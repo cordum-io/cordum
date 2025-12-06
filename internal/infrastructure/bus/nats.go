@@ -2,8 +2,9 @@ package bus
 
 import (
 	"log"
+	"time"
 
-	pb "github.com/cortex-os/core/pkg/pb/v1/api/proto/v1"
+	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 )
@@ -15,7 +16,22 @@ type NatsBus struct {
 
 // NewNatsBus dials NATS at the provided URL.
 func NewNatsBus(url string) (*NatsBus, error) {
-	nc, err := nats.Connect(url)
+	opts := []nats.Option{
+		nats.Name("cortex-bus"),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2 * time.Second),
+		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
+			log.Printf("[BUS] disconnected from NATS: %v", err)
+		}),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			log.Printf("[BUS] reconnected to NATS at %s", nc.ConnectedUrl())
+		}),
+		nats.ClosedHandler(func(nc *nats.Conn) {
+			log.Printf("[BUS] connection closed")
+		}),
+	}
+
+	nc, err := nats.Connect(url, opts...)
 	if err != nil {
 		return nil, err
 	}

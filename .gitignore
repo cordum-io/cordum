@@ -8,7 +8,7 @@ bin/
 *.test
 *.out
 .codex
-# Logs and temp files
+# Logs and temp filesthis
 *.log
 *.tmp
 *.swp
@@ -22,3 +22,7 @@ bin/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Local build/test caches
+.gocache/
+.gomodcache/
