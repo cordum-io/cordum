@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package cortex.v1;
+option go_package = "github.com/cortex-os/core/pkg/pb/v1";
+
+message Heartbeat {
+  string worker_id = 1;
+  string region    = 2;
+  string type      = 3;              // "gpu", "cpu-tools", etc.
+
+  float cpu_load        = 4;         // 0-100
+  float gpu_utilization = 5;         // 0-100
+  int32 active_jobs     = 6;
+
+  repeated string capabilities = 7;   // ["echo", "python", "k8s"]
+  reserved 8, 9, 10;
+}

@@ -1,0 +1,24 @@
+# Build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.codex
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+
+# Editor settings
+.vscode/
+.idea/
+
+# OS metadata
+.DS_Store
+Thumbs.db
