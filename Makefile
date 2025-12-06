@@ -2,10 +2,13 @@ PROTO_SRC = api/proto/v1
 PB_OUT    = pkg/pb/v1
 
 proto:
-	protoc \
+	PATH="$$PATH:$(HOME)/go/bin" protoc \
 		-I . \
 		-I $(PROTO_SRC) \
 		--go_out=$(PB_OUT) --go_opt=paths=source_relative \
+		--go-grpc_out=$(PB_OUT) --go-grpc_opt=paths=source_relative \
+		$(PROTO_SRC)/safety.proto \
+		$(PROTO_SRC)/api.proto \
 		$(PROTO_SRC)/job.proto \
 		$(PROTO_SRC)/heartbeat.proto \
 		$(PROTO_SRC)/packet.proto
@@ -16,6 +19,12 @@ build-scheduler: proto
 build-worker-echo: proto
 	go build -o bin/cortex-worker-echo ./cmd/cortex-worker-echo
 
-build: build-scheduler build-worker-echo
+build-api-gateway: proto
+	go build -o bin/cortex-api-gateway ./cmd/cortex-api-gateway
 
-.PHONY: proto build build-scheduler build-worker-echo
+build-safety-kernel: proto
+	go build -o bin/cortex-safety-kernel ./cmd/cortex-safety-kernel
+
+build: build-scheduler build-worker-echo build-api-gateway build-safety-kernel
+
+.PHONY: proto build build-scheduler build-worker-echo build-api-gateway build-safety-kernel

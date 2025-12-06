@@ -121,7 +121,7 @@ Have a compiling repo with Protobuf contracts, generated Go code, and a working 
 
 1. **Initialize Go module**
 
-   * `go mod init github.com/cortex-os/core`
+   * `go mod init github.com/yaront1111/cortex-os/core`
 
 2. **Create directories** (if not exist)
 
@@ -144,7 +144,7 @@ Have a compiling repo with Protobuf contracts, generated Go code, and a working 
    syntax = "proto3";
 
    package cortex.v1;
-   option go_package = "github.com/cortex-os/core/pkg/pb/v1";
+   option go_package = "github.com/yaront1111/cortex-os/core/pkg/pb/v1";
 
    enum JobPriority {
      JOB_PRIORITY_UNSPECIFIED = 0;
@@ -185,7 +185,7 @@ Have a compiling repo with Protobuf contracts, generated Go code, and a working 
    syntax = "proto3";
 
    package cortex.v1;
-   option go_package = "github.com/cortex-os/core/pkg/pb/v1";
+   option go_package = "github.com/yaront1111/cortex-os/core/pkg/pb/v1";
 
    message Heartbeat {
      string worker_id = 1;
@@ -207,7 +207,7 @@ Have a compiling repo with Protobuf contracts, generated Go code, and a working 
    syntax = "proto3";
 
    package cortex.v1;
-   option go_package = "github.com/cortex-os/core/pkg/pb/v1";
+   option go_package = "github.com/yaront1111/cortex-os/core/pkg/pb/v1";
 
    import "google/protobuf/timestamp.proto";
    import "api/proto/v1/job.proto";
@@ -291,7 +291,7 @@ Abstract NATS behind a simple interface and load basic config.
    ```go
    package scheduler
 
-   import pb "github.com/cortex-os/core/pkg/pb/v1"
+   import pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 
    type Bus interface {
        Publish(subject string, packet *pb.BusPacket) error
@@ -310,7 +310,7 @@ Abstract NATS behind a simple interface and load basic config.
        "log"
 
        "github.com/nats-io/nats.go"
-       pb "github.com/cortex-os/core/pkg/pb/v1"
+       pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
        "google.golang.org/protobuf/proto"
    )
 
@@ -403,7 +403,7 @@ Implement the Scheduler with a **pluggable core** and a simple Safety check.
    ```go
    package scheduler
 
-   import pb "github.com/cortex-os/core/pkg/pb/v1"
+   import pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 
    type SafetyDecision int
 
@@ -433,7 +433,7 @@ Implement the Scheduler with a **pluggable core** and a simple Safety check.
    ```go
    package scheduler
 
-   import pb "github.com/cortex-os/core/pkg/pb/v1"
+   import pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 
    type SafetyStub struct{}
 
@@ -457,7 +457,7 @@ Implement the Scheduler with a **pluggable core** and a simple Safety check.
    import (
        "sync"
 
-       pb "github.com/cortex-os/core/pkg/pb/v1"
+       pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
    )
 
    type MemoryRegistry struct {
@@ -496,7 +496,7 @@ Implement the Scheduler with a **pluggable core** and a simple Safety check.
    import (
        "fmt"
 
-       pb "github.com/cortex-os/core/pkg/pb/v1"
+       pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
    )
 
    type NaiveStrategy struct{}
@@ -524,7 +524,7 @@ Implement the Scheduler with a **pluggable core** and a simple Safety check.
    import (
        "log"
 
-       pb "github.com/cortex-os/core/pkg/pb/v1"
+       pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
        "google.golang.org/protobuf/types/known/timestamppb"
    )
 
@@ -622,9 +622,9 @@ Implement the Scheduler with a **pluggable core** and a simple Safety check.
        "os/signal"
        "syscall"
 
-       "github.com/cortex-os/core/internal/infrastructure/bus"
-       "github.com/cortex-os/core/internal/infrastructure/config"
-       "github.com/cortex-os/core/internal/scheduler"
+       "github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
+       "github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
+       "github.com/yaront1111/cortex-os/core/internal/scheduler"
    )
 
    func main() {
@@ -686,9 +686,9 @@ Implement a simple worker to validate the flow.
        "syscall"
        "time"
 
-       "github.com/cortex-os/core/internal/infrastructure/bus"
-       "github.com/cortex-os/core/internal/infrastructure/config"
-       pb "github.com/cortex-os/core/pkg/pb/v1"
+       "github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
+       "github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
+       pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
        "google.golang.org/protobuf/types/known/timestamppb"
    )
 
@@ -795,9 +795,9 @@ Implement a simple worker to validate the flow.
        "log"
        "time"
 
-       "github.com/cortex-os/core/internal/infrastructure/bus"
-       "github.com/cortex-os/core/internal/infrastructure/config"
-       pb "github.com/cortex-os/core/pkg/pb/v1"
+       "github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
+       "github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
+       pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
        "github.com/google/uuid"
        "google.golang.org/protobuf/types/known/timestamppb"
    )
