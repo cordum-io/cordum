@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package cortex.v1;
+option go_package = "github.com/cortex-os/core/pkg/pb/v1";
+
+import "google/protobuf/timestamp.proto";
+import "api/proto/v1/job.proto";
+import "api/proto/v1/heartbeat.proto";
+
+message BusPacket {
+  string trace_id  = 1;
+  string sender_id = 2;
+
+  google.protobuf.Timestamp created_at = 3;
+
+  uint32 protocol_version = 4;
+
+  oneof payload {
+    JobRequest job_request = 10;
+    JobResult  job_result  = 11;
+    Heartbeat  heartbeat   = 12;
+    SystemAlert alert      = 13;
+  }
+}
+
+message SystemAlert {
+  string level     = 1; // "INFO", "WARN", "CRITICAL"
+  string message   = 2;
+  string component = 3;
+}
