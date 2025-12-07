@@ -38,3 +38,17 @@ func (r *MemoryRegistry) Snapshot() map[string]*pb.Heartbeat {
 	}
 	return snapshot
 }
+
+// WorkersForPool returns a slice of workers that belong to the given pool.
+func (r *MemoryRegistry) WorkersForPool(pool string) []*pb.Heartbeat {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []*pb.Heartbeat
+	for _, hb := range r.workers {
+		if hb.GetPool() == pool {
+			result = append(result, hb)
+		}
+	}
+	return result
+}

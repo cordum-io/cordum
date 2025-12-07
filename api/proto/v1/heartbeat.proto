@@ -14,4 +14,6 @@ message Heartbeat {
 
   repeated string capabilities = 7;   // ["echo", "python", "k8s"]
   reserved 8, 9, 10;
+  string pool = 11;                   // worker pool name
+  int32 max_parallel_jobs = 12;       // capacity hint
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,6 +25,8 @@ const (
 	jobSubject       = "job.echo"
 	queueGroup       = "workers-echo"
 )
+
+var activeJobs int32
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
@@ -72,6 +75,9 @@ func handleJob(b *bus.NatsBus, store memory.Store) func(*pb.BusPacket) {
 		if req == nil {
 			return
 		}
+
+		atomic.AddInt32(&activeJobs, 1)
+		defer atomic.AddInt32(&activeJobs, -1)
 
 		var ctxPayload []byte
 		if key, err := memory.KeyFromPointer(req.ContextPtr); err != nil {
@@ -139,13 +145,15 @@ func sendHeartbeats(ctx context.Context, b *bus.NatsBus) {
 			return
 		case <-ticker.C:
 			hb := &pb.Heartbeat{
-				WorkerId:       workerID,
-				Region:         "local",
-				Type:           "cpu",
-				CpuLoad:        float32(rand.Intn(50)),
-				GpuUtilization: 0,
-				ActiveJobs:     0,
-				Capabilities:   []string{"echo"},
+				WorkerId:        workerID,
+				Region:          "local",
+				Type:            "cpu",
+				CpuLoad:         float32(rand.Intn(50)), // stub load
+				GpuUtilization:  0,
+				ActiveJobs:      atomic.LoadInt32(&activeJobs),
+				Capabilities:    []string{"echo"},
+				Pool:            "echo",
+				MaxParallelJobs: 1,
 			}
 
 			packet := &pb.BusPacket{

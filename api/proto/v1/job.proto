@@ -24,6 +24,9 @@ message JobRequest {
   string adapter_id = 5;
   map<string, string> env_vars = 6;
   reserved 7, 8, 9;
+  string parent_job_id = 10;       // optional workflow chaining
+  string workflow_id   = 11;       // optional workflow identifier
+  int32 step_index     = 12;       // optional step position
 }
 
 message JobResult {

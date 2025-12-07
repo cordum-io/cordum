@@ -438,3 +438,9 @@ Each with autoscale options.
 ---
 
 # **End of Version 1.0**
+
+## Developer quick actions
+
+- Run tests locally with caches inside the repo: `GOMODCACHE=$(pwd)/.gomodcache GOCACHE=$(pwd)/.gocache /usr/local/go/bin/go test ./...`
+- Bring up the full stack in containers: see `docs/DOCKER.md` (`docker compose up` with NATS, Redis, scheduler, safety, API, and workers).
+- See a validated end-to-end snapshot (compose + sample jobs + result pointers) in `docs/LOCAL_E2E.md`.
