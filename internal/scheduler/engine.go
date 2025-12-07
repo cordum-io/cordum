@@ -2,8 +2,8 @@ package scheduler
 
 import (
 	"context"
-	"log"
 
+	"github.com/yaront1111/cortex-os/core/internal/infrastructure/logging"
 	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -21,15 +21,17 @@ type Engine struct {
 	registry WorkerRegistry
 	strategy SchedulingStrategy
 	jobStore JobStore
+	metrics  Metrics
 }
 
-func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy SchedulingStrategy, jobStore JobStore) *Engine {
+func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy SchedulingStrategy, jobStore JobStore, metrics Metrics) *Engine {
 	return &Engine{
 		bus:      bus,
 		safety:   safety,
 		registry: registry,
 		strategy: strategy,
 		jobStore: jobStore,
+		metrics:  metrics,
 	}
 }
 
@@ -59,15 +61,26 @@ func (e *Engine) HandlePacket(packet *pb.BusPacket) {
 		if hb == nil {
 			return
 		}
-		log.Printf("[SCHEDULER] heartbeat worker_id=%s type=%s cpu=%.1f gpu=%.1f active_jobs=%d",
-			hb.WorkerId, hb.Type, hb.CpuLoad, hb.GpuUtilization, hb.ActiveJobs)
+		logging.Info("scheduler", "heartbeat received",
+			"worker_id", hb.WorkerId,
+			"type", hb.Type,
+			"cpu", hb.CpuLoad,
+			"gpu", hb.GpuUtilization,
+			"active_jobs", hb.ActiveJobs,
+			"pool", hb.Pool,
+		)
 		e.registry.UpdateHeartbeat(hb)
 	case *pb.BusPacket_JobRequest:
 		req := payload.JobRequest
 		if req == nil {
 			return
 		}
-		log.Printf("[SCHEDULER] job request id=%s topic=%s", req.JobId, req.Topic)
+		logging.Info("scheduler", "job request received",
+			"job_id", req.JobId,
+			"topic", req.Topic,
+			"trace_id", packet.TraceId,
+		)
+		e.incJobsReceived(req.Topic)
 		e.setJobState(req.JobId, JobStatePending)
 		e.processJob(req, packet.TraceId)
 	case *pb.BusPacket_JobResult:
@@ -75,8 +88,12 @@ func (e *Engine) HandlePacket(packet *pb.BusPacket) {
 		if res == nil {
 			return
 		}
-		log.Printf("[SCHEDULER] job result id=%s status=%s worker_id=%s",
-			res.JobId, res.Status.String(), res.WorkerId)
+		logging.Info("scheduler", "job result received",
+			"job_id", res.JobId,
+			"status", res.Status.String(),
+			"worker_id", res.WorkerId,
+			"result_ptr", res.ResultPtr,
+		)
 		e.handleJobResult(res)
 	default:
 		// Unknown payloads are ignored for now.
@@ -85,26 +102,46 @@ func (e *Engine) HandlePacket(packet *pb.BusPacket) {
 
 func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 	if req == nil || req.JobId == "" || req.Topic == "" {
-		log.Printf("[SCHEDULER] invalid job request trace_id=%s job_id=%q topic=%q", traceID, safeJobID(req), safeTopic(req))
+		logging.Error("scheduler", "invalid job request",
+			"trace_id", traceID,
+			"job_id", safeJobID(req),
+			"topic", safeTopic(req),
+		)
 		return
 	}
 
 	decision, reason := e.safety.Check(req)
 	if decision == SafetyDeny {
-		log.Printf("[SAFETY] blocked job_id=%s reason=%s", req.JobId, reason)
+		logging.Info("safety", "job denied",
+			"job_id", req.JobId,
+			"topic", req.Topic,
+			"reason", reason,
+			"trace_id", traceID,
+		)
 		e.setJobState(req.JobId, JobStateDenied)
+		e.incSafetyDenied(req.Topic)
 		return
 	}
 
 	workers := e.registry.Snapshot()
 	subject, err := e.strategy.PickSubject(req, workers)
 	if err != nil {
-		log.Printf("[SCHEDULER] failed to pick subject for job_id=%s: %v", req.JobId, err)
+		logging.Error("scheduler", "failed to pick subject",
+			"job_id", req.JobId,
+			"topic", req.Topic,
+			"error", err,
+		)
 		return
 	}
 
-	log.Printf("[SCHEDULER] dispatching job_id=%s trace_id=%s subject=%s", req.JobId, traceID, subject)
+	logging.Info("scheduler", "dispatching job",
+		"job_id", req.JobId,
+		"trace_id", traceID,
+		"subject", subject,
+		"topic", req.Topic,
+	)
 	e.setJobState(req.JobId, JobStateRunning)
+	e.incJobsDispatched(req.Topic)
 
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
@@ -117,7 +154,11 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 	}
 
 	if err := e.bus.Publish(subject, packet); err != nil {
-		log.Printf("[SCHEDULER] failed to publish job_id=%s to subject=%s: %v", req.JobId, subject, err)
+		logging.Error("scheduler", "failed to publish job",
+			"job_id", req.JobId,
+			"subject", subject,
+			"error", err,
+		)
 	}
 }
 
@@ -133,6 +174,7 @@ func (e *Engine) handleJobResult(res *pb.JobResult) {
 	if res.ResultPtr != "" {
 		e.setResultPtr(res.JobId, res.ResultPtr)
 	}
+	e.incJobsCompleted(res.JobId, res.Status.String())
 }
 
 func (e *Engine) setJobState(jobID string, state JobState) {
@@ -161,4 +203,28 @@ func safeTopic(req *pb.JobRequest) string {
 		return ""
 	}
 	return req.Topic
+}
+
+func (e *Engine) incJobsReceived(topic string) {
+	if e.metrics != nil {
+		e.metrics.IncJobsReceived(topic)
+	}
+}
+
+func (e *Engine) incJobsDispatched(topic string) {
+	if e.metrics != nil {
+		e.metrics.IncJobsDispatched(topic)
+	}
+}
+
+func (e *Engine) incJobsCompleted(topic, status string) {
+	if e.metrics != nil {
+		e.metrics.IncJobsCompleted(topic, status)
+	}
+}
+
+func (e *Engine) incSafetyDenied(topic string) {
+	if e.metrics != nil {
+		e.metrics.IncSafetyDenied(topic)
+	}
 }

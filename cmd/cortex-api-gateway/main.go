@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
+	"github.com/yaront1111/cortex-os/core/internal/infrastructure/logging"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/memory"
 	"github.com/yaront1111/cortex-os/core/internal/scheduler"
 	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
@@ -36,19 +37,22 @@ func main() {
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
 	if err != nil {
-		log.Fatalf("api-gateway: failed to connect to redis: %v", err)
+		logging.Error("api-gateway", "failed to connect to redis", "error", err)
+		os.Exit(1)
 	}
 	defer memStore.Close()
 
 	jobStore, err := memory.NewRedisJobStore(cfg.RedisURL)
 	if err != nil {
-		log.Fatalf("api-gateway: failed to connect to redis for job store: %v", err)
+		logging.Error("api-gateway", "failed to connect to redis for job store", "error", err)
+		os.Exit(1)
 	}
 	defer jobStore.Close()
 
 	natsBus, err := bus.NewNatsBus(cfg.NatsURL)
 	if err != nil {
-		log.Fatalf("api-gateway: failed to connect to NATS: %v", err)
+		logging.Error("api-gateway", "failed to connect to NATS", "error", err)
+		os.Exit(1)
 	}
 	defer natsBus.Close()
 
@@ -62,16 +66,23 @@ func main() {
 
 	lis, err := net.Listen("tcp", defaultListenAddr)
 	if err != nil {
-		log.Fatalf("api-gateway: failed to listen on %s: %v", defaultListenAddr, err)
+		logging.Error("api-gateway", "failed to listen for grpc", "addr", defaultListenAddr, "error", err)
+		os.Exit(1)
 	}
 
 	grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
 	pb.RegisterCortexApiServer(grpcServer, s)
 	reflection.Register(grpcServer)
 
-	log.Printf("api-gateway: listening on %s (gRPC) and :8081/health (HTTP)", defaultListenAddr)
+	logging.Info("api-gateway", "listening",
+		"grpc_addr", defaultListenAddr,
+		"health_addr", ":8081",
+		"nats_url", cfg.NatsURL,
+		"redis_url", cfg.RedisURL,
+	)
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("api-gateway: grpc server error: %v", err)
+		logging.Error("api-gateway", "grpc server error", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -82,7 +93,7 @@ func serveHTTPHealth() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	if err := http.ListenAndServe(":8081", mux); err != nil {
-		log.Printf("api-gateway: health server error: %v", err)
+		logging.Error("api-gateway", "health server error", "error", err)
 	}
 }
 
@@ -139,6 +150,13 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, err
 	}
 
+	logging.Info("api-gateway", "job submitted",
+		"job_id", jobID,
+		"trace_id", traceID,
+		"topic", req.GetTopic(),
+		"context_ptr", ctxPtr,
+	)
+
 	return &pb.SubmitJobResponse{
 		JobId:   jobID,
 		TraceId: traceID,
@@ -164,9 +182,17 @@ func (s *server) GetJobStatus(ctx context.Context, req *pb.GetJobStatusRequest) 
 		resultPtr = ""
 	}
 
-	return &pb.GetJobStatusResponse{
+	resp := &pb.GetJobStatusResponse{
 		JobId:     req.GetJobId(),
 		Status:    string(state),
 		ResultPtr: resultPtr,
-	}, nil
+	}
+
+	logging.Info("api-gateway", "job status fetched",
+		"job_id", req.GetJobId(),
+		"status", resp.Status,
+		"result_ptr", resp.ResultPtr,
+	)
+
+	return resp, nil
 }

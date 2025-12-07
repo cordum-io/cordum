@@ -60,7 +60,7 @@ func (b *fakeBus) Subscribe(subject, queue string, handler func(*pb.BusPacket)) 
 func TestEngineHandleHeartbeatStoresWorker(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
-	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), newFakeJobStore())
+	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
 
 	packet := &pb.BusPacket{
 		SenderId:        "worker-1",
@@ -91,7 +91,7 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 	registry := NewMemoryRegistry()
 	strategy := &NaiveStrategy{}
 	jobStore := newFakeJobStore()
-	engine := NewEngine(bus, NewSafetyStub(), registry, strategy, jobStore)
+	engine := NewEngine(bus, NewSafetyStub(), registry, strategy, jobStore, nil)
 
 	req := &pb.JobRequest{
 		JobId: "job-1",
@@ -122,7 +122,7 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
 	jobStore := newFakeJobStore()
-	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), jobStore)
+	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), jobStore, nil)
 
 	req := &pb.JobRequest{
 		JobId: "job-blocked",
@@ -142,7 +142,7 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 func TestProcessJobSkipsInvalidRequest(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
-	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), newFakeJobStore())
+	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
 
 	req := &pb.JobRequest{
 		JobId: "",
@@ -160,7 +160,7 @@ func TestHandleJobResultUpdatesState(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
 	jobStore := newFakeJobStore()
-	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), jobStore)
+	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), jobStore, nil)
 
 	res := &pb.JobResult{
 		JobId:     "job-1",

@@ -9,6 +9,7 @@ import (
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/memory"
+	"github.com/yaront1111/cortex-os/core/internal/infrastructure/metrics"
 	"github.com/yaront1111/cortex-os/core/internal/scheduler"
 )
 
@@ -35,12 +36,21 @@ func main() {
 	}
 	defer safetyClient.Close()
 
+	topicToPool := map[string]string{
+		"job.echo":          "echo",
+		"job.chat.simple":   "chat-simple",
+		"job.chat.advanced": "chat-advanced",
+		"job.workflow.demo": "workflow",
+		"job.code.llm":      "code-llm",
+	}
+
 	engine := scheduler.NewEngine(
 		natsBus,
 		safetyClient,
 		scheduler.NewMemoryRegistry(),
-		scheduler.NewNaiveStrategy(),
+		scheduler.NewLeastLoadedStrategy(topicToPool),
 		jobStore,
+		metrics.Noop{},
 	)
 
 	if err := engine.Start(); err != nil {

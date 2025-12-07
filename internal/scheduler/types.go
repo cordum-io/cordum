@@ -37,6 +37,14 @@ type SchedulingStrategy interface {
 	PickSubject(req *pb.JobRequest, workers map[string]*pb.Heartbeat) (string, error)
 }
 
+// Metrics captures counters for scheduler events.
+type Metrics interface {
+	IncJobsReceived(topic string)
+	IncJobsDispatched(topic string)
+	IncJobsCompleted(topic, status string)
+	IncSafetyDenied(topic string)
+}
+
 // JobState captures lifecycle for a job as seen by the scheduler.
 type JobState string
 
