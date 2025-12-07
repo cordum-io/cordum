@@ -3,7 +3,7 @@ PB_OUT    = pkg/pb/v1
 
 proto:
 	PATH="$$PATH:$(HOME)/go/bin" protoc \
-		-I . \
+		-I .
 		-I $(PROTO_SRC) \
 		--go_out=$(PB_OUT) --go_opt=paths=source_relative \
 		--go-grpc_out=$(PB_OUT) --go-grpc_opt=paths=source_relative \
@@ -39,4 +39,16 @@ build-safety-kernel: proto
 
 build: build-scheduler build-worker-echo build-worker-chat build-worker-chat-advanced build-worker-orchestrator build-worker-code-llm build-api-gateway build-safety-kernel
 
-.PHONY: proto build build-scheduler build-worker-echo build-worker-chat build-worker-chat-advanced build-worker-orchestrator build-worker-code-llm build-api-gateway build-safety-kernel
+dev-up:
+	docker-compose up -d --build
+
+dev-down:
+	docker-compose down
+
+dev-logs:
+	docker-compose logs -f
+
+dev-test-echo:
+	go run ./tools/scripts/send_echo_job.go
+
+.PHONY: proto build build-scheduler build-worker-echo build-worker-chat build-worker-chat-advanced build-worker-orchestrator build-worker-code-llm build-api-gateway build-safety-kernel dev-up dev-down dev-logs dev-test-echo

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -26,6 +29,12 @@ const (
 )
 
 var codeActiveJobs int32
+
+var (
+	ollamaURL   = envOrDefault("OLLAMA_URL", "http://ollama:11434")
+	ollamaModel = envOrDefault("OLLAMA_MODEL", "llama3")
+	httpClient  = &http.Client{Timeout: 20 * time.Second}
+)
 
 type codeContext struct {
 	FilePath    string `json:"file_path"`
@@ -104,10 +113,11 @@ func handleCodeJob(b *bus.NatsBus, store memory.Store) func(*pb.BusPacket) {
 
 		start := time.Now()
 
-		// Stub LLM: produce a placeholder patch suggestion.
-		result := codeResult{
-			FilePath: ctxPayload.FilePath,
-			Patch:    "// TODO: suggested patch",
+		result, err := callOllama(ctxPayload)
+		status := pb.JobStatus_JOB_STATUS_COMPLETED
+		if err != nil {
+			log.Printf("[WORKER code-llm] ollama call failed job_id=%s: %v", req.JobId, err)
+			status = pb.JobStatus_JOB_STATUS_FAILED
 		}
 
 		resultBytes, _ := json.Marshal(result)
@@ -119,7 +129,7 @@ func handleCodeJob(b *bus.NatsBus, store memory.Store) func(*pb.BusPacket) {
 
 		jobRes := &pb.JobResult{
 			JobId:       req.JobId,
-			Status:      pb.JobStatus_JOB_STATUS_COMPLETED,
+			Status:      status,
 			ResultPtr:   resultPtr,
 			WorkerId:    codeLLMWorkerID,
 			ExecutionMs: time.Since(start).Milliseconds(),
@@ -179,4 +189,68 @@ func sendCodeHeartbeats(ctx context.Context, b *bus.NatsBus) {
 			}
 		}
 	}
+}
+
+type ollamaRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	Stream bool   `json:"stream"`
+}
+
+type ollamaResponse struct {
+	Response string `json:"response"`
+	Error    string `json:"error"`
+}
+
+func callOllama(ctxPayload codeContext) (codeResult, error) {
+	prompt := buildPrompt(ctxPayload)
+	reqBody, _ := json.Marshal(&ollamaRequest{
+		Model:  ollamaModel,
+		Prompt: prompt,
+		Stream: false,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, ollamaURL+"/api/generate", bytes.NewReader(reqBody))
+	if err != nil {
+		return codeResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return codeResult{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return codeResult{}, fmt.Errorf("ollama status %d", resp.StatusCode)
+	}
+
+	var out ollamaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return codeResult{}, err
+	}
+	if out.Error != "" {
+		return codeResult{}, fmt.Errorf("ollama error: %s", out.Error)
+	}
+	if out.Response == "" {
+		return codeResult{}, fmt.Errorf("ollama empty response")
+	}
+
+	return codeResult{
+		FilePath: ctxPayload.FilePath,
+		Patch:    out.Response,
+	}, nil
+}
+
+func buildPrompt(ctxPayload codeContext) string {
+	return fmt.Sprintf("You are a code assistant. Given file %s and instruction: %s\nCode:\n%s\nGenerate a concise patch (diff or replacement) to satisfy the instruction.",
+		ctxPayload.FilePath, ctxPayload.Instruction, ctxPayload.CodeSnippet)
+}
+
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

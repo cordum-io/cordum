@@ -26,6 +26,7 @@ Environment defaults:
 - `SAFETY_KERNEL_ADDR` – `cortex-safety-kernel:50051`
 - `OLLAMA_URL` – `http://ollama:11434` (used by advanced chat worker; if unreachable, worker falls back to a stub response)
 - `OLLAMA_MODEL` – `llama3`
+  - Also used by code-LLM worker; ensure Ollama is running or reachable.
 
 ## Smoke test
 With the stack running, send a job to NATS:
@@ -38,6 +39,11 @@ go run ./tools/scripts/send_echo_job.go
 NATS_URL=nats://localhost:4222 \
 REDIS_URL=redis://localhost:6379 \
 go run ./tools/scripts/code/send_code_job.go
+
+# Workflow demo job (triggers code-llm then chat-simple)
+NATS_URL=nats://localhost:4222 \
+REDIS_URL=redis://localhost:6379 \
+go run ./tools/scripts/workflow/send_workflow_job.go
 ```
 
 You should see:
