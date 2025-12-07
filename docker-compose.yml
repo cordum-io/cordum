@@ -1,0 +1,128 @@
+version: "3.9"
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    ports:
+      - "4222:4222"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  cortex-safety-kernel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-safety-kernel
+    depends_on:
+      - nats
+    environment:
+      - NATS_URL=nats://nats:4222
+
+  cortex-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-scheduler
+    depends_on:
+      - nats
+      - redis
+      - cortex-safety-kernel
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+      - SAFETY_KERNEL_ADDR=cortex-safety-kernel:50051
+
+  cortex-api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-api-gateway
+    depends_on:
+      - nats
+      - redis
+      - cortex-scheduler
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+      - SAFETY_KERNEL_ADDR=cortex-safety-kernel:50051
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+
+  cortex-worker-echo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-echo
+    depends_on:
+      - nats
+      - redis
+      - cortex-scheduler
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-chat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-chat
+    depends_on:
+      - nats
+      - redis
+      - cortex-scheduler
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-chat-advanced:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-chat-advanced
+    depends_on:
+      - nats
+      - redis
+      - cortex-scheduler
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3
+
+  cortex-worker-code-llm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-code-llm
+    depends_on:
+      - nats
+      - redis
+      - cortex-scheduler
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-orchestrator
+    depends_on:
+      - nats
+      - redis
+      - cortex-scheduler
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
