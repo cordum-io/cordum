@@ -46,7 +46,7 @@ Workers publish on `sys.heartbeat.<something>`; scheduler subscribes to `sys.hea
   - Subject: `job.workflow.demo`
   - Pool: `workflow`
   - Queue group: `workers-orchestrator`
-  - Behavior: dispatches child jobs (current placeholder).
+  - Behavior: dispatches child jobs (`job.code.llm` then `job.chat.simple`) and aggregates results via pointers and JobStore.
 
 ## Scheduler routing
 - Topic→pool map (inline in `cmd/cortex-scheduler/main.go`):

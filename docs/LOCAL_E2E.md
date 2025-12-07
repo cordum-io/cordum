@@ -51,9 +51,15 @@ Expected: all services in `State=Up` with ports exposed for NATS/Redis/API.
 ### Code LLM job
 - Submit: `GOMODCACHE=$(pwd)/.gomodcache GOCACHE=$(pwd)/.gocache /usr/local/go/bin/go run ./tools/scripts/code/send_code_job.go`
 - Scheduler logs: job received on `job.code.llm` → dispatched to pool `code-llm`.
-- Result pointer: `docker exec cortex-redis-1 redis-cli get res:<job_id>` (contains stub patch suggestion JSON).
+- Result pointer: `docker exec cortex-redis-1 redis-cli get res:<job_id>` (contains patch suggestion from Ollama).
+- Requires `OLLAMA_URL` reachable (compose sets `http://ollama:11434`); otherwise the worker marks the job failed.
+
+### Workflow orchestration (demo)
+- Submit: `GOMODCACHE=$(pwd)/.gomodcache GOCACHE=$(pwd)/.gocache /usr/local/go/bin/go run ./tools/scripts/workflow/send_workflow_job.go`
+- Flow: orchestrator on `job.workflow.demo` spawns `job.code.llm` then `job.chat.simple`, aggregates results via Redis/JobStore.
+- Result pointer: `docker exec cortex-redis-1 redis-cli get res:<parent_job_id>` (combined patch + explanation JSON). Retries/timeouts are handled internally if a child is slow or fails.
 
 ## Notes
 - Safety kernel currently allows all topics except the hardcoded deny in code (`sys.destroy`).
 - Heartbeats flow to the scheduler on `sys.heartbeat.*` and inform pool/capacity.
-- Scripts use localhost ports; when running inside the repo against compose, they talk to the mapped NATS/Redis ports. Use the provided `GOMODCACHE`/`GOCACHE` envs to avoid global cache writes.
+  - Scripts use localhost ports; when running inside the repo against compose, they talk to the mapped NATS/Redis ports. Use the provided `GOMODCACHE`/`GOCACHE` envs to avoid global cache writes.

@@ -65,9 +65,34 @@ func main() {
 		},
 	}
 
+	// Subscribe to results to verify completion
+	resCh := make(chan *pb.JobResult, 1)
+	if err := natsBus.Subscribe("sys.job.result", "", func(p *pb.BusPacket) {
+		if res := p.GetJobResult(); res != nil && res.JobId == jobID {
+			resCh <- res
+		}
+	}); err != nil {
+		log.Fatalf("failed to subscribe to results: %v", err)
+	}
+
 	if err := natsBus.Publish("sys.job.submit", packet); err != nil {
 		log.Fatalf("failed to publish job: %v", err)
 	}
 
 	log.Printf("sent job job_id=%s trace_id=%s context_ptr=%s", jobID, traceID, ctxPtr)
+	log.Println("waiting for result...")
+
+	select {
+	case res := <-resCh:
+		log.Printf("✅ received result: status=%s worker=%s duration=%dms", res.Status, res.WorkerId, res.ExecutionMs)
+		// Retrieve result payload
+		if res.ResultPtr != "" {
+			resKey, _ := memory.KeyFromPointer(res.ResultPtr)
+			if data, err := memStore.GetResult(context.Background(), resKey); err == nil {
+				log.Printf("   payload: %s", string(data))
+			}
+		}
+	case <-time.After(5 * time.Second):
+		log.Fatalf("❌ timed out waiting for result")
+	}
 }

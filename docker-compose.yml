@@ -112,6 +112,8 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3
 
   cortex-worker-orchestrator:
     build:
