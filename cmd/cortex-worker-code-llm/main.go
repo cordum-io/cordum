@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -33,7 +36,7 @@ var codeActiveJobs int32
 var (
 	ollamaURL   = envOrDefault("OLLAMA_URL", "http://ollama:11434")
 	ollamaModel = envOrDefault("OLLAMA_MODEL", "llama3")
-	httpClient  = &http.Client{Timeout: 20 * time.Second}
+	httpClient  = &http.Client{Timeout: 150 * time.Second}
 )
 
 type codeContext struct {
@@ -43,8 +46,15 @@ type codeContext struct {
 }
 
 type codeResult struct {
-	FilePath string `json:"file_path"`
-	Patch    string `json:"patch"`
+	FilePath     string          `json:"file_path"`
+	OriginalCode string          `json:"original_code"`
+	Instruction  string          `json:"instruction"`
+	Patch        structuredPatch `json:"patch"`
+}
+
+type structuredPatch struct {
+	Type    string `json:"type"`    // e.g., unified_diff
+	Content string `json:"content"` // diff or patch text
 }
 
 func main() {
@@ -63,6 +73,10 @@ func main() {
 		log.Fatalf("failed to connect to NATS: %v", err)
 	}
 	defer natsBus.Close()
+
+	if err := checkOllamaHealth(context.Background()); err != nil {
+		log.Fatalf("ollama health check failed: %v", err)
+	}
 
 	if err := natsBus.Subscribe(codeLLMJobSubject, codeLLMQueueGroup, handleCodeJob(natsBus, memStore)); err != nil {
 		log.Fatalf("failed to subscribe to code llm jobs: %v", err)
@@ -113,11 +127,20 @@ func handleCodeJob(b *bus.NatsBus, store memory.Store) func(*pb.BusPacket) {
 
 		start := time.Now()
 
-		result, err := callOllama(ctxPayload)
+		result, err := callOllamaWithRetry(ctxPayload)
 		status := pb.JobStatus_JOB_STATUS_COMPLETED
 		if err != nil {
 			log.Printf("[WORKER code-llm] ollama call failed job_id=%s: %v", req.JobId, err)
 			status = pb.JobStatus_JOB_STATUS_FAILED
+			result = codeResult{
+				FilePath:     ctxPayload.FilePath,
+				OriginalCode: ctxPayload.CodeSnippet,
+				Instruction:  ctxPayload.Instruction,
+				Patch: structuredPatch{
+					Type:    "error",
+					Content: err.Error(),
+				},
+			}
 		}
 
 		resultBytes, _ := json.Marshal(result)
@@ -203,6 +226,9 @@ type ollamaResponse struct {
 }
 
 func callOllama(ctxPayload codeContext) (codeResult, error) {
+	reqCtx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	defer cancel()
+
 	prompt := buildPrompt(ctxPayload)
 	reqBody, _ := json.Marshal(&ollamaRequest{
 		Model:  ollamaModel,
@@ -210,7 +236,7 @@ func callOllama(ctxPayload codeContext) (codeResult, error) {
 		Stream: false,
 	})
 
-	req, err := http.NewRequest(http.MethodPost, ollamaURL+"/api/generate", bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, ollamaURL+"/api/generate", bytes.NewReader(reqBody))
 	if err != nil {
 		return codeResult{}, err
 	}
@@ -223,7 +249,8 @@ func callOllama(ctxPayload codeContext) (codeResult, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		return codeResult{}, fmt.Errorf("ollama status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return codeResult{}, fmt.Errorf("ollama status %d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var out ollamaResponse
@@ -238,14 +265,83 @@ func callOllama(ctxPayload codeContext) (codeResult, error) {
 	}
 
 	return codeResult{
-		FilePath: ctxPayload.FilePath,
-		Patch:    out.Response,
+		FilePath:     ctxPayload.FilePath,
+		OriginalCode: ctxPayload.CodeSnippet,
+		Instruction:  ctxPayload.Instruction,
+		Patch: structuredPatch{
+			Type:    "unified_diff",
+			Content: out.Response,
+		},
 	}, nil
 }
 
 func buildPrompt(ctxPayload codeContext) string {
 	return fmt.Sprintf("You are a code assistant. Given file %s and instruction: %s\nCode:\n%s\nGenerate a concise patch (diff or replacement) to satisfy the instruction.",
 		ctxPayload.FilePath, ctxPayload.Instruction, ctxPayload.CodeSnippet)
+}
+
+func checkOllamaHealth(ctx context.Context) error {
+	healthCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(healthCtx, http.MethodGet, ollamaURL+"/api/tags", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("ollama health status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func callOllamaWithRetry(ctxPayload codeContext) (codeResult, error) {
+	const maxAttempts = 3
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		res, err := callOllama(ctxPayload)
+		if err == nil {
+			return res, nil
+		}
+		lastErr = err
+		if !isRetryable(err) || attempt == maxAttempts {
+			break
+		}
+		backoff := time.Duration(attempt*2) * time.Second
+		log.Printf("[WORKER code-llm] retrying ollama attempt=%d after error: %v", attempt, err)
+		time.Sleep(backoff)
+	}
+
+	return codeResult{}, lastErr
+}
+
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	retryHints := []string{
+		"timeout",
+		"deadline exceeded",
+		"connection refused",
+		"connection reset",
+		"temporarily unavailable",
+		"503",
+	}
+	for _, hint := range retryHints {
+		if strings.Contains(msg, hint) {
+			return true
+		}
+	}
+	return false
 }
 
 func envOrDefault(key, def string) string {
