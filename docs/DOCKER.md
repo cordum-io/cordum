@@ -16,6 +16,7 @@ This repo now ships a simple Docker setup to run the control plane, workers, and
 - `cortex-worker-orchestrator`
 - `cortex-worker-planner` (optional plan generator)
 - Scheduler reads pool routing from `config/pools.yaml` (mounted into the container); override with `POOL_CONFIG_PATH`.
+- Orchestrator exposes metrics on `:9091/metrics`; gateway exposes metrics on `:9092/metrics`.
 
 ## Build and run
 ```bash
@@ -32,13 +33,14 @@ Environment defaults:
 - `OLLAMA_URL` – `http://ollama:11434` (used by advanced chat + code-LLM workers)
 - `OLLAMA_MODEL` – `llama3`
   - Also used by code-LLM worker; ensure Ollama is running or reachable.
+- Code-LLM worker performs a startup health check against Ollama and will retry requests on transient timeouts/network errors.
 - `POOL_CONFIG_PATH` – `/etc/cortex/pools.yaml` (set in compose; edit `config/pools.yaml` to change pool routing)
 - `API_KEY` – optional API key for the gateway HTTP endpoints (header `X-API-Key`)
 - `TIMEOUT_CONFIG_PATH` – `/etc/cortex/timeouts.yaml` (per-workflow/topic timeouts)
 - `TENANT_ID` – optional tenant label injected by gateway
-- `USE_PLANNER` / `PLANNER_TOPIC` – orchestrator planner flag (defaults off; planner listens on `job.workflow.plan`)
+- `USE_PLANNER` / `PLANNER_TOPIC` – orchestrator planner flag (compose enables it by default; planner listens on `job.workflow.plan`)
 - Metrics endpoints: scheduler exposes `/metrics` on `:9090` inside the compose network (Prometheus format).
-  Gateway exposes `/metrics` on `:9092`.
+  Gateway exposes `/metrics` on `:9092`; orchestrator on `:9091`.
 
 ### Dashboard (optional)
 - Build UI: `cd web/dashboard && npm install && npm run dev`

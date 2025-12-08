@@ -15,7 +15,7 @@ This captures the current, validated end-to-end flow running via `docker-compose
 - `cortex-worker-orchestrator` (subject `job.workflow.demo`, pool `workflow`)
 - `ollama` (LLM runtime, port `11434`, model pulled separately)
 - Scheduler pool routing is configured via `config/pools.yaml` (mounted into the scheduler container; override with `POOL_CONFIG_PATH`).
-- Planner worker available on `job.workflow.plan`; orchestrator can use it when `USE_PLANNER=true`.
+- Planner worker available on `job.workflow.plan`; orchestrator uses it when `USE_PLANNER=true` (enabled by default in compose).
 
 ## Bring-up
 ```bash
@@ -57,7 +57,7 @@ Expected: all services in `State=Up` with ports exposed for NATS/Redis/API.
 - Submit: `GOMODCACHE=$(pwd)/.gomodcache GOCACHE=$(pwd)/.gocache /usr/local/go/bin/go run ./tools/scripts/code/send_code_job.go`
 - Scheduler logs: job received on `job.code.llm` → dispatched to pool `code-llm`.
 - Result pointer: `docker exec cortex-redis-1 redis-cli get res:<job_id>` (contains patch suggestion from Ollama).
-- Requires `ollama` service healthy and `ollama pull llama3`; otherwise the worker marks the job failed.
+- Requires `ollama` service healthy and `ollama pull llama3`; worker performs a health check on startup and will retry transient timeouts, but will mark failed and include an error payload if Ollama stays unreachable.
 
 ### Workflow orchestration (demo)
 - Submit: `GOMODCACHE=$(pwd)/.gomodcache GOCACHE=$(pwd)/.gocache /usr/local/go/bin/go run ./tools/scripts/workflow/send_workflow_job.go`
@@ -68,6 +68,7 @@ Expected: all services in `State=Up` with ports exposed for NATS/Redis/API.
 - Submit: `GOMODCACHE=$(pwd)/.gomodcache GOCACHE=$(pwd)/.gocache /usr/local/go/bin/go run ./tools/scripts/workflow/code_review/send_code_review_job.go -file path/to/file -instruction "improve and add logging"`
 - Flow: same orchestrator (`job.workflow.demo`) but using real file content/instruction; code-LLM returns structured patch (`type`, `content`, `original_code`, `instruction`), chat-simple explains it.
 - Result pointer: `docker exec cortex-redis-1 redis-cli get res:<parent_job_id>` will contain `{file_path, original_code, instruction, patch{type,content}, explanation, workflow_id}`.
+- If planner is enabled, orchestrator will execute the plan returned from `job.workflow.plan`, validating topics before running child jobs.
 
 ## Notes
 - Safety kernel currently allows all topics except the hardcoded deny in code (`sys.destroy`).
