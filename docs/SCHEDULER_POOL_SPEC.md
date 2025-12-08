@@ -36,12 +36,12 @@ Workers publish on `sys.heartbeat.<something>`; scheduler subscribes to `sys.hea
   - Subject: `job.chat.advanced`
   - Pool: `chat-advanced`
   - Queue group: `workers-chat-advanced`
-  - Behavior: calls Ollama (`OLLAMA_URL`, `OLLAMA_MODEL`) via `/api/generate`; on failure, returns fallback stub.
+  - Behavior: calls Ollama (`OLLAMA_URL`, `OLLAMA_MODEL`) via `/api/generate`.
 - Code LLM:
   - Subject: `job.code.llm`
   - Pool: `code-llm`
   - Queue group: `workers-code-llm`
-  - Behavior: stub LLM patch suggestion (writes diff JSON to Redis, publishes result_ptr).
+  - Behavior: calls Ollama to produce structured patch suggestions (writes diff JSON with `{file_path, original_code, instruction, patch{type,content}}` to Redis, publishes result_ptr).
 - Orchestrator (demo):
   - Subject: `job.workflow.demo`
   - Pool: `workflow`
@@ -49,10 +49,12 @@ Workers publish on `sys.heartbeat.<something>`; scheduler subscribes to `sys.hea
   - Behavior: dispatches child jobs (`job.code.llm` then `job.chat.simple`) and aggregates results via pointers and JobStore.
 
 ## Scheduler routing
-- Topic→pool map (inline in `cmd/cortex-scheduler/main.go`):
+- Topic→pool map now comes from `config/pools.yaml` (override with `POOL_CONFIG_PATH`):
   - `job.echo` → `echo`
   - `job.chat.simple` → `chat-simple`
   - `job.chat.advanced` → `chat-advanced`
+  - `job.code.llm` → `code-llm`
+  - `job.workflow.demo` → `workflow`
 - Strategy: `LeastLoadedStrategy` uses load score
   - `score = active_jobs + cpu_load/100 + gpu_utilization/100`
   - Chooses the lowest-score worker in the pool; publishes to the topic (pool subject).
@@ -63,12 +65,28 @@ Workers publish on `sys.heartbeat.<something>`; scheduler subscribes to `sys.hea
 - Context key: `ctx:<job_id>` stored in Redis, pointer `redis://ctx:<job_id>`.
 - Result key: `res:<job_id>` stored in Redis, pointer `redis://res:<job_id>`.
 
+## Job state machine
+- Canonical states: `PENDING → SCHEDULED → DISPATCHED → RUNNING → SUCCEEDED | FAILED | CANCELLED | TIMEOUT` (plus `DENIED` for safety failures).
+- Transitions are enforced and recorded in Redis (state + event log). Backwards/non-monotonic moves are rejected.
+- Scheduler sets:
+  - `PENDING` on receipt
+  - `SCHEDULED` after safety allow/subject selection
+  - `DISPATCHED` then `RUNNING` after successful publish
+  - Terminal states on results (`SUCCEEDED`/`FAILED`) or safety denial (`DENIED`)
+- Reconciler loop (inside scheduler):
+  - Periodically scans `DISPATCHED`/`RUNNING` older than the timeout window and marks them `TIMEOUT`.
+  - Uses per-state sorted sets (`job:index:<state>`) for efficient scans.
+
 ## Env vars (relevant)
 - `NATS_URL` (default `nats://localhost:4222` or compose service `nats`)
 - `REDIS_URL` (default `redis://localhost:6379` or compose service `redis`)
 - `SAFETY_KERNEL_ADDR` (default `localhost:50051` or compose service `cortex-safety-kernel:50051`)
 - `OLLAMA_URL` (advanced worker, default `http://ollama:11434`)
 - `OLLAMA_MODEL` (advanced worker, default `llama3`)
+- `POOL_CONFIG_PATH` (scheduler; default `config/pools.yaml`)
+- `API_KEY` (gateway HTTP; optional)
+- Metrics: scheduler exports Prometheus on `:9090/metrics` (internal).
+- Timeouts: orchestrator reads `TIMEOUT_CONFIG_PATH` (default `config/timeouts.yaml`) for child/total workflow timeouts and retries.
 
 ## Run and test (local/compose)
 - Bring up stack: `docker-compose up --build -d`

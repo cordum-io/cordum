@@ -49,12 +49,23 @@ type Metrics interface {
 type JobState string
 
 const (
-	JobStatePending   JobState = "PENDING"
-	JobStateRunning   JobState = "RUNNING"
-	JobStateCompleted JobState = "COMPLETED"
-	JobStateFailed    JobState = "FAILED"
-	JobStateDenied    JobState = "DENIED"
+	JobStatePending    JobState = "PENDING"
+	JobStateScheduled  JobState = "SCHEDULED"
+	JobStateDispatched JobState = "DISPATCHED"
+	JobStateRunning    JobState = "RUNNING"
+	JobStateSucceeded  JobState = "SUCCEEDED"
+	JobStateFailed     JobState = "FAILED"
+	JobStateCancelled  JobState = "CANCELLED"
+	JobStateTimeout    JobState = "TIMEOUT"
+	JobStateDenied     JobState = "DENIED"
 )
+
+// JobRecord captures a lightweight view of job state for reconciliation.
+type JobRecord struct {
+	ID        string
+	UpdatedAt int64
+	State     JobState
+}
 
 // JobStore tracks job state and result pointers.
 type JobStore interface {
@@ -62,4 +73,11 @@ type JobStore interface {
 	GetState(ctx context.Context, jobID string) (JobState, error)
 	SetResultPtr(ctx context.Context, jobID, resultPtr string) error
 	GetResultPtr(ctx context.Context, jobID string) (string, error)
+	ListJobsByState(ctx context.Context, state JobState, updatedBeforeUnix int64, limit int64) ([]JobRecord, error)
+	// New: Trace support
+	AddJobToTrace(ctx context.Context, traceID, jobID string) error
+	GetTraceJobs(ctx context.Context, traceID string) ([]JobRecord, error)
+	// Metadata helpers
+	SetTopic(ctx context.Context, jobID, topic string) error
+	GetTopic(ctx context.Context, jobID string) (string, error)
 }

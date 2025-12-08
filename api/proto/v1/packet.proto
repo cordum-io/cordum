@@ -20,7 +20,12 @@ message BusPacket {
     JobResult  job_result  = 11;
     Heartbeat  heartbeat   = 12;
     SystemAlert alert      = 13;
+    WorkerList worker_list = 14;
   }
+}
+
+message WorkerList {
+  repeated Heartbeat workers = 1;
 }
 
 message SystemAlert {

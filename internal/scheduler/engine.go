@@ -43,19 +43,18 @@ func (e *Engine) Start() error {
 	if err := e.bus.Subscribe("sys.job.submit", schedulerQueue, e.HandlePacket); err != nil {
 		return err
 	}
-	if err := e.bus.Subscribe("sys.job.result", schedulerQueue, e.HandlePacket); err != nil {
+	if err := e.bus.Subscribe("sys.job.result", "cortex-scheduler", e.HandlePacket); err != nil {
 		return err
 	}
 	return nil
 }
 
-// HandlePacket routes incoming bus packets to the appropriate handlers.
-func (e *Engine) HandlePacket(packet *pb.BusPacket) {
-	if packet == nil {
+func (e *Engine) HandlePacket(p *pb.BusPacket) {
+	if p == nil {
 		return
 	}
 
-	switch payload := packet.Payload.(type) {
+	switch payload := p.Payload.(type) {
 	case *pb.BusPacket_Heartbeat:
 		hb := payload.Heartbeat
 		if hb == nil {
@@ -78,11 +77,16 @@ func (e *Engine) HandlePacket(packet *pb.BusPacket) {
 		logging.Info("scheduler", "job request received",
 			"job_id", req.JobId,
 			"topic", req.Topic,
-			"trace_id", packet.TraceId,
+			"trace_id", p.TraceId,
 		)
 		e.incJobsReceived(req.Topic)
 		e.setJobState(req.JobId, JobStatePending)
-		e.processJob(req, packet.TraceId)
+		if e.jobStore != nil {
+			_ = e.jobStore.AddJobToTrace(context.Background(), p.TraceId, req.JobId)
+			_ = e.jobStore.SetTopic(context.Background(), req.JobId, req.Topic)
+		}
+		e.processJob(req, p.TraceId)
+
 	case *pb.BusPacket_JobResult:
 		res := payload.JobResult
 		if res == nil {
@@ -140,7 +144,7 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 		"subject", subject,
 		"topic", req.Topic,
 	)
-	e.setJobState(req.JobId, JobStateRunning)
+	e.setJobState(req.JobId, JobStateScheduled)
 	e.incJobsDispatched(req.Topic)
 
 	packet := &pb.BusPacket{
@@ -159,14 +163,24 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 			"subject", subject,
 			"error", err,
 		)
+		return
 	}
+	e.setJobState(req.JobId, JobStateDispatched)
+	e.setJobState(req.JobId, JobStateRunning)
 }
 
 func (e *Engine) handleJobResult(res *pb.JobResult) {
 	if res == nil {
 		return
 	}
-	state := JobStateCompleted
+	var topic string
+	if e.jobStore != nil {
+		topic, _ = e.jobStore.GetTopic(context.Background(), res.JobId)
+	}
+	if topic == "" {
+		topic = "unknown"
+	}
+	state := JobStateSucceeded
 	if res.Status == pb.JobStatus_JOB_STATUS_FAILED {
 		state = JobStateFailed
 	}
@@ -174,7 +188,7 @@ func (e *Engine) handleJobResult(res *pb.JobResult) {
 	if res.ResultPtr != "" {
 		e.setResultPtr(res.JobId, res.ResultPtr)
 	}
-	e.incJobsCompleted(res.JobId, res.Status.String())
+	e.incJobsCompleted(topic, res.Status.String())
 }
 
 func (e *Engine) setJobState(jobID string, state JobState) {
