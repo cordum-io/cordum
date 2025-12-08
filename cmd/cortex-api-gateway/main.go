@@ -3,37 +3,58 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/logging"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/memory"
+	infraMetrics "github.com/yaront1111/cortex-os/core/internal/infrastructure/metrics"
 	"github.com/yaront1111/cortex-os/core/internal/scheduler"
 	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
-	defaultListenAddr = ":8080"
+	defaultGrpcAddr = ":8080"
+	defaultHttpAddr = ":8081"
 )
 
 type server struct {
 	pb.UnimplementedCortexApiServer
 	memStore memory.Store
-	jobStore scheduler.JobStore
-	bus      *bus.NatsBus
+	jobStore *memory.RedisJobStore // Typed for ListRecentJobs
+	bus      scheduler.Bus
+	workers  map[string]*pb.Heartbeat
+	workerMu sync.RWMutex
+
+	clients   map[*websocket.Conn]chan *pb.BusPacket
+	clientsMu sync.RWMutex
+	eventsCh  chan *pb.BusPacket
+
+	metrics infraMetrics.GatewayMetrics
+	tenant  string
+}
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
 func main() {
 	cfg := config.Load()
+
+	gwMetrics := infraMetrics.NewGatewayProm("cortex_api_gateway")
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
 	if err != nil {
@@ -60,57 +81,386 @@ func main() {
 		memStore: memStore,
 		jobStore: jobStore,
 		bus:      natsBus,
+		workers:  make(map[string]*pb.Heartbeat),
+		clients:  make(map[*websocket.Conn]chan *pb.BusPacket),
+		eventsCh: make(chan *pb.BusPacket, 512),
+		metrics:  gwMetrics,
+		tenant:   os.Getenv("TENANT_ID"),
+	}
+	if s.tenant == "" {
+		s.tenant = "default"
 	}
 
-	go serveHTTPHealth()
+	s.startBusTaps()
 
-	lis, err := net.Listen("tcp", defaultListenAddr)
-	if err != nil {
-		logging.Error("api-gateway", "failed to listen for grpc", "addr", defaultListenAddr, "error", err)
-		os.Exit(1)
-	}
+	// Start gRPC
+	go func() {
+		lis, err := net.Listen("tcp", defaultGrpcAddr)
+		if err != nil {
+			logging.Error("api-gateway", "failed to listen for grpc", "error", err)
+			os.Exit(1)
+		}
+		grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
+		pb.RegisterCortexApiServer(grpcServer, s)
+		reflection.Register(grpcServer)
+		logging.Info("api-gateway", "grpc listening", "addr", defaultGrpcAddr)
+		if err := grpcServer.Serve(lis); err != nil {
+			logging.Error("api-gateway", "grpc server error", "error", err)
+		}
+	}()
 
-	grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
-	pb.RegisterCortexApiServer(grpcServer, s)
-	reflection.Register(grpcServer)
-
-	logging.Info("api-gateway", "listening",
-		"grpc_addr", defaultListenAddr,
-		"health_addr", ":8081",
-		"nats_url", cfg.NatsURL,
-		"redis_url", cfg.RedisURL,
-	)
-	if err := grpcServer.Serve(lis); err != nil {
-		logging.Error("api-gateway", "grpc server error", "error", err)
-		os.Exit(1)
-	}
+	// Start HTTP API + WS
+	startHTTPServer(s)
 }
 
-func serveHTTPHealth() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+// startBusTaps subscribes to heartbeats and system events once for the lifetime of the gateway.
+func (s *server) startBusTaps() {
+	// Heartbeats -> worker registry snapshot
+	_ = s.bus.Subscribe("sys.heartbeat.>", "", func(p *pb.BusPacket) {
+		if hb := p.GetHeartbeat(); hb != nil {
+			s.workerMu.Lock()
+			s.workers[hb.WorkerId] = hb
+			s.workerMu.Unlock()
+		}
 	})
-	if err := http.ListenAndServe(":8081", mux); err != nil {
-		logging.Error("api-gateway", "health server error", "error", err)
+
+	// Event taps -> broadcast channel
+	for _, subj := range []string{"sys.job.>", "sys.audit.>"} {
+		subject := subj
+		_ = s.bus.Subscribe(subject, "", func(p *pb.BusPacket) {
+			select {
+			case s.eventsCh <- p:
+			default:
+			}
+		})
+	}
+
+	// Broadcast loop to WS clients
+	go func() {
+		for evt := range s.eventsCh {
+			s.clientsMu.RLock()
+			for conn, ch := range s.clients {
+				select {
+				case ch <- evt:
+				default:
+					// drop slow client
+					conn.Close()
+				}
+			}
+			s.clientsMu.RUnlock()
+		}
+	}()
+}
+
+func startHTTPServer(s *server) {
+	mux := http.NewServeMux()
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", infraMetrics.Handler())
+	go func() {
+		srv := &http.Server{
+			Addr:         ":9092",
+			Handler:      metricsMux,
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 5 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		}
+		logging.Info("api-gateway", "metrics listening", "addr", ":9092/metrics")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logging.Error("api-gateway", "metrics server error", "error", err)
+		}
+	}()
+
+	// 1. Health
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	// 2. Workers (RPC via NATS)
+	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
+
+	// 3. Jobs (Redis ZSet)
+	mux.HandleFunc("GET /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleListJobs))
+
+	// 4. Job Details
+	mux.HandleFunc("GET /api/v1/jobs/{id}", s.instrumented("/api/v1/jobs/{id}", s.handleGetJob))
+
+	// 5. Submit Job (REST)
+	mux.HandleFunc("POST /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleSubmitJobHTTP))
+
+	// 6. Trace Details
+	mux.HandleFunc("GET /api/v1/traces/{id}", s.instrumented("/api/v1/traces/{id}", s.handleGetTrace))
+
+	// 7. Stream (WebSocket)
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+
+	// CORS Middleware
+	handler := corsMiddleware(apiKeyMiddleware(mux))
+
+	logging.Info("api-gateway", "http listening", "addr", defaultHttpAddr)
+	if err := http.ListenAndServe(defaultHttpAddr, handler); err != nil {
+		logging.Error("api-gateway", "http server error", "error", err)
 	}
 }
+
+// --- Handlers ---
+
+func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
+	s.workerMu.RLock()
+	out := make([]*pb.Heartbeat, 0, len(s.workers))
+	for _, hb := range s.workers {
+		out = append(out, hb)
+	}
+	s.workerMu.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
+	jobs, err := s.jobStore.ListRecentJobs(r.Context(), 50)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(jobs)
+}
+
+func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+
+	state, err := s.jobStore.GetState(r.Context(), id)
+	if err != nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
+	resPtr, _ := s.jobStore.GetResultPtr(r.Context(), id)
+
+	var resultData any
+	if resPtr != "" {
+		// Attempt to fetch result payload
+		if key, err := memory.KeyFromPointer(resPtr); err == nil {
+			if bytes, err := s.memStore.GetResult(r.Context(), key); err == nil {
+				_ = json.Unmarshal(bytes, &resultData)
+			}
+		}
+	}
+
+	resp := map[string]any{
+		"id":         id,
+		"state":      state,
+		"result_ptr": resPtr,
+		"result":     resultData,
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Prompt    string `json:"prompt"`
+		Topic     string `json:"topic"`
+		AdapterId string `json:"adapter_id"`
+		Priority  string `json:"priority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+
+	jobID := uuid.NewString()
+	traceID := uuid.NewString()
+	ctxKey := memory.MakeContextKey(jobID)
+	ctxPtr := memory.PointerForKey(ctxKey)
+
+	// Default topic if missing
+	if req.Topic == "" {
+		req.Topic = "job.chat.simple"
+	}
+
+	envVars := map[string]string{
+		"tenant_id": s.tenant,
+	}
+
+	payload := map[string]any{
+		"prompt":     req.Prompt,
+		"adapter_id": req.AdapterId,
+		"priority":   req.Priority,
+		"topic":      req.Topic,
+		"created_at": time.Now().UTC().Format(time.RFC3339),
+		"tenant_id":  s.tenant,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	_ = s.memStore.PutContext(r.Context(), ctxKey, payloadBytes)
+
+	// Set initial state
+	_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending)
+
+	jobReq := &pb.JobRequest{
+		JobId:      jobID,
+		Topic:      req.Topic,
+		Priority:   pb.JobPriority_JOB_PRIORITY_INTERACTIVE,
+		ContextPtr: ctxPtr,
+		AdapterId:  req.AdapterId,
+		EnvVars:    envVars,
+	}
+
+	packet := &pb.BusPacket{
+		TraceId:         traceID,
+		SenderId:        "api-gateway-http",
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: 1,
+		Payload: &pb.BusPacket_JobRequest{
+			JobRequest: jobReq,
+		},
+	}
+
+	s.bus.Publish("sys.job.submit", packet)
+
+	logging.Info("api-gateway", "job submitted http", "job_id", jobID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"job_id":   jobID,
+		"trace_id": traceID,
+	})
+}
+
+func (s *server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing trace id", http.StatusBadRequest)
+		return
+	}
+
+	jobs, err := s.jobStore.GetTraceJobs(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Enrich with details if needed, but for now list is enough
+	json.NewEncoder(w).Encode(jobs)
+}
+
+func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
+	// Honor API key on WS as well
+	required := os.Getenv("API_KEY")
+	if required != "" {
+		key := r.Header.Get("X-API-Key")
+		if key == "" {
+			key = r.URL.Query().Get("api_key")
+		}
+		if key != required {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	logging.Info("gateway", "ws connection attempt", "remote", r.RemoteAddr)
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		logging.Error("gateway", "ws upgrade failed", "error", err)
+		return
+	}
+	defer ws.Close()
+	logging.Info("gateway", "ws connected", "remote", r.RemoteAddr)
+
+	clientCh := make(chan *pb.BusPacket, 100)
+	s.clientsMu.Lock()
+	s.clients[ws] = clientCh
+	s.clientsMu.Unlock()
+	defer func() {
+		s.clientsMu.Lock()
+		delete(s.clients, ws)
+		s.clientsMu.Unlock()
+		close(clientCh)
+	}()
+
+	for {
+		select {
+		case msg, ok := <-clientCh:
+			if !ok {
+				return
+			}
+			// Use protojson to correctly handle oneof fields and proto semantics
+			data, err := protojson.Marshal(msg)
+			if err != nil {
+				logging.Error("gateway", "protojson marshal failed", "error", err)
+				continue
+			}
+			if err := ws.WriteMessage(websocket.TextMessage, data); err != nil {
+				return
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
+		if r.Method == "OPTIONS" {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// apiKeyMiddleware enforces a static API key if API_KEY is set.
+func apiKeyMiddleware(next http.Handler) http.Handler {
+	required := os.Getenv("API_KEY")
+	if required == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-API-Key")
+		if key == "" {
+			key = r.URL.Query().Get("api_key")
+		}
+		if key != required {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// instrumented wraps handlers to record metrics.
+func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		fn(rec, r)
+		if s.metrics != nil {
+			s.metrics.ObserveRequest(r.Method, route, fmt.Sprintf("%d", rec.status), time.Since(start).Seconds())
+		}
+	}
+}
+
+// --- gRPC Implementations (unchanged mostly) ---
 
 func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.SubmitJobResponse, error) {
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
-
 	ctxKey := memory.MakeContextKey(jobID)
 	ctxPtr := memory.PointerForKey(ctxKey)
-
-	priority := pb.JobPriority_JOB_PRIORITY_INTERACTIVE
-	switch req.GetPriority() {
-	case "batch":
-		priority = pb.JobPriority_JOB_PRIORITY_BATCH
-	case "critical":
-		priority = pb.JobPriority_JOB_PRIORITY_CRITICAL
-	}
 
 	payload := map[string]any{
 		"prompt":     req.GetPrompt(),
@@ -118,22 +468,21 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		"priority":   req.GetPriority(),
 		"topic":      req.GetTopic(),
 		"created_at": time.Now().UTC().Format(time.RFC3339),
+		"tenant_id":  s.tenant,
 	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
+	payloadBytes, _ := json.Marshal(payload)
+	_ = s.memStore.PutContext(ctx, ctxKey, payloadBytes)
 
-	if err := s.memStore.PutContext(ctx, ctxKey, payloadBytes); err != nil {
-		return nil, err
-	}
+	// Set initial state
+	_ = s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending)
 
 	jobReq := &pb.JobRequest{
 		JobId:      jobID,
 		Topic:      req.GetTopic(),
-		Priority:   priority,
+		Priority:   pb.JobPriority_JOB_PRIORITY_INTERACTIVE,
 		ContextPtr: ctxPtr,
 		AdapterId:  req.GetAdapterId(),
+		EnvVars:    map[string]string{"tenant_id": s.tenant},
 	}
 
 	packet := &pb.BusPacket{
@@ -146,53 +495,21 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		},
 	}
 
-	if err := s.bus.Publish("sys.job.submit", packet); err != nil {
-		return nil, err
-	}
+	s.bus.Publish("sys.job.submit", packet)
 
-	logging.Info("api-gateway", "job submitted",
-		"job_id", jobID,
-		"trace_id", traceID,
-		"topic", req.GetTopic(),
-		"context_ptr", ctxPtr,
-	)
-
-	return &pb.SubmitJobResponse{
-		JobId:   jobID,
-		TraceId: traceID,
-	}, nil
+	logging.Info("api-gateway", "job submitted", "job_id", jobID)
+	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
 }
 
 func (s *server) GetJobStatus(ctx context.Context, req *pb.GetJobStatusRequest) (*pb.GetJobStatusResponse, error) {
-	if s.jobStore == nil {
-		return &pb.GetJobStatusResponse{
-			JobId:     req.GetJobId(),
-			Status:    "UNKNOWN",
-			ResultPtr: "",
-		}, nil
-	}
-
 	state, err := s.jobStore.GetState(ctx, req.GetJobId())
 	if err != nil {
 		state = "UNKNOWN"
 	}
-
-	resultPtr, err := s.jobStore.GetResultPtr(ctx, req.GetJobId())
-	if err != nil {
-		resultPtr = ""
-	}
-
-	resp := &pb.GetJobStatusResponse{
+	resPtr, _ := s.jobStore.GetResultPtr(ctx, req.GetJobId())
+	return &pb.GetJobStatusResponse{
 		JobId:     req.GetJobId(),
 		Status:    string(state),
-		ResultPtr: resultPtr,
-	}
-
-	logging.Info("api-gateway", "job status fetched",
-		"job_id", req.GetJobId(),
-		"status", resp.Status,
-		"result_ptr", resp.ResultPtr,
-	)
-
-	return resp, nil
+		ResultPtr: resPtr,
+	}, nil
 }

@@ -64,6 +64,13 @@ CortexOS is composed of 4 planes:
 3. **Memory Fabric** – Redis + Vector DB
 4. **Observability Plane** – audit logs + metrics + dashboards
 
+### **Operational snapshot (current codebase)**
+- Scheduler is pool/load-aware and now enforces a canonical job state machine: `PENDING → SCHEDULED → DISPATCHED → RUNNING → SUCCEEDED | FAILED | CANCELLED | TIMEOUT (+DENIED)`.
+- State transitions are persisted in Redis with per-state indices and an event log; non-monotonic transitions are rejected.
+- A reconciler loop in the scheduler marks DISPATCHED/RUNNING jobs as TIMEOUT after a window and keeps indices tidy.
+- Pool routing is externalized in `config/pools.yaml` (override with `POOL_CONFIG_PATH`); compose mounts it into the scheduler.
+- Workers (echo, chat, chat-advanced, code-llm, orchestrator) and Ollama service run via `docker compose up`; workflow demo exercises code-llm → chat-simple orchestration end-to-end.
+
 ---
 
 ## **3. Cluster Topology**

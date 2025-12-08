@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/memory"
+	infraMetrics "github.com/yaront1111/cortex-os/core/internal/infrastructure/metrics"
 	"github.com/yaront1111/cortex-os/core/internal/scheduler"
 	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -28,10 +30,11 @@ const (
 	orchestratorHeartbeatSub = "sys.heartbeat.workflow"
 	childJobSubject          = "job.code.llm"
 
-	defaultChildTimeout = 60 * time.Second
+	defaultChildTimeout = 3 * time.Minute
 	childPollInterval   = 300 * time.Millisecond
 	maxChildRetries     = 1
 	childRetryBackoff   = 800 * time.Millisecond
+	workflowName        = "code_review_demo"
 )
 
 var orchestratorActiveJobs int32
@@ -40,6 +43,37 @@ func main() {
 	log.Println("cortex worker orchestrator starting...")
 
 	cfg := config.Load()
+	timeoutCfg, _ := config.LoadTimeouts(cfg.TimeoutConfigPath)
+	workflowCfg := timeoutCfg.Workflows["code_review_demo"]
+	childTimeout := time.Duration(workflowCfg.ChildTimeoutSeconds) * time.Second
+	if childTimeout == 0 {
+		childTimeout = defaultChildTimeout
+	}
+	totalTimeout := time.Duration(workflowCfg.TotalTimeoutSeconds) * time.Second
+	if totalTimeout == 0 {
+		totalTimeout = 10 * time.Minute
+	}
+	retries := workflowCfg.MaxRetries
+	if retries <= 0 {
+		retries = maxChildRetries
+	}
+
+	metrics := infraMetrics.NewWorkflowProm("cortex_orchestrator")
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", infraMetrics.Handler())
+		srv := &http.Server{
+			Addr:         ":9091",
+			Handler:      mux,
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 5 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		}
+		log.Println("orchestrator metrics on :9091/metrics")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("metrics server error: %v", err)
+		}
+	}()
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
 	if err != nil {
@@ -59,7 +93,7 @@ func main() {
 	}
 	defer natsBus.Close()
 
-	if err := natsBus.Subscribe(orchestratorJobSubject, orchestratorQueueGroup, handleOrchestratorJob(natsBus, memStore, jobStore)); err != nil {
+	if err := natsBus.Subscribe(orchestratorJobSubject, orchestratorQueueGroup, handleOrchestratorJob(natsBus, memStore, jobStore, childTimeout, totalTimeout, retries, metrics, cfg)); err != nil {
 		log.Fatalf("failed to subscribe to orchestrator jobs: %v", err)
 	}
 
@@ -86,12 +120,63 @@ type parentContext struct {
 	Instruction string `json:"instruction"`
 }
 
-type codePatch struct {
-	FilePath string `json:"file_path"`
-	Patch    string `json:"patch"`
+type structuredPatch struct {
+	Type    string `json:"type"`
+	Content string `json:"content"`
 }
 
-func handleOrchestratorJob(b *bus.NatsBus, store memory.Store, jobStore scheduler.JobStore) func(*pb.BusPacket) {
+type codePatch struct {
+	FilePath     string          `json:"file_path"`
+	OriginalCode string          `json:"original_code"`
+	Instruction  string          `json:"instruction"`
+	Patch        structuredPatch `json:"patch"`
+}
+
+type planStep struct {
+	ID        string   `json:"id"`
+	Topic     string   `json:"topic"`
+	AdapterID string   `json:"adapter_id"`
+	DependsOn []string `json:"depends_on"`
+}
+
+func readPlan(ctx context.Context, store memory.Store, ptr string) ([]planStep, error) {
+	if ptr == "" {
+		return nil, fmt.Errorf("missing plan result_ptr")
+	}
+	key, err := memory.KeyFromPointer(ptr)
+	if err != nil {
+		return nil, err
+	}
+	data, err := store.GetResult(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Steps []planStep `json:"steps"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Steps, nil
+}
+
+func validatePlan(steps []planStep) error {
+	if len(steps) == 0 {
+		return fmt.Errorf("empty plan")
+	}
+	allowed := map[string]bool{
+		childJobSubject:   true,
+		"job.chat.simple": true,
+	}
+	for _, s := range steps {
+		if !allowed[s.Topic] {
+			return fmt.Errorf("topic %s not allowed", s.Topic)
+		}
+	}
+	return nil
+}
+
+func handleOrchestratorJob(b *bus.NatsBus, store memory.Store, jobStore scheduler.JobStore, childTimeout, totalTimeout time.Duration, retries int, metrics infraMetrics.WorkflowMetrics, cfg *config.Config) func(*pb.BusPacket) {
 	return func(packet *pb.BusPacket) {
 		req := packet.GetJobRequest()
 		if req == nil {
@@ -101,52 +186,120 @@ func handleOrchestratorJob(b *bus.NatsBus, store memory.Store, jobStore schedule
 		atomic.AddInt32(&orchestratorActiveJobs, 1)
 		defer atomic.AddInt32(&orchestratorActiveJobs, -1)
 
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
+		defer cancel()
+		start := time.Now()
+		workflowName := "code_review_demo"
+		if metrics != nil {
+			metrics.IncWorkflowStarted(workflowName)
+		}
+		status := "failed"
+		defer func() {
+			if metrics != nil {
+				metrics.IncWorkflowCompleted(workflowName, status)
+				metrics.ObserveWorkflowDuration(workflowName, time.Since(start).Seconds())
+			}
+		}()
 		var parentCtx parentContext
 		if key, err := memory.KeyFromPointer(req.ContextPtr); err == nil {
-			if data, err := store.GetContext(ctx, key); err == nil {
-				if err := json.Unmarshal(data, &parentCtx); err != nil {
-					log.Printf("[WORKER orchestrator] decode parent context job_id=%s: %v", req.JobId, err)
-				}
-			} else {
-				log.Printf("[WORKER orchestrator] read parent context job_id=%s: %v", req.JobId, err)
+			data, err := store.GetContext(ctx, key)
+			if err != nil {
+				failParent(ctx, store, b, jobStore, req, packet.TraceId, fmt.Errorf("read parent context: %w", err))
+				return
+			}
+			if err := json.Unmarshal(data, &parentCtx); err != nil {
+				failParent(ctx, store, b, jobStore, req, packet.TraceId, fmt.Errorf("decode parent context: %w", err))
+				return
 			}
 		} else {
-			log.Printf("[WORKER orchestrator] invalid context_ptr for job_id=%s: %v", req.JobId, err)
+			failParent(ctx, store, b, jobStore, req, packet.TraceId, fmt.Errorf("invalid context_ptr: %w", err))
+			return
 		}
 
-		start := time.Now()
 		workflowID := pickWorkflowID(req)
 
-		// Child 1: code patch
-		patchPtr, err := runChild(ctx, b, store, jobStore, packet.TraceId, req, workflowID, 0, childJobSubject, parentCtx, nil)
-		if err != nil {
-			failParent(ctx, b, jobStore, req, packet.TraceId, err)
-			return
+		patchPtr := ""
+		explainPtr := ""
+
+		if cfg.UsePlanner {
+			planPtr, err := runChild(ctx, b, store, jobStore, packet.TraceId, req, workflowID, -1, cfg.PlannerTopic, parentCtx, nil, childTimeout, retries)
+			if err != nil {
+				failParent(ctx, store, b, jobStore, req, packet.TraceId, err)
+				return
+			}
+			steps, err := readPlan(ctx, store, planPtr)
+			if err != nil {
+				failParent(ctx, store, b, jobStore, req, packet.TraceId, fmt.Errorf("invalid plan: %w", err))
+				return
+			}
+			if err := validatePlan(steps); err != nil {
+				failParent(ctx, store, b, jobStore, req, packet.TraceId, fmt.Errorf("plan validation failed: %w", err))
+				return
+			}
+			for idx, step := range steps {
+				switch step.Topic {
+				case childJobSubject:
+					ptr, err := runChild(ctx, b, store, jobStore, packet.TraceId, req, workflowID, int32(idx), childJobSubject, parentCtx, nil, childTimeout, retries)
+					if err != nil {
+						failParent(ctx, store, b, jobStore, req, packet.TraceId, err)
+						return
+					}
+					patchPtr = ptr
+				case "job.chat.simple":
+					if patchPtr == "" {
+						failParent(ctx, store, b, jobStore, req, packet.TraceId, fmt.Errorf("plan missing patch before explanation"))
+						return
+					}
+					patch, err := readPatch(ctx, store, patchPtr)
+					if err != nil {
+						failParent(ctx, store, b, jobStore, req, packet.TraceId, err)
+						return
+					}
+					ptr, err := runChild(ctx, b, store, jobStore, packet.TraceId, req, workflowID, int32(idx), "job.chat.simple", parentCtx, patch, childTimeout, retries)
+					if err != nil {
+						failParent(ctx, store, b, jobStore, req, packet.TraceId, err)
+						return
+					}
+					explainPtr = ptr
+				default:
+					failParent(ctx, store, b, jobStore, req, packet.TraceId, fmt.Errorf("unsupported plan topic %s", step.Topic))
+					return
+				}
+			}
+		} else {
+			// Default 2-step plan
+			var err error
+			patchPtr, err = runChild(ctx, b, store, jobStore, packet.TraceId, req, workflowID, 0, childJobSubject, parentCtx, nil, childTimeout, retries)
+			if err != nil {
+				failParent(ctx, store, b, jobStore, req, packet.TraceId, err)
+				return
+			}
+			explainPtr, err = runChild(ctx, b, store, jobStore, packet.TraceId, req, workflowID, 1, "job.chat.simple", parentCtx, nil, childTimeout, retries)
+			if err != nil {
+				failParent(ctx, store, b, jobStore, req, packet.TraceId, err)
+				return
+			}
 		}
+
 		patch, err := readPatch(ctx, store, patchPtr)
 		if err != nil {
-			failParent(ctx, b, jobStore, req, packet.TraceId, err)
+			failParent(ctx, store, b, jobStore, req, packet.TraceId, err)
 			return
 		}
 
-		// Child 2: explanation
-		explainPtr, err := runChild(ctx, b, store, jobStore, packet.TraceId, req, workflowID, 1, "job.chat.simple", parentCtx, patch)
-		if err != nil {
-			failParent(ctx, b, jobStore, req, packet.TraceId, err)
-			return
-		}
 		explanation, err := readExplanation(ctx, store, explainPtr)
 		if err != nil {
-			failParent(ctx, b, jobStore, req, packet.TraceId, err)
+			failParent(ctx, store, b, jobStore, req, packet.TraceId, err)
 			return
 		}
 
 		final := map[string]any{
-			"file_path":   patch.FilePath,
-			"patch":       patch.Patch,
-			"explanation": explanation,
-			"workflow_id": workflowID,
+			"file_path":     patch.FilePath,
+			"original_code": patch.OriginalCode,
+			"instruction":   patch.Instruction,
+			"patch":         patch.Patch,
+			"explanation":   explanation,
+			"workflow_id":   workflowID,
 		}
 		finalBytes, _ := json.Marshal(final)
 		resKey := memory.MakeResultKey(req.JobId)
@@ -155,7 +308,7 @@ func handleOrchestratorJob(b *bus.NatsBus, store memory.Store, jobStore schedule
 		}
 		resultPtr := memory.PointerForKey(resKey)
 		_ = jobStore.SetResultPtr(ctx, req.JobId, resultPtr)
-		_ = jobStore.SetState(ctx, req.JobId, scheduler.JobStateCompleted)
+		_ = jobStore.SetState(ctx, req.JobId, scheduler.JobStateSucceeded)
 
 		res := &pb.JobResult{
 			JobId:       req.JobId,
@@ -179,6 +332,7 @@ func handleOrchestratorJob(b *bus.NatsBus, store memory.Store, jobStore schedule
 			log.Printf("[WORKER orchestrator] failed to publish parent result job_id=%s: %v", req.JobId, err)
 		} else {
 			log.Printf("[WORKER orchestrator] completed parent job_id=%s workflow_id=%s", req.JobId, workflowID)
+			status = "completed"
 		}
 	}
 }
@@ -232,6 +386,12 @@ func pickWorkflowID(req *pb.JobRequest) string {
 }
 
 func submitChildJob(ctx context.Context, b *bus.NatsBus, store memory.Store, jobStore scheduler.JobStore, traceID, childID string, parentReq *pb.JobRequest, workflowID string, step int32, topic string, parentCtx parentContext, patch *codePatch) error {
+	prompt := parentCtx.Instruction
+	if patch != nil {
+		prompt = fmt.Sprintf("Explain this patch for %s.\nOriginal instruction: %s\nPatch (type=%s):\n%s",
+			parentCtx.FilePath, parentCtx.Instruction, patch.Patch.Type, patch.Patch.Content)
+	}
+
 	childCtx := map[string]any{
 		"file_path":    parentCtx.FilePath,
 		"code_snippet": parentCtx.CodeSnippet,
@@ -239,6 +399,9 @@ func submitChildJob(ctx context.Context, b *bus.NatsBus, store memory.Store, job
 		"patch":        patch,
 		"step_index":   step,
 		"workflow_id":  workflowID,
+	}
+	if prompt != "" {
+		childCtx["prompt"] = prompt
 	}
 	childCtxBytes, _ := json.Marshal(childCtx)
 	childCtxKey := memory.MakeContextKey(childID)
@@ -280,9 +443,14 @@ func submitChildJob(ctx context.Context, b *bus.NatsBus, store memory.Store, job
 func waitForChild(ctx context.Context, jobStore scheduler.JobStore, childID string, timeout time.Duration, traceID string) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return logErrorf("child job cancelled job_id=%s trace_id=%s reason=%v", childID, traceID, ctx.Err())
+		default:
+		}
 		state, err := jobStore.GetState(ctx, childID)
 		if err == nil {
-			if state == scheduler.JobStateCompleted {
+			if state == scheduler.JobStateSucceeded {
 				return nil
 			}
 			if state == scheduler.JobStateFailed || state == scheduler.JobStateDenied {
@@ -335,12 +503,28 @@ func readExplanation(ctx context.Context, store memory.Store, ptr string) (strin
 	return string(data), nil
 }
 
-func failParent(ctx context.Context, b *bus.NatsBus, jobStore scheduler.JobStore, req *pb.JobRequest, traceID string, failure error) {
+func failParent(ctx context.Context, store memory.Store, b *bus.NatsBus, jobStore scheduler.JobStore, req *pb.JobRequest, traceID string, failure error) {
 	log.Printf("[WORKER orchestrator] failing parent job_id=%s error=%v", req.JobId, failure)
+	errPayload := map[string]any{
+		"error":    failure.Error(),
+		"job_id":   req.JobId,
+		"trace_id": traceID,
+		"time":     time.Now().UTC().Format(time.RFC3339),
+	}
+	errBytes, _ := json.Marshal(errPayload)
+	resKey := memory.MakeResultKey(req.JobId)
+	resultPtr := ""
+	if err := store.PutResult(ctx, resKey, errBytes); err == nil {
+		resultPtr = memory.PointerForKey(resKey)
+		_ = jobStore.SetResultPtr(ctx, req.JobId, resultPtr)
+	} else {
+		log.Printf("[WORKER orchestrator] failed to store error payload for job_id=%s: %v", req.JobId, err)
+	}
+
 	res := &pb.JobResult{
 		JobId:     req.JobId,
 		Status:    pb.JobStatus_JOB_STATUS_FAILED,
-		ResultPtr: "",
+		ResultPtr: resultPtr,
 		WorkerId:  orchestratorWorkerID,
 	}
 	packet := &pb.BusPacket{
@@ -362,20 +546,20 @@ func logErrorf(format string, args ...interface{}) error {
 	return err
 }
 
-func runChild(ctx context.Context, b *bus.NatsBus, store memory.Store, jobStore scheduler.JobStore, traceID string, parentReq *pb.JobRequest, workflowID string, step int32, topic string, parentCtx parentContext, patch *codePatch) (string, error) {
+func runChild(ctx context.Context, b *bus.NatsBus, store memory.Store, jobStore scheduler.JobStore, traceID string, parentReq *pb.JobRequest, workflowID string, step int32, topic string, parentCtx parentContext, patch *codePatch, timeout time.Duration, retries int) (string, error) {
 	var lastErr error
-	for attempt := 0; attempt <= maxChildRetries; attempt++ {
+	for attempt := 0; attempt <= retries; attempt++ {
 		childID := uuid.NewString()
 		if err := submitChildJob(ctx, b, store, jobStore, traceID, childID, parentReq, workflowID, step, topic, parentCtx, patch); err != nil {
 			lastErr = err
-		} else if err := waitForChild(ctx, jobStore, childID, defaultChildTimeout, traceID); err != nil {
+		} else if err := waitForChild(ctx, jobStore, childID, timeout, traceID); err != nil {
 			lastErr = err
 			_ = jobStore.SetState(ctx, childID, scheduler.JobStateFailed)
 		} else {
 			ptr, _ := jobStore.GetResultPtr(ctx, childID)
 			return ptr, nil
 		}
-		if attempt < maxChildRetries {
+		if attempt < retries {
 			log.Printf("[WORKER orchestrator] retrying child topic=%s step=%d attempt=%d error=%v", topic, step, attempt+1, lastErr)
 			time.Sleep(childRetryBackoff)
 		}

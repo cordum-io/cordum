@@ -44,6 +44,7 @@ func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecision, string) {
 	resp, err := c.client.Check(ctx, &pb.PolicyCheckRequest{
 		JobId: req.GetJobId(),
 		Topic: req.GetTopic(),
+		Tenant: req.GetEnvVars()["tenant_id"],
 	})
 	if err != nil {
 		return SafetyDeny, fmt.Sprintf("safety kernel error: %v", err)

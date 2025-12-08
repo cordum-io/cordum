@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"testing"
+	"time"
 
 	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -20,12 +21,14 @@ type fakeBus struct {
 type fakeJobStore struct {
 	states map[string]JobState
 	ptrs   map[string]string
+	topics map[string]string
 }
 
 func newFakeJobStore() *fakeJobStore {
 	return &fakeJobStore{
 		states: make(map[string]JobState),
 		ptrs:   make(map[string]string),
+		topics: make(map[string]string),
 	}
 }
 
@@ -45,6 +48,33 @@ func (s *fakeJobStore) SetResultPtr(_ context.Context, jobID, resultPtr string) 
 
 func (s *fakeJobStore) GetResultPtr(_ context.Context, jobID string) (string, error) {
 	return s.ptrs[jobID], nil
+}
+
+func (s *fakeJobStore) ListJobsByState(_ context.Context, state JobState, _ int64, _ int64) ([]JobRecord, error) {
+	var out []JobRecord
+	for id, st := range s.states {
+		if st == state {
+			out = append(out, JobRecord{ID: id, UpdatedAt: time.Now().Unix()})
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeJobStore) AddJobToTrace(_ context.Context, traceID, jobID string) error {
+	return nil
+}
+
+func (s *fakeJobStore) GetTraceJobs(_ context.Context, traceID string) ([]JobRecord, error) {
+	return nil, nil
+}
+
+func (s *fakeJobStore) SetTopic(_ context.Context, jobID, topic string) error {
+	s.topics[jobID] = topic
+	return nil
+}
+
+func (s *fakeJobStore) GetTopic(_ context.Context, jobID string) (string, error) {
+	return s.topics[jobID], nil
 }
 
 func (b *fakeBus) Publish(subject string, packet *pb.BusPacket) error {
@@ -171,8 +201,8 @@ func TestHandleJobResultUpdatesState(t *testing.T) {
 
 	engine.handleJobResult(res)
 
-	if state := jobStore.states["job-1"]; state != JobStateCompleted {
-		t.Fatalf("expected job state COMPLETED, got %s", state)
+	if state := jobStore.states["job-1"]; state != JobStateSucceeded {
+		t.Fatalf("expected job state SUCCEEDED, got %s", state)
 	}
 	if ptr := jobStore.ptrs["job-1"]; ptr != "redis://res:job-1" {
 		t.Fatalf("expected result ptr redis://res:job-1, got %s", ptr)

@@ -45,6 +45,7 @@ func (s *server) Check(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.Pol
 		decision = pb.DecisionType_DECISION_TYPE_DENY
 		reason = "forbidden topic"
 	}
+	_ = req.GetTenant() // placeholder: future per-tenant policy
 
 	// Include trivial latency to simulate real checks.
 	if deadline, ok := ctx.Deadline(); ok {

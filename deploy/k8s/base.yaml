@@ -1,0 +1,432 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cortex
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cortex-pools
+  namespace: cortex
+data:
+  pools.yaml: |
+    topic_to_pool:
+      job.echo: echo
+      job.chat.simple: chat-simple
+      job.chat.advanced: chat-advanced
+      job.code.llm: code-llm
+      job.workflow.demo: workflow
+      job.workflow.plan: workflow
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cortex-timeouts
+  namespace: cortex
+data:
+  timeouts.yaml: |
+    workflows:
+      code_review_demo:
+        child_timeout_seconds: 180
+        total_timeout_seconds: 600
+        max_retries: 1
+    topics:
+      job.code.llm:
+        timeout_seconds: 120
+        max_retries: 0
+      job.chat.simple:
+        timeout_seconds: 60
+        max_retries: 0
+    reconciler:
+      dispatch_timeout_seconds: 120
+      running_timeout_seconds: 300
+      scan_interval_seconds: 30
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nats
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: nats}
+  template:
+    metadata:
+      labels: {app: nats}
+    spec:
+      containers:
+      - name: nats
+        image: nats:2.10
+        args: ["-js"]
+        ports:
+        - name: client
+          containerPort: 4222
+        livenessProbe:
+          tcpSocket: {port: 4222}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: cortex
+spec:
+  selector: {app: nats}
+  ports:
+  - name: client
+    port: 4222
+    targetPort: 4222
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+      - name: redis
+        image: redis:7
+        ports:
+        - containerPort: 6379
+        livenessProbe:
+          tcpSocket: {port: 6379}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: cortex
+spec:
+  selector: {app: redis}
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-safety-kernel
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cortex-safety-kernel}
+  template:
+    metadata:
+      labels: {app: cortex-safety-kernel}
+    spec:
+      containers:
+      - name: safety
+        image: cortex-cortex-safety-kernel
+        env:
+        - name: SAFETY_KERNEL_ADDR
+          value: ":50051"
+        ports:
+        - containerPort: 50051
+        livenessProbe:
+          tcpSocket: {port: 50051}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-safety-kernel
+  namespace: cortex
+spec:
+  selector: {app: cortex-safety-kernel}
+  ports:
+  - port: 50051
+    targetPort: 50051
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-scheduler
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cortex-scheduler}
+  template:
+    metadata:
+      labels: {app: cortex-scheduler}
+    spec:
+      containers:
+      - name: scheduler
+        image: cortex-cortex-scheduler
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: SAFETY_KERNEL_ADDR
+          value: cortex-safety-kernel:50051
+        - name: POOL_CONFIG_PATH
+          value: /etc/cortex/pools.yaml
+        - name: TIMEOUT_CONFIG_PATH
+          value: /etc/cortex/timeouts.yaml
+        volumeMounts:
+        - name: pools
+          mountPath: /etc/cortex/pools.yaml
+          subPath: pools.yaml
+        - name: timeouts
+          mountPath: /etc/cortex/timeouts.yaml
+          subPath: timeouts.yaml
+        ports:
+        - containerPort: 9090
+        livenessProbe:
+          tcpSocket: {port: 9090}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: pools
+        configMap:
+          name: cortex-pools
+          items:
+          - key: pools.yaml
+            path: pools.yaml
+      - name: timeouts
+        configMap:
+          name: cortex-timeouts
+          items:
+          - key: timeouts.yaml
+            path: timeouts.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-api-gateway
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cortex-api-gateway}
+  template:
+    metadata:
+      labels: {app: cortex-api-gateway}
+    spec:
+      containers:
+      - name: gateway
+        image: cortex-cortex-api-gateway
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: SAFETY_KERNEL_ADDR
+          value: cortex-safety-kernel:50051
+        - name: API_KEY
+          value: "change-me"
+        - name: TENANT_ID
+          value: "default"
+        ports:
+        - containerPort: 8081
+        - containerPort: 9092
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-api-gateway
+  namespace: cortex
+spec:
+  selector: {app: cortex-api-gateway}
+  ports:
+  - name: http
+    port: 8081
+    targetPort: 8081
+  - name: grpc
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-worker-echo
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cortex-worker-echo}
+  template:
+    metadata:
+      labels: {app: cortex-worker-echo}
+    spec:
+      containers:
+      - name: worker
+        image: cortex-cortex-worker-echo
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
+        ports:
+        - containerPort: 8082
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-worker-chat
+  namespace: cortex
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: cortex-worker-chat}
+  template:
+    metadata:
+      labels: {app: cortex-worker-chat}
+    spec:
+      containers:
+      - name: worker
+        image: cortex-cortex-worker-chat
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cortex-worker-chat-hpa
+  namespace: cortex
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cortex-worker-chat
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-worker-chat-advanced
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cortex-worker-chat-advanced}
+  template:
+    metadata:
+      labels: {app: cortex-worker-chat-advanced}
+    spec:
+      containers:
+      - name: worker
+        image: cortex-cortex-worker-chat-advanced
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: OLLAMA_URL
+          value: http://ollama:11434
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-worker-code-llm
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cortex-worker-code-llm}
+  template:
+    metadata:
+      labels: {app: cortex-worker-code-llm}
+    spec:
+      containers:
+      - name: worker
+        image: cortex-cortex-worker-code-llm
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: OLLAMA_URL
+          value: http://ollama:11434
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-worker-orchestrator
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cortex-worker-orchestrator}
+  template:
+    metadata:
+      labels: {app: cortex-worker-orchestrator}
+    spec:
+      containers:
+      - name: worker
+        image: cortex-cortex-worker-orchestrator
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: TIMEOUT_CONFIG_PATH
+          value: /etc/cortex/timeouts.yaml
+        - name: USE_PLANNER
+          value: "false"
+        - name: PLANNER_TOPIC
+          value: job.workflow.plan
+        volumeMounts:
+        - name: timeouts
+          mountPath: /etc/cortex/timeouts.yaml
+          subPath: timeouts.yaml
+      volumes:
+      - name: timeouts
+        configMap:
+          name: cortex-timeouts
+          items:
+          - key: timeouts.yaml
+            path: timeouts.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-worker-planner
+  namespace: cortex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cortex-worker-planner}
+  template:
+    metadata:
+      labels: {app: cortex-worker-planner}
+    spec:
+      containers:
+      - name: worker
+        image: cortex-cortex-worker-planner
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379

@@ -3,7 +3,7 @@ PB_OUT    = pkg/pb/v1
 
 proto:
 	PATH="$$PATH:$(HOME)/go/bin" protoc \
-		-I .
+		-I . \
 		-I $(PROTO_SRC) \
 		--go_out=$(PB_OUT) --go_opt=paths=source_relative \
 		--go-grpc_out=$(PB_OUT) --go-grpc_opt=paths=source_relative \
