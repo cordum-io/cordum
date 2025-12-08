@@ -1,0 +1,17 @@
+workflows:
+  code_review_demo:
+    child_timeout_seconds: 180
+    total_timeout_seconds: 600
+    max_retries: 1
+
+topics:
+  job.code.llm:
+    timeout_seconds: 120
+    max_retries: 0
+  job.chat.simple:
+    timeout_seconds: 60
+    max_retries: 0
+reconciler:
+  dispatch_timeout_seconds: 120
+  running_timeout_seconds: 300
+  scan_interval_seconds: 30
