@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
@@ -45,7 +46,15 @@ func (s *server) Check(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.Pol
 		decision = pb.DecisionType_DECISION_TYPE_DENY
 		reason = "forbidden topic"
 	}
-	_ = req.GetTenant() // placeholder: future per-tenant policy
+
+	// Require caller identity and job-scoped topics to avoid accidental sys.* publishes.
+	if tenant := strings.TrimSpace(req.GetTenant()); tenant == "" {
+		decision = pb.DecisionType_DECISION_TYPE_DENY
+		reason = "missing tenant"
+	} else if !strings.HasPrefix(req.GetTopic(), "job.") {
+		decision = pb.DecisionType_DECISION_TYPE_DENY
+		reason = "unsupported topic"
+	}
 
 	// Include trivial latency to simulate real checks.
 	if deadline, ok := ctx.Deadline(); ok {

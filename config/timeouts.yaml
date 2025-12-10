@@ -3,6 +3,10 @@ workflows:
     child_timeout_seconds: 180
     total_timeout_seconds: 600
     max_retries: 1
+  repo_code_review:
+    child_timeout_seconds: 240
+    total_timeout_seconds: 1800
+    max_retries: 1
 
 topics:
   job.code.llm:
@@ -10,6 +14,21 @@ topics:
     max_retries: 0
   job.chat.simple:
     timeout_seconds: 60
+    max_retries: 0
+  job.repo.scan:
+    timeout_seconds: 300
+    max_retries: 0
+  job.repo.partition:
+    timeout_seconds: 120
+    max_retries: 0
+  job.repo.lint:
+    timeout_seconds: 240
+    max_retries: 0
+  job.repo.tests:
+    timeout_seconds: 600
+    max_retries: 0
+  job.repo.report:
+    timeout_seconds: 180
     max_retries: 0
 reconciler:
   dispatch_timeout_seconds: 120

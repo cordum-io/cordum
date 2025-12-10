@@ -5,3 +5,9 @@ topics:
   job.code.llm: code-llm
   job.workflow.plan: workflow
   job.workflow.demo: workflow
+  job.workflow.repo.code_review: workflow
+  job.repo.scan: repo-scan
+  job.repo.partition: repo-partition
+  job.repo.lint: repo-lint
+  job.repo.tests: repo-tests
+  job.repo.report: repo-report

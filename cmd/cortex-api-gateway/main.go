@@ -20,10 +20,13 @@ import (
 	"github.com/yaront1111/cortex-os/core/internal/scheduler"
 	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"strings"
 )
 
 const (
@@ -187,6 +190,7 @@ func startHTTPServer(s *server) {
 
 	// 5. Submit Job (REST)
 	mux.HandleFunc("POST /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleSubmitJobHTTP))
+	mux.HandleFunc("POST /api/v1/repo-review", s.instrumented("/api/v1/repo-review", s.handleSubmitRepoReview))
 
 	// 6. Trace Details
 	mux.HandleFunc("GET /api/v1/traces/{id}", s.instrumented("/api/v1/traces/{id}", s.handleGetTrace))
@@ -265,6 +269,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		Topic     string `json:"topic"`
 		AdapterId string `json:"adapter_id"`
 		Priority  string `json:"priority"`
+		Context   any    `json:"context"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -275,6 +280,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	traceID := uuid.NewString()
 	ctxKey := memory.MakeContextKey(jobID)
 	ctxPtr := memory.PointerForKey(ctxKey)
+	jobPriority := parsePriority(req.Priority)
 
 	// Default topic if missing
 	if req.Topic == "" {
@@ -293,6 +299,9 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		"created_at": time.Now().UTC().Format(time.RFC3339),
 		"tenant_id":  s.tenant,
 	}
+	if req.Context != nil {
+		payload["context"] = req.Context
+	}
 	payloadBytes, _ := json.Marshal(payload)
 	_ = s.memStore.PutContext(r.Context(), ctxKey, payloadBytes)
 
@@ -302,7 +311,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	jobReq := &pb.JobRequest{
 		JobId:      jobID,
 		Topic:      req.Topic,
-		Priority:   pb.JobPriority_JOB_PRIORITY_INTERACTIVE,
+		Priority:   jobPriority,
 		ContextPtr: ctxPtr,
 		AdapterId:  req.AdapterId,
 		EnvVars:    envVars,
@@ -318,7 +327,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	s.bus.Publish("sys.job.submit", packet)
+	if err := s.bus.Publish("sys.job.submit", packet); err != nil {
+		logging.Error("api-gateway", "job publish failed", "job_id", jobID, "error", err)
+		_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStateFailed)
+		http.Error(w, "failed to enqueue job", http.StatusServiceUnavailable)
+		return
+	}
 
 	logging.Info("api-gateway", "job submitted http", "job_id", jobID)
 
@@ -413,6 +427,98 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// Submit a repo review workflow job with explicit repo context.
+func (s *server) handleSubmitRepoReview(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepoURL      string   `json:"repo_url"`
+		Branch       string   `json:"branch"`
+		LocalPath    string   `json:"local_path"`
+		IncludeGlobs []string `json:"include_globs"`
+		ExcludeGlobs []string `json:"exclude_globs"`
+		MaxFiles     int      `json:"max_files"`
+		BatchSize    int      `json:"batch_size"`
+		MaxBatches   int      `json:"max_batches"`
+		RunTests     bool     `json:"run_tests"`
+		TestCommand  string   `json:"test_command"`
+		Priority     string   `json:"priority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if req.RepoURL == "" && req.LocalPath == "" {
+		http.Error(w, "repo_url or local_path required", http.StatusBadRequest)
+		return
+	}
+
+	jobID := uuid.NewString()
+	traceID := uuid.NewString()
+	ctxKey := memory.MakeContextKey(jobID)
+	ctxPtr := memory.PointerForKey(ctxKey)
+	jobPriority := parsePriority(req.Priority)
+
+	if len(req.IncludeGlobs) == 0 {
+		req.IncludeGlobs = []string{"**/*.go", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py"}
+	}
+	if len(req.ExcludeGlobs) == 0 {
+		req.ExcludeGlobs = []string{"vendor/**", "node_modules/**", "dist/**", ".git/**", "build/**"}
+	}
+	if req.TestCommand == "" {
+		req.TestCommand = "go test ./..."
+	}
+
+	payload := map[string]any{
+		"repo_url":      req.RepoURL,
+		"branch":        req.Branch,
+		"local_path":    req.LocalPath,
+		"include_globs": req.IncludeGlobs,
+		"exclude_globs": req.ExcludeGlobs,
+		"max_files":     req.MaxFiles,
+		"batch_size":    req.BatchSize,
+		"max_batches":   req.MaxBatches,
+		"run_tests":     req.RunTests,
+		"test_command":  req.TestCommand,
+		"created_at":    time.Now().UTC().Format(time.RFC3339),
+		"tenant_id":     s.tenant,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	_ = s.memStore.PutContext(r.Context(), ctxKey, payloadBytes)
+
+	_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending)
+
+	jobReq := &pb.JobRequest{
+		JobId:      jobID,
+		Topic:      "job.workflow.repo.code_review",
+		Priority:   jobPriority,
+		ContextPtr: ctxPtr,
+		EnvVars:    map[string]string{"tenant_id": s.tenant},
+	}
+
+	packet := &pb.BusPacket{
+		TraceId:         traceID,
+		SenderId:        "api-gateway-repo-review",
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: 1,
+		Payload: &pb.BusPacket_JobRequest{
+			JobRequest: jobReq,
+		},
+	}
+
+	if err := s.bus.Publish("sys.job.submit", packet); err != nil {
+		logging.Error("api-gateway", "repo review publish failed", "job_id", jobID, "error", err)
+		_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStateFailed)
+		http.Error(w, "failed to enqueue job", http.StatusServiceUnavailable)
+		return
+	}
+
+	logging.Info("api-gateway", "repo review job submitted", "job_id", jobID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"job_id":   jobID,
+		"trace_id": traceID,
+	})
+}
+
 // apiKeyMiddleware enforces a static API key if API_KEY is set.
 func apiKeyMiddleware(next http.Handler) http.Handler {
 	required := os.Getenv("API_KEY")
@@ -430,6 +536,19 @@ func apiKeyMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func parsePriority(priority string) pb.JobPriority {
+	switch strings.ToLower(priority) {
+	case "batch":
+		return pb.JobPriority_JOB_PRIORITY_BATCH
+	case "critical":
+		return pb.JobPriority_JOB_PRIORITY_CRITICAL
+	case "interactive":
+		return pb.JobPriority_JOB_PRIORITY_INTERACTIVE
+	default:
+		return pb.JobPriority_JOB_PRIORITY_INTERACTIVE
+	}
 }
 
 type statusRecorder struct {
@@ -461,6 +580,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	traceID := uuid.NewString()
 	ctxKey := memory.MakeContextKey(jobID)
 	ctxPtr := memory.PointerForKey(ctxKey)
+	jobPriority := parsePriority(req.GetPriority())
 
 	payload := map[string]any{
 		"prompt":     req.GetPrompt(),
@@ -479,7 +599,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	jobReq := &pb.JobRequest{
 		JobId:      jobID,
 		Topic:      req.GetTopic(),
-		Priority:   pb.JobPriority_JOB_PRIORITY_INTERACTIVE,
+		Priority:   jobPriority,
 		ContextPtr: ctxPtr,
 		AdapterId:  req.GetAdapterId(),
 		EnvVars:    map[string]string{"tenant_id": s.tenant},
@@ -495,7 +615,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		},
 	}
 
-	s.bus.Publish("sys.job.submit", packet)
+	if err := s.bus.Publish("sys.job.submit", packet); err != nil {
+		_ = s.jobStore.SetState(ctx, jobID, scheduler.JobStateFailed)
+		logging.Error("api-gateway", "job publish failed", "job_id", jobID, "error", err)
+		return nil, status.Errorf(codes.Unavailable, "failed to enqueue job")
+	}
 
 	logging.Info("api-gateway", "job submitted", "job_id", jobID)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
