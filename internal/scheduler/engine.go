@@ -111,6 +111,8 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 			"job_id", safeJobID(req),
 			"topic", safeTopic(req),
 		)
+		e.setJobState(safeJobID(req), JobStateFailed)
+		e.incJobsCompleted(safeTopic(req), pb.JobStatus_JOB_STATUS_FAILED.String())
 		return
 	}
 
@@ -135,6 +137,8 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 			"topic", req.Topic,
 			"error", err,
 		)
+		e.setJobState(req.JobId, JobStateFailed)
+		e.incJobsCompleted(req.Topic, pb.JobStatus_JOB_STATUS_FAILED.String())
 		return
 	}
 
@@ -163,6 +167,8 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 			"subject", subject,
 			"error", err,
 		)
+		e.setJobState(req.JobId, JobStateFailed)
+		e.incJobsCompleted(req.Topic, pb.JobStatus_JOB_STATUS_FAILED.String())
 		return
 	}
 	e.setJobState(req.JobId, JobStateDispatched)
@@ -181,8 +187,15 @@ func (e *Engine) handleJobResult(res *pb.JobResult) {
 		topic = "unknown"
 	}
 	state := JobStateSucceeded
-	if res.Status == pb.JobStatus_JOB_STATUS_FAILED {
+	switch res.Status {
+	case pb.JobStatus_JOB_STATUS_FAILED:
 		state = JobStateFailed
+	case pb.JobStatus_JOB_STATUS_TIMEOUT:
+		state = JobStateTimeout
+	case pb.JobStatus_JOB_STATUS_DENIED:
+		state = JobStateDenied
+	case pb.JobStatus_JOB_STATUS_CANCELLED:
+		state = JobStateCancelled
 	}
 	e.setJobState(res.JobId, state)
 	if res.ResultPtr != "" {

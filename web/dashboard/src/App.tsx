@@ -3,7 +3,8 @@ import MissionControl from './pages/MissionControl';
 import WorkerMesh from './pages/WorkerMesh';
 import JobExplorer from './pages/JobExplorer';
 import Chat from './pages/Chat';
-import { LayoutDashboard, Server, Search, Activity, MessageSquare } from 'lucide-react';
+import RepoReview from './pages/RepoReview';
+import { LayoutDashboard, Server, Search, Activity, MessageSquare, GitBranch } from 'lucide-react';
 import clsx from 'clsx';
 
 function NavItem({ to, icon: Icon, label }: { to: string; icon: any; label: string }) {
@@ -47,6 +48,7 @@ function Sidebar() {
           <NavItem to="/" icon={LayoutDashboard} label="Mission Control" />
           <NavItem to="/workers" icon={Server} label="Worker Mesh" />
           <NavItem to="/jobs" icon={Search} label="Job Explorer" />
+          <NavItem to="/repo-review" icon={GitBranch} label="Repo Review" />
         </ul>
 
         <div className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-2 pl-2 mt-8">Apps</div>
@@ -82,6 +84,7 @@ function App() {
               <Route path="/workers" element={<WorkerMesh />} />
               <Route path="/jobs" element={<JobExplorer />} />
               <Route path="/chat" element={<Chat />} />
+              <Route path="/repo-review" element={<RepoReview />} />
             </Routes>
           </div>
         </main>

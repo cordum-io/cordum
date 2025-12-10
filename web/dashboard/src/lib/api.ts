@@ -17,9 +17,12 @@ export interface Worker {
 }
 
 export interface BusPacket {
-    traceId: string;
-    senderId: string;
-    createdAt: string;
+    traceId?: string;
+    senderId?: string;
+    createdAt?: string;
+    trace_id?: string;
+    sender_id?: string;
+    created_at?: string;
     jobRequest?: any;
     jobResult?: {
         jobId: string;
@@ -34,15 +37,35 @@ export interface BusPacket {
     payload?: any; 
 }
 
-const defaultApi = "http://localhost:8081";
 const envApi = (import.meta as any).env?.VITE_API_BASE as string | undefined;
-export const API_BASE = envApi || defaultApi;
-
 const envWs = (import.meta as any).env?.VITE_WS_BASE as string | undefined;
 export const API_KEY = (import.meta as any).env?.VITE_API_KEY as string | undefined;
 
-const derivedWs = API_BASE.replace(/^http/i, "ws") + "/api/v1/stream";
-export const WS_BASE = envWs || derivedWs;
+const inferApiBase = () => {
+  if (envApi) return envApi;
+  if (typeof window !== "undefined") {
+    const { origin } = window.location;
+    return origin;
+  }
+  return "http://localhost:8081";
+};
+
+export const API_BASE = inferApiBase();
+
+const inferWsBase = () => {
+  if (envWs) return envWs;
+  let base = API_BASE;
+  try {
+    const url = new URL(base);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/api/v1/stream";
+    return url.toString();
+  } catch {
+    return base.replace(/^http/i, "ws") + "/api/v1/stream";
+  }
+};
+
+export const WS_BASE = inferWsBase();
 
 const authHeaders = () => {
     return API_KEY ? { "X-API-Key": API_KEY } : {};

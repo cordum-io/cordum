@@ -37,7 +37,25 @@ build-api-gateway: proto
 build-safety-kernel: proto
 	go build -o bin/cortex-safety-kernel ./cmd/cortex-safety-kernel
 
-build: build-scheduler build-worker-echo build-worker-chat build-worker-chat-advanced build-worker-orchestrator build-worker-code-llm build-api-gateway build-safety-kernel
+build-worker-repo-scan: proto
+	go build -o bin/cortex-worker-repo-scan ./cmd/cortex-worker-repo-scan
+
+build-worker-repo-partition: proto
+	go build -o bin/cortex-worker-repo-partition ./cmd/cortex-worker-repo-partition
+
+build-worker-repo-lint: proto
+	go build -o bin/cortex-worker-repo-lint ./cmd/cortex-worker-repo-lint
+
+build-worker-repo-tests: proto
+	go build -o bin/cortex-worker-repo-tests ./cmd/cortex-worker-repo-tests
+
+build-worker-repo-report: proto
+	go build -o bin/cortex-worker-repo-report ./cmd/cortex-worker-repo-report
+
+build-worker-repo-orchestrator: proto
+	go build -o bin/cortex-worker-repo-orchestrator ./cmd/cortex-worker-repo-orchestrator
+
+build: build-scheduler build-worker-echo build-worker-chat build-worker-chat-advanced build-worker-orchestrator build-worker-code-llm build-api-gateway build-safety-kernel build-worker-repo-scan build-worker-repo-partition build-worker-repo-lint build-worker-repo-tests build-worker-repo-report build-worker-repo-orchestrator
 
 dev-up:
 	docker-compose up -d --build

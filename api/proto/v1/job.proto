@@ -14,6 +14,9 @@ enum JobStatus {
   JOB_STATUS_UNSPECIFIED = 0;
   JOB_STATUS_COMPLETED   = 1;
   JOB_STATUS_FAILED      = 2;
+  JOB_STATUS_TIMEOUT     = 3;
+  JOB_STATUS_DENIED      = 4;
+  JOB_STATUS_CANCELLED   = 5;
 }
 
 message JobRequest {

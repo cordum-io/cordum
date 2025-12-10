@@ -33,30 +33,56 @@ const MissionControl = () => {
     const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
     useEffect(() => {
-        const ws = new WebSocket(makeWsUrl());
-        
-        ws.onopen = () => setConnectionStatus('connected');
-        ws.onerror = () => setConnectionStatus('disconnected');
-        ws.onclose = () => setConnectionStatus('disconnected');
-        
-        ws.onmessage = (event) => {
-            try {
-                const packet = JSON.parse(event.data);
-                setEvents(prev => [packet, ...prev].slice(0, 100));
-                setStats(s => ({ ...s, eventsCount: s.eventsCount + 1 }));
-                
-                if (packet.jobRequest || packet.payload?.job_request) {
-                    setStats(s => ({ ...s, activeJobs: s.activeJobs + 1 }));
+        let closed = false;
+        let retry = 0;
+        let ws: WebSocket | null = null;
+
+        const connect = () => {
+            setConnectionStatus('connecting');
+            ws = new WebSocket(makeWsUrl());
+            
+            ws.onopen = () => {
+                if (closed) {
+                    ws?.close();
+                    return;
                 }
-                 if (packet.jobResult || packet.payload?.job_result) {
-                    setStats(s => ({ ...s, activeJobs: Math.max(0, s.activeJobs - 1), completedJobs: s.completedJobs + 1 }));
+                setConnectionStatus('connected');
+                retry = 0;
+            };
+            ws.onerror = () => setConnectionStatus('disconnected');
+            ws.onclose = () => {
+                setConnectionStatus('disconnected');
+                if (closed) return;
+                const delay = Math.min(5000, 500 * Math.pow(2, retry++));
+                setTimeout(connect, delay);
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const packet = JSON.parse(event.data);
+                    setEvents(prev => [packet, ...prev].slice(0, 100));
+                    setStats(s => ({ ...s, eventsCount: s.eventsCount + 1 }));
+                    
+                    if (packet.jobRequest || packet.payload?.job_request) {
+                        setStats(s => ({ ...s, activeJobs: s.activeJobs + 1 }));
+                    }
+                     if (packet.jobResult || packet.payload?.job_result) {
+                        setStats(s => ({ ...s, activeJobs: Math.max(0, s.activeJobs - 1), completedJobs: s.completedJobs + 1 }));
+                    }
+                } catch (e) {
+                    console.error("WS Parse Error", e);
                 }
-            } catch (e) {
-                console.error("WS Parse Error", e);
-            }
+            };
         };
 
-        return () => ws.close();
+        connect();
+
+        return () => {
+            closed = true;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+        };
     }, []);
 
     return (

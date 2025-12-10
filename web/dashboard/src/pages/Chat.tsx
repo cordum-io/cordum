@@ -15,7 +15,6 @@ interface Message {
 const Chat = () => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
-    const [activeJobId, setActiveJobId] = useState<string | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const wsRef = useRef<WebSocket | null>(null);
 
@@ -27,41 +26,50 @@ const Chat = () => {
     }, [messages]);
 
     useEffect(() => {
-        const ws = new WebSocket(makeWsUrl());
-        wsRef.current = ws;
-        
-        ws.onerror = () => {
-            // leave a breadcrumb; UI bubbles will stay pending
-            console.warn("WebSocket error, check API key / gateway availability");
-        };
-
-        ws.onmessage = async (event) => {
-            try {
-                const packet: BusPacket = JSON.parse(event.data);
-                
-                // Check if this is a result for our active job
-                // Support both old structure (payload.job_result) and new (jobResult)
-                const result = packet.jobResult || packet.payload?.job_result;
-
-                if (result) {
-                    // Find the message waiting for this job ID
-                    setMessages(prev => prev.map(msg => {
-                        // Handle camelCase or snake_case
-                        const resultJobId = result.jobId || result.job_id;
-                        if (msg.id === resultJobId) {
-                            // It's our job! Fetch the full result payload to get the text.
-                            fetchResult(resultJobId);
-                            return { ...msg, status: 'complete' }; 
-                        }
-                        return msg;
-                    }));
+        let retry = 0;
+        let closed = false;
+        const connect = () => {
+            if (closed) return;
+            const ws = new WebSocket(makeWsUrl());
+            wsRef.current = ws;
+            
+            ws.onerror = () => {
+                console.warn("WebSocket error, check API key / gateway availability");
+            };
+            ws.onclose = () => {
+                if (closed) return;
+                const delay = Math.min(5000, 500 * Math.pow(2, retry++));
+                setTimeout(connect, delay);
+            };
+            ws.onopen = () => {
+                retry = 0;
+            };
+    
+            ws.onmessage = async (event) => {
+                try {
+                    const packet: BusPacket = JSON.parse(event.data);
+                    const result = packet.jobResult || packet.payload?.job_result;
+    
+                    if (result) {
+                        setMessages(prev => prev.map(msg => {
+                            const resultJobId = result.jobId || result.job_id;
+                            if (msg.id === resultJobId) {
+                                fetchResult(resultJobId);
+                                return { ...msg, status: 'complete' }; 
+                            }
+                            return msg;
+                        }));
+                    }
+                } catch (e) {
+                    console.error("WS Error", e);
                 }
-            } catch (e) {
-                console.error("WS Error", e);
-            }
+            };
         };
-
-        return () => ws.close();
+        connect();
+        return () => {
+            closed = true;
+            wsRef.current?.close();
+        };
     }, []);
 
     const fetchResult = async (jobId: string) => {
@@ -122,7 +130,6 @@ const Chat = () => {
             if (res.ok) {
                 const data = await res.json();
                 const jobId = data.job_id;
-                setActiveJobId(jobId);
 
                 // 3. Add Placeholder Assistant Message linked to Job ID
                 setMessages(prev => [...prev, {
@@ -227,7 +234,7 @@ const Chat = () => {
                     </div>
                     <div className="text-center mt-2">
                          <span className="text-[10px] text-slate-600">
-                            Powered by CortexOS • Latency: &lt;100ms
+                            Powered by CortexOS - Latency: &lt;100ms
                         </span>
                     </div>
                 </div>

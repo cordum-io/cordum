@@ -188,7 +188,9 @@ const JobExplorer = () => {
                                                     <div key={tJob.id} className="flex items-center gap-2 text-xs">
                                                         {getStatusBadge(tJob.state)}
                                                         <span className="font-mono text-slate-400">{tJob.id.substring(0,8)}...</span>
-                                                        <span className="text-slate-600">{new Date(tJob.updatedAt * 1000).toLocaleTimeString()}</span>
+                                                        <span className="text-slate-600">
+                                                            {tJob.updatedAt ? new Date(tJob.updatedAt * 1000).toLocaleTimeString() : '-'}
+                                                        </span>
                                                     </div>
                                                 ))}
                                             </div>

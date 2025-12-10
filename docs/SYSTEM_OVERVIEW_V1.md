@@ -1,4 +1,4 @@
-# CortexOS – System Overview (V1)
+cd # CortexOS – System Overview (V1)
 
 ## Mission & Vision
 - AI Control Plane (“AI Motherboard”) that schedules, routes, constrains, and observes AI/tool workloads with deterministic guarantees.

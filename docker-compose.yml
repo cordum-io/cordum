@@ -166,5 +166,91 @@ services:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
 
+  cortex-worker-repo-scan:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-repo-scan
+    depends_on:
+      - nats
+      - redis
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-repo-partition:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-repo-partition
+    depends_on:
+      - nats
+      - redis
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-repo-lint:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-repo-lint
+    depends_on:
+      - nats
+      - redis
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-repo-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-repo-tests
+    depends_on:
+      - nats
+      - redis
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-repo-report:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-repo-report
+    depends_on:
+      - nats
+      - redis
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-repo-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-repo-orchestrator
+    depends_on:
+      - nats
+      - redis
+      - cortex-scheduler
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+      - TIMEOUT_CONFIG_PATH=/etc/cortex/timeouts.yaml
+      - REPO_REVIEW_MAX_FILES=500
+      - REPO_REVIEW_BATCH_SIZE=50
+      - REPO_REVIEW_MAX_BATCHES=5
+      - REPO_REVIEW_RUN_TESTS=false
+    volumes:
+      - ./config/timeouts.yaml:/etc/cortex/timeouts.yaml:ro
+
 volumes:
   ollama_data:
