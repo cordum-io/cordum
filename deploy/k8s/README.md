@@ -8,8 +8,8 @@ Minimal manifests to run the control plane + workers in a single namespace. This
 - Safety kernel
 - Scheduler
 - API gateway (HTTP :8081, gRPC :8080, Prom :9092)
-- Workers: echo, chat, chat-advanced, code-llm, orchestrator, planner
-- ConfigMaps: pools.yaml, timeouts.yaml
+- Workers: echo, chat, chat-advanced, code-llm, orchestrator, planner (repo pipeline not included in this starter)
+- ConfigMaps: pools.yaml, timeouts.yaml (add safety.yaml if you need custom policy)
 
 ## Apply
 ```bash
@@ -22,4 +22,3 @@ kubectl apply -n cortex -f deploy/k8s/base.yaml
 - API key is injected via `API_KEY`; planner is off by default (`USE_PLANNER=false`).
 - Probes are basic HTTP/TCP; adjust for your environment.
 - Example HPA for chat worker targets CPU.
-

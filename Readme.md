@@ -1,453 +1,84 @@
-Perfect — we’ll start exactly the right way:
-**with a fully structured, production-grade `README.md` / architecture specification document** that your Codex CLI can use as the root of the repo.
+# CortexOS — AI Control Plane (Go + NATS)
 
-Below is **Version 1.0 of the CortexOS Technical Specification Document** — extremely detailed, structured, and ready to drop into GitHub as `docs/ARCHITECTURE.md` or `README.md`.
+CortexOS is a Go control plane that routes, schedules, and safeguards AI/agent workloads over a NATS bus. Jobs move as protobuf envelopes, large payloads live in Redis via pointers, safety gates every dispatch, and workers live in `packages/` with thin binaries under `cmd/`.
 
-This document gives:
+## Architecture Snapshot
+- **Bus:** NATS subjects `sys.job.submit`, `sys.job.result`, `sys.heartbeat`, and worker subjects `job.*` (pool map in `config/pools.yaml`).
+- **Control Plane:** Scheduler (`core/controlplane/scheduler`) with safety check, least-loaded strategy, Redis-backed `JobStore`, and a reconciler that marks stale jobs `TIMEOUT`.
+- **Safety Kernel:** gRPC `Check` service; policy file at `config/safety.yaml` (deny/allow per tenant).
+- **API Gateway:** gRPC + HTTP/WS; writes contexts to Redis, publishes to `sys.job.submit`, tracks state/result via JobStore, streams bus events, and exposes metrics on `:9092/metrics`. Repo review helper endpoint: `POST /api/v1/repo-review`.
+- **Context Engine:** gRPC service (`cmd/cortex-context-engine`) that builds model windows, maintains chat history, and ingests repo scan data in Redis.
+- **Workers/Workflows (packages/):** echo, chat, chat-advanced (Ollama), code-llm (patch generator), planner, demo orchestrator, repo pipeline (scan → SAST → partition → lint → tests → report) driven by `job.workflow.repo.code_review`.
+- **Memory:** Redis for contexts/results and job metadata (`job:*` keys, per-state indices, recent jobs, trace mappings).
 
-* Overview
-* Architecture
-* Components
-* NATS subjects
-* Worker lifecycle
-* Safety Kernel spec
-* Scheduler spec
-* Memory protocol
-* Deployment layout
-* Future roadmap
+## Layout
+- `core/` – bus/config/memory/metrics, scheduler, agent runtime, context engine, protocol (`core/protocol/proto/v1` + generated `core/protocol/pb/v1`).
+- `packages/` – workers (`packages/workers/*`) and workflows (`packages/workflows/*`), providers under `packages/providers`.
+- `cmd/` – binaries wiring config to core/packages (scheduler, safety kernel, API gateway, context engine, each worker).
+- `config/` – pools, timeouts, safety policy.
+- `tools/scripts/` – smoke/send-job helpers for chat/code/workflows.
+- `docs/` – protocol, scheduler, docker/local guides; `spec/` contains CAP spec notes.
 
-It reads like a real internal engineering doc for a serious infra system.
+## Topics → Pools (from `config/pools.yaml`)
+| Topic | Pool | Notes |
+| --- | --- | --- |
+| `job.echo` | `echo` | simple echo |
+| `job.chat.simple` | `chat-simple` | lightweight chat |
+| `job.chat.advanced` | `chat-advanced` | Ollama-backed |
+| `job.code.llm` | `code-llm` | structured code patch |
+| `job.workflow.plan` | `workflow` | planner |
+| `job.workflow.demo` | `workflow` | demo orchestrator (code patch → explanation) |
+| `job.workflow.repo.code_review` | `workflow` | repo pipeline orchestrator |
+| `job.repo.scan` | `repo-scan` | repo index + archive |
+| `job.repo.partition` | `repo-partition` | batch files |
+| `job.repo.lint` | `repo-lint` | lint batch |
+| `job.repo.sast` | `repo-sast` | heuristic SAST |
+| `job.repo.tests` | `repo-tests` | run tests |
+| `job.repo.report` | `repo-report` | aggregate findings |
 
----
+## Quickstart (Docker)
+Requirements: Docker/Compose, Go 1.24+ (if running scripts locally).
 
-# **CortexOS — AI Control Plane**
-
-### **Version 1.0 — Technical Architecture Document**
-
----
-
-## **1. Introduction**
-
-CortexOS is an **AI Control Plane**:
-A distributed operating system that **schedules, routes, constrains, and observes** probabilistic workloads (LLMs, solvers, tools) with **deterministic guarantees**.
-
-CortexOS is built to solve the core enterprise problems in AI adoption:
-
-* Non-deterministic output
-* Poor reliability of agentic systems
-* Lack of observability
-* Lack of governance, RBAC, and policy enforcement
-* Inefficient GPU utilization
-* Fragile JSON-based workflows
-* No way to treat LLMs as “compute resources”
-
-CortexOS introduces:
-
-* **Predictive Scheduling**
-* **Safety Kernel (AI Firewall)**
-* **Grammar-Constrained Inference**
-* **NATS-Based Intelligence Bus**
-* **Pointer-Based Memory Fabric**
-* **Mixed-Compute Worker Model (LLM + Tools + Solvers)**
-* **Auditable Execution Graphs**
-
-This document defines the **V1 architecture** for CortexOS.
-
----
-
-## **2. High-Level System Overview**
-
-CortexOS is composed of 4 planes:
-
-1. **Control Plane (CPU)** – scheduler, safety kernel, API gateway
-2. **Compute Plane (GPU & CPU Workers)** – LLMs, solvers, tools
-3. **Memory Fabric** – Redis + Vector DB
-4. **Observability Plane** – audit logs + metrics + dashboards
-
-### **Operational snapshot (current codebase)**
-- Scheduler is pool/load-aware and now enforces a canonical job state machine: `PENDING → SCHEDULED → DISPATCHED → RUNNING → SUCCEEDED | FAILED | CANCELLED | TIMEOUT (+DENIED)`.
-- State transitions are persisted in Redis with per-state indices and an event log; non-monotonic transitions are rejected.
-- A reconciler loop in the scheduler marks DISPATCHED/RUNNING jobs as TIMEOUT after a window and keeps indices tidy.
-- Pool routing is externalized in `config/pools.yaml` (override with `POOL_CONFIG_PATH`); compose mounts it into the scheduler.
-- Workers (echo, chat, chat-advanced, code-llm, orchestrator) and Ollama service run via `docker compose up`; workflow demo exercises code-llm → chat-simple orchestration end-to-end.
-
----
-
-## **3. Cluster Topology**
-
-```
-+------------------------------------------------------------+
-|                        Kubernetes Cluster                  |
-|                                                            |
-|   +-----------------------------+   +--------------------+ |
-|   | cpu-system Node Group       |   | gpu-llm Node Group | |
-|   |-----------------------------|   |--------------------| |
-|   | cortex-api-gateway          |   | worker-code-llm    | |
-|   | cortex-scheduler            |   | worker-vision      | |
-|   | cortex-safety-kernel        |   +--------------------+ |
-|   | nats-jetstream (Stateful)   |                        |
-|   | redis (Stateful)            |   +--------------------+ |
-|   | weaviate / qdrant (Stateful)|   | cpu-tools Group    | |
-|   | cortex-dashboard            |   |--------------------| |
-|   | telemetry-collector         |   | worker-math        | |
-|   +-----------------------------+   | worker-k8s-ops     | |
-|                                    +--------------------+ |
-+------------------------------------------------------------+
+```bash
+docker compose build
+docker compose up -d
+# First run: pull an LLM for advanced/chat/code workers
+docker compose exec ollama ollama pull llama3
 ```
 
----
-
-## **4. Core Components**
-
-### **4.1 API Gateway**
-
-* Exposes CortexOS externally via:
-
-  * gRPC
-  * HTTP/JSON for non-tech integrations
-* Validates requests
-* Transforms input into `JobRequest` packet
-* Forwards to Scheduler
-
----
-
-### **4.2 Scheduler**
-
-Primary responsibilities:
-
-1. **Worker Selection**
-2. **Latency Prediction**
-3. **Queue depth & GPU utilization analysis**
-4. **Autoscaling triggers**
-5. **Budget estimation**
-6. **PolicyCheck initiation**
-
-Scheduler flow:
-
-```
-API → Scheduler → Safety Kernel → Scheduler → NATS → Worker
+Smoke a job (uses repo-local caches to avoid writing to global Go cache):
+```bash
+GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/send_echo_job.go
+GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/chat/send_chat_job.go
+GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/code/send_code_job.go
+# Workflow demo (code patch + explanation)
+GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/workflow/send_workflow_job.go
+# Repo code review via gateway HTTP
+curl -X POST http://localhost:8081/api/v1/repo-review \
+  -H 'Content-Type: application/json' \
+  -d '{"repo_url":"https://github.com/example/repo.git","branch":"main","max_files":200,"run_tests":false}'
 ```
 
-Key logic:
-
-```go
-type Scheduler interface {
-    Schedule(task TaskContext) (subject string, err error)
-    Autoscale(queueMetrics QueueDepth) Action
-}
+Inspect results:
+```bash
+docker exec cortex-redis-1 redis-cli get res:<job_id>
 ```
 
-Decision factors:
-
-| Factor                  | Source         |
-| ----------------------- | -------------- |
-| Worker load             | Heartbeats     |
-| GPU utilization         | Worker metrics |
-| Queue backlog           | JetStream      |
-| Estimated cost (tokens) | Model metadata |
-| SLA target              | Job metadata   |
-
----
-
-### **4.3 Safety Kernel (AI Firewall)**
-
-**Nothing touches the Bus without Safety approval.**
-
-Responsibilities:
-
-* RBAC (roles/principals)
-* Data security rules
-* Budget enforcement
-* Environment restrictions
-* Action restrictions (kubectl delete, database writes, etc.)
-* Compliance requirements
-* Full audit logging to `sys.audit.event`
-
-Kernel receives:
-
-* JobMeta
-* CostEstimate
-* BudgetState
-
-Kernel returns:
-
-* `ALLOW`
-* `ALLOW_MOD` (patched topic or restricted parameters)
-* `DENY`
-* `REQUIRE_HUMAN`
-* `THROTTLE`
-
-Security enforcement example:
-
-```rego
-deny[msg] {
-    input.job_meta.environment == "prod"
-    not input.principal.roles[_] == "SRE_LEAD"
-    msg = "Non-SRE attempted prod action"
-}
-```
-
----
-
-### **4.4 NATS JetStream (The Bus)**
-
-Job routing is done using predictable subject patterns:
-
-```
-job.code.*
-job.vision.*
-job.math.*
-job.k8s.*
-sys.job.submit
-sys.job.result
-sys.audit.event
-sys.registry.heartbeat
-```
-
-Properties:
-
-* Extremely low overhead
-* Built-in queue groups (load balanced workers)
-* Persistent streams (JetStream)
-* No HTTP complexity
-
-CortexOS uses **Protobuf**, not JSON.
-
-Workers subscribe to specific subject namespaces.
-
----
-
-### **4.5 Memory Fabric**
-
-CortexOS never passes large payloads over the bus.
-
-All job and result data uses **pointers**:
-
-```
-context_ptr = "redis://ctx/<job_id>"
-result_ptr  = "redis://res/<job_id>"
-embeddings_ptr = "vector://collection/<id>"
-```
-
-### Redis
-
-* Hot memory
-* Job metadata
-* Context blobs
-* Results
-* State transitions
-
-### Vector DB (Weaviate / Qdrant)
-
-* Semantic retrieval
-* Long-term memory
-* Knowledge stores
-
----
-
-### **4.6 Compute Plane (Workers)**
-
-Workers are stateless agents subscribed to NATS topics.
-
-#### **4.6.1 LLM Workers**
-
-* llama.cpp or vLLM backend
-* Dynamic LoRA injection per task
-* Grammar-constrained decoding ensures deterministic structure
-
-#### **4.6.2 Vision Workers**
-
-* LLaVA, CLIP, OpenCLIP
-
-#### **4.6.3 Solver Workers (C++)**
-
-* Fast deterministic math engines
-* Pathfinding
-* Routing
-* Optimization
-
-These replace LLM reasoning for tasks that require precision.
-
-#### **4.6.4 Tool Workers (Go/Python)**
-
-* Kubernetes operator (kubectl, helm, api calls)
-* AWS/GCP APIs
-* Internal devops tasks
-
-These are strictly RBAC filtered.
-
----
-
-### **4.7 Telemetry & Dashboard**
-
-The observability plane aggregates:
-
-* Job lifecycle
-* Worker performance
-* GPU utilization
-* Safety Kernel decisions
-* Audit logs
-* Scheduling traces
-
-Dashboard shows:
-
-```
-Job → Safety → Worker → Result
-```
-
----
-
-## **5. Job Lifecycle**
-
-1. API receives caller request
-2. Scheduler builds `JobMeta`
-3. Scheduler calls Safety Kernel
-4. Safety approves or denies
-5. Scheduler chooses worker subject
-6. Publish to NATS
-7. Worker receives job
-8. Worker fetches context from Redis
-9. Worker executes
-10. Worker writes result back
-11. Worker publishes `JobResult`
-12. Scheduler or caller receives result
-13. Telemetry stores trace
-14. Audit logs persistent events
-
----
-
-## **6. Heartbeat Protocol**
-
-Workers emit:
-
-```
-worker_id
-worker_type
-gpu_util
-in_flight_jobs
-adapter_loaded
-supported_topics
-latency_histogram
-```
-
-Scheduler maintains a real-time map of cluster capacity.
-
----
-
-## **7. NATS Subject Architecture**
-
-Example:
-
-```
-job.code.python
-job.code.go
-job.code.rust
-
-job.vision.classify
-job.vision.describe
-
-job.math.optimize
-job.math.route
-
-job.k8s.ops
-job.k8s.deploy
-job.k8s.patch
-
-sys.audit.event
-sys.policy.check
-sys.registry.heartbeat
-sys.job.result
-```
-
----
-
-## **8. Kubernetes Deployment Layout**
-
-### Namespaces
-
-```
-cortex-system
-cortex-workers
-cortex-observability
-```
-
-### Core Deployments
-
-```
-Deployment: cortex-api-gateway
-Deployment: cortex-scheduler
-Deployment: cortex-safety-kernel
-StatefulSet: nats-jetstream
-StatefulSet: redis
-StatefulSet: weaviate
-Deployment: cortex-dashboard
-Deployment: telemetry-collector
-```
-
-### Worker Deployments
-
-```
-worker-code-llm (GPU)
-worker-vision (GPU)
-worker-math-solver (CPU)
-worker-k8s-ops (CPU)
-```
-
-Each with autoscale options.
-
----
-
-## **9. Security Architecture**
-
-* Zero-trust routing
-* Safety Kernel as mandatory gatekeeper
-* All worker pods run in restricted namespaces
-* Workers can only communicate with:
-
-  * NATS
-  * Redis
-  * Vector DB
-* No direct outside access
-* All destructive actions require:
-
-  * Role-based policies
-  * Budget checks
-  * Audit enforcement
-
----
-
-## **10. Roadmap (V1 → V2)**
-
-### **V1 (MVP)**
-
-* Scheduler
-* Safety Kernel
-* LLM worker
-* Tool worker
-* Redis & NATS integration
-* Dashboard (basic graph)
-
-### **V2**
-
-* Predictive autoscaler
-* Multi-model routing
-* Cross-cluster deployment
-* Human approval workflow
-* Policy Packs marketplace
-
-### **V3**
-
-* Self-healing jobs
-* Model marketplace
-* Distributed memory fabric
-* Automatic chain optimization
-
----
-
-# **End of Version 1.0**
-
-## Developer quick actions
-
-- Run tests locally with caches inside the repo: `GOMODCACHE=$(pwd)/.gomodcache GOCACHE=$(pwd)/.gocache /usr/local/go/bin/go test ./...`
-- Bring up the full stack in containers: see `docs/DOCKER.md` (`docker compose up` with NATS, Redis, scheduler, safety, API, and workers).
-- See a validated end-to-end snapshot (compose + sample jobs + result pointers) in `docs/LOCAL_E2E.md`.
+## Development & Testing
+- Go toolchain: `go 1.24` (module-specified). To avoid permission errors, pin caches locally: `GOCACHE=$(pwd)/.cache/go-build go test ./...`.
+- Proto changes: edit files under `core/protocol/proto/v1`, then run `make proto`.
+- Docker images: `docker compose build` rebuilds all services; adjust `config/pools.yaml` / `config/timeouts.yaml` / `config/safety.yaml` as needed.
+
+## Configuration (env defaults)
+- `NATS_URL` (`nats://localhost:4222`), `REDIS_URL` (`redis://localhost:6379`)
+- `SAFETY_KERNEL_ADDR` (`localhost:50051`), `SAFETY_POLICY_PATH` (`config/safety.yaml`)
+- `POOL_CONFIG_PATH` (`config/pools.yaml`), `TIMEOUT_CONFIG_PATH` (`config/timeouts.yaml`)
+- `CONTEXT_ENGINE_ADDR` (`:50070`)
+- `API_KEY` (optional gateway HTTP/WS key), `TENANT_ID` (gateway injects into `JobRequest.env["tenant_id"]`)
+- Ollama workers: `OLLAMA_URL` (`http://ollama:11434`), `OLLAMA_MODEL` (`llama3`)
+- Orchestrators: `USE_PLANNER` (default false), `PLANNER_TOPIC` (`job.workflow.plan`)
+
+## Observability & Safety
+- Metrics: scheduler `:9090/metrics`, orchestrator `:9091/metrics`, API gateway `:9092/metrics`.
+- Safety kernel denies/permits per `config/safety.yaml`; scheduler records decisions in JobStore for dashboards/trace queries.
+- Job lifecycle/state, traces, and pointers are stored in Redis (`core/infra/memory.RedisJobStore`).

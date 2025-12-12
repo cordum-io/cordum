@@ -31,6 +31,9 @@ services:
       - nats
     environment:
       - NATS_URL=nats://nats:4222
+      - SAFETY_POLICY_PATH=/etc/cortex/safety.yaml
+    volumes:
+      - ./config/safety.yaml:/etc/cortex/safety.yaml:ro
 
   cortex-scheduler:
     build:
@@ -172,6 +175,19 @@ services:
       dockerfile: Dockerfile
       args:
         SERVICE: cortex-worker-repo-scan
+    depends_on:
+      - nats
+      - redis
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+
+  cortex-worker-repo-sast:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cortex-worker-repo-sast
     depends_on:
       - nats
       - redis

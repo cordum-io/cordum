@@ -9,5 +9,6 @@ topics:
   job.repo.scan: repo-scan
   job.repo.partition: repo-partition
   job.repo.lint: repo-lint
+  job.repo.sast: repo-sast
   job.repo.tests: repo-tests
   job.repo.report: repo-report

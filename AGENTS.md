@@ -6,18 +6,22 @@ You are helping build **CortexOS**, an AI Control Plane.
 Core ideas:
 - NATS-based bus
 - Go control-plane (scheduler + safety)
-- Protobuf contracts in `api/proto/v1` + `pkg/pb/v1`
+- Protobuf contracts in `core/protocol/proto/v1` + `core/protocol/pb/v1`
 - Workers as separate binaries under `cmd/`
+- Layout:
+  - `core/` = kernel (protocol, infra, controlplane, agent runtime)
+  - `packages/` = plug-in packs (workers, workflows, providers)
+  - `cmd/` = thin binaries wiring config to core + packages
 
 ## Architecture rules
 
 - Do NOT change field numbers in existing .proto files.
 - New proto fields must be appended with new IDs.
-- Scheduler must depend on interfaces in `internal/scheduler/types.go`,
+- Scheduler must depend on interfaces in `core/controlplane/scheduler/types.go`,
   not on concrete infra (NATS, config, etc.).
-- Bus = NATS implementation in `internal/infrastructure/bus`. Treat it as
+- Bus = NATS implementation in `core/infra/bus`. Treat it as
   an abstraction behind the `Bus` interface.
-- Keep all public wire contracts in `api/proto/v1` and generated code in `pkg/pb/v1`.
+- Keep all public wire contracts in `core/protocol/proto/v1` and generated code in `core/protocol/pb/v1`.
 
 ## Code style
 
@@ -30,7 +34,7 @@ Core ideas:
 ## Testing and sanity checks
 
 - For now: at minimum `go test ./...` must pass.
-- When adding new packages under `internal/`, add basic unit tests where meaningful.
+- When adding new packages under `core/` or `packages/`, add basic unit tests where meaningful.
 - If you create a new binary under `cmd/`, add a tiny smoke test script under `tools/scripts`.
 
 ## What you MUST do on every change

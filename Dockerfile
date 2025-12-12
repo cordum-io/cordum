@@ -7,7 +7,9 @@ WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 
 COPY . .
 
@@ -15,9 +17,12 @@ COPY . .
 ARG SERVICE
 RUN test -n "${SERVICE}" || (echo "SERVICE build arg required" && false)
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/${SERVICE} ./cmd/${SERVICE}
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/${SERVICE} ./cmd/${SERVICE}
 
 FROM alpine:3.19
+RUN apk add --no-cache ca-certificates git
 RUN adduser -D -u 65532 cortex
 USER cortex
 WORKDIR /home/cortex

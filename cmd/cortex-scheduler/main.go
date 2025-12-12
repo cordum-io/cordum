@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/memory"
-	infraMetrics "github.com/yaront1111/cortex-os/core/internal/infrastructure/metrics"
-	"github.com/yaront1111/cortex-os/core/internal/scheduler"
+	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/cortex-os/core/infra/bus"
+	"github.com/yaront1111/cortex-os/core/infra/config"
+	"github.com/yaront1111/cortex-os/core/infra/memory"
+	infraMetrics "github.com/yaront1111/cortex-os/core/infra/metrics"
 )
 
 func main() {

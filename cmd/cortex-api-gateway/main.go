@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,13 +13,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/logging"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/memory"
-	infraMetrics "github.com/yaront1111/cortex-os/core/internal/infrastructure/metrics"
-	"github.com/yaront1111/cortex-os/core/internal/scheduler"
-	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
+	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/cortex-os/core/infra/bus"
+	"github.com/yaront1111/cortex-os/core/infra/config"
+	"github.com/yaront1111/cortex-os/core/infra/logging"
+	"github.com/yaront1111/cortex-os/core/infra/memory"
+	infraMetrics "github.com/yaront1111/cortex-os/core/infra/metrics"
+	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -119,7 +120,7 @@ func main() {
 // startBusTaps subscribes to heartbeats and system events once for the lifetime of the gateway.
 func (s *server) startBusTaps() {
 	// Heartbeats -> worker registry snapshot
-	_ = s.bus.Subscribe("sys.heartbeat.>", "", func(p *pb.BusPacket) {
+	_ = s.bus.Subscribe("sys.heartbeat", "", func(p *pb.BusPacket) {
 		if hb := p.GetHeartbeat(); hb != nil {
 			s.workerMu.Lock()
 			s.workers[hb.WorkerId] = hb
@@ -187,6 +188,7 @@ func startHTTPServer(s *server) {
 
 	// 4. Job Details
 	mux.HandleFunc("GET /api/v1/jobs/{id}", s.instrumented("/api/v1/jobs/{id}", s.handleGetJob))
+	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", s.instrumented("/api/v1/jobs/{id}/cancel", s.handleCancelJob))
 
 	// 5. Submit Job (REST)
 	mux.HandleFunc("POST /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleSubmitJobHTTP))
@@ -241,6 +243,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job not found", http.StatusNotFound)
 		return
 	}
+	safetyDecision, safetyReason, _ := s.jobStore.GetSafetyDecision(r.Context(), id)
+	topic, _ := s.jobStore.GetTopic(r.Context(), id)
+	tenant, _ := s.jobStore.GetTenant(r.Context(), id)
 
 	resPtr, _ := s.jobStore.GetResultPtr(r.Context(), id)
 
@@ -255,12 +260,77 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"id":         id,
-		"state":      state,
-		"result_ptr": resPtr,
-		"result":     resultData,
+		"id":              id,
+		"state":           state,
+		"result_ptr":      resPtr,
+		"result":          resultData,
+		"topic":           topic,
+		"tenant":          tenant,
+		"safety_decision": safetyDecision,
+		"safety_reason":   safetyReason,
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+
+	state, err := s.jobStore.GetState(r.Context(), id)
+	if err != nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	switch state {
+	case scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout, scheduler.JobStateDenied:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":     id,
+			"state":  state,
+			"reason": "job already terminal",
+		})
+		return
+	}
+
+	if err := s.jobStore.SetState(r.Context(), id, scheduler.JobStateCancelled); err != nil {
+		// Make cancel idempotent and non-fatal: return current state with reason instead of 409.
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":     id,
+			"state":  state,
+			"reason": fmt.Sprintf("failed to cancel: %v", err),
+		})
+		return
+	}
+
+	// Broadcast a synthetic cancellation event for dashboards and listeners.
+	cancelPacket := &pb.BusPacket{
+		TraceId:         id,
+		SenderId:        "api-gateway",
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: 1,
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:  id,
+				Status: pb.JobStatus_JOB_STATUS_CANCELLED,
+			},
+		},
+	}
+	select {
+	case s.eventsCh <- cancelPacket:
+	default:
+	}
+	// Best-effort publish so scheduler/system listeners can observe the cancel.
+	_ = s.bus.Publish("sys.job.result", cancelPacket)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"id":    id,
+		"state": scheduler.JobStateCancelled,
+	})
 }
 
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +340,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		AdapterId string `json:"adapter_id"`
 		Priority  string `json:"priority"`
 		Context   any    `json:"context"`
+		MemoryId  string `json:"memory_id"`
+		Mode      string `json:"context_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -287,9 +359,26 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Topic = "job.chat.simple"
 	}
 
+	memoryID := req.MemoryId
+	if memoryID == "" {
+		if h := r.Header.Get("X-Session-Id"); h != "" {
+			memoryID = h
+		} else {
+			memoryID = "session:" + jobID
+		}
+	}
+
 	envVars := map[string]string{
 		"tenant_id": s.tenant,
 	}
+	if memoryID != "" {
+		envVars["memory_id"] = memoryID
+	}
+	if req.Mode != "" {
+		envVars["context_mode"] = req.Mode
+	}
+	envVars["max_input_tokens"] = "8000"
+	envVars["max_output_tokens"] = "1024"
 
 	payload := map[string]any{
 		"prompt":     req.Prompt,
@@ -307,6 +396,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Set initial state
 	_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending)
+	_ = s.jobStore.SetTopic(r.Context(), jobID, req.Topic)
+	_ = s.jobStore.SetTenant(r.Context(), jobID, s.tenant)
 
 	jobReq := &pb.JobRequest{
 		JobId:      jobID,
@@ -314,7 +405,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		Priority:   jobPriority,
 		ContextPtr: ctxPtr,
 		AdapterId:  req.AdapterId,
-		EnvVars:    envVars,
+		Env:        envVars,
 	}
 
 	packet := &pb.BusPacket{
@@ -441,6 +532,7 @@ func (s *server) handleSubmitRepoReview(w http.ResponseWriter, r *http.Request) 
 		RunTests     bool     `json:"run_tests"`
 		TestCommand  string   `json:"test_command"`
 		Priority     string   `json:"priority"`
+		MemoryId     string   `json:"memory_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -458,13 +550,29 @@ func (s *server) handleSubmitRepoReview(w http.ResponseWriter, r *http.Request) 
 	jobPriority := parsePriority(req.Priority)
 
 	if len(req.IncludeGlobs) == 0 {
-		req.IncludeGlobs = []string{"**/*.go", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py"}
+		req.IncludeGlobs = []string{
+			"**/*.go", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py",
+			"**/*.rs", "**/*.java", "**/*.cs", "**/*.rb", "**/*.php", "**/*.c", "**/*.h", "**/*.cpp", "**/*.cxx", "**/*.hpp", "**/*.hxx",
+			"**/*.sh", "**/*.bash", "**/*.zsh", "**/*.ps1",
+			"**/*.json", "**/*.yaml", "**/*.yml", "**/*.toml", "**/*.ini", "**/*.cfg", "**/*.conf",
+			"**/*.md", "**/*.txt", "**/*.sql",
+		}
 	}
 	if len(req.ExcludeGlobs) == 0 {
-		req.ExcludeGlobs = []string{"vendor/**", "node_modules/**", "dist/**", ".git/**", "build/**"}
+		req.ExcludeGlobs = []string{
+			"vendor/**", "node_modules/**", "dist/**", ".git/**", "build/**", "bin/**", "obj/**", "target/**", ".venv/**", "venv/**",
+		}
 	}
 	if req.TestCommand == "" {
 		req.TestCommand = "go test ./..."
+	}
+
+	envVars := map[string]string{
+		"tenant_id":         s.tenant,
+		"memory_id":         "",
+		"context_mode":      "rag",
+		"max_input_tokens":  "12000",
+		"max_output_tokens": "2048",
 	}
 
 	payload := map[string]any{
@@ -486,12 +594,25 @@ func (s *server) handleSubmitRepoReview(w http.ResponseWriter, r *http.Request) 
 
 	_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending)
 
+	memoryID := req.MemoryId
+	if memoryID == "" {
+		if req.RepoURL != "" {
+			memoryID = "repo:" + req.RepoURL
+			if req.Branch != "" {
+				memoryID += "#" + req.Branch
+			}
+		} else {
+			memoryID = "repo:" + jobID
+		}
+	}
+	envVars["memory_id"] = memoryID
+
 	jobReq := &pb.JobRequest{
 		JobId:      jobID,
 		Topic:      "job.workflow.repo.code_review",
 		Priority:   jobPriority,
 		ContextPtr: ctxPtr,
-		EnvVars:    map[string]string{"tenant_id": s.tenant},
+		Env:        envVars,
 	}
 
 	packet := &pb.BusPacket{
@@ -551,6 +672,37 @@ func parsePriority(priority string) pb.JobPriority {
 	}
 }
 
+func parseContextMode(topic, explicit string) string {
+	switch strings.ToLower(explicit) {
+	case "chat":
+		return "chat"
+	case "rag":
+		return "rag"
+	case "raw":
+		return "raw"
+	}
+	if strings.HasPrefix(topic, "job.chat") {
+		return "chat"
+	}
+	if strings.HasPrefix(topic, "job.code") || strings.HasPrefix(topic, "job.workflow.repo") {
+		return "rag"
+	}
+	return "raw"
+}
+
+func deriveMemoryIDFromReq(topic, explicit, jobID string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if strings.HasPrefix(topic, "job.chat") {
+		return "session:" + jobID
+	}
+	if strings.HasPrefix(topic, "job.code") || strings.HasPrefix(topic, "job.workflow.repo") {
+		return "repo:" + jobID
+	}
+	return "mem:" + jobID
+}
+
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -559,6 +711,22 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack forwards websocket hijacking support to the underlying writer when available.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("hijacker not supported")
+	}
+	return hj.Hijack()
+}
+
+// Flush preserves streaming support if the wrapped writer implements it.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // instrumented wraps handlers to record metrics.
@@ -596,13 +764,24 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// Set initial state
 	_ = s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending)
 
+	envVars := map[string]string{
+		"tenant_id":         s.tenant,
+		"memory_id":         deriveMemoryIDFromReq(req.GetTopic(), "", jobID),
+		"context_mode":      "",
+		"max_input_tokens":  "8000",
+		"max_output_tokens": "1024",
+	}
+	if mode := parseContextMode(req.GetTopic(), ""); mode != "" {
+		envVars["context_mode"] = mode
+	}
+
 	jobReq := &pb.JobRequest{
 		JobId:      jobID,
 		Topic:      req.GetTopic(),
 		Priority:   jobPriority,
 		ContextPtr: ctxPtr,
 		AdapterId:  req.GetAdapterId(),
-		EnvVars:    map[string]string{"tenant_id": s.tenant},
+		Env:        envVars,
 	}
 
 	packet := &pb.BusPacket{
