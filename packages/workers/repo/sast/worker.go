@@ -11,10 +11,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	worker "github.com/yaront1111/cortex-os/core/agent/runtime"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 const (
@@ -40,7 +40,7 @@ type sastResult struct {
 
 // Run starts the repo-sast worker.
 func Run() {
-	log.Println("cortex worker repo-sast starting...")
+	log.Println("coretex worker repo-sast starting...")
 
 	cfg := config.Load()
 

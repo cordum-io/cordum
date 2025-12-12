@@ -1,8 +1,8 @@
 package v1
 
 import (
-	agentv1 "github.com/coretexos/cap/gen/go/cortex/agent/v1"
-	apiv1 "github.com/yaront1111/cortex-os/core/protocol/pb/v1/api/proto/v1"
+	agentv1 "github.com/coretexos/cap/v2/go/cortex/agent/v1"
+	apiv1 "github.com/yaront1111/coretex-os/core/protocol/pb/v1/api/proto/v1"
 )
 
 type (
@@ -16,6 +16,8 @@ type (
 	JobRequest                      = agentv1.JobRequest
 	JobResult                       = agentv1.JobResult
 	Heartbeat                       = agentv1.Heartbeat
+	ContextHints                    = agentv1.ContextHints
+	Budget                          = agentv1.Budget
 	JobPriority                     = agentv1.JobPriority
 	JobStatus                       = agentv1.JobStatus
 	DecisionType                    = agentv1.DecisionType
@@ -37,9 +39,9 @@ type (
 	SubmitJobResponse                = apiv1.SubmitJobResponse
 	GetJobStatusRequest              = apiv1.GetJobStatusRequest
 	GetJobStatusResponse             = apiv1.GetJobStatusResponse
-	CortexApiClient                  = apiv1.CortexApiClient
-	CortexApiServer                  = apiv1.CortexApiServer
-	UnimplementedCortexApiServer     = apiv1.UnimplementedCortexApiServer
+	CoretexApiClient                 = apiv1.CoretexApiClient
+	CoretexApiServer                 = apiv1.CoretexApiServer
+	UnimplementedCoretexApiServer    = apiv1.UnimplementedCoretexApiServer
 	ContextMode                      = apiv1.ContextMode
 	ContextEngineClient              = apiv1.ContextEngineClient
 	ContextEngineServer              = apiv1.ContextEngineServer
@@ -78,8 +80,8 @@ const (
 var (
 	RegisterSafetyKernelServer  = agentv1.RegisterSafetyKernelServer
 	NewSafetyKernelClient       = agentv1.NewSafetyKernelClient
-	RegisterCortexApiServer     = apiv1.RegisterCortexApiServer
-	NewCortexApiClient          = apiv1.NewCortexApiClient
+	RegisterCoretexApiServer    = apiv1.RegisterCoretexApiServer
+	NewCoretexApiClient         = apiv1.NewCoretexApiClient
 	RegisterContextEngineServer = apiv1.RegisterContextEngineServer
 	NewContextEngineClient      = apiv1.NewContextEngineClient
 )

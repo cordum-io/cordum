@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package cortex.v1;
-option go_package = "github.com/yaront1111/cortex-os/core/protocol/pb/v1";
+package coretex.v1;
+option go_package = "github.com/yaront1111/coretex-os/core/protocol/pb/v1/api/proto/v1";
 
 import "google/protobuf/empty.proto";
 
-service CortexApi {
+service CoretexApi {
   rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
   rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
 }

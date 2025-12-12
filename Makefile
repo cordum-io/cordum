@@ -12,55 +12,55 @@ proto:
 		$(PROTO_FILES)
 
 build-scheduler: proto
-	go build -o bin/cortex-scheduler ./cmd/cortex-scheduler
+	go build -o bin/coretex-scheduler ./cmd/coretex-scheduler
 
 build-worker-echo: proto
-	go build -o bin/cortex-worker-echo ./cmd/cortex-worker-echo
+	go build -o bin/coretex-worker-echo ./cmd/coretex-worker-echo
 
 build-worker-chat: proto
-	go build -o bin/cortex-worker-chat ./cmd/cortex-worker-chat
+	go build -o bin/coretex-worker-chat ./cmd/coretex-worker-chat
 
 build-worker-chat-advanced: proto
-	go build -o bin/cortex-worker-chat-advanced ./cmd/cortex-worker-chat-advanced
+	go build -o bin/coretex-worker-chat-advanced ./cmd/coretex-worker-chat-advanced
 
 build-worker-planner: proto
-	go build -o bin/cortex-worker-planner ./cmd/cortex-worker-planner
+	go build -o bin/coretex-worker-planner ./cmd/coretex-worker-planner
 
 build-worker-orchestrator: proto
-	go build -o bin/cortex-worker-orchestrator ./cmd/cortex-worker-orchestrator
+	go build -o bin/coretex-worker-orchestrator ./cmd/coretex-worker-orchestrator
 
 build-worker-code-llm: proto
-	go build -o bin/cortex-worker-code-llm ./cmd/cortex-worker-code-llm
+	go build -o bin/coretex-worker-code-llm ./cmd/coretex-worker-code-llm
 
 build-api-gateway: proto
-	go build -o bin/cortex-api-gateway ./cmd/cortex-api-gateway
+	go build -o bin/coretex-api-gateway ./cmd/coretex-api-gateway
 
 build-safety-kernel: proto
-	go build -o bin/cortex-safety-kernel ./cmd/cortex-safety-kernel
+	go build -o bin/coretex-safety-kernel ./cmd/coretex-safety-kernel
 
 build-worker-repo-scan: proto
-	go build -o bin/cortex-worker-repo-scan ./cmd/cortex-worker-repo-scan
+	go build -o bin/coretex-worker-repo-scan ./cmd/coretex-worker-repo-scan
 
 build-worker-repo-partition: proto
-	go build -o bin/cortex-worker-repo-partition ./cmd/cortex-worker-repo-partition
+	go build -o bin/coretex-worker-repo-partition ./cmd/coretex-worker-repo-partition
 
 build-worker-repo-lint: proto
-	go build -o bin/cortex-worker-repo-lint ./cmd/cortex-worker-repo-lint
+	go build -o bin/coretex-worker-repo-lint ./cmd/coretex-worker-repo-lint
 
 build-worker-repo-sast: proto
-	go build -o bin/cortex-worker-repo-sast ./cmd/cortex-worker-repo-sast
+	go build -o bin/coretex-worker-repo-sast ./cmd/coretex-worker-repo-sast
 
 build-worker-repo-tests: proto
-	go build -o bin/cortex-worker-repo-tests ./cmd/cortex-worker-repo-tests
+	go build -o bin/coretex-worker-repo-tests ./cmd/coretex-worker-repo-tests
 
 build-worker-repo-report: proto
-	go build -o bin/cortex-worker-repo-report ./cmd/cortex-worker-repo-report
+	go build -o bin/coretex-worker-repo-report ./cmd/coretex-worker-repo-report
 
 build-worker-repo-orchestrator: proto
-	go build -o bin/cortex-worker-repo-orchestrator ./cmd/cortex-worker-repo-orchestrator
+	go build -o bin/coretex-worker-repo-orchestrator ./cmd/coretex-worker-repo-orchestrator
 
 build-context-engine: proto
-	go build -o bin/cortex-context-engine ./cmd/cortex-context-engine
+	go build -o bin/coretex-context-engine ./cmd/coretex-context-engine
 
 build: build-scheduler build-worker-echo build-worker-chat build-worker-chat-advanced build-worker-planner build-worker-orchestrator build-worker-code-llm build-api-gateway build-safety-kernel build-worker-repo-scan build-worker-repo-partition build-worker-repo-lint build-worker-repo-sast build-worker-repo-tests build-worker-repo-report build-worker-repo-orchestrator build-context-engine
 

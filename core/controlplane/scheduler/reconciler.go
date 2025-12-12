@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/yaront1111/cortex-os/core/infra/logging"
+	"github.com/yaront1111/coretex-os/core/infra/logging"
 )
 
 // Reconciler periodically inspects job state to enforce timeouts and cleanup.
@@ -43,6 +43,7 @@ func (r *Reconciler) tick(ctx context.Context) {
 	now := time.Now()
 	r.handleTimeouts(ctx, JobStateDispatched, now.Add(-r.dispatchTimeout))
 	r.handleTimeouts(ctx, JobStateRunning, now.Add(-r.runningTimeout))
+	r.handleDeadlineExpirations(ctx, now)
 }
 
 func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff time.Time) {
@@ -63,5 +64,20 @@ func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff 
 			}
 		}
 		// continue looping in case there are more
+	}
+}
+
+func (r *Reconciler) handleDeadlineExpirations(ctx context.Context, now time.Time) {
+	records, err := r.store.ListExpiredDeadlines(ctx, now.Unix(), 200)
+	if err != nil {
+		logging.Error("reconciler", "list expired deadlines", "error", err)
+		return
+	}
+	for _, rec := range records {
+		if err := r.store.SetState(ctx, rec.ID, JobStateTimeout); err != nil {
+			logging.Error("reconciler", "mark deadline timeout", "job_id", rec.ID, "error", err)
+		} else {
+			logging.Info("reconciler", "job deadline expired", "job_id", rec.ID)
+		}
 	}
 }

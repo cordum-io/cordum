@@ -37,7 +37,7 @@ function Sidebar() {
             <Activity className="text-white" size={20} />
         </div>
         <div>
-          <h1 className="text-sm font-bold text-slate-100 tracking-wide">CORTEX<span className="text-indigo-500">OS</span></h1>
+          <h1 className="text-sm font-bold text-slate-100 tracking-wide">coretex<span className="text-indigo-500">OS</span></h1>
           <div className="text-[10px] text-slate-500 font-mono">CONTROLLER v1.0</div>
         </div>
       </div>
@@ -53,7 +53,7 @@ function Sidebar() {
 
         <div className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-2 pl-2 mt-8">Apps</div>
         <ul className="space-y-1">
-             <NavItem to="/chat" icon={MessageSquare} label="Cortex Chat" />
+             <NavItem to="/chat" icon={MessageSquare} label="coretex Chat" />
         </ul>
       </nav>
 
@@ -64,7 +64,7 @@ function Sidebar() {
           </div>
           <div>
             <div className="text-sm font-medium text-slate-200">Operator</div>
-            <div className="text-xs text-slate-500">admin@cortex</div>
+            <div className="text-xs text-slate-500">admin@coretex</div>
           </div>
         </div>
       </div>

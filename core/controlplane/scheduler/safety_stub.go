@@ -1,6 +1,6 @@
 package scheduler
 
-import pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+import pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 
 // SafetyStub performs a minimal check, blocking only dangerous topics.
 type SafetyStub struct{}

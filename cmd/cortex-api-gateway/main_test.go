@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {

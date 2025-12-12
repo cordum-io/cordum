@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 type fakeReconcileStore struct {
@@ -11,6 +13,7 @@ type fakeReconcileStore struct {
 	updated map[string]int64
 	tenants map[string]string
 	safety  map[string]struct{ decision, reason string }
+	dead    map[string]int64
 }
 
 func newFakeReconcileStore() *fakeReconcileStore {
@@ -19,6 +22,7 @@ func newFakeReconcileStore() *fakeReconcileStore {
 		updated: make(map[string]int64),
 		tenants: make(map[string]string),
 		safety:  make(map[string]struct{ decision, reason string }),
+		dead:    make(map[string]int64),
 	}
 }
 
@@ -38,6 +42,28 @@ func (s *fakeReconcileStore) SetResultPtr(_ context.Context, jobID, resultPtr st
 
 func (s *fakeReconcileStore) GetResultPtr(_ context.Context, jobID string) (string, error) {
 	return "", nil
+}
+
+func (s *fakeReconcileStore) SetJobMeta(_ context.Context, _ *pb.JobRequest) error {
+	return nil
+}
+
+func (s *fakeReconcileStore) SetDeadline(_ context.Context, jobID string, deadline time.Time) error {
+	s.dead[jobID] = deadline.Unix()
+	return nil
+}
+
+func (s *fakeReconcileStore) ListExpiredDeadlines(_ context.Context, nowUnix int64, limit int64) ([]JobRecord, error) {
+	var out []JobRecord
+	for id, ts := range s.dead {
+		if ts <= nowUnix {
+			out = append(out, JobRecord{ID: id, DeadlineUnix: ts})
+			if limit > 0 && int64(len(out)) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *fakeReconcileStore) ListJobsByState(_ context.Context, state JobState, updatedBeforeUnix int64, _ int64) ([]JobRecord, error) {

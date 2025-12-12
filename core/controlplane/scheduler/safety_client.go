@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -41,14 +41,22 @@ func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecision, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	tenant := req.GetEnv()["tenant_id"]
+	tenant := req.GetTenantId()
+	if tenant == "" {
+		tenant = req.GetEnv()["tenant_id"]
+	}
 	if tenant == "" {
 		tenant = "default"
 	}
 	resp, err := c.client.Check(ctx, &pb.PolicyCheckRequest{
-		JobId:  req.GetJobId(),
-		Topic:  req.GetTopic(),
-		Tenant: tenant,
+		JobId:       req.GetJobId(),
+		Topic:       req.GetTopic(),
+		Tenant:      tenant,
+		PrincipalId: req.GetPrincipalId(),
+		Priority:    req.GetPriority(),
+		Budget:      req.GetBudget(),
+		Labels:      req.GetLabels(),
+		MemoryId:    req.GetMemoryId(),
 	})
 	if err != nil {
 		return SafetyDeny, fmt.Sprintf("safety kernel error: %v", err)

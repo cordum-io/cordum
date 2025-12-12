@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -17,7 +17,7 @@ type NatsBus struct {
 // NewNatsBus dials NATS at the provided URL.
 func NewNatsBus(url string) (*NatsBus, error) {
 	opts := []nats.Option{
-		nats.Name("cortex-bus"),
+		nats.Name("coretex-bus"),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2 * time.Second),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {

@@ -189,7 +189,7 @@ type JobRequest struct {
 
 	JobId           string            `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	Topic           string            `protobuf:"bytes,2,opt,name=topic,proto3" json:"topic,omitempty"` // logical topic / NATS subject
-	Priority        JobPriority       `protobuf:"varint,3,opt,name=priority,proto3,enum=cortex.v1.JobPriority" json:"priority,omitempty"`
+	Priority        JobPriority       `protobuf:"varint,3,opt,name=priority,proto3,enum=coretex.v1.JobPriority" json:"priority,omitempty"`
 	ContextPtr      string            `protobuf:"bytes,4,opt,name=context_ptr,json=contextPtr,proto3" json:"context_ptr,omitempty"` // "redis://jobs/{id}/context" (future)
 	AdapterId       string            `protobuf:"bytes,5,opt,name=adapter_id,json=adapterId,proto3" json:"adapter_id,omitempty"`
 	EnvVars         map[string]string `protobuf:"bytes,6,rep,name=env_vars,json=envVars,proto3" json:"env_vars,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
@@ -197,7 +197,7 @@ type JobRequest struct {
 	WorkflowId      string            `protobuf:"bytes,11,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`                                // optional workflow identifier
 	StepIndex       int32             `protobuf:"varint,12,opt,name=step_index,json=stepIndex,proto3" json:"step_index,omitempty"`                                  // optional step position
 	MemoryId        string            `protobuf:"bytes,13,opt,name=memory_id,json=memoryId,proto3" json:"memory_id,omitempty"`                                      // long-lived context identifier
-	ContextMode     ContextMode       `protobuf:"varint,14,opt,name=context_mode,json=contextMode,proto3,enum=cortex.v1.ContextMode" json:"context_mode,omitempty"` // how to treat context (raw/chat/rag)
+	ContextMode     ContextMode       `protobuf:"varint,14,opt,name=context_mode,json=contextMode,proto3,enum=coretex.v1.ContextMode" json:"context_mode,omitempty"` // how to treat context (raw/chat/rag)
 	MaxInputTokens  int32             `protobuf:"varint,15,opt,name=max_input_tokens,json=maxInputTokens,proto3" json:"max_input_tokens,omitempty"`                 // optional budget hints
 	MaxOutputTokens int32             `protobuf:"varint,16,opt,name=max_output_tokens,json=maxOutputTokens,proto3" json:"max_output_tokens,omitempty"`              // optional budget hints
 }
@@ -331,7 +331,7 @@ type JobResult struct {
 	unknownFields protoimpl.UnknownFields
 
 	JobId       string    `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	Status      JobStatus `protobuf:"varint,2,opt,name=status,proto3,enum=cortex.v1.JobStatus" json:"status,omitempty"`
+	Status      JobStatus `protobuf:"varint,2,opt,name=status,proto3,enum=coretex.v1.JobStatus" json:"status,omitempty"`
 	ResultPtr   string    `protobuf:"bytes,3,opt,name=result_ptr,json=resultPtr,proto3" json:"result_ptr,omitempty"` // "redis://jobs/{id}/result" (future)
 	WorkerId    string    `protobuf:"bytes,4,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
 	ExecutionMs int64     `protobuf:"varint,5,opt,name=execution_ms,json=executionMs,proto3" json:"execution_ms,omitempty"`
@@ -503,18 +503,18 @@ func file_job_proto_rawDescGZIP() []byte {
 var file_job_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
 var file_job_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_job_proto_goTypes = []interface{}{
-	(JobPriority)(0),   // 0: cortex.v1.JobPriority
-	(JobStatus)(0),     // 1: cortex.v1.JobStatus
-	(ContextMode)(0),   // 2: cortex.v1.ContextMode
-	(*JobRequest)(nil), // 3: cortex.v1.JobRequest
-	(*JobResult)(nil),  // 4: cortex.v1.JobResult
-	nil,                // 5: cortex.v1.JobRequest.EnvVarsEntry
+	(JobPriority)(0),   // 0: coretex.v1.JobPriority
+	(JobStatus)(0),     // 1: coretex.v1.JobStatus
+	(ContextMode)(0),   // 2: coretex.v1.ContextMode
+	(*JobRequest)(nil), // 3: coretex.v1.JobRequest
+	(*JobResult)(nil),  // 4: coretex.v1.JobResult
+	nil,                // 5: coretex.v1.JobRequest.EnvVarsEntry
 }
 var file_job_proto_depIdxs = []int32{
-	0, // 0: cortex.v1.JobRequest.priority:type_name -> cortex.v1.JobPriority
-	5, // 1: cortex.v1.JobRequest.env_vars:type_name -> cortex.v1.JobRequest.EnvVarsEntry
-	2, // 2: cortex.v1.JobRequest.context_mode:type_name -> cortex.v1.ContextMode
-	1, // 3: cortex.v1.JobResult.status:type_name -> cortex.v1.JobStatus
+	0, // 0: coretex.v1.JobRequest.priority:type_name -> coretex.v1.JobPriority
+	5, // 1: coretex.v1.JobRequest.env_vars:type_name -> coretex.v1.JobRequest.EnvVarsEntry
+	2, // 2: coretex.v1.JobRequest.context_mode:type_name -> coretex.v1.ContextMode
+	1, // 3: coretex.v1.JobResult.status:type_name -> coretex.v1.JobStatus
 	4, // [4:4] is the sub-list for method output_type
 	4, // [4:4] is the sub-list for method input_type
 	4, // [4:4] is the sub-list for extension type_name

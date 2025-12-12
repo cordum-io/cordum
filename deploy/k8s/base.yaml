@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: cortex
+  name: coretex
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cortex-pools
-  namespace: cortex
+  name: coretex-pools
+  namespace: coretex
 data:
   pools.yaml: |
     topic_to_pool:
@@ -21,8 +21,8 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cortex-timeouts
-  namespace: cortex
+  name: coretex-timeouts
+  namespace: coretex
 data:
   timeouts.yaml: |
     workflows:
@@ -46,7 +46,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nats
-  namespace: cortex
+  namespace: coretex
 spec:
   replicas: 1
   selector:
@@ -71,7 +71,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: nats
-  namespace: cortex
+  namespace: coretex
 spec:
   selector: {app: nats}
   ports:
@@ -83,7 +83,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis
-  namespace: cortex
+  namespace: coretex
 spec:
   replicas: 1
   selector:
@@ -106,7 +106,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
-  namespace: cortex
+  namespace: coretex
 spec:
   selector: {app: redis}
   ports:
@@ -116,19 +116,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-safety-kernel
-  namespace: cortex
+  name: coretex-safety-kernel
+  namespace: coretex
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: cortex-safety-kernel}
+    matchLabels: {app: coretex-safety-kernel}
   template:
     metadata:
-      labels: {app: cortex-safety-kernel}
+      labels: {app: coretex-safety-kernel}
     spec:
       containers:
       - name: safety
-        image: cortex-cortex-safety-kernel
+        image: coretex-coretex-safety-kernel
         env:
         - name: SAFETY_KERNEL_ADDR
           value: ":50051"
@@ -142,10 +142,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: cortex-safety-kernel
-  namespace: cortex
+  name: coretex-safety-kernel
+  namespace: coretex
 spec:
-  selector: {app: cortex-safety-kernel}
+  selector: {app: coretex-safety-kernel}
   ports:
   - port: 50051
     targetPort: 50051
@@ -153,36 +153,36 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-scheduler
-  namespace: cortex
+  name: coretex-scheduler
+  namespace: coretex
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: cortex-scheduler}
+    matchLabels: {app: coretex-scheduler}
   template:
     metadata:
-      labels: {app: cortex-scheduler}
+      labels: {app: coretex-scheduler}
     spec:
       containers:
       - name: scheduler
-        image: cortex-cortex-scheduler
+        image: coretex-coretex-scheduler
         env:
         - name: NATS_URL
           value: nats://nats:4222
         - name: REDIS_URL
           value: redis://redis:6379
         - name: SAFETY_KERNEL_ADDR
-          value: cortex-safety-kernel:50051
+          value: coretex-safety-kernel:50051
         - name: POOL_CONFIG_PATH
-          value: /etc/cortex/pools.yaml
+          value: /etc/coretex/pools.yaml
         - name: TIMEOUT_CONFIG_PATH
-          value: /etc/cortex/timeouts.yaml
+          value: /etc/coretex/timeouts.yaml
         volumeMounts:
         - name: pools
-          mountPath: /etc/cortex/pools.yaml
+          mountPath: /etc/coretex/pools.yaml
           subPath: pools.yaml
         - name: timeouts
-          mountPath: /etc/cortex/timeouts.yaml
+          mountPath: /etc/coretex/timeouts.yaml
           subPath: timeouts.yaml
         ports:
         - containerPort: 9090
@@ -193,13 +193,13 @@ spec:
       volumes:
       - name: pools
         configMap:
-          name: cortex-pools
+          name: coretex-pools
           items:
           - key: pools.yaml
             path: pools.yaml
       - name: timeouts
         configMap:
-          name: cortex-timeouts
+          name: coretex-timeouts
           items:
           - key: timeouts.yaml
             path: timeouts.yaml
@@ -207,26 +207,26 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-api-gateway
-  namespace: cortex
+  name: coretex-api-gateway
+  namespace: coretex
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: cortex-api-gateway}
+    matchLabels: {app: coretex-api-gateway}
   template:
     metadata:
-      labels: {app: cortex-api-gateway}
+      labels: {app: coretex-api-gateway}
     spec:
       containers:
       - name: gateway
-        image: cortex-cortex-api-gateway
+        image: coretex-coretex-api-gateway
         env:
         - name: NATS_URL
           value: nats://nats:4222
         - name: REDIS_URL
           value: redis://redis:6379
         - name: SAFETY_KERNEL_ADDR
-          value: cortex-safety-kernel:50051
+          value: coretex-safety-kernel:50051
         - name: API_KEY
           value: "change-me"
         - name: TENANT_ID
@@ -244,10 +244,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: cortex-api-gateway
-  namespace: cortex
+  name: coretex-api-gateway
+  namespace: coretex
 spec:
-  selector: {app: cortex-api-gateway}
+  selector: {app: coretex-api-gateway}
   ports:
   - name: http
     port: 8081
@@ -259,19 +259,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-worker-echo
-  namespace: cortex
+  name: coretex-worker-echo
+  namespace: coretex
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: cortex-worker-echo}
+    matchLabels: {app: coretex-worker-echo}
   template:
     metadata:
-      labels: {app: cortex-worker-echo}
+      labels: {app: coretex-worker-echo}
     spec:
       containers:
       - name: worker
-        image: cortex-cortex-worker-echo
+        image: coretex-coretex-worker-echo
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -283,19 +283,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-worker-chat
-  namespace: cortex
+  name: coretex-worker-chat
+  namespace: coretex
 spec:
   replicas: 2
   selector:
-    matchLabels: {app: cortex-worker-chat}
+    matchLabels: {app: coretex-worker-chat}
   template:
     metadata:
-      labels: {app: cortex-worker-chat}
+      labels: {app: coretex-worker-chat}
     spec:
       containers:
       - name: worker
-        image: cortex-cortex-worker-chat
+        image: coretex-coretex-worker-chat
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -305,13 +305,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: cortex-worker-chat-hpa
-  namespace: cortex
+  name: coretex-worker-chat-hpa
+  namespace: coretex
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: cortex-worker-chat
+    name: coretex-worker-chat
   minReplicas: 1
   maxReplicas: 5
   metrics:
@@ -325,19 +325,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-worker-chat-advanced
-  namespace: cortex
+  name: coretex-worker-chat-advanced
+  namespace: coretex
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: cortex-worker-chat-advanced}
+    matchLabels: {app: coretex-worker-chat-advanced}
   template:
     metadata:
-      labels: {app: cortex-worker-chat-advanced}
+      labels: {app: coretex-worker-chat-advanced}
     spec:
       containers:
       - name: worker
-        image: cortex-cortex-worker-chat-advanced
+        image: coretex-coretex-worker-chat-advanced
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -349,19 +349,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-worker-code-llm
-  namespace: cortex
+  name: coretex-worker-code-llm
+  namespace: coretex
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: cortex-worker-code-llm}
+    matchLabels: {app: coretex-worker-code-llm}
   template:
     metadata:
-      labels: {app: cortex-worker-code-llm}
+      labels: {app: coretex-worker-code-llm}
     spec:
       containers:
       - name: worker
-        image: cortex-cortex-worker-code-llm
+        image: coretex-coretex-worker-code-llm
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -373,38 +373,38 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-worker-orchestrator
-  namespace: cortex
+  name: coretex-worker-orchestrator
+  namespace: coretex
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: cortex-worker-orchestrator}
+    matchLabels: {app: coretex-worker-orchestrator}
   template:
     metadata:
-      labels: {app: cortex-worker-orchestrator}
+      labels: {app: coretex-worker-orchestrator}
     spec:
       containers:
       - name: worker
-        image: cortex-cortex-worker-orchestrator
+        image: coretex-coretex-worker-orchestrator
         env:
         - name: NATS_URL
           value: nats://nats:4222
         - name: REDIS_URL
           value: redis://redis:6379
         - name: TIMEOUT_CONFIG_PATH
-          value: /etc/cortex/timeouts.yaml
+          value: /etc/coretex/timeouts.yaml
         - name: USE_PLANNER
           value: "false"
         - name: PLANNER_TOPIC
           value: job.workflow.plan
         volumeMounts:
         - name: timeouts
-          mountPath: /etc/cortex/timeouts.yaml
+          mountPath: /etc/coretex/timeouts.yaml
           subPath: timeouts.yaml
       volumes:
       - name: timeouts
         configMap:
-          name: cortex-timeouts
+          name: coretex-timeouts
           items:
           - key: timeouts.yaml
             path: timeouts.yaml
@@ -412,19 +412,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-worker-planner
-  namespace: cortex
+  name: coretex-worker-planner
+  namespace: coretex
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: cortex-worker-planner}
+    matchLabels: {app: coretex-worker-planner}
   template:
     metadata:
-      labels: {app: cortex-worker-planner}
+      labels: {app: coretex-worker-planner}
     spec:
       containers:
       - name: worker
-        image: cortex-cortex-worker-planner
+        image: coretex-coretex-worker-planner
         env:
         - name: NATS_URL
           value: nats://nats:4222

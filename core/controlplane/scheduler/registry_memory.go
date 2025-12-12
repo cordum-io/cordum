@@ -3,7 +3,7 @@ package scheduler
 import (
 	"sync"
 
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 // MemoryRegistry keeps worker heartbeats in-memory.

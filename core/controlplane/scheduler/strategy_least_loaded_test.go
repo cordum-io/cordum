@@ -3,7 +3,7 @@ package scheduler
 import (
 	"testing"
 
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 func TestLeastLoadedStrategyPicksPoolMatch(t *testing.T) {

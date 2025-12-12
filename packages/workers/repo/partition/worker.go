@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strings"
 
-	worker "github.com/yaront1111/cortex-os/core/agent/runtime"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 const (
@@ -52,7 +52,7 @@ type batch struct {
 
 // Run starts the repo-partition worker.
 func Run() {
-	log.Println("cortex worker repo-partition starting...")
+	log.Println("coretex worker repo-partition starting...")
 
 	cfg := config.Load()
 

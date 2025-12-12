@@ -15,13 +15,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yaront1111/cortex-os/core/agent"
-	ctxengine "github.com/yaront1111/cortex-os/core/context/engine"
-	"github.com/yaront1111/cortex-os/core/infra/bus"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
-	"github.com/yaront1111/cortex-os/packages/providers/ollama"
+	"github.com/yaront1111/coretex-os/core/agent"
+	ctxengine "github.com/yaront1111/coretex-os/core/context/engine"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/packages/providers/ollama"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -56,7 +56,7 @@ type structuredPatch struct {
 
 // Run starts the code-llm worker.
 func Run() {
-	log.Println("cortex worker code-llm starting...")
+	log.Println("coretex worker code-llm starting...")
 
 	cfg := config.Load()
 

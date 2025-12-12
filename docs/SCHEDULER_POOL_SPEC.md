@@ -4,8 +4,8 @@ This describes how the control-plane scheduler routes jobs to pools, tracks stat
 
 ## Subjects & Queue Groups
 - Scheduler subscribes to:
-  - `sys.job.submit` (queue `cortex-scheduler`)
-  - `sys.job.result` (queue `cortex-scheduler`)
+  - `sys.job.submit` (queue `coretex-scheduler`)
+  - `sys.job.result` (queue `coretex-scheduler`)
   - `sys.heartbeat` (fan-out; used to refresh registry)
 - Workers subscribe to their `job.*` subject in a queue group (e.g., `workers-echo`, `workers-repo-scan`).
 

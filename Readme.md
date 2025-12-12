@@ -1,13 +1,13 @@
-# CortexOS — AI Control Plane (Go + NATS)
+# coretexOS — AI Control Plane (Go + NATS)
 
-CortexOS is a Go control plane that routes, schedules, and safeguards AI/agent workloads over a NATS bus. Jobs move as protobuf envelopes, large payloads live in Redis via pointers, safety gates every dispatch, and workers live in `packages/` with thin binaries under `cmd/`.
+coretexOS is a Go control plane that routes, schedules, and safeguards AI/agent workloads over a NATS bus. Jobs move as protobuf envelopes, large payloads live in Redis via pointers, safety gates every dispatch, and workers live in `packages/` with thin binaries under `cmd/`.
 
 ## Architecture Snapshot
 - **Bus:** NATS subjects `sys.job.submit`, `sys.job.result`, `sys.heartbeat`, and worker subjects `job.*` (pool map in `config/pools.yaml`).
 - **Control Plane:** Scheduler (`core/controlplane/scheduler`) with safety check, least-loaded strategy, Redis-backed `JobStore`, and a reconciler that marks stale jobs `TIMEOUT`.
 - **Safety Kernel:** gRPC `Check` service; policy file at `config/safety.yaml` (deny/allow per tenant).
 - **API Gateway:** gRPC + HTTP/WS; writes contexts to Redis, publishes to `sys.job.submit`, tracks state/result via JobStore, streams bus events, and exposes metrics on `:9092/metrics`. Repo review helper endpoint: `POST /api/v1/repo-review`.
-- **Context Engine:** gRPC service (`cmd/cortex-context-engine`) that builds model windows, maintains chat history, and ingests repo scan data in Redis.
+- **Context Engine:** gRPC service (`cmd/coretex-context-engine`) that builds model windows, maintains chat history, and ingests repo scan data in Redis.
 - **Workers/Workflows (packages/):** echo, chat, chat-advanced (Ollama), code-llm (patch generator), planner, demo orchestrator, repo pipeline (scan → SAST → partition → lint → tests → report) driven by `job.workflow.repo.code_review`.
 - **Memory:** Redis for contexts/results and job metadata (`job:*` keys, per-state indices, recent jobs, trace mappings).
 
@@ -61,7 +61,7 @@ curl -X POST http://localhost:8081/api/v1/repo-review \
 
 Inspect results:
 ```bash
-docker exec cortex-redis-1 redis-cli get res:<job_id>
+docker exec coretex-redis-1 redis-cli get res:<job_id>
 ```
 
 ## Development & Testing

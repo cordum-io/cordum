@@ -13,10 +13,10 @@ import (
 	"strconv"
 	"strings"
 
-	worker "github.com/yaront1111/cortex-os/core/agent/runtime"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 const (
@@ -48,7 +48,7 @@ var goVetPattern = regexp.MustCompile(`^(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d
 
 // Run starts the repo-lint worker.
 func Run() {
-	log.Println("cortex worker repo-lint starting...")
+	log.Println("coretex worker repo-lint starting...")
 
 	cfg := config.Load()
 

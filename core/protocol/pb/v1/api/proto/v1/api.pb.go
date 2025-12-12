@@ -316,16 +316,16 @@ func file_api_proto_rawDescGZIP() []byte {
 
 var file_api_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_api_proto_goTypes = []interface{}{
-	(*SubmitJobRequest)(nil),     // 0: cortex.v1.SubmitJobRequest
-	(*SubmitJobResponse)(nil),    // 1: cortex.v1.SubmitJobResponse
-	(*GetJobStatusRequest)(nil),  // 2: cortex.v1.GetJobStatusRequest
-	(*GetJobStatusResponse)(nil), // 3: cortex.v1.GetJobStatusResponse
+	(*SubmitJobRequest)(nil),     // 0: coretex.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),    // 1: coretex.v1.SubmitJobResponse
+	(*GetJobStatusRequest)(nil),  // 2: coretex.v1.GetJobStatusRequest
+	(*GetJobStatusResponse)(nil), // 3: coretex.v1.GetJobStatusResponse
 }
 var file_api_proto_depIdxs = []int32{
-	0, // 0: cortex.v1.CortexApi.SubmitJob:input_type -> cortex.v1.SubmitJobRequest
-	2, // 1: cortex.v1.CortexApi.GetJobStatus:input_type -> cortex.v1.GetJobStatusRequest
-	1, // 2: cortex.v1.CortexApi.SubmitJob:output_type -> cortex.v1.SubmitJobResponse
-	3, // 3: cortex.v1.CortexApi.GetJobStatus:output_type -> cortex.v1.GetJobStatusResponse
+	0, // 0: coretex.v1.coretexApi.SubmitJob:input_type -> coretex.v1.SubmitJobRequest
+	2, // 1: coretex.v1.coretexApi.GetJobStatus:input_type -> coretex.v1.GetJobStatusRequest
+	1, // 2: coretex.v1.coretexApi.SubmitJob:output_type -> coretex.v1.SubmitJobResponse
+	3, // 3: coretex.v1.coretexApi.GetJobStatus:output_type -> coretex.v1.GetJobStatusResponse
 	2, // [2:4] is the sub-list for method output_type
 	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name

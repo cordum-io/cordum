@@ -81,7 +81,7 @@ type BuildWindowRequest struct {
 	unknownFields protoimpl.UnknownFields
 
 	MemoryId        string      `protobuf:"bytes,1,opt,name=memory_id,json=memoryId,proto3" json:"memory_id,omitempty"`
-	Mode            ContextMode `protobuf:"varint,2,opt,name=mode,proto3,enum=cortex.v1.ContextMode" json:"mode,omitempty"`
+	Mode            ContextMode `protobuf:"varint,2,opt,name=mode,proto3,enum=coretex.v1.ContextMode" json:"mode,omitempty"`
 	Model           string      `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	LogicalPayload  []byte      `protobuf:"bytes,4,opt,name=logical_payload,json=logicalPayload,proto3" json:"logical_payload,omitempty"`
 	MaxInputTokens  int32       `protobuf:"varint,5,opt,name=max_input_tokens,json=maxInputTokens,proto3" json:"max_input_tokens,omitempty"`
@@ -233,7 +233,7 @@ type UpdateMemoryRequest struct {
 	MemoryId       string      `protobuf:"bytes,1,opt,name=memory_id,json=memoryId,proto3" json:"memory_id,omitempty"`
 	LogicalPayload []byte      `protobuf:"bytes,2,opt,name=logical_payload,json=logicalPayload,proto3" json:"logical_payload,omitempty"`
 	ModelResponse  []byte      `protobuf:"bytes,3,opt,name=model_response,json=modelResponse,proto3" json:"model_response,omitempty"`
-	Mode           ContextMode `protobuf:"varint,4,opt,name=mode,proto3,enum=cortex.v1.ContextMode" json:"mode,omitempty"`
+	Mode           ContextMode `protobuf:"varint,4,opt,name=mode,proto3,enum=coretex.v1.ContextMode" json:"mode,omitempty"`
 }
 
 func (x *UpdateMemoryRequest) Reset() {
@@ -526,25 +526,25 @@ func file_context_proto_rawDescGZIP() []byte {
 
 var file_context_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_context_proto_goTypes = []interface{}{
-	(*ModelMessage)(nil),         // 0: cortex.v1.ModelMessage
-	(*BuildWindowRequest)(nil),   // 1: cortex.v1.BuildWindowRequest
-	(*BuildWindowResponse)(nil),  // 2: cortex.v1.BuildWindowResponse
-	(*UpdateMemoryRequest)(nil),  // 3: cortex.v1.UpdateMemoryRequest
-	(*UpdateMemoryResponse)(nil), // 4: cortex.v1.UpdateMemoryResponse
-	(*IngestRepoRequest)(nil),    // 5: cortex.v1.IngestRepoRequest
-	(*IngestRepoResponse)(nil),   // 6: cortex.v1.IngestRepoResponse
-	(ContextMode)(0),             // 7: cortex.v1.ContextMode
+	(*ModelMessage)(nil),         // 0: coretex.v1.ModelMessage
+	(*BuildWindowRequest)(nil),   // 1: coretex.v1.BuildWindowRequest
+	(*BuildWindowResponse)(nil),  // 2: coretex.v1.BuildWindowResponse
+	(*UpdateMemoryRequest)(nil),  // 3: coretex.v1.UpdateMemoryRequest
+	(*UpdateMemoryResponse)(nil), // 4: coretex.v1.UpdateMemoryResponse
+	(*IngestRepoRequest)(nil),    // 5: coretex.v1.IngestRepoRequest
+	(*IngestRepoResponse)(nil),   // 6: coretex.v1.IngestRepoResponse
+	(ContextMode)(0),             // 7: coretex.v1.ContextMode
 }
 var file_context_proto_depIdxs = []int32{
-	7, // 0: cortex.v1.BuildWindowRequest.mode:type_name -> cortex.v1.ContextMode
-	0, // 1: cortex.v1.BuildWindowResponse.messages:type_name -> cortex.v1.ModelMessage
-	7, // 2: cortex.v1.UpdateMemoryRequest.mode:type_name -> cortex.v1.ContextMode
-	1, // 3: cortex.v1.ContextEngine.BuildWindow:input_type -> cortex.v1.BuildWindowRequest
-	3, // 4: cortex.v1.ContextEngine.UpdateMemory:input_type -> cortex.v1.UpdateMemoryRequest
-	5, // 5: cortex.v1.ContextEngine.IngestRepo:input_type -> cortex.v1.IngestRepoRequest
-	2, // 6: cortex.v1.ContextEngine.BuildWindow:output_type -> cortex.v1.BuildWindowResponse
-	4, // 7: cortex.v1.ContextEngine.UpdateMemory:output_type -> cortex.v1.UpdateMemoryResponse
-	6, // 8: cortex.v1.ContextEngine.IngestRepo:output_type -> cortex.v1.IngestRepoResponse
+	7, // 0: coretex.v1.BuildWindowRequest.mode:type_name -> coretex.v1.ContextMode
+	0, // 1: coretex.v1.BuildWindowResponse.messages:type_name -> coretex.v1.ModelMessage
+	7, // 2: coretex.v1.UpdateMemoryRequest.mode:type_name -> coretex.v1.ContextMode
+	1, // 3: coretex.v1.ContextEngine.BuildWindow:input_type -> coretex.v1.BuildWindowRequest
+	3, // 4: coretex.v1.ContextEngine.UpdateMemory:input_type -> coretex.v1.UpdateMemoryRequest
+	5, // 5: coretex.v1.ContextEngine.IngestRepo:input_type -> coretex.v1.IngestRepoRequest
+	2, // 6: coretex.v1.ContextEngine.BuildWindow:output_type -> coretex.v1.BuildWindowResponse
+	4, // 7: coretex.v1.ContextEngine.UpdateMemory:output_type -> coretex.v1.UpdateMemoryResponse
+	6, // 8: coretex.v1.ContextEngine.IngestRepo:output_type -> coretex.v1.IngestRepoResponse
 	6, // [6:9] is the sub-list for method output_type
 	3, // [3:6] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name

@@ -1,7 +1,7 @@
 syntax = "proto3";
 
-package cortex.v1;
-option go_package = "github.com/yaront1111/cortex-os/core/protocol/pb/v1";
+package coretex.v1;
+option go_package = "github.com/yaront1111/coretex-os/core/protocol/pb/v1";
 
 service SafetyKernel {
   rpc Check(PolicyCheckRequest) returns (PolicyCheckResponse);

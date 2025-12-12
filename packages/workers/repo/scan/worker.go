@@ -16,10 +16,10 @@ import (
 	"strconv"
 	"strings"
 
-	worker "github.com/yaront1111/cortex-os/core/agent/runtime"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 const (
@@ -52,7 +52,7 @@ type fileRecord struct {
 
 // Run starts the repo-scan worker.
 func Run() {
-	log.Println("cortex worker repo-scan starting...")
+	log.Println("coretex worker repo-scan starting...")
 
 	cfg := config.Load()
 
@@ -165,7 +165,7 @@ func ensureRepo(ctx context.Context, payload *scanContext) (string, func(), erro
 	if branch == "" {
 		branch = "main"
 	}
-	tempDir, err := os.MkdirTemp("", "cortex-repo-*")
+	tempDir, err := os.MkdirTemp("", "coretex-repo-*")
 	if err != nil {
 		return "", nil, err
 	}

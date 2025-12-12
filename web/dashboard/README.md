@@ -1,4 +1,4 @@
-# CortexOS Dashboard (web/dashboard)
+# coretexOS Dashboard (web/dashboard)
 
 Thin React/Vite UI for the control plane:
 - Worker Mesh: `/api/v1/workers`

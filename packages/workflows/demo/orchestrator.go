@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
-	"github.com/yaront1111/cortex-os/core/infra/bus"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	infraMetrics "github.com/yaront1111/cortex-os/core/infra/metrics"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	infraMetrics "github.com/yaront1111/coretex-os/core/infra/metrics"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -41,7 +41,7 @@ var orchestratorActiveJobs int32
 
 // Run starts the generic demo orchestrator worker.
 func Run() {
-	log.Println("cortex worker orchestrator starting...")
+	log.Println("coretex worker orchestrator starting...")
 
 	cfg := config.Load()
 	timeoutCfg, _ := config.LoadTimeouts(cfg.TimeoutConfigPath)
@@ -59,7 +59,7 @@ func Run() {
 		retries = maxChildRetries
 	}
 
-	metrics := infraMetrics.NewWorkflowProm("cortex_orchestrator")
+	metrics := infraMetrics.NewWorkflowProm("coretex_orchestrator")
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", infraMetrics.Handler())

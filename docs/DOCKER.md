@@ -1,10 +1,10 @@
 # Docker Compose Quickstart
 
-Run the full CortexOS stack locally (bus, Redis, control plane, workers, Ollama). Compose builds binaries from `cmd/` and mounts config files.
+Run the full coretexOS stack locally (bus, Redis, control plane, workers, Ollama). Compose builds binaries from `cmd/` and mounts config files.
 
 ## Services in `docker-compose.yml`
 - Infra: `nats`, `redis`, `ollama` (model runtime, persistent volume).
-- Control plane: `cortex-safety-kernel`, `cortex-scheduler`, `cortex-api-gateway`.
+- Control plane: `coretex-safety-kernel`, `coretex-scheduler`, `coretex-api-gateway`.
 - Workers & workflows: echo, chat, chat-advanced, code-llm, planner, demo orchestrator, repo pipeline (`repo-scan`, `repo-sast`, `repo-partition`, `repo-lint`, `repo-tests`, `repo-report`, repo orchestrator).
 - Config mounts: `config/pools.yaml`, `config/timeouts.yaml`, `config/safety.yaml`.
 - Metrics: scheduler `:9090/metrics`, orchestrator `:9091/metrics`, gateway `:9092/metrics` (inside compose network; gateway metrics also exposed on host).
@@ -36,13 +36,13 @@ curl -X POST http://localhost:8081/api/v1/repo-review \
 
 Inspect results:
 ```bash
-docker exec cortex-redis-1 redis-cli get res:<job_id>
+docker exec coretex-redis-1 redis-cli get res:<job_id>
 ```
 
 ## Environment Defaults (override in compose if needed)
 - `NATS_URL=nats://nats:4222`, `REDIS_URL=redis://redis:6379`
-- `SAFETY_KERNEL_ADDR=cortex-safety-kernel:50051`, `SAFETY_POLICY_PATH=/etc/cortex/safety.yaml`
-- `POOL_CONFIG_PATH=/etc/cortex/pools.yaml`, `TIMEOUT_CONFIG_PATH=/etc/cortex/timeouts.yaml`
+- `SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051`, `SAFETY_POLICY_PATH=/etc/coretex/safety.yaml`
+- `POOL_CONFIG_PATH=/etc/coretex/pools.yaml`, `TIMEOUT_CONFIG_PATH=/etc/coretex/timeouts.yaml`
 - `API_KEY` (gateway HTTP/WS), `TENANT_ID` (gateway injects into `JobRequest.env`)
 - `OLLAMA_URL=http://ollama:11434`, `OLLAMA_MODEL=llama3`
 - Orchestrator: `USE_PLANNER=true` (enabled in compose), `PLANNER_TOPIC=job.workflow.plan`

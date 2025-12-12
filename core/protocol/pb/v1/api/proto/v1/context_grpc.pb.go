@@ -19,9 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	ContextEngine_BuildWindow_FullMethodName  = "/cortex.v1.ContextEngine/BuildWindow"
-	ContextEngine_UpdateMemory_FullMethodName = "/cortex.v1.ContextEngine/UpdateMemory"
-	ContextEngine_IngestRepo_FullMethodName   = "/cortex.v1.ContextEngine/IngestRepo"
+	ContextEngine_BuildWindow_FullMethodName  = "/coretex.v1.ContextEngine/BuildWindow"
+	ContextEngine_UpdateMemory_FullMethodName = "/coretex.v1.ContextEngine/UpdateMemory"
+	ContextEngine_IngestRepo_FullMethodName   = "/coretex.v1.ContextEngine/IngestRepo"
 )
 
 // ContextEngineClient is the client API for ContextEngine service.
@@ -162,7 +162,7 @@ func _ContextEngine_IngestRepo_Handler(srv interface{}, ctx context.Context, dec
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ContextEngine_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "cortex.v1.ContextEngine",
+	ServiceName: "coretex.v1.ContextEngine",
 	HandlerType: (*ContextEngineServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
