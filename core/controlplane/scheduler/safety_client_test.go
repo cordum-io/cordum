@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 
@@ -62,5 +63,28 @@ func TestSafetyClientDeny(t *testing.T) {
 	decision, reason := client.Check(&pb.JobRequest{JobId: "1", Topic: "sys.destroy"})
 	if decision != SafetyDeny || reason != "blocked" {
 		t.Fatalf("expected deny, got %v reason=%s", decision, reason)
+	}
+}
+
+type failingSafetyKernelClient struct{}
+
+func (f failingSafetyKernelClient) Check(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, fmt.Errorf("forced failure")
+}
+
+func TestSafetyClientCircuitOpens(t *testing.T) {
+	client := &SafetyClient{client: failingSafetyKernelClient{}}
+	req := &pb.JobRequest{JobId: "1", Topic: "job.echo"}
+
+	for i := 0; i < safetyCircuitFailBudget; i++ {
+		decision, _ := client.Check(req)
+		if decision != SafetyDeny {
+			t.Fatalf("expected deny on failure %d", i)
+		}
+	}
+
+	decision, reason := client.Check(req)
+	if decision != SafetyDeny || reason != "safety kernel circuit open" {
+		t.Fatalf("expected circuit open deny, got %v reason=%s", decision, reason)
 	}
 }

@@ -13,6 +13,7 @@ const (
 	schedulerQueue    = "coretex-scheduler"
 	defaultSenderID   = "coretex-scheduler"
 	protocolVersionV1 = 1
+	storeOpTimeout    = 2 * time.Second
 )
 
 // Engine wires together bus interactions, safety checks, and scheduling decisions.
@@ -88,8 +89,14 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) {
 		e.incJobsReceived(req.Topic)
 		e.setJobState(req.JobId, JobStatePending)
 		if e.jobStore != nil {
-			_ = e.jobStore.AddJobToTrace(context.Background(), p.TraceId, req.JobId)
-			_ = e.jobStore.SetJobMeta(context.Background(), req)
+			ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+			if err := e.jobStore.AddJobToTrace(ctx, p.TraceId, req.JobId); err != nil {
+				logging.Error("scheduler", "failed to add job to trace", "job_id", req.JobId, "trace_id", p.TraceId, "error", err)
+			}
+			if err := e.jobStore.SetJobMeta(ctx, req); err != nil {
+				logging.Error("scheduler", "failed to persist job metadata", "job_id", req.JobId, "error", err)
+			}
+			cancel()
 		}
 		e.processJob(req, p.TraceId)
 
@@ -124,7 +131,11 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 
 	decision, reason := e.safety.Check(req)
 	if e.jobStore != nil {
-		_ = e.jobStore.SetSafetyDecision(context.Background(), req.JobId, safetyDecisionString(decision), reason)
+		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+		if err := e.jobStore.SetSafetyDecision(ctx, req.JobId, safetyDecisionString(decision), reason); err != nil {
+			logging.Error("scheduler", "failed to persist safety decision", "job_id", req.JobId, "error", err)
+		}
+		cancel()
 	}
 	if decision != SafetyAllow {
 		logging.Info("safety", "job denied",
@@ -159,7 +170,11 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 	)
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
-		_ = e.jobStore.SetDeadline(context.Background(), req.JobId, time.Now().Add(time.Duration(budget.GetDeadlineMs())*time.Millisecond))
+		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+		if err := e.jobStore.SetDeadline(ctx, req.JobId, time.Now().Add(time.Duration(budget.GetDeadlineMs())*time.Millisecond)); err != nil {
+			logging.Error("scheduler", "failed to persist deadline", "job_id", req.JobId, "error", err)
+		}
+		cancel()
 	}
 
 	e.setJobState(req.JobId, JobStateScheduled)
@@ -222,14 +237,22 @@ func (e *Engine) setJobState(jobID string, state JobState) {
 	if e.jobStore == nil {
 		return
 	}
-	_ = e.jobStore.SetState(context.Background(), jobID, state)
+	ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+	defer cancel()
+	if err := e.jobStore.SetState(ctx, jobID, state); err != nil {
+		logging.Error("scheduler", "failed to set job state", "job_id", jobID, "state", state, "error", err)
+	}
 }
 
 func (e *Engine) setResultPtr(jobID, ptr string) {
 	if e.jobStore == nil {
 		return
 	}
-	_ = e.jobStore.SetResultPtr(context.Background(), jobID, ptr)
+	ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+	defer cancel()
+	if err := e.jobStore.SetResultPtr(ctx, jobID, ptr); err != nil {
+		logging.Error("scheduler", "failed to persist result ptr", "job_id", jobID, "error", err)
+	}
 }
 
 func safeJobID(req *pb.JobRequest) string {

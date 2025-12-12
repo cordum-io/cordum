@@ -71,6 +71,9 @@ services:
       - SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051
       - API_KEY=super-secret-key
       - TENANT_ID=default
+      - API_RATE_LIMIT_RPS=50
+      - API_RATE_LIMIT_BURST=100
+      - REDIS_DATA_TTL=24h
     ports:
       - "8080:8080"
       - "8081:8081"
@@ -89,6 +92,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-chat:
     build:
@@ -103,6 +107,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-chat-advanced:
     build:
@@ -119,6 +124,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-code-llm:
     build:
@@ -135,6 +141,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-orchestrator:
     build:
@@ -149,6 +156,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - REDIS_DATA_TTL=24h
       - TIMEOUT_CONFIG_PATH=/etc/coretex/timeouts.yaml
       - USE_PLANNER=true
       - PLANNER_TOPIC=job.workflow.plan
@@ -168,6 +176,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-repo-scan:
     build:
@@ -181,6 +190,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-repo-sast:
     build:
@@ -194,6 +204,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-repo-partition:
     build:
@@ -207,6 +218,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-repo-lint:
     build:
@@ -220,6 +232,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - REDIS_DATA_TTL=24h
 
   coretex-worker-repo-tests:
     build:

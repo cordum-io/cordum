@@ -29,6 +29,13 @@ func TestRedisStoreContextAndResult(t *testing.T) {
 		t.Fatalf("put result: %v", err)
 	}
 
+	if ttl := srv.TTL(ctxKey); ttl <= 0 || ttl > defaultDataTTL {
+		t.Fatalf("context TTL not set correctly, got %v", ttl)
+	}
+	if ttl := srv.TTL(resKey); ttl <= 0 || ttl > defaultDataTTL {
+		t.Fatalf("result TTL not set correctly, got %v", ttl)
+	}
+
 	gotCtx, err := store.GetContext(ctx, ctxKey)
 	if err != nil {
 		t.Fatalf("get context: %v", err)
