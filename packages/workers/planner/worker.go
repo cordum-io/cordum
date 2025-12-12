@@ -10,10 +10,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/yaront1111/cortex-os/core/infra/bus"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

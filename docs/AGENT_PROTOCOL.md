@@ -1,4 +1,4 @@
-# CortexOS Agent Protocol (NATS + Redis pointers)
+# coretexOS Agent Protocol (NATS + Redis pointers)
 
 This document describes how control-plane components and workers communicate on the bus, what goes into `context_ptr` / `result_ptr`, and how job state is tracked.
 
@@ -15,7 +15,7 @@ This document describes how control-plane components and workers communicate on 
 - `sys.heartbeat` – worker heartbeats (fan-out, no queue group).
 - `job.*` – worker pools (map lives in `config/pools.yaml`, e.g., `job.echo`, `job.repo.scan`, `job.workflow.repo.code_review`).
 
-## Wire Contracts (CAP – `github.com/coretexos/cap/gen/go/cortex/agent/v1`)
+## Wire Contracts (CAP – `github.com/coretexos/cap/v2/go/cortex/agent/v1`)
 - **Envelope: `BusPacket`**
   - `trace_id`, `sender_id`, `created_at`, `protocol_version` (current: `1`)
   - `payload` oneof: `JobRequest`, `JobResult`, `Heartbeat`, `SystemAlert`.
@@ -49,7 +49,7 @@ This document describes how control-plane components and workers communicate on 
 - Gateway can inject `TENANT_ID` into `JobRequest.env["tenant_id"]`; scheduler writes decision/reason into JobStore for dashboards.
 
 ## Context Engine (non-bus)
-- gRPC service `ContextEngine` (`cmd/cortex-context-engine`) with RPCs:
+- gRPC service `ContextEngine` (`cmd/coretex-context-engine`) with RPCs:
   - `BuildWindow(memory_id, mode, logical_payload, max_input_tokens, max_output_tokens)` → list of `ModelMessage`.
   - `UpdateMemory(memory_id, logical_payload, model_response, mode)` → appends chat history.
   - `IngestRepo(memory_id, repo_root, scan_result)` → stores repo chunks for RAG lookups.

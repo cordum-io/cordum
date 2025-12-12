@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 func TestMemoryRegistry_UpdateHeartbeat(t *testing.T) {

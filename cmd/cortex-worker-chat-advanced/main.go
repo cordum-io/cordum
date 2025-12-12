@@ -1,6 +1,6 @@
 package main
 
-import "github.com/yaront1111/cortex-os/packages/workers/chatadvanced"
+import "github.com/yaront1111/coretex-os/packages/workers/chatadvanced"
 
 func main() {
 	chatadvanced.Run()

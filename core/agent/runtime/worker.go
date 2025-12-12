@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yaront1111/cortex-os/core/infra/bus"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -28,6 +28,7 @@ type Config struct {
 	Capabilities    []string
 	Pool            string
 	MaxParallelJobs int32
+	Labels          map[string]string
 }
 
 // HandlerFunc is the signature for the worker's business logic.
@@ -38,7 +39,7 @@ type Config struct {
 // Let's stick closer to the existing pattern: pass the request, get a JobResult back.
 type HandlerFunc func(ctx context.Context, req *pb.JobRequest, store memory.Store) (*pb.JobResult, error)
 
-// Worker represents a CortexOS worker.
+// Worker represents a coretexOS worker.
 type Worker struct {
 	Config     Config
 	Bus        *bus.NatsBus
@@ -48,6 +49,13 @@ type Worker struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 }
+
+type contextKey string
+
+const (
+	contextHintsKey contextKey = "context_hints"
+	budgetKey       contextKey = "budget"
+)
 
 // New creates a new Worker instance.
 func New(cfg Config) (*Worker, error) {
@@ -123,7 +131,20 @@ func (w *Worker) wrapHandler(handler HandlerFunc) func(*pb.BusPacket) {
 		atomic.AddInt32(&w.ActiveJobs, 1)
 		defer atomic.AddInt32(&w.ActiveJobs, -1)
 
-		ctx := context.Background() // Could use a timeout context here
+		ctx := context.Background()
+		if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(budget.GetDeadlineMs())*time.Millisecond)
+			defer cancel()
+		}
+
+		// Attach hints/budget to context for handlers that want them.
+		if hints := req.GetContextHints(); hints != nil {
+			ctx = context.WithValue(ctx, contextHintsKey, hints)
+		}
+		if budget := req.GetBudget(); budget != nil {
+			ctx = context.WithValue(ctx, budgetKey, budget)
+		}
 
 		// Execute business logic
 		result, err := handler(ctx, req, w.Store)
@@ -186,6 +207,7 @@ func (w *Worker) heartbeatLoop() {
 				Capabilities:    w.Config.Capabilities,
 				Pool:            w.Config.Pool,
 				MaxParallelJobs: w.Config.MaxParallelJobs,
+				Labels:          w.Config.Labels,
 			}
 
 			packet := &pb.BusPacket{

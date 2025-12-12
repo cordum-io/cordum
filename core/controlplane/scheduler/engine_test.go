@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -52,6 +52,18 @@ func (s *fakeJobStore) SetResultPtr(_ context.Context, jobID, resultPtr string) 
 
 func (s *fakeJobStore) GetResultPtr(_ context.Context, jobID string) (string, error) {
 	return s.ptrs[jobID], nil
+}
+
+func (s *fakeJobStore) SetJobMeta(_ context.Context, _ *pb.JobRequest) error {
+	return nil
+}
+
+func (s *fakeJobStore) SetDeadline(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}
+
+func (s *fakeJobStore) ListExpiredDeadlines(_ context.Context, _ int64, _ int64) ([]JobRecord, error) {
+	return nil, nil
 }
 
 func (s *fakeJobStore) ListJobsByState(_ context.Context, state JobState, _ int64, _ int64) ([]JobRecord, error) {

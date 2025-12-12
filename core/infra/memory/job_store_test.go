@@ -6,7 +6,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
 )
 
 func TestRedisJobStoreStateAndResultPtr(t *testing.T) {

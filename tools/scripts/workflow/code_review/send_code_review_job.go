@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yaront1111/cortex-os/core/infra/bus"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -84,5 +84,5 @@ func main() {
 		log.Fatalf("failed to publish workflow job: %v", err)
 	}
 	log.Printf("sent workflow job job_id=%s trace_id=%s context_ptr=%s", jobID, traceID, ctxPtr)
-	log.Println("poll result with: docker exec cortex-redis-1 redis-cli get res:" + jobID)
+	log.Println("poll result with: docker exec coretex-redis-1 redis-cli get res:" + jobID)
 }

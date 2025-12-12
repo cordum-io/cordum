@@ -13,26 +13,26 @@ This captures the end-to-end flows validated with `docker compose up -d` (NATS +
 ### Echo
 ```bash
 GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/send_echo_job.go
-docker exec cortex-redis-1 redis-cli get res:<job_id>
+docker exec coretex-redis-1 redis-cli get res:<job_id>
 ```
 
 ### Chat (simple)
 ```bash
 GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/chat/send_chat_job.go
-docker exec cortex-redis-1 redis-cli get res:<job_id>
+docker exec coretex-redis-1 redis-cli get res:<job_id>
 ```
 
 ### Code LLM
 Requires `ollama pull llama3`.
 ```bash
 GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/code/send_code_job.go
-docker exec cortex-redis-1 redis-cli get res:<job_id>
+docker exec coretex-redis-1 redis-cli get res:<job_id>
 ```
 
 ### Demo Workflow (code patch → explanation)
 ```bash
 GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/workflow/send_workflow_job.go
-docker exec cortex-redis-1 redis-cli get res:<parent_job_id>
+docker exec coretex-redis-1 redis-cli get res:<parent_job_id>
 ```
 
 ### Repo Code Review Pipeline

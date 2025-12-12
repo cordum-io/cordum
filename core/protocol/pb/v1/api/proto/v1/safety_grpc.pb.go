@@ -19,7 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	SafetyKernel_Check_FullMethodName = "/cortex.v1.SafetyKernel/Check"
+	SafetyKernel_Check_FullMethodName = "/coretex.v1.SafetyKernel/Check"
 )
 
 // SafetyKernelClient is the client API for SafetyKernel service.
@@ -96,7 +96,7 @@ func _SafetyKernel_Check_Handler(srv interface{}, ctx context.Context, dec func(
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var SafetyKernel_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "cortex.v1.SafetyKernel",
+	ServiceName: "coretex.v1.SafetyKernel",
 	HandlerType: (*SafetyKernelServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

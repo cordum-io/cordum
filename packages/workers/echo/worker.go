@@ -7,10 +7,10 @@ import (
 	"math/rand"
 	"time"
 
-	worker "github.com/yaront1111/cortex-os/core/agent/runtime"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 const (
@@ -20,7 +20,7 @@ const (
 // Run starts the echo worker.
 func Run() {
 	rand.Seed(time.Now().UnixNano())
-	log.Println("cortex worker echo starting...")
+	log.Println("coretex worker echo starting...")
 
 	cfg := config.Load()
 

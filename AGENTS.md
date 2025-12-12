@@ -1,8 +1,8 @@
-# AGENTS.md – CortexOS AI Control Plane
+# AGENTS.md – coretexOS AI Control Plane
 
 ## Mission
 
-You are helping build **CortexOS**, an AI Control Plane.
+You are helping build **coretexOS**, an AI Control Plane.
 Core ideas:
 - NATS-based bus
 - Go control-plane (scheduler + safety)

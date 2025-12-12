@@ -3,8 +3,8 @@ package scheduler
 import (
 	"fmt"
 
-	"github.com/yaront1111/cortex-os/core/infra/logging"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/infra/logging"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 // LeastLoadedStrategy picks a worker from the pool configured for the job topic using a simple load score.
@@ -29,10 +29,15 @@ func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string
 		return "", fmt.Errorf("no pool configured for topic %q", req.Topic)
 	}
 
+	requiredLabels := req.GetLabels()
+
 	var selected *pb.Heartbeat
 	var bestScore float32
 	for _, hb := range workers {
 		if hb == nil || hb.GetPool() != pool {
+			continue
+		}
+		if !matchesLabels(hb, requiredLabels) {
 			continue
 		}
 		score := loadScore(hb)
@@ -62,4 +67,20 @@ func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string
 
 func loadScore(hb *pb.Heartbeat) float32 {
 	return float32(hb.GetActiveJobs()) + hb.GetCpuLoad()/100.0 + hb.GetGpuUtilization()/100.0
+}
+
+func matchesLabels(hb *pb.Heartbeat, required map[string]string) bool {
+	if len(required) == 0 {
+		return true
+	}
+	labels := hb.GetLabels()
+	if len(labels) == 0 {
+		return false
+	}
+	for k, v := range required {
+		if labels[k] != v {
+			return false
+		}
+	}
+	return true
 }

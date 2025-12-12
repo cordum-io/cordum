@@ -1,4 +1,4 @@
-module github.com/yaront1111/cortex-os
+module github.com/yaront1111/coretex-os
 
 go 1.24.0
 
@@ -6,7 +6,7 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
-	github.com/coretexos/cap v1.0.5
+	github.com/coretexos/cap/v2 v2.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.47.0
@@ -40,4 +40,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 )
 
-// Use published CAP module
+// Use vendored CAP module during development/builds
+replace github.com/coretexos/cap/v2 => ./third_party/coretexos/cap

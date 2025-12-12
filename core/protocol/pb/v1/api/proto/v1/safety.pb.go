@@ -137,7 +137,7 @@ type PolicyCheckResponse struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Decision DecisionType `protobuf:"varint,1,opt,name=decision,proto3,enum=cortex.v1.DecisionType" json:"decision,omitempty"`
+	Decision DecisionType `protobuf:"varint,1,opt,name=decision,proto3,enum=coretex.v1.DecisionType" json:"decision,omitempty"`
 	Reason   string       `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 }
 
@@ -236,14 +236,14 @@ func file_safety_proto_rawDescGZIP() []byte {
 var file_safety_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_safety_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_safety_proto_goTypes = []interface{}{
-	(DecisionType)(0),           // 0: cortex.v1.DecisionType
-	(*PolicyCheckRequest)(nil),  // 1: cortex.v1.PolicyCheckRequest
-	(*PolicyCheckResponse)(nil), // 2: cortex.v1.PolicyCheckResponse
+	(DecisionType)(0),           // 0: coretex.v1.DecisionType
+	(*PolicyCheckRequest)(nil),  // 1: coretex.v1.PolicyCheckRequest
+	(*PolicyCheckResponse)(nil), // 2: coretex.v1.PolicyCheckResponse
 }
 var file_safety_proto_depIdxs = []int32{
-	0, // 0: cortex.v1.PolicyCheckResponse.decision:type_name -> cortex.v1.DecisionType
-	1, // 1: cortex.v1.SafetyKernel.Check:input_type -> cortex.v1.PolicyCheckRequest
-	2, // 2: cortex.v1.SafetyKernel.Check:output_type -> cortex.v1.PolicyCheckResponse
+	0, // 0: coretex.v1.PolicyCheckResponse.decision:type_name -> coretex.v1.DecisionType
+	1, // 1: coretex.v1.SafetyKernel.Check:input_type -> coretex.v1.PolicyCheckRequest
+	2, // 2: coretex.v1.SafetyKernel.Check:output_type -> coretex.v1.PolicyCheckResponse
 	2, // [2:3] is the sub-list for method output_type
 	1, // [1:2] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name

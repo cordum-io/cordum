@@ -175,7 +175,7 @@ func file_heartbeat_proto_rawDescGZIP() []byte {
 
 var file_heartbeat_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_heartbeat_proto_goTypes = []interface{}{
-	(*Heartbeat)(nil), // 0: cortex.v1.Heartbeat
+	(*Heartbeat)(nil), // 0: coretex.v1.Heartbeat
 }
 var file_heartbeat_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type

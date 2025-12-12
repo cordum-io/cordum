@@ -2,12 +2,14 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 const (
@@ -17,6 +19,10 @@ const (
 	jobEventsKeyPrefix      = "job:events:"
 	metaFieldTopic          = "topic"
 	metaFieldTenant         = "tenant"
+	metaFieldPrincipal      = "principal"
+	metaFieldMemory         = "memory_id"
+	metaFieldLabels         = "labels"
+	metaFieldDeadline       = "deadline_unix"
 	metaFieldSafetyDecision = "safety_decision"
 	metaFieldSafetyReason   = "safety_reason"
 )
@@ -53,6 +59,10 @@ var (
 		scheduler.JobStateDenied:     {},
 	}
 )
+
+func deadlineIndexKey() string {
+	return "job:deadline"
+}
 
 // RedisJobStore implements scheduler.JobStore backed by Redis.
 type RedisJobStore struct {
@@ -121,6 +131,11 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 	// append event
 	pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, state))
 
+	if terminalStates[state] {
+		pipe.ZRem(ctx, deadlineIndexKey(), jobID)
+		pipe.HDel(ctx, metaKey, metaFieldDeadline)
+	}
+
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
@@ -148,15 +163,19 @@ func (s *RedisJobStore) ListRecentJobs(ctx context.Context, limit int64) ([]sche
 
 		topic, _ := s.GetTopic(ctx, jobID)
 		tenant, _ := s.GetTenant(ctx, jobID)
+		principal, _ := s.GetPrincipal(ctx, jobID)
 		safetyDecision, safetyReason, _ := s.GetSafetyDecision(ctx, jobID)
+		deadlineUnix, _ := s.getDeadline(ctx, jobID)
 		out = append(out, scheduler.JobRecord{
 			ID:             jobID,
 			UpdatedAt:      int64(m.Score),
 			State:          state,
 			Topic:          topic,
 			Tenant:         tenant,
+			Principal:      principal,
 			SafetyDecision: safetyDecision,
 			SafetyReason:   safetyReason,
+			DeadlineUnix:   deadlineUnix,
 		})
 	}
 	return out, nil
@@ -196,6 +215,92 @@ func (s *RedisJobStore) GetResultPtr(ctx context.Context, jobID string) (string,
 	return val, nil
 }
 
+// SetJobMeta stores first-class metadata for a job, including tenant, principal, memory, labels, and optional deadline.
+func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) error {
+	if req == nil || req.GetJobId() == "" {
+		return fmt.Errorf("invalid job request")
+	}
+	metaKey := jobMetaKey(req.GetJobId())
+	tenantID := req.GetTenantId()
+	if tenantID == "" {
+		tenantID = req.GetEnv()["tenant_id"]
+	}
+	fields := map[string]any{
+		metaFieldTopic:     req.GetTopic(),
+		metaFieldTenant:    tenantID,
+		metaFieldPrincipal: req.GetPrincipalId(),
+		metaFieldMemory:    req.GetMemoryId(),
+	}
+
+	if labels := req.GetLabels(); len(labels) > 0 {
+		if data, err := json.Marshal(labels); err == nil {
+			fields[metaFieldLabels] = string(data)
+		}
+	}
+
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, metaKey, fields)
+
+	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 {
+		deadline := time.Now().Add(time.Duration(budget.GetDeadlineMs()) * time.Millisecond)
+		pipe.HSet(ctx, metaKey, metaFieldDeadline, deadline.Unix())
+		pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.Unix()), Member: req.GetJobId()})
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SetDeadline records a per-job deadline for enforcement.
+func (s *RedisJobStore) SetDeadline(ctx context.Context, jobID string, deadline time.Time) error {
+	if jobID == "" || deadline.IsZero() {
+		return fmt.Errorf("invalid job deadline")
+	}
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDeadline, deadline.Unix())
+	pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.Unix()), Member: jobID})
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// ListExpiredDeadlines returns jobs whose deadline has passed.
+func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64, limit int64) ([]scheduler.JobRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	members, err := s.client.ZRangeByScoreWithScores(ctx, deadlineIndexKey(), &redis.ZRangeBy{
+		Min:    "-inf",
+		Max:    fmt.Sprintf("%d", nowUnix),
+		Offset: 0,
+		Count:  limit,
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]scheduler.JobRecord, 0, len(members))
+	for _, m := range members {
+		jobID, ok := m.Member.(string)
+		if !ok {
+			continue
+		}
+		topic, _ := s.GetTopic(ctx, jobID)
+		tenant, _ := s.GetTenant(ctx, jobID)
+		principal, _ := s.GetPrincipal(ctx, jobID)
+		out = append(out, scheduler.JobRecord{
+			ID:           jobID,
+			UpdatedAt:    int64(m.Score),
+			Topic:        topic,
+			Tenant:       tenant,
+			Principal:    principal,
+			DeadlineUnix: int64(m.Score),
+		})
+	}
+	return out, nil
+}
+
 // ListJobsByState returns jobs in the given state last updated at or before the given unix timestamp.
 func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.JobState, updatedBeforeUnix int64, limit int64) ([]scheduler.JobRecord, error) {
 	key := stateIndexKey(state)
@@ -223,14 +328,18 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.Job
 		topic, _ := s.GetTopic(ctx, jobID)
 		tenant, _ := s.GetTenant(ctx, jobID)
 		safetyDecision, safetyReason, _ := s.GetSafetyDecision(ctx, jobID)
+		principal, _ := s.GetPrincipal(ctx, jobID)
+		deadlineUnix, _ := s.getDeadline(ctx, jobID)
 		out = append(out, scheduler.JobRecord{
 			ID:             jobID,
 			UpdatedAt:      int64(m.Score),
 			State:          state,
 			Topic:          topic,
 			Tenant:         tenant,
+			Principal:      principal,
 			SafetyDecision: safetyDecision,
 			SafetyReason:   safetyReason,
+			DeadlineUnix:   deadlineUnix,
 		})
 	}
 	return out, nil
@@ -290,6 +399,18 @@ func (s *RedisJobStore) GetTenant(ctx context.Context, jobID string) (string, er
 	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldTenant).Result()
 }
 
+// Optional helpers for principal metadata.
+func (s *RedisJobStore) SetPrincipal(ctx context.Context, jobID, principal string) error {
+	if jobID == "" || principal == "" {
+		return fmt.Errorf("jobID and principal are required")
+	}
+	return s.client.HSet(ctx, jobMetaKey(jobID), metaFieldPrincipal, principal).Err()
+}
+
+func (s *RedisJobStore) GetPrincipal(ctx context.Context, jobID string) (string, error) {
+	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldPrincipal).Result()
+}
+
 func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID, decision, reason string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID required")
@@ -327,6 +448,14 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 		})
 	}
 	return out, nil
+}
+
+func (s *RedisJobStore) getDeadline(ctx context.Context, jobID string) (int64, error) {
+	val, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldDeadline).Int64()
+	if err != nil {
+		return 0, err
+	}
+	return val, nil
 }
 
 func isAllowedTransition(from, to scheduler.JobState) bool {

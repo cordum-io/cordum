@@ -353,22 +353,22 @@ func file_packet_proto_rawDescGZIP() []byte {
 
 var file_packet_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_packet_proto_goTypes = []interface{}{
-	(*BusPacket)(nil),             // 0: cortex.v1.BusPacket
-	(*WorkerList)(nil),            // 1: cortex.v1.WorkerList
-	(*SystemAlert)(nil),           // 2: cortex.v1.SystemAlert
+	(*BusPacket)(nil),             // 0: coretex.v1.BusPacket
+	(*WorkerList)(nil),            // 1: coretex.v1.WorkerList
+	(*SystemAlert)(nil),           // 2: coretex.v1.SystemAlert
 	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
-	(*JobRequest)(nil),            // 4: cortex.v1.JobRequest
-	(*JobResult)(nil),             // 5: cortex.v1.JobResult
-	(*Heartbeat)(nil),             // 6: cortex.v1.Heartbeat
+	(*JobRequest)(nil),            // 4: coretex.v1.JobRequest
+	(*JobResult)(nil),             // 5: coretex.v1.JobResult
+	(*Heartbeat)(nil),             // 6: coretex.v1.Heartbeat
 }
 var file_packet_proto_depIdxs = []int32{
-	3, // 0: cortex.v1.BusPacket.created_at:type_name -> google.protobuf.Timestamp
-	4, // 1: cortex.v1.BusPacket.job_request:type_name -> cortex.v1.JobRequest
-	5, // 2: cortex.v1.BusPacket.job_result:type_name -> cortex.v1.JobResult
-	6, // 3: cortex.v1.BusPacket.heartbeat:type_name -> cortex.v1.Heartbeat
-	2, // 4: cortex.v1.BusPacket.alert:type_name -> cortex.v1.SystemAlert
-	1, // 5: cortex.v1.BusPacket.worker_list:type_name -> cortex.v1.WorkerList
-	6, // 6: cortex.v1.WorkerList.workers:type_name -> cortex.v1.Heartbeat
+	3, // 0: coretex.v1.BusPacket.created_at:type_name -> google.protobuf.Timestamp
+	4, // 1: coretex.v1.BusPacket.job_request:type_name -> coretex.v1.JobRequest
+	5, // 2: coretex.v1.BusPacket.job_result:type_name -> coretex.v1.JobResult
+	6, // 3: coretex.v1.BusPacket.heartbeat:type_name -> coretex.v1.Heartbeat
+	2, // 4: coretex.v1.BusPacket.alert:type_name -> coretex.v1.SystemAlert
+	1, // 5: coretex.v1.BusPacket.worker_list:type_name -> coretex.v1.WorkerList
+	6, // 6: coretex.v1.WorkerList.workers:type_name -> coretex.v1.Heartbeat
 	7, // [7:7] is the sub-list for method output_type
 	7, // [7:7] is the sub-list for method input_type
 	7, // [7:7] is the sub-list for extension type_name

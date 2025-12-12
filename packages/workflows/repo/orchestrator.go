@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
-	"github.com/yaront1111/cortex-os/core/infra/bus"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -96,7 +96,7 @@ type repoConfig struct {
 
 // Run starts the repo orchestrator worker.
 func Run() {
-	log.Println("cortex worker repo orchestrator starting...")
+	log.Println("coretex worker repo orchestrator starting...")
 
 	cfg := config.Load()
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
@@ -432,7 +432,7 @@ func hydrateRepo(ctx context.Context, store memory.Store, res *scanResult) (stri
 	if len(data) < 256 {
 		return "", nil, fmt.Errorf("repo archive too small (%d bytes)", len(data))
 	}
-	tmpDir, err := os.MkdirTemp("", "cortex-repo-*")
+	tmpDir, err := os.MkdirTemp("", "coretex-repo-*")
 	if err != nil {
 		return "", nil, err
 	}

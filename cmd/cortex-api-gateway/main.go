@@ -13,13 +13,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
-	"github.com/yaront1111/cortex-os/core/infra/bus"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/logging"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	infraMetrics "github.com/yaront1111/cortex-os/core/infra/metrics"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/logging"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	infraMetrics "github.com/yaront1111/coretex-os/core/infra/metrics"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -36,7 +36,7 @@ const (
 )
 
 type server struct {
-	pb.UnimplementedCortexApiServer
+	pb.UnimplementedCoretexApiServer
 	memStore memory.Store
 	jobStore *memory.RedisJobStore // Typed for ListRecentJobs
 	bus      scheduler.Bus
@@ -58,7 +58,7 @@ var upgrader = websocket.Upgrader{
 func main() {
 	cfg := config.Load()
 
-	gwMetrics := infraMetrics.NewGatewayProm("cortex_api_gateway")
+	gwMetrics := infraMetrics.NewGatewayProm("coretex_api_gateway")
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
 	if err != nil {
@@ -105,7 +105,7 @@ func main() {
 			os.Exit(1)
 		}
 		grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
-		pb.RegisterCortexApiServer(grpcServer, s)
+		pb.RegisterCoretexApiServer(grpcServer, s)
 		reflection.Register(grpcServer)
 		logging.Info("api-gateway", "grpc listening", "addr", defaultGrpcAddr)
 		if err := grpcServer.Serve(lis); err != nil {
@@ -335,17 +335,34 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Prompt    string `json:"prompt"`
-		Topic     string `json:"topic"`
-		AdapterId string `json:"adapter_id"`
-		Priority  string `json:"priority"`
-		Context   any    `json:"context"`
-		MemoryId  string `json:"memory_id"`
-		Mode      string `json:"context_mode"`
+		Prompt             string            `json:"prompt"`
+		Topic              string            `json:"topic"`
+		AdapterId          string            `json:"adapter_id"`
+		Priority           string            `json:"priority"`
+		Context            any               `json:"context"`
+		MemoryId           string            `json:"memory_id"`
+		Mode               string            `json:"context_mode"`
+		TenantId           string            `json:"tenant_id"`
+		PrincipalId        string            `json:"principal_id"`
+		Labels             map[string]string `json:"labels"`
+		MaxInputTokens     int32             `json:"max_input_tokens"`
+		AllowSummarization bool              `json:"allow_summarization"`
+		AllowRetrieval     bool              `json:"allow_retrieval"`
+		Tags               []string          `json:"tags"`
+		MaxOutputTokens    int64             `json:"max_output_tokens"`
+		MaxTotalTokens     int64             `json:"max_total_tokens"`
+		DeadlineMs         int64             `json:"deadline_ms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
+	}
+
+	if req.MaxInputTokens == 0 {
+		req.MaxInputTokens = 8000
+	}
+	if req.MaxOutputTokens == 0 {
+		req.MaxOutputTokens = 1024
 	}
 
 	jobID := uuid.NewString()
@@ -368,8 +385,13 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tenantID := req.TenantId
+	if tenantID == "" {
+		tenantID = s.tenant
+	}
+
 	envVars := map[string]string{
-		"tenant_id": s.tenant,
+		"tenant_id": tenantID,
 	}
 	if memoryID != "" {
 		envVars["memory_id"] = memoryID
@@ -377,8 +399,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	if req.Mode != "" {
 		envVars["context_mode"] = req.Mode
 	}
-	envVars["max_input_tokens"] = "8000"
-	envVars["max_output_tokens"] = "1024"
+	envVars["max_input_tokens"] = fmt.Sprintf("%d", req.MaxInputTokens)
+	envVars["max_output_tokens"] = fmt.Sprintf("%d", req.MaxOutputTokens)
 
 	payload := map[string]any{
 		"prompt":     req.Prompt,
@@ -397,15 +419,35 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// Set initial state
 	_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending)
 	_ = s.jobStore.SetTopic(r.Context(), jobID, req.Topic)
-	_ = s.jobStore.SetTenant(r.Context(), jobID, s.tenant)
+	_ = s.jobStore.SetTenant(r.Context(), jobID, tenantID)
 
 	jobReq := &pb.JobRequest{
-		JobId:      jobID,
-		Topic:      req.Topic,
-		Priority:   jobPriority,
-		ContextPtr: ctxPtr,
-		AdapterId:  req.AdapterId,
-		Env:        envVars,
+		JobId:       jobID,
+		Topic:       req.Topic,
+		Priority:    jobPriority,
+		ContextPtr:  ctxPtr,
+		AdapterId:   req.AdapterId,
+		Env:         envVars,
+		MemoryId:    memoryID,
+		TenantId:    tenantID,
+		PrincipalId: req.PrincipalId,
+		Labels:      req.Labels,
+		ContextHints: &pb.ContextHints{
+			MaxInputTokens:     req.MaxInputTokens,
+			AllowSummarization: req.AllowSummarization,
+			AllowRetrieval:     req.AllowRetrieval,
+			Tags:               req.Tags,
+		},
+		Budget: &pb.Budget{
+			MaxInputTokens:  int64(req.MaxInputTokens),
+			MaxOutputTokens: req.MaxOutputTokens,
+			MaxTotalTokens:  req.MaxTotalTokens,
+			DeadlineMs:      req.DeadlineMs,
+		},
+	}
+
+	if s.jobStore != nil {
+		_ = s.jobStore.SetJobMeta(r.Context(), jobReq)
 	}
 
 	packet := &pb.BusPacket{
@@ -764,12 +806,14 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// Set initial state
 	_ = s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending)
 
+	maxInput := int32(8000)
+	maxOutput := int64(1024)
 	envVars := map[string]string{
 		"tenant_id":         s.tenant,
 		"memory_id":         deriveMemoryIDFromReq(req.GetTopic(), "", jobID),
 		"context_mode":      "",
-		"max_input_tokens":  "8000",
-		"max_output_tokens": "1024",
+		"max_input_tokens":  fmt.Sprintf("%d", maxInput),
+		"max_output_tokens": fmt.Sprintf("%d", maxOutput),
 	}
 	if mode := parseContextMode(req.GetTopic(), ""); mode != "" {
 		envVars["context_mode"] = mode
@@ -782,6 +826,20 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		ContextPtr: ctxPtr,
 		AdapterId:  req.GetAdapterId(),
 		Env:        envVars,
+		MemoryId:   envVars["memory_id"],
+		TenantId:   s.tenant,
+		Labels:     nil,
+		ContextHints: &pb.ContextHints{
+			MaxInputTokens: maxInput,
+		},
+		Budget: &pb.Budget{
+			MaxInputTokens:  int64(maxInput),
+			MaxOutputTokens: maxOutput,
+		},
+	}
+
+	if s.jobStore != nil {
+		_ = s.jobStore.SetJobMeta(ctx, jobReq)
 	}
 
 	packet := &pb.BusPacket{

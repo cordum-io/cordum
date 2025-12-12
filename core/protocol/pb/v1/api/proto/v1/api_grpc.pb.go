@@ -19,126 +19,126 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	CortexApi_SubmitJob_FullMethodName    = "/cortex.v1.CortexApi/SubmitJob"
-	CortexApi_GetJobStatus_FullMethodName = "/cortex.v1.CortexApi/GetJobStatus"
+	CoretexApi_SubmitJob_FullMethodName    = "/coretex.v1.CoretexApi/SubmitJob"
+	CoretexApi_GetJobStatus_FullMethodName = "/coretex.v1.CoretexApi/GetJobStatus"
 )
 
-// CortexApiClient is the client API for CortexApi service.
+// CoretexApiClient is the client API for CoretexApi service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type CortexApiClient interface {
+type CoretexApiClient interface {
 	SubmitJob(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error)
 	GetJobStatus(ctx context.Context, in *GetJobStatusRequest, opts ...grpc.CallOption) (*GetJobStatusResponse, error)
 }
 
-type cortexApiClient struct {
+type coretexApiClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewCortexApiClient(cc grpc.ClientConnInterface) CortexApiClient {
-	return &cortexApiClient{cc}
+func NewCoretexApiClient(cc grpc.ClientConnInterface) CoretexApiClient {
+	return &coretexApiClient{cc}
 }
 
-func (c *cortexApiClient) SubmitJob(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error) {
+func (c *coretexApiClient) SubmitJob(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error) {
 	out := new(SubmitJobResponse)
-	err := c.cc.Invoke(ctx, CortexApi_SubmitJob_FullMethodName, in, out, opts...)
+	err := c.cc.Invoke(ctx, CoretexApi_SubmitJob_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *cortexApiClient) GetJobStatus(ctx context.Context, in *GetJobStatusRequest, opts ...grpc.CallOption) (*GetJobStatusResponse, error) {
+func (c *coretexApiClient) GetJobStatus(ctx context.Context, in *GetJobStatusRequest, opts ...grpc.CallOption) (*GetJobStatusResponse, error) {
 	out := new(GetJobStatusResponse)
-	err := c.cc.Invoke(ctx, CortexApi_GetJobStatus_FullMethodName, in, out, opts...)
+	err := c.cc.Invoke(ctx, CoretexApi_GetJobStatus_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// CortexApiServer is the server API for CortexApi service.
-// All implementations must embed UnimplementedCortexApiServer
+// CoretexApiServer is the server API for CoretexApi service.
+// All implementations must embed UnimplementedCoretexApiServer
 // for forward compatibility
-type CortexApiServer interface {
+type CoretexApiServer interface {
 	SubmitJob(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error)
 	GetJobStatus(context.Context, *GetJobStatusRequest) (*GetJobStatusResponse, error)
-	mustEmbedUnimplementedCortexApiServer()
+	mustEmbedUnimplementedCoretexApiServer()
 }
 
-// UnimplementedCortexApiServer must be embedded to have forward compatible implementations.
-type UnimplementedCortexApiServer struct {
+// UnimplementedCoretexApiServer must be embedded to have forward compatible implementations.
+type UnimplementedCoretexApiServer struct {
 }
 
-func (UnimplementedCortexApiServer) SubmitJob(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error) {
+func (UnimplementedCoretexApiServer) SubmitJob(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitJob not implemented")
 }
-func (UnimplementedCortexApiServer) GetJobStatus(context.Context, *GetJobStatusRequest) (*GetJobStatusResponse, error) {
+func (UnimplementedCoretexApiServer) GetJobStatus(context.Context, *GetJobStatusRequest) (*GetJobStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetJobStatus not implemented")
 }
-func (UnimplementedCortexApiServer) mustEmbedUnimplementedCortexApiServer() {}
+func (UnimplementedCoretexApiServer) mustEmbedUnimplementedCoretexApiServer() {}
 
-// UnsafeCortexApiServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to CortexApiServer will
+// UnsafeCoretexApiServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to CoretexApiServer will
 // result in compilation errors.
-type UnsafeCortexApiServer interface {
-	mustEmbedUnimplementedCortexApiServer()
+type UnsafeCoretexApiServer interface {
+	mustEmbedUnimplementedCoretexApiServer()
 }
 
-func RegisterCortexApiServer(s grpc.ServiceRegistrar, srv CortexApiServer) {
-	s.RegisterService(&CortexApi_ServiceDesc, srv)
+func RegisterCoretexApiServer(s grpc.ServiceRegistrar, srv CoretexApiServer) {
+	s.RegisterService(&CoretexApi_ServiceDesc, srv)
 }
 
-func _CortexApi_SubmitJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _CoretexApi_SubmitJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SubmitJobRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CortexApiServer).SubmitJob(ctx, in)
+		return srv.(CoretexApiServer).SubmitJob(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CortexApi_SubmitJob_FullMethodName,
+		FullMethod: CoretexApi_SubmitJob_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CortexApiServer).SubmitJob(ctx, req.(*SubmitJobRequest))
+		return srv.(CoretexApiServer).SubmitJob(ctx, req.(*SubmitJobRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CortexApi_GetJobStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _CoretexApi_GetJobStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetJobStatusRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CortexApiServer).GetJobStatus(ctx, in)
+		return srv.(CoretexApiServer).GetJobStatus(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CortexApi_GetJobStatus_FullMethodName,
+		FullMethod: CoretexApi_GetJobStatus_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CortexApiServer).GetJobStatus(ctx, req.(*GetJobStatusRequest))
+		return srv.(CoretexApiServer).GetJobStatus(ctx, req.(*GetJobStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// CortexApi_ServiceDesc is the grpc.ServiceDesc for CortexApi service.
+// coretexApi_ServiceDesc is the grpc.ServiceDesc for coretexApi service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var CortexApi_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "cortex.v1.CortexApi",
-	HandlerType: (*CortexApiServer)(nil),
+var CoretexApi_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "coretex.v1.CoretexApi",
+	HandlerType: (*CoretexApiServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "SubmitJob",
-			Handler:    _CortexApi_SubmitJob_Handler,
+			Handler:    _CoretexApi_SubmitJob_Handler,
 		},
 		{
 			MethodName: "GetJobStatus",
-			Handler:    _CortexApi_GetJobStatus_Handler,
+			Handler:    _CoretexApi_GetJobStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

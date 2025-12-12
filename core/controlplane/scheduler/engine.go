@@ -2,15 +2,16 @@ package scheduler
 
 import (
 	"context"
+	"time"
 
-	"github.com/yaront1111/cortex-os/core/infra/logging"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	"github.com/yaront1111/coretex-os/core/infra/logging"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
-	schedulerQueue    = "cortex-scheduler"
-	defaultSenderID   = "cortex-scheduler"
+	schedulerQueue    = "coretex-scheduler"
+	defaultSenderID   = "coretex-scheduler"
 	protocolVersionV1 = 1
 )
 
@@ -43,7 +44,7 @@ func (e *Engine) Start() error {
 	if err := e.bus.Subscribe("sys.job.submit", schedulerQueue, e.HandlePacket); err != nil {
 		return err
 	}
-	if err := e.bus.Subscribe("sys.job.result", "cortex-scheduler", e.HandlePacket); err != nil {
+	if err := e.bus.Subscribe("sys.job.result", "coretex-scheduler", e.HandlePacket); err != nil {
 		return err
 	}
 	return nil
@@ -74,7 +75,10 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) {
 		if req == nil {
 			return
 		}
-		tenant := req.GetEnv()["tenant_id"]
+		tenant := req.GetTenantId()
+		if tenant == "" {
+			tenant = req.GetEnv()["tenant_id"]
+		}
 		logging.Info("scheduler", "job request received",
 			"job_id", req.JobId,
 			"topic", req.Topic,
@@ -85,10 +89,7 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) {
 		e.setJobState(req.JobId, JobStatePending)
 		if e.jobStore != nil {
 			_ = e.jobStore.AddJobToTrace(context.Background(), p.TraceId, req.JobId)
-			_ = e.jobStore.SetTopic(context.Background(), req.JobId, req.Topic)
-			if tenant != "" {
-				_ = e.jobStore.SetTenant(context.Background(), req.JobId, tenant)
-			}
+			_ = e.jobStore.SetJobMeta(context.Background(), req)
 		}
 		e.processJob(req, p.TraceId)
 
@@ -156,6 +157,11 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 		"subject", subject,
 		"topic", req.Topic,
 	)
+
+	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
+		_ = e.jobStore.SetDeadline(context.Background(), req.JobId, time.Now().Add(time.Duration(budget.GetDeadlineMs())*time.Millisecond))
+	}
+
 	e.setJobState(req.JobId, JobStateScheduled)
 	e.incJobsDispatched(req.Topic)
 

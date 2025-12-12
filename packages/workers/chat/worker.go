@@ -6,10 +6,10 @@ import (
 	"log"
 	"time"
 
-	worker "github.com/yaront1111/cortex-os/core/agent/runtime"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
+	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 
 // Run starts the chat worker.
 func Run() {
-	log.Println("cortex worker chat starting...")
+	log.Println("coretex worker chat starting...")
 
 	cfg := config.Load()
 

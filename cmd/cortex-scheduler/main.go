@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/yaront1111/cortex-os/core/controlplane/scheduler"
-	"github.com/yaront1111/cortex-os/core/infra/bus"
-	"github.com/yaront1111/cortex-os/core/infra/config"
-	"github.com/yaront1111/cortex-os/core/infra/memory"
-	infraMetrics "github.com/yaront1111/cortex-os/core/infra/metrics"
+	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/memory"
+	infraMetrics "github.com/yaront1111/coretex-os/core/infra/metrics"
 )
 
 func main() {
-	log.Println("cortex scheduler starting...")
+	log.Println("coretex scheduler starting...")
 
 	cfg := config.Load()
 
@@ -30,7 +30,7 @@ func main() {
 		timeoutsCfg, _ = config.LoadTimeouts("")
 	}
 
-	metrics := infraMetrics.NewProm("cortex_scheduler")
+	metrics := infraMetrics.NewProm("coretex_scheduler")
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())

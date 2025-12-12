@@ -1,10 +1,10 @@
-# CortexOS Dashboard & Capabilities
+# coretexOS Dashboard & Capabilities
 
 **Status:** Implemented & Live.
 
 ## 1. Overview
 
-The CortexOS Dashboard provides a "Control Room" interface for the AI Control Plane. It visualizes the distributed system state, traces execution flows, and allows direct interaction via Chat.
+The coretexOS Dashboard provides a "Control Room" interface for the AI Control Plane. It visualizes the distributed system state, traces execution flows, and allows direct interaction via Chat.
 
 ## 2. Architecture
 
@@ -36,14 +36,14 @@ graph TD
 - **Workflow Tracing:** Visualize parent-child relationships (Trace ID based).
 - **Tech:** Polls `GET /api/v1/jobs` and `GET /api/v1/traces/{id}`.
 
-### D. Cortex Chat (App)
+### D. coretex Chat (App)
 - **Interactive UI:** Chat interface to submit jobs directly.
 - **Feedback Loop:** Shows "Thinking..." state and updates with real-time results.
 - **Tech:** `POST /api/v1/jobs` -> NATS -> Worker -> Redis -> NATS -> `WS /api/v1/stream`.
 
 ## 4. API Endpoints
 
-The `cortex-api-gateway` exposes the following:
+The `coretex-api-gateway` exposes the following:
 
 | Method | Endpoint | Description |
 |---|---|---|

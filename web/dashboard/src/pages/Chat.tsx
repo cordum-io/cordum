@@ -161,7 +161,7 @@ const Chat = () => {
                         <Bot size={24} />
                     </div>
                     <div>
-                        <h2 className="font-bold text-slate-100">Cortex Chat</h2>
+                        <h2 className="font-bold text-slate-100">coretex Chat</h2>
                         <div className="flex items-center gap-2">
                              <span className="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
                              <span className="text-xs text-slate-500 font-mono">job.chat.simple</span>
@@ -234,7 +234,7 @@ const Chat = () => {
                     </div>
                     <div className="text-center mt-2">
                          <span className="text-[10px] text-slate-600">
-                            Powered by CortexOS - Latency: &lt;100ms
+                            Powered by coretexOS - Latency: &lt;100ms
                         </span>
                     </div>
                 </div>
