@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
@@ -31,8 +34,12 @@ import (
 )
 
 const (
-	defaultGrpcAddr = ":8080"
-	defaultHttpAddr = ":8081"
+	defaultGrpcAddr       = ":8080"
+	defaultHttpAddr       = ":8081"
+	maxJobPayloadBytes    = 2 << 20 // 2 MiB limit for incoming job payloads
+	maxPromptChars        = 100000
+	defaultRateLimitRPS   = 50
+	defaultRateLimitBurst = 100
 )
 
 type server struct {
@@ -53,6 +60,162 @@ type server struct {
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+type tokenBucket struct {
+	tokens chan struct{}
+}
+
+func newTokenBucket(rps, burst int) *tokenBucket {
+	if rps <= 0 || burst <= 0 {
+		return nil
+	}
+	tb := &tokenBucket{tokens: make(chan struct{}, burst)}
+	for i := 0; i < burst; i++ {
+		tb.tokens <- struct{}{}
+	}
+	interval := time.Second / time.Duration(rps)
+	if interval <= 0 {
+		interval = time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			select {
+			case tb.tokens <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	return tb
+}
+
+func newTokenBucketFromEnv() *tokenBucket {
+	rps := defaultRateLimitRPS
+	burst := defaultRateLimitBurst
+	if val := os.Getenv("API_RATE_LIMIT_RPS"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			rps = parsed
+		}
+	}
+	if val := os.Getenv("API_RATE_LIMIT_BURST"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			burst = parsed
+		}
+	}
+	return newTokenBucket(rps, burst)
+}
+
+func (tb *tokenBucket) Allow() bool {
+	if tb == nil {
+		return true
+	}
+	select {
+	case <-tb.tokens:
+		return true
+	default:
+		return false
+	}
+}
+
+var apiLimiter = newTokenBucketFromEnv()
+
+type submitJobRequest struct {
+	Prompt             string            `json:"prompt"`
+	Topic              string            `json:"topic"`
+	AdapterId          string            `json:"adapter_id"`
+	Priority           string            `json:"priority"`
+	Context            any               `json:"context"`
+	MemoryId           string            `json:"memory_id"`
+	Mode               string            `json:"context_mode"`
+	TenantId           string            `json:"tenant_id"`
+	PrincipalId        string            `json:"principal_id"`
+	Labels             map[string]string `json:"labels"`
+	MaxInputTokens     int32             `json:"max_input_tokens"`
+	AllowSummarization bool              `json:"allow_summarization"`
+	AllowRetrieval     bool              `json:"allow_retrieval"`
+	Tags               []string          `json:"tags"`
+	MaxOutputTokens    int64             `json:"max_output_tokens"`
+	MaxTotalTokens     int64             `json:"max_total_tokens"`
+	DeadlineMs         int64             `json:"deadline_ms"`
+}
+
+func (r *submitJobRequest) applyDefaults(defaultTenant string) {
+	if r.MaxInputTokens == 0 {
+		r.MaxInputTokens = 8000
+	}
+	if r.MaxOutputTokens == 0 {
+		r.MaxOutputTokens = 1024
+	}
+	if r.Topic == "" {
+		r.Topic = "job.chat.simple"
+	}
+	if r.TenantId == "" {
+		r.TenantId = defaultTenant
+	}
+}
+
+func (r *submitJobRequest) validate(defaultTenant string) error {
+	if r == nil {
+		return errors.New("request required")
+	}
+	if len(r.Prompt) == 0 {
+		return errors.New("prompt is required")
+	}
+	if len(r.Prompt) > maxPromptChars {
+		return fmt.Errorf("prompt too long (>%d chars)", maxPromptChars)
+	}
+	if r.Topic == "" {
+		return errors.New("topic is required")
+	}
+	if !strings.HasPrefix(r.Topic, "job.") {
+		return errors.New("topic must start with job.")
+	}
+	if r.MaxInputTokens < 0 || r.MaxOutputTokens < 0 || r.MaxTotalTokens < 0 {
+		return errors.New("token limits must be non-negative")
+	}
+	if r.DeadlineMs < 0 {
+		return errors.New("deadline_ms must be non-negative")
+	}
+	if len(r.Tags) > 50 {
+		return errors.New("too many tags (max 50)")
+	}
+	if len(r.Labels) > 50 {
+		return errors.New("too many labels (max 50)")
+	}
+	if r.TenantId == "" {
+		r.TenantId = defaultTenant
+	}
+	return nil
+}
+
+type repoReviewRequest struct {
+	RepoURL      string   `json:"repo_url"`
+	Branch       string   `json:"branch"`
+	LocalPath    string   `json:"local_path"`
+	IncludeGlobs []string `json:"include_globs"`
+	ExcludeGlobs []string `json:"exclude_globs"`
+	MaxFiles     int      `json:"max_files"`
+	BatchSize    int      `json:"batch_size"`
+	MaxBatches   int      `json:"max_batches"`
+	RunTests     bool     `json:"run_tests"`
+	TestCommand  string   `json:"test_command"`
+	Priority     string   `json:"priority"`
+	MemoryId     string   `json:"memory_id"`
+}
+
+func (r *repoReviewRequest) validate() error {
+	if r == nil {
+		return errors.New("request required")
+	}
+	if r.RepoURL == "" && r.LocalPath == "" {
+		return errors.New("repo_url or local_path required")
+	}
+	if r.MaxFiles < 0 || r.BatchSize < 0 || r.MaxBatches < 0 {
+		return errors.New("limits must be non-negative")
+	}
+	return nil
 }
 
 func main() {
@@ -104,7 +267,18 @@ func main() {
 			logging.Error("api-gateway", "failed to listen for grpc", "error", err)
 			os.Exit(1)
 		}
-		grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
+		serverOpts := []grpc.ServerOption{grpc.Creds(insecure.NewCredentials())}
+		if certFile := os.Getenv("GRPC_TLS_CERT"); certFile != "" {
+			keyFile := os.Getenv("GRPC_TLS_KEY")
+			if keyFile == "" {
+				logging.Error("api-gateway", "grpc tls key missing", "cert", certFile)
+			} else if creds, err := credentials.NewServerTLSFromFile(certFile, keyFile); err != nil {
+				logging.Error("api-gateway", "grpc tls setup failed", "error", err)
+			} else {
+				serverOpts = []grpc.ServerOption{grpc.Creds(creds)}
+			}
+		}
+		grpcServer := grpc.NewServer(serverOpts...)
 		pb.RegisterCoretexApiServer(grpcServer, s)
 		reflection.Register(grpcServer)
 		logging.Info("api-gateway", "grpc listening", "addr", defaultGrpcAddr)
@@ -147,8 +321,13 @@ func (s *server) startBusTaps() {
 				select {
 				case ch <- evt:
 				default:
-					// drop slow client
+					// drop slow client and remove from registry to avoid leaks
 					conn.Close()
+					s.clientsMu.RUnlock()
+					s.clientsMu.Lock()
+					delete(s.clients, conn)
+					s.clientsMu.Unlock()
+					s.clientsMu.RLock()
 				}
 			}
 			s.clientsMu.RUnlock()
@@ -201,7 +380,7 @@ func startHTTPServer(s *server) {
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
 
 	// CORS Middleware
-	handler := corsMiddleware(apiKeyMiddleware(mux))
+	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(mux)))
 
 	logging.Info("api-gateway", "http listening", "addr", defaultHttpAddr)
 	if err := http.ListenAndServe(defaultHttpAddr, handler); err != nil {
@@ -334,35 +513,18 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Prompt             string            `json:"prompt"`
-		Topic              string            `json:"topic"`
-		AdapterId          string            `json:"adapter_id"`
-		Priority           string            `json:"priority"`
-		Context            any               `json:"context"`
-		MemoryId           string            `json:"memory_id"`
-		Mode               string            `json:"context_mode"`
-		TenantId           string            `json:"tenant_id"`
-		PrincipalId        string            `json:"principal_id"`
-		Labels             map[string]string `json:"labels"`
-		MaxInputTokens     int32             `json:"max_input_tokens"`
-		AllowSummarization bool              `json:"allow_summarization"`
-		AllowRetrieval     bool              `json:"allow_retrieval"`
-		Tags               []string          `json:"tags"`
-		MaxOutputTokens    int64             `json:"max_output_tokens"`
-		MaxTotalTokens     int64             `json:"max_total_tokens"`
-		DeadlineMs         int64             `json:"deadline_ms"`
-	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxJobPayloadBytes)
+
+	var req submitJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
 
-	if req.MaxInputTokens == 0 {
-		req.MaxInputTokens = 8000
-	}
-	if req.MaxOutputTokens == 0 {
-		req.MaxOutputTokens = 1024
+	req.applyDefaults(s.tenant)
+	if err := req.validate(s.tenant); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	jobID := uuid.NewString()
@@ -370,11 +532,6 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	ctxKey := memory.MakeContextKey(jobID)
 	ctxPtr := memory.PointerForKey(ctxKey)
 	jobPriority := parsePriority(req.Priority)
-
-	// Default topic if missing
-	if req.Topic == "" {
-		req.Topic = "job.chat.simple"
-	}
 
 	memoryID := req.MemoryId
 	if memoryID == "" {
@@ -408,7 +565,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		"priority":   req.Priority,
 		"topic":      req.Topic,
 		"created_at": time.Now().UTC().Format(time.RFC3339),
-		"tenant_id":  s.tenant,
+		"tenant_id":  tenantID,
 	}
 	if req.Context != nil {
 		payload["context"] = req.Context
@@ -560,28 +717,34 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func rateLimitMiddleware(next http.Handler) http.Handler {
+	if apiLimiter == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !apiLimiter.Allow() {
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Submit a repo review workflow job with explicit repo context.
 func (s *server) handleSubmitRepoReview(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		RepoURL      string   `json:"repo_url"`
-		Branch       string   `json:"branch"`
-		LocalPath    string   `json:"local_path"`
-		IncludeGlobs []string `json:"include_globs"`
-		ExcludeGlobs []string `json:"exclude_globs"`
-		MaxFiles     int      `json:"max_files"`
-		BatchSize    int      `json:"batch_size"`
-		MaxBatches   int      `json:"max_batches"`
-		RunTests     bool     `json:"run_tests"`
-		TestCommand  string   `json:"test_command"`
-		Priority     string   `json:"priority"`
-		MemoryId     string   `json:"memory_id"`
-	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxJobPayloadBytes)
+	var req repoReviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if req.RepoURL == "" && req.LocalPath == "" {
-		http.Error(w, "repo_url or local_path required", http.StatusBadRequest)
+
+	if err := req.validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -786,17 +949,29 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 // --- gRPC Implementations (unchanged mostly) ---
 
 func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.SubmitJobResponse, error) {
+	payloadReq := submitJobRequest{
+		Prompt:    req.GetPrompt(),
+		Topic:     req.GetTopic(),
+		AdapterId: req.GetAdapterId(),
+		Priority:  req.GetPriority(),
+		TenantId:  s.tenant,
+	}
+	payloadReq.applyDefaults(s.tenant)
+	if err := payloadReq.validate(s.tenant); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
 	ctxKey := memory.MakeContextKey(jobID)
 	ctxPtr := memory.PointerForKey(ctxKey)
-	jobPriority := parsePriority(req.GetPriority())
+	jobPriority := parsePriority(payloadReq.Priority)
 
 	payload := map[string]any{
-		"prompt":     req.GetPrompt(),
-		"adapter_id": req.GetAdapterId(),
-		"priority":   req.GetPriority(),
-		"topic":      req.GetTopic(),
+		"prompt":     payloadReq.Prompt,
+		"adapter_id": payloadReq.AdapterId,
+		"priority":   payloadReq.Priority,
+		"topic":      payloadReq.Topic,
 		"created_at": time.Now().UTC().Format(time.RFC3339),
 		"tenant_id":  s.tenant,
 	}
@@ -806,25 +981,31 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// Set initial state
 	_ = s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending)
 
-	maxInput := int32(8000)
-	maxOutput := int64(1024)
+	maxInput := payloadReq.MaxInputTokens
+	if maxInput <= 0 {
+		maxInput = 8000
+	}
+	maxOutput := payloadReq.MaxOutputTokens
+	if maxOutput <= 0 {
+		maxOutput = 1024
+	}
 	envVars := map[string]string{
 		"tenant_id":         s.tenant,
-		"memory_id":         deriveMemoryIDFromReq(req.GetTopic(), "", jobID),
+		"memory_id":         deriveMemoryIDFromReq(payloadReq.Topic, "", jobID),
 		"context_mode":      "",
 		"max_input_tokens":  fmt.Sprintf("%d", maxInput),
 		"max_output_tokens": fmt.Sprintf("%d", maxOutput),
 	}
-	if mode := parseContextMode(req.GetTopic(), ""); mode != "" {
+	if mode := parseContextMode(payloadReq.Topic, ""); mode != "" {
 		envVars["context_mode"] = mode
 	}
 
 	jobReq := &pb.JobRequest{
 		JobId:      jobID,
-		Topic:      req.GetTopic(),
+		Topic:      payloadReq.Topic,
 		Priority:   jobPriority,
 		ContextPtr: ctxPtr,
-		AdapterId:  req.GetAdapterId(),
+		AdapterId:  payloadReq.AdapterId,
 		Env:        envVars,
 		MemoryId:   envVars["memory_id"],
 		TenantId:   s.tenant,

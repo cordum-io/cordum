@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +15,10 @@ import (
 const (
 	defaultRedisURL = "redis://localhost:6379"
 	pointerPrefix   = "redis://"
+	// data TTL guards against unbounded Redis growth; configurable via env.
+	defaultDataTTL           = 24 * time.Hour
+	envRedisDataTTLInSeconds = "REDIS_DATA_TTL_SECONDS"
+	envRedisDataTTLFallback  = "REDIS_DATA_TTL" // accepts ParseDuration values (e.g. 24h)
 )
 
 // Store defines access to the memory fabric for contexts and results.
@@ -26,13 +32,26 @@ type Store interface {
 
 // RedisStore implements Store using Redis.
 type RedisStore struct {
-	client *redis.Client
+	client  *redis.Client
+	dataTTL time.Duration
 }
 
 // NewRedisStore constructs a Redis-backed store from a redis:// URL.
 func NewRedisStore(url string) (*RedisStore, error) {
 	if url == "" {
 		url = defaultRedisURL
+	}
+
+	ttl := defaultDataTTL
+	if ttlSeconds := os.Getenv(envRedisDataTTLInSeconds); ttlSeconds != "" {
+		if secs, err := strconv.Atoi(ttlSeconds); err == nil && secs > 0 {
+			ttl = time.Duration(secs) * time.Second
+		}
+	}
+	if ttlEnv := os.Getenv(envRedisDataTTLFallback); ttlEnv != "" {
+		if parsed, err := time.ParseDuration(ttlEnv); err == nil && parsed > 0 {
+			ttl = parsed
+		}
 	}
 
 	opts, err := redis.ParseURL(url)
@@ -48,11 +67,11 @@ func NewRedisStore(url string) (*RedisStore, error) {
 		return nil, fmt.Errorf("connect redis: %w", err)
 	}
 
-	return &RedisStore{client: client}, nil
+	return &RedisStore{client: client, dataTTL: ttl}, nil
 }
 
 func (s *RedisStore) PutContext(ctx context.Context, key string, data []byte) error {
-	return s.client.Set(ctx, key, data, 0).Err()
+	return s.client.Set(ctx, key, data, s.dataTTL).Err()
 }
 
 func (s *RedisStore) GetContext(ctx context.Context, key string) ([]byte, error) {
@@ -64,7 +83,7 @@ func (s *RedisStore) GetContext(ctx context.Context, key string) ([]byte, error)
 }
 
 func (s *RedisStore) PutResult(ctx context.Context, key string, data []byte) error {
-	return s.client.Set(ctx, key, data, 0).Err()
+	return s.client.Set(ctx, key, data, s.dataTTL).Err()
 }
 
 func (s *RedisStore) GetResult(ctx context.Context, key string) ([]byte, error) {

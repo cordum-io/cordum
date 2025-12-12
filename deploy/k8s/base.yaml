@@ -231,6 +231,12 @@ spec:
           value: "change-me"
         - name: TENANT_ID
           value: "default"
+        - name: API_RATE_LIMIT_RPS
+          value: "50"
+        - name: API_RATE_LIMIT_BURST
+          value: "100"
+        - name: REDIS_DATA_TTL
+          value: "24h"
         ports:
         - containerPort: 8081
         - containerPort: 9092
@@ -277,6 +283,8 @@ spec:
           value: nats://nats:4222
         - name: REDIS_URL
           value: redis://redis:6379
+        - name: REDIS_DATA_TTL
+          value: "24h"
         ports:
         - containerPort: 8082
 ---
@@ -301,6 +309,8 @@ spec:
           value: nats://nats:4222
         - name: REDIS_URL
           value: redis://redis:6379
+        - name: REDIS_DATA_TTL
+          value: "24h"
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -345,6 +355,8 @@ spec:
           value: redis://redis:6379
         - name: OLLAMA_URL
           value: http://ollama:11434
+        - name: REDIS_DATA_TTL
+          value: "24h"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -369,6 +381,8 @@ spec:
           value: redis://redis:6379
         - name: OLLAMA_URL
           value: http://ollama:11434
+        - name: REDIS_DATA_TTL
+          value: "24h"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -393,6 +407,8 @@ spec:
           value: redis://redis:6379
         - name: TIMEOUT_CONFIG_PATH
           value: /etc/coretex/timeouts.yaml
+        - name: REDIS_DATA_TTL
+          value: "24h"
         - name: USE_PLANNER
           value: "false"
         - name: PLANNER_TOPIC
@@ -430,3 +446,5 @@ spec:
           value: nats://nats:4222
         - name: REDIS_URL
           value: redis://redis:6379
+        - name: REDIS_DATA_TTL
+          value: "24h"

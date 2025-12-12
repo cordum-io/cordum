@@ -3,9 +3,11 @@ package worker
 import (
 	"context"
 	"log"
-	"math/rand"
 	"os"
 	"os/signal"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -194,8 +196,7 @@ func (w *Worker) heartbeatLoop() {
 		case <-w.ctx.Done():
 			return
 		case <-ticker.C:
-			// Stub CPU load for now
-			cpuLoad := float32(rand.Intn(50))
+			cpuLoad := readCPULoad()
 
 			hb := &pb.Heartbeat{
 				WorkerId:        w.Config.WorkerID,
@@ -225,4 +226,33 @@ func (w *Worker) heartbeatLoop() {
 			}
 		}
 	}
+}
+
+// readCPULoad derives a rough CPU load percentage from /proc/loadavg to avoid random scheduling signals.
+func readCPULoad() float32 {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0
+	}
+	load, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0
+	}
+	cores := runtime.NumCPU()
+	if cores <= 0 {
+		cores = 1
+	}
+	pct := (load / float64(cores)) * 100
+	if pct < 0 {
+		pct = 0
+	}
+	// Cap to avoid runaway values if load spikes; scheduler just needs relative signal.
+	if pct > 1000 {
+		pct = 1000
+	}
+	return float32(pct)
 }

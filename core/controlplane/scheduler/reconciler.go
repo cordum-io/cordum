@@ -47,7 +47,8 @@ func (r *Reconciler) tick(ctx context.Context) {
 }
 
 func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff time.Time) {
-	for {
+	const maxIterations = 100
+	for i := 0; i < maxIterations; i++ {
 		records, err := r.store.ListJobsByState(ctx, state, cutoff.Unix(), 200)
 		if err != nil {
 			logging.Error("reconciler", "list jobs", "state", state, "error", err)
@@ -56,15 +57,21 @@ func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff 
 		if len(records) == 0 {
 			return
 		}
+		progress := 0
 		for _, rec := range records {
 			if err := r.store.SetState(ctx, rec.ID, JobStateTimeout); err != nil {
 				logging.Error("reconciler", "mark timeout", "job_id", rec.ID, "error", err)
 			} else {
 				logging.Info("reconciler", "job timed out", "job_id", rec.ID, "from_state", state)
+				progress++
 			}
 		}
-		// continue looping in case there are more
+		if progress == 0 {
+			logging.Error("reconciler", "no progress on timeouts; breaking to avoid spin", "state", state)
+			return
+		}
 	}
+	logging.Error("reconciler", "max iterations reached while processing timeouts", "state", state)
 }
 
 func (r *Reconciler) handleDeadlineExpirations(ctx context.Context, now time.Time) {

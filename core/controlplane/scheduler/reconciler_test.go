@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ type fakeReconcileStore struct {
 	tenants map[string]string
 	safety  map[string]struct{ decision, reason string }
 	dead    map[string]int64
+	fail    bool
 }
 
 func newFakeReconcileStore() *fakeReconcileStore {
@@ -27,6 +29,9 @@ func newFakeReconcileStore() *fakeReconcileStore {
 }
 
 func (s *fakeReconcileStore) SetState(_ context.Context, jobID string, state JobState) error {
+	if s.fail {
+		return errors.New("forced failure")
+	}
 	s.states[jobID] = state
 	s.updated[jobID] = time.Now().Unix()
 	return nil
@@ -149,5 +154,27 @@ func TestReconcilerTimeouts(t *testing.T) {
 	}
 	if store.states["succeeded-old"] != JobStateSucceeded {
 		t.Fatalf("terminal state should be unchanged, got %s", store.states["succeeded-old"])
+	}
+}
+
+func TestReconcilerStopsWhenNoProgress(t *testing.T) {
+	store := newFakeReconcileStore()
+	store.fail = true
+	store.states["stuck"] = JobStateRunning
+	store.updated["stuck"] = time.Now().Add(-10 * time.Minute).Unix()
+
+	rec := NewReconciler(store, time.Minute, time.Minute, 10*time.Millisecond)
+	ctx := context.Background()
+
+	done := make(chan struct{})
+	go func() {
+		rec.handleTimeouts(ctx, JobStateRunning, time.Now().Add(-time.Minute))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("reconciler did not exit when no progress was made")
 	}
 }
