@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package cortex.v1;
+option go_package = "github.com/yaront1111/cortex-os/core/protocol/pb/v1";
+
+import "job.proto";
+
+service ContextEngine {
+  rpc BuildWindow(BuildWindowRequest) returns (BuildWindowResponse);
+  rpc UpdateMemory(UpdateMemoryRequest) returns (UpdateMemoryResponse);
+  rpc IngestRepo(IngestRepoRequest) returns (IngestRepoResponse);
+}
+
+message ModelMessage {
+  string role = 1;
+  string content = 2;
+}
+
+message BuildWindowRequest {
+  string memory_id = 1;
+  ContextMode mode = 2;
+  string model = 3;
+  bytes logical_payload = 4;
+  int32 max_input_tokens = 5;
+  int32 max_output_tokens = 6;
+}
+
+message BuildWindowResponse {
+  repeated ModelMessage messages = 1;
+  int32 input_tokens = 2;
+  int32 output_tokens = 3;
+}
+
+message UpdateMemoryRequest {
+  string memory_id = 1;
+  bytes logical_payload = 2;
+  bytes model_response = 3;
+  ContextMode mode = 4;
+}
+
+message UpdateMemoryResponse {}
+
+message IngestRepoRequest {
+  string memory_id = 1;
+  string repo_root = 2;
+  bytes scan_result = 3;
+}
+
+message IngestRepoResponse {}

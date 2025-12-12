@@ -1,0 +1,7 @@
+default_tenant: default
+tenants:
+  default:
+    allow_topics:
+      - "job.*"
+    deny_topics:
+      - "sys.*"
