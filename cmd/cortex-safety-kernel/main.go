@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
-	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
+	"github.com/yaront1111/cortex-os/core/infra/config"
+	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
@@ -16,11 +16,17 @@ import (
 
 type server struct {
 	pb.UnimplementedSafetyKernelServer
+	policy *config.SafetyPolicy
 }
 
 func main() {
 	cfg := config.Load()
 	addr := cfg.SafetyKernelAddr
+
+	policy, err := config.LoadSafetyPolicy(cfg.SafetyPolicyPath)
+	if err != nil {
+		log.Fatalf("safety-kernel: failed to load policy: %v", err)
+	}
 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -28,7 +34,7 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
-	pb.RegisterSafetyKernelServer(grpcServer, &server{})
+	pb.RegisterSafetyKernelServer(grpcServer, &server{policy: policy})
 	reflection.Register(grpcServer)
 
 	log.Printf("safety-kernel: listening on %s", addr)
@@ -41,19 +47,35 @@ func (s *server) Check(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.Pol
 	decision := pb.DecisionType_DECISION_TYPE_ALLOW
 	reason := ""
 
-	// Minimal policy: block dangerous topic.
-	if req.GetTopic() == "sys.destroy" {
-		decision = pb.DecisionType_DECISION_TYPE_DENY
-		reason = "forbidden topic"
+	tenant := strings.TrimSpace(req.GetTenant())
+	topic := strings.TrimSpace(req.GetTopic())
+
+	// Policy evaluation
+	if s.policy != nil {
+		if tenant == "" {
+			decision = pb.DecisionType_DECISION_TYPE_DENY
+			reason = "missing tenant"
+		} else {
+			allowed, why := s.policy.Evaluate(tenant, topic)
+			if !allowed {
+				decision = pb.DecisionType_DECISION_TYPE_DENY
+				reason = why
+			}
+		}
 	}
 
-	// Require caller identity and job-scoped topics to avoid accidental sys.* publishes.
-	if tenant := strings.TrimSpace(req.GetTenant()); tenant == "" {
-		decision = pb.DecisionType_DECISION_TYPE_DENY
-		reason = "missing tenant"
-	} else if !strings.HasPrefix(req.GetTopic(), "job.") {
-		decision = pb.DecisionType_DECISION_TYPE_DENY
-		reason = "unsupported topic"
+	// Baseline protections: block sys.* and missing tenant.
+	if decision == pb.DecisionType_DECISION_TYPE_ALLOW {
+		if tenant == "" {
+			decision = pb.DecisionType_DECISION_TYPE_DENY
+			reason = "missing tenant"
+		} else if !strings.HasPrefix(topic, "job.") {
+			decision = pb.DecisionType_DECISION_TYPE_DENY
+			reason = "unsupported topic"
+		} else if topic == "sys.destroy" {
+			decision = pb.DecisionType_DECISION_TYPE_DENY
+			reason = "forbidden topic"
+		}
 	}
 
 	// Include trivial latency to simulate real checks.

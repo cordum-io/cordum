@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/bus"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/config"
-	"github.com/yaront1111/cortex-os/core/internal/infrastructure/memory"
-	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
+	"github.com/yaront1111/cortex-os/core/infra/bus"
+	"github.com/yaront1111/cortex-os/core/infra/config"
+	"github.com/yaront1111/cortex-os/core/infra/memory"
+	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -35,10 +35,10 @@ func main() {
 	ctxPtr := memory.PointerForKey(ctxKey)
 
 	payload := map[string]any{
-		"file_path":   "main.go",
+		"file_path":    "main.go",
 		"code_snippet": "func main() {}",
-		"instruction": "Add logging",
-		"created_at":  time.Now().UTC().Format(time.RFC3339),
+		"instruction":  "Add logging",
+		"created_at":   time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(payload)
 	if err := memStore.PutContext(context.Background(), ctxKey, data); err != nil {

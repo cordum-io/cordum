@@ -1,4 +1,4 @@
-module github.com/yaront1111/cortex-os/core
+module github.com/yaront1111/cortex-os
 
 go 1.24.0
 
@@ -6,16 +6,18 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
+	github.com/coretexos/cap v1.0.5
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.47.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.5.1
-	google.golang.org/grpc v1.63.2
+	google.golang.org/grpc v1.64.0
 	google.golang.org/protobuf v1.36.8
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+// Use published CAP module
 require (
 	github.com/alicebob/gopher-json v0.0.0-20230218143504-906a9b012302 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -35,5 +37,7 @@ require (
 	golang.org/x/net v0.45.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240227224415-6ceb2ff114de // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 )
+
+// Use published CAP module

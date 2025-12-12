@@ -1,28 +1,16 @@
-# Build artifacts
-bin/
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.out
-.codex
-# Logs and temp filesthis
-*.log
-*.tmp
-*.swp
-*.swo
-*.bak
-
-# Editor settings
-.vscode/
-.idea/
-
-# OS metadata
 .DS_Store
-Thumbs.db
-
-# Local build/test caches
+*.log
+node_modules/
+venv/
+.venv/
+__pycache__/
+dist/
+build/
+out/
+.idea/
+.vscode/
+generated/
+.codex/
 .gocache/
 .gomodcache/
+.cache/

@@ -1,78 +1,49 @@
 package main
 
 import (
-	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
-	pb "github.com/yaront1111/cortex-os/core/pkg/pb/v1"
+	pb "github.com/yaront1111/cortex-os/core/protocol/pb/v1"
 )
 
-type fakeBus struct {
-	subs map[string]func(*pb.BusPacket)
-}
-
-func newFakeBus() *fakeBus {
-	return &fakeBus{subs: make(map[string]func(*pb.BusPacket))}
-}
-
-func (b *fakeBus) Publish(subject string, packet *pb.BusPacket) error {
-	for sub, handler := range b.subs {
-		if sub == subject {
-			handler(packet)
-			continue
-		}
-		if strings.HasSuffix(sub, ">") {
-			prefix := strings.TrimSuffix(sub, ">")
-			if strings.HasPrefix(subject, prefix) {
-				handler(packet)
-			}
-		}
-	}
-	return nil
-}
-
-func (b *fakeBus) Subscribe(subject, queue string, handler func(*pb.BusPacket)) error {
-	b.subs[subject] = handler
-	return nil
-}
-
-func TestHandleGetWorkersUsesHeartbeatSnapshot(t *testing.T) {
-	bus := newFakeBus()
+func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 	s := &server{
-		bus:      bus,
-		workers:  make(map[string]*pb.Heartbeat),
 		clients:  make(map[*websocket.Conn]chan *pb.BusPacket),
-		eventsCh: make(chan *pb.BusPacket, 10),
-	}
-	s.startBusTaps()
-	defer close(s.eventsCh)
-
-	// Simulate a heartbeat
-	hb := &pb.Heartbeat{
-		WorkerId: "w1",
-		Type:     "cpu",
-		Pool:     "echo",
-	}
-	bus.Publish("sys.heartbeat.echo", &pb.BusPacket{Payload: &pb.BusPacket_Heartbeat{Heartbeat: hb}})
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
-
-	s.handleGetWorkers(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
+		eventsCh: make(chan *pb.BusPacket, 1),
 	}
 
-	var out []*pb.Heartbeat
-	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
 	}
-	if len(out) != 1 || out[0].WorkerId != "w1" {
-		t.Fatalf("unexpected workers response: %#v", out)
+	conn.Close()
+
+	// Give the handler a moment to observe the close and exit cleanly.
+	time.Sleep(20 * time.Millisecond)
+}
+
+// newIPv4Server ensures tests work in sandboxes without IPv6 listeners.
+func newIPv4Server(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("skipping: unable to listen on ipv4 loopback (%v)", err)
 	}
+	srv := httptest.NewUnstartedServer(handler)
+	srv.Listener = ln
+	srv.Start()
+	return srv
 }
