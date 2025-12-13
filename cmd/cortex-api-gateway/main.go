@@ -316,21 +316,27 @@ func (s *server) startBusTaps() {
 	// Broadcast loop to WS clients
 	go func() {
 		for evt := range s.eventsCh {
+			var slowClients []*websocket.Conn
 			s.clientsMu.RLock()
 			for conn, ch := range s.clients {
 				select {
 				case ch <- evt:
 				default:
-					// drop slow client and remove from registry to avoid leaks
-					conn.Close()
-					s.clientsMu.RUnlock()
-					s.clientsMu.Lock()
-					delete(s.clients, conn)
-					s.clientsMu.Unlock()
-					s.clientsMu.RLock()
+					slowClients = append(slowClients, conn)
 				}
 			}
 			s.clientsMu.RUnlock()
+
+			if len(slowClients) > 0 {
+				s.clientsMu.Lock()
+				for _, conn := range slowClients {
+					delete(s.clients, conn)
+				}
+				s.clientsMu.Unlock()
+				for _, conn := range slowClients {
+					conn.Close()
+				}
+			}
 		}
 	}()
 }
@@ -458,29 +464,20 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, err := s.jobStore.GetState(r.Context(), id)
+	state, err := s.jobStore.CancelJob(r.Context(), id)
 	if err != nil {
-		http.Error(w, "job not found", http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("failed to cancel job: %v", err), http.StatusInternalServerError)
 		return
 	}
-	switch state {
-	case scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout, scheduler.JobStateDenied:
+	if state == "" {
+		state = scheduler.JobStateCancelled
+	}
+	if state != scheduler.JobStateCancelled {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"id":     id,
 			"state":  state,
 			"reason": "job already terminal",
-		})
-		return
-	}
-
-	if err := s.jobStore.SetState(r.Context(), id, scheduler.JobStateCancelled); err != nil {
-		// Make cancel idempotent and non-fatal: return current state with reason instead of 409.
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"id":     id,
-			"state":  state,
-			"reason": fmt.Sprintf("failed to cancel: %v", err),
 		})
 		return
 	}

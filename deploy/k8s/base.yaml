@@ -177,6 +177,8 @@ spec:
           value: /etc/coretex/pools.yaml
         - name: TIMEOUT_CONFIG_PATH
           value: /etc/coretex/timeouts.yaml
+        - name: JOB_META_TTL
+          value: "168h"
         volumeMounts:
         - name: pools
           mountPath: /etc/coretex/pools.yaml
@@ -237,6 +239,8 @@ spec:
           value: "100"
         - name: REDIS_DATA_TTL
           value: "24h"
+        - name: JOB_META_TTL
+          value: "168h"
         ports:
         - containerPort: 8081
         - containerPort: 9092

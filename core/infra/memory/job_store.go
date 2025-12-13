@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,8 @@ const (
 	metaFieldDeadline       = "deadline_unix"
 	metaFieldSafetyDecision = "safety_decision"
 	metaFieldSafetyReason   = "safety_reason"
+	envJobMetaTTL           = "JOB_META_TTL"
+	envJobMetaTTLSeconds    = "JOB_META_TTL_SECONDS"
 )
 
 var (
@@ -60,19 +64,91 @@ var (
 	}
 )
 
+var defaultJobMetaTTL = 7 * 24 * time.Hour
+
 func deadlineIndexKey() string {
 	return "job:deadline"
 }
 
 // RedisJobStore implements scheduler.JobStore backed by Redis.
 type RedisJobStore struct {
-	client *redis.Client
+	client  *redis.Client
+	metaTTL time.Duration
+}
+
+// CancelJob atomically cancels a job if it is not already terminal.
+func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.JobState, error) {
+	if jobID == "" {
+		return "", fmt.Errorf("jobID required")
+	}
+	metaKey := jobMetaKey(jobID)
+
+	var resultState scheduler.JobState
+	err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+		current, err := tx.HGet(ctx, metaKey, "state").Result()
+		if err != nil && err != redis.Nil {
+			return err
+		}
+		currState := scheduler.JobState(current)
+		if terminalStates[currState] {
+			resultState = currState
+			return nil
+		}
+
+		now := time.Now().Unix()
+		pipe := tx.TxPipeline()
+		pipe.HSet(ctx, metaKey, map[string]any{
+			"state":      string(scheduler.JobStateCancelled),
+			"updated_at": now,
+		})
+		pipe.Set(ctx, jobStateKey(jobID), string(scheduler.JobStateCancelled), 0)
+
+		if prevIdx := stateIndexKey(currState); prevIdx != "" {
+			pipe.ZRem(ctx, prevIdx, jobID)
+		}
+		if idx := stateIndexKey(scheduler.JobStateCancelled); idx != "" {
+			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
+		}
+
+		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
+		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
+
+		pipe.ZRem(ctx, deadlineIndexKey(), jobID)
+		pipe.HDel(ctx, metaKey, metaFieldDeadline)
+
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, metaKey, s.metaTTL)
+			pipe.Expire(ctx, jobStateKey(jobID), s.metaTTL)
+			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
+		}
+
+		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, scheduler.JobStateCancelled))
+
+		if _, err := pipe.Exec(ctx); err != nil {
+			return err
+		}
+		resultState = scheduler.JobStateCancelled
+		return nil
+	}, metaKey, jobStateKey(jobID))
+	return resultState, err
 }
 
 // NewRedisJobStore constructs a Redis-backed JobStore using a redis:// URL.
 func NewRedisJobStore(url string) (*RedisJobStore, error) {
 	if url == "" {
 		url = defaultRedisURL
+	}
+
+	ttl := defaultJobMetaTTL
+	if v := os.Getenv(envJobMetaTTLSeconds); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			ttl = time.Duration(secs) * time.Second
+		}
+	}
+	if v := os.Getenv(envJobMetaTTL); v != "" {
+		if parsed, err := time.ParseDuration(v); err == nil && parsed > 0 {
+			ttl = parsed
+		}
 	}
 	opts, err := redis.ParseURL(url)
 	if err != nil {
@@ -86,7 +162,7 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 		return nil, fmt.Errorf("connect redis: %w", err)
 	}
 
-	return &RedisJobStore{client: client}, nil
+	return &RedisJobStore{client: client, metaTTL: ttl}, nil
 }
 
 func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state scheduler.JobState) error {
@@ -127,6 +203,11 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 	pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
 	// Keep only last 1000
 	pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, metaKey, s.metaTTL)
+		pipe.Expire(ctx, jobStateKey(jobID), s.metaTTL)
+		pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
+	}
 
 	// append event
 	pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, state))
@@ -240,6 +321,9 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 
 	pipe := s.client.TxPipeline()
 	pipe.HSet(ctx, metaKey, fields)
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, metaKey, s.metaTTL)
+	}
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 {
 		deadline := time.Now().Add(time.Duration(budget.GetDeadlineMs()) * time.Millisecond)

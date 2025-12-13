@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -14,6 +15,9 @@ type Provider struct {
 	url    string
 	model  string
 	client *http.Client
+	mu        sync.Mutex
+	failures  int
+	openUntil time.Time
 }
 
 type request struct {
@@ -41,6 +45,9 @@ func (p *Provider) Generate(ctx context.Context, prompt string) (string, error) 
 	if prompt == "" {
 		return "", fmt.Errorf("empty prompt")
 	}
+	if p.isCircuitOpen() {
+		return "", fmt.Errorf("ollama circuit open")
+	}
 	body, _ := json.Marshal(&request{
 		Model:  p.model,
 		Prompt: prompt,
@@ -54,17 +61,49 @@ func (p *Provider) Generate(ctx context.Context, prompt string) (string, error) 
 
 	resp, err := p.client.Do(req)
 	if err != nil {
+		p.recordFailure()
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		p.recordFailure()
 		return "", fmt.Errorf("ollama returned status %d", resp.StatusCode)
 	}
 	var out response
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		p.recordFailure()
 		return "", err
 	}
+	p.recordSuccess()
 	return out.Response, nil
+}
+
+const (
+	ollamaCircuitFailBudget = 3
+	ollamaCircuitOpenFor    = 30 * time.Second
+)
+
+func (p *Provider) isCircuitOpen() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.openUntil.After(time.Now())
+}
+
+func (p *Provider) recordFailure() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.failures++
+	if p.failures >= ollamaCircuitFailBudget {
+		p.openUntil = time.Now().Add(ollamaCircuitOpenFor)
+		p.failures = 0
+	}
+}
+
+func (p *Provider) recordSuccess() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.failures = 0
+	p.openUntil = time.Time{}
 }
 
 func envOrDefault(key, def string) string {

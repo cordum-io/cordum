@@ -108,7 +108,9 @@ docker exec coretex-redis-1 redis-cli get res:<job_id>
 - `SAFETY_KERNEL_ADDR` (`localhost:50051`), `SAFETY_POLICY_PATH` (`config/safety.yaml`)
 - `POOL_CONFIG_PATH` (`config/pools.yaml`), `TIMEOUT_CONFIG_PATH` (`config/timeouts.yaml`)
 - `CONTEXT_ENGINE_ADDR` (`:50070`)
-- `API_KEY` (optional gateway HTTP/WS key), `TENANT_ID` (gateway injects into `JobRequest.env["tenant_id"]`)
+- Gateway: `API_KEY` (optional HTTP/WS key), `TENANT_ID` (default tenant), `API_RATE_LIMIT_RPS`/`API_RATE_LIMIT_BURST` (token bucket, defaults 50/100), `REDIS_DATA_TTL`/`REDIS_DATA_TTL_SECONDS` (expiry for contexts/results; default 24h)
+- Job metadata retention: `JOB_META_TTL`/`JOB_META_TTL_SECONDS` (expiry for job meta/state; default 7d)
+- TLS (optional): `GRPC_TLS_CERT`/`GRPC_TLS_KEY` on gateway; `SAFETY_KERNEL_TLS_CERT`/`SAFETY_KERNEL_TLS_KEY` on safety kernel; clients can set `SAFETY_KERNEL_TLS_CA` to verify
 - Ollama workers: `OLLAMA_URL` (`http://ollama:11434`), `OLLAMA_MODEL` (`llama3`)
 - Orchestrators: `USE_PLANNER` (default false), `PLANNER_TOPIC` (`job.workflow.plan`)
 
