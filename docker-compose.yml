@@ -51,6 +51,7 @@ services:
       - SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051
       - POOL_CONFIG_PATH=/etc/coretex/pools.yaml
       - TIMEOUT_CONFIG_PATH=/etc/coretex/timeouts.yaml
+      - JOB_META_TTL=168h
     volumes:
       - ./config/pools.yaml:/etc/coretex/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/coretex/timeouts.yaml:ro
@@ -74,6 +75,7 @@ services:
       - API_RATE_LIMIT_RPS=50
       - API_RATE_LIMIT_BURST=100
       - REDIS_DATA_TTL=24h
+      - JOB_META_TTL=168h
     ports:
       - "8080:8080"
       - "8081:8081"
