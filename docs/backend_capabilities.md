@@ -19,7 +19,7 @@ This document tracks the current backend features, their status, and where they 
 - Hints & cancel: respects preferred worker/pool hints via labels; broadcasts job cancel packets to `sys.job.cancel` and job topics (best-effort).
 
 ### API Gateway
-- Jobs: submit/list/get/cancel, trace fetch, repo-review helper.
+- Jobs: submit/list/get/cancel, trace fetch, repo-review helper; list supports filters (state/topic/tenant/team/time/trace) and cursor pagination (`cursor`/`next_cursor`).
 - Workflows: REST CRUD (`/api/v1/workflows`), runs start/get/list, approve step, cancel run; dispatches runs via workflow engine.
 - Config: Redis-backed config service (`/api/v1/config` set, `/api/v1/config/effective` get).
 - Stream: WS stream of bus packets; worker snapshots.

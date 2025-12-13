@@ -11,13 +11,13 @@ This is a living checklist to converge backend features toward the plan.
 - Scheduler now injects effective config into dispatched jobs and uses config service.
 - Scheduler job status alignment with CAP (COMPLETED alias -> SUCCEEDED); handle direct worker routing and registry TTL.
 - Workflow engine: for_each fan-out, retries/backoff, timeout budget hinting, approval pause/resume, and new tests.
-- Gateway: job list filters (state/topic/tenant/team/time/trace + offset), DLQ retry (rehydrates context into new job id), workflow approval + cancel run endpoints.
-- Scheduler hints/cancel: respects preferred worker/pool labels; publishes job cancel packets; trace lookups return full metadata (tenant/team/principal/etc.).
+- Gateway: job list filters (state/topic/tenant/team/time/trace) with cursor pagination (`cursor`/`next_cursor`), DLQ retry (rehydrates context into new job id), workflow approval + cancel run endpoints.
+- Scheduler hints/cancel: respects preferred worker/pool labels; publishes job cancel packets; trace lookups return full metadata (tenant/team/principal/etc.); safety client now sends effective_config to Safety Kernel (CAP proto updated).
 
 ## In Progress / Next
-- Extend workflow engine: stronger routing hints to scheduler, explicit per-step cancellation hooks, artifacts/secrets when steps need them.
+- Extend workflow engine: stronger routing hints to scheduler, explicit per-step cancellation hooks/acks, artifacts/secrets when steps need them.
 - DLQ: add tracing/telemetry on retries and optional context/result replay confirmation.
-- Ops: server-side pagination/cursors and richer job/trace search (state/topic/tenant/team/time).
+- Ops: richer trace search and monitoring/alerts.
 
 ## Optional/Deferred
 - Vector store bindings for embeddings/context steps.

@@ -511,17 +511,17 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
-	offset := int64(0)
-	if q := r.URL.Query().Get("offset"); q != "" {
-		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v >= 0 {
-			offset = v
-		}
-	}
 	stateFilter := strings.ToUpper(r.URL.Query().Get("state"))
 	topicFilter := r.URL.Query().Get("topic")
 	tenantFilter := r.URL.Query().Get("tenant")
 	teamFilter := r.URL.Query().Get("team")
 	traceFilter := r.URL.Query().Get("trace_id")
+	cursor := int64(0)
+	if q := r.URL.Query().Get("cursor"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			cursor = v
+		}
+	}
 	updatedAfter := int64(0)
 	if q := r.URL.Query().Get("updated_after"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil {
@@ -539,8 +539,10 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if traceFilter != "" {
 		jobs, err = s.jobStore.GetTraceJobs(r.Context(), traceFilter)
+	} else if cursor > 0 {
+		jobs, err = s.jobStore.ListRecentJobsByScore(r.Context(), cursor, limit)
 	} else {
-		jobs, err = s.jobStore.ListRecentJobs(r.Context(), limit+offset)
+		jobs, err = s.jobStore.ListRecentJobs(r.Context(), limit)
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -569,13 +571,16 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		filtered = append(filtered, j)
 	}
-	if offset > 0 && offset < int64(len(filtered)) {
-		filtered = filtered[offset:]
-	} else if offset >= int64(len(filtered)) {
-		filtered = []scheduler.JobRecord{}
-	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(filtered)
+	var nextCursor *int64
+	if len(filtered) == int(limit) {
+		nc := filtered[len(filtered)-1].UpdatedAt - 1
+		nextCursor = &nc
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"items":       filtered,
+		"next_cursor": nextCursor,
+	})
 }
 
 func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
