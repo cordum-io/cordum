@@ -251,6 +251,30 @@ func (s *RedisJobStore) ListRecentJobs(ctx context.Context, limit int64) ([]sche
 	if err != nil {
 		return nil, err
 	}
+	return s.buildJobRecords(ctx, members)
+}
+
+// ListRecentJobsByScore returns jobs at or below the provided updated_at score (cursor) ordered desc.
+func (s *RedisJobStore) ListRecentJobsByScore(ctx context.Context, cursor int64, limit int64) ([]scheduler.JobRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	max := "+inf"
+	if cursor > 0 {
+		max = fmt.Sprintf("%d", cursor)
+	}
+	members, err := s.client.ZRevRangeByScoreWithScores(ctx, "job:recent", &redis.ZRangeBy{
+		Max:   max,
+		Min:   "-inf",
+		Count: limit,
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	return s.buildJobRecords(ctx, members)
+}
+
+func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) ([]scheduler.JobRecord, error) {
 	out := make([]scheduler.JobRecord, 0, len(members))
 	if len(members) == 0 {
 		return out, nil

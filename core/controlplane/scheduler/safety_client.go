@@ -86,6 +86,11 @@ func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecision, string) {
 		Labels:      req.GetLabels(),
 		MemoryId:    req.GetMemoryId(),
 	}
+	if env := req.GetEnv(); env != nil {
+		if eff := env[EffectiveConfigEnvVar]; eff != "" {
+			checkReq.EffectiveConfig = []byte(eff)
+		}
+	}
 
 	resp, err := c.client.Check(ctx, checkReq)
 	if err != nil {

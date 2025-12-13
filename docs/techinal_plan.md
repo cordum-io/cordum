@@ -611,6 +611,7 @@ type ModelsConfig struct {
    - Expose gRPC/HTTP get/set endpoints. (done via gateway)  
    - Scheduler pulls effective config; job envs record safety/budget decisions. (done)
    - Routing/cancel: scheduler honors preferred worker/pool labels; publishes cancel packets; DLQ retries rehydrate context before re-dispatch. (done)
+   - Safety kernel now accepts `effective_config` (CAP proto updated); client sends it with checks. (done)
 
 3) **Expression evaluator (Week 3-4)**  
    - Parser + built-ins (`length`, `first`, `where`, `json`, math/logic).  
