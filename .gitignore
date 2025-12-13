@@ -15,3 +15,4 @@ generated/
 .gomodcache/
 .cache/
 bin/
+AGENTS.md

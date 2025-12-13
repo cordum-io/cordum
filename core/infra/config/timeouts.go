@@ -62,14 +62,14 @@ func defaultTimeouts() *TimeoutsConfig {
 	return &TimeoutsConfig{
 		Workflows: map[string]WorkflowTimeout{
 			"code_review_demo": {
-				ChildTimeoutSeconds: 180,
-				TotalTimeoutSeconds: 600,
+				ChildTimeoutSeconds: 1200,
+				TotalTimeoutSeconds: 1800,
 				MaxRetries:          1,
 			},
 		},
 		Topics: map[string]TopicTimeout{
 			"job.code.llm": {
-				TimeoutSeconds: 120,
+				TimeoutSeconds: 1200,
 				MaxRetries:     0,
 			},
 			"job.chat.simple": {
@@ -79,7 +79,7 @@ func defaultTimeouts() *TimeoutsConfig {
 		},
 		Reconciler: ReconcilerTimeout{
 			DispatchTimeoutSeconds: 120,
-			RunningTimeoutSeconds:  300,
+			RunningTimeoutSeconds:  1500,
 			ScanIntervalSeconds:    30,
 		},
 	}

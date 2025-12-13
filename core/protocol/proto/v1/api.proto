@@ -11,10 +11,14 @@ service CoretexApi {
 }
 
 message SubmitJobRequest {
-  string prompt     = 1;
-  string topic      = 2; // e.g. "job.echo" or "job.chat.llm"
-  string adapter_id = 3;
-  string priority   = 4; // "interactive", "batch" (optional for now)
+  string prompt       = 1;
+  string topic        = 2; // e.g. "job.echo" or "job.chat.llm"
+  string adapter_id   = 3;
+  string priority     = 4; // "interactive", "batch" (optional for now)
+  string org_id       = 5;
+  string team_id      = 6;
+  string project_id   = 7;
+  string principal_id = 8;
 }
 
 message SubmitJobResponse {

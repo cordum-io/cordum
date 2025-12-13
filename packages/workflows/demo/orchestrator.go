@@ -97,6 +97,11 @@ func Run() {
 	if err := natsBus.Subscribe(orchestratorJobSubject, orchestratorQueueGroup, handleOrchestratorJob(natsBus, memStore, jobStore, childTimeout, totalTimeout, retries, metrics, cfg)); err != nil {
 		log.Fatalf("failed to subscribe to orchestrator jobs: %v", err)
 	}
+	if direct := bus.DirectSubject(orchestratorWorkerID); direct != "" {
+		if err := natsBus.Subscribe(direct, "", handleOrchestratorJob(natsBus, memStore, jobStore, childTimeout, totalTimeout, retries, metrics, cfg)); err != nil {
+			log.Fatalf("failed to subscribe to direct orchestrator jobs: %v", err)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup

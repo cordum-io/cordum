@@ -83,6 +83,11 @@ func Run() {
 	if err := natsBus.Subscribe(codeLLMJobSubject, codeLLMQueueGroup, handleCodeJob(natsBus, memStore, provider, ctxClient)); err != nil {
 		log.Fatalf("failed to subscribe to code llm jobs: %v", err)
 	}
+	if direct := bus.DirectSubject(codeWorkerID); direct != "" {
+		if err := natsBus.Subscribe(direct, "", handleCodeJob(natsBus, memStore, provider, ctxClient)); err != nil {
+			log.Fatalf("failed to subscribe to direct code llm jobs: %v", err)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup

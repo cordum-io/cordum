@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/yaront1111/coretex-os/core/infra/logging"
@@ -14,6 +16,7 @@ const (
 	defaultSenderID   = "coretex-scheduler"
 	protocolVersionV1 = 1
 	storeOpTimeout    = 2 * time.Second
+	dlqSubject        = "sys.job.dlq"
 )
 
 // Engine wires together bus interactions, safety checks, and scheduling decisions.
@@ -24,6 +27,7 @@ type Engine struct {
 	strategy SchedulingStrategy
 	jobStore JobStore
 	metrics  Metrics
+	config   ConfigProvider
 }
 
 func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy SchedulingStrategy, jobStore JobStore, metrics Metrics) *Engine {
@@ -37,6 +41,12 @@ func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy 
 	}
 }
 
+// WithConfig wires an optional effective config provider for dispatch-time injection.
+func (e *Engine) WithConfig(cfg ConfigProvider) *Engine {
+	e.config = cfg
+	return e
+}
+
 // Start registers subscriptions for the scheduler.
 func (e *Engine) Start() error {
 	if err := e.bus.Subscribe("sys.heartbeat", schedulerQueue, e.HandlePacket); err != nil {
@@ -45,7 +55,7 @@ func (e *Engine) Start() error {
 	if err := e.bus.Subscribe("sys.job.submit", schedulerQueue, e.HandlePacket); err != nil {
 		return err
 	}
-	if err := e.bus.Subscribe("sys.job.result", "coretex-scheduler", e.HandlePacket); err != nil {
+	if err := e.bus.Subscribe("sys.job.result", schedulerQueue, e.HandlePacket); err != nil {
 		return err
 	}
 	return nil
@@ -76,10 +86,7 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) {
 		if req == nil {
 			return
 		}
-		tenant := req.GetTenantId()
-		if tenant == "" {
-			tenant = req.GetEnv()["tenant_id"]
-		}
+		tenant := ExtractTenant(req)
 		logging.Info("scheduler", "job request received",
 			"job_id", req.JobId,
 			"topic", req.Topic,
@@ -149,6 +156,16 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 		return
 	}
 
+	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+		if err := e.jobStore.SetDeadline(ctx, req.JobId, time.Now().Add(time.Duration(budget.GetDeadlineMs())*time.Millisecond)); err != nil {
+			logging.Error("scheduler", "failed to persist deadline", "job_id", req.JobId, "error", err)
+		}
+		cancel()
+	}
+
+	e.attachEffectiveConfig(req)
+
 	workers := e.registry.Snapshot()
 	subject, err := e.strategy.PickSubject(req, workers)
 	if err != nil {
@@ -159,26 +176,14 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 		)
 		e.setJobState(req.JobId, JobStateFailed)
 		e.incJobsCompleted(req.Topic, pb.JobStatus_JOB_STATUS_FAILED.String())
+		e.emitDLQ(req.JobId, req.Topic, pb.JobStatus_JOB_STATUS_FAILED, err.Error())
 		return
-	}
-
-	logging.Info("scheduler", "dispatching job",
-		"job_id", req.JobId,
-		"trace_id", traceID,
-		"subject", subject,
-		"topic", req.Topic,
-	)
-
-	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
-		if err := e.jobStore.SetDeadline(ctx, req.JobId, time.Now().Add(time.Duration(budget.GetDeadlineMs())*time.Millisecond)); err != nil {
-			logging.Error("scheduler", "failed to persist deadline", "job_id", req.JobId, "error", err)
-		}
-		cancel()
 	}
 
 	e.setJobState(req.JobId, JobStateScheduled)
 	e.incJobsDispatched(req.Topic)
+	e.setJobState(req.JobId, JobStateDispatched)
+	e.setJobState(req.JobId, JobStateRunning)
 
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
@@ -198,10 +203,9 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
 		)
 		e.setJobState(req.JobId, JobStateFailed)
 		e.incJobsCompleted(req.Topic, pb.JobStatus_JOB_STATUS_FAILED.String())
+		e.emitDLQ(req.JobId, req.Topic, pb.JobStatus_JOB_STATUS_FAILED, err.Error())
 		return
 	}
-	e.setJobState(req.JobId, JobStateDispatched)
-	e.setJobState(req.JobId, JobStateRunning)
 }
 
 func (e *Engine) handleJobResult(res *pb.JobResult) {
@@ -215,8 +219,10 @@ func (e *Engine) handleJobResult(res *pb.JobResult) {
 	if topic == "" {
 		topic = "unknown"
 	}
-	state := JobStateSucceeded
+	var state JobState
 	switch res.Status {
+	case pb.JobStatus_JOB_STATUS_SUCCEEDED:
+		state = JobStateSucceeded
 	case pb.JobStatus_JOB_STATUS_FAILED:
 		state = JobStateFailed
 	case pb.JobStatus_JOB_STATUS_TIMEOUT:
@@ -225,16 +231,25 @@ func (e *Engine) handleJobResult(res *pb.JobResult) {
 		state = JobStateDenied
 	case pb.JobStatus_JOB_STATUS_CANCELLED:
 		state = JobStateCancelled
+	default:
+		logging.Error("scheduler", "unknown job status",
+			"job_id", res.JobId,
+			"status", res.Status.String(),
+		)
+		state = JobStateFailed
 	}
 	e.setJobState(res.JobId, state)
 	if res.ResultPtr != "" {
 		e.setResultPtr(res.JobId, res.ResultPtr)
 	}
 	e.incJobsCompleted(topic, res.Status.String())
+	if res.Status != pb.JobStatus_JOB_STATUS_SUCCEEDED {
+		e.emitDLQ(res.JobId, topic, res.Status, res.ErrorMessage)
+	}
 }
 
 func (e *Engine) setJobState(jobID string, state JobState) {
-	if e.jobStore == nil {
+	if e.jobStore == nil || jobID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
@@ -245,7 +260,7 @@ func (e *Engine) setJobState(jobID string, state JobState) {
 }
 
 func (e *Engine) setResultPtr(jobID, ptr string) {
-	if e.jobStore == nil {
+	if e.jobStore == nil || jobID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
@@ -253,6 +268,35 @@ func (e *Engine) setResultPtr(jobID, ptr string) {
 	if err := e.jobStore.SetResultPtr(ctx, jobID, ptr); err != nil {
 		logging.Error("scheduler", "failed to persist result ptr", "job_id", jobID, "error", err)
 	}
+}
+
+// attachEffectiveConfig resolves and injects the effective config into the job request env.
+func (e *Engine) attachEffectiveConfig(req *pb.JobRequest) {
+	if e.config == nil || req == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+	defer cancel()
+
+	env := req.GetEnv()
+	stepID := ""
+	teamID := ""
+	if env != nil {
+		stepID = env["step_id"]
+		teamID = env["team_id"]
+	}
+	cfg, err := e.config.Effective(ctx, ExtractTenant(req), teamID, req.GetWorkflowId(), stepID)
+	if err != nil || len(cfg) == 0 {
+		return
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return
+	}
+	if req.Env == nil {
+		req.Env = map[string]string{}
+	}
+	req.Env[EffectiveConfigEnvVar] = string(data)
 }
 
 func safeJobID(req *pb.JobRequest) string {
@@ -267,6 +311,24 @@ func safeTopic(req *pb.JobRequest) string {
 		return ""
 	}
 	return req.Topic
+}
+
+// CancelJob marks a job as cancelled if not already terminal.
+func (e *Engine) CancelJob(ctx context.Context, jobID string) error {
+	if e.jobStore == nil {
+		return fmt.Errorf("job store not configured")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+	defer cancel()
+	_, err := e.jobStore.CancelJob(cctx, jobID)
+	if err != nil {
+		return err
+	}
+	e.publishCancel(jobID, "cancelled by request")
+	return err
 }
 
 func safetyDecisionString(dec SafetyDecision) string {
@@ -306,4 +368,53 @@ func (e *Engine) incSafetyDenied(topic string) {
 	if e.metrics != nil {
 		e.metrics.IncSafetyDenied(topic)
 	}
+}
+
+// publishCancel emits a cancellation packet to a broadcast subject and the job topic (best effort).
+func (e *Engine) publishCancel(jobID, reason string) {
+	if e.bus == nil {
+		return
+	}
+	cancelReq := &pb.JobRequest{
+		JobId: jobID,
+		Topic: "sys.job.cancel",
+		Env: map[string]string{
+			"cancel_reason": reason,
+		},
+	}
+	packet := &pb.BusPacket{
+		TraceId:         jobID,
+		SenderId:        defaultSenderID,
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: protocolVersionV1,
+		Payload:         &pb.BusPacket_JobRequest{JobRequest: cancelReq},
+	}
+	_ = e.bus.Publish("sys.job.cancel", packet)
+	if e.jobStore != nil {
+		if topic, err := e.jobStore.GetTopic(context.Background(), jobID); err == nil && topic != "" {
+			_ = e.bus.Publish(topic, packet)
+		}
+	}
+}
+
+func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string) {
+	if e.bus == nil || jobID == "" {
+		return
+	}
+	packet := &pb.BusPacket{
+		TraceId:         jobID,
+		SenderId:        defaultSenderID,
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: protocolVersionV1,
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:        jobID,
+				Status:       status,
+				ErrorMessage: reason,
+				ResultPtr:    "",
+				WorkerId:     "",
+			},
+		},
+	}
+	_ = e.bus.Publish(dlqSubject, packet)
 }

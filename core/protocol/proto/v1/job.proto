@@ -11,12 +11,19 @@ enum JobPriority {
 }
 
 enum JobStatus {
+  option allow_alias = true;
   JOB_STATUS_UNSPECIFIED = 0;
-  JOB_STATUS_COMPLETED   = 1;
+  JOB_STATUS_COMPLETED   = 1; // legacy name retained
+  JOB_STATUS_SUCCEEDED   = 1; // preferred name
   JOB_STATUS_FAILED      = 2;
   JOB_STATUS_TIMEOUT     = 3;
   JOB_STATUS_DENIED      = 4;
   JOB_STATUS_CANCELLED   = 5;
+  // Extended states to align with agent protocol; append only.
+  JOB_STATUS_PENDING     = 6;
+  JOB_STATUS_SCHEDULED   = 7;
+  JOB_STATUS_DISPATCHED  = 8;
+  JOB_STATUS_RUNNING     = 9;
 }
 
 message JobRequest {
@@ -33,6 +40,10 @@ message JobRequest {
   ContextMode context_mode = 14;   // how to treat context (raw/chat/rag)
   int32 max_input_tokens  = 15;    // optional budget hints
   int32 max_output_tokens = 16;    // optional budget hints
+  string org_id         = 17;
+  string team_id        = 18;
+  string project_id     = 19;
+  string principal_id   = 20;
 }
 
 message JobResult {

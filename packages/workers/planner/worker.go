@@ -94,6 +94,11 @@ func Run() {
 	if err := natsBus.Subscribe(plannerSubject, plannerQueueGroup, handlePlan(natsBus, memStore)); err != nil {
 		log.Fatalf("planner: failed to subscribe: %v", err)
 	}
+	if direct := bus.DirectSubject(plannerWorkerID); direct != "" {
+		if err := natsBus.Subscribe(direct, "", handlePlan(natsBus, memStore)); err != nil {
+			log.Fatalf("planner: failed to subscribe direct: %v", err)
+		}
+	}
 
 	log.Println("planner worker running on subject", plannerSubject)
 	sigCh := make(chan os.Signal, 1)

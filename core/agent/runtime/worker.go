@@ -26,6 +26,7 @@ type Config struct {
 	RedisURL        string
 	QueueGroup      string
 	JobSubject      string
+	DirectSubject   string
 	HeartbeatSub    string
 	Capabilities    []string
 	Pool            string
@@ -50,6 +51,8 @@ type Worker struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
+	cancelMu   sync.Mutex
+	cancels    map[string]context.CancelFunc
 }
 
 type contextKey string
@@ -80,11 +83,12 @@ func New(cfg Config) (*Worker, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Worker{
-		Config: cfg,
-		Bus:    natsBus,
-		Store:  store,
-		ctx:    ctx,
-		cancel: cancel,
+		Config:  cfg,
+		Bus:     natsBus,
+		Store:   store,
+		ctx:     ctx,
+		cancel:  cancel,
+		cancels: make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -95,6 +99,13 @@ func (w *Worker) Start(handler HandlerFunc) error {
 	if err := w.Bus.Subscribe(w.Config.JobSubject, w.Config.QueueGroup, w.wrapHandler(handler)); err != nil {
 		return err
 	}
+	if w.Config.DirectSubject != "" {
+		if err := w.Bus.Subscribe(w.Config.DirectSubject, "", w.wrapHandler(handler)); err != nil {
+			return err
+		}
+	}
+	// Subscribe to cancel notifications (best-effort)
+	_ = w.Bus.Subscribe("sys.job.cancel", "", w.handleCancel)
 
 	// Start Heartbeat loop
 	w.wg.Add(1)
@@ -133,12 +144,15 @@ func (w *Worker) wrapHandler(handler HandlerFunc) func(*pb.BusPacket) {
 		atomic.AddInt32(&w.ActiveJobs, 1)
 		defer atomic.AddInt32(&w.ActiveJobs, -1)
 
-		ctx := context.Background()
+		ctx := w.ctx
 		if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(budget.GetDeadlineMs())*time.Millisecond)
-			defer cancel()
+			var cancelTimeout context.CancelFunc
+			ctx, cancelTimeout = context.WithTimeout(ctx, time.Duration(budget.GetDeadlineMs())*time.Millisecond)
+			defer cancelTimeout()
 		}
+		ctx, cancelJob := context.WithCancel(ctx)
+		w.registerCancel(req.JobId, cancelJob)
+		defer w.clearCancel(req.JobId)
 
 		// Attach hints/budget to context for handlers that want them.
 		if hints := req.GetContextHints(); hints != nil {
@@ -185,6 +199,41 @@ func (w *Worker) wrapHandler(handler HandlerFunc) func(*pb.BusPacket) {
 			}
 		}
 	}
+}
+
+func (w *Worker) handleCancel(packet *pb.BusPacket) {
+	req := packet.GetJobRequest()
+	if req == nil || req.JobId == "" {
+		return
+	}
+	w.cancelMu.Lock()
+	cancel := w.cancels[req.JobId]
+	w.cancelMu.Unlock()
+	if cancel != nil {
+		log.Printf("[WORKER %s] cancelling job_id=%s reason=%s", w.Config.WorkerID, req.JobId, req.GetEnv()["cancel_reason"])
+		cancel()
+	}
+}
+
+func (w *Worker) registerCancel(jobID string, cancel context.CancelFunc) {
+	if jobID == "" || cancel == nil {
+		return
+	}
+	w.cancelMu.Lock()
+	w.cancels[jobID] = cancel
+	w.cancelMu.Unlock()
+}
+
+func (w *Worker) clearCancel(jobID string) {
+	if jobID == "" {
+		return
+	}
+	w.cancelMu.Lock()
+	if cancel, ok := w.cancels[jobID]; ok {
+		cancel()
+		delete(w.cancels, jobID)
+	}
+	w.cancelMu.Unlock()
 }
 
 func (w *Worker) heartbeatLoop() {

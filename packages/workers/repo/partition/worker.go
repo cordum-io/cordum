@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/config"
 	"github.com/yaront1111/coretex-os/core/infra/memory"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
@@ -62,6 +63,7 @@ func Run() {
 		RedisURL:        cfg.RedisURL,
 		QueueGroup:      "workers-repo-partition",
 		JobSubject:      "job.repo.partition",
+		DirectSubject:   bus.DirectSubject(partitionWorkerID),
 		HeartbeatSub:    "sys.heartbeat",
 		Capabilities:    []string{"repo-partition"},
 		Pool:            "repo-partition",

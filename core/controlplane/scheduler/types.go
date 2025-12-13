@@ -40,6 +40,11 @@ type SchedulingStrategy interface {
 	PickSubject(req *pb.JobRequest, workers map[string]*pb.Heartbeat) (string, error)
 }
 
+// ConfigProvider resolves effective configuration for a given context.
+type ConfigProvider interface {
+	Effective(ctx context.Context, orgID, teamID, workflowID, stepID string) (map[string]any, error)
+}
+
 // Metrics captures counters for scheduler events.
 type Metrics interface {
 	IncJobsReceived(topic string)
@@ -63,6 +68,14 @@ const (
 	JobStateDenied     JobState = "DENIED"
 )
 
+var terminalStates = map[JobState]bool{
+	JobStateSucceeded: true,
+	JobStateFailed:    true,
+	JobStateCancelled: true,
+	JobStateTimeout:   true,
+	JobStateDenied:    true,
+}
+
 // JobRecord captures a lightweight view of job state for reconciliation.
 type JobRecord struct {
 	ID             string   `json:"id"`
@@ -70,6 +83,7 @@ type JobRecord struct {
 	State          JobState `json:"state"`
 	Topic          string   `json:"topic,omitempty"`
 	Tenant         string   `json:"tenant,omitempty"`
+	Team           string   `json:"team,omitempty"`
 	Principal      string   `json:"principal,omitempty"`
 	SafetyDecision string   `json:"safety_decision,omitempty"`
 	SafetyReason   string   `json:"safety_reason,omitempty"`
@@ -94,6 +108,11 @@ type JobStore interface {
 	GetTopic(ctx context.Context, jobID string) (string, error)
 	SetTenant(ctx context.Context, jobID, tenant string) error
 	GetTenant(ctx context.Context, jobID string) (string, error)
+	SetTeam(ctx context.Context, jobID, team string) error
+	GetTeam(ctx context.Context, jobID string) (string, error)
 	SetSafetyDecision(ctx context.Context, jobID, decision, reason string) error
 	GetSafetyDecision(ctx context.Context, jobID string) (decision string, reason string, err error)
+	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (bool, error)
+	ReleaseLock(ctx context.Context, key string) error
+	CancelJob(ctx context.Context, jobID string) (JobState, error)
 }
