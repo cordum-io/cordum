@@ -20,8 +20,8 @@ func TestLeastLoadedStrategyPicksPoolMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if subject != "job.echo" {
-		t.Fatalf("expected subject job.echo, got %s", subject)
+	if subject != "worker.w2.jobs" {
+		t.Fatalf("expected subject worker.w2.jobs, got %s", subject)
 	}
 }
 
@@ -58,8 +58,34 @@ func TestLeastLoadedStrategyUsesLoadScore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if subject != "job.echo" {
-		t.Fatalf("expected subject job.echo, got %s", subject)
+	if subject != "worker.w2.jobs" {
+		t.Fatalf("expected subject worker.w2.jobs, got %s", subject)
 	}
 	// w2 should be selected due to lower score; ensure best isn't nil
+}
+
+func TestLeastLoadedStrategyHonorsPreferredWorker(t *testing.T) {
+	strategy := NewLeastLoadedStrategy(map[string]string{
+		"job.echo": "echo",
+	})
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 5, CpuLoad: 90},
+		"w2": {WorkerId: "w2", Pool: "echo", ActiveJobs: 2, CpuLoad: 50},
+		"w3": {WorkerId: "w3", Pool: "echo", ActiveJobs: 1, CpuLoad: 10},
+	}
+
+	req := &pb.JobRequest{
+		Topic: "job.echo",
+		Labels: map[string]string{
+			"preferred_worker_id": "w2",
+		},
+	}
+
+	subject, err := strategy.PickSubject(req, workers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "worker.w2.jobs" {
+		t.Fatalf("expected subject worker.w2.jobs via preferred hint, got %s", subject)
+	}
 }

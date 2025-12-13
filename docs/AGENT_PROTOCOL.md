@@ -15,7 +15,7 @@ This document describes how control-plane components and workers communicate on 
 - `sys.heartbeat` – worker heartbeats (fan-out, no queue group).
 - `job.*` – worker pools (map lives in `config/pools.yaml`, e.g., `job.echo`, `job.repo.scan`, `job.workflow.repo.code_review`).
 
-## Wire Contracts (CAP – `github.com/coretexos/cap/v2/go/cortex/agent/v1`)
+## Wire Contracts (CAP – `github.com/coretexos/cap/v2/go/coretex/agent/v1`)
 - **Envelope: `BusPacket`**
   - `trace_id`, `sender_id`, `created_at`, `protocol_version` (current: `1`)
   - `payload` oneof: `JobRequest`, `JobResult`, `Heartbeat`, `SystemAlert`.

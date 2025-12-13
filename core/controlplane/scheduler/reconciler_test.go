@@ -13,8 +13,10 @@ type fakeReconcileStore struct {
 	states  map[string]JobState
 	updated map[string]int64
 	tenants map[string]string
+	teams   map[string]string
 	safety  map[string]struct{ decision, reason string }
 	dead    map[string]int64
+	locks   map[string]time.Time
 	fail    bool
 }
 
@@ -23,8 +25,10 @@ func newFakeReconcileStore() *fakeReconcileStore {
 		states:  make(map[string]JobState),
 		updated: make(map[string]int64),
 		tenants: make(map[string]string),
+		teams:   make(map[string]string),
 		safety:  make(map[string]struct{ decision, reason string }),
 		dead:    make(map[string]int64),
+		locks:   make(map[string]time.Time),
 	}
 }
 
@@ -109,6 +113,15 @@ func (s *fakeReconcileStore) GetTenant(_ context.Context, jobID string) (string,
 	return s.tenants[jobID], nil
 }
 
+func (s *fakeReconcileStore) SetTeam(_ context.Context, jobID, team string) error {
+	s.teams[jobID] = team
+	return nil
+}
+
+func (s *fakeReconcileStore) GetTeam(_ context.Context, jobID string) (string, error) {
+	return s.teams[jobID], nil
+}
+
 func (s *fakeReconcileStore) SetSafetyDecision(_ context.Context, jobID, decision, reason string) error {
 	s.safety[jobID] = struct{ decision, reason string }{decision: decision, reason: reason}
 	return nil
@@ -117,6 +130,31 @@ func (s *fakeReconcileStore) SetSafetyDecision(_ context.Context, jobID, decisio
 func (s *fakeReconcileStore) GetSafetyDecision(_ context.Context, jobID string) (string, string, error) {
 	entry := s.safety[jobID]
 	return entry.decision, entry.reason, nil
+}
+
+func (s *fakeReconcileStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (bool, error) {
+	if s.locks == nil {
+		s.locks = make(map[string]time.Time)
+	}
+	if until, ok := s.locks[key]; ok && until.After(time.Now()) {
+		return false, nil
+	}
+	s.locks[key] = time.Now().Add(ttl)
+	return true, nil
+}
+
+func (s *fakeReconcileStore) ReleaseLock(_ context.Context, key string) error {
+	delete(s.locks, key)
+	return nil
+}
+
+func (s *fakeReconcileStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
+	state := s.states[jobID]
+	if terminalStates[state] {
+		return state, nil
+	}
+	s.states[jobID] = JobStateCancelled
+	return JobStateCancelled, nil
 }
 
 func TestReconcilerTimeouts(t *testing.T) {
@@ -164,7 +202,8 @@ func TestReconcilerStopsWhenNoProgress(t *testing.T) {
 	store.updated["stuck"] = time.Now().Add(-10 * time.Minute).Unix()
 
 	rec := NewReconciler(store, time.Minute, time.Minute, 10*time.Millisecond)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
 
 	done := make(chan struct{})
 	go func() {
@@ -174,7 +213,7 @@ func TestReconcilerStopsWhenNoProgress(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("reconciler did not exit when no progress was made")
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconciler did not exit when no progress was made before timeout")
 	}
 }

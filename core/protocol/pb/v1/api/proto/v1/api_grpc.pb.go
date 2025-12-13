@@ -125,7 +125,7 @@ func _CoretexApi_GetJobStatus_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
-// coretexApi_ServiceDesc is the grpc.ServiceDesc for coretexApi service.
+// CoretexApi_ServiceDesc is the grpc.ServiceDesc for CoretexApi service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var CoretexApi_ServiceDesc = grpc.ServiceDesc{

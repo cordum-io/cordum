@@ -27,19 +27,19 @@ data:
   timeouts.yaml: |
     workflows:
       code_review_demo:
-        child_timeout_seconds: 180
-        total_timeout_seconds: 600
+        child_timeout_seconds: 1200
+        total_timeout_seconds: 1800
         max_retries: 1
     topics:
       job.code.llm:
-        timeout_seconds: 120
+        timeout_seconds: 1200
         max_retries: 0
       job.chat.simple:
         timeout_seconds: 60
         max_retries: 0
     reconciler:
       dispatch_timeout_seconds: 120
-      running_timeout_seconds: 300
+      running_timeout_seconds: 1500
       scan_interval_seconds: 30
 ---
 apiVersion: apps/v1

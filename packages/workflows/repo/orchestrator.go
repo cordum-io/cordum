@@ -39,6 +39,10 @@ const (
 	childRetryBackoff          = 1 * time.Second
 )
 
+var topicChildTimeouts = map[string]time.Duration{
+	"job.code.llm": 20 * time.Minute,
+}
+
 var activeJobs int32
 
 type repoWorkflowContext struct {
@@ -119,6 +123,11 @@ func Run() {
 
 	if err := natsBus.Subscribe(repoWorkflowSubject, repoOrchestratorQueueGroup, handleWorkflow(natsBus, memStore, jobStore, cfg)); err != nil {
 		log.Fatalf("failed to subscribe to repo workflow: %v", err)
+	}
+	if direct := bus.DirectSubject(repoOrchestratorWorkerID); direct != "" {
+		if err := natsBus.Subscribe(direct, "", handleWorkflow(natsBus, memStore, jobStore, cfg)); err != nil {
+			log.Fatalf("failed to subscribe to direct repo workflow: %v", err)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -540,6 +549,13 @@ func extractPatchContent(data []byte) string {
 	return patch.Patch.Content
 }
 
+func childTimeoutForTopic(topic string) time.Duration {
+	if d, ok := topicChildTimeouts[topic]; ok {
+		return d
+	}
+	return defaultChildTimeout
+}
+
 func runChildWithContext(ctx context.Context, b *bus.NatsBus, jobStore scheduler.JobStore, store memory.Store, traceID string, parentReq *pb.JobRequest, topic string, payload any) (string, error) {
 	childID := uuid.NewString()
 	ctxBytes, _ := json.Marshal(payload)
@@ -574,15 +590,16 @@ func runChildWithContext(ctx context.Context, b *bus.NatsBus, jobStore scheduler
 		return "", err
 	}
 	_ = jobStore.SetState(ctx, childID, scheduler.JobStatePending)
-	if err := waitForChild(ctx, jobStore, childID); err != nil {
+	timeout := childTimeoutForTopic(topic)
+	if err := waitForChild(ctx, jobStore, childID, topic, timeout); err != nil {
 		return "", err
 	}
 	ptr, _ := jobStore.GetResultPtr(ctx, childID)
 	return ptr, nil
 }
 
-func waitForChild(ctx context.Context, jobStore scheduler.JobStore, childID string) error {
-	deadline := time.Now().Add(defaultChildTimeout)
+func waitForChild(ctx context.Context, jobStore scheduler.JobStore, childID, topic string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -600,7 +617,7 @@ func waitForChild(ctx context.Context, jobStore scheduler.JobStore, childID stri
 		}
 		time.Sleep(childPollInterval)
 	}
-	return fmt.Errorf("child job timeout")
+	return fmt.Errorf("child job timeout topic=%s after %s", topic, timeout)
 }
 
 func selectFiles(all []struct {

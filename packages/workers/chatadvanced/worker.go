@@ -61,6 +61,11 @@ func Run() {
 	if err := natsBus.Subscribe(advancedJobSubject, advancedQueueGroup, handleAdvancedChatJobWithContext(natsBus, memStore, provider, ctxClient)); err != nil {
 		log.Fatalf("failed to subscribe to advanced chat jobs: %v", err)
 	}
+	if direct := bus.DirectSubject(advancedWorkerID); direct != "" {
+		if err := natsBus.Subscribe(direct, "", handleAdvancedChatJobWithContext(natsBus, memStore, provider, ctxClient)); err != nil {
+			log.Fatalf("failed to subscribe to direct advanced chat jobs: %v", err)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup

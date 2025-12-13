@@ -27,12 +27,13 @@ This describes how the control-plane scheduler routes jobs to pools, tracks stat
 ## Heartbeats & Registry
 - Heartbeat fields used: `worker_id`, `pool`, `active_jobs`, `cpu_load`, `gpu_utilization`, `capabilities`, `max_parallel_jobs`.
 - Latest heartbeat per worker is kept in-memory; registry snapshot is passed to the strategy.
+- Registry evicts workers that stop heartbeating after ~30s, so workers must emit heartbeats every few seconds to remain eligible.
 
 ## Scheduling Strategy
 - `LeastLoadedStrategy` computes a score per worker in the target pool:
   - `score = active_jobs + cpu_load/100 + gpu_utilization/100`
   - Lowest score wins; subject to pool membership.
-- Subject published is the job topic itself (e.g., `job.repo.scan`).
+- Scheduler publishes to a worker-specific subject (`worker.<id>.jobs`) when available so the selected worker receives the job. Workers still subscribe to the shared topic subject in their queue group as a fallback.
 
 ## Safety
 - Scheduler calls the Safety Kernel gRPC `Check` before picking a subject.

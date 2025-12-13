@@ -18,15 +18,28 @@ type SafetyClient struct {
 	client pb.SafetyKernelClient
 	conn   *grpc.ClientConn
 
-	mu        sync.Mutex
-	failures  int
-	openUntil time.Time
+	mu              sync.Mutex
+	state           circuitState
+	failures        int
+	successes       int
+	openUntil       time.Time
+	halfOpenAllowed int
 }
 
 const (
-	safetyTimeout           = 2 * time.Second
-	safetyCircuitOpenFor    = 30 * time.Second
-	safetyCircuitFailBudget = 3
+	safetyTimeout            = 2 * time.Second
+	safetyCircuitOpenFor     = 30 * time.Second
+	safetyCircuitFailBudget  = 3
+	safetyCircuitHalfOpenMax = 3
+	safetyCircuitCloseAfter  = 2
+)
+
+type circuitState int
+
+const (
+	circuitClosed circuitState = iota
+	circuitOpen
+	circuitHalfOpen
 )
 
 // NewSafetyClient dials the safety kernel at addr.
@@ -52,31 +65,29 @@ func (c *SafetyClient) Close() error {
 
 // Check forwards the request to the safety kernel; denies on error/timeout.
 func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecision, string) {
-	now := time.Now()
-	if c.isCircuitOpen(now) {
+	if c.isCircuitOpen() {
 		return SafetyDeny, "safety kernel circuit open"
+	}
+
+	if !c.allowHalfOpenRequest() {
+		return SafetyDeny, "safety kernel circuit half-open (throttled)"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), safetyTimeout)
 	defer cancel()
 
-	tenant := req.GetTenantId()
-	if tenant == "" {
-		tenant = req.GetEnv()["tenant_id"]
-	}
-	if tenant == "" {
-		tenant = "default"
-	}
-	resp, err := c.client.Check(ctx, &pb.PolicyCheckRequest{
+	checkReq := &pb.PolicyCheckRequest{
 		JobId:       req.GetJobId(),
 		Topic:       req.GetTopic(),
-		Tenant:      tenant,
+		Tenant:      ExtractTenant(req),
 		PrincipalId: req.GetPrincipalId(),
 		Priority:    req.GetPriority(),
 		Budget:      req.GetBudget(),
 		Labels:      req.GetLabels(),
 		MemoryId:    req.GetMemoryId(),
-	})
+	}
+
+	resp, err := c.client.Check(ctx, checkReq)
 	if err != nil {
 		c.recordFailure()
 		return SafetyDeny, fmt.Sprintf("safety kernel error: %v", err)
@@ -97,17 +108,45 @@ func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecision, string) {
 	}
 }
 
-func (c *SafetyClient) isCircuitOpen(now time.Time) bool {
+func (c *SafetyClient) isCircuitOpen() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.openUntil.After(now)
+	now := time.Now()
+	if c.state == circuitOpen && c.openUntil.Before(now) {
+		c.state = circuitHalfOpen
+		c.successes = 0
+		c.halfOpenAllowed = safetyCircuitHalfOpenMax
+	}
+	return c.state == circuitOpen
+}
+
+func (c *SafetyClient) allowHalfOpenRequest() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != circuitHalfOpen {
+		return true
+	}
+	if c.halfOpenAllowed > 0 {
+		c.halfOpenAllowed--
+		return true
+	}
+	return false
 }
 
 func (c *SafetyClient) recordFailure() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.failures++
-	if c.failures >= safetyCircuitFailBudget {
+
+	switch c.state {
+	case circuitClosed:
+		c.failures++
+		if c.failures >= safetyCircuitFailBudget {
+			c.state = circuitOpen
+			c.openUntil = time.Now().Add(safetyCircuitOpenFor)
+			c.failures = 0
+		}
+	case circuitHalfOpen:
+		c.state = circuitOpen
 		c.openUntil = time.Now().Add(safetyCircuitOpenFor)
 		c.failures = 0
 	}
@@ -116,8 +155,20 @@ func (c *SafetyClient) recordFailure() {
 func (c *SafetyClient) recordSuccess() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.failures = 0
-	c.openUntil = time.Time{}
+	switch c.state {
+	case circuitClosed:
+		c.failures = 0
+	case circuitHalfOpen:
+		c.successes++
+		if c.successes >= safetyCircuitCloseAfter {
+			c.state = circuitClosed
+			c.failures = 0
+			c.successes = 0
+			c.halfOpenAllowed = 0
+		}
+	default:
+		c.failures = 0
+	}
 }
 
 func safetyTransportCredentials() credentials.TransportCredentials {

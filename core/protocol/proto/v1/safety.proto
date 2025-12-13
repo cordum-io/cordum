@@ -17,6 +17,7 @@ message PolicyCheckRequest {
   string job_id = 1;
   string topic  = 2;
   string tenant = 3;
+  bytes effective_config = 4; // Marshaled EffectiveConfig
 }
 
 message PolicyCheckResponse {

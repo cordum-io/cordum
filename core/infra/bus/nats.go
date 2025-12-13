@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -43,6 +44,14 @@ func (b *NatsBus) Close() {
 	if b.nc != nil {
 		b.nc.Close()
 	}
+}
+
+// DirectSubject constructs a worker-specific subject for targeted delivery.
+func DirectSubject(workerID string) string {
+	if workerID == "" {
+		return ""
+	}
+	return fmt.Sprintf("worker.%s.jobs", workerID)
 }
 
 // Publish sends a protobuf-encoded BusPacket on the given subject.

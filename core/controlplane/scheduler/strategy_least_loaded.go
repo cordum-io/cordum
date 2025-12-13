@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 
+	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/logging"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
@@ -12,6 +13,8 @@ import (
 type LeastLoadedStrategy struct {
 	topicToPool map[string]string
 }
+
+const overloadUtilizationThreshold = 0.9
 
 func NewLeastLoadedStrategy(topicToPool map[string]string) *LeastLoadedStrategy {
 	return &LeastLoadedStrategy{
@@ -24,20 +27,46 @@ func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string
 		return "", fmt.Errorf("missing topic")
 	}
 
+	labels := req.GetLabels()
+	requiredLabels := filterPlacementLabels(labels)
+	poolHint := labels["preferred_pool"]
 	pool, ok := s.topicToPool[req.Topic]
+	if poolHint != "" {
+		pool = poolHint
+		ok = true
+	}
 	if !ok {
 		return "", fmt.Errorf("no pool configured for topic %q", req.Topic)
 	}
 
-	requiredLabels := req.GetLabels()
-
+	// Preferred worker shortcut if available and healthy.
+	if preferredWorker := labels["preferred_worker_id"]; preferredWorker != "" {
+		if hb, exists := workers[preferredWorker]; exists && hb.GetPool() == pool && matchesLabels(hb, requiredLabels) && !isOverloaded(hb) {
+			if subject := bus.DirectSubject(preferredWorker); subject != "" {
+				logging.Info("scheduler", "strategy pick preferred worker",
+					"topic", req.Topic,
+					"pool", pool,
+					"selected_worker", hb.WorkerId,
+					"hint", "preferred_worker_id",
+				)
+				return subject, nil
+			}
+		}
+	}
 	var selected *pb.Heartbeat
 	var bestScore float32
+	overloadedCandidates := 0
+	totalCandidates := 0
 	for _, hb := range workers {
 		if hb == nil || hb.GetPool() != pool {
 			continue
 		}
 		if !matchesLabels(hb, requiredLabels) {
+			continue
+		}
+		totalCandidates++
+		if isOverloaded(hb) {
+			overloadedCandidates++
 			continue
 		}
 		score := loadScore(hb)
@@ -48,6 +77,9 @@ func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string
 	}
 
 	if selected == nil {
+		if totalCandidates > 0 && overloadedCandidates == totalCandidates {
+			return "", fmt.Errorf("all workers in pool %q are overloaded", pool)
+		}
 		return "", fmt.Errorf("no workers available for pool %q", pool)
 	}
 
@@ -61,7 +93,10 @@ func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string
 		"gpu_utilization", selected.GpuUtilization,
 	)
 
-	// Publish to the topic (pool subject); queue groups fan-in to a single worker.
+	if subject := bus.DirectSubject(selected.WorkerId); subject != "" {
+		return subject, nil
+	}
+	// Fallback: publish to the topic (pool subject); queue groups fan-in to a single worker.
 	return req.Topic, nil
 }
 
@@ -83,4 +118,33 @@ func matchesLabels(hb *pb.Heartbeat, required map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func isOverloaded(hb *pb.Heartbeat) bool {
+	capacity := hb.GetMaxParallelJobs()
+	if capacity > 0 && hb.GetActiveJobs() >= int32(float32(capacity)*overloadUtilizationThreshold) {
+		return true
+	}
+	// Fallback on CPU load if capacity not set.
+	if hb.GetCpuLoad() >= 90 {
+		return true
+	}
+	if hb.GetGpuUtilization() >= 90 {
+		return true
+	}
+	return false
+}
+
+func filterPlacementLabels(labels map[string]string) map[string]string {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		if k == "preferred_worker_id" || k == "preferred_pool" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }

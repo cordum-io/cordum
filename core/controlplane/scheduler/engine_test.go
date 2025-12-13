@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -18,12 +19,22 @@ type fakeBus struct {
 	published []publishedMsg
 }
 
+type fakeConfigProvider struct {
+	cfg map[string]any
+}
+
+func (f *fakeConfigProvider) Effective(ctx context.Context, orgID, teamID, workflowID, stepID string) (map[string]any, error) {
+	return f.cfg, nil
+}
+
 type fakeJobStore struct {
 	states  map[string]JobState
 	ptrs    map[string]string
 	topics  map[string]string
 	tenants map[string]string
+	teams   map[string]string
 	safety  map[string]struct{ decision, reason string }
+	locks   map[string]time.Time
 }
 
 func newFakeJobStore() *fakeJobStore {
@@ -32,7 +43,9 @@ func newFakeJobStore() *fakeJobStore {
 		ptrs:    make(map[string]string),
 		topics:  make(map[string]string),
 		tenants: make(map[string]string),
+		teams:   make(map[string]string),
 		safety:  make(map[string]struct{ decision, reason string }),
+		locks:   make(map[string]time.Time),
 	}
 }
 
@@ -102,6 +115,15 @@ func (s *fakeJobStore) GetTenant(_ context.Context, jobID string) (string, error
 	return s.tenants[jobID], nil
 }
 
+func (s *fakeJobStore) SetTeam(_ context.Context, jobID, team string) error {
+	s.teams[jobID] = team
+	return nil
+}
+
+func (s *fakeJobStore) GetTeam(_ context.Context, jobID string) (string, error) {
+	return s.teams[jobID], nil
+}
+
 func (s *fakeJobStore) SetSafetyDecision(_ context.Context, jobID, decision, reason string) error {
 	s.safety[jobID] = struct{ decision, reason string }{decision: decision, reason: reason}
 	return nil
@@ -110,6 +132,28 @@ func (s *fakeJobStore) SetSafetyDecision(_ context.Context, jobID, decision, rea
 func (s *fakeJobStore) GetSafetyDecision(_ context.Context, jobID string) (string, string, error) {
 	entry := s.safety[jobID]
 	return entry.decision, entry.reason, nil
+}
+
+func (s *fakeJobStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (bool, error) {
+	if until, ok := s.locks[key]; ok && until.After(time.Now()) {
+		return false, nil
+	}
+	s.locks[key] = time.Now().Add(ttl)
+	return true, nil
+}
+
+func (s *fakeJobStore) ReleaseLock(_ context.Context, key string) error {
+	delete(s.locks, key)
+	return nil
+}
+
+func (s *fakeJobStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
+	state := s.states[jobID]
+	if terminalStates[state] {
+		return state, nil
+	}
+	s.states[jobID] = JobStateCancelled
+	return JobStateCancelled, nil
 }
 
 func (b *fakeBus) Publish(subject string, packet *pb.BusPacket) error {
@@ -180,6 +224,46 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 	}
 	if msg.packet.TraceId != "trace-123" {
 		t.Fatalf("expected trace_id trace-123, got %s", msg.packet.TraceId)
+	}
+}
+
+func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	strategy := &NaiveStrategy{}
+	jobStore := newFakeJobStore()
+	cfg := &fakeConfigProvider{cfg: map[string]any{"feature": "on", "limit": 3}}
+	engine := NewEngine(bus, NewSafetyStub(), registry, strategy, jobStore, nil).WithConfig(cfg)
+
+	req := &pb.JobRequest{
+		JobId: "job-ec",
+		Topic: "job.echo",
+		Env: map[string]string{
+			"step_id":   "step-1",
+			"tenant_id": "org-a",
+			"team_id":   "team-a",
+		},
+	}
+
+	engine.processJob(req, "trace-ec")
+
+	if len(bus.published) != 1 {
+		t.Fatalf("expected 1 publish with effective config injected")
+	}
+	jr := bus.published[0].packet.GetJobRequest()
+	if jr == nil {
+		t.Fatalf("missing job request in packet")
+	}
+	val := jr.GetEnv()[EffectiveConfigEnvVar]
+	if val == "" {
+		t.Fatalf("expected %s env var to be set", EffectiveConfigEnvVar)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(val), &parsed); err != nil {
+		t.Fatalf("config not valid json: %v", err)
+	}
+	if parsed["feature"] != "on" {
+		t.Fatalf("unexpected config content: %v", parsed)
 	}
 }
 

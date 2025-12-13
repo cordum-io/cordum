@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -43,38 +44,29 @@ func LoadSafetyPolicy(path string) (*SafetyPolicy, error) {
 	return &policy, nil
 }
 
-// Evaluate returns decision (allow=true) and reason for the provided tenant/topic.
-func (p *SafetyPolicy) Evaluate(tenant, topic string) (bool, string) {
-	if p == nil {
-		return true, ""
-	}
-	t := strings.TrimSpace(tenant)
-	if t == "" {
-		if p.DefaultTenant != "" {
-			t = p.DefaultTenant
-		} else {
-			return false, "missing tenant"
+// Evaluate returns decision (allow=true) and reason for the provided effective safety config and topic.
+func (p *SafetyPolicy) Evaluate(effectiveSafetyConfig SafetyConfig, topic string) (bool, string) {
+	// The SafetyPolicy struct itself (p) becomes less relevant if all rules are in effectiveSafetyConfig.
+	// However, we can use p.DefaultTenant or other global settings if needed.
+
+	// Deny overrides
+	for _, pat := range effectiveSafetyConfig.DeniedTopics {
+		if matchTopic(pat, topic) {
+			return false, fmt.Sprintf("topic '%s' denied by policy", topic)
 		}
-	}
-	policy, ok := p.Tenants[t]
-	if !ok {
-		policy = p.Tenants["default"]
 	}
 
-	// deny overrides
-	for _, pat := range policy.DenyTopics {
-		if matchTopic(pat, topic) {
-			return false, "topic denied by policy"
-		}
-	}
-	if len(policy.AllowTopics) > 0 {
-		for _, pat := range policy.AllowTopics {
+	// Allow only if specified
+	if len(effectiveSafetyConfig.AllowedTopics) > 0 {
+		for _, pat := range effectiveSafetyConfig.AllowedTopics {
 			if matchTopic(pat, topic) {
 				return true, ""
 			}
 		}
-		return false, "topic not allowed for tenant"
+		return false, fmt.Sprintf("topic '%s' not explicitly allowed by policy", topic)
 	}
+
+	// If no explicit allow rules and no deny rules, allow by default
 	return true, ""
 }
 

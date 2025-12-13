@@ -1,0 +1,90 @@
+# config/system.yaml
+safety:
+  pii_detection_enabled: true
+  pii_action: "block"
+  pii_types_to_detect:
+    - "email"
+    - "phone"
+  injection_detection: true
+  injection_sensitivity: "high"
+  content_filter_enabled: true
+  blocked_categories:
+    - "hate_speech"
+    - "sexual_content"
+  anomaly_detection: false
+  allowed_topics: []
+  denied_topics: []
+budget:
+  daily_limit_usd: 1000.0
+  monthly_limit_usd: 10000.0
+  per_job_max_usd: 5.0
+  per_workflow_max_usd: 50.0
+  alert_at_percent: [50, 75, 90, 100]
+  action_at_limit: "throttle"
+  cost_attribution_enabled: true
+  cost_centers: []
+rate_limits:
+  requests_per_minute: 600
+  requests_per_hour: 36000
+  burst_size: 100
+  concurrent_jobs: 20
+  concurrent_workflows: 5
+  queue_size: 100
+retry:
+  max_retries: 3
+  initial_backoff: 1s
+  max_backoff: 30s
+  backoff_multiplier: 2.0
+  retryable_errors: ["network_error", "timeout"]
+  non_retryable_errors: ["bad_request"]
+resources:
+  default_priority: "interactive"
+  max_timeout_seconds: 300
+  default_timeout_seconds: 60
+  max_parallel_steps: 10
+  preemption_enabled: true
+  preemption_grace_period: 30
+models:
+  allowed_models: ["gpt-4", "llama-3", "claude-3"]
+  default_model: "gpt-4"
+  fallback_models: ["llama-3"]
+  model_preferences: {}
+  model_cost_limits: {}
+context:
+  allowed_memory_ids: ["repo:*", "kb:*"]
+  denied_memory_ids: []
+  max_context_tokens: 4000
+  max_retrieved_chunks: 10
+  cross_tenant_access: false
+  allowed_connectors: ["github", "slack"]
+  redaction_policies: {}
+experiment:
+  enabled: false
+  name: ""
+  buckets: []
+integrations:
+  github:
+    enabled: false
+    connection_id: ""
+    allowed_teams: []
+    allowed_scopes: []
+  gitlab:
+    enabled: false
+    connection_id: ""
+    allowed_teams: []
+    allowed_scopes: []
+  slack:
+    enabled: false
+    connection_id: ""
+    allowed_teams: []
+    allowed_scopes: []
+  jira:
+    enabled: false
+    connection_id: ""
+    allowed_teams: []
+    allowed_scopes: []
+slo:
+  target_p95_latency_ms: 1000
+  error_rate_budget: 0.01
+  timeout_seconds: 60
+  critical: false

@@ -26,12 +26,11 @@ This document outlines the steps to fully align CoreTex with CAP 2.0.0. The goal
 
 ```go
 // go.mod
-require github.com/coretexos/cap/v2 v2.0.0
 ```
 
 Then import:
 ```go
-import agentv1 "github.com/coretexos/cap/v2/go/cortex/agent/v1"
+import agentv1 "github.com/coretexos/cap/v2/go/coretex/agent/v1"
 ```
 
 ### Step 1.2: Create Compatibility Layer
@@ -44,7 +43,7 @@ package compat
 
 import (
     oldpb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
-    newpb "github.com/coretexos/cap/v2/go/cortex/agent/v1"
+    newpb "github.com/coretexos/cap/v2/go/coretex/agent/v1"
 )
 
 func JobRequestToCAP(old *oldpb.JobRequest) *newpb.JobRequest {

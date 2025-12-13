@@ -1,0 +1,254 @@
+package workflow
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	defaultWorkflowRedisURL = "redis://localhost:6379"
+)
+
+// RedisStore persists workflow definitions and runs in Redis.
+type RedisStore struct {
+	client *redis.Client
+}
+
+// NewRedisWorkflowStore constructs a Redis-backed workflow store.
+func NewRedisWorkflowStore(url string) (*RedisStore, error) {
+	if url == "" {
+		url = defaultWorkflowRedisURL
+	}
+	opts, err := redis.ParseURL(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("connect redis: %w", err)
+	}
+	return &RedisStore{client: client}, nil
+}
+
+// Close closes the underlying Redis client.
+func (s *RedisStore) Close() error {
+	if s.client == nil {
+		return nil
+	}
+	return s.client.Close()
+}
+
+// SaveWorkflow upserts a workflow definition and updates org index.
+func (s *RedisStore) SaveWorkflow(ctx context.Context, wf *Workflow) error {
+	if wf == nil || wf.ID == "" {
+		return fmt.Errorf("workflow id required")
+	}
+	now := time.Now().UTC()
+	if wf.CreatedAt.IsZero() {
+		wf.CreatedAt = now
+	}
+	wf.UpdatedAt = now
+
+	payload, err := json.Marshal(wf)
+	if err != nil {
+		return fmt.Errorf("marshal workflow: %w", err)
+	}
+
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, workflowKey(wf.ID), payload, 0)
+	if wf.OrgID != "" {
+		pipe.ZAdd(ctx, workflowOrgIndexKey(wf.OrgID), redis.Z{Score: float64(now.Unix()), Member: wf.ID})
+	}
+	pipe.ZAdd(ctx, workflowAllIndexKey(), redis.Z{Score: float64(now.Unix()), Member: wf.ID})
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// GetWorkflow returns a workflow definition by ID.
+func (s *RedisStore) GetWorkflow(ctx context.Context, id string) (*Workflow, error) {
+	if id == "" {
+		return nil, fmt.Errorf("id required")
+	}
+	data, err := s.client.Get(ctx, workflowKey(id)).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	var wf Workflow
+	if err := json.Unmarshal(data, &wf); err != nil {
+		return nil, fmt.Errorf("unmarshal workflow: %w", err)
+	}
+	return &wf, nil
+}
+
+// ListWorkflows returns recent workflows, optionally scoped by org.
+func (s *RedisStore) ListWorkflows(ctx context.Context, orgID string, limit int64) ([]*Workflow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	index := workflowAllIndexKey()
+	if orgID != "" {
+		index = workflowOrgIndexKey(orgID)
+	}
+	ids, err := s.client.ZRevRange(ctx, index, 0, limit-1).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []*Workflow{}, nil
+	}
+
+	pipe := s.client.Pipeline()
+	cmds := make(map[string]*redis.StringCmd, len(ids))
+	for _, id := range ids {
+		cmds[id] = pipe.Get(ctx, workflowKey(id))
+	}
+	_, _ = pipe.Exec(ctx)
+
+	out := make([]*Workflow, 0, len(ids))
+	for _, id := range ids {
+		cmd := cmds[id]
+		if cmd == nil {
+			continue
+		}
+		data, err := cmd.Bytes()
+		if err != nil {
+			continue
+		}
+		var wf Workflow
+		if err := json.Unmarshal(data, &wf); err != nil {
+			continue
+		}
+		out = append(out, &wf)
+	}
+	return out, nil
+}
+
+// CreateRun persists a new workflow run and indexes it by workflow.
+func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
+	if run == nil || run.ID == "" || run.WorkflowID == "" {
+		return fmt.Errorf("run id and workflow id required")
+	}
+	now := time.Now().UTC()
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = now
+	}
+	run.UpdatedAt = now
+	if run.Status == "" {
+		run.Status = RunStatusPending
+	}
+
+	payload, err := json.Marshal(run)
+	if err != nil {
+		return fmt.Errorf("marshal run: %w", err)
+	}
+
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, runKey(run.ID), payload, 0)
+	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: float64(now.Unix()), Member: run.ID})
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// UpdateRun overwrites an existing run document and bumps the index score.
+func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
+	if run == nil || run.ID == "" || run.WorkflowID == "" {
+		return fmt.Errorf("run id and workflow id required")
+	}
+	now := time.Now().UTC()
+	run.UpdatedAt = now
+
+	payload, err := json.Marshal(run)
+	if err != nil {
+		return fmt.Errorf("marshal run: %w", err)
+	}
+
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, runKey(run.ID), payload, 0)
+	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: float64(now.Unix()), Member: run.ID})
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// GetRun fetches a run by ID.
+func (s *RedisStore) GetRun(ctx context.Context, runID string) (*WorkflowRun, error) {
+	if runID == "" {
+		return nil, fmt.Errorf("run id required")
+	}
+	data, err := s.client.Get(ctx, runKey(runID)).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	var run WorkflowRun
+	if err := json.Unmarshal(data, &run); err != nil {
+		return nil, fmt.Errorf("unmarshal run: %w", err)
+	}
+	return &run, nil
+}
+
+// ListRunsByWorkflow returns recent runs for a workflow.
+func (s *RedisStore) ListRunsByWorkflow(ctx context.Context, workflowID string, limit int64) ([]*WorkflowRun, error) {
+	if workflowID == "" {
+		return nil, fmt.Errorf("workflow id required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	ids, err := s.client.ZRevRange(ctx, runIndexKey(workflowID), 0, limit-1).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []*WorkflowRun{}, nil
+	}
+
+	pipe := s.client.Pipeline()
+	cmds := make(map[string]*redis.StringCmd, len(ids))
+	for _, id := range ids {
+		cmds[id] = pipe.Get(ctx, runKey(id))
+	}
+	_, _ = pipe.Exec(ctx)
+
+	out := make([]*WorkflowRun, 0, len(ids))
+	for _, id := range ids {
+		cmd := cmds[id]
+		if cmd == nil {
+			continue
+		}
+		data, err := cmd.Bytes()
+		if err != nil {
+			continue
+		}
+		var run WorkflowRun
+		if err := json.Unmarshal(data, &run); err != nil {
+			continue
+		}
+		out = append(out, &run)
+	}
+	return out, nil
+}
+
+func workflowKey(id string) string {
+	return "wf:def:" + id
+}
+
+func workflowOrgIndexKey(orgID string) string {
+	return "wf:index:org:" + orgID
+}
+
+func workflowAllIndexKey() string {
+	return "wf:index:all"
+}
+
+func runKey(id string) string {
+	return "wf:run:" + id
+}
+
+func runIndexKey(workflowID string) string {
+	return "wf:runs:" + workflowID
+}

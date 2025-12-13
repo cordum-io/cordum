@@ -18,12 +18,19 @@ COPY . .
 # SERVICE must match a directory under cmd/ (e.g. coretex-scheduler).
 ARG SERVICE
 RUN test -n "${SERVICE}" || (echo "SERVICE build arg required" && false)
-# Allow coretex-* names by normalizing to cortex-* directory names.
-RUN TARGET="${SERVICE/coretex-/cortex-}" && test -d "./cmd/${TARGET}" || (echo "Service dir ./cmd/${TARGET} not found for SERVICE=${SERVICE}" && false)
+# Resolve target dir; coretex-* names must match directories under cmd/
+RUN TARGET="${SERVICE}" ; \
+    if [ -d "./cmd/${TARGET}" ]; then : ; \
+    elif [ -d "./cmd/${SERVICE/coretex-/coretex-}" ]; then TARGET="${SERVICE/coretex-/coretex-}"; \
+    else echo "Service dir ./cmd/${TARGET} not found for SERVICE=${SERVICE}" && false; fi
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    TARGET="${SERVICE/coretex-/cortex-}" && \
+    TARGET="${SERVICE}" ; \
+    if [ ! -d "./cmd/${TARGET}" ]; then \
+      if [ -d "./cmd/${SERVICE/coretex-/coretex-}" ]; then TARGET="${SERVICE/coretex-/coretex-}"; \
+      fi; \
+    fi; \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/${SERVICE} ./cmd/${TARGET}
 
 FROM alpine:3.19

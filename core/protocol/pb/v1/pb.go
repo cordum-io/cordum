@@ -1,7 +1,7 @@
 package v1
 
 import (
-	agentv1 "github.com/coretexos/cap/v2/go/cortex/agent/v1"
+	agentv1 "github.com/coretexos/cap/v2/go/coretex/agent/v1"
 	apiv1 "github.com/yaront1111/coretex-os/core/protocol/pb/v1/api/proto/v1"
 )
 
@@ -54,6 +54,8 @@ const (
 	JobPriority_JOB_PRIORITY_BATCH       = agentv1.JobPriority_JOB_PRIORITY_BATCH
 	JobPriority_JOB_PRIORITY_CRITICAL    = agentv1.JobPriority_JOB_PRIORITY_CRITICAL
 
+	// Alias for backwards compatibility with older API naming.
+	JobStatus_JOB_STATUS_COMPLETED   = agentv1.JobStatus_JOB_STATUS_SUCCEEDED
 	JobStatus_JOB_STATUS_UNSPECIFIED = agentv1.JobStatus_JOB_STATUS_UNSPECIFIED
 	JobStatus_JOB_STATUS_PENDING     = agentv1.JobStatus_JOB_STATUS_PENDING
 	JobStatus_JOB_STATUS_SCHEDULED   = agentv1.JobStatus_JOB_STATUS_SCHEDULED

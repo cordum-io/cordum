@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/config"
 	"github.com/yaront1111/coretex-os/core/infra/memory"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
@@ -50,6 +51,7 @@ func Run() {
 		RedisURL:        cfg.RedisURL,
 		QueueGroup:      "workers-repo-sast",
 		JobSubject:      "job.repo.sast",
+		DirectSubject:   bus.DirectSubject(repoSastWorkerID),
 		HeartbeatSub:    "sys.heartbeat",
 		Capabilities:    []string{"repo-sast"},
 		Pool:            "repo-sast",

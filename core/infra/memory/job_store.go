@@ -22,6 +22,7 @@ const (
 	metaFieldTopic          = "topic"
 	metaFieldTenant         = "tenant"
 	metaFieldPrincipal      = "principal"
+	metaFieldTeam           = "team"
 	metaFieldMemory         = "memory_id"
 	metaFieldLabels         = "labels"
 	metaFieldDeadline       = "deadline_unix"
@@ -133,6 +134,23 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 	return resultState, err
 }
 
+// TryAcquireLock attempts to acquire a distributed lock with TTL; returns true if acquired.
+func (s *RedisJobStore) TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	return s.client.SetNX(ctx, key, time.Now().Unix(), ttl).Result()
+}
+
+// ReleaseLock releases a distributed lock.
+func (s *RedisJobStore) ReleaseLock(ctx context.Context, key string) error {
+	if key == "" {
+		return nil
+	}
+	_, err := s.client.Del(ctx, key).Result()
+	return err
+}
+
 // NewRedisJobStore constructs a Redis-backed JobStore using a redis:// URL.
 func NewRedisJobStore(url string) (*RedisJobStore, error) {
 	if url == "" {
@@ -173,54 +191,55 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 	now := time.Now().Unix()
 	metaKey := jobMetaKey(jobID)
 
-	prev, _ := s.client.HGet(ctx, metaKey, "state").Result()
-	prevState := scheduler.JobState(prev)
-	if !isAllowedTransition(prevState, state) {
-		return fmt.Errorf("invalid transition %s -> %s", prevState, state)
-	}
+	return s.client.Watch(ctx, func(tx *redis.Tx) error {
+		prev, err := tx.HGet(ctx, metaKey, "state").Result()
+		if err != nil && err != redis.Nil {
+			return err
+		}
+		prevState := scheduler.JobState(prev)
+		if !isAllowedTransition(prevState, state) {
+			return fmt.Errorf("invalid transition %s -> %s", prevState, state)
+		}
 
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, metaKey, map[string]any{
-		"state":      string(state),
-		"updated_at": now,
-	})
-	// keep legacy key for compatibility
-	pipe.Set(ctx, jobStateKey(jobID), string(state), 0)
+		pipe := tx.TxPipeline()
+		pipe.HSet(ctx, metaKey, map[string]any{
+			"state":      string(state),
+			"updated_at": now,
+		})
+		// keep legacy key for compatibility
+		pipe.Set(ctx, jobStateKey(jobID), string(state), 0)
 
-	// maintain per-state index for reconciliation
-	prevIdx := stateIndexKey(prevState)
-	if prevIdx != "" {
-		pipe.ZRem(ctx, prevIdx, jobID)
-	}
-	idx := stateIndexKey(state)
-	if idx != "" {
-		pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
-	}
+		// maintain per-state index for reconciliation
+		prevIdx := stateIndexKey(prevState)
+		if prevIdx != "" {
+			pipe.ZRem(ctx, prevIdx, jobID)
+		}
+		idx := stateIndexKey(state)
+		if idx != "" {
+			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
+		}
 
-	// Maintain global recent jobs list (score = updated_at)
-	// Cap it at, say, 1000 items to avoid infinite growth?
-	// For MVP, just adding is fine, user can manage cleanup later or we can add ZREMRANGEBYRANK.
-	pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
-	// Keep only last 1000
-	pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
-	if s.metaTTL > 0 {
-		pipe.Expire(ctx, metaKey, s.metaTTL)
-		pipe.Expire(ctx, jobStateKey(jobID), s.metaTTL)
-		pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
-	}
+		// Maintain global recent jobs list (score = updated_at)
+		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
+		// Keep only last 1000
+		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, metaKey, s.metaTTL)
+			pipe.Expire(ctx, jobStateKey(jobID), s.metaTTL)
+			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
+		}
 
-	// append event
-	pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, state))
+		// append event
+		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, state))
 
-	if terminalStates[state] {
-		pipe.ZRem(ctx, deadlineIndexKey(), jobID)
-		pipe.HDel(ctx, metaKey, metaFieldDeadline)
-	}
+		if terminalStates[state] {
+			pipe.ZRem(ctx, deadlineIndexKey(), jobID)
+			pipe.HDel(ctx, metaKey, metaFieldDeadline)
+		}
 
-	if _, err := pipe.Exec(ctx); err != nil {
-		return err
-	}
-	return nil
+		_, execErr := pipe.Exec(ctx)
+		return execErr
+	}, metaKey, jobStateKey(jobID))
 }
 
 // ListRecentJobs returns the N most recently updated jobs.
@@ -233,26 +252,53 @@ func (s *RedisJobStore) ListRecentJobs(ctx context.Context, limit int64) ([]sche
 		return nil, err
 	}
 	out := make([]scheduler.JobRecord, 0, len(members))
+	if len(members) == 0 {
+		return out, nil
+	}
+
+	// Batch fetch metadata for each job to avoid N+1 round trips.
+	pipe := s.client.Pipeline()
+	metaCmds := make(map[string]*redis.MapStringStringCmd, len(members))
+	stateCmds := make(map[string]*redis.StringCmd, len(members))
 	for _, m := range members {
 		jobID, ok := m.Member.(string)
-		if !ok {
+		if !ok || jobID == "" {
 			continue
 		}
-		// Fetch current state for each job to be helpful
-		// Using pipeline to fetch state for all jobs would be better, but loop is okay for MVP
-		state, _ := s.GetState(ctx, jobID)
+		metaCmds[jobID] = pipe.HGetAll(ctx, jobMetaKey(jobID))
+		stateCmds[jobID] = pipe.Get(ctx, jobStateKey(jobID))
+	}
+	_, _ = pipe.Exec(ctx)
 
-		topic, _ := s.GetTopic(ctx, jobID)
-		tenant, _ := s.GetTenant(ctx, jobID)
-		principal, _ := s.GetPrincipal(ctx, jobID)
-		safetyDecision, safetyReason, _ := s.GetSafetyDecision(ctx, jobID)
-		deadlineUnix, _ := s.getDeadline(ctx, jobID)
+	for _, m := range members {
+		jobID, ok := m.Member.(string)
+		if !ok || jobID == "" {
+			continue
+		}
+		meta, _ := metaCmds[jobID].Result()
+		state := scheduler.JobState(meta["state"])
+		if state == "" {
+			if sCmd := stateCmds[jobID]; sCmd != nil {
+				if val, err := sCmd.Result(); err == nil {
+					state = scheduler.JobState(val)
+				}
+			}
+		}
+		topic := meta[metaFieldTopic]
+		tenant := meta[metaFieldTenant]
+		team := meta[metaFieldTeam]
+		principal := meta[metaFieldPrincipal]
+		safetyDecision := meta[metaFieldSafetyDecision]
+		safetyReason := meta[metaFieldSafetyReason]
+		deadlineUnix, _ := strconv.ParseInt(meta[metaFieldDeadline], 10, 64)
+
 		out = append(out, scheduler.JobRecord{
 			ID:             jobID,
 			UpdatedAt:      int64(m.Score),
 			State:          state,
 			Topic:          topic,
 			Tenant:         tenant,
+			Team:           team,
 			Principal:      principal,
 			SafetyDecision: safetyDecision,
 			SafetyReason:   safetyReason,
@@ -306,9 +352,11 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 	if tenantID == "" {
 		tenantID = req.GetEnv()["tenant_id"]
 	}
+	teamID := req.GetEnv()["team_id"]
 	fields := map[string]any{
 		metaFieldTopic:     req.GetTopic(),
 		metaFieldTenant:    tenantID,
+		metaFieldTeam:      teamID,
 		metaFieldPrincipal: req.GetPrincipalId(),
 		metaFieldMemory:    req.GetMemoryId(),
 	}
@@ -483,6 +531,17 @@ func (s *RedisJobStore) GetTenant(ctx context.Context, jobID string) (string, er
 	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldTenant).Result()
 }
 
+func (s *RedisJobStore) SetTeam(ctx context.Context, jobID, team string) error {
+	if jobID == "" || team == "" {
+		return fmt.Errorf("jobID and team are required")
+	}
+	return s.client.HSet(ctx, jobMetaKey(jobID), metaFieldTeam, team).Err()
+}
+
+func (s *RedisJobStore) GetTeam(ctx context.Context, jobID string) (string, error) {
+	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldTeam).Result()
+}
+
 // Optional helpers for principal metadata.
 func (s *RedisJobStore) SetPrincipal(ctx context.Context, jobID, principal string) error {
 	if jobID == "" || principal == "" {
@@ -523,12 +582,35 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 	if err != nil {
 		return nil, err
 	}
+	if len(jobIDs) == 0 {
+		return []scheduler.JobRecord{}, nil
+	}
+
+	pipe := s.client.Pipeline()
+	metaCmds := make(map[string]*redis.MapStringStringCmd, len(jobIDs))
+	for _, id := range jobIDs {
+		metaCmds[id] = pipe.HGetAll(ctx, jobMetaKey(id))
+	}
+	_, _ = pipe.Exec(ctx)
+
 	out := make([]scheduler.JobRecord, 0, len(jobIDs))
 	for _, jobID := range jobIDs {
-		state, _ := s.GetState(ctx, jobID)
+		meta, _ := metaCmds[jobID].Result()
+		state := scheduler.JobState(meta["state"])
+		if state == "" {
+			state, _ = s.GetState(ctx, jobID)
+		}
+		deadlineUnix, _ := strconv.ParseInt(meta[metaFieldDeadline], 10, 64)
 		out = append(out, scheduler.JobRecord{
-			ID:    jobID,
-			State: state,
+			ID:             jobID,
+			State:          state,
+			Topic:          meta[metaFieldTopic],
+			Tenant:         meta[metaFieldTenant],
+			Team:           meta[metaFieldTeam],
+			Principal:      meta[metaFieldPrincipal],
+			SafetyDecision: meta[metaFieldSafetyDecision],
+			SafetyReason:   meta[metaFieldSafetyReason],
+			DeadlineUnix:   deadlineUnix,
 		})
 	}
 	return out, nil
