@@ -14,3 +14,4 @@ generated/
 .gocache/
 .gomodcache/
 .cache/
+bin/
