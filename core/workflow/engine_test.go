@@ -16,19 +16,19 @@ type pubMsg struct {
 	packet  *pb.BusPacket
 }
 
-type stubBus struct {
+type recordingBus struct {
 	mu        sync.Mutex
 	published []pubMsg
 }
 
-func (b *stubBus) Publish(subject string, packet *pb.BusPacket) error {
+func (b *recordingBus) Publish(subject string, packet *pb.BusPacket) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.published = append(b.published, pubMsg{subject: subject, packet: packet})
 	return nil
 }
 
-func (b *stubBus) Subscribe(subject, queue string, handler func(*pb.BusPacket)) error {
+func (b *recordingBus) Subscribe(subject, queue string, handler func(*pb.BusPacket)) error {
 	return nil
 }
 
@@ -49,7 +49,7 @@ func TestEngineForEachFanoutAndAggregateSuccess(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer store.Close()
 
-	bus := &stubBus{}
+	bus := &recordingBus{}
 	engine := NewEngine(store, bus)
 
 	wf := &Workflow{
@@ -91,11 +91,11 @@ func TestEngineForEachFanoutAndAggregateSuccess(t *testing.T) {
 	}
 
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
-		JobId:  "run-foreach:fan[0]",
+		JobId:  "run-foreach:fan[0]@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	})
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
-		JobId:  "run-foreach:fan[1]",
+		JobId:  "run-foreach:fan[1]@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	})
 
@@ -112,7 +112,7 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer store.Close()
 
-	bus := &stubBus{}
+	bus := &recordingBus{}
 	engine := NewEngine(store, bus)
 
 	wf := &Workflow{
@@ -153,7 +153,7 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 	}
 
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
-		JobId:  "run-retry:step",
+		JobId:  "run-retry:step@1",
 		Status: pb.JobStatus_JOB_STATUS_FAILED,
 	})
 
@@ -164,7 +164,7 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 	}
 
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
-		JobId:  "run-retry:step",
+		JobId:  "run-retry:step@2",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	})
 	final, _ := store.GetRun(context.Background(), run.ID)
@@ -177,7 +177,7 @@ func TestEngineApprovalPausesAndResumes(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer store.Close()
 
-	bus := &stubBus{}
+	bus := &recordingBus{}
 	engine := NewEngine(store, bus)
 
 	wf := &Workflow{
@@ -221,7 +221,7 @@ func TestEngineApprovalPausesAndResumes(t *testing.T) {
 		t.Fatalf("expected downstream publish after approval, got %d", len(bus.published))
 	}
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
-		JobId:  runID + ":work",
+		JobId:  runID + ":work@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	})
 	final, _ := store.GetRun(context.Background(), run.ID)

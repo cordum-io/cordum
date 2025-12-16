@@ -23,9 +23,17 @@ type workerEntry struct {
 const defaultWorkerTTL = 30 * time.Second
 
 func NewMemoryRegistry() *MemoryRegistry {
+	return NewMemoryRegistryWithTTL(defaultWorkerTTL)
+}
+
+// NewMemoryRegistryWithTTL allows customizing worker heartbeat TTL (primarily for tests).
+func NewMemoryRegistryWithTTL(ttl time.Duration) *MemoryRegistry {
+	if ttl <= 0 {
+		ttl = defaultWorkerTTL
+	}
 	r := &MemoryRegistry{
 		workers: make(map[string]*workerEntry),
-		ttl:     defaultWorkerTTL,
+		ttl:     ttl,
 		stopCh:  make(chan struct{}),
 	}
 	go r.expireLoop()

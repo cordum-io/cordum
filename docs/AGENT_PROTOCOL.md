@@ -12,6 +12,7 @@ This document describes how control-plane components and workers communicate on 
 ## Bus Subjects
 - `sys.job.submit` – inbound jobs to the scheduler.
 - `sys.job.result` – job completions from workers.
+- `sys.job.cancel` – cancellation notifications (workers cancel matching in-flight job IDs).
 - `sys.heartbeat` – worker heartbeats (fan-out, no queue group).
 - `job.*` – worker pools (map lives in `config/pools.yaml`, e.g., `job.echo`, `job.repo.scan`, `job.workflow.repo.code_review`).
 
@@ -43,6 +44,7 @@ This document describes how control-plane components and workers communicate on 
 4. Worker consumes `job.*`, fetches `context_ptr`, performs work, writes result to `res:<job_id>`, and publishes `BusPacket{JobResult}` with `result_ptr`.
 5. Scheduler updates JobStore with terminal state from `JobResult` and stores `result_ptr`.
 6. Reconciler periodically marks old `DISPATCHED`/`RUNNING` jobs as `TIMEOUT` based on `config/timeouts.yaml`.
+7. Cancellation: gateway or scheduler publishes `BusPacket{JobRequest(topic=sys.job.cancel, job_id=<id>)}` to `sys.job.cancel`; workers cancel the matching in-flight job context and publish a terminal `JobResult` (`CANCELLED` or `TIMEOUT`).
 
 ## Safety & Tenancy
 - Safety policy file (`config/safety.yaml`) provides per-tenant `allow_topics` / `deny_topics`.

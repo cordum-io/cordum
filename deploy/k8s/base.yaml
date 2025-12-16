@@ -10,13 +10,20 @@ metadata:
   namespace: coretex
 data:
   pools.yaml: |
-    topic_to_pool:
+    topics:
       job.echo: echo
       job.chat.simple: chat-simple
       job.chat.advanced: chat-advanced
       job.code.llm: code-llm
-      job.workflow.demo: workflow
       job.workflow.plan: workflow
+      job.workflow.demo: workflow
+      job.workflow.repo.code_review: workflow
+      job.repo.scan: repo-scan
+      job.repo.partition: repo-partition
+      job.repo.lint: repo-lint
+      job.repo.sast: repo-sast
+      job.repo.tests: repo-tests
+      job.repo.report: repo-report
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -30,6 +37,10 @@ data:
         child_timeout_seconds: 1200
         total_timeout_seconds: 1800
         max_retries: 1
+      repo_code_review:
+        child_timeout_seconds: 1200
+        total_timeout_seconds: 1800
+        max_retries: 1
     topics:
       job.code.llm:
         timeout_seconds: 1200
@@ -37,10 +48,37 @@ data:
       job.chat.simple:
         timeout_seconds: 60
         max_retries: 0
+      job.repo.scan:
+        timeout_seconds: 300
+        max_retries: 0
+      job.repo.partition:
+        timeout_seconds: 120
+        max_retries: 0
+      job.repo.lint:
+        timeout_seconds: 240
+        max_retries: 0
+      job.repo.sast:
+        timeout_seconds: 240
+        max_retries: 0
+      job.repo.tests:
+        timeout_seconds: 600
+        max_retries: 0
+      job.repo.report:
+        timeout_seconds: 180
+        max_retries: 0
     reconciler:
       dispatch_timeout_seconds: 120
       running_timeout_seconds: 1500
       scan_interval_seconds: 30
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: coretex-api-key
+  namespace: coretex
+type: Opaque
+stringData:
+  API_KEY: super-secret-key
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -112,6 +150,45 @@ spec:
   ports:
   - port: 6379
     targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coretex-context-engine
+  namespace: coretex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: coretex-context-engine}
+  template:
+    metadata:
+      labels: {app: coretex-context-engine}
+    spec:
+      containers:
+      - name: context-engine
+        image: coretex-coretex-context-engine
+        env:
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: CONTEXT_ENGINE_ADDR
+          value: ":50070"
+        ports:
+        - containerPort: 50070
+        livenessProbe:
+          tcpSocket: {port: 50070}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coretex-context-engine
+  namespace: coretex
+spec:
+  selector: {app: coretex-context-engine}
+  ports:
+  - port: 50070
+    targetPort: 50070
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -230,7 +307,20 @@ spec:
         - name: SAFETY_KERNEL_ADDR
           value: coretex-safety-kernel:50051
         - name: API_KEY
-          value: "change-me"
+          valueFrom:
+            secretKeyRef:
+              name: coretex-api-key
+              key: API_KEY
+        - name: CORETEX_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: coretex-api-key
+              key: API_KEY
+        - name: CORETEX_SUPER_SECRET_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: coretex-api-key
+              key: API_KEY
         - name: TENANT_ID
           value: "default"
         - name: API_RATE_LIMIT_RPS
@@ -242,6 +332,7 @@ spec:
         - name: JOB_META_TTL
           value: "168h"
         ports:
+        - containerPort: 8080
         - containerPort: 8081
         - containerPort: 9092
         livenessProbe:
@@ -265,6 +356,53 @@ spec:
   - name: grpc
     port: 8080
     targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coretex-workflow-engine
+  namespace: coretex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: coretex-workflow-engine}
+  template:
+    metadata:
+      labels: {app: coretex-workflow-engine}
+    spec:
+      containers:
+      - name: workflow-engine
+        image: coretex-coretex-workflow-engine
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: WORKFLOW_ENGINE_HTTP_ADDR
+          value: ":9093"
+        - name: WORKFLOW_ENGINE_SCAN_INTERVAL
+          value: "5s"
+        - name: WORKFLOW_ENGINE_RUN_SCAN_LIMIT
+          value: "200"
+        ports:
+        - containerPort: 9093
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9093
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coretex-workflow-engine
+  namespace: coretex
+spec:
+  selector: {app: coretex-workflow-engine}
+  ports:
+  - port: 9093
+    targetPort: 9093
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -357,6 +495,8 @@ spec:
           value: nats://nats:4222
         - name: REDIS_URL
           value: redis://redis:6379
+        - name: CONTEXT_ENGINE_ADDR
+          value: coretex-context-engine:50070
         - name: OLLAMA_URL
           value: http://ollama:11434
         - name: REDIS_DATA_TTL
@@ -383,6 +523,8 @@ spec:
           value: nats://nats:4222
         - name: REDIS_URL
           value: redis://redis:6379
+        - name: CONTEXT_ENGINE_ADDR
+          value: coretex-context-engine:50070
         - name: OLLAMA_URL
           value: http://ollama:11434
         - name: REDIS_DATA_TTL

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"sync/atomic"
+
 	"github.com/yaront1111/coretex-os/core/infra/logging"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -28,6 +30,7 @@ type Engine struct {
 	jobStore JobStore
 	metrics  Metrics
 	config   ConfigProvider
+	stopped  atomic.Bool
 }
 
 func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy SchedulingStrategy, jobStore JobStore, metrics Metrics) *Engine {
@@ -63,6 +66,9 @@ func (e *Engine) Start() error {
 
 func (e *Engine) HandlePacket(p *pb.BusPacket) {
 	if p == nil {
+		return
+	}
+	if e.stopped.Load() {
 		return
 	}
 
@@ -122,6 +128,11 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) {
 	default:
 		// Unknown payloads are ignored for now.
 	}
+}
+
+// Stop prevents new packet handling; bus subscriptions are cleaned up when the bus is closed by caller.
+func (e *Engine) Stop() {
+	e.stopped.Store(true)
 }
 
 func (e *Engine) processJob(req *pb.JobRequest, traceID string) {
@@ -212,6 +223,10 @@ func (e *Engine) handleJobResult(res *pb.JobResult) {
 	if res == nil {
 		return
 	}
+	status := res.Status
+	if status == pb.JobStatus_JOB_STATUS_COMPLETED {
+		status = pb.JobStatus_JOB_STATUS_SUCCEEDED
+	}
 	var topic string
 	if e.jobStore != nil {
 		topic, _ = e.jobStore.GetTopic(context.Background(), res.JobId)
@@ -220,9 +235,11 @@ func (e *Engine) handleJobResult(res *pb.JobResult) {
 		topic = "unknown"
 	}
 	var state JobState
-	switch res.Status {
+	succeeded := false
+	switch status {
 	case pb.JobStatus_JOB_STATUS_SUCCEEDED:
 		state = JobStateSucceeded
+		succeeded = true
 	case pb.JobStatus_JOB_STATUS_FAILED:
 		state = JobStateFailed
 	case pb.JobStatus_JOB_STATUS_TIMEOUT:
@@ -242,9 +259,9 @@ func (e *Engine) handleJobResult(res *pb.JobResult) {
 	if res.ResultPtr != "" {
 		e.setResultPtr(res.JobId, res.ResultPtr)
 	}
-	e.incJobsCompleted(topic, res.Status.String())
-	if res.Status != pb.JobStatus_JOB_STATUS_SUCCEEDED {
-		e.emitDLQ(res.JobId, topic, res.Status, res.ErrorMessage)
+	e.incJobsCompleted(topic, status.String())
+	if !succeeded {
+		e.emitDLQ(res.JobId, topic, status, res.ErrorMessage)
 	}
 }
 
@@ -370,7 +387,7 @@ func (e *Engine) incSafetyDenied(topic string) {
 	}
 }
 
-// publishCancel emits a cancellation packet to a broadcast subject and the job topic (best effort).
+// publishCancel emits a cancellation packet to a broadcast subject (best effort).
 func (e *Engine) publishCancel(jobID, reason string) {
 	if e.bus == nil {
 		return
@@ -390,11 +407,6 @@ func (e *Engine) publishCancel(jobID, reason string) {
 		Payload:         &pb.BusPacket_JobRequest{JobRequest: cancelReq},
 	}
 	_ = e.bus.Publish("sys.job.cancel", packet)
-	if e.jobStore != nil {
-		if topic, err := e.jobStore.GetTopic(context.Background(), jobID); err == nil && topic != "" {
-			_ = e.bus.Publish(topic, packet)
-		}
-	}
 }
 
 func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string) {

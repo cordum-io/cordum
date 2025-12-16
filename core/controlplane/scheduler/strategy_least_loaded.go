@@ -144,6 +144,15 @@ func filterPlacementLabels(labels map[string]string) map[string]string {
 		if k == "preferred_worker_id" || k == "preferred_pool" {
 			continue
 		}
+		// These labels are used for traceability/observability and should not constrain placement.
+		// Placement constraints should be expressed via dedicated labels (e.g. hardware/region),
+		// not workflow/run identifiers.
+		if k == "workflow_id" || k == "run_id" || k == "step_id" {
+			continue
+		}
+		if k == "worker_id" {
+			continue
+		}
 		out[k] = v
 	}
 	return out

@@ -11,6 +11,20 @@ services:
     ports:
       - "6379:6379"
 
+  coretex-context-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: coretex-context-engine
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CONTEXT_ENGINE_ADDR=:50070
+    ports:
+      - "50070:50070"
+
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
@@ -70,7 +84,9 @@ services:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
       - SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051
-      - API_KEY=super-secret-key
+      - API_KEY=${CORETEX_API_KEY:-super-secret-key}
+      - CORETEX_API_KEY=${CORETEX_API_KEY:-super-secret-key}
+      - CORETEX_SUPER_SECRET_API_TOKEN=${CORETEX_API_KEY:-super-secret-key}
       - TENANT_ID=default
       - API_RATE_LIMIT_RPS=50
       - API_RATE_LIMIT_BURST=100
@@ -80,6 +96,38 @@ services:
       - "8080:8080"
       - "8081:8081"
       - "9092:9092"
+
+  coretex-workflow-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: coretex-workflow-engine
+    depends_on:
+      - nats
+      - redis
+      - coretex-scheduler
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
+      - WORKFLOW_ENGINE_HTTP_ADDR=:9093
+      - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
+      - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200
+    ports:
+      - "9093:9093"
+
+  coretex-dashboard:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile
+    depends_on:
+      - coretex-api-gateway
+    environment:
+      - NEXT_TELEMETRY_DISABLED=1
+      - CORETEX_DASHBOARD_API_KEY=${CORETEX_API_KEY:-super-secret-key}
+      - CORETEX_SUPER_SECRET_API_TOKEN=${CORETEX_API_KEY:-super-secret-key}
+    ports:
+      - "3000:3000"
 
   coretex-worker-echo:
     build:
@@ -121,9 +169,11 @@ services:
       - nats
       - redis
       - coretex-scheduler
+      - coretex-context-engine
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - CONTEXT_ENGINE_ADDR=coretex-context-engine:50070
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
       - REDIS_DATA_TTL=24h
@@ -138,9 +188,11 @@ services:
       - nats
       - redis
       - coretex-scheduler
+      - coretex-context-engine
     environment:
       - NATS_URL=nats://nats:4222
       - REDIS_URL=redis://redis:6379
+      - CONTEXT_ENGINE_ADDR=coretex-context-engine:50070
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
       - REDIS_DATA_TTL=24h

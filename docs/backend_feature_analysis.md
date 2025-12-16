@@ -23,15 +23,15 @@ This document summarizes the production-bound backend surface, where it lives in
 - **Hierarchy**: System → Org → Team → Workflow → Step shallow merge.  
   Code: `core/configsvc`.
 - **Exposure**: Gateway endpoints for set/get/effective config.  
-  Code: `cmd/coretex-api-gateway/main.go`.
+  Code: `core/controlplane/gateway/`.
 
 ## API Gateway
 - **Jobs**: Submit/list/get/cancel with filters (state/topic/tenant/team/time).  
-  Code: handlers in `cmd/coretex-api-gateway/main.go`.
+  Code: handlers in `core/controlplane/gateway/`.
 - **Workflows**: CRUD, start runs, approval endpoint to resume waiting steps.  
-  Code: `cmd/coretex-api-gateway/main.go` (workflow handlers).
+  Code: `core/controlplane/gateway/` (workflow handlers).
 - **DLQ**: List/delete/retry (re-dispatches job with prior context pointer).  
-  Code: `cmd/coretex-api-gateway/main.go`, `core/infra/memory/dlq_store.go`.
+  Code: `core/controlplane/gateway/`, `core/infra/memory/dlq_store.go`.
 
 ## DLQ Store
 - **Persistence**: Redis entries with index, get/list/delete, tested.  

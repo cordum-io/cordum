@@ -272,7 +272,7 @@ func (l *ContextLoader) retrieveFromMemory(ctx context.Context, memoryID string,
 ### Step 4.1: Update REST Handlers
 
 ```go
-// cmd/coretex-api-gateway/main.go
+// core/controlplane/gateway/gateway.go
 
 type SubmitJobHTTPRequest struct {
     Topic       string            `json:"topic"`
@@ -463,7 +463,7 @@ func (r *Reconciler) handleDeadlineExpirations(ctx context.Context, now time.Tim
 ### Step 6.1: Enhanced Policy Checks
 
 ```go
-// cmd/coretex-safety-kernel/main.go
+// core/controlplane/safetykernel/kernel.go
 
 func (s *server) Check(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.PolicyCheckResponse, error) {
     decision := pb.DecisionType_DECISION_TYPE_ALLOW

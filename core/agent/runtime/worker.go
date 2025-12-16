@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -164,6 +166,9 @@ func (w *Worker) wrapHandler(handler HandlerFunc) func(*pb.BusPacket) {
 
 		// Execute business logic
 		result, err := handler(ctx, req, w.Store)
+		if err == nil && result == nil {
+			err = fmt.Errorf("handler returned nil result")
+		}
 
 		// Prepare response packet
 		respPacket := &pb.BusPacket{
@@ -175,12 +180,28 @@ func (w *Worker) wrapHandler(handler HandlerFunc) func(*pb.BusPacket) {
 
 		if err != nil {
 			log.Printf("[WORKER %s] Handler error job_id=%s: %v", w.Config.WorkerID, req.JobId, err)
+			status := pb.JobStatus_JOB_STATUS_FAILED
+			switch {
+			case errors.Is(err, context.Canceled):
+				status = pb.JobStatus_JOB_STATUS_CANCELLED
+			case errors.Is(err, context.DeadlineExceeded):
+				status = pb.JobStatus_JOB_STATUS_TIMEOUT
+			}
+
 			// Ensure we send a failed result if one wasn't returned
 			if result == nil {
 				result = &pb.JobResult{
 					JobId:    req.JobId,
-					Status:   pb.JobStatus_JOB_STATUS_FAILED,
+					Status:   status,
 					WorkerId: w.Config.WorkerID,
+					ErrorMessage: err.Error(),
+				}
+			} else {
+				if result.Status == pb.JobStatus_JOB_STATUS_UNSPECIFIED || result.Status == pb.JobStatus_JOB_STATUS_SUCCEEDED {
+					result.Status = status
+				}
+				if result.ErrorMessage == "" {
+					result.ErrorMessage = err.Error()
 				}
 			}
 		}

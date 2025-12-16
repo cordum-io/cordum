@@ -106,3 +106,49 @@ func TestWorkflowRunsCRUD(t *testing.T) {
 		t.Fatalf("unexpected runs: %+v", list)
 	}
 }
+
+func TestRunStatusIndexing(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	run := &WorkflowRun{
+		ID:         "run-idx-1",
+		WorkflowID: "wf-1",
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	ids, err := store.ListRunIDsByStatus(ctx, RunStatusPending, 10)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != run.ID {
+		t.Fatalf("unexpected pending ids: %+v", ids)
+	}
+
+	run.Status = RunStatusRunning
+	if err := store.UpdateRun(ctx, run); err != nil {
+		t.Fatalf("update run: %v", err)
+	}
+
+	ids, err = store.ListRunIDsByStatus(ctx, RunStatusPending, 10)
+	if err != nil {
+		t.Fatalf("list pending after update: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected no pending ids, got %+v", ids)
+	}
+
+	ids, err = store.ListRunIDsByStatus(ctx, RunStatusRunning, 10)
+	if err != nil {
+		t.Fatalf("list running: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != run.ID {
+		t.Fatalf("unexpected running ids: %+v", ids)
+	}
+}

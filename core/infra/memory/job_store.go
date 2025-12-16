@@ -52,9 +52,9 @@ var (
 		scheduler.JobStateDenied,
 	}
 	allowedTransitions = map[scheduler.JobState][]scheduler.JobState{
-		"":                           {scheduler.JobStatePending, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning},
-		scheduler.JobStatePending:    {scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied},
-		scheduler.JobStateScheduled:  {scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied},
+		"":                           {scheduler.JobStatePending, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateFailed},
+		scheduler.JobStatePending:    {scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
+		scheduler.JobStateScheduled:  {scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
 		scheduler.JobStateDispatched: {scheduler.JobStateRunning, scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout},
 		scheduler.JobStateRunning:    {scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout},
 		scheduler.JobStateSucceeded:  {},
@@ -503,6 +503,13 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.Job
 
 func (s *RedisJobStore) Close() error {
 	return s.client.Close()
+}
+
+func (s *RedisJobStore) Ping(ctx context.Context) error {
+	if s == nil || s.client == nil {
+		return fmt.Errorf("redis job store not initialized")
+	}
+	return s.client.Ping(ctx).Err()
 }
 
 func jobStateKey(jobID string) string {

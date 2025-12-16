@@ -3,6 +3,7 @@ package scheduler_test
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
@@ -86,5 +87,18 @@ func TestMemoryRegistry_Concurrency(t *testing.T) {
 	// Ensure map is still valid
 	if len(r.Snapshot()) != 1 {
 		t.Errorf("expected 1 worker after concurrent updates")
+	}
+}
+
+func TestMemoryRegistry_ExpiresStaleWorkers(t *testing.T) {
+	r := scheduler.NewMemoryRegistryWithTTL(10 * time.Millisecond)
+
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-expire", Pool: "A"})
+
+	time.Sleep(25 * time.Millisecond) // allow expire loop to run
+
+	snapshot := r.Snapshot()
+	if len(snapshot) != 0 {
+		t.Fatalf("expected worker to expire, found %d", len(snapshot))
 	}
 }

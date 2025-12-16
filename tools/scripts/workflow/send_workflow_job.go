@@ -36,7 +36,7 @@ func main() {
 
 	payload := map[string]any{
 		"file_path":    "foo/bar.go",
-		"code_snippet": "func Foo() { /* stub */ }",
+		"code_snippet": "func Foo() { /* example */ }",
 		"instruction":  "improve performance and add logging",
 		"created_at":   time.Now().UTC().Format(time.RFC3339),
 	}

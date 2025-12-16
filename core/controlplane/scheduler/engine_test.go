@@ -169,7 +169,7 @@ func (b *fakeBus) Subscribe(subject, queue string, handler func(*pb.BusPacket)) 
 func TestEngineHandleHeartbeatStoresWorker(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
-	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
 
 	packet := &pb.BusPacket{
 		SenderId:        "worker-1",
@@ -200,7 +200,7 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 	registry := NewMemoryRegistry()
 	strategy := &NaiveStrategy{}
 	jobStore := newFakeJobStore()
-	engine := NewEngine(bus, NewSafetyStub(), registry, strategy, jobStore, nil)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, strategy, jobStore, nil)
 
 	req := &pb.JobRequest{
 		JobId: "job-1",
@@ -227,13 +227,53 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 	}
 }
 
+func TestCancelJobPublishesOnlyCancelSubject(t *testing.T) {
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	jobStore := newFakeJobStore()
+	jobStore.states["job-1"] = JobStateRunning
+	jobStore.topics["job-1"] = "job.chat.advanced"
+
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
+
+	if err := engine.CancelJob(context.Background(), "job-1"); err != nil {
+		t.Fatalf("cancel job: %v", err)
+	}
+
+	if len(bus.published) != 1 {
+		t.Fatalf("expected 1 publish, got %d", len(bus.published))
+	}
+	if bus.published[0].subject != "sys.job.cancel" {
+		t.Fatalf("expected publish to sys.job.cancel, got %s", bus.published[0].subject)
+	}
+	if req := bus.published[0].packet.GetJobRequest(); req == nil || req.GetJobId() != "job-1" || req.GetTopic() != "sys.job.cancel" {
+		t.Fatalf("expected cancel job request payload for job-1")
+	}
+}
+
+func TestHandleJobResultTreatsCompletedAsSucceeded(t *testing.T) {
+	store := newFakeJobStore()
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil)
+
+	res := &pb.JobResult{
+		JobId:  "job-completed",
+		Status: pb.JobStatus_JOB_STATUS_COMPLETED,
+	}
+
+	engine.handleJobResult(res)
+
+	if got := store.states["job-completed"]; got != JobStateSucceeded {
+		t.Fatalf("expected COMPLETED to map to SUCCEEDED state, got %s", got)
+	}
+}
+
 func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
 	strategy := &NaiveStrategy{}
 	jobStore := newFakeJobStore()
 	cfg := &fakeConfigProvider{cfg: map[string]any{"feature": "on", "limit": 3}}
-	engine := NewEngine(bus, NewSafetyStub(), registry, strategy, jobStore, nil).WithConfig(cfg)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, strategy, jobStore, nil).WithConfig(cfg)
 
 	req := &pb.JobRequest{
 		JobId: "job-ec",
@@ -271,7 +311,7 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
 	jobStore := newFakeJobStore()
-	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), jobStore, nil)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
 
 	req := &pb.JobRequest{
 		JobId: "job-blocked",
@@ -291,7 +331,7 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 func TestProcessJobSkipsInvalidRequest(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
-	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
 
 	req := &pb.JobRequest{
 		JobId: "",
@@ -309,7 +349,7 @@ func TestHandleJobResultUpdatesState(t *testing.T) {
 	bus := &fakeBus{}
 	registry := NewMemoryRegistry()
 	jobStore := newFakeJobStore()
-	engine := NewEngine(bus, NewSafetyStub(), registry, NewNaiveStrategy(), jobStore, nil)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
 
 	res := &pb.JobResult{
 		JobId:     "job-1",

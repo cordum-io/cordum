@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -44,6 +45,8 @@ var topicChildTimeouts = map[string]time.Duration{
 }
 
 var activeJobs int32
+var cancelMu sync.Mutex
+var activeCancels = map[string]context.CancelFunc{}
 
 type repoWorkflowContext struct {
 	RepoURL      string   `json:"repo_url"`
@@ -121,6 +124,10 @@ func Run() {
 	}
 	defer natsBus.Close()
 
+	if err := natsBus.Subscribe("sys.job.cancel", "", handleCancelPacket()); err != nil {
+		log.Fatalf("failed to subscribe to job cancel: %v", err)
+	}
+
 	if err := natsBus.Subscribe(repoWorkflowSubject, repoOrchestratorQueueGroup, handleWorkflow(natsBus, memStore, jobStore, cfg)); err != nil {
 		log.Fatalf("failed to subscribe to repo workflow: %v", err)
 	}
@@ -146,6 +153,40 @@ func Run() {
 	wg.Wait()
 }
 
+func handleCancelPacket() func(*pb.BusPacket) {
+	return func(packet *pb.BusPacket) {
+		req := packet.GetJobRequest()
+		if req == nil || req.GetJobId() == "" {
+			return
+		}
+		cancelMu.Lock()
+		cancel := activeCancels[req.GetJobId()]
+		cancelMu.Unlock()
+		if cancel != nil {
+			log.Printf("[WORKFLOW repo] cancelling job_id=%s reason=%s", req.GetJobId(), req.GetEnv()["cancel_reason"])
+			cancel()
+		}
+	}
+}
+
+func registerCancel(jobID string, cancel context.CancelFunc) {
+	if jobID == "" || cancel == nil {
+		return
+	}
+	cancelMu.Lock()
+	activeCancels[jobID] = cancel
+	cancelMu.Unlock()
+}
+
+func clearCancel(jobID string) {
+	if jobID == "" {
+		return
+	}
+	cancelMu.Lock()
+	delete(activeCancels, jobID)
+	cancelMu.Unlock()
+}
+
 func handleWorkflow(b *bus.NatsBus, store memory.Store, jobStore scheduler.JobStore, cfg *config.Config) func(*pb.BusPacket) {
 	return func(packet *pb.BusPacket) {
 		req := packet.GetJobRequest()
@@ -157,7 +198,9 @@ func handleWorkflow(b *bus.NatsBus, store memory.Store, jobStore scheduler.JobSt
 
 		traceID := packet.TraceId
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTotalTimeout)
+		registerCancel(req.JobId, cancel)
 		defer cancel()
+		defer clearCancel(req.JobId)
 
 		wcfg := loadRepoConfig()
 
@@ -589,9 +632,11 @@ func runChildWithContext(ctx context.Context, b *bus.NatsBus, jobStore scheduler
 	if err := b.Publish("sys.job.submit", packet); err != nil {
 		return "", err
 	}
-	_ = jobStore.SetState(ctx, childID, scheduler.JobStatePending)
 	timeout := childTimeoutForTopic(topic)
 	if err := waitForChild(ctx, jobStore, childID, topic, timeout); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			publishCancel(b, childID, err.Error())
+		}
 		return "", err
 	}
 	ptr, _ := jobStore.GetResultPtr(ctx, childID)
@@ -611,13 +656,40 @@ func waitForChild(ctx context.Context, jobStore scheduler.JobStore, childID, top
 			if state == scheduler.JobStateSucceeded {
 				return nil
 			}
-			if state == scheduler.JobStateFailed || state == scheduler.JobStateDenied || state == scheduler.JobStateTimeout {
+			if state == scheduler.JobStateCancelled {
+				return fmt.Errorf("child job cancelled: %w", context.Canceled)
+			}
+			if state == scheduler.JobStateTimeout {
+				return fmt.Errorf("child job timeout: %w", context.DeadlineExceeded)
+			}
+			if state == scheduler.JobStateFailed || state == scheduler.JobStateDenied {
 				return fmt.Errorf("child job failed state=%s", state)
 			}
 		}
 		time.Sleep(childPollInterval)
 	}
-	return fmt.Errorf("child job timeout topic=%s after %s", topic, timeout)
+	return fmt.Errorf("child job timeout topic=%s after %s: %w", topic, timeout, context.DeadlineExceeded)
+}
+
+func publishCancel(b *bus.NatsBus, jobID, reason string) {
+	if b == nil || jobID == "" {
+		return
+	}
+	cancelReq := &pb.JobRequest{
+		JobId: jobID,
+		Topic: "sys.job.cancel",
+		Env: map[string]string{
+			"cancel_reason": reason,
+		},
+	}
+	packet := &pb.BusPacket{
+		TraceId:         jobID,
+		SenderId:        repoOrchestratorWorkerID,
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: 1,
+		Payload:         &pb.BusPacket_JobRequest{JobRequest: cancelReq},
+	}
+	_ = b.Publish("sys.job.cancel", packet)
 }
 
 func selectFiles(all []struct {
@@ -723,11 +795,23 @@ func failParent(ctx context.Context, b *bus.NatsBus, jobStore scheduler.JobStore
 		resultPtr = memory.PointerForKey(resKey)
 		_ = jobStore.SetResultPtr(ctx, req.JobId, resultPtr)
 	}
+
+	status := pb.JobStatus_JOB_STATUS_FAILED
+	state := scheduler.JobStateFailed
+	switch {
+	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
+		status = pb.JobStatus_JOB_STATUS_CANCELLED
+		state = scheduler.JobStateCancelled
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded):
+		status = pb.JobStatus_JOB_STATUS_TIMEOUT
+		state = scheduler.JobStateTimeout
+	}
 	res := &pb.JobResult{
-		JobId:     req.JobId,
-		Status:    pb.JobStatus_JOB_STATUS_FAILED,
-		ResultPtr: resultPtr,
-		WorkerId:  repoOrchestratorWorkerID,
+		JobId:        req.JobId,
+		Status:       status,
+		ResultPtr:    resultPtr,
+		WorkerId:     repoOrchestratorWorkerID,
+		ErrorMessage: err.Error(),
 	}
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
@@ -738,7 +822,7 @@ func failParent(ctx context.Context, b *bus.NatsBus, jobStore scheduler.JobStore
 			JobResult: res,
 		},
 	}
-	_ = jobStore.SetState(ctx, req.JobId, scheduler.JobStateFailed)
+	_ = jobStore.SetState(ctx, req.JobId, state)
 	_ = b.Publish("sys.job.result", packet)
 }
 
