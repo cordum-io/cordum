@@ -7,34 +7,27 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/yaront1111/coretex-os/core/agent"
+	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
 	ctxengine "github.com/yaront1111/coretex-os/core/context/engine"
 	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/config"
 	"github.com/yaront1111/coretex-os/core/infra/memory"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"github.com/yaront1111/coretex-os/packages/providers/ollama"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
-	codeLLMWorkerID     = "worker-code-llm-1"
-	codeLLMQueueGroup   = "workers-code-llm"
-	codeLLMJobSubject   = "job.code.llm"
-	codeLLMHeartbeatSub = "sys.heartbeat"
+	defaultWorkerID = "worker-code-llm-1"
+	queueGroup      = "workers-code-llm"
+	jobSubject      = "job.code.llm"
 )
 
-var codeWorkerID = resolveWorkerID(codeLLMWorkerID)
-
-var codeActiveJobs int32
+var workerID = resolveWorkerID(defaultWorkerID)
 
 type codeContext struct {
 	FilePath    string `json:"file_path"`
@@ -50,8 +43,8 @@ type codeResult struct {
 }
 
 type structuredPatch struct {
-	Type    string `json:"type"`    // e.g., unified_diff
-	Content string `json:"content"` // diff or patch text
+	Type    string `json:"type"`
+	Content string `json:"content"`
 }
 
 // Run starts the code-llm worker.
@@ -59,18 +52,7 @@ func Run() {
 	log.Println("coretex worker code-llm starting...")
 
 	cfg := config.Load()
-
-	memStore, err := memory.NewRedisStore(cfg.RedisURL)
-	if err != nil {
-		log.Fatalf("failed to connect to Redis: %v", err)
-	}
-	defer memStore.Close()
-
-	natsBus, err := bus.NewNatsBus(cfg.NatsURL)
-	if err != nil {
-		log.Fatalf("failed to connect to NATS: %v", err)
-	}
-	defer natsBus.Close()
+	provider := ollama.NewFromEnv()
 
 	ctxClient, closeCtxClient, err := ctxengine.NewClient(context.Background(), cfg.ContextEngineAddr)
 	if err != nil {
@@ -78,185 +60,175 @@ func Run() {
 	}
 	defer closeCtxClient()
 
-	provider := ollama.NewFromEnv()
-
-	if err := natsBus.Subscribe(codeLLMJobSubject, codeLLMQueueGroup, handleCodeJob(natsBus, memStore, provider, ctxClient)); err != nil {
-		log.Fatalf("failed to subscribe to code llm jobs: %v", err)
+	wConfig := worker.Config{
+		WorkerID:        workerID,
+		NatsURL:         cfg.NatsURL,
+		RedisURL:        cfg.RedisURL,
+		QueueGroup:      queueGroup,
+		JobSubject:      jobSubject,
+		DirectSubject:   bus.DirectSubject(workerID),
+		HeartbeatSub:    "sys.heartbeat",
+		Capabilities:    []string{"code-llm"},
+		Pool:            "code-llm",
+		MaxParallelJobs: 2,
 	}
-	if direct := bus.DirectSubject(codeWorkerID); direct != "" {
-		if err := natsBus.Subscribe(direct, "", handleCodeJob(natsBus, memStore, provider, ctxClient)); err != nil {
-			log.Fatalf("failed to subscribe to direct code llm jobs: %v", err)
-		}
+
+	w, err := worker.New(wConfig)
+	if err != nil {
+		log.Fatalf("failed to initialize worker: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		sendCodeHeartbeats(ctx, natsBus)
-	}()
-
-	log.Println("worker code-llm running. waiting for jobs...")
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-	log.Println("worker code-llm shutting down")
-	cancel()
-	wg.Wait()
+	if err := w.Start(func(ctx context.Context, req *pb.JobRequest, store memory.Store) (*pb.JobResult, error) {
+		return handleCodeLLM(ctx, req, store, provider, ctxClient)
+	}); err != nil {
+		log.Fatalf("worker code-llm failed: %v", err)
+	}
 }
 
-func handleCodeJob(b *bus.NatsBus, store memory.Store, provider agent.ModelProvider, ctxClient pb.ContextEngineClient) func(*pb.BusPacket) {
-	return func(packet *pb.BusPacket) {
-		req := packet.GetJobRequest()
-		if req == nil {
-			return
+func handleCodeLLM(ctx context.Context, req *pb.JobRequest, store memory.Store, provider agent.ModelProvider, ctxClient pb.ContextEngineClient) (*pb.JobResult, error) {
+	start := time.Now()
+
+	payloadBytes, ctxPayload, err := loadCodeContext(ctx, req, store)
+	if err != nil {
+		return storeCodeResult(ctx, req, store, codeResult{}, err, 0)
+	}
+
+	prompt := buildPrompt(ctxPayload)
+
+	memoryID := getEnv(req, "memory_id")
+	if memoryID == "" {
+		memoryID = "session:" + req.GetJobId()
+	}
+	mode := parseContextMode(req, pb.ContextMode_CONTEXT_MODE_RAG)
+	maxIn := parseIntEnv(req, "max_input_tokens", 12000)
+	maxOut := parseIntEnv(req, "max_output_tokens", 2048)
+
+	if ctxClient != nil && len(payloadBytes) > 0 {
+		win, err := ctxClient.BuildWindow(ctx, &pb.BuildWindowRequest{
+			MemoryId:        memoryID,
+			Mode:            mode,
+			Model:           "code",
+			LogicalPayload:  payloadBytes,
+			MaxInputTokens:  maxIn,
+			MaxOutputTokens: maxOut,
+		})
+		if err == nil && len(win.GetMessages()) > 0 {
+			prompt = flattenMessages(win.GetMessages())
 		}
+	}
 
-		atomic.AddInt32(&codeActiveJobs, 1)
-		defer atomic.AddInt32(&codeActiveJobs, -1)
-
-		ctx := context.Background()
-		var ctxPayload codeContext
-		var payloadBytes []byte
-		if key, err := memory.KeyFromPointer(req.ContextPtr); err == nil {
-			if data, err := store.GetContext(ctx, key); err == nil {
-				payloadBytes = data
-				if err := json.Unmarshal(data, &ctxPayload); err != nil {
-					log.Printf("[WORKER code-llm] failed to decode context for job_id=%s: %v", req.JobId, err)
-				}
-			} else {
-				log.Printf("[WORKER code-llm] failed to read context for job_id=%s: %v", req.JobId, err)
-			}
-		} else {
-			log.Printf("[WORKER code-llm] invalid context_ptr for job_id=%s: %v", req.JobId, err)
+	respText, err := provider.Generate(ctx, prompt)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
 		}
-
-		log.Printf("[WORKER code-llm] received job_id=%s topic=%s file=%s", req.JobId, req.Topic, ctxPayload.FilePath)
-
-		start := time.Now()
-
-		prompt := buildPrompt(ctxPayload)
-		memoryID := getEnv(req, "memory_id")
-		if memoryID == "" {
-			memoryID = "session:" + req.GetJobId()
-		}
-		mode := parseContextMode(req, pb.ContextMode_CONTEXT_MODE_RAG)
-		maxIn := parseIntEnv(req, "max_input_tokens", 12000)
-		maxOut := parseIntEnv(req, "max_output_tokens", 2048)
-		if ctxClient != nil {
-			win, err := ctxClient.BuildWindow(ctx, &pb.BuildWindowRequest{
-				MemoryId:        memoryID,
-				Mode:            mode,
-				Model:           "code",
-				LogicalPayload:  payloadBytes,
-				MaxInputTokens:  maxIn,
-				MaxOutputTokens: maxOut,
-			})
-			if err == nil && len(win.GetMessages()) > 0 {
-				prompt = flattenMessages(win.GetMessages())
-			}
-		}
-
-		respText, err := provider.Generate(ctx, prompt)
-		status := pb.JobStatus_JOB_STATUS_SUCCEEDED
-		if err != nil {
-			log.Printf("[WORKER code-llm] ollama call failed job_id=%s: %v", req.JobId, err)
-			status = pb.JobStatus_JOB_STATUS_FAILED
-			respText = err.Error()
-		}
-
-		if ctxClient != nil {
-			_, _ = ctxClient.UpdateMemory(ctx, &pb.UpdateMemoryRequest{
-				MemoryId:       memoryID,
-				LogicalPayload: payloadBytes,
-				ModelResponse:  []byte(respText),
-				Mode:           mode,
-			})
-		}
-
-		result := codeResult{
+		return storeCodeResult(ctx, req, store, codeResult{
 			FilePath:     ctxPayload.FilePath,
 			OriginalCode: ctxPayload.CodeSnippet,
 			Instruction:  ctxPayload.Instruction,
 			Patch: structuredPatch{
 				Type:    "unified_diff",
-				Content: respText,
+				Content: err.Error(),
 			},
-		}
+		}, err, time.Since(start).Milliseconds())
+	}
 
-		resultBytes, _ := json.Marshal(result)
-		resKey := memory.MakeResultKey(req.JobId)
+	respText = strings.TrimSpace(respText)
+	result := codeResult{
+		FilePath:     ctxPayload.FilePath,
+		OriginalCode: ctxPayload.CodeSnippet,
+		Instruction:  ctxPayload.Instruction,
+		Patch: structuredPatch{
+			Type:    "unified_diff",
+			Content: respText,
+		},
+	}
+
+	if ctxClient != nil {
+		_, _ = ctxClient.UpdateMemory(ctx, &pb.UpdateMemoryRequest{
+			MemoryId:       memoryID,
+			LogicalPayload: payloadBytes,
+			ModelResponse:  []byte(respText),
+			Mode:           mode,
+		})
+	}
+
+	return storeCodeResult(ctx, req, store, result, nil, time.Since(start).Milliseconds())
+}
+
+func loadCodeContext(ctx context.Context, req *pb.JobRequest, store memory.Store) ([]byte, codeContext, error) {
+	if req == nil {
+		return nil, codeContext{}, fmt.Errorf("nil request")
+	}
+	if req.ContextPtr == "" {
+		return nil, codeContext{}, fmt.Errorf("missing context_ptr")
+	}
+	key, err := memory.KeyFromPointer(req.ContextPtr)
+	if err != nil {
+		return nil, codeContext{}, fmt.Errorf("invalid context_ptr: %w", err)
+	}
+	data, err := store.GetContext(ctx, key)
+	if err != nil {
+		return nil, codeContext{}, fmt.Errorf("read context: %w", err)
+	}
+	var payload codeContext
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return data, codeContext{}, fmt.Errorf("decode context: %w", err)
+	}
+	return data, payload, nil
+}
+
+func storeCodeResult(ctx context.Context, req *pb.JobRequest, store memory.Store, result codeResult, runErr error, execMs int64) (*pb.JobResult, error) {
+	resKey := memory.MakeResultKey(req.JobId)
+	resultPtr := memory.PointerForKey(resKey)
+
+	payload := map[string]any{
+		"file_path":     result.FilePath,
+		"original_code": result.OriginalCode,
+		"instruction":   result.Instruction,
+		"patch": map[string]any{
+			"type":    result.Patch.Type,
+			"content": result.Patch.Content,
+		},
+		"processed_by": workerID,
+		"completed_at": time.Now().UTC().Format(time.RFC3339),
+		"model":        "ollama",
+	}
+	if runErr != nil {
+		payload["error"] = map[string]any{"message": runErr.Error()}
+	}
+	if resultBytes, err := json.Marshal(payload); err == nil {
 		if err := store.PutResult(ctx, resKey, resultBytes); err != nil {
 			log.Printf("[WORKER code-llm] failed to store result for job_id=%s: %v", req.JobId, err)
 		}
-		resultPtr := memory.PointerForKey(resKey)
-
-		jobRes := &pb.JobResult{
-			JobId:       req.JobId,
-			Status:      status,
-			ResultPtr:   resultPtr,
-			WorkerId:    codeWorkerID,
-			ExecutionMs: time.Since(start).Milliseconds(),
-		}
-
-		response := &pb.BusPacket{
-			TraceId:         packet.TraceId,
-			SenderId:        codeWorkerID,
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: 1,
-			Payload: &pb.BusPacket_JobResult{
-				JobResult: jobRes,
-			},
-		}
-
-		if err := b.Publish("sys.job.result", response); err != nil {
-			log.Printf("[WORKER code-llm] failed to publish result for job_id=%s: %v", req.JobId, err)
-		} else {
-			log.Printf("[WORKER code-llm] completed job_id=%s duration_ms=%d", req.JobId, jobRes.ExecutionMs)
-		}
 	}
+
+	status := pb.JobStatus_JOB_STATUS_SUCCEEDED
+	errMsg := ""
+	if runErr != nil {
+		status = pb.JobStatus_JOB_STATUS_FAILED
+		errMsg = runErr.Error()
+	}
+
+	return &pb.JobResult{
+		JobId:        req.JobId,
+		Status:       status,
+		ResultPtr:    resultPtr,
+		ExecutionMs:  execMs,
+		ErrorMessage: errMsg,
+	}, nil
 }
 
-func sendCodeHeartbeats(ctx context.Context, b *bus.NatsBus) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			hb := &pb.Heartbeat{
-				WorkerId:        codeWorkerID,
-				Region:          "local",
-				Type:            "cpu",
-				CpuLoad:         5,
-				GpuUtilization:  0,
-				ActiveJobs:      atomic.LoadInt32(&codeActiveJobs),
-				Capabilities:    []string{"code-llm"},
-				Pool:            "code-llm",
-				MaxParallelJobs: 2,
-			}
-
-			packet := &pb.BusPacket{
-				TraceId:         "hb-" + codeWorkerID,
-				SenderId:        codeWorkerID,
-				CreatedAt:       timestamppb.Now(),
-				ProtocolVersion: 1,
-				Payload: &pb.BusPacket_Heartbeat{
-					Heartbeat: hb,
-				},
-			}
-
-			if err := b.Publish(codeLLMHeartbeatSub, packet); err != nil {
-				log.Printf("[WORKER code-llm] failed to publish heartbeat: %v", err)
-			}
-		}
-	}
+func buildPrompt(ctxPayload codeContext) string {
+	return fmt.Sprintf(
+		"You are a code assistant. Given file %s and instruction: %s\nCode:\n%s\nGenerate a concise patch (diff or replacement) to satisfy the instruction.",
+		ctxPayload.FilePath,
+		ctxPayload.Instruction,
+		ctxPayload.CodeSnippet,
+	)
 }
 
-func resolveWorkerID(defaultID string) string {
+func resolveWorkerID(fallback string) string {
 	if v := os.Getenv("WORKER_ID"); v != "" {
 		return v
 	}
@@ -264,84 +236,9 @@ func resolveWorkerID(defaultID string) string {
 		if len(h) > 8 {
 			h = h[len(h)-8:]
 		}
-		return fmt.Sprintf("%s-%s", defaultID, h)
+		return fmt.Sprintf("%s-%s", fallback, h)
 	}
-	return defaultID
-}
-
-func callModel(ctxPayload codeContext, provider agent.ModelProvider) (codeResult, error) {
-	reqCtx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
-	defer cancel()
-
-	prompt := buildPrompt(ctxPayload)
-	resp, err := provider.Generate(reqCtx, prompt)
-	if err != nil {
-		return codeResult{}, err
-	}
-	resp = strings.TrimSpace(resp)
-	if resp == "" {
-		return codeResult{}, fmt.Errorf("model empty response")
-	}
-
-	return codeResult{
-		FilePath:     ctxPayload.FilePath,
-		OriginalCode: ctxPayload.CodeSnippet,
-		Instruction:  ctxPayload.Instruction,
-		Patch: structuredPatch{
-			Type:    "unified_diff",
-			Content: resp,
-		},
-	}, nil
-}
-
-func buildPrompt(ctxPayload codeContext) string {
-	return fmt.Sprintf("You are a code assistant. Given file %s and instruction: %s\nCode:\n%s\nGenerate a concise patch (diff or replacement) to satisfy the instruction.",
-		ctxPayload.FilePath, ctxPayload.Instruction, ctxPayload.CodeSnippet)
-}
-
-func callModelWithRetry(ctxPayload codeContext, provider agent.ModelProvider) (codeResult, error) {
-	const maxAttempts = 3
-
-	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		res, err := callModel(ctxPayload, provider)
-		if err == nil {
-			return res, nil
-		}
-		lastErr = err
-		if !isRetryable(err) || attempt == maxAttempts {
-			break
-		}
-		backoff := time.Duration(attempt*2) * time.Second
-		log.Printf("[WORKER code-llm] retrying model attempt=%d after error: %v", attempt, err)
-		time.Sleep(backoff)
-	}
-
-	return codeResult{}, lastErr
-}
-
-func isRetryable(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	retryHints := []string{
-		"timeout",
-		"deadline exceeded",
-		"connection refused",
-		"connection reset",
-		"temporarily unavailable",
-		"503",
-	}
-	for _, hint := range retryHints {
-		if strings.Contains(msg, hint) {
-			return true
-		}
-	}
-	return false
+	return fallback
 }
 
 func getEnv(req *pb.JobRequest, key string) string {
@@ -380,13 +277,6 @@ func parseIntEnv(req *pb.JobRequest, key string, fallback int32) int32 {
 	return int32(n)
 }
 
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 func flattenMessages(msgs []*pb.ModelMessage) string {
 	var parts []string
 	for _, m := range msgs {
@@ -394,3 +284,4 @@ func flattenMessages(msgs []*pb.ModelMessage) string {
 	}
 	return strings.Join(parts, "\n")
 }
+

@@ -151,6 +151,8 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	pipe := s.client.TxPipeline()
 	pipe.Set(ctx, runKey(run.ID), payload, 0)
 	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: float64(now.Unix()), Member: run.ID})
+	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: float64(now.Unix()), Member: run.ID})
+	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: float64(now.Unix()), Member: run.ID})
 	_, err = pipe.Exec(ctx)
 	return err
 }
@@ -159,6 +161,13 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	if run == nil || run.ID == "" || run.WorkflowID == "" {
 		return fmt.Errorf("run id and workflow id required")
+	}
+	prevStatus := RunStatus("")
+	if data, err := s.client.Get(ctx, runKey(run.ID)).Bytes(); err == nil {
+		var prev WorkflowRun
+		if err := json.Unmarshal(data, &prev); err == nil {
+			prevStatus = prev.Status
+		}
 	}
 	now := time.Now().UTC()
 	run.UpdatedAt = now
@@ -171,6 +180,11 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	pipe := s.client.TxPipeline()
 	pipe.Set(ctx, runKey(run.ID), payload, 0)
 	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: float64(now.Unix()), Member: run.ID})
+	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: float64(now.Unix()), Member: run.ID})
+	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: float64(now.Unix()), Member: run.ID})
+	if prevStatus != "" && prevStatus != run.Status {
+		pipe.ZRem(ctx, runStatusIndexKey(prevStatus), run.ID)
+	}
 	_, err = pipe.Exec(ctx)
 	return err
 }
@@ -233,6 +247,24 @@ func (s *RedisStore) ListRunsByWorkflow(ctx context.Context, workflowID string, 
 	return out, nil
 }
 
+// ListRunIDsByStatus returns recent run IDs filtered by status.
+func (s *RedisStore) ListRunIDsByStatus(ctx context.Context, status RunStatus, limit int64) ([]string, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if status == "" {
+		return nil, fmt.Errorf("status required")
+	}
+	ids, err := s.client.ZRevRange(ctx, runStatusIndexKey(status), 0, limit-1).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []string{}, nil
+	}
+	return ids, nil
+}
+
 func workflowKey(id string) string {
 	return "wf:def:" + id
 }
@@ -251,4 +283,12 @@ func runKey(id string) string {
 
 func runIndexKey(workflowID string) string {
 	return "wf:runs:" + workflowID
+}
+
+func runAllIndexKey() string {
+	return "wf:runs:all"
+}
+
+func runStatusIndexKey(status RunStatus) string {
+	return "wf:runs:status:" + string(status)
 }

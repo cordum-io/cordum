@@ -46,7 +46,7 @@ func TestEngineDispatchesToDirectWorkerAndMarksSucceeded(t *testing.T) {
 	reg := NewMemoryRegistry()
 	store := newFakeJobStore()
 
-	engine := NewEngine(bus, NewSafetyStub(), reg, NewLeastLoadedStrategy(map[string]string{"job.echo": "echo"}), store, nil)
+	engine := NewEngine(bus, NewSafetyBasic(), reg, NewLeastLoadedStrategy(map[string]string{"job.echo": "echo"}), store, nil)
 	if err := engine.Start(); err != nil {
 		t.Fatalf("engine start failed: %v", err)
 	}

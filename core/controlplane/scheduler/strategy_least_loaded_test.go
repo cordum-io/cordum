@@ -89,3 +89,29 @@ func TestLeastLoadedStrategyHonorsPreferredWorker(t *testing.T) {
 		t.Fatalf("expected subject worker.w2.jobs via preferred hint, got %s", subject)
 	}
 }
+
+func TestLeastLoadedStrategyIgnoresWorkflowLabelsForPlacement(t *testing.T) {
+	strategy := NewLeastLoadedStrategy(map[string]string{
+		"job.echo": "echo",
+	})
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 0, CpuLoad: 10},
+	}
+
+	req := &pb.JobRequest{
+		Topic: "job.echo",
+		Labels: map[string]string{
+			"workflow_id": "wf-1",
+			"run_id":      "run-1",
+			"step_id":     "step-1",
+		},
+	}
+
+	subject, err := strategy.PickSubject(req, workers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "worker.w1.jobs" {
+		t.Fatalf("expected subject worker.w1.jobs, got %s", subject)
+	}
+}

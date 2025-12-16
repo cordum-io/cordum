@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"testing"
+	"time"
 
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
@@ -72,6 +73,12 @@ func (f failingSafetyKernelClient) Check(context.Context, *pb.PolicyCheckRequest
 	return nil, fmt.Errorf("forced failure")
 }
 
+type allowSafetyKernelClient struct{}
+
+func (a allowSafetyKernelClient) Check(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}, nil
+}
+
 func TestSafetyClientCircuitOpens(t *testing.T) {
 	client := &SafetyClient{client: failingSafetyKernelClient{}}
 	req := &pb.JobRequest{JobId: "1", Topic: "job.echo"}
@@ -86,5 +93,43 @@ func TestSafetyClientCircuitOpens(t *testing.T) {
 	decision, reason := client.Check(req)
 	if decision != SafetyDeny || reason != "safety kernel circuit open" {
 		t.Fatalf("expected circuit open deny, got %v reason=%s", decision, reason)
+	}
+}
+
+func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
+	client := &SafetyClient{client: failingSafetyKernelClient{}}
+	req := &pb.JobRequest{JobId: "1", Topic: "job.echo"}
+
+	// Trip the circuit open.
+	for i := 0; i < safetyCircuitFailBudget; i++ {
+		client.Check(req)
+	}
+
+	// Force transition into half-open state.
+	client.mu.Lock()
+	client.openUntil = time.Now().Add(-time.Second)
+	client.state = circuitOpen
+	client.mu.Unlock()
+
+	// Swap client to a successful responder to allow closing.
+	client.client = allowSafetyKernelClient{}
+
+	decision, _ := client.Check(req)
+	if decision != SafetyAllow {
+		t.Fatalf("expected allow during half-open probe, got %v", decision)
+	}
+	// Second success should close the circuit.
+	decision, _ = client.Check(req)
+	if decision != SafetyAllow {
+		t.Fatalf("expected allow during half-open probe, got %v", decision)
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.state != circuitClosed {
+		t.Fatalf("expected circuit to close after two successes, state=%v", client.state)
+	}
+	if client.failures != 0 || client.successes != 0 {
+		t.Fatalf("expected counters reset, failures=%d successes=%d", client.failures, client.successes)
 	}
 }

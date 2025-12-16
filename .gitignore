@@ -1,6 +1,11 @@
 .DS_Store
+.env
+.env.*
+!.env.example
 *.log
+*.tsbuildinfo
 node_modules/
+.next/
 venv/
 .venv/
 __pycache__/
@@ -13,6 +18,7 @@ generated/
 .codex/
 .gocache/
 .gomodcache/
+.gopath/
 .cache/
 bin/
 AGENTS.md

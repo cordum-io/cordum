@@ -86,6 +86,7 @@
 | Storage/Secrets     | None beyond Redis                                                | S3 for artifacts; Vault for secrets                            | Defer until engine needs artifacts/secrets                   |
 
 Principle: evolve one system. Add Postgres-backed workflow/config layers and the engine; keep Redis + NATS for job state/dispatch; avoid parallel “half systems”.
+Current implementation runs Redis + NATS only; Postgres/JetStream/S3/Vault remain optional and should be introduced only when a feature needs them.
 
 ## 2. Core Components
 

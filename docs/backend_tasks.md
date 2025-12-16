@@ -9,10 +9,11 @@ This is a living checklist to converge backend features toward the plan.
 - Redis-backed DLQ store with tests (add/list/delete).
 - Removed unused configresolver; all tests passing.
 - Scheduler now injects effective config into dispatched jobs and uses config service.
-- Scheduler job status alignment with CAP (COMPLETED alias -> SUCCEEDED); handle direct worker routing and registry TTL.
+- Scheduler job status alignment with CAP (COMPLETED alias -> SUCCEEDED); handle direct worker routing and registry TTL; graceful Stop guard.
 - Workflow engine: for_each fan-out, retries/backoff, timeout budget hinting, approval pause/resume, and new tests.
 - Gateway: job list filters (state/topic/tenant/team/time/trace) with cursor pagination (`cursor`/`next_cursor`), DLQ retry (rehydrates context into new job id), workflow approval + cancel run endpoints.
 - Scheduler hints/cancel: respects preferred worker/pool labels; publishes job cancel packets; trace lookups return full metadata (tenant/team/principal/etc.); safety client now sends effective_config to Safety Kernel (CAP proto updated).
+- Safety: half-open circuit breaker (throttle + close-after-success) tested; job store pipelined listings with pagination tests.
 
 ## In Progress / Next
 - Extend workflow engine: stronger routing hints to scheduler, explicit per-step cancellation hooks/acks, artifacts/secrets when steps need them.

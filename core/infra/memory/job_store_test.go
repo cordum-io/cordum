@@ -88,6 +88,47 @@ func TestRedisJobStoreTransitionGuard(t *testing.T) {
 	if err := store.SetState(ctx, jobID, scheduler.JobStateScheduled); err == nil {
 		t.Fatalf("expected invalid backward transition")
 	}
+
+	jobPendingFail := "job-456-pending-fail"
+	if err := store.SetState(ctx, jobPendingFail, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetState(ctx, jobPendingFail, scheduler.JobStateFailed); err != nil {
+		t.Fatalf("pending -> failed should be ok: %v", err)
+	}
+	if err := store.SetState(ctx, jobPendingFail, scheduler.JobStateFailed); err != nil {
+		t.Fatalf("same terminal state should be ok: %v", err)
+	}
+
+	jobScheduledFail := "job-456-scheduled-fail"
+	if err := store.SetState(ctx, jobScheduledFail, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetState(ctx, jobScheduledFail, scheduler.JobStateScheduled); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if err := store.SetState(ctx, jobScheduledFail, scheduler.JobStateFailed); err != nil {
+		t.Fatalf("scheduled -> failed should be ok: %v", err)
+	}
+
+	jobPendingTimeout := "job-456-pending-timeout"
+	if err := store.SetState(ctx, jobPendingTimeout, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetState(ctx, jobPendingTimeout, scheduler.JobStateTimeout); err != nil {
+		t.Fatalf("pending -> timeout should be ok: %v", err)
+	}
+
+	jobScheduledTimeout := "job-456-scheduled-timeout"
+	if err := store.SetState(ctx, jobScheduledTimeout, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetState(ctx, jobScheduledTimeout, scheduler.JobStateScheduled); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if err := store.SetState(ctx, jobScheduledTimeout, scheduler.JobStateTimeout); err != nil {
+		t.Fatalf("scheduled -> timeout should be ok: %v", err)
+	}
 }
 
 func TestRedisJobStoreListRecentJobs(t *testing.T) {
@@ -128,6 +169,48 @@ func TestRedisJobStoreListRecentJobs(t *testing.T) {
 	}
 	if list[0].State != scheduler.JobStateRunning {
 		t.Fatalf("expected state RUNNING, got %s", list[0].State)
+	}
+}
+
+func TestRedisJobStoreListRecentJobsByScorePagination(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.SetState(ctx, "job-1", scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := store.SetState(ctx, "job-2", scheduler.JobStateRunning); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := store.SetState(ctx, "job-3", scheduler.JobStateSucceeded); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	firstPage, err := store.ListRecentJobsByScore(ctx, 0, 2)
+	if err != nil {
+		t.Fatalf("ListRecentJobsByScore page1: %v", err)
+	}
+	if len(firstPage) != 2 || firstPage[0].ID != "job-3" || firstPage[1].ID != "job-2" {
+		t.Fatalf("unexpected first page: %#v", firstPage)
+	}
+
+	cursor := firstPage[len(firstPage)-1].UpdatedAt - 1
+	secondPage, err := store.ListRecentJobsByScore(ctx, cursor, 2)
+	if err != nil {
+		t.Fatalf("ListRecentJobsByScore page2: %v", err)
+	}
+	if len(secondPage) != 1 || secondPage[0].ID != "job-1" {
+		t.Fatalf("unexpected second page: %#v", secondPage)
 	}
 }
 

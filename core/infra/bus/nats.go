@@ -65,13 +65,36 @@ func (b *NatsBus) Publish(subject string, packet *pb.BusPacket) error {
 
 // Subscribe attaches a queue subscription that decodes protobuf packets and invokes the handler.
 func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket)) error {
-	_, err := b.nc.QueueSubscribe(subject, queue, func(msg *nats.Msg) {
+	cb := func(msg *nats.Msg) {
 		var packet pb.BusPacket
 		if err := proto.Unmarshal(msg.Data, &packet); err != nil {
 			log.Printf("nats bus: failed to unmarshal packet: %v", err)
 			return
 		}
 		handler(&packet)
-	})
+	}
+	if queue == "" {
+		_, err := b.nc.Subscribe(subject, cb)
+		return err
+	}
+	_, err := b.nc.QueueSubscribe(subject, queue, cb)
 	return err
+}
+
+func (b *NatsBus) IsConnected() bool {
+	return b != nil && b.nc != nil && b.nc.IsConnected()
+}
+
+func (b *NatsBus) Status() string {
+	if b == nil || b.nc == nil {
+		return "UNKNOWN"
+	}
+	return b.nc.Status().String()
+}
+
+func (b *NatsBus) ConnectedURL() string {
+	if b == nil || b.nc == nil {
+		return ""
+	}
+	return b.nc.ConnectedUrl()
 }

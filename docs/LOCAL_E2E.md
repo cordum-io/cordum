@@ -4,7 +4,7 @@ This captures the end-to-end flows validated with `docker compose up -d` (NATS +
 
 ## Stack (compose)
 - Infra: NATS `4222`, Redis `6379`, Ollama `11434` (persistent volume).
-- Control plane: scheduler, safety kernel, API gateway (HTTP `:8081`, gRPC `:8080`, metrics `:9092`).
+- Control plane: scheduler, safety kernel, API gateway (HTTP `:8081`, gRPC `:8080`, metrics `:9092`), workflow engine (`:9093/health`).
 - Workers/pools: echo, chat-simple, chat-advanced, code-llm, planner, demo orchestrator, repo pipeline (`repo-scan`, `repo-sast`, `repo-partition`, `repo-lint`, `repo-tests`, `repo-report`, repo orchestrator).
 - Config: pools/timeouts/safety mounted from `config/`.
 
@@ -17,6 +17,7 @@ docker exec coretex-redis-1 redis-cli get res:<job_id>
 ```
 
 ### Chat (simple)
+Requires `ollama pull llama3`.
 ```bash
 GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/chat/send_chat_job.go
 docker exec coretex-redis-1 redis-cli get res:<job_id>
@@ -47,5 +48,6 @@ The orchestrator drives `job.repo.scan` → `job.repo.sast` → `job.repo.partit
 ## Notes
 - Safety policy (`config/safety.yaml`) denies `sys.*` and allows `job.*` for the default tenant.
 - Scheduler state machine and timeouts come from `config/timeouts.yaml`; reconciler marks stale jobs `TIMEOUT`.
+- Cancellation is broadcast on `sys.job.cancel`; workers built on `core/agent/runtime` honor cancel requests via context cancellation.
 - Use repo-local caches when running scripts (`GOCACHE=.cache/go-build`) to avoid permission issues.
 - Metrics endpoints: scheduler `:9090/metrics`, orchestrator `:9091/metrics`, gateway `:9092/metrics`.

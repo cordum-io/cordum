@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -66,7 +68,20 @@ func (p *Provider) Generate(ctx context.Context, prompt string) (string, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		msg := ""
+		if body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096)); readErr == nil {
+			msg = strings.TrimSpace(string(body))
+			var parsed struct {
+				Error string `json:"error"`
+			}
+			if jsonErr := json.Unmarshal(body, &parsed); jsonErr == nil && strings.TrimSpace(parsed.Error) != "" {
+				msg = strings.TrimSpace(parsed.Error)
+			}
+		}
 		p.recordFailure()
+		if msg != "" {
+			return "", fmt.Errorf("ollama %d: %s", resp.StatusCode, msg)
+		}
 		return "", fmt.Errorf("ollama returned status %d", resp.StatusCode)
 	}
 	var out response

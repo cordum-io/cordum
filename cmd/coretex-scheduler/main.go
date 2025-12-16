@@ -119,5 +119,6 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	log.Println("scheduler shutting down")
+	engine.Stop()
 	cancel()
 }
