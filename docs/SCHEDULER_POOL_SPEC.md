@@ -14,9 +14,9 @@ This describes how the control-plane scheduler routes jobs to pools, tracks stat
 - `job.chat.simple` → `chat-simple`
 - `job.chat.advanced` → `chat-advanced`
 - `job.code.llm` → `code-llm`
-- `job.workflow.plan` → `workflow`
-- `job.workflow.demo` → `workflow`
-- `job.workflow.repo.code_review` → `workflow`
+- `job.workflow.plan` → `workflow-planner`
+- `job.workflow.demo` → `workflow-demo`
+- `job.workflow.repo.code_review` → `workflow-repo`
 - `job.repo.scan` → `repo-scan`
 - `job.repo.partition` → `repo-partition`
 - `job.repo.lint` → `repo-lint`

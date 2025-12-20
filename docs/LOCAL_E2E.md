@@ -10,6 +10,42 @@ This captures the end-to-end flows validated with `docker compose up -d` (NATS +
 
 ## Flows
 
+### Automated Smoke (Echo via Gateway)
+Runs a minimal end-to-end stack (Redis + NATS containers; control-plane + echo worker as local Go processes), submits `job.echo` via the API gateway, and asserts:
+- job result payload
+- job detail `trace_id` + `context_ptr` + context JSON
+- `/api/v1/jobs` includes `trace_id`
+- `/api/v1/traces/:id` includes the job
+- WS stream includes heartbeats + the job result (requires Node.js)
+
+```bash
+./tools/scripts/e2e/run_echo_gateway_e2e.sh
+```
+
+### Automated Full (Gateway + Mock Ollama)
+Runs a fuller local stack (Redis + NATS containers; control-plane + context engine + echo/chat/chat-advanced/code-llm workers as local Go processes) with a mock Ollama HTTP server (no model downloads), submits:
+- `job.echo`
+- `job.chat.simple`
+- `job.chat.advanced`
+- `job.code.llm`
+and validates a Workflow Engine run with an approval gate (`POST /api/v1/workflows`, `POST /runs`, approve step, then `job.echo`).
+
+and asserts REST + trace + WS stream events for each job.
+
+```bash
+./tools/scripts/e2e/run_gateway_full_e2e.sh
+```
+
+### Automated Compose Smoke (No Local Go Required)
+Runs the compose stack (Redis + NATS + control-plane + workers) and points Ollama-dependent workers at a tiny host-run mock server (no model downloads, no `ollama pull`), then validates:
+- `job.echo` dispatch with Studio-style labels (`workflow_id`, `run_id`, `node_id`)
+- `job.chat.advanced` multi-message memory growth (reads `redis://mem:<memory_id>:events` via `GET /api/v1/memory`)
+- a Workflow Engine run (draft → refine → summarize) using `job.chat.advanced`
+
+```bash
+./tools/scripts/e2e/run_compose_gateway_smoke.sh
+```
+
 ### Echo
 ```bash
 GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/send_echo_job.go

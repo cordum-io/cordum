@@ -26,10 +26,10 @@ sudo docker compose up -d
 
 ## Dashboard
 
-The dashboard UI is a production Next.js app under `webapp/` and runs as the `coretex-dashboard` service.
+The dashboard UI lives under `web/dashboard/` and runs as the `coretex-dashboard` service.
 
 - Open: `http://localhost:3000/`
-- Auth: set `CORETEX_API_KEY` (alias: `CORETEX_SUPER_SECRET_API_TOKEN`; compose default is `super-secret-key`; change it for real deployments)
+- Auth: gateway expects `CORETEX_API_KEY` (alias: `CORETEX_SUPER_SECRET_API_TOKEN`); compose default is `super-secret-key` (change it for real deployments). The dashboard container uses `CORETEX_DASHBOARD_API_KEY` to prefill the UI.
 
 To use your own key in compose:
 ```bash
@@ -63,6 +63,7 @@ docker exec coretex-redis-1 redis-cli get res:<job_id>
 ## Environment Defaults (override in compose if needed)
 - `NATS_URL=nats://nats:4222`, `REDIS_URL=redis://redis:6379`
 - `SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051`, `SAFETY_POLICY_PATH=/etc/coretex/safety.yaml`
+- Safety Kernel service must bind `SAFETY_KERNEL_ADDR=:50051` in compose so other containers can reach it.
 - `CONTEXT_ENGINE_ADDR` (context engine gRPC; workers point at `coretex-context-engine:50070`)
 - `POOL_CONFIG_PATH=/etc/coretex/pools.yaml`, `TIMEOUT_CONFIG_PATH=/etc/coretex/timeouts.yaml`
 - `CORETEX_API_KEY` / `API_KEY` (gateway HTTP/WS), `TENANT_ID` (gateway injects into `JobRequest.env`)

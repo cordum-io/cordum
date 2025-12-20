@@ -24,6 +24,7 @@ const (
 	metaFieldPrincipal      = "principal"
 	metaFieldTeam           = "team"
 	metaFieldMemory         = "memory_id"
+	metaFieldTraceID        = "trace_id"
 	metaFieldLabels         = "labels"
 	metaFieldDeadline       = "deadline_unix"
 	metaFieldSafetyDecision = "safety_decision"
@@ -318,6 +319,7 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 
 		out = append(out, scheduler.JobRecord{
 			ID:             jobID,
+			TraceID:        meta[metaFieldTraceID],
 			UpdatedAt:      int64(m.Score),
 			State:          state,
 			Topic:          topic,
@@ -536,8 +538,27 @@ func stateIndexKey(state scheduler.JobState) string {
 }
 
 func (s *RedisJobStore) AddJobToTrace(ctx context.Context, traceID, jobID string) error {
-	// Add to set of jobs for this trace
-	return s.client.SAdd(ctx, "trace:"+traceID, jobID).Err()
+	if traceID == "" || jobID == "" {
+		return fmt.Errorf("traceID and jobID are required")
+	}
+
+	metaKey := jobMetaKey(jobID)
+	pipe := s.client.TxPipeline()
+	pipe.SAdd(ctx, "trace:"+traceID, jobID)
+	pipe.HSet(ctx, metaKey, metaFieldTraceID, traceID)
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, metaKey, s.metaTTL)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// GetTraceID returns the stored trace id for a job, if available.
+func (s *RedisJobStore) GetTraceID(ctx context.Context, jobID string) (string, error) {
+	if jobID == "" {
+		return "", fmt.Errorf("jobID required")
+	}
+	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldTraceID).Result()
 }
 
 func (s *RedisJobStore) SetTopic(ctx context.Context, jobID, topic string) error {
@@ -634,6 +655,7 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 		deadlineUnix, _ := strconv.ParseInt(meta[metaFieldDeadline], 10, 64)
 		out = append(out, scheduler.JobRecord{
 			ID:             jobID,
+			TraceID:        traceID,
 			State:          state,
 			Topic:          meta[metaFieldTopic],
 			Tenant:         meta[metaFieldTenant],

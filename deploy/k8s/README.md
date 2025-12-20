@@ -28,5 +28,5 @@ kubectl apply -n coretex -f deploy/k8s/ingress.yaml
 - The dashboard reads the API key from `CORETEX_DASHBOARD_API_KEY`, wired from the same Secret.
 - Probes are basic HTTP/TCP; adjust for your environment.
 - Example HPA for chat worker targets CPU.
-- Dashboard UI is a Next.js app in `webapp/`; `deploy/k8s/dashboard.yaml` runs it as a Deployment/Service.
-- If you use an Ingress, `deploy/k8s/ingress.yaml` routes `/api/v1/*` and `/health` to `coretex-api-gateway`, and routes `/` to `coretex-dashboard` (so `/api/bootstrap` keeps working from the dashboard).
+- Dashboard UI is in `web/dashboard/`; `deploy/k8s/dashboard.yaml` runs it as a Deployment/Service.
+- If you use an Ingress, `deploy/k8s/ingress.yaml` routes `/api/v1/*` and `/health` to `coretex-api-gateway`, and routes `/` to `coretex-dashboard`.

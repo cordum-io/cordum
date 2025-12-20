@@ -36,6 +36,7 @@ services:
       - ollama_data:/root/.ollama
 
   coretex-safety-kernel:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -45,11 +46,13 @@ services:
       - nats
     environment:
       - NATS_URL=nats://nats:4222
+      - SAFETY_KERNEL_ADDR=:50051
       - SAFETY_POLICY_PATH=/etc/coretex/safety.yaml
     volumes:
       - ./config/safety.yaml:/etc/coretex/safety.yaml:ro
 
   coretex-scheduler:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -118,14 +121,12 @@ services:
 
   coretex-dashboard:
     build:
-      context: ./webapp
+      context: ./web/dashboard
       dockerfile: Dockerfile
     depends_on:
       - coretex-api-gateway
     environment:
-      - NEXT_TELEMETRY_DISABLED=1
       - CORETEX_DASHBOARD_API_KEY=${CORETEX_API_KEY:-super-secret-key}
-      - CORETEX_SUPER_SECRET_API_TOKEN=${CORETEX_API_KEY:-super-secret-key}
     ports:
       - "3000:3000"
 

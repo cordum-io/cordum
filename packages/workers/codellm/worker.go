@@ -93,7 +93,7 @@ func handleCodeLLM(ctx context.Context, req *pb.JobRequest, store memory.Store, 
 		return storeCodeResult(ctx, req, store, codeResult{}, err, 0)
 	}
 
-	prompt := buildPrompt(ctxPayload)
+	payloadBytes, ctxPayload, prompt := normalizeCodePrompt(payloadBytes, ctxPayload)
 
 	memoryID := getEnv(req, "memory_id")
 	if memoryID == "" {
@@ -176,6 +176,43 @@ func loadCodeContext(ctx context.Context, req *pb.JobRequest, store memory.Store
 		return data, codeContext{}, fmt.Errorf("decode context: %w", err)
 	}
 	return data, payload, nil
+}
+
+type gatewayJobEnvelope struct {
+	Prompt  string          `json:"prompt"`
+	Context json.RawMessage `json:"context"`
+}
+
+func normalizeCodePrompt(payloadBytes []byte, ctxPayload codeContext) ([]byte, codeContext, string) {
+	if strings.TrimSpace(ctxPayload.FilePath) != "" ||
+		strings.TrimSpace(ctxPayload.CodeSnippet) != "" ||
+		strings.TrimSpace(ctxPayload.Instruction) != "" {
+		return payloadBytes, ctxPayload, buildPrompt(ctxPayload)
+	}
+
+	var env gatewayJobEnvelope
+	if err := json.Unmarshal(payloadBytes, &env); err != nil {
+		return payloadBytes, ctxPayload, buildPrompt(ctxPayload)
+	}
+
+	if len(env.Context) > 0 && string(env.Context) != "null" {
+		var nested codeContext
+		if err := json.Unmarshal(env.Context, &nested); err == nil {
+			if strings.TrimSpace(nested.FilePath) != "" ||
+				strings.TrimSpace(nested.CodeSnippet) != "" ||
+				strings.TrimSpace(nested.Instruction) != "" {
+				return env.Context, nested, buildPrompt(nested)
+			}
+		}
+	}
+
+	prompt := strings.TrimSpace(env.Prompt)
+	if prompt == "" {
+		return payloadBytes, ctxPayload, buildPrompt(ctxPayload)
+	}
+
+	ctxPayload.Instruction = prompt
+	return payloadBytes, ctxPayload, prompt
 }
 
 func storeCodeResult(ctx context.Context, req *pb.JobRequest, store memory.Store, result codeResult, runErr error, execMs int64) (*pb.JobResult, error) {
@@ -284,4 +321,3 @@ func flattenMessages(msgs []*pb.ModelMessage) string {
 	}
 	return strings.Join(parts, "\n")
 }
-
