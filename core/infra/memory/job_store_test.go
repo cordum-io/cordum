@@ -187,11 +187,15 @@ func TestRedisJobStoreListRecentJobsByScorePagination(t *testing.T) {
 	if err := store.SetState(ctx, "job-1", scheduler.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 	if err := store.SetState(ctx, "job-2", scheduler.JobStateRunning); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
+	if err := store.SetState(ctx, "job-3", scheduler.JobStateRunning); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
 	if err := store.SetState(ctx, "job-3", scheduler.JobStateSucceeded); err != nil {
 		t.Fatalf("set state: %v", err)
 	}

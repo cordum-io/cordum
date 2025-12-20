@@ -99,6 +99,12 @@ func (s *RedisStore) Close() error {
 	return s.client.Close()
 }
 
+// Client exposes the underlying Redis client for advanced operations (lists/sets/etc).
+// Prefer using Store methods where possible.
+func (s *RedisStore) Client() *redis.Client {
+	return s.client
+}
+
 // MakeContextKey constructs the context key for a given job ID.
 func MakeContextKey(jobID string) string {
 	return "ctx:" + jobID

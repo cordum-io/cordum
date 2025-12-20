@@ -1,0 +1,30 @@
+version: "3.9"
+
+# Override file used by local smoke tests to point Ollama-dependent workers at a host-run mock server.
+#
+# Usage:
+#   MOCK_OLLAMA_PORT=18080 docker compose -f docker-compose.yml -f tools/scripts/e2e/docker-compose.mock-ollama.yml up -d ...
+#
+# The test script `tools/scripts/e2e/run_compose_gateway_smoke.sh` starts a tiny mock server on the host and exports
+# MOCK_OLLAMA_PORT automatically.
+services:
+  coretex-worker-chat:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:${MOCK_OLLAMA_PORT:-18080}
+      - OLLAMA_MODEL=mock-model
+
+  coretex-worker-chat-advanced:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:${MOCK_OLLAMA_PORT:-18080}
+      - OLLAMA_MODEL=mock-model
+
+  coretex-worker-code-llm:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:${MOCK_OLLAMA_PORT:-18080}
+      - OLLAMA_MODEL=mock-model

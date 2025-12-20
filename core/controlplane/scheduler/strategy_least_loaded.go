@@ -122,8 +122,11 @@ func matchesLabels(hb *pb.Heartbeat, required map[string]string) bool {
 
 func isOverloaded(hb *pb.Heartbeat) bool {
 	capacity := hb.GetMaxParallelJobs()
-	if capacity > 0 && hb.GetActiveJobs() >= int32(float32(capacity)*overloadUtilizationThreshold) {
-		return true
+	if capacity > 0 {
+		utilization := float32(hb.GetActiveJobs()) / float32(capacity)
+		if utilization >= overloadUtilizationThreshold {
+			return true
+		}
 	}
 	// Fallback on CPU load if capacity not set.
 	if hb.GetCpuLoad() >= 90 {
@@ -147,7 +150,7 @@ func filterPlacementLabels(labels map[string]string) map[string]string {
 		// These labels are used for traceability/observability and should not constrain placement.
 		// Placement constraints should be expressed via dedicated labels (e.g. hardware/region),
 		// not workflow/run identifiers.
-		if k == "workflow_id" || k == "run_id" || k == "step_id" {
+		if k == "workflow_id" || k == "run_id" || k == "step_id" || k == "node_id" {
 			continue
 		}
 		if k == "worker_id" {

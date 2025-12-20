@@ -104,6 +104,7 @@ func TestLeastLoadedStrategyIgnoresWorkflowLabelsForPlacement(t *testing.T) {
 			"workflow_id": "wf-1",
 			"run_id":      "run-1",
 			"step_id":     "step-1",
+			"node_id":     "n-1",
 		},
 	}
 
@@ -113,5 +114,36 @@ func TestLeastLoadedStrategyIgnoresWorkflowLabelsForPlacement(t *testing.T) {
 	}
 	if subject != "worker.w1.jobs" {
 		t.Fatalf("expected subject worker.w1.jobs, got %s", subject)
+	}
+}
+
+func TestLeastLoadedStrategyDoesNotMarkIdleWorkerOverloaded(t *testing.T) {
+	strategy := NewLeastLoadedStrategy(map[string]string{
+		"job.echo": "echo",
+	})
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 0, CpuLoad: 1, MaxParallelJobs: 1},
+	}
+
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.echo"}, workers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "worker.w1.jobs" {
+		t.Fatalf("expected subject worker.w1.jobs, got %s", subject)
+	}
+}
+
+func TestLeastLoadedStrategyMarksWorkerOverloadedWhenAtCapacity(t *testing.T) {
+	strategy := NewLeastLoadedStrategy(map[string]string{
+		"job.echo": "echo",
+	})
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 1, CpuLoad: 1, MaxParallelJobs: 1},
+	}
+
+	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.echo"}, workers)
+	if err == nil {
+		t.Fatalf("expected error when all workers overloaded")
 	}
 }

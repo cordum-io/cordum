@@ -3,18 +3,17 @@ package planner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
-	"os"
-	"os/signal"
 	"sort"
 	"strings"
-	"syscall"
 
-	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/config"
 	"github.com/yaront1111/coretex-os/core/infra/memory"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
+
+	worker "github.com/yaront1111/coretex-os/core/agent/runtime"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
 )
 
 const (
@@ -79,92 +78,75 @@ func buildDefaultPlan(workflow string) plan {
 func Run() {
 	cfg := config.Load()
 
-	memStore, err := memory.NewRedisStore(cfg.RedisURL)
-	if err != nil {
-		log.Fatalf("planner: failed to connect to Redis: %v", err)
+	wConfig := worker.Config{
+		WorkerID:        plannerWorkerID,
+		NatsURL:         cfg.NatsURL,
+		RedisURL:        cfg.RedisURL,
+		QueueGroup:      plannerQueueGroup,
+		JobSubject:      plannerSubject,
+		DirectSubject:   bus.DirectSubject(plannerWorkerID),
+		HeartbeatSub:    "sys.heartbeat",
+		Capabilities:    []string{"workflow-plan"},
+		Pool:            "workflow-planner",
+		MaxParallelJobs: 2,
 	}
-	defer memStore.Close()
 
-	natsBus, err := bus.NewNatsBus(cfg.NatsURL)
+	w, err := worker.New(wConfig)
 	if err != nil {
-		log.Fatalf("planner: failed to connect to NATS: %v", err)
-	}
-	defer natsBus.Close()
-
-	if err := natsBus.Subscribe(plannerSubject, plannerQueueGroup, handlePlan(natsBus, memStore)); err != nil {
-		log.Fatalf("planner: failed to subscribe: %v", err)
-	}
-	if direct := bus.DirectSubject(plannerWorkerID); direct != "" {
-		if err := natsBus.Subscribe(direct, "", handlePlan(natsBus, memStore)); err != nil {
-			log.Fatalf("planner: failed to subscribe direct: %v", err)
-		}
+		log.Fatalf("planner: failed to initialize worker: %v", err)
 	}
 
 	log.Println("planner worker running on subject", plannerSubject)
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	if err := w.Start(planHandler); err != nil {
+		log.Fatalf("planner: worker failed: %v", err)
+	}
 }
 
-func handlePlan(b *bus.NatsBus, store memory.Store) func(*pb.BusPacket) {
-	return func(packet *pb.BusPacket) {
-		req := packet.GetJobRequest()
-		if req == nil {
-			return
-		}
+func planHandler(ctx context.Context, req *pb.JobRequest, store memory.Store) (*pb.JobResult, error) {
+	if req == nil {
+		return nil, fmt.Errorf("missing job request")
+	}
 
-		ctx := context.Background()
-		var planReq planRequest
-		if req.ContextPtr != "" {
-			if key, err := memory.KeyFromPointer(req.ContextPtr); err == nil {
-				if data, err := store.GetContext(ctx, key); err == nil {
-					_ = json.Unmarshal(data, &planReq)
-				}
+	var planReq planRequest
+	if req.ContextPtr != "" {
+		if key, err := memory.KeyFromPointer(req.ContextPtr); err == nil {
+			if data, err := store.GetContext(ctx, key); err == nil {
+				_ = json.Unmarshal(data, &planReq)
 			}
 		}
-		if planReq.Workflow == "" {
-			planReq.Workflow = req.GetWorkflowId()
-		}
-		if planReq.Workflow == "" {
-			planReq.Workflow = "code_review_demo"
-		}
-
-		var planPayload planResponse
-		if len(planReq.Files) > 0 {
-			planPayload = buildRepoPlan(planReq)
-		} else {
-			p := buildDefaultPlan(planReq.Workflow)
-			planPayload = planResponse{Workflow: p.Workflow, Steps: p.Steps}
-		}
-
-		planBytes, _ := json.Marshal(planPayload)
-		resKey := memory.MakeResultKey(req.JobId)
-		if err := store.PutResult(ctx, resKey, planBytes); err != nil {
-			log.Printf("planner: failed to store plan job_id=%s err=%v", req.JobId, err)
-			return
-		}
-		resultPtr := memory.PointerForKey(resKey)
-
-		res := &pb.JobResult{
-			JobId:       req.JobId,
-			Status:      pb.JobStatus_JOB_STATUS_SUCCEEDED,
-			ResultPtr:   resultPtr,
-			WorkerId:    plannerWorkerID,
-			ExecutionMs: 0,
-		}
-
-		resp := &pb.BusPacket{
-			TraceId:         packet.TraceId,
-			SenderId:        plannerWorkerID,
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: 1,
-			Payload:         &pb.BusPacket_JobResult{JobResult: res},
-		}
-
-		if err := b.Publish("sys.job.result", resp); err != nil {
-			log.Printf("planner: failed to publish result job_id=%s: %v", req.JobId, err)
-		}
 	}
+	if planReq.Workflow == "" {
+		planReq.Workflow = req.GetWorkflowId()
+	}
+	if planReq.Workflow == "" {
+		planReq.Workflow = "code_review_demo"
+	}
+
+	var planPayload planResponse
+	if len(planReq.Files) > 0 {
+		planPayload = buildRepoPlan(planReq)
+	} else {
+		p := buildDefaultPlan(planReq.Workflow)
+		planPayload = planResponse{Workflow: p.Workflow, Steps: p.Steps}
+	}
+
+	planBytes, err := json.Marshal(planPayload)
+	if err != nil {
+		return nil, err
+	}
+	resKey := memory.MakeResultKey(req.JobId)
+	if err := store.PutResult(ctx, resKey, planBytes); err != nil {
+		return nil, err
+	}
+	resultPtr := memory.PointerForKey(resKey)
+
+	return &pb.JobResult{
+		JobId:       req.JobId,
+		Status:      pb.JobStatus_JOB_STATUS_SUCCEEDED,
+		ResultPtr:   resultPtr,
+		WorkerId:    plannerWorkerID,
+		ExecutionMs: 0,
+	}, nil
 }
 
 // buildRepoPlan prioritizes files based on language and size to guide downstream steps.

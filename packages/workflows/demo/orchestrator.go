@@ -403,7 +403,7 @@ func sendOrchestratorHeartbeats(ctx context.Context, b *bus.NatsBus) {
 				GpuUtilization:  0,
 				ActiveJobs:      atomic.LoadInt32(&orchestratorActiveJobs),
 				Capabilities:    []string{"workflow"},
-				Pool:            "workflow",
+				Pool:            "workflow-demo",
 				MaxParallelJobs: 1,
 			}
 
@@ -592,10 +592,10 @@ func failParent(ctx context.Context, store memory.Store, b *bus.NatsBus, jobStor
 	}
 
 	res := &pb.JobResult{
-		JobId:     req.JobId,
-		Status:    status,
-		ResultPtr: resultPtr,
-		WorkerId:  orchestratorWorkerID,
+		JobId:        req.JobId,
+		Status:       status,
+		ResultPtr:    resultPtr,
+		WorkerId:     orchestratorWorkerID,
 		ErrorMessage: failure.Error(),
 	}
 	packet := &pb.BusPacket{

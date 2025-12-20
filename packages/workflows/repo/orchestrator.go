@@ -865,7 +865,7 @@ func sendHeartbeats(ctx context.Context, b *bus.NatsBus) {
 				GpuUtilization:  0,
 				ActiveJobs:      atomic.LoadInt32(&activeJobs),
 				Capabilities:    []string{"workflow"},
-				Pool:            "workflow",
+				Pool:            "workflow-repo",
 				MaxParallelJobs: 1,
 			}
 			packet := &pb.BusPacket{

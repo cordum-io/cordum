@@ -350,17 +350,20 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 		run.StartedAt = &now
 	}
 
-	for stepID, step := range wfDef.Steps {
-		parentSR := run.Steps[stepID]
-		if parentSR == nil {
-			parentSR = &StepRun{StepID: stepID}
-		}
-		if parentSR.Status != "" && parentSR.Status != StepStatusPending && parentSR.Status != StepStatusWaiting {
-			continue
-		}
-		if !depsSatisfied(step, run) {
-			continue
-		}
+		for stepID, step := range wfDef.Steps {
+			parentSR := run.Steps[stepID]
+			if parentSR == nil {
+				parentSR = &StepRun{StepID: stepID}
+			}
+			if parentSR.Status != "" && parentSR.Status != StepStatusPending && parentSR.Status != StepStatusWaiting {
+				// For-each steps may remain RUNNING while new children need dispatching as capacity frees up.
+				if step.ForEach == "" || parentSR.Status != StepStatusRunning {
+					continue
+				}
+			}
+			if !depsSatisfied(step, run) {
+				continue
+			}
 		// condition gate
 		if step.Condition != "" {
 			ok, err := evalCondition(step.Condition, buildEvalScope(run, nil))
@@ -389,45 +392,56 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 			continue
 		}
 
-		// For-each fan-out.
-		if step.ForEach != "" {
-			items, err := evalForEach(step.ForEach, buildEvalScope(run, nil))
-			if err != nil {
-				logging.Error("workflow-engine", "for_each eval failed", "step_id", stepID, "error", err)
-				continue
-			}
-			if parentSR.Children == nil {
-				parentSR.Children = make(map[string]*StepRun)
-			}
-			if len(items) == 0 {
-				parentSR.Status = StepStatusSucceeded
-				parentSR.StartedAt = &now
-				parentSR.CompletedAt = &now
-				run.Steps[stepID] = parentSR
-				continue
-			}
-			parentSR.Status = StepStatusRunning
-			if parentSR.StartedAt == nil {
-				parentSR.StartedAt = &now
-			}
-			runningChildren := 0
-			for _, child := range parentSR.Children {
-				if child != nil && child.Status == StepStatusRunning {
-					runningChildren++
-				}
-			}
-			for idx, item := range items {
-				if step.MaxParallel > 0 && runningChildren >= step.MaxParallel {
-					break
-				}
-				childID := fmt.Sprintf("%s[%d]", stepID, idx)
-				child := parentSR.Children[childID]
-				if child == nil {
-					child = &StepRun{StepID: childID}
-				}
-				if child.Status != "" && child.Status != StepStatusPending {
+			// For-each fan-out.
+			if step.ForEach != "" {
+				items, err := evalForEach(step.ForEach, buildEvalScope(run, nil))
+				if err != nil {
+					logging.Error("workflow-engine", "for_each eval failed", "step_id", stepID, "error", err)
 					continue
 				}
+				if parentSR.Children == nil {
+					parentSR.Children = make(map[string]*StepRun)
+				}
+				if len(items) == 0 {
+					parentSR.Status = StepStatusSucceeded
+					parentSR.StartedAt = &now
+					parentSR.CompletedAt = &now
+					run.Steps[stepID] = parentSR
+					continue
+				}
+				// Pre-create children so the parent doesn't incorrectly aggregate to SUCCEEDED
+				// before all items have been processed (e.g. when max_parallel throttles dispatch).
+				for idx := range items {
+					childID := fmt.Sprintf("%s[%d]", stepID, idx)
+					if parentSR.Children[childID] != nil {
+						continue
+					}
+					child := &StepRun{StepID: childID, Status: StepStatusPending}
+					parentSR.Children[childID] = child
+					run.Steps[childID] = child
+				}
+				parentSR.Status = StepStatusRunning
+				if parentSR.StartedAt == nil {
+					parentSR.StartedAt = &now
+				}
+				runningChildren := 0
+				for _, child := range parentSR.Children {
+					if child != nil && child.Status == StepStatusRunning {
+						runningChildren++
+					}
+				}
+				for idx, item := range items {
+					if step.MaxParallel > 0 && runningChildren >= step.MaxParallel {
+						break
+					}
+					childID := fmt.Sprintf("%s[%d]", stepID, idx)
+					child := parentSR.Children[childID]
+					if child == nil {
+						child = &StepRun{StepID: childID, Status: StepStatusPending}
+					}
+					if child.Status != "" && child.Status != StepStatusPending {
+						continue
+					}
 				if child.NextAttemptAt != nil && child.NextAttemptAt.After(now) {
 					continue
 				}

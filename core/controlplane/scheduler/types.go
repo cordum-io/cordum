@@ -79,6 +79,7 @@ var terminalStates = map[JobState]bool{
 // JobRecord captures a lightweight view of job state for reconciliation.
 type JobRecord struct {
 	ID             string   `json:"id"`
+	TraceID        string   `json:"trace_id,omitempty"`
 	UpdatedAt      int64    `json:"updated_at"`
 	State          JobState `json:"state"`
 	Topic          string   `json:"topic,omitempty"`

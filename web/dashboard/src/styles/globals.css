@@ -1,0 +1,64 @@
+@import url("https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    font-family: "Satoshi", ui-sans-serif, system-ui, -apple-system,
+      BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial,
+      "Apple Color Emoji", "Segoe UI Emoji";
+  }
+
+  #root {
+    height: 100%;
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+  }
+
+  /* React Flow theme tweaks (dashboard dark theme). */
+  .react-flow__controls {
+    background: rgba(20, 20, 26, 0.35);
+    border: 1px solid rgba(42, 42, 58, 0.9);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  }
+  .react-flow__controls button {
+    background: transparent;
+    border: 0;
+    color: #d1d1f5;
+  }
+  .react-flow__controls button:hover {
+    background: rgba(42, 42, 48, 0.7);
+  }
+  .react-flow__minimap {
+    background: rgba(20, 20, 26, 0.35);
+    border: 1px solid rgba(42, 42, 58, 0.9);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  }
+  .react-flow__minimap-mask {
+    fill: rgba(0, 0, 0, 0.35);
+  }
+  .react-flow__edge-path {
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}

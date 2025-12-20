@@ -7,6 +7,21 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 )
 
+func asInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int32:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
 func newSvc(t *testing.T) *Service {
 	t.Helper()
 	srv, err := miniredis.Run()
@@ -48,13 +63,13 @@ func TestSetGetEffective(t *testing.T) {
 	if err != nil {
 		t.Fatalf("effective: %v", err)
 	}
-	if eff["timeout"] != 30 {
+	if timeout, ok := asInt(eff["timeout"]); !ok || timeout != 30 {
 		t.Fatalf("expected timeout 30, got %v", eff["timeout"])
 	}
 	if eff["model"] != "gpt-4" {
 		t.Fatalf("expected inherited model, got %v", eff["model"])
 	}
-	if eff["budget"] != 100 {
+	if budget, ok := asInt(eff["budget"]); !ok || budget != 100 {
 		t.Fatalf("expected team budget, got %v", eff["budget"])
 	}
 }
