@@ -6,17 +6,26 @@ import (
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
+func routingForTopic(topic, pool string) PoolRouting {
+	return PoolRouting{
+		Topics: map[string][]string{
+			topic: {pool},
+		},
+		Pools: map[string]PoolProfile{
+			pool: {},
+		},
+	}
+}
+
 func TestLeastLoadedStrategyPicksPoolMatch(t *testing.T) {
-	strategy := NewLeastLoadedStrategy(map[string]string{
-		"job.echo": "echo",
-	})
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
 	workers := map[string]*pb.Heartbeat{
-		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 2, CpuLoad: 50},
-		"w2": {WorkerId: "w2", Pool: "echo", ActiveJobs: 1, CpuLoad: 10},
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 2, CpuLoad: 50},
+		"w2": {WorkerId: "w2", Pool: "default", ActiveJobs: 1, CpuLoad: 10},
 		"w3": {WorkerId: "w3", Pool: "other", ActiveJobs: 0, CpuLoad: 0},
 	}
 
-	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.echo"}, workers)
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,19 +35,15 @@ func TestLeastLoadedStrategyPicksPoolMatch(t *testing.T) {
 }
 
 func TestLeastLoadedStrategyNoWorkers(t *testing.T) {
-	strategy := NewLeastLoadedStrategy(map[string]string{
-		"job.echo": "echo",
-	})
-	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.echo"}, map[string]*pb.Heartbeat{})
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
+	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, map[string]*pb.Heartbeat{})
 	if err == nil {
 		t.Fatalf("expected error when no workers")
 	}
 }
 
 func TestLeastLoadedStrategyNoPoolConfigured(t *testing.T) {
-	strategy := NewLeastLoadedStrategy(map[string]string{
-		"job.echo": "echo",
-	})
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
 	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.unknown"}, map[string]*pb.Heartbeat{})
 	if err == nil {
 		t.Fatalf("expected error for unknown topic pool")
@@ -46,15 +51,13 @@ func TestLeastLoadedStrategyNoPoolConfigured(t *testing.T) {
 }
 
 func TestLeastLoadedStrategyUsesLoadScore(t *testing.T) {
-	strategy := NewLeastLoadedStrategy(map[string]string{
-		"job.echo": "echo",
-	})
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
 	workers := map[string]*pb.Heartbeat{
-		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 1, CpuLoad: 90, GpuUtilization: 0},
-		"w2": {WorkerId: "w2", Pool: "echo", ActiveJobs: 1, CpuLoad: 10, GpuUtilization: 0},
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 1, CpuLoad: 90, GpuUtilization: 0},
+		"w2": {WorkerId: "w2", Pool: "default", ActiveJobs: 1, CpuLoad: 10, GpuUtilization: 0},
 	}
 
-	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.echo"}, workers)
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,17 +68,15 @@ func TestLeastLoadedStrategyUsesLoadScore(t *testing.T) {
 }
 
 func TestLeastLoadedStrategyHonorsPreferredWorker(t *testing.T) {
-	strategy := NewLeastLoadedStrategy(map[string]string{
-		"job.echo": "echo",
-	})
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
 	workers := map[string]*pb.Heartbeat{
-		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 5, CpuLoad: 90},
-		"w2": {WorkerId: "w2", Pool: "echo", ActiveJobs: 2, CpuLoad: 50},
-		"w3": {WorkerId: "w3", Pool: "echo", ActiveJobs: 1, CpuLoad: 10},
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 5, CpuLoad: 90},
+		"w2": {WorkerId: "w2", Pool: "default", ActiveJobs: 2, CpuLoad: 50},
+		"w3": {WorkerId: "w3", Pool: "default", ActiveJobs: 1, CpuLoad: 10},
 	}
 
 	req := &pb.JobRequest{
-		Topic: "job.echo",
+		Topic: "job.default",
 		Labels: map[string]string{
 			"preferred_worker_id": "w2",
 		},
@@ -91,15 +92,13 @@ func TestLeastLoadedStrategyHonorsPreferredWorker(t *testing.T) {
 }
 
 func TestLeastLoadedStrategyIgnoresWorkflowLabelsForPlacement(t *testing.T) {
-	strategy := NewLeastLoadedStrategy(map[string]string{
-		"job.echo": "echo",
-	})
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
 	workers := map[string]*pb.Heartbeat{
-		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 0, CpuLoad: 10},
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 0, CpuLoad: 10},
 	}
 
 	req := &pb.JobRequest{
-		Topic: "job.echo",
+		Topic: "job.default",
 		Labels: map[string]string{
 			"workflow_id": "wf-1",
 			"run_id":      "run-1",
@@ -118,14 +117,12 @@ func TestLeastLoadedStrategyIgnoresWorkflowLabelsForPlacement(t *testing.T) {
 }
 
 func TestLeastLoadedStrategyDoesNotMarkIdleWorkerOverloaded(t *testing.T) {
-	strategy := NewLeastLoadedStrategy(map[string]string{
-		"job.echo": "echo",
-	})
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
 	workers := map[string]*pb.Heartbeat{
-		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 0, CpuLoad: 1, MaxParallelJobs: 1},
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 0, CpuLoad: 1, MaxParallelJobs: 1},
 	}
 
-	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.echo"}, workers)
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,14 +132,12 @@ func TestLeastLoadedStrategyDoesNotMarkIdleWorkerOverloaded(t *testing.T) {
 }
 
 func TestLeastLoadedStrategyMarksWorkerOverloadedWhenAtCapacity(t *testing.T) {
-	strategy := NewLeastLoadedStrategy(map[string]string{
-		"job.echo": "echo",
-	})
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
 	workers := map[string]*pb.Heartbeat{
-		"w1": {WorkerId: "w1", Pool: "echo", ActiveJobs: 1, CpuLoad: 1, MaxParallelJobs: 1},
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 1, CpuLoad: 1, MaxParallelJobs: 1},
 	}
 
-	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.echo"}, workers)
+	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
 	if err == nil {
 		t.Fatalf("expected error when all workers overloaded")
 	}

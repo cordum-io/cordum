@@ -14,8 +14,9 @@ type fakeReconcileStore struct {
 	updated map[string]int64
 	tenants map[string]string
 	teams   map[string]string
-	safety  map[string]struct{ decision, reason string }
+	safety  map[string]SafetyDecisionRecord
 	dead    map[string]int64
+	attempts map[string]int
 	locks   map[string]time.Time
 	fail    bool
 }
@@ -26,10 +27,15 @@ func newFakeReconcileStore() *fakeReconcileStore {
 		updated: make(map[string]int64),
 		tenants: make(map[string]string),
 		teams:   make(map[string]string),
-		safety:  make(map[string]struct{ decision, reason string }),
+		safety:  make(map[string]SafetyDecisionRecord),
 		dead:    make(map[string]int64),
+		attempts: make(map[string]int),
 		locks:   make(map[string]time.Time),
 	}
+}
+
+func toUnixMicros(t time.Time) int64 {
+	return t.UnixNano() / int64(time.Microsecond)
 }
 
 func (s *fakeReconcileStore) SetState(_ context.Context, jobID string, state JobState) error {
@@ -37,7 +43,10 @@ func (s *fakeReconcileStore) SetState(_ context.Context, jobID string, state Job
 		return errors.New("forced failure")
 	}
 	s.states[jobID] = state
-	s.updated[jobID] = time.Now().Unix()
+	s.updated[jobID] = toUnixMicros(time.Now())
+	if state == JobStateScheduled {
+		s.attempts[jobID]++
+	}
 	return nil
 }
 
@@ -122,14 +131,21 @@ func (s *fakeReconcileStore) GetTeam(_ context.Context, jobID string) (string, e
 	return s.teams[jobID], nil
 }
 
-func (s *fakeReconcileStore) SetSafetyDecision(_ context.Context, jobID, decision, reason string) error {
-	s.safety[jobID] = struct{ decision, reason string }{decision: decision, reason: reason}
+func (s *fakeReconcileStore) SetSafetyDecision(_ context.Context, jobID string, record SafetyDecisionRecord) error {
+	s.safety[jobID] = record
 	return nil
 }
 
-func (s *fakeReconcileStore) GetSafetyDecision(_ context.Context, jobID string) (string, string, error) {
-	entry := s.safety[jobID]
-	return entry.decision, entry.reason, nil
+func (s *fakeReconcileStore) GetSafetyDecision(_ context.Context, jobID string) (SafetyDecisionRecord, error) {
+	return s.safety[jobID], nil
+}
+
+func (s *fakeReconcileStore) GetAttempts(_ context.Context, jobID string) (int, error) {
+	return s.attempts[jobID], nil
+}
+
+func (s *fakeReconcileStore) CountActiveByTenant(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 func (s *fakeReconcileStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (bool, error) {
@@ -162,15 +178,15 @@ func TestReconcilerTimeouts(t *testing.T) {
 
 	// Seed jobs with old timestamps to trigger timeout.
 	store.states["dispatched-old"] = JobStateDispatched
-	store.updated["dispatched-old"] = time.Now().Add(-5 * time.Minute).Unix()
+	store.updated["dispatched-old"] = toUnixMicros(time.Now().Add(-5 * time.Minute))
 	store.states["running-old"] = JobStateRunning
-	store.updated["running-old"] = time.Now().Add(-10 * time.Minute).Unix()
+	store.updated["running-old"] = toUnixMicros(time.Now().Add(-10 * time.Minute))
 
 	// Fresh jobs should not be touched.
 	store.states["dispatched-fresh"] = JobStateDispatched
-	store.updated["dispatched-fresh"] = time.Now().Unix()
+	store.updated["dispatched-fresh"] = toUnixMicros(time.Now())
 	store.states["succeeded-old"] = JobStateSucceeded
-	store.updated["succeeded-old"] = time.Now().Add(-15 * time.Minute).Unix()
+	store.updated["succeeded-old"] = toUnixMicros(time.Now().Add(-15 * time.Minute))
 
 	reconciler := NewReconciler(store, 1*time.Minute, 1*time.Minute, 10*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -199,7 +215,7 @@ func TestReconcilerStopsWhenNoProgress(t *testing.T) {
 	store := newFakeReconcileStore()
 	store.fail = true
 	store.states["stuck"] = JobStateRunning
-	store.updated["stuck"] = time.Now().Add(-10 * time.Minute).Unix()
+	store.updated["stuck"] = toUnixMicros(time.Now().Add(-10 * time.Minute))
 
 	rec := NewReconciler(store, time.Minute, time.Minute, 10*time.Millisecond)
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)

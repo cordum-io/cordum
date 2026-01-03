@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -12,14 +13,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/yaront1111/coretex-os/core/configsvc"
 	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/infra/buildinfo"
 	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/config"
 	"github.com/yaront1111/coretex-os/core/infra/memory"
 	infraMetrics "github.com/yaront1111/coretex-os/core/infra/metrics"
+	agentregistry "github.com/yaront1111/coretex-os/core/infra/registry"
 )
 
 func main() {
 	log.Println("coretex scheduler starting...")
+	buildinfo.Log("coretex-scheduler")
 
 	cfg := config.Load()
 
@@ -66,17 +70,44 @@ func main() {
 	}
 	defer safetyClient.Close()
 
-	topicToPool, err := config.LoadPoolTopics(cfg.PoolConfigPath)
+	poolCfg, err := config.LoadPoolConfig(cfg.PoolConfigPath)
 	if err != nil {
 		log.Fatalf("failed to load pool config (%s): %v", cfg.PoolConfigPath, err)
 	}
-	log.Printf("loaded %d topic mappings from %s", len(topicToPool), cfg.PoolConfigPath)
 
 	configSvc, err := configsvc.New(cfg.RedisURL)
 	if err != nil {
 		log.Fatalf("failed to connect to Redis for config service: %v", err)
 	}
 	defer configSvc.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := bootstrapConfig(ctx, configSvc, poolCfg, timeoutsCfg); err != nil {
+		log.Printf("config bootstrap failed: %v", err)
+	}
+
+	snapshot, err := loadConfigSnapshot(ctx, configSvc, poolCfg, timeoutsCfg)
+	if err != nil {
+		log.Printf("config snapshot failed: %v", err)
+	}
+	if snapshot.Pools == nil {
+		snapshot.Pools = poolCfg
+	}
+	if snapshot.Timeouts == nil {
+		snapshot.Timeouts = timeoutsCfg
+	}
+	log.Printf("loaded %d topic mappings (config + %s)", len(snapshot.Pools.Topics), cfg.PoolConfigPath)
+
+	routing := scheduler.PoolRouting{
+		Topics: snapshot.Pools.Topics,
+		Pools:  make(map[string]scheduler.PoolProfile, len(snapshot.Pools.Pools)),
+	}
+	for name, pool := range snapshot.Pools.Pools {
+		routing.Pools[name] = scheduler.PoolProfile{Requires: append([]string{}, pool.Requires...)}
+	}
+	strategy := scheduler.NewLeastLoadedStrategy(routing)
 
 	registry := scheduler.NewMemoryRegistry()
 	defer registry.Close()
@@ -85,7 +116,7 @@ func main() {
 		natsBus,
 		safetyClient,
 		registry,
-		scheduler.NewLeastLoadedStrategy(topicToPool),
+		strategy,
 		jobStore,
 		metrics,
 	).WithConfig(configSvc)
@@ -94,25 +125,47 @@ func main() {
 		log.Fatalf("failed to start scheduler engine: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	snapshotStore, err := memory.NewRedisStore(cfg.RedisURL)
+	if err != nil {
+		log.Printf("worker snapshot disabled: failed to connect to Redis: %v", err)
+	} else {
+		defer snapshotStore.Close()
+		snapshotInterval := 5 * time.Second
+		if raw := os.Getenv("WORKER_SNAPSHOT_INTERVAL"); raw != "" {
+			if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+				snapshotInterval = parsed
+			} else {
+				log.Printf("invalid WORKER_SNAPSHOT_INTERVAL=%q, using default %s", raw, snapshotInterval)
+			}
+		}
+		go func() {
+			ticker := time.NewTicker(snapshotInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					current := strategy.CurrentRouting()
+					snap := agentregistry.BuildSnapshot(registry.Snapshot(), current.TopicToPool())
+					data, err := json.Marshal(snap)
+					if err != nil {
+						log.Printf("worker snapshot marshal failed: %v", err)
+						continue
+					}
+					if err := snapshotStore.PutResult(ctx, agentregistry.SnapshotKey, data); err != nil {
+						log.Printf("worker snapshot write failed: %v", err)
+					}
+				}
+			}
+		}()
+	}
 
-	recCfg := timeoutsCfg.Reconciler
-	dispatchTimeout := time.Duration(recCfg.DispatchTimeoutSeconds) * time.Second
-	if dispatchTimeout == 0 {
-		dispatchTimeout = 2 * time.Minute
-	}
-	runningTimeout := time.Duration(recCfg.RunningTimeoutSeconds) * time.Second
-	if runningTimeout == 0 {
-		runningTimeout = 5 * time.Minute
-	}
-	scanInterval := time.Duration(recCfg.ScanIntervalSeconds) * time.Second
-	if scanInterval == 0 {
-		scanInterval = 30 * time.Second
-	}
-
+	dispatchTimeout, runningTimeout, scanInterval := reconcilerTimeouts(snapshot.Timeouts)
 	reconciler := scheduler.NewReconciler(jobStore, dispatchTimeout, runningTimeout, scanInterval)
 	go reconciler.Start(ctx)
+
+	go watchConfigChanges(ctx, configSvc, poolCfg, timeoutsCfg, strategy, reconciler)
 
 	log.Println("scheduler running. waiting for signals...")
 	sigCh := make(chan os.Signal, 1)

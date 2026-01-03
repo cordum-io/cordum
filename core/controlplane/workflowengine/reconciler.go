@@ -2,10 +2,12 @@ package workflowengine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/logging"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	wf "github.com/yaront1111/coretex-os/core/workflow"
@@ -67,23 +69,29 @@ func (r *reconciler) Start(ctx context.Context) {
 	}
 }
 
-func (r *reconciler) HandleJobResult(ctx context.Context, jr *pb.JobResult) {
+func (r *reconciler) HandleJobResult(ctx context.Context, jr *pb.JobResult) error {
 	if jr == nil || jr.JobId == "" {
-		return
+		return nil
 	}
 	runID, _ := splitJobID(jr.JobId)
 	if runID == "" {
-		return
+		return nil
 	}
 	if r.jobStore != nil {
 		lockKey := runLockKey(runID)
 		ok, err := r.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
-		if err != nil || !ok {
-			return
+		if err != nil {
+			return bus.RetryAfter(err, 1*time.Second)
+		}
+		if !ok {
+			return bus.RetryAfter(fmt.Errorf("run lock busy"), 500*time.Millisecond)
 		}
 		defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey) }()
 	}
-	r.engine.HandleJobResult(ctx, jr)
+	if r.engine != nil {
+		r.engine.HandleJobResult(ctx, jr)
+	}
+	return nil
 }
 
 func (r *reconciler) tick(ctx context.Context) {

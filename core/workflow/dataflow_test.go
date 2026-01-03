@@ -22,7 +22,7 @@ func TestTemplateEvaluationInStepInput(t *testing.T) {
 			"step": {
 				ID:    "step",
 				Type:  StepTypeWorker,
-				Topic: "job.echo",
+				Topic: "job.default",
 				Input: map[string]any{
 					"foo": "${input.foo}",
 					"msg": "hello ${input.foo}",
@@ -82,7 +82,7 @@ func TestForEachMaxParallelLimitsDispatch(t *testing.T) {
 			"fan": {
 				ID:          "fan",
 				Type:        StepTypeWorker,
-				Topic:       "job.echo",
+				Topic:       "job.default",
 				ForEach:     "input.items",
 				MaxParallel: 1,
 			},

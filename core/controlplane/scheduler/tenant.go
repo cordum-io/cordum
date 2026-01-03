@@ -3,7 +3,6 @@ package scheduler
 import pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 
 const DefaultTenant = "default"
-const EffectiveConfigEnvVar = "CORETEX_EFFECTIVE_CONFIG"
 
 // ExtractTenant returns tenant ID with fallbacks to env.
 func ExtractTenant(req *pb.JobRequest) string {

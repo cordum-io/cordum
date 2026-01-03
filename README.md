@@ -1,96 +1,76 @@
-# coretexOS — AI Control Plane (Go + NATS)
+# coretexOS - AI Control Plane (Go + NATS)
 
-coretexOS is a Go control plane that routes, schedules, and safeguards AI/agent workloads over a NATS bus. Jobs move as protobuf envelopes, large payloads live in Redis via pointers, safety gates every dispatch, and workers live in `packages/` with thin binaries under `cmd/`.
+coretexOS is a platform-only control plane for AI workloads. It uses NATS for the bus,
+Redis for state and payload pointers, and CAP v2 wire contracts for jobs, results, and heartbeats.
+Worker implementations and product packs live outside this repo.
 
-## Architecture Snapshot
-- **Bus:** NATS subjects `sys.job.submit`, `sys.job.result`, `sys.heartbeat`, and worker subjects `job.*` (pool map in `config/pools.yaml`).
-- **Control Plane:** Scheduler (`core/controlplane/scheduler`) with safety check, least-loaded strategy, Redis-backed `JobStore`, and a reconciler that marks stale jobs `TIMEOUT`.
-- **Safety Kernel:** gRPC `Check` service; policy file at `config/safety.yaml` (deny/allow per tenant).
-- **API Gateway:** gRPC + HTTP/WS; writes contexts to Redis, publishes to `sys.job.submit`, tracks state/result via JobStore, streams bus events, and exposes metrics on `:9092/metrics`. Repo review helper endpoint: `POST /api/v1/repo-review`.
-- **Context Engine:** gRPC service (`cmd/coretex-context-engine`) that builds model windows, maintains chat history, and ingests repo scan data in Redis.
-- **Workers/Workflows (packages/):** echo, chat, chat-advanced (Ollama), code-llm (patch generator), planner, demo orchestrator, repo pipeline (scan → SAST → partition → lint → tests → report) driven by `job.workflow.repo.code_review`.
-- **Memory:** Redis for contexts/results and job metadata (`job:*` keys, per-state indices, recent jobs, trace mappings).
+Key ideas:
+- Bus-first: publish/subscribe with optional JetStream durability.
+- Control plane: scheduler + safety kernel + workflow engine + API gateway (+ optional context engine).
+- State: Redis for job metadata, workflow runs, config, DLQ, and payload pointers.
+- External workers connect via job topics; no built-in workers ship here.
 
-## Layout
-- `core/` – bus/config/memory/metrics, scheduler, agent runtime, context engine, protocol (`core/protocol/proto/v1` + generated `core/protocol/pb/v1`).
-- `packages/` – workers (`packages/workers/*`) and workflows (`packages/workflows/*`), providers under `packages/providers`.
-- `cmd/` – binaries wiring config to core/packages (scheduler, safety kernel, API gateway, context engine, each worker).
-- `config/` – pools, timeouts, safety policy.
-- `tools/scripts/` – smoke/send-job helpers for chat/code/workflows.
-- `docs/` – protocol, scheduler, docker/local guides; `spec/` contains CAP spec notes.
+Docs:
+- `docs/system_overview.md` for the full architecture.
+- `docs/AGENT_PROTOCOL.md` for bus and pointer semantics.
+- `docs/backend_capabilities.md` for feature coverage.
+- `docs/techinal_plan.md` for current + roadmap status.
 
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              CONTROL PLANE                                      │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐              │
-│  │   API Gateway   │    │    Scheduler    │    │  Safety Kernel  │              │
-│  │  :8080 gRPC     │    │                 │    │    :50051       │              │
-│  │  :8081 HTTP     │    │  State Machine  │    │                 │              │
-│  │  :9092 metrics  │    │  :9090 metrics  │    │  Policy Engine  │              │
-│  └────────┬────────┘    └────────┬────────┘    └────────┬────────┘              │
-│           │                      │                      │                       │
-└───────────┼──────────────────────┼──────────────────────┼───────────────────────┘
-            │                      │                      │
-            ▼                      ▼                      ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              MESSAGE BUS (NATS)                                 │
-│  sys.job.submit │ sys.job.result │ sys.heartbeat │ job.* (worker pools)         │
-└─────────────────────────────────────────────────────────────────────────────────┘
-            │                      │                      │
-            ▼                      ▼                      ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              DATA PLANE                                         │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐               │
-│  │   Echo   │ │   Chat   │ │ Code-LLM │ │  Planner │ │Orchestr. │               │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘               │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐               │
-│  │ RepoScan │ │ RepoLint │ │ RepoSAST │ │RepoTests │ │RepoReport│               │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘               │
-└─────────────────────────────────────────────────────────────────────────────────┘
-            │                      │                      │
-            ▼                      ▼                      ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              STATE (Redis)                                      │
-│  ctx:<job_id>  │  res:<job_id>  │  job:meta:<id>  │  mem:<memory_id>:*          │
-└─────────────────────────────────────────────────────────────────────────────────┘
+## Architecture (current code)
 
-## Topics → Pools (from `config/pools.yaml`)
+Components:
+- API gateway: HTTP/WS + gRPC for jobs, workflows/runs, approvals, config, policy, DLQ, schemas, locks, artifacts, traces.
+- Scheduler: safety gate, config-driven routing (pool + labels + requires), job state in Redis, reconciler timeouts.
+- Safety kernel: gRPC policy check using `config/safety.yaml` plus effective config (if provided); explain/simulate.
+- Workflow engine: Redis-backed workflows/runs with for_each fan-out, retries/backoff, approvals, delay/notify/condition steps, reruns, timeline.
+- Context engine (optional): gRPC helper for context windows and memory in Redis.
+- External workers: subscribe to `job.*` or `worker.<id>.jobs`, publish results on `sys.job.result`.
+
+Bus subjects:
+- `sys.job.submit`, `sys.job.result`, `sys.job.progress`, `sys.job.dlq`, `sys.job.cancel`, `sys.heartbeat`, `sys.workflow.event`
+- `job.*` (pool subjects), `worker.<id>.jobs` (direct)
+
+Pointers and state:
+- Contexts: `ctx:<job_id>` with pointer `redis://ctx:<job_id>`
+- Results: `res:<job_id>` with pointer `redis://res:<job_id>`
+- Artifacts: `art:<id>` with pointer `redis://art:<id>`
+- Job metadata: `job:meta:<id>` plus per-state indices and `job:recent`
+- Context engine memory: `mem:<memory_id>:*`
+- Workflow runs: `wf:run:<run_id>` plus run indexes and timelines
+
+Protocol:
+- Bus and safety types are CAP v2 (`github.com/coretexos/cap/v2`, pinned in `go.mod`) via aliases in `core/protocol/pb/v1`.
+- API/Context protos live in `core/protocol/proto/v1`; generated Go types live in `core/protocol/pb/v1` and `sdk/gen/go/coretex/v1`.
+
+SDK:
+- Public Go SDK lives under `sdk/` (module `github.com/yaront1111/coretex-os/sdk`), including generated protos, a minimal gateway client, and a CAP worker runtime (`sdk/runtime`).
+
+## Topics -> pools (`config/pools.yaml`)
+
 | Topic | Pool | Notes |
 | --- | --- | --- |
-| `job.echo` | `echo` | simple echo |
-| `job.chat.simple` | `chat-simple` | lightweight chat |
-| `job.chat.advanced` | `chat-advanced` | Ollama-backed |
-| `job.code.llm` | `code-llm` | structured code patch |
-| `job.workflow.plan` | `workflow` | planner |
-| `job.workflow.demo` | `workflow` | demo orchestrator (code patch → explanation) |
-| `job.workflow.repo.code_review` | `workflow` | repo pipeline orchestrator |
-| `job.repo.scan` | `repo-scan` | repo index + archive |
-| `job.repo.partition` | `repo-partition` | batch files |
-| `job.repo.lint` | `repo-lint` | lint batch |
-| `job.repo.sast` | `repo-sast` | heuristic SAST |
-| `job.repo.tests` | `repo-tests` | run tests |
-| `job.repo.report` | `repo-report` | aggregate findings |
+| `job.default` | `default` | baseline pool for external workers |
+
+Notes:
+- Topics are config-driven; no core topics are enforced in code.
 
 ## Quickstart (Docker)
-Requirements: Docker/Compose, Go 1.24+ (if running scripts locally).
+
+Requirements: Docker/Compose, curl, jq.
 
 ```bash
 docker compose build
 docker compose up -d
-# First run: pull an LLM for advanced/chat/code workers
-docker compose exec ollama ollama pull llama3
 ```
 
-Smoke a job (uses repo-local caches to avoid writing to global Go cache):
+Platform smoke (create workflow + run + approve + delete):
 ```bash
-GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/send_echo_job.go
-GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/chat/send_chat_job.go
-GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/code/send_code_job.go
-# Workflow demo (code patch + explanation)
-GOCACHE=$(pwd)/.cache/go-build go run ./tools/scripts/workflow/send_workflow_job.go
-# Repo code review via gateway HTTP
-curl -X POST http://localhost:8081/api/v1/repo-review \
-  -H 'Content-Type: application/json' \
-  -d '{"repo_url":"https://github.com/example/repo.git","branch":"main","max_files":200,"run_tests":false}'
+./tools/scripts/platform_smoke.sh
+```
+
+CLI smoke (coretexctl):
+```bash
+./tools/scripts/coretexctl_smoke.sh
 ```
 
 Inspect results:
@@ -98,23 +78,56 @@ Inspect results:
 docker exec coretex-redis-1 redis-cli get res:<job_id>
 ```
 
-## Development & Testing
-- Go toolchain: `go 1.24` (module-specified). To avoid permission errors, pin caches locally: `GOCACHE=$(pwd)/.cache/go-build go test ./...`.
-- Proto changes: edit files under `core/protocol/proto/v1`, then run `make proto`.
-- Docker images: `docker compose build` rebuilds all services; adjust `config/pools.yaml` / `config/timeouts.yaml` / `config/safety.yaml` as needed.
+Pointer inspection via gateway:
+- `GET /api/v1/memory?ptr=<urlencoded redis://...>`
 
-## Configuration (env defaults)
-- `NATS_URL` (`nats://localhost:4222`), `REDIS_URL` (`redis://localhost:6379`)
-- `SAFETY_KERNEL_ADDR` (`localhost:50051`), `SAFETY_POLICY_PATH` (`config/safety.yaml`)
-- `POOL_CONFIG_PATH` (`config/pools.yaml`), `TIMEOUT_CONFIG_PATH` (`config/timeouts.yaml`)
-- `CONTEXT_ENGINE_ADDR` (`:50070`)
-- Gateway: `API_KEY` (optional HTTP/WS key), `TENANT_ID` (default tenant), `API_RATE_LIMIT_RPS`/`API_RATE_LIMIT_BURST` (token bucket, defaults 50/100), `REDIS_DATA_TTL`/`REDIS_DATA_TTL_SECONDS` (expiry for contexts/results; default 24h)
-- Job metadata retention: `JOB_META_TTL`/`JOB_META_TTL_SECONDS` (expiry for job meta/state; default 7d)
-- TLS (optional): `GRPC_TLS_CERT`/`GRPC_TLS_KEY` on gateway; `SAFETY_KERNEL_TLS_CERT`/`SAFETY_KERNEL_TLS_KEY` on safety kernel; clients can set `SAFETY_KERNEL_TLS_CA` to verify
-- Ollama workers: `OLLAMA_URL` (`http://ollama:11434`), `OLLAMA_MODEL` (`llama3`)
-- Orchestrators: `USE_PLANNER` (default false), `PLANNER_TOPIC` (`job.workflow.plan`)
+## Development and tests
 
-## Observability & Safety
-- Metrics: scheduler `:9090/metrics`, orchestrator `:9091/metrics`, API gateway `:9092/metrics`.
-- Safety kernel denies/permits per `config/safety.yaml`; scheduler records decisions in JobStore for dashboards/trace queries.
-- Job lifecycle/state, traces, and pointers are stored in Redis (`core/infra/memory.RedisJobStore`).
+- Go toolchain: `go 1.24` (module-specified). Use local cache to avoid permission issues:
+  `GOCACHE=$(pwd)/.cache/go-build go test ./...`
+- Proto changes: edit `core/protocol/proto/v1`, then run `make proto`.
+- Docker images: `docker compose build` rebuilds all services.
+- Binaries: `make build` (all), or `make build SERVICE=coretex-scheduler` (one).
+- Container image: `make docker SERVICE=coretex-scheduler` (uses the root Dockerfile).
+- Smoke: `make smoke` (runs `tools/scripts/platform_smoke.sh`).
+- Integration tests: `make test-integration` (opt-in, tagged).
+
+## Config (selected env)
+
+Core:
+- `NATS_URL`, `REDIS_URL`
+- `NATS_USE_JETSTREAM` (`0|1`), `NATS_JS_ACK_WAIT`, `NATS_JS_MAX_AGE`
+- `POOL_CONFIG_PATH`, `TIMEOUT_CONFIG_PATH`, `CONTEXT_ENGINE_ADDR`
+- `SAFETY_KERNEL_ADDR`, `SAFETY_POLICY_PATH`
+- `JOB_META_TTL` / `JOB_META_TTL_SECONDS` (job meta retention)
+- `REDIS_DATA_TTL` / `REDIS_DATA_TTL_SECONDS` (ctx/res retention)
+- `WORKER_SNAPSHOT_INTERVAL`
+- `CORETEX_LOG_FORMAT=json` (stdlib log, JSON output)
+
+Gateway:
+- `GATEWAY_GRPC_ADDR`, `GATEWAY_HTTP_ADDR`, `GATEWAY_METRICS_ADDR`
+- `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST`
+- `TENANT_ID`
+- API keys: `CORETEX_SUPER_SECRET_API_TOKEN`, `CORETEX_API_KEY`, or `API_KEY`
+- CORS/WS: `CORETEX_ALLOWED_ORIGINS`, `CORETEX_CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGINS`
+- TLS: `GRPC_TLS_CERT`, `GRPC_TLS_KEY`
+
+Safety kernel:
+- `SAFETY_KERNEL_ADDR`, `SAFETY_POLICY_PATH`
+- TLS server: `SAFETY_KERNEL_TLS_CERT`, `SAFETY_KERNEL_TLS_KEY`
+- TLS client: `SAFETY_KERNEL_TLS_CA`, `SAFETY_KERNEL_INSECURE`
+
+Workflow engine:
+- `WORKFLOW_ENGINE_HTTP_ADDR`, `WORKFLOW_ENGINE_SCAN_INTERVAL`, `WORKFLOW_ENGINE_RUN_SCAN_LIMIT`
+
+## Observability
+
+- Scheduler: `:9090/metrics`
+- API gateway: `:9092/metrics`
+- Workflow engine health: `:9093/health`
+
+## Reset state (local)
+
+- Wipe Redis (jobs + ctx/res + memory + workflows + config + DLQ):
+  `docker compose exec redis redis-cli FLUSHALL`
+- Wipe JetStream state too: `docker compose down -v` (removes `nats_data`) and then `docker compose up -d`

@@ -8,70 +8,65 @@ import (
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
-func TestCheckRequiresTenantAndTopic(t *testing.T) {
-	s := &server{}
-
-	resp, err := s.Check(context.Background(), &pb.PolicyCheckRequest{Topic: "job.chat.simple"})
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
-		t.Fatalf("expected deny for missing tenant, got %s", resp.GetDecision().String())
-	}
-
-	resp, err = s.Check(context.Background(), &pb.PolicyCheckRequest{Tenant: "default"})
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
-		t.Fatalf("expected deny for missing topic, got %s", resp.GetDecision().String())
-	}
-}
-
-func TestCheckAppliesTenantPolicy(t *testing.T) {
-	policy := &config.SafetyPolicy{
+func TestCheckMCPPolicyDenies(t *testing.T) {
+	srv := &server{policy: &config.SafetyPolicy{
 		DefaultTenant: "default",
 		Tenants: map[string]config.TenantPolicy{
 			"default": {
-				AllowTopics: []string{"job.chat.*"},
-				DenyTopics:  []string{"job.chat.secret"},
+				AllowTopics: []string{"job.*"},
+				MCP: config.MCPPolicy{
+					DenyServers: []string{"blocked.example.com"},
+				},
 			},
 		},
-	}
-	s := &server{policy: policy}
+	}}
 
-	resp, _ := s.Check(context.Background(), &pb.PolicyCheckRequest{Tenant: "default", Topic: "job.chat.simple"})
-	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
-		t.Fatalf("expected allow, got %s (%s)", resp.GetDecision().String(), resp.GetReason())
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.default",
+		Tenant: "default",
+		Labels: map[string]string{
+			"mcp.server": "blocked.example.com",
+			"mcp.tool":   "read",
+		},
 	}
 
-	resp, _ = s.Check(context.Background(), &pb.PolicyCheckRequest{Tenant: "default", Topic: "job.code.llm"})
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
 	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
-		t.Fatalf("expected deny for non-allowed topic, got %s", resp.GetDecision().String())
-	}
-
-	resp, _ = s.Check(context.Background(), &pb.PolicyCheckRequest{Tenant: "default", Topic: "job.chat.secret"})
-	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
-		t.Fatalf("expected deny for denied topic, got %s", resp.GetDecision().String())
+		t.Fatalf("expected deny, got %v", resp.GetDecision())
 	}
 }
 
-func TestCheckAppliesEffectiveConfigRestrictions(t *testing.T) {
-	policy := &config.SafetyPolicy{
+func TestCheckMCPPolicyRequiresFieldWhenAllowlistSet(t *testing.T) {
+	srv := &server{policy: &config.SafetyPolicy{
 		DefaultTenant: "default",
 		Tenants: map[string]config.TenantPolicy{
-			"default": {AllowTopics: []string{"job.*"}},
+			"default": {
+				AllowTopics: []string{"job.*"},
+				MCP: config.MCPPolicy{
+					AllowServers: []string{"github.com"},
+				},
+			},
+		},
+	}}
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-2",
+		Topic:  "job.default",
+		Tenant: "default",
+		Labels: map[string]string{
+			"mcp.tool": "read",
 		},
 	}
-	s := &server{policy: policy}
 
-	effective := []byte(`{"safety":{"denied_topics":["job.chat.*"]}}`)
-	resp, _ := s.Check(context.Background(), &pb.PolicyCheckRequest{
-		Tenant:          "default",
-		Topic:           "job.chat.simple",
-		EffectiveConfig: effective,
-	})
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
 	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
-		t.Fatalf("expected deny by effective config, got %s (%s)", resp.GetDecision().String(), resp.GetReason())
+		t.Fatalf("expected deny when mcp.server missing, got %v", resp.GetDecision())
 	}
 }

@@ -35,6 +35,13 @@ type Service struct {
 	client *redis.Client
 }
 
+// EffectiveSnapshot includes the merged config plus version/hash metadata.
+type EffectiveSnapshot struct {
+	Version string         `json:"version"`
+	Hash    string         `json:"hash"`
+	Data    map[string]any `json:"data"`
+}
+
 // New creates a config service backed by Redis.
 func New(url string) (*Service, error) {
 	if url == "" {
@@ -96,6 +103,18 @@ func (s *Service) Get(ctx context.Context, scope Scope, id string) (*Document, e
 // Effective merges configs in order: system -> org -> team -> workflow -> step.
 // Later scopes override earlier keys shallowly.
 func (s *Service) Effective(ctx context.Context, orgID, teamID, workflowID, stepID string) (map[string]any, error) {
+	snap, err := s.EffectiveSnapshot(ctx, orgID, teamID, workflowID, stepID)
+	if err != nil {
+		return nil, err
+	}
+	if snap == nil {
+		return map[string]any{}, nil
+	}
+	return snap.Data, nil
+}
+
+// EffectiveSnapshot merges configs in order and returns the merged config plus version/hash metadata.
+func (s *Service) EffectiveSnapshot(ctx context.Context, orgID, teamID, workflowID, stepID string) (*EffectiveSnapshot, error) {
 	order := []struct {
 		scope Scope
 		id    string
@@ -107,6 +126,7 @@ func (s *Service) Effective(ctx context.Context, orgID, teamID, workflowID, step
 		{ScopeStep, stepID},
 	}
 	result := make(map[string]any)
+	revisions := make(map[Scope]int64, len(order))
 	for _, item := range order {
 		if item.scope != ScopeSystem && item.id == "" {
 			continue
@@ -116,9 +136,16 @@ func (s *Service) Effective(ctx context.Context, orgID, teamID, workflowID, step
 			// ignore missing
 			continue
 		}
+		revisions[item.scope] = doc.Revision
 		mergeShallow(result, doc.Data)
 	}
-	return result, nil
+	version := snapshotVersion(revisions)
+	hash, _ := snapshotHash(result)
+	return &EffectiveSnapshot{
+		Version: version,
+		Hash:    hash,
+		Data:    result,
+	}, nil
 }
 
 // mergeShallow overwrites keys in dst with src values.

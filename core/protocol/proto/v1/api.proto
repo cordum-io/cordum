@@ -1,9 +1,7 @@
 syntax = "proto3";
 
 package coretex.v1;
-option go_package = "github.com/yaront1111/coretex-os/core/protocol/pb/v1/api/proto/v1";
-
-import "google/protobuf/empty.proto";
+option go_package = "github.com/yaront1111/coretex-os/sdk/gen/go/coretex/v1";
 
 service CoretexApi {
   rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
@@ -12,13 +10,22 @@ service CoretexApi {
 
 message SubmitJobRequest {
   string prompt       = 1;
-  string topic        = 2; // e.g. "job.echo" or "job.chat.llm"
+  string topic        = 2; // e.g. "job.default" or "job.custom"
   string adapter_id   = 3;
   string priority     = 4; // "interactive", "batch" (optional for now)
   string org_id       = 5;
   string team_id      = 6;
   string project_id   = 7;
   string principal_id = 8;
+  string idempotency_key = 9;
+  string actor_id     = 10;
+  string actor_type   = 11; // "human" | "service" (optional)
+  string pack_id      = 12;
+  string capability   = 13;
+  repeated string risk_tags = 14;
+  repeated string requires  = 15;
+  map<string, string> labels = 16;
+  string memory_id   = 17;
 }
 
 message SubmitJobResponse {

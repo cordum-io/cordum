@@ -33,7 +33,7 @@ func TestWorkflowSaveGetList(t *testing.T) {
 		Description: "desc",
 		Version:     "v1",
 		Steps: map[string]*Step{
-			"start": {ID: "start", Name: "Start", Type: StepTypeWorker, Topic: "job.echo"},
+			"start": {ID: "start", Name: "Start", Type: StepTypeWorker, Topic: "job.default"},
 		},
 	}
 	if err := store.SaveWorkflow(ctx, wf); err != nil {
@@ -107,6 +107,76 @@ func TestWorkflowRunsCRUD(t *testing.T) {
 	}
 }
 
+func TestWorkflowDeleteRemovesIndexes(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	wf := &Workflow{
+		ID:    "wf-del",
+		OrgID: "org-1",
+		Name:  "Delete me",
+		Steps: map[string]*Step{"start": {ID: "start", Type: StepTypeApproval}},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if err := store.DeleteWorkflow(ctx, wf.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := store.GetWorkflow(ctx, wf.ID); err == nil {
+		t.Fatalf("expected workflow to be deleted")
+	}
+
+	listOrg, err := store.ListWorkflows(ctx, "org-1", 10)
+	if err != nil {
+		t.Fatalf("list org: %v", err)
+	}
+	if len(listOrg) != 0 {
+		t.Fatalf("expected empty org list, got %+v", listOrg)
+	}
+	listAll, err := store.ListWorkflows(ctx, "", 10)
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(listAll) != 0 {
+		t.Fatalf("expected empty list, got %+v", listAll)
+	}
+}
+
+func TestRunDeleteRemovesIndexes(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	run := &WorkflowRun{
+		ID:         "run-del",
+		WorkflowID: "wf-1",
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := store.DeleteRun(ctx, run.ID); err != nil {
+		t.Fatalf("delete run: %v", err)
+	}
+	if _, err := store.GetRun(ctx, run.ID); err == nil {
+		t.Fatalf("expected run to be deleted")
+	}
+
+	list, err := store.ListRunsByWorkflow(ctx, run.WorkflowID, 5)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected empty runs list, got %+v", list)
+	}
+}
+
 func TestRunStatusIndexing(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -150,5 +220,72 @@ func TestRunStatusIndexing(t *testing.T) {
 	}
 	if len(ids) != 1 || ids[0] != run.ID {
 		t.Fatalf("unexpected running ids: %+v", ids)
+	}
+}
+
+func TestRunIdempotencyKeyMapping(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	run := &WorkflowRun{
+		ID:             "run-idem-1",
+		WorkflowID:     "wf-1",
+		OrgID:          "org-1",
+		Status:         RunStatusPending,
+		Steps:          map[string]*StepRun{},
+		IdempotencyKey: "idem-key-1",
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	got, err := store.GetRunByIdempotencyKey(ctx, "idem-key-1")
+	if err != nil {
+		t.Fatalf("get idempotency: %v", err)
+	}
+	if got != run.ID {
+		t.Fatalf("expected run id %s, got %s", run.ID, got)
+	}
+	ok, err := store.TrySetRunIdempotencyKey(ctx, "idem-key-1", "run-idem-2")
+	if err != nil {
+		t.Fatalf("try set: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected idempotency key to be taken")
+	}
+}
+
+func TestRunTimelineAppendAndList(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	run := &WorkflowRun{
+		ID:         "run-timeline",
+		WorkflowID: "wf-1",
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := store.AppendTimelineEvent(ctx, run.ID, &TimelineEvent{Type: "run_created"}); err != nil {
+		t.Fatalf("append timeline: %v", err)
+	}
+	if err := store.AppendTimelineEvent(ctx, run.ID, &TimelineEvent{Type: "run_status", Status: string(RunStatusRunning)}); err != nil {
+		t.Fatalf("append timeline: %v", err)
+	}
+
+	events, err := store.ListTimelineEvents(ctx, run.ID, 10)
+	if err != nil {
+		t.Fatalf("list timeline: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].Type != "run_created" || events[1].Type != "run_status" {
+		t.Fatalf("unexpected timeline events: %+v", events)
 	}
 }

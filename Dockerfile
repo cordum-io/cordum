@@ -7,16 +7,28 @@ WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 
 COPY go.mod go.sum ./
-# Bring in vendored CAP module for replace path resolution before download.
-COPY third_party/coretexos/cap ./third_party/coretexos/cap
+COPY sdk/go.mod ./sdk/go.mod
+ARG USE_LOCAL_CAP=0
+RUN if [ "${USE_LOCAL_CAP}" != "1" ]; then \
+      go mod edit -dropreplace github.com/coretexos/cap/v2; \
+    fi
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOFLAGS=-mod=mod go mod download
+
+COPY . .
+RUN if [ "${USE_LOCAL_CAP}" != "1" ]; then \
+      go mod edit -dropreplace github.com/coretexos/cap/v2; \
+    fi
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go mod download
 
-COPY . .
-
 # SERVICE must match a directory under cmd/ (e.g. coretex-scheduler).
 ARG SERVICE
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
 RUN test -n "${SERVICE}" || (echo "SERVICE build arg required" && false)
 # Resolve target dir; coretex-* names must match directories under cmd/
 RUN TARGET="${SERVICE}" ; \
@@ -31,7 +43,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       if [ -d "./cmd/${SERVICE/coretex-/coretex-}" ]; then TARGET="${SERVICE/coretex-/coretex-}"; \
       fi; \
     fi; \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/${SERVICE} ./cmd/${TARGET}
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+      -ldflags "-s -w -X github.com/yaront1111/coretex-os/core/infra/buildinfo.Version=${VERSION} -X github.com/yaront1111/coretex-os/core/infra/buildinfo.Commit=${COMMIT} -X github.com/yaront1111/coretex-os/core/infra/buildinfo.Date=${BUILD_DATE}" \
+      -o /out/${SERVICE} ./cmd/${TARGET}
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates git

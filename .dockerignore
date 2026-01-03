@@ -2,6 +2,7 @@ bin
 .git
 .gocache
 .gomodcache
+.cache
 vendor
 *.swp
 *.tmp

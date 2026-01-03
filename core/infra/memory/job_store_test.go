@@ -111,6 +111,28 @@ func TestRedisJobStoreTransitionGuard(t *testing.T) {
 		t.Fatalf("scheduled -> failed should be ok: %v", err)
 	}
 
+	jobScheduledSuccess := "job-456-scheduled-success"
+	if err := store.SetState(ctx, jobScheduledSuccess, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetState(ctx, jobScheduledSuccess, scheduler.JobStateScheduled); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if err := store.SetState(ctx, jobScheduledSuccess, scheduler.JobStateSucceeded); err != nil {
+		t.Fatalf("scheduled -> succeeded should be ok: %v", err)
+	}
+
+	jobScheduledCancel := "job-456-scheduled-cancel"
+	if err := store.SetState(ctx, jobScheduledCancel, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetState(ctx, jobScheduledCancel, scheduler.JobStateScheduled); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if err := store.SetState(ctx, jobScheduledCancel, scheduler.JobStateCancelled); err != nil {
+		t.Fatalf("scheduled -> cancelled should be ok: %v", err)
+	}
+
 	jobPendingTimeout := "job-456-pending-timeout"
 	if err := store.SetState(ctx, jobPendingTimeout, scheduler.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
@@ -187,15 +209,15 @@ func TestRedisJobStoreListRecentJobsByScorePagination(t *testing.T) {
 	if err := store.SetState(ctx, "job-1", scheduler.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
 	if err := store.SetState(ctx, "job-2", scheduler.JobStateRunning); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
 	if err := store.SetState(ctx, "job-3", scheduler.JobStateRunning); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
 	if err := store.SetState(ctx, "job-3", scheduler.JobStateSucceeded); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
@@ -231,15 +253,15 @@ func TestRedisJobStoreTopicMetadata(t *testing.T) {
 
 	ctx := context.Background()
 	jobID := "job-topic"
-	if err := store.SetTopic(ctx, jobID, "job.chat.simple"); err != nil {
+	if err := store.SetTopic(ctx, jobID, "job.default"); err != nil {
 		t.Fatalf("set topic: %v", err)
 	}
 	got, err := store.GetTopic(ctx, jobID)
 	if err != nil {
 		t.Fatalf("get topic: %v", err)
 	}
-	if got != "job.chat.simple" {
-		t.Fatalf("expected topic job.chat.simple, got %s", got)
+	if got != "job.default" {
+		t.Fatalf("expected topic job.default, got %s", got)
 	}
 
 	if err := store.SetTenant(ctx, jobID, "tenant-a"); err != nil {
@@ -253,14 +275,14 @@ func TestRedisJobStoreTopicMetadata(t *testing.T) {
 		t.Fatalf("expected tenant tenant-a, got %s", tenant)
 	}
 
-	if err := store.SetSafetyDecision(ctx, jobID, "DENY", "forbidden"); err != nil {
+	if err := store.SetSafetyDecision(ctx, jobID, scheduler.SafetyDecisionRecord{Decision: scheduler.SafetyDeny, Reason: "forbidden"}); err != nil {
 		t.Fatalf("set safety decision: %v", err)
 	}
-	dec, reason, err := store.GetSafetyDecision(ctx, jobID)
+	record, err := store.GetSafetyDecision(ctx, jobID)
 	if err != nil {
 		t.Fatalf("get safety decision: %v", err)
 	}
-	if dec != "DENY" || reason != "forbidden" {
-		t.Fatalf("unexpected safety decision %s reason %s", dec, reason)
+	if record.Decision != scheduler.SafetyDeny || record.Reason != "forbidden" {
+		t.Fatalf("unexpected safety decision %s reason %s", record.Decision, record.Reason)
 	}
 }
