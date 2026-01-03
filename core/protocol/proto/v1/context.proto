@@ -1,14 +1,18 @@
 syntax = "proto3";
 
 package coretex.v1;
-option go_package = "github.com/yaront1111/coretex-os/core/protocol/pb/v1";
+option go_package = "github.com/yaront1111/coretex-os/sdk/gen/go/coretex/v1";
 
-import "job.proto";
+enum ContextMode {
+  CONTEXT_MODE_UNSPECIFIED = 0;
+  CONTEXT_MODE_RAW = 1;
+  CONTEXT_MODE_CHAT = 2;
+  CONTEXT_MODE_RAG = 3;
+}
 
 service ContextEngine {
   rpc BuildWindow(BuildWindowRequest) returns (BuildWindowResponse);
   rpc UpdateMemory(UpdateMemoryRequest) returns (UpdateMemoryResponse);
-  rpc IngestRepo(IngestRepoRequest) returns (IngestRepoResponse);
 }
 
 message ModelMessage {
@@ -39,11 +43,3 @@ message UpdateMemoryRequest {
 }
 
 message UpdateMemoryResponse {}
-
-message IngestRepoRequest {
-  string memory_id = 1;
-  string repo_root = 2;
-  bytes scan_result = 3;
-}
-
-message IngestRepoResponse {}

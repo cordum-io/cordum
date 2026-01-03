@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/yaront1111/coretex-os/core/context/engine"
+	"github.com/yaront1111/coretex-os/core/infra/buildinfo"
 	"github.com/yaront1111/coretex-os/core/infra/config"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
@@ -14,6 +15,7 @@ import (
 
 func main() {
 	cfg := config.Load()
+	buildinfo.Log("coretex-context-engine")
 
 	svc, err := engine.NewService(cfg.RedisURL)
 	if err != nil {

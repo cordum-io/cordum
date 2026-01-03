@@ -4,53 +4,70 @@ This document tracks the current backend features, their status, and where they 
 
 ## Runtime Stack (active)
 - Language: Go
-- Bus: NATS (core subjects), DLQ emitter
+- Bus: NATS with optional JetStream durability (`NATS_USE_JETSTREAM=1`), DLQ emitter
 - State: Redis for job state, contexts/results, workflows/runs, config, DLQ
-- Vector/Artifacts/Secrets: not yet wired (planned when steps need embeddings/artifacts)
+- Artifacts: Redis-backed store with retention classes
+- Schemas: JSON schema registry + validation
+- Locks: Redis-backed shared/exclusive locks
+- Secrets: `secret://` reference detection and redaction helpers (policy enforcement via risk tags/labels)
 
 ## Components & Features
 
 ### Scheduler
-- Dispatch: NATS publish of `sys.job.submit` to worker topics or direct subjects (least-loaded strategy).
+- Dispatch: consumes `sys.job.submit`, routes to worker topics or direct subjects (least-loaded strategy).
 - States: Redis job store (atomic via WATCH), deadlines, trace linkage.
 - Safety: Safety client with half-open circuit breaker; decisions persisted (includes effective_config payload).
 - Registry: in-memory with TTL expiry loop to drop dead workers.
+- Reliability: JetStream mode uses explicit ack/nak on durable subjects; scheduler is idempotent under redelivery (per-job lock + retryable errors).
 - Reconciler: timeout scans for dispatched/running; bounded retries + lock-based to avoid double processing.
 - DLQ: emits to `sys.job.dlq` on failures.
 - Hints & cancel: respects preferred worker/pool hints via labels; broadcasts job cancel packets to `sys.job.cancel` (best-effort).
 
 ### API Gateway
-- Jobs: submit/list/get/cancel, trace fetch, repo-review helper; list supports filters (state/topic/tenant/team/time/trace) and cursor pagination (`cursor`/`next_cursor`).
-- Workflows: REST CRUD (`/api/v1/workflows`), runs start/get/list, approve step, cancel run; creates runs and kicks off execution via workflow engine.
-- Config: Redis-backed config service (`/api/v1/config` set, `/api/v1/config/effective` get).
-- Stream: WS stream of bus packets; worker snapshots.
-- DLQ: list/delete/get; retry rehydrates original context into a new job id and re-dispatches.
+- Jobs: submit/list/get/cancel, trace fetch; list supports filters (state/topic/tenant/team/time/trace) and cursor pagination (`cursor`/`next_cursor`).
+- Workflows: create/upsert (`/api/v1/workflows`), list/get, runs start/get/list, approve step, cancel run, rerun, timeline.
+- Approvals: job approvals (`/api/v1/approvals/...`) and step approvals (`/api/v1/workflows/.../steps/.../approve`).
+- Config: Redis-backed config service (set/get via `/api/v1/config`, effective via `/api/v1/config/effective`).
+- Policy: evaluate/simulate/explain, list snapshots.
+- Schemas: register/get/list/delete JSON schemas.
+- Locks: acquire/release/renew/get shared/exclusive locks.
+- Artifacts: put/get with retention class metadata.
+- Stream: WS stream of bus packets (includes heartbeats and job events).
+- Memory: pointer reader (`GET /api/v1/memory?ptr=...`) used by operators or UI clients to inspect `redis://ctx:*`, `redis://res:*`, and `redis://mem:*` keys.
+- Security: CORS/WS origin allowlist (set `CORETEX_ALLOWED_ORIGINS` for non-local browser clients).
+- DLQ: list/delete/retry; retry rehydrates original context into a new job id and re-dispatches.
 
-### Workflow Engine Service (new)
+### Workflow Engine Service
 - Control plane: `cmd/coretex-workflow-engine` subscribes to `sys.job.result` (queue group) and advances runs independently from the gateway.
 - Storage: Redis workflows and runs (`core/workflow`), status indexes for reconciliation.
 - Execution: starts runs, dispatches ready steps as jobs (job ID = runID:stepID@attempt), consumes job results to advance run state.
 - Fan-out: `for_each` expression evaluated against run input/context; child jobs dispatched with index/item metadata; parent aggregated.
 - Dataflow: step `input` supports `${...}` expressions; step outputs are recorded in run context under `steps.<step_id>` and optionally `output_path`.
-- Reliability: per-step retry/backoff (exponential), budget deadline hint from `timeout_sec`, approval steps pause/resume via API; reconciler replays terminal job states from JobStore and resumes delayed retries; tests cover fan-out/retry/approval/max_parallel.
+- Step types: approval, delay (timer), notify (SystemAlert), condition (inline boolean output), worker.
+- Reliability: per-step retry/backoff (exponential), budget deadline hint from `timeout_sec`, approval steps pause/resume via API; job-result handling returns retryable errors (NAK) under transient store/lock failures so results aren’t dropped; reconciler replays terminal job states from JobStore and resumes delayed retries; tests cover fan-out/retry/approval/max_parallel.
+- Rerun: rerun-from-step and dry-run support.
+- Validation: workflow input schema validation; step input/output schema validation.
+- Audit: append-only timeline for run events.
 - Hooks: callbacks on step dispatch/finish for observability.
 - Routing: route labels/worker_id propagated to job labels for scheduler hints; cancel guard prevents further dispatch after cancel.
 
-### Config Service (new)
+### Config Service
 - Redis-backed hierarchical merge (system→org→team→workflow→step) with shallow overrides.
+- Effective snapshot includes version and hash.
 - REST endpoints exposed via gateway.
 
-### DLQ (new)
-- Redis-backed DLQ store with add/list/delete/get; retry endpoint in gateway rehydrates context and re-dispatches under a new job id.
+### DLQ
+- Redis-backed DLQ store with add/list/delete/get; gateway exposes list/delete/retry and re-dispatches under a new job id.
 
 ### Workers
-- Go workers built on `core/agent/runtime` subscribe to `sys.job.cancel` and honor cancel requests via context cancellation; chat/code/repo worker implementations use this wrapper.
+- External workers (not in this repo) subscribe to `sys.job.cancel` and honor cancel requests.
+- CAP worker runtime SDK is implemented at `sdk/runtime` (heartbeats, progress, cancel handling).
 
 ## Pending/Next (to align with plan)
-- Workflow engine: richer routing hints to scheduler (per-step worker prefs), per-step cancellation hooks, artifacts/secrets when steps require them.
-- DLQ ops: add tracing/context replay telemetry and pagination.
+- DLQ ops: add pagination and richer telemetry.
 - Ops filters: server-side trace search and richer analytics/alerts.
-- Optional: vector store bindings, artifacts (S3), secrets (Vault) when step types require them.
+- Optional: vector store bindings, artifacts (S3), secrets (Vault/KMS) when step types require them.
+- CAP signatures: enable signing/verification on the bus when needed.
 
 ## Key Paths
 - Workflow store/engine: `core/workflow/`

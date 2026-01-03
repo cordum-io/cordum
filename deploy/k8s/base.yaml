@@ -11,19 +11,7 @@ metadata:
 data:
   pools.yaml: |
     topics:
-      job.echo: echo
-      job.chat.simple: chat-simple
-      job.chat.advanced: chat-advanced
-      job.code.llm: code-llm
-      job.workflow.plan: workflow-planner
-      job.workflow.demo: workflow-demo
-      job.workflow.repo.code_review: workflow-repo
-      job.repo.scan: repo-scan
-      job.repo.partition: repo-partition
-      job.repo.lint: repo-lint
-      job.repo.sast: repo-sast
-      job.repo.tests: repo-tests
-      job.repo.report: repo-report
+      job.default: default
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -32,44 +20,38 @@ metadata:
   namespace: coretex
 data:
   timeouts.yaml: |
-    workflows:
-      code_review_demo:
-        child_timeout_seconds: 1200
-        total_timeout_seconds: 1800
-        max_retries: 1
-      repo_code_review:
-        child_timeout_seconds: 1200
-        total_timeout_seconds: 1800
-        max_retries: 1
-    topics:
-      job.code.llm:
-        timeout_seconds: 1200
-        max_retries: 0
-      job.chat.simple:
-        timeout_seconds: 60
-        max_retries: 0
-      job.repo.scan:
-        timeout_seconds: 300
-        max_retries: 0
-      job.repo.partition:
-        timeout_seconds: 120
-        max_retries: 0
-      job.repo.lint:
-        timeout_seconds: 240
-        max_retries: 0
-      job.repo.sast:
-        timeout_seconds: 240
-        max_retries: 0
-      job.repo.tests:
-        timeout_seconds: 600
-        max_retries: 0
-      job.repo.report:
-        timeout_seconds: 180
-        max_retries: 0
+    workflows: {}
+    topics: {}
     reconciler:
-      dispatch_timeout_seconds: 120
-      running_timeout_seconds: 1500
+      dispatch_timeout_seconds: 300
+      running_timeout_seconds: 9000
       scan_interval_seconds: 30
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coretex-safety
+  namespace: coretex
+data:
+  safety.yaml: |
+    default_tenant: default
+    tenants:
+      default:
+        allow_topics:
+          - "job.*"
+        deny_topics:
+          - "sys.*"
+        allowed_repo_hosts: []
+        denied_repo_hosts: []
+        mcp:
+          allow_servers: []
+          deny_servers: []
+          allow_tools: []
+          deny_tools: []
+          allow_resources: []
+          deny_resources: []
+          allow_actions: []
+          deny_actions: []
 ---
 apiVersion: v1
 kind: Secret
@@ -148,7 +130,8 @@ metadata:
 spec:
   selector: {app: redis}
   ports:
-  - port: 6379
+  - name: redis
+    port: 6379
     targetPort: 6379
 ---
 apiVersion: apps/v1
@@ -171,13 +154,9 @@ spec:
         - name: REDIS_URL
           value: redis://redis:6379
         - name: CONTEXT_ENGINE_ADDR
-          value: ":50070"
+          value: :50070
         ports:
         - containerPort: 50070
-        livenessProbe:
-          tcpSocket: {port: 50070}
-          initialDelaySeconds: 5
-          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -187,7 +166,8 @@ metadata:
 spec:
   selector: {app: coretex-context-engine}
   ports:
-  - port: 50070
+  - name: grpc
+    port: 50070
     targetPort: 50070
 ---
 apiVersion: apps/v1
@@ -207,14 +187,22 @@ spec:
       - name: safety
         image: coretex-coretex-safety-kernel
         env:
+        - name: NATS_URL
+          value: nats://nats:4222
         - name: SAFETY_KERNEL_ADDR
-          value: ":50051"
+          value: :50051
+        - name: SAFETY_POLICY_PATH
+          value: /etc/coretex/safety.yaml
+        volumeMounts:
+        - name: coretex-safety
+          mountPath: /etc/coretex
+          readOnly: true
         ports:
         - containerPort: 50051
-        livenessProbe:
-          tcpSocket: {port: 50051}
-          initialDelaySeconds: 5
-          periodSeconds: 10
+      volumes:
+      - name: coretex-safety
+        configMap:
+          name: coretex-safety
 ---
 apiVersion: v1
 kind: Service
@@ -224,7 +212,8 @@ metadata:
 spec:
   selector: {app: coretex-safety-kernel}
   ports:
-  - port: 50051
+  - name: grpc
+    port: 50051
     targetPort: 50051
 ---
 apiVersion: apps/v1
@@ -246,6 +235,8 @@ spec:
         env:
         - name: NATS_URL
           value: nats://nats:4222
+        - name: NATS_USE_JETSTREAM
+          value: "1"
         - name: REDIS_URL
           value: redis://redis:6379
         - name: SAFETY_KERNEL_ADDR
@@ -254,34 +245,36 @@ spec:
           value: /etc/coretex/pools.yaml
         - name: TIMEOUT_CONFIG_PATH
           value: /etc/coretex/timeouts.yaml
-        - name: JOB_META_TTL
-          value: "168h"
         volumeMounts:
-        - name: pools
+        - name: coretex-pools
           mountPath: /etc/coretex/pools.yaml
           subPath: pools.yaml
-        - name: timeouts
+          readOnly: true
+        - name: coretex-timeouts
           mountPath: /etc/coretex/timeouts.yaml
           subPath: timeouts.yaml
+          readOnly: true
         ports:
         - containerPort: 9090
-        livenessProbe:
-          tcpSocket: {port: 9090}
-          initialDelaySeconds: 5
-          periodSeconds: 10
       volumes:
-      - name: pools
+      - name: coretex-pools
         configMap:
           name: coretex-pools
-          items:
-          - key: pools.yaml
-            path: pools.yaml
-      - name: timeouts
+      - name: coretex-timeouts
         configMap:
           name: coretex-timeouts
-          items:
-          - key: timeouts.yaml
-            path: timeouts.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coretex-scheduler
+  namespace: coretex
+spec:
+  selector: {app: coretex-scheduler}
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -302,10 +295,22 @@ spec:
         env:
         - name: NATS_URL
           value: nats://nats:4222
+        - name: NATS_USE_JETSTREAM
+          value: "1"
         - name: REDIS_URL
           value: redis://redis:6379
         - name: SAFETY_KERNEL_ADDR
           value: coretex-safety-kernel:50051
+        - name: TENANT_ID
+          value: default
+        - name: API_RATE_LIMIT_RPS
+          value: "50"
+        - name: API_RATE_LIMIT_BURST
+          value: "100"
+        - name: REDIS_DATA_TTL
+          value: 24h
+        - name: JOB_META_TTL
+          value: 168h
         - name: API_KEY
           valueFrom:
             secretKeyRef:
@@ -321,26 +326,10 @@ spec:
             secretKeyRef:
               name: coretex-api-key
               key: API_KEY
-        - name: TENANT_ID
-          value: "default"
-        - name: API_RATE_LIMIT_RPS
-          value: "50"
-        - name: API_RATE_LIMIT_BURST
-          value: "100"
-        - name: REDIS_DATA_TTL
-          value: "24h"
-        - name: JOB_META_TTL
-          value: "168h"
         ports:
         - containerPort: 8080
         - containerPort: 8081
         - containerPort: 9092
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -350,12 +339,15 @@ metadata:
 spec:
   selector: {app: coretex-api-gateway}
   ports:
-  - name: http
-    port: 8081
-    targetPort: 8081
   - name: grpc
     port: 8080
     targetPort: 8080
+  - name: http
+    port: 8081
+    targetPort: 8081
+  - name: metrics
+    port: 9092
+    targetPort: 9092
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -376,22 +368,18 @@ spec:
         env:
         - name: NATS_URL
           value: nats://nats:4222
+        - name: NATS_USE_JETSTREAM
+          value: "1"
         - name: REDIS_URL
           value: redis://redis:6379
         - name: WORKFLOW_ENGINE_HTTP_ADDR
-          value: ":9093"
+          value: :9093
         - name: WORKFLOW_ENGINE_SCAN_INTERVAL
-          value: "5s"
+          value: 5s
         - name: WORKFLOW_ENGINE_RUN_SCAN_LIMIT
           value: "200"
         ports:
         - containerPort: 9093
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 9093
-          initialDelaySeconds: 5
-          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -401,196 +389,6 @@ metadata:
 spec:
   selector: {app: coretex-workflow-engine}
   ports:
-  - port: 9093
+  - name: http
+    port: 9093
     targetPort: 9093
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coretex-worker-echo
-  namespace: coretex
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: coretex-worker-echo}
-  template:
-    metadata:
-      labels: {app: coretex-worker-echo}
-    spec:
-      containers:
-      - name: worker
-        image: coretex-coretex-worker-echo
-        env:
-        - name: NATS_URL
-          value: nats://nats:4222
-        - name: REDIS_URL
-          value: redis://redis:6379
-        - name: REDIS_DATA_TTL
-          value: "24h"
-        ports:
-        - containerPort: 8082
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coretex-worker-chat
-  namespace: coretex
-spec:
-  replicas: 2
-  selector:
-    matchLabels: {app: coretex-worker-chat}
-  template:
-    metadata:
-      labels: {app: coretex-worker-chat}
-    spec:
-      containers:
-      - name: worker
-        image: coretex-coretex-worker-chat
-        env:
-        - name: NATS_URL
-          value: nats://nats:4222
-        - name: REDIS_URL
-          value: redis://redis:6379
-        - name: REDIS_DATA_TTL
-          value: "24h"
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: coretex-worker-chat-hpa
-  namespace: coretex
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: coretex-worker-chat
-  minReplicas: 1
-  maxReplicas: 5
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coretex-worker-chat-advanced
-  namespace: coretex
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: coretex-worker-chat-advanced}
-  template:
-    metadata:
-      labels: {app: coretex-worker-chat-advanced}
-    spec:
-      containers:
-      - name: worker
-        image: coretex-coretex-worker-chat-advanced
-        env:
-        - name: NATS_URL
-          value: nats://nats:4222
-        - name: REDIS_URL
-          value: redis://redis:6379
-        - name: CONTEXT_ENGINE_ADDR
-          value: coretex-context-engine:50070
-        - name: OLLAMA_URL
-          value: http://ollama:11434
-        - name: REDIS_DATA_TTL
-          value: "24h"
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coretex-worker-code-llm
-  namespace: coretex
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: coretex-worker-code-llm}
-  template:
-    metadata:
-      labels: {app: coretex-worker-code-llm}
-    spec:
-      containers:
-      - name: worker
-        image: coretex-coretex-worker-code-llm
-        env:
-        - name: NATS_URL
-          value: nats://nats:4222
-        - name: REDIS_URL
-          value: redis://redis:6379
-        - name: CONTEXT_ENGINE_ADDR
-          value: coretex-context-engine:50070
-        - name: OLLAMA_URL
-          value: http://ollama:11434
-        - name: REDIS_DATA_TTL
-          value: "24h"
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coretex-worker-orchestrator
-  namespace: coretex
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: coretex-worker-orchestrator}
-  template:
-    metadata:
-      labels: {app: coretex-worker-orchestrator}
-    spec:
-      containers:
-      - name: worker
-        image: coretex-coretex-worker-orchestrator
-        env:
-        - name: NATS_URL
-          value: nats://nats:4222
-        - name: REDIS_URL
-          value: redis://redis:6379
-        - name: TIMEOUT_CONFIG_PATH
-          value: /etc/coretex/timeouts.yaml
-        - name: REDIS_DATA_TTL
-          value: "24h"
-        - name: USE_PLANNER
-          value: "false"
-        - name: PLANNER_TOPIC
-          value: job.workflow.plan
-        volumeMounts:
-        - name: timeouts
-          mountPath: /etc/coretex/timeouts.yaml
-          subPath: timeouts.yaml
-      volumes:
-      - name: timeouts
-        configMap:
-          name: coretex-timeouts
-          items:
-          - key: timeouts.yaml
-            path: timeouts.yaml
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coretex-worker-planner
-  namespace: coretex
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: coretex-worker-planner}
-  template:
-    metadata:
-      labels: {app: coretex-worker-planner}
-    spec:
-      containers:
-      - name: worker
-        image: coretex-coretex-worker-planner
-        env:
-        - name: NATS_URL
-          value: nats://nats:4222
-        - name: REDIS_URL
-          value: redis://redis:6379
-        - name: REDIS_DATA_TTL
-          value: "24h"

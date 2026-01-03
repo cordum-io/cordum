@@ -11,11 +11,14 @@ import (
 
 // DLQEntry captures a failed job/result for diagnostics.
 type DLQEntry struct {
-	JobID     string    `json:"job_id"`
-	Topic     string    `json:"topic,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	JobID      string    `json:"job_id"`
+	Topic      string    `json:"topic,omitempty"`
+	Status     string    `json:"status,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	ReasonCode string    `json:"reason_code,omitempty"`
+	LastState  string    `json:"last_state,omitempty"`
+	Attempts   int       `json:"attempts,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // DLQStore persists DLQ entries in Redis.

@@ -10,11 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
 	"github.com/yaront1111/coretex-os/core/configsvc"
 	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/config"
 	"github.com/yaront1111/coretex-os/core/infra/logging"
 	"github.com/yaront1111/coretex-os/core/infra/memory"
+	"github.com/yaront1111/coretex-os/core/infra/schema"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	wf "github.com/yaront1111/coretex-os/core/workflow"
 )
@@ -75,13 +77,19 @@ func Run(cfg *config.Config) error {
 	}
 	defer configSvc.Close()
 
+	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("connect redis schema registry: %w", err)
+	}
+	defer schemaRegistry.Close()
+
 	natsBus, err := bus.NewNatsBus(cfg.NatsURL)
 	if err != nil {
 		return fmt.Errorf("connect nats: %w", err)
 	}
 	defer natsBus.Close()
 
-	engine := wf.NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc)
+	engine := wf.NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -89,12 +97,13 @@ func Run(cfg *config.Config) error {
 	rec := newReconciler(workflowStore, engine, jobStore, scanInterval, runScanLimit)
 	go rec.Start(ctx)
 
-	if err := natsBus.Subscribe("sys.job.result", workflowEngineQueue, func(p *pb.BusPacket) {
+	if err := natsBus.Subscribe(capsdk.SubjectResult, workflowEngineQueue, func(p *pb.BusPacket) error {
 		if jr := p.GetJobResult(); jr != nil {
-			rec.HandleJobResult(context.Background(), jr)
+			return rec.HandleJobResult(context.Background(), jr)
 		}
+		return nil
 	}); err != nil {
-		return fmt.Errorf("subscribe sys.job.result: %w", err)
+		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectResult, err)
 	}
 
 	srv := startHealthServer(httpAddr)

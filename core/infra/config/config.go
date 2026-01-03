@@ -17,8 +17,6 @@ const (
 	envPoolConfigPath    = "POOL_CONFIG_PATH"
 	envTimeoutConfigPath = "TIMEOUT_CONFIG_PATH"
 	envSafetyPolicyPath  = "SAFETY_POLICY_PATH"
-	envUsePlanner        = "USE_PLANNER"
-	envPlannerTopic      = "PLANNER_TOPIC"
 )
 
 // Config holds runtime configuration for the control plane components.
@@ -29,8 +27,6 @@ type Config struct {
 	ContextEngineAddr string
 	PoolConfigPath    string
 	TimeoutConfigPath string
-	UsePlanner        bool
-	PlannerTopic      string
 	SafetyPolicyPath  string
 }
 
@@ -67,11 +63,6 @@ func Load() *Config {
 	if safetyPolicy == "" {
 		safetyPolicy = defaultSafetyPolicy
 	}
-	usePlanner := os.Getenv(envUsePlanner) == "true"
-	plannerTopic := os.Getenv(envPlannerTopic)
-	if plannerTopic == "" {
-		plannerTopic = "job.workflow.plan"
-	}
 
 	return &Config{
 		NatsURL:           natsURL,
@@ -80,8 +71,6 @@ func Load() *Config {
 		ContextEngineAddr: contextEngineAddr,
 		PoolConfigPath:    poolCfg,
 		TimeoutConfigPath: timeoutCfg,
-		UsePlanner:        usePlanner,
-		PlannerTopic:      plannerTopic,
 		SafetyPolicyPath:  safetyPolicy,
 	}
 }

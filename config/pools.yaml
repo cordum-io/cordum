@@ -1,14 +1,5 @@
 topics:
-  job.echo: echo
-  job.chat.simple: chat-simple
-  job.chat.advanced: chat-advanced
-  job.code.llm: code-llm
-  job.workflow.plan: workflow-planner
-  job.workflow.demo: workflow-demo
-  job.workflow.repo.code_review: workflow-repo
-  job.repo.scan: repo-scan
-  job.repo.partition: repo-partition
-  job.repo.lint: repo-lint
-  job.repo.sast: repo-sast
-  job.repo.tests: repo-tests
-  job.repo.report: repo-report
+  job.default: default
+pools:
+  default:
+    requires: []

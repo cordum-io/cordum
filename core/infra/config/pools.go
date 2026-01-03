@@ -8,13 +8,49 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PoolsConfig describes the topic-to-pool mapping consumed by the scheduler.
-type PoolsConfig struct {
-	Topics map[string]string `yaml:"topics"`
+// PoolConfig describes a worker pool's declared capabilities.
+type PoolConfig struct {
+	Requires []string `yaml:"requires,omitempty"`
 }
 
-// LoadPoolTopics reads a YAML file containing a "topics" map and returns it.
-func LoadPoolTopics(path string) (map[string]string, error) {
+// PoolsConfig describes topic routing and pool capabilities.
+type PoolsConfig struct {
+	Topics map[string][]string   `yaml:"topics"`
+	Pools  map[string]PoolConfig `yaml:"pools,omitempty"`
+}
+
+type rawPoolsConfig struct {
+	Topics map[string]any        `yaml:"topics"`
+	Pools  map[string]PoolConfig `yaml:"pools"`
+}
+
+// ParsePoolsConfig parses pools config data from YAML/JSON bytes.
+func ParsePoolsConfig(data []byte) (*PoolsConfig, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var raw rawPoolsConfig
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse pool config: %w", err)
+	}
+	topics, err := parseTopicPools(raw.Topics)
+	if err != nil {
+		return nil, err
+	}
+	if len(topics) == 0 {
+		return nil, errors.New("pool config has no topics")
+	}
+	if raw.Pools == nil {
+		raw.Pools = map[string]PoolConfig{}
+	}
+	return &PoolsConfig{
+		Topics: topics,
+		Pools:  raw.Pools,
+	}, nil
+}
+
+// LoadPoolConfig reads a YAML file containing topics + pools.
+func LoadPoolConfig(path string) (*PoolsConfig, error) {
 	if path == "" {
 		return nil, errors.New("pool config path is empty")
 	}
@@ -24,20 +60,79 @@ func LoadPoolTopics(path string) (map[string]string, error) {
 		return nil, fmt.Errorf("read pool config: %w", err)
 	}
 
-	var cfg PoolsConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	var raw rawPoolsConfig
+	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse pool config: %w", err)
 	}
-
-	if len(cfg.Topics) == 0 {
+	topics, err := parseTopicPools(raw.Topics)
+	if err != nil {
+		return nil, err
+	}
+	if len(topics) == 0 {
 		return nil, errors.New("pool config has no topics")
 	}
-
-	for topic, pool := range cfg.Topics {
-		if topic == "" || pool == "" {
-			return nil, fmt.Errorf("invalid topic mapping: %q -> %q", topic, pool)
-		}
+	if raw.Pools == nil {
+		raw.Pools = map[string]PoolConfig{}
 	}
 
-	return cfg.Topics, nil
+	return &PoolsConfig{
+		Topics: topics,
+		Pools:  raw.Pools,
+	}, nil
+}
+
+// LoadPoolTopics returns a single-pool mapping for legacy callers.
+func LoadPoolTopics(path string) (map[string]string, error) {
+	cfg, err := LoadPoolConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.TopicToPool(), nil
+}
+
+// TopicToPool picks the first pool for each topic mapping.
+func (c *PoolsConfig) TopicToPool() map[string]string {
+	out := make(map[string]string, len(c.Topics))
+	for topic, pools := range c.Topics {
+		if len(pools) == 0 {
+			continue
+		}
+		out[topic] = pools[0]
+	}
+	return out
+}
+
+func parseTopicPools(raw map[string]any) (map[string][]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(map[string][]string, len(raw))
+	for topic, value := range raw {
+		if topic == "" {
+			return nil, fmt.Errorf("invalid topic mapping: empty topic")
+		}
+		switch v := value.(type) {
+		case string:
+			if v == "" {
+				return nil, fmt.Errorf("invalid topic mapping: %q -> empty pool", topic)
+			}
+			out[topic] = []string{v}
+		case []any:
+			pools := make([]string, 0, len(v))
+			for _, item := range v {
+				pool, ok := item.(string)
+				if !ok || pool == "" {
+					return nil, fmt.Errorf("invalid pool list for topic %q", topic)
+				}
+				pools = append(pools, pool)
+			}
+			if len(pools) == 0 {
+				return nil, fmt.Errorf("invalid topic mapping: %q -> empty pools", topic)
+			}
+			out[topic] = pools
+		default:
+			return nil, fmt.Errorf("invalid topic mapping for %q", topic)
+		}
+	}
+	return out, nil
 }

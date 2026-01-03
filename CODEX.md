@@ -4,15 +4,20 @@ You are building **coretexOS** - a platform for AI workflow orchestration. Befor
 
 **We are building a PLATFORM, not a PRODUCT.**
 
+Current code note:
+- Implemented: NATS+Redis control plane, basic workflow engine (conditions/for_each/retries/approvals),
+  safety kernel, config service, and context engine. No built-in workers ship in this repo.
+- Planned: worker manager abstractions (Docker/HTTP/Lambda), richer expression language, artifacts/secrets.
+
 ## What this means
 
 A **product** solves specific problems with pre-built features:
-- "Here's our code reviewer"
+- "Here's our incident triage assistant"
 - "Here's our document summarizer"
-- "Here's our email responder"
+- "Here's our customer support responder"
 
 A **platform** provides primitives that users compose to solve ANY problem:
-- "Here's how you register YOUR code reviewer"
+- "Here's how you register YOUR incident triage assistant"
 - "Here's how you connect YOUR tools into workflows"
 - "Here's how you orchestrate YOUR AI agents"
 
@@ -20,7 +25,7 @@ A **platform** provides primitives that users compose to solve ANY problem:
 
 1. **Generic primitives** (we build these):
    - Workflow engine (DAG execution, loops, conditions, error handling)
-   - Worker registry (Docker, HTTP, Lambda, Script endpoints)
+   - Worker registry (planned; external workers only today)
    - Expression language for data flow between steps
    - Configuration hierarchy (org → team → workflow → step)
    - Safety kernel, rate limiting, cost tracking

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -22,11 +23,16 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/yaront1111/coretex-os/core/configsvc"
 	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	"github.com/yaront1111/coretex-os/core/infra/artifacts"
 	"github.com/yaront1111/coretex-os/core/infra/bus"
 	"github.com/yaront1111/coretex-os/core/infra/config"
+	"github.com/yaront1111/coretex-os/core/infra/locks"
 	"github.com/yaront1111/coretex-os/core/infra/logging"
 	"github.com/yaront1111/coretex-os/core/infra/memory"
 	infraMetrics "github.com/yaront1111/coretex-os/core/infra/metrics"
+	"github.com/yaront1111/coretex-os/core/infra/schema"
+	"github.com/yaront1111/coretex-os/core/infra/secrets"
+	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -56,6 +62,14 @@ const (
 	envGatewayMetricsAddr = "GATEWAY_METRICS_ADDR"
 )
 
+const (
+	microsPerSecond      = int64(1_000_000)
+	microsPerMillisecond = int64(1_000)
+	secondsThreshold     = int64(1_000_000_000_000)
+	millisThreshold      = int64(1_000_000_000_000_000)
+	microsThreshold      = int64(1_000_000_000_000_000_000)
+)
+
 type server struct {
 	pb.UnimplementedCoretexApiServer
 	memStore memory.Store
@@ -72,14 +86,19 @@ type server struct {
 	tenant  string
 	started time.Time
 
-	workflowStore *wf.RedisStore
-	workflowEng   *wf.Engine
-	configSvc     *configsvc.Service
-	dlqStore      *memory.DLQStore
+	workflowStore  *wf.RedisStore
+	workflowEng    *wf.Engine
+	configSvc      *configsvc.Service
+	dlqStore       *memory.DLQStore
+	artifactStore  artifacts.Store
+	lockStore      locks.Store
+	schemaRegistry *schema.Registry
+	safetyConn     *grpc.ClientConn
+	safetyClient   pb.SafetyKernelClient
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool { return isAllowedOrigin(r) },
 }
 
 type tokenBucket struct {
@@ -151,6 +170,13 @@ type submitJobRequest struct {
 	Mode               string            `json:"context_mode"`
 	TenantId           string            `json:"tenant_id"`
 	PrincipalId        string            `json:"principal_id"`
+	ActorId            string            `json:"actor_id"`
+	ActorType          string            `json:"actor_type"`
+	IdempotencyKey     string            `json:"idempotency_key"`
+	PackId             string            `json:"pack_id"`
+	Capability         string            `json:"capability"`
+	RiskTags           []string          `json:"risk_tags"`
+	Requires           []string          `json:"requires"`
 	OrgId              string            `json:"org_id"`
 	TeamId             string            `json:"team_id"`
 	ProjectId          string            `json:"project_id"`
@@ -164,6 +190,36 @@ type submitJobRequest struct {
 	DeadlineMs         int64             `json:"deadline_ms"`
 }
 
+type policyMetaRequest struct {
+	TenantId       string            `json:"tenant_id"`
+	ActorId        string            `json:"actor_id"`
+	ActorType      string            `json:"actor_type"`
+	IdempotencyKey string            `json:"idempotency_key"`
+	Capability     string            `json:"capability"`
+	RiskTags       []string          `json:"risk_tags"`
+	Requires       []string          `json:"requires"`
+	PackId         string            `json:"pack_id"`
+	Labels         map[string]string `json:"labels"`
+}
+
+type policyCheckRequest struct {
+	JobId           string             `json:"job_id"`
+	Topic           string             `json:"topic"`
+	Tenant          string             `json:"tenant"`
+	OrgId           string             `json:"org_id"`
+	TeamId          string             `json:"team_id"`
+	WorkflowId      string             `json:"workflow_id"`
+	StepId          string             `json:"step_id"`
+	PrincipalId     string             `json:"principal_id"`
+	Priority        string             `json:"priority"`
+	EstimatedCost   float64            `json:"estimated_cost"`
+	Budget          *pb.Budget         `json:"budget"`
+	Labels          map[string]string  `json:"labels"`
+	MemoryId        string             `json:"memory_id"`
+	EffectiveConfig any                `json:"effective_config"`
+	Meta            *policyMetaRequest `json:"meta"`
+}
+
 func (r *submitJobRequest) applyDefaults(defaultTenant string) {
 	if r.MaxInputTokens == 0 {
 		r.MaxInputTokens = 8000
@@ -172,7 +228,7 @@ func (r *submitJobRequest) applyDefaults(defaultTenant string) {
 		r.MaxOutputTokens = 1024
 	}
 	if r.Topic == "" {
-		r.Topic = "job.chat.simple"
+		r.Topic = "job.default"
 	}
 	// Prioritize OrgId, then TenantId, then default
 	if r.OrgId == "" {
@@ -207,6 +263,9 @@ func (r *submitJobRequest) validate(defaultTenant string) error {
 	if r.DeadlineMs < 0 {
 		return errors.New("deadline_ms must be non-negative")
 	}
+	if r.ActorType != "" && parseActorType(r.ActorType) == pb.ActorType_ACTOR_TYPE_UNSPECIFIED {
+		return errors.New("actor_type must be 'human' or 'service'")
+	}
 	if len(r.Tags) > 50 {
 		return errors.New("too many tags (max 50)")
 	}
@@ -223,32 +282,81 @@ func (r *submitJobRequest) validate(defaultTenant string) error {
 	return nil
 }
 
-type repoReviewRequest struct {
-	RepoURL      string   `json:"repo_url"`
-	Branch       string   `json:"branch"`
-	LocalPath    string   `json:"local_path"`
-	IncludeGlobs []string `json:"include_globs"`
-	ExcludeGlobs []string `json:"exclude_globs"`
-	MaxFiles     int      `json:"max_files"`
-	BatchSize    int      `json:"batch_size"`
-	MaxBatches   int      `json:"max_batches"`
-	RunTests     bool     `json:"run_tests"`
-	TestCommand  string   `json:"test_command"`
-	Priority     string   `json:"priority"`
-	MemoryId     string   `json:"memory_id"`
+func buildJobMetadata(metaReq *policyMetaRequest, tenant, principal string) *pb.JobMetadata {
+	if metaReq == nil && tenant == "" && principal == "" {
+		return nil
+	}
+	meta := &pb.JobMetadata{
+		TenantId: tenant,
+	}
+	if metaReq != nil {
+		if metaReq.TenantId != "" {
+			meta.TenantId = metaReq.TenantId
+		}
+		meta.ActorId = strings.TrimSpace(metaReq.ActorId)
+		meta.ActorType = parseActorType(metaReq.ActorType)
+		meta.IdempotencyKey = strings.TrimSpace(metaReq.IdempotencyKey)
+		meta.Capability = strings.TrimSpace(metaReq.Capability)
+		meta.RiskTags = append(meta.RiskTags, metaReq.RiskTags...)
+		meta.Requires = append(meta.Requires, metaReq.Requires...)
+		meta.PackId = strings.TrimSpace(metaReq.PackId)
+		if len(metaReq.Labels) > 0 {
+			meta.Labels = metaReq.Labels
+		}
+	}
+	if meta.ActorId == "" {
+		meta.ActorId = principal
+	}
+	return meta
 }
 
-func (r *repoReviewRequest) validate() error {
-	if r == nil {
-		return errors.New("request required")
+func buildPolicyCheckRequest(ctx context.Context, req *policyCheckRequest, cfgSvc *configsvc.Service, defaultTenant string) (*pb.PolicyCheckRequest, error) {
+	if req == nil {
+		return nil, errors.New("request required")
 	}
-	if r.RepoURL == "" && r.LocalPath == "" {
-		return errors.New("repo_url or local_path required")
+	topic := strings.TrimSpace(req.Topic)
+	if topic == "" {
+		return nil, errors.New("topic is required")
 	}
-	if r.MaxFiles < 0 || r.BatchSize < 0 || r.MaxBatches < 0 {
-		return errors.New("limits must be non-negative")
+	tenant := strings.TrimSpace(req.Tenant)
+	if tenant == "" {
+		tenant = strings.TrimSpace(req.OrgId)
 	}
-	return nil
+	if tenant == "" {
+		tenant = defaultTenant
+	}
+	meta := buildJobMetadata(req.Meta, tenant, strings.TrimSpace(req.PrincipalId))
+
+	checkReq := &pb.PolicyCheckRequest{
+		JobId:         strings.TrimSpace(req.JobId),
+		Topic:         topic,
+		Tenant:        tenant,
+		Priority:      parsePriority(req.Priority),
+		EstimatedCost: req.EstimatedCost,
+		Budget:        req.Budget,
+		PrincipalId:   strings.TrimSpace(req.PrincipalId),
+		Labels:        req.Labels,
+		MemoryId:      strings.TrimSpace(req.MemoryId),
+		Meta:          meta,
+	}
+
+	if req.EffectiveConfig != nil {
+		if data, err := json.Marshal(req.EffectiveConfig); err == nil {
+			checkReq.EffectiveConfig = data
+		}
+	} else if cfgSvc != nil {
+		orgID := req.OrgId
+		if orgID == "" {
+			orgID = tenant
+		}
+		if snap, err := cfgSvc.EffectiveSnapshot(ctx, orgID, req.TeamId, req.WorkflowId, req.StepId); err == nil && snap != nil {
+			if data, err := json.Marshal(snap); err == nil {
+				checkReq.EffectiveConfig = data
+			}
+		}
+	}
+
+	return checkReq, nil
 }
 
 func Run(cfg *config.Config) error {
@@ -297,14 +405,12 @@ func Run(cfg *config.Config) error {
 		return fmt.Errorf("connect redis config service: %w", err)
 	}
 	defer configSvc.Close()
-	workflowEng = workflowEng.WithMemory(memStore).WithConfig(configSvc)
-
-	if err := ensureRepoCodeReviewWorkflow(context.Background(), workflowStore, tenantID); err != nil {
-		logging.Error("api-gateway", "failed to seed repo code review workflow", "error", err)
+	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("connect redis schema registry: %w", err)
 	}
-	if err := ensureCodeReviewPatchWorkflow(context.Background(), workflowStore, tenantID); err != nil {
-		logging.Error("api-gateway", "failed to seed code review patch workflow", "error", err)
-	}
+	defer schemaRegistry.Close()
+	workflowEng = workflowEng.WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
 
 	dlqStore, err := memory.NewDLQStore(cfg.RedisURL)
 	if err != nil {
@@ -312,20 +418,50 @@ func Run(cfg *config.Config) error {
 	}
 	defer dlqStore.Close()
 
+	artifactStore, err := artifacts.NewRedisStore(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("connect redis artifact store: %w", err)
+	}
+	defer artifactStore.Close()
+
+	lockStore, err := locks.NewRedisStore(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("connect redis lock store: %w", err)
+	}
+	defer lockStore.Close()
+
+	var safetyConn *grpc.ClientConn
+	var safetyClient pb.SafetyKernelClient
+	if cfg.SafetyKernelAddr != "" {
+		conn, client, err := dialSafetyKernel(cfg.SafetyKernelAddr)
+		if err != nil {
+			logging.Error("api-gateway", "safety kernel dial failed", "error", err)
+		} else {
+			safetyConn = conn
+			safetyClient = client
+			defer safetyConn.Close()
+		}
+	}
+
 	s := &server{
-		memStore:      memStore,
-		jobStore:      jobStore,
-		bus:           natsBus,
-		workers:       make(map[string]*pb.Heartbeat),
-		clients:       make(map[*websocket.Conn]chan *pb.BusPacket),
-		eventsCh:      make(chan *pb.BusPacket, 512),
-		metrics:       gwMetrics,
-		tenant:        tenantID,
-		started:       time.Now().UTC(),
-		workflowStore: workflowStore,
-		workflowEng:   workflowEng,
-		configSvc:     configSvc,
-		dlqStore:      dlqStore,
+		memStore:       memStore,
+		jobStore:       jobStore,
+		bus:            natsBus,
+		workers:        make(map[string]*pb.Heartbeat),
+		clients:        make(map[*websocket.Conn]chan *pb.BusPacket),
+		eventsCh:       make(chan *pb.BusPacket, 512),
+		metrics:        gwMetrics,
+		tenant:         tenantID,
+		started:        time.Now().UTC(),
+		workflowStore:  workflowStore,
+		workflowEng:    workflowEng,
+		configSvc:      configSvc,
+		dlqStore:       dlqStore,
+		artifactStore:  artifactStore,
+		lockStore:      lockStore,
+		schemaRegistry: schemaRegistry,
+		safetyConn:     safetyConn,
+		safetyClient:   safetyClient,
 	}
 
 	s.startBusTaps()
@@ -360,180 +496,10 @@ func Run(cfg *config.Config) error {
 	return startHTTPServer(s, httpAddr, metricsAddr)
 }
 
-func ensureRepoCodeReviewWorkflow(ctx context.Context, store *wf.RedisStore, orgID string) error {
-	if store == nil {
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	const workflowID = "repo_code_review"
-	_, err := store.GetWorkflow(ctx, workflowID)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, redis.Nil) {
-		return err
-	}
-	def := &wf.Workflow{
-		ID:          workflowID,
-		OrgID:       orgID,
-		Name:        "Repo Code Review",
-		Description: "Runs the repo code review pipeline (scan + SAST + partition + lint + optional tests + report).",
-		Version:     "1",
-		TimeoutSec:  3600,
-		CreatedBy:   "system",
-		Steps: map[string]*wf.Step{
-			"code_review": {
-				ID:         "code_review",
-				Name:       "Code review (repo pipeline)",
-				Type:       wf.StepTypeWorker,
-				Topic:      "job.workflow.repo.code_review",
-				TimeoutSec: 3600,
-			},
-		},
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"repo_url":      map[string]any{"type": "string"},
-				"branch":        map[string]any{"type": "string"},
-				"local_path":    map[string]any{"type": "string"},
-				"include_globs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"exclude_globs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"max_files":     map[string]any{"type": "integer"},
-				"batch_size":    map[string]any{"type": "integer"},
-				"max_batches":   map[string]any{"type": "integer"},
-				"run_tests":     map[string]any{"type": "boolean"},
-				"test_command":  map[string]any{"type": "string"},
-				"priority":      map[string]any{"type": "string"},
-				"memory_id":     map[string]any{"type": "string"},
-			},
-			"oneOf": []any{
-				map[string]any{"required": []string{"repo_url"}},
-				map[string]any{"required": []string{"local_path"}},
-			},
-		},
-	}
-	return store.SaveWorkflow(ctx, def)
-}
-
-func ensureCodeReviewPatchWorkflow(ctx context.Context, store *wf.RedisStore, orgID string) error {
-	if store == nil {
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	const workflowID = "code_review_patch"
-	_, err := store.GetWorkflow(ctx, workflowID)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, redis.Nil) {
-		return err
-	}
-
-	def := &wf.Workflow{
-		ID:          workflowID,
-		OrgID:       orgID,
-		Name:        "Code Review (Patch)",
-		Description: "Multi-step code review: propose a plan, generate a patch, and explain the result.",
-		Version:     "1",
-		TimeoutSec:  900,
-		CreatedBy:   "system",
-		Steps: map[string]*wf.Step{
-			"plan_review": {
-				ID:         "plan_review",
-				Name:       "Plan review",
-				Type:       wf.StepTypeWorker,
-				Topic:      "job.chat.advanced",
-				TimeoutSec: 180,
-				Retry: &wf.RetryConfig{
-					MaxRetries:        1,
-					InitialBackoffSec: 2,
-					MaxBackoffSec:     10,
-					Multiplier:        2,
-				},
-				Input: map[string]any{
-					"file_path":    "${input.file_path}",
-					"code_snippet": "${input.code_snippet}",
-					"instruction":  "${input.instruction}",
-					"prompt": "You are a senior code reviewer.\n\n" +
-						"Goal: propose a concise plan of changes.\n\n" +
-						"File: ${input.file_path}\n\n" +
-						"Instruction:\n${input.instruction}\n\n" +
-						"Code:\n${input.code_snippet}\n",
-				},
-			},
-			"generate_patch": {
-				ID:         "generate_patch",
-				Name:       "Generate patch",
-				Type:       wf.StepTypeWorker,
-				Topic:      "job.code.llm",
-				TimeoutSec: 300,
-				DependsOn:  []string{"plan_review"},
-				Retry: &wf.RetryConfig{
-					MaxRetries:        1,
-					InitialBackoffSec: 2,
-					MaxBackoffSec:     10,
-					Multiplier:        2,
-				},
-				Input: map[string]any{
-					"file_path":    "${input.file_path}",
-					"code_snippet": "${input.code_snippet}",
-					"instruction": "Apply this review plan and generate a unified diff patch.\n\n" +
-						"Plan:\n${steps.plan_review.output.response}\n\n" +
-						"Original instruction:\n${input.instruction}\n",
-				},
-			},
-			"explain_patch": {
-				ID:         "explain_patch",
-				Name:       "Explain patch",
-				Type:       wf.StepTypeWorker,
-				Topic:      "job.chat.advanced",
-				TimeoutSec: 180,
-				DependsOn:  []string{"generate_patch"},
-				Retry: &wf.RetryConfig{
-					MaxRetries:        1,
-					InitialBackoffSec: 2,
-					MaxBackoffSec:     10,
-					Multiplier:        2,
-				},
-				Input: map[string]any{
-					"prompt": "Explain the following patch and summarize the key changes and risks.\n\n" +
-						"File: ${input.file_path}\n\n" +
-						"Patch:\n${steps.generate_patch.output.patch.content}\n",
-				},
-			},
-		},
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"file_path": map[string]any{
-					"type":    "string",
-					"default": "src/main.go",
-				},
-				"code_snippet": map[string]any{
-					"type":    "string",
-					"default": "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n",
-				},
-				"instruction": map[string]any{
-					"type":    "string",
-					"default": "Refactor for readability and add basic error handling where appropriate.",
-				},
-				"priority":  map[string]any{"type": "string", "default": "interactive"},
-				"memory_id": map[string]any{"type": "string"},
-			},
-			"required": []string{"file_path", "code_snippet", "instruction"},
-		},
-	}
-	return store.SaveWorkflow(ctx, def)
-}
-
 // startBusTaps subscribes to heartbeats and system events once for the lifetime of the gateway.
 func (s *server) startBusTaps() {
 	// Heartbeats -> worker registry snapshot
-	_ = s.bus.Subscribe("sys.heartbeat", "", func(p *pb.BusPacket) {
+	_ = s.bus.Subscribe(capsdk.SubjectHeartbeat, "", func(p *pb.BusPacket) error {
 		if hb := p.GetHeartbeat(); hb != nil {
 			s.workerMu.Lock()
 			s.workers[hb.WorkerId] = hb
@@ -544,22 +510,40 @@ func (s *server) startBusTaps() {
 			default:
 			}
 		}
+		return nil
 	})
 
 	// DLQ tap to persist entries
 	if s.dlqStore != nil {
-		_ = s.bus.Subscribe("sys.job.dlq", "", func(p *pb.BusPacket) {
+		_ = s.bus.Subscribe(capsdk.SubjectDLQ, "", func(p *pb.BusPacket) error {
 			if jr := p.GetJobResult(); jr != nil {
 				jobID := strings.TrimSpace(jr.JobId)
+				topic := ""
+				lastState := ""
+				attempts := 0
+				if s.jobStore != nil && jobID != "" {
+					if t, err := s.jobStore.GetTopic(context.Background(), jobID); err == nil {
+						topic = t
+					}
+					if st, err := s.jobStore.GetState(context.Background(), jobID); err == nil {
+						lastState = string(st)
+					}
+					if a, err := s.jobStore.GetAttempts(context.Background(), jobID); err == nil {
+						attempts = a
+					}
+				}
 				_ = s.dlqStore.Add(context.Background(), memory.DLQEntry{
-					JobID:     jobID,
-					Topic:     "", // topic unknown here; stored in DLQ entry payload if needed
-					Status:    jr.Status.String(),
-					Reason:    jr.ErrorMessage,
-					CreatedAt: time.Now().UTC(),
+					JobID:      jobID,
+					Topic:      topic,
+					Status:     jr.Status.String(),
+					Reason:     jr.ErrorMessage,
+					ReasonCode: strings.TrimSpace(jr.ErrorCode),
+					LastState:  lastState,
+					Attempts:   attempts,
+					CreatedAt:  time.Now().UTC(),
 				})
 
-				// Best effort: ensure a result exists for failed-to-dispatch jobs so dashboards can inspect `res:<job_id>`.
+				// Best effort: ensure a result exists for failed-to-dispatch jobs so clients can inspect `res:<job_id>`.
 				if s.memStore != nil && s.jobStore != nil && jobID != "" {
 					resKey := memory.MakeResultKey(jobID)
 					resPtr := memory.PointerForKey(resKey)
@@ -578,13 +562,14 @@ func (s *server) startBusTaps() {
 					}
 				}
 			}
+			return nil
 		})
 	}
 
 	// Event taps -> broadcast channel
 	for _, subj := range []string{"sys.job.>", "sys.audit.>"} {
 		subject := subj
-		_ = s.bus.Subscribe(subject, "", func(p *pb.BusPacket) {
+		_ = s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
 			if subject == "sys.job.>" {
 				s.handleWorkflowJobResult(context.Background(), p.GetJobResult())
 			}
@@ -592,6 +577,7 @@ func (s *server) startBusTaps() {
 			case s.eventsCh <- p:
 			default:
 			}
+			return nil
 		})
 	}
 
@@ -689,14 +675,17 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 
 	// 4. Job Details
 	mux.HandleFunc("GET /api/v1/jobs/{id}", s.instrumented("/api/v1/jobs/{id}", s.handleGetJob))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/decisions", s.instrumented("/api/v1/jobs/{id}/decisions", s.handleListJobDecisions))
 	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", s.instrumented("/api/v1/jobs/{id}/cancel", s.handleCancelJob))
 
 	// 4.5 Memory pointers (debug)
 	mux.HandleFunc("GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
+	// 4.6 Artifact store
+	mux.HandleFunc("POST /api/v1/artifacts", s.instrumented("/api/v1/artifacts", s.handlePutArtifact))
+	mux.HandleFunc("GET /api/v1/artifacts/{ptr}", s.instrumented("/api/v1/artifacts/{ptr}", s.handleGetArtifact))
 
 	// 5. Submit Job (REST)
 	mux.HandleFunc("POST /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleSubmitJobHTTP))
-	mux.HandleFunc("POST /api/v1/repo-review", s.instrumented("/api/v1/repo-review", s.handleSubmitRepoReview))
 
 	// 6. Trace Details
 	mux.HandleFunc("GET /api/v1/traces/{id}", s.instrumented("/api/v1/traces/{id}", s.handleGetTrace))
@@ -705,13 +694,30 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("GET /api/v1/workflows", s.instrumented("/api/v1/workflows", s.handleListWorkflows))
 	mux.HandleFunc("POST /api/v1/workflows", s.instrumented("/api/v1/workflows", s.handleCreateWorkflow))
 	mux.HandleFunc("GET /api/v1/workflows/{id}", s.instrumented("/api/v1/workflows/{id}", s.handleGetWorkflow))
+	mux.HandleFunc("DELETE /api/v1/workflows/{id}", s.instrumented("/api/v1/workflows/{id}", s.handleDeleteWorkflow))
 	mux.HandleFunc("POST /api/v1/workflows/{id}/runs", s.instrumented("/api/v1/workflows/{id}/runs", s.handleStartRun))
 	mux.HandleFunc("GET /api/v1/workflows/{id}/runs", s.instrumented("/api/v1/workflows/{id}/runs", s.handleListRuns))
 	mux.HandleFunc("GET /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleGetRun))
+	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/timeline", s.instrumented("/api/v1/workflow-runs/{id}/timeline", s.handleGetRunTimeline))
+	mux.HandleFunc("DELETE /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleDeleteRun))
+	mux.HandleFunc("POST /api/v1/workflow-runs/{id}/rerun", s.instrumented("/api/v1/workflow-runs/{id}/rerun", s.handleRerunRun))
 
 	// 9. Config
+	mux.HandleFunc("GET /api/v1/config", s.instrumented("/api/v1/config", s.handleGetConfig))
 	mux.HandleFunc("GET /api/v1/config/effective", s.instrumented("/api/v1/config/effective", s.handleGetEffectiveConfig))
 	mux.HandleFunc("POST /api/v1/config", s.instrumented("/api/v1/config", s.handleSetConfig))
+
+	// 9.5 Schemas
+	mux.HandleFunc("POST /api/v1/schemas", s.instrumented("/api/v1/schemas", s.handleRegisterSchema))
+	mux.HandleFunc("GET /api/v1/schemas", s.instrumented("/api/v1/schemas", s.handleListSchemas))
+	mux.HandleFunc("GET /api/v1/schemas/{id}", s.instrumented("/api/v1/schemas/{id}", s.handleGetSchema))
+	mux.HandleFunc("DELETE /api/v1/schemas/{id}", s.instrumented("/api/v1/schemas/{id}", s.handleDeleteSchema))
+
+	// 9.6 Resource locks
+	mux.HandleFunc("GET /api/v1/locks", s.instrumented("/api/v1/locks", s.handleGetLock))
+	mux.HandleFunc("POST /api/v1/locks/acquire", s.instrumented("/api/v1/locks/acquire", s.handleAcquireLock))
+	mux.HandleFunc("POST /api/v1/locks/release", s.instrumented("/api/v1/locks/release", s.handleReleaseLock))
+	mux.HandleFunc("POST /api/v1/locks/renew", s.instrumented("/api/v1/locks/renew", s.handleRenewLock))
 
 	// 10. DLQ
 	mux.HandleFunc("GET /api/v1/dlq", s.instrumented("/api/v1/dlq", s.handleListDLQ))
@@ -721,6 +727,17 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	// 11. Workflow approvals
 	mux.HandleFunc("POST /api/v1/workflows/{id}/runs/{run_id}/steps/{step_id}/approve", s.instrumented("/api/v1/workflows/{id}/runs/{run_id}/steps/{step_id}/approve", s.handleApproveStep))
 	mux.HandleFunc("POST /api/v1/workflows/{id}/runs/{run_id}/cancel", s.instrumented("/api/v1/workflows/{id}/runs/{run_id}/cancel", s.handleCancelRun))
+
+	// 11.5 Job approvals
+	mux.HandleFunc("GET /api/v1/approvals", s.instrumented("/api/v1/approvals", s.handleListApprovals))
+	mux.HandleFunc("POST /api/v1/approvals/{job_id}/approve", s.instrumented("/api/v1/approvals/{job_id}/approve", s.handleApproveJob))
+	mux.HandleFunc("POST /api/v1/approvals/{job_id}/reject", s.instrumented("/api/v1/approvals/{job_id}/reject", s.handleRejectJob))
+
+	// 12. Policy endpoints
+	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
+	mux.HandleFunc("POST /api/v1/policy/simulate", s.instrumented("/api/v1/policy/simulate", s.handlePolicySimulate))
+	mux.HandleFunc("POST /api/v1/policy/explain", s.instrumented("/api/v1/policy/explain", s.handlePolicyExplain))
+	mux.HandleFunc("GET /api/v1/policy/snapshots", s.instrumented("/api/v1/policy/snapshots", s.handlePolicySnapshots))
 
 	// 7. Stream (WebSocket)
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
@@ -838,6 +855,10 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	cursor = normalizeTimestampMicrosUpper(cursor)
+	updatedAfter = normalizeTimestampMicrosLower(updatedAfter)
+	updatedBefore = normalizeTimestampMicrosUpper(updatedBefore)
+
 	var jobs []scheduler.JobRecord
 	var err error
 	if traceFilter != "" {
@@ -898,9 +919,17 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job not found", http.StatusNotFound)
 		return
 	}
-	safetyDecision, safetyReason, _ := s.jobStore.GetSafetyDecision(r.Context(), id)
+	safetyRecord, _ := s.jobStore.GetSafetyDecision(r.Context(), id)
 	topic, _ := s.jobStore.GetTopic(r.Context(), id)
 	tenant, _ := s.jobStore.GetTenant(r.Context(), id)
+	actorID, _ := s.jobStore.GetActorID(r.Context(), id)
+	actorType, _ := s.jobStore.GetActorType(r.Context(), id)
+	idempotencyKey, _ := s.jobStore.GetIdempotencyKey(r.Context(), id)
+	capability, _ := s.jobStore.GetCapability(r.Context(), id)
+	packID, _ := s.jobStore.GetPackID(r.Context(), id)
+	riskTags, _ := s.jobStore.GetRiskTags(r.Context(), id)
+	requires, _ := s.jobStore.GetRequires(r.Context(), id)
+	attempts, _ := s.jobStore.GetAttempts(r.Context(), id)
 
 	ctxPtr := memory.PointerForKey(memory.MakeContextKey(id))
 
@@ -932,25 +961,44 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 	errorMessage := ""
 	errorStatus := ""
+	errorCode := ""
+	lastState := ""
+	attemptsFromDLQ := 0
 	if s.dlqStore != nil {
 		if entry, err := s.dlqStore.Get(r.Context(), id); err == nil && entry != nil {
 			errorMessage = strings.TrimSpace(entry.Reason)
 			errorStatus = strings.TrimSpace(entry.Status)
+			errorCode = strings.TrimSpace(entry.ReasonCode)
+			lastState = strings.TrimSpace(entry.LastState)
+			attemptsFromDLQ = entry.Attempts
 		}
 	}
 
 	resp := map[string]any{
-		"id":              id,
-		"state":           state,
-		"trace_id":        traceID,
-		"context_ptr":     ctxPtr,
-		"context":         contextData,
-		"result_ptr":      resPtr,
-		"result":          resultData,
-		"topic":           topic,
-		"tenant":          tenant,
-		"safety_decision": safetyDecision,
-		"safety_reason":   safetyReason,
+		"id":                 id,
+		"state":              state,
+		"trace_id":           traceID,
+		"context_ptr":        ctxPtr,
+		"context":            contextData,
+		"result_ptr":         resPtr,
+		"result":             resultData,
+		"topic":              topic,
+		"tenant":             tenant,
+		"actor_id":           actorID,
+		"actor_type":         actorType,
+		"idempotency_key":    idempotencyKey,
+		"capability":         capability,
+		"pack_id":            packID,
+		"risk_tags":          riskTags,
+		"requires":           requires,
+		"attempts":           attempts,
+		"safety_decision":    string(safetyRecord.Decision),
+		"safety_reason":      safetyRecord.Reason,
+		"safety_rule_id":     safetyRecord.RuleID,
+		"safety_snapshot":    safetyRecord.PolicySnapshot,
+		"safety_constraints": safetyRecord.Constraints,
+		"approval_required":  safetyRecord.ApprovalRequired,
+		"approval_ref":       safetyRecord.ApprovalRef,
 	}
 	if errorMessage != "" {
 		resp["error_message"] = errorMessage
@@ -958,7 +1006,41 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	if errorStatus != "" {
 		resp["error_status"] = errorStatus
 	}
+	if errorCode != "" {
+		resp["error_code"] = errorCode
+	}
+	if lastState != "" {
+		resp["last_state"] = lastState
+	}
+	if attemptsFromDLQ > 0 {
+		resp["attempts"] = attemptsFromDLQ
+	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) {
+	if s.jobStore == nil {
+		http.Error(w, "job store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	limit := int64(50)
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	decisions, err := s.jobStore.ListSafetyDecisions(r.Context(), id, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(decisions)
 }
 
 func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
@@ -1152,6 +1234,98 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+type artifactPutRequest struct {
+	ContentBase64 string            `json:"content_base64"`
+	Content       string            `json:"content"`
+	ContentType   string            `json:"content_type"`
+	Retention     string            `json:"retention"`
+	Labels        map[string]string `json:"labels"`
+}
+
+func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
+	if s.artifactStore == nil {
+		http.Error(w, "artifact store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var req artifactPutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	var content []byte
+	if req.ContentBase64 != "" {
+		data, err := base64.StdEncoding.DecodeString(req.ContentBase64)
+		if err != nil {
+			http.Error(w, "invalid base64 content", http.StatusBadRequest)
+			return
+		}
+		content = data
+	} else {
+		content = []byte(req.Content)
+	}
+	if len(content) == 0 {
+		http.Error(w, "content required", http.StatusBadRequest)
+		return
+	}
+	maxBytes := int64(0)
+	if raw := r.URL.Query().Get("max_bytes"); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			maxBytes = v
+		}
+	}
+	if raw := r.Header.Get("X-Max-Artifact-Bytes"); raw != "" && maxBytes == 0 {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			maxBytes = v
+		}
+	}
+	if maxBytes > 0 && int64(len(content)) > maxBytes {
+		http.Error(w, "artifact too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	meta := artifacts.Metadata{
+		ContentType: strings.TrimSpace(req.ContentType),
+		Retention:   parseRetention(req.Retention),
+		Labels:      req.Labels,
+	}
+	ptr, err := s.artifactStore.Put(r.Context(), content, meta)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"artifact_ptr": ptr,
+		"size_bytes":   len(content),
+	})
+}
+
+func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
+	if s.artifactStore == nil {
+		http.Error(w, "artifact store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	ptr := strings.TrimSpace(r.PathValue("ptr"))
+	if ptr == "" {
+		http.Error(w, "artifact pointer required", http.StatusBadRequest)
+		return
+	}
+	content, meta, err := s.artifactStore.Get(r.Context(), ptr)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "artifact not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"artifact_ptr":   ptr,
+		"content_base64": base64.StdEncoding.EncodeToString(content),
+		"metadata":       meta,
+	})
+}
+
 func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -1177,12 +1351,12 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast a synthetic cancellation event for dashboards and listeners.
+	// Broadcast a synthetic cancellation event for listeners.
 	cancelPacket := &pb.BusPacket{
 		TraceId:         id,
 		SenderId:        "api-gateway",
 		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: 1,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
 				JobId:  id,
@@ -1195,24 +1369,22 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 	// Best-effort publish so scheduler/system listeners can observe the cancel.
-	_ = s.bus.Publish("sys.job.result", cancelPacket)
+	_ = s.bus.Publish(capsdk.SubjectResult, cancelPacket)
 
 	// Best-effort cancel broadcast to workers.
-	cancelReq := &pb.JobRequest{
-		JobId: id,
-		Topic: "sys.job.cancel",
-		Env: map[string]string{
-			"cancel_reason": "cancelled via api",
-		},
+	cancelReq := &pb.JobCancel{
+		JobId:       id,
+		Reason:      "cancelled via api",
+		RequestedBy: "api-gateway",
 	}
 	cancelBusPacket := &pb.BusPacket{
 		TraceId:         id,
 		SenderId:        "api-gateway",
 		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: 1,
-		Payload:         &pb.BusPacket_JobRequest{JobRequest: cancelReq},
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
-	_ = s.bus.Publish("sys.job.cancel", cancelBusPacket)
+	_ = s.bus.Publish(capsdk.SubjectCancel, cancelBusPacket)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -1236,6 +1408,20 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.IdempotencyKey != "" && s.jobStore != nil {
+		if existingID, err := s.jobStore.GetJobByIdempotencyKey(r.Context(), req.IdempotencyKey); err == nil && existingID != "" {
+			traceID, _ := s.jobStore.GetTraceID(r.Context(), existingID)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{
+				"job_id":   existingID,
+				"trace_id": traceID,
+			})
+			return
+		} else if err != nil && !errors.Is(err, redis.Nil) {
+			logging.Error("api-gateway", "idempotency lookup failed", "error", err)
+		}
+	}
+
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
 	ctxKey := memory.MakeContextKey(jobID)
@@ -1250,6 +1436,15 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	teamID := req.TeamId
 	projectID := req.ProjectId
 	principalID := req.PrincipalId
+
+	secretsPresent := secrets.ContainsSecretRefs(req.Prompt) || secrets.ContainsSecretRefs(req.Context)
+	if secretsPresent {
+		req.RiskTags = appendUniqueTag(req.RiskTags, "secrets")
+		if req.Labels == nil {
+			req.Labels = map[string]string{}
+		}
+		req.Labels["secrets_present"] = "true"
+	}
 
 	memoryID := req.MemoryId
 	if memoryID == "" {
@@ -1274,6 +1469,24 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	envVars["max_input_tokens"] = fmt.Sprintf("%d", req.MaxInputTokens)
 	envVars["max_output_tokens"] = fmt.Sprintf("%d", req.MaxOutputTokens)
 
+	actorID := strings.TrimSpace(req.ActorId)
+	if actorID == "" {
+		actorID = principalID
+	}
+	meta := &pb.JobMetadata{
+		TenantId:       orgID,
+		ActorId:        actorID,
+		ActorType:      parseActorType(req.ActorType),
+		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
+		Capability:     strings.TrimSpace(req.Capability),
+		RiskTags:       append([]string{}, req.RiskTags...),
+		Requires:       append([]string{}, req.Requires...),
+		PackId:         strings.TrimSpace(req.PackId),
+	}
+	if len(req.Labels) > 0 {
+		meta.Labels = req.Labels
+	}
+
 	payload := map[string]any{
 		"prompt":     req.Prompt,
 		"adapter_id": req.AdapterId,
@@ -1286,12 +1499,37 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		payload["context"] = req.Context
 	}
 	payloadBytes, _ := json.Marshal(payload)
-	_ = s.memStore.PutContext(r.Context(), ctxKey, payloadBytes)
+	if s.memStore == nil {
+		http.Error(w, "memory store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.memStore.PutContext(r.Context(), ctxKey, payloadBytes); err != nil {
+		logging.Error("api-gateway", "failed to persist job context", "job_id", jobID, "error", err)
+		http.Error(w, "failed to persist job context", http.StatusServiceUnavailable)
+		return
+	}
 
 	// Set initial state
-	_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending)
-	_ = s.jobStore.SetTopic(r.Context(), jobID, req.Topic)
-	_ = s.jobStore.SetTenant(r.Context(), jobID, orgID) // Use OrgId here too
+	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending); err != nil {
+		logging.Error("api-gateway", "failed to initialize job state", "job_id", jobID, "error", err)
+		http.Error(w, "failed to initialize job state", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.jobStore.SetTopic(r.Context(), jobID, req.Topic); err != nil {
+		logging.Error("api-gateway", "failed to set job topic", "job_id", jobID, "error", err)
+		http.Error(w, "failed to initialize job metadata", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.jobStore.SetTenant(r.Context(), jobID, orgID); err != nil {
+		logging.Error("api-gateway", "failed to set job tenant", "job_id", jobID, "error", err)
+		http.Error(w, "failed to initialize job metadata", http.StatusServiceUnavailable)
+		return
+	} // Use OrgId here too
+	if err := s.jobStore.AddJobToTrace(r.Context(), traceID, jobID); err != nil {
+		logging.Error("api-gateway", "failed to add job to trace", "job_id", jobID, "trace_id", traceID, "error", err)
+		http.Error(w, "failed to initialize job metadata", http.StatusServiceUnavailable)
+		return
+	}
 
 	jobReq := &pb.JobRequest{
 		JobId:       jobID,
@@ -1304,6 +1542,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		TenantId:    orgID,       // Use OrgId here
 		PrincipalId: principalID, // Populated from new field
 		Labels:      req.Labels,
+		Meta:        meta,
 		ContextHints: &pb.ContextHints{
 			MaxInputTokens:     req.MaxInputTokens,
 			AllowSummarization: req.AllowSummarization,
@@ -1319,20 +1558,29 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.jobStore != nil {
-		_ = s.jobStore.SetJobMeta(r.Context(), jobReq)
+		if err := s.jobStore.SetJobMeta(r.Context(), jobReq); err != nil {
+			logging.Error("api-gateway", "failed to persist job metadata", "job_id", jobID, "error", err)
+			http.Error(w, "failed to persist job metadata", http.StatusServiceUnavailable)
+			return
+		}
+		if err := s.jobStore.SetJobRequest(r.Context(), jobReq); err != nil {
+			logging.Error("api-gateway", "failed to persist job request", "job_id", jobID, "error", err)
+			http.Error(w, "failed to persist job metadata", http.StatusServiceUnavailable)
+			return
+		}
 	}
 
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        "api-gateway-http",
 		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: 1,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobRequest{
 			JobRequest: jobReq,
 		},
 	}
 
-	if err := s.bus.Publish("sys.job.submit", packet); err != nil {
+	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		logging.Error("api-gateway", "job publish failed", "job_id", jobID, "error", err)
 		_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStateFailed)
 		http.Error(w, "failed to enqueue job", http.StatusServiceUnavailable)
@@ -1422,14 +1670,91 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin != "" {
+			if !isAllowedOrigin(r) {
+				http.Error(w, "origin not allowed", http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+		}
+
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
 		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAllowedOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		// Non-browser clients often omit Origin; treat as allowed.
+		return true
+	}
+
+	allowed, allowAll := allowedOriginsFromEnv()
+	if allowAll {
+		return true
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+
+	if len(allowed) == 0 {
+		host := strings.ToLower(u.Hostname())
+		switch host {
+		case "localhost", "127.0.0.1", "::1":
+			return true
+		}
+		reqHost := strings.ToLower(requestHostname(r.Host))
+		if reqHost != "" && host == reqHost {
+			return true
+		}
+		return false
+	}
+
+	_, ok := allowed[origin]
+	return ok
+}
+
+func allowedOriginsFromEnv() (map[string]struct{}, bool) {
+	for _, key := range []string{"CORETEX_ALLOWED_ORIGINS", "CORETEX_CORS_ALLOW_ORIGINS", "CORS_ALLOW_ORIGINS"} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		if raw == "*" {
+			return nil, true
+		}
+		set := make(map[string]struct{})
+		for _, part := range strings.Split(raw, ",") {
+			p := strings.TrimSpace(part)
+			if p == "" {
+				continue
+			}
+			set[p] = struct{}{}
+		}
+		return set, false
+	}
+	return nil, false
+}
+
+func requestHostname(hostport string) string {
+	hostport = strings.TrimSpace(hostport)
+	if hostport == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(hostport); err == nil && host != "" {
+		return host
+	}
+	return hostport
 }
 
 func normalizeAPIKey(key string) string {
@@ -1459,6 +1784,27 @@ func addrFromEnv(key, fallback string) string {
 	return fallback
 }
 
+func dialSafetyKernel(addr string) (*grpc.ClientConn, pb.SafetyKernelClient, error) {
+	creds := safetyTransportCredentials()
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, pb.NewSafetyKernelClient(conn), nil
+}
+
+func safetyTransportCredentials() credentials.TransportCredentials {
+	if caPath := os.Getenv("SAFETY_KERNEL_TLS_CA"); caPath != "" {
+		if creds, err := credentials.NewClientTLSFromFile(caPath, ""); err == nil {
+			return creds
+		}
+	}
+	if os.Getenv("SAFETY_KERNEL_INSECURE") == "true" {
+		return insecure.NewCredentials()
+	}
+	return insecure.NewCredentials()
+}
+
 func rateLimitMiddleware(next http.Handler) http.Handler {
 	if apiLimiter == nil {
 		return next
@@ -1477,117 +1823,6 @@ func rateLimitMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
-	})
-}
-
-// Submit a repo review workflow job with explicit repo context.
-func (s *server) handleSubmitRepoReview(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxJobPayloadBytes)
-	var req repoReviewRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
-	}
-
-	if err := req.validate(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	jobID := uuid.NewString()
-	traceID := uuid.NewString()
-	ctxKey := memory.MakeContextKey(jobID)
-	ctxPtr := memory.PointerForKey(ctxKey)
-	jobPriority := parsePriority(req.Priority)
-
-	if len(req.IncludeGlobs) == 0 {
-		req.IncludeGlobs = []string{
-			"**/*.go", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py",
-			"**/*.rs", "**/*.java", "**/*.cs", "**/*.rb", "**/*.php", "**/*.c", "**/*.h", "**/*.cpp", "**/*.cxx", "**/*.hpp", "**/*.hxx",
-			"**/*.sh", "**/*.bash", "**/*.zsh", "**/*.ps1",
-			"**/*.json", "**/*.yaml", "**/*.yml", "**/*.toml", "**/*.ini", "**/*.cfg", "**/*.conf",
-			"**/*.md", "**/*.txt", "**/*.sql",
-		}
-	}
-	if len(req.ExcludeGlobs) == 0 {
-		req.ExcludeGlobs = []string{
-			"vendor/**", "node_modules/**", "dist/**", ".git/**", "build/**", "bin/**", "obj/**", "target/**", ".venv/**", "venv/**",
-		}
-	}
-	if req.TestCommand == "" {
-		req.TestCommand = "go test ./..."
-	}
-
-	envVars := map[string]string{
-		"tenant_id":         s.tenant,
-		"memory_id":         "",
-		"context_mode":      "rag",
-		"max_input_tokens":  "12000",
-		"max_output_tokens": "2048",
-	}
-
-	payload := map[string]any{
-		"repo_url":      req.RepoURL,
-		"branch":        req.Branch,
-		"local_path":    req.LocalPath,
-		"include_globs": req.IncludeGlobs,
-		"exclude_globs": req.ExcludeGlobs,
-		"max_files":     req.MaxFiles,
-		"batch_size":    req.BatchSize,
-		"max_batches":   req.MaxBatches,
-		"run_tests":     req.RunTests,
-		"test_command":  req.TestCommand,
-		"created_at":    time.Now().UTC().Format(time.RFC3339),
-		"tenant_id":     s.tenant,
-	}
-	payloadBytes, _ := json.Marshal(payload)
-	_ = s.memStore.PutContext(r.Context(), ctxKey, payloadBytes)
-
-	_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending)
-
-	memoryID := req.MemoryId
-	if memoryID == "" {
-		if req.RepoURL != "" {
-			memoryID = "repo:" + req.RepoURL
-			if req.Branch != "" {
-				memoryID += "#" + req.Branch
-			}
-		} else {
-			memoryID = "repo:" + jobID
-		}
-	}
-	envVars["memory_id"] = memoryID
-
-	jobReq := &pb.JobRequest{
-		JobId:      jobID,
-		Topic:      "job.workflow.repo.code_review",
-		Priority:   jobPriority,
-		ContextPtr: ctxPtr,
-		Env:        envVars,
-	}
-
-	packet := &pb.BusPacket{
-		TraceId:         traceID,
-		SenderId:        "api-gateway-repo-review",
-		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: 1,
-		Payload: &pb.BusPacket_JobRequest{
-			JobRequest: jobReq,
-		},
-	}
-
-	if err := s.bus.Publish("sys.job.submit", packet); err != nil {
-		logging.Error("api-gateway", "repo review publish failed", "job_id", jobID, "error", err)
-		_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStateFailed)
-		http.Error(w, "failed to enqueue job", http.StatusServiceUnavailable)
-		return
-	}
-
-	logging.Info("api-gateway", "repo review job submitted", "job_id", jobID)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"job_id":   jobID,
-		"trace_id": traceID,
 	})
 }
 
@@ -1627,6 +1862,105 @@ func parsePriority(priority string) pb.JobPriority {
 	}
 }
 
+func parseBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func idempotencyKeyFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	candidates := []string{
+		r.Header.Get("Idempotency-Key"),
+		r.Header.Get("X-Idempotency-Key"),
+		r.URL.Query().Get("idempotency_key"),
+		r.URL.Query().Get("idempotency-key"),
+	}
+	for _, raw := range candidates {
+		if val := strings.TrimSpace(raw); val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+func (s *server) maxConcurrentRuns(ctx context.Context, orgID, teamID string) int {
+	if s.configSvc == nil {
+		return 0
+	}
+	cfg, err := s.configSvc.Effective(ctx, orgID, teamID, "", "")
+	if err != nil || cfg == nil {
+		return 0
+	}
+	if limit := lookupIntPath(cfg, "limits", "max_concurrent_runs"); limit > 0 {
+		return limit
+	}
+	if limit := lookupIntPath(cfg, "rate_limits", "concurrent_workflows"); limit > 0 {
+		return limit
+	}
+	return 0
+}
+
+func lookupIntPath(data map[string]any, keys ...string) int {
+	if data == nil || len(keys) == 0 {
+		return 0
+	}
+	var cur any = data
+	for _, key := range keys {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return 0
+		}
+		cur = m[key]
+	}
+	switch v := cur.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return int(i)
+		}
+	case string:
+		if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return i
+		}
+	}
+	return 0
+}
+
+func parseActorType(raw string) pb.ActorType {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "human":
+		return pb.ActorType_ACTOR_TYPE_HUMAN
+	case "service":
+		return pb.ActorType_ACTOR_TYPE_SERVICE
+	default:
+		return pb.ActorType_ACTOR_TYPE_UNSPECIFIED
+	}
+}
+
+func appendUniqueTag(tags []string, tag string) []string {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return tags
+	}
+	for _, existing := range tags {
+		if strings.EqualFold(existing, tag) {
+			return tags
+		}
+	}
+	return append(tags, tag)
+}
+
 func parseContextMode(topic, explicit string) string {
 	switch strings.ToLower(explicit) {
 	case "chat":
@@ -1636,12 +1970,6 @@ func parseContextMode(topic, explicit string) string {
 	case "raw":
 		return "raw"
 	}
-	if strings.HasPrefix(topic, "job.chat") {
-		return "chat"
-	}
-	if strings.HasPrefix(topic, "job.code") || strings.HasPrefix(topic, "job.workflow.repo") {
-		return "rag"
-	}
 	return "raw"
 }
 
@@ -1649,13 +1977,39 @@ func deriveMemoryIDFromReq(topic, explicit, jobID string) string {
 	if explicit != "" {
 		return explicit
 	}
-	if strings.HasPrefix(topic, "job.chat") {
-		return "session:" + jobID
-	}
-	if strings.HasPrefix(topic, "job.code") || strings.HasPrefix(topic, "job.workflow.repo") {
-		return "repo:" + jobID
-	}
 	return "mem:" + jobID
+}
+
+func normalizeTimestampMicrosLower(ts int64) int64 {
+	if ts <= 0 {
+		return ts
+	}
+	switch {
+	case ts < secondsThreshold:
+		return ts * microsPerSecond
+	case ts < millisThreshold:
+		return ts * microsPerMillisecond
+	case ts < microsThreshold:
+		return ts
+	default:
+		return ts / microsPerMillisecond
+	}
+}
+
+func normalizeTimestampMicrosUpper(ts int64) int64 {
+	if ts <= 0 {
+		return ts
+	}
+	switch {
+	case ts < secondsThreshold:
+		return ts*microsPerSecond + (microsPerSecond - 1)
+	case ts < millisThreshold:
+		return ts*microsPerMillisecond + (microsPerMillisecond - 1)
+	case ts < microsThreshold:
+		return ts
+	default:
+		return ts / microsPerMillisecond
+	}
 }
 
 type statusRecorder struct {
@@ -1809,6 +2163,27 @@ func (s *server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(wfDef)
 }
 
+func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
+	if s.workflowStore == nil {
+		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if err := s.workflowStore.DeleteWorkflow(r.Context(), id); err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {
 		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
@@ -1839,24 +2214,86 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	runID := uuid.NewString()
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "workflow not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if wfDef != nil && len(wfDef.InputSchema) > 0 {
+		if err := schema.ValidateMap(wfDef.InputSchema, payload); err != nil {
+			http.Error(w, fmt.Sprintf("input schema validation failed: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
 	orgID := r.URL.Query().Get("org_id")
 	if orgID == "" {
 		orgID = s.tenant
 	}
 	teamID := r.URL.Query().Get("team_id")
+	dryRun := parseBool(r.URL.Query().Get("dry_run"))
+	idempotencyKey := idempotencyKeyFromRequest(r)
+	if idempotencyKey != "" {
+		if existingID, err := s.workflowStore.GetRunByIdempotencyKey(r.Context(), idempotencyKey); err == nil && existingID != "" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"run_id": existingID})
+			return
+		} else if err != nil && !errors.Is(err, redis.Nil) {
+			logging.Error("api-gateway", "run idempotency lookup failed", "error", err)
+		}
+	}
+	runID := uuid.NewString()
+	reservedKey := false
+	if idempotencyKey != "" {
+		ok, err := s.workflowStore.TrySetRunIdempotencyKey(r.Context(), idempotencyKey, runID)
+		if err != nil {
+			http.Error(w, "idempotency reservation failed", http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			if existingID, err := s.workflowStore.GetRunByIdempotencyKey(r.Context(), idempotencyKey); err == nil && existingID != "" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{"run_id": existingID})
+				return
+			}
+			http.Error(w, "idempotency key already used", http.StatusConflict)
+			return
+		}
+		reservedKey = true
+	}
+	if limit := s.maxConcurrentRuns(r.Context(), orgID, teamID); limit > 0 {
+		if count, err := s.workflowStore.CountActiveRuns(r.Context(), orgID); err == nil && count >= limit {
+			http.Error(w, "max concurrent runs reached", http.StatusTooManyRequests)
+			return
+		}
+	}
 	run := &wf.WorkflowRun{
-		ID:         runID,
-		WorkflowID: wfID,
-		OrgID:      orgID,
-		TeamID:     teamID,
-		Input:      payload,
-		Status:     wf.RunStatusPending,
-		Steps:      map[string]*wf.StepRun{},
-		CreatedAt:  time.Now().UTC(),
-		UpdatedAt:  time.Now().UTC(),
+		ID:             runID,
+		WorkflowID:     wfID,
+		OrgID:          orgID,
+		TeamID:         teamID,
+		Input:          payload,
+		Status:         wf.RunStatusPending,
+		Steps:          map[string]*wf.StepRun{},
+		DryRun:         dryRun,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+		IdempotencyKey: idempotencyKey,
+	}
+	if dryRun {
+		run.Metadata = map[string]string{"dry_run": "true"}
+		run.Labels = map[string]string{"dry_run": "true"}
 	}
 	if err := s.workflowStore.CreateRun(r.Context(), run); err != nil {
+		if reservedKey && idempotencyKey != "" {
+			_ = s.workflowStore.DeleteRunIdempotencyKey(r.Context(), idempotencyKey)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1877,6 +2314,68 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"run_id": runID})
+}
+
+type rerunRequest struct {
+	FromStep string `json:"from_step"`
+	DryRun   bool   `json:"dry_run"`
+}
+
+func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
+	if s.workflowEng == nil || s.workflowStore == nil {
+		http.Error(w, "workflow engine unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	runID := r.PathValue("id")
+	if runID == "" {
+		http.Error(w, "missing run id", http.StatusBadRequest)
+		return
+	}
+	origRun, err := s.workflowStore.GetRun(r.Context(), runID)
+	if err != nil || origRun == nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "run not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	if limit := s.maxConcurrentRuns(r.Context(), origRun.OrgID, origRun.TeamID); limit > 0 {
+		if count, err := s.workflowStore.CountActiveRuns(r.Context(), origRun.OrgID); err == nil && count >= limit {
+			http.Error(w, "max concurrent runs reached", http.StatusTooManyRequests)
+			return
+		}
+	}
+	var req rerunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	newID, err := s.workflowEng.RerunFrom(r.Context(), runID, strings.TrimSpace(req.FromStep), req.DryRun)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	newRun, err := s.workflowStore.GetRun(r.Context(), newID)
+	if err != nil || newRun == nil {
+		http.Error(w, "new run not found", http.StatusInternalServerError)
+		return
+	}
+	wfID := newRun.WorkflowID
+	if s.jobStore != nil {
+		lockKey := "coretex:wf:run:lock:" + newID
+		ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+		if err != nil {
+			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
+		} else if ok {
+			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
+			_ = s.jobStore.ReleaseLock(r.Context(), lockKey)
+		}
+	} else {
+		_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"run_id": newID})
 }
 
 // Config handlers
@@ -1910,6 +2409,32 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	if s.configSvc == nil {
+		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = string(configsvc.ScopeSystem)
+	}
+	scopeID := strings.TrimSpace(r.URL.Query().Get("scope_id"))
+	if scope == string(configsvc.ScopeSystem) && scopeID == "" {
+		scopeID = "default"
+	}
+	doc, err := s.configSvc.Get(r.Context(), configsvc.Scope(scope), scopeID)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "config not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(doc)
+}
+
 func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
@@ -1920,13 +2445,301 @@ func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request
 	wfID := r.URL.Query().Get("workflow_id")
 	stepID := r.URL.Query().Get("step_id")
 
-	eff, err := s.configSvc.Effective(r.Context(), orgID, teamID, wfID, stepID)
+	snap, err := s.configSvc.EffectiveSnapshot(r.Context(), orgID, teamID, wfID, stepID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(eff)
+	if snap == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(snap)
+}
+
+// Schema handlers
+type schemaRegisterRequest struct {
+	ID     string         `json:"id"`
+	Schema map[string]any `json:"schema"`
+}
+
+func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
+	if s.schemaRegistry == nil {
+		http.Error(w, "schema registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var req schemaRegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	data, err := json.Marshal(req.Schema)
+	if err != nil {
+		http.Error(w, "invalid schema", http.StatusBadRequest)
+		return
+	}
+	if err := s.schemaRegistry.Register(r.Context(), req.ID, data); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
+	if s.schemaRegistry == nil {
+		http.Error(w, "schema registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	limit := int64(100)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	ids, err := s.schemaRegistry.List(r.Context(), limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"schemas": ids})
+}
+
+func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
+	if s.schemaRegistry == nil {
+		http.Error(w, "schema registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "schema id required", http.StatusBadRequest)
+		return
+	}
+	data, err := s.schemaRegistry.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "schema not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var payload any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		http.Error(w, "failed to decode schema", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "schema": payload})
+}
+
+func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
+	if s.schemaRegistry == nil {
+		http.Error(w, "schema registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "schema id required", http.StatusBadRequest)
+		return
+	}
+	if err := s.schemaRegistry.Delete(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Resource lock handlers
+type lockRequest struct {
+	Resource string `json:"resource"`
+	Owner    string `json:"owner"`
+	Mode     string `json:"mode"`
+	TTLms    int64  `json:"ttl_ms"`
+}
+
+func (s *server) handleGetLock(w http.ResponseWriter, r *http.Request) {
+	if s.lockStore == nil {
+		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	resource := strings.TrimSpace(r.URL.Query().Get("resource"))
+	if resource == "" {
+		http.Error(w, "resource required", http.StatusBadRequest)
+		return
+	}
+	lock, err := s.lockStore.Get(r.Context(), resource)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "lock not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(lock)
+}
+
+func (s *server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
+	if s.lockStore == nil {
+		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var req lockRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	mode := parseLockMode(req.Mode)
+	lock, ok, err := s.lockStore.Acquire(r.Context(), req.Resource, req.Owner, mode, time.Duration(req.TTLms)*time.Millisecond)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !ok {
+		http.Error(w, "lock unavailable", http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(lock)
+}
+
+func (s *server) handleReleaseLock(w http.ResponseWriter, r *http.Request) {
+	if s.lockStore == nil {
+		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var req lockRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	lock, ok, err := s.lockStore.Release(r.Context(), req.Resource, req.Owner)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !ok {
+		http.Error(w, "lock not held", http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"lock": lock, "released": true})
+}
+
+func (s *server) handleRenewLock(w http.ResponseWriter, r *http.Request) {
+	if s.lockStore == nil {
+		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var req lockRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	lock, ok, err := s.lockStore.Renew(r.Context(), req.Resource, req.Owner, time.Duration(req.TTLms)*time.Millisecond)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !ok {
+		http.Error(w, "lock not held", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(lock)
+}
+
+func parseLockMode(raw string) locks.Mode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "shared":
+		return locks.ModeShared
+	default:
+		return locks.ModeExclusive
+	}
+}
+
+func parseRetention(raw string) artifacts.RetentionClass {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "short":
+		return artifacts.RetentionShort
+	case "audit":
+		return artifacts.RetentionAudit
+	default:
+		return artifacts.RetentionStandard
+	}
+}
+
+func (s *server) handlePolicyEvaluate(w http.ResponseWriter, r *http.Request) {
+	s.handlePolicyCheck(w, r, "evaluate")
+}
+
+func (s *server) handlePolicySimulate(w http.ResponseWriter, r *http.Request) {
+	s.handlePolicyCheck(w, r, "simulate")
+}
+
+func (s *server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
+	s.handlePolicyCheck(w, r, "explain")
+}
+
+func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
+	if s.safetyClient == nil {
+		http.Error(w, "safety kernel unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	resp, err := s.safetyClient.ListSnapshots(r.Context(), &pb.ListSnapshotsRequest{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	data, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(data)
+}
+
+func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode string) {
+	if s.safetyClient == nil {
+		http.Error(w, "safety kernel unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var req policyCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	checkReq, err := buildPolicyCheckRequest(r.Context(), &req, s.configSvc, s.tenant)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var resp *pb.PolicyCheckResponse
+	switch mode {
+	case "simulate":
+		resp, err = s.safetyClient.Simulate(r.Context(), checkReq)
+	case "explain":
+		resp, err = s.safetyClient.Explain(r.Context(), checkReq)
+	default:
+		resp, err = s.safetyClient.Evaluate(r.Context(), checkReq)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	data, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(data)
 }
 
 // DLQ handlers
@@ -1968,8 +2781,8 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
-	if s.dlqStore == nil || s.jobStore == nil {
-		http.Error(w, "dlq or job store unavailable", http.StatusServiceUnavailable)
+	if s.dlqStore == nil || s.jobStore == nil || s.memStore == nil {
+		http.Error(w, "dlq, job, or memory store unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	jobID := r.PathValue("job_id")
@@ -1993,6 +2806,7 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newJobID := jobID + "-retry-" + uuid.NewString()[:8]
+	traceID := "dlq-retry-" + jobID
 	var ctxPtr string
 	origCtxKey := memory.MakeContextKey(jobID)
 	if data, err := s.memStore.GetContext(r.Context(), origCtxKey); err == nil {
@@ -2025,26 +2839,29 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	packet := &pb.BusPacket{
-		TraceId:         "dlq-retry-" + jobID,
+		TraceId:         traceID,
 		SenderId:        "api-gateway",
-		ProtocolVersion: 1,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		CreatedAt:       timestamppb.Now(),
 		Payload: &pb.BusPacket_JobRequest{
 			JobRequest: jobReq,
 		},
 	}
 
-	_ = s.jobStore.SetTopic(r.Context(), newJobID, topic)
-	_ = s.jobStore.SetTenant(r.Context(), newJobID, tenant)
-	if team != "" {
-		_ = s.jobStore.SetTeam(r.Context(), newJobID, team)
+	if err := s.jobStore.SetJobMeta(r.Context(), jobReq); err != nil {
+		http.Error(w, "failed to persist job metadata", http.StatusServiceUnavailable)
+		return
 	}
-	if principal != "" {
-		_ = s.jobStore.SetPrincipal(r.Context(), newJobID, principal)
+	if err := s.jobStore.AddJobToTrace(r.Context(), traceID, newJobID); err != nil {
+		http.Error(w, "failed to persist trace metadata", http.StatusServiceUnavailable)
+		return
 	}
-	_ = s.jobStore.SetState(r.Context(), newJobID, scheduler.JobStatePending)
+	if err := s.jobStore.SetState(r.Context(), newJobID, scheduler.JobStatePending); err != nil {
+		http.Error(w, "failed to initialize job state", http.StatusServiceUnavailable)
+		return
+	}
 
-	if err := s.bus.Publish("sys.job.submit", packet); err != nil {
+	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		http.Error(w, fmt.Sprintf("publish failed: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -2121,6 +2938,130 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
+	if s.jobStore == nil {
+		http.Error(w, "job store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	limit := int64(100)
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	cursor := time.Now().UnixNano() / int64(time.Microsecond)
+	if q := r.URL.Query().Get("cursor"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			cursor = v
+		}
+	}
+	jobs, err := s.jobStore.ListJobsByState(r.Context(), scheduler.JobStateApproval, cursor, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	items := make([]map[string]any, 0, len(jobs))
+	for _, job := range jobs {
+		record, _ := s.jobStore.GetSafetyDecision(r.Context(), job.ID)
+		items = append(items, map[string]any{
+			"job":               job,
+			"constraints":       record.Constraints,
+			"approval_required": record.ApprovalRequired,
+			"approval_ref":      record.ApprovalRef,
+		})
+	}
+	var nextCursor *int64
+	if len(jobs) == int(limit) {
+		nc := jobs[len(jobs)-1].UpdatedAt - 1
+		nextCursor = &nc
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"items":       items,
+		"next_cursor": nextCursor,
+	})
+}
+
+func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
+	if s.jobStore == nil || s.bus == nil {
+		http.Error(w, "job store or bus unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	jobID := r.PathValue("job_id")
+	if jobID == "" {
+		http.Error(w, "missing job_id", http.StatusBadRequest)
+		return
+	}
+	state, err := s.jobStore.GetState(r.Context(), jobID)
+	if err != nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	if state != scheduler.JobStateApproval {
+		http.Error(w, "job not awaiting approval", http.StatusConflict)
+		return
+	}
+	req, err := s.jobStore.GetJobRequest(r.Context(), jobID)
+	if err != nil {
+		http.Error(w, "job request not found", http.StatusNotFound)
+		return
+	}
+	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	traceID, _ := s.jobStore.GetTraceID(r.Context(), jobID)
+	packet := &pb.BusPacket{
+		TraceId:         traceID,
+		SenderId:        "api-gateway",
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobRequest{
+			JobRequest: req,
+		},
+	}
+	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"job_id": jobID, "trace_id": traceID})
+}
+
+func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
+	if s.jobStore == nil || s.bus == nil {
+		http.Error(w, "job store or bus unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	jobID := r.PathValue("job_id")
+	if jobID == "" {
+		http.Error(w, "missing job_id", http.StatusBadRequest)
+		return
+	}
+	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStateDenied); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	traceID, _ := s.jobStore.GetTraceID(r.Context(), jobID)
+	packet := &pb.BusPacket{
+		TraceId:         traceID,
+		SenderId:        "api-gateway",
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:        jobID,
+				Status:       pb.JobStatus_JOB_STATUS_DENIED,
+				ErrorCode:    "approval_rejected",
+				ErrorMessage: "approval rejected",
+			},
+		},
+	}
+	_ = s.bus.Publish(capsdk.SubjectDLQ, packet)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
 func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {
 		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
@@ -2159,9 +3100,68 @@ func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(run)
 }
 
+func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {
+	if s.workflowStore == nil {
+		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing run id", http.StatusBadRequest)
+		return
+	}
+	limit := int64(200)
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	events, err := s.workflowStore.ListTimelineEvents(r.Context(), id, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(events)
+}
+
+func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
+	if s.workflowStore == nil {
+		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if err := s.workflowStore.DeleteRun(r.Context(), id); err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.SubmitJobResponse, error) {
 	// The incoming gRPC request (req) directly contains the new identity fields.
 	// We'll use them to populate the pb.JobRequest.
+
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
+
+	if key := strings.TrimSpace(req.GetIdempotencyKey()); key != "" && s.jobStore != nil {
+		if existingID, err := s.jobStore.GetJobByIdempotencyKey(ctx, key); err == nil && existingID != "" {
+			traceID, _ := s.jobStore.GetTraceID(ctx, existingID)
+			return &pb.SubmitJobResponse{JobId: existingID, TraceId: traceID}, nil
+		} else if err != nil && !errors.Is(err, redis.Nil) {
+			logging.Error("api-gateway", "idempotency lookup failed", "error", err)
+		}
+	}
 
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
@@ -2177,14 +3177,23 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	principalID := req.GetPrincipalId()
 
 	payloadReq := submitJobRequest{
-		Prompt:      req.GetPrompt(),
-		Topic:       req.GetTopic(),
-		AdapterId:   req.GetAdapterId(),
-		Priority:    req.GetPriority(),
-		TenantId:    orgID, // Use OrgId for TenantId in payloadReq
-		PrincipalId: principalID,
-		OrgId:       orgID,
-		// MaxInputTokens and MaxOutputTokens are part of the Budget message in SubmitJobRequest
+		Prompt:         req.GetPrompt(),
+		Topic:          req.GetTopic(),
+		AdapterId:      req.GetAdapterId(),
+		Priority:       req.GetPriority(),
+		TenantId:       orgID, // Use OrgId for TenantId in payloadReq
+		PrincipalId:    principalID,
+		OrgId:          orgID,
+		ActorId:        req.GetActorId(),
+		ActorType:      req.GetActorType(),
+		IdempotencyKey: req.GetIdempotencyKey(),
+		PackId:         req.GetPackId(),
+		Capability:     req.GetCapability(),
+		RiskTags:       req.GetRiskTags(),
+		Requires:       req.GetRequires(),
+		Labels:         req.GetLabels(),
+		MemoryId:       req.GetMemoryId(),
+		// SubmitJobRequest does not carry budget limits yet; defaults are applied below.
 	}
 	// For gRPC, validation of basic fields like prompt, topic happens earlier via protobuf definition
 	// For complex validation rules, we can still use a simplified applyDefaults and validate for payloadReq.
@@ -2204,18 +3213,46 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 	// Context is not directly passed in SubmitJobRequest, but could be added
 	payloadBytes, _ := json.Marshal(payload)
-	_ = s.memStore.PutContext(ctx, ctxKey, payloadBytes)
+	if s.memStore == nil {
+		return nil, status.Error(codes.Unavailable, "memory store unavailable")
+	}
+	if err := s.memStore.PutContext(ctx, ctxKey, payloadBytes); err != nil {
+		logging.Error("api-gateway", "failed to persist job context", "job_id", jobID, "error", err)
+		return nil, status.Error(codes.Unavailable, "failed to persist job context")
+	}
 
 	// Set initial state
-	_ = s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending)
-	_ = s.jobStore.SetTopic(ctx, jobID, payloadReq.Topic)
-	_ = s.jobStore.SetTenant(ctx, jobID, orgID) // Use OrgId here
+	if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+		logging.Error("api-gateway", "failed to initialize job state", "job_id", jobID, "error", err)
+		return nil, status.Error(codes.Unavailable, "failed to initialize job state")
+	}
+	if err := s.jobStore.SetTopic(ctx, jobID, payloadReq.Topic); err != nil {
+		logging.Error("api-gateway", "failed to set job topic", "job_id", jobID, "error", err)
+		return nil, status.Error(codes.Unavailable, "failed to initialize job metadata")
+	}
+	if err := s.jobStore.SetTenant(ctx, jobID, orgID); err != nil {
+		logging.Error("api-gateway", "failed to set job tenant", "job_id", jobID, "error", err)
+		return nil, status.Error(codes.Unavailable, "failed to initialize job metadata")
+	} // Use OrgId here
+
+	secretsPresent := secrets.ContainsSecretRefs(payloadReq.Prompt)
+	if secretsPresent {
+		payloadReq.RiskTags = appendUniqueTag(payloadReq.RiskTags, "secrets")
+		if payloadReq.Labels == nil {
+			payloadReq.Labels = map[string]string{}
+		}
+		payloadReq.Labels["secrets_present"] = "true"
+	}
 
 	maxInput := int64(8000)
 	maxOutput := int64(1024)
+	memoryID := payloadReq.MemoryId
+	if memoryID == "" {
+		memoryID = deriveMemoryIDFromReq(payloadReq.Topic, "", jobID)
+	}
 	envVars := map[string]string{
 		"tenant_id":         orgID,
-		"memory_id":         deriveMemoryIDFromReq(payloadReq.Topic, "", jobID),
+		"memory_id":         memoryID,
 		"context_mode":      "",
 		"max_input_tokens":  fmt.Sprintf("%d", maxInput),
 		"max_output_tokens": fmt.Sprintf("%d", maxOutput),
@@ -2230,6 +3267,24 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		envVars["context_mode"] = mode
 	}
 
+	actorID := strings.TrimSpace(payloadReq.ActorId)
+	if actorID == "" {
+		actorID = principalID
+	}
+	meta := &pb.JobMetadata{
+		TenantId:       orgID,
+		ActorId:        actorID,
+		ActorType:      parseActorType(payloadReq.ActorType),
+		IdempotencyKey: strings.TrimSpace(payloadReq.IdempotencyKey),
+		Capability:     strings.TrimSpace(payloadReq.Capability),
+		RiskTags:       append([]string{}, payloadReq.RiskTags...),
+		Requires:       append([]string{}, payloadReq.Requires...),
+		PackId:         strings.TrimSpace(payloadReq.PackId),
+	}
+	if len(payloadReq.Labels) > 0 {
+		meta.Labels = payloadReq.Labels
+	}
+
 	jobReq := &pb.JobRequest{
 		JobId:       jobID,
 		Topic:       payloadReq.Topic,
@@ -2237,10 +3292,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		ContextPtr:  ctxPtr,
 		AdapterId:   payloadReq.AdapterId,
 		Env:         envVars,
-		MemoryId:    envVars["memory_id"],
+		MemoryId:    memoryID,
 		TenantId:    orgID,       // Use OrgId here
 		PrincipalId: principalID, // Populated from new field
-		Labels:      nil,         // SubmitJobRequest does not include labels
+		Labels:      payloadReq.Labels,
+		Meta:        meta,
 		ContextHints: &pb.ContextHints{
 			MaxInputTokens:     int32(maxInput),
 			AllowSummarization: false,
@@ -2256,20 +3312,31 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 
 	if s.jobStore != nil {
-		_ = s.jobStore.SetJobMeta(ctx, jobReq)
+		if err := s.jobStore.SetJobMeta(ctx, jobReq); err != nil {
+			logging.Error("api-gateway", "failed to persist job metadata", "job_id", jobID, "error", err)
+			return nil, status.Error(codes.Unavailable, "failed to persist job metadata")
+		}
+		if err := s.jobStore.SetJobRequest(ctx, jobReq); err != nil {
+			logging.Error("api-gateway", "failed to persist job request", "job_id", jobID, "error", err)
+			return nil, status.Error(codes.Unavailable, "failed to persist job metadata")
+		}
+		if err := s.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
+			logging.Error("api-gateway", "failed to add job to trace", "job_id", jobID, "trace_id", traceID, "error", err)
+			return nil, status.Error(codes.Unavailable, "failed to persist trace metadata")
+		}
 	}
 
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        "api-gateway",
 		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: 1,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobRequest{
 			JobRequest: jobReq,
 		},
 	}
 
-	if err := s.bus.Publish("sys.job.submit", packet); err != nil {
+	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		_ = s.jobStore.SetState(ctx, jobID, scheduler.JobStateFailed)
 		logging.Error("api-gateway", "job publish failed", "job_id", jobID, "error", err)
 		return nil, status.Errorf(codes.Unavailable, "failed to enqueue job")

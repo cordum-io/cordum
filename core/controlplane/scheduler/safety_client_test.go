@@ -50,9 +50,12 @@ func TestSafetyClientAllow(t *testing.T) {
 	defer cleanup()
 
 	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn}
-	decision, reason := client.Check(&pb.JobRequest{JobId: "1", Topic: "job.echo"})
-	if decision != SafetyAllow || reason != "" {
-		t.Fatalf("expected allow, got %v reason=%s", decision, reason)
+	record, err := client.Check(&pb.JobRequest{JobId: "1", Topic: "job.default"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.Decision != SafetyAllow || record.Reason != "" {
+		t.Fatalf("expected allow, got %v reason=%s", record.Decision, record.Reason)
 	}
 }
 
@@ -61,9 +64,12 @@ func TestSafetyClientDeny(t *testing.T) {
 	defer cleanup()
 
 	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn}
-	decision, reason := client.Check(&pb.JobRequest{JobId: "1", Topic: "sys.destroy"})
-	if decision != SafetyDeny || reason != "blocked" {
-		t.Fatalf("expected deny, got %v reason=%s", decision, reason)
+	record, err := client.Check(&pb.JobRequest{JobId: "1", Topic: "sys.destroy"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.Decision != SafetyDeny || record.Reason != "blocked" {
+		t.Fatalf("expected deny, got %v reason=%s", record.Decision, record.Reason)
 	}
 }
 
@@ -73,32 +79,64 @@ func (f failingSafetyKernelClient) Check(context.Context, *pb.PolicyCheckRequest
 	return nil, fmt.Errorf("forced failure")
 }
 
+func (f failingSafetyKernelClient) Evaluate(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, fmt.Errorf("forced failure")
+}
+
+func (f failingSafetyKernelClient) Explain(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, fmt.Errorf("forced failure")
+}
+
+func (f failingSafetyKernelClient) Simulate(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, fmt.Errorf("forced failure")
+}
+
+func (f failingSafetyKernelClient) ListSnapshots(context.Context, *pb.ListSnapshotsRequest, ...grpc.CallOption) (*pb.ListSnapshotsResponse, error) {
+	return nil, fmt.Errorf("forced failure")
+}
+
 type allowSafetyKernelClient struct{}
 
 func (a allowSafetyKernelClient) Check(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
 	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}, nil
 }
 
+func (a allowSafetyKernelClient) Evaluate(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}, nil
+}
+
+func (a allowSafetyKernelClient) Explain(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}, nil
+}
+
+func (a allowSafetyKernelClient) Simulate(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}, nil
+}
+
+func (a allowSafetyKernelClient) ListSnapshots(context.Context, *pb.ListSnapshotsRequest, ...grpc.CallOption) (*pb.ListSnapshotsResponse, error) {
+	return &pb.ListSnapshotsResponse{}, nil
+}
+
 func TestSafetyClientCircuitOpens(t *testing.T) {
 	client := &SafetyClient{client: failingSafetyKernelClient{}}
-	req := &pb.JobRequest{JobId: "1", Topic: "job.echo"}
+	req := &pb.JobRequest{JobId: "1", Topic: "job.default"}
 
 	for i := 0; i < safetyCircuitFailBudget; i++ {
-		decision, _ := client.Check(req)
-		if decision != SafetyDeny {
+		record, _ := client.Check(req)
+		if record.Decision != SafetyDeny {
 			t.Fatalf("expected deny on failure %d", i)
 		}
 	}
 
-	decision, reason := client.Check(req)
-	if decision != SafetyDeny || reason != "safety kernel circuit open" {
-		t.Fatalf("expected circuit open deny, got %v reason=%s", decision, reason)
+	record, _ := client.Check(req)
+	if record.Decision != SafetyDeny || record.Reason != "safety kernel circuit open" {
+		t.Fatalf("expected circuit open deny, got %v reason=%s", record.Decision, record.Reason)
 	}
 }
 
 func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 	client := &SafetyClient{client: failingSafetyKernelClient{}}
-	req := &pb.JobRequest{JobId: "1", Topic: "job.echo"}
+	req := &pb.JobRequest{JobId: "1", Topic: "job.default"}
 
 	// Trip the circuit open.
 	for i := 0; i < safetyCircuitFailBudget; i++ {
@@ -114,14 +152,14 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 	// Swap client to a successful responder to allow closing.
 	client.client = allowSafetyKernelClient{}
 
-	decision, _ := client.Check(req)
-	if decision != SafetyAllow {
-		t.Fatalf("expected allow during half-open probe, got %v", decision)
+	record, _ := client.Check(req)
+	if record.Decision != SafetyAllow {
+		t.Fatalf("expected allow during half-open probe, got %v", record.Decision)
 	}
 	// Second success should close the circuit.
-	decision, _ = client.Check(req)
-	if decision != SafetyAllow {
-		t.Fatalf("expected allow during half-open probe, got %v", decision)
+	record, _ = client.Check(req)
+	if record.Decision != SafetyAllow {
+		t.Fatalf("expected allow during half-open probe, got %v", record.Decision)
 	}
 
 	client.mu.Lock()

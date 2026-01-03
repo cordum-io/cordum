@@ -8,6 +8,7 @@ import (
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 )
 
@@ -28,7 +29,7 @@ func (b *recordingBus) Publish(subject string, packet *pb.BusPacket) error {
 	return nil
 }
 
-func (b *recordingBus) Subscribe(subject, queue string, handler func(*pb.BusPacket)) error {
+func (b *recordingBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
 	return nil
 }
 
@@ -59,7 +60,7 @@ func TestEngineForEachFanoutAndAggregateSuccess(t *testing.T) {
 			"fan": {
 				ID:      "fan",
 				Type:    StepTypeWorker,
-				Topic:   "job.echo",
+				Topic:   "job.default",
 				ForEach: "input.items",
 			},
 		},
@@ -185,7 +186,7 @@ func TestEngineApprovalPausesAndResumes(t *testing.T) {
 		OrgID: "org-1",
 		Steps: map[string]*Step{
 			"approve": {ID: "approve", Type: StepTypeApproval},
-			"work":    {ID: "work", Type: StepTypeWorker, Topic: "job.echo", DependsOn: []string{"approve"}},
+			"work":    {ID: "work", Type: StepTypeWorker, Topic: "job.default", DependsOn: []string{"approve"}},
 		},
 	}
 	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
@@ -227,5 +228,245 @@ func TestEngineApprovalPausesAndResumes(t *testing.T) {
 	final, _ := store.GetRun(context.Background(), run.ID)
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded, got %s", final.Status)
+	}
+}
+
+func TestEngineStepMetadataPropagates(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-meta",
+		OrgID: "tenant-1",
+		Steps: map[string]*Step{
+			"work": {
+				ID:    "work",
+				Type:  StepTypeWorker,
+				Topic: "job.default",
+				Meta: &StepMeta{
+					ActorId:        "actor-1",
+					ActorType:      "human",
+					IdempotencyKey: "idem-1",
+					PackId:         "pack-1",
+					Capability:     "repo.scan",
+					RiskTags:       []string{"prod", " network "},
+					Requires:       []string{"git", " "},
+					Labels:         map[string]string{"team": "blue"},
+				},
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-meta",
+		WorkflowID: wf.ID,
+		OrgID:      "tenant-1",
+		Steps:      map[string]*StepRun{},
+		Status:     RunStatusPending,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if len(bus.published) != 1 {
+		t.Fatalf("expected 1 publish, got %d", len(bus.published))
+	}
+	req := bus.published[0].packet.GetJobRequest()
+	if req == nil {
+		t.Fatalf("expected job request")
+	}
+	if req.PrincipalId != "actor-1" {
+		t.Fatalf("expected principal_id actor-1, got %q", req.PrincipalId)
+	}
+	if req.Meta == nil {
+		t.Fatalf("expected job metadata")
+	}
+	if req.Meta.TenantId != "tenant-1" {
+		t.Fatalf("expected tenant_id tenant-1, got %q", req.Meta.TenantId)
+	}
+	if req.Meta.ActorId != "actor-1" {
+		t.Fatalf("expected actor_id actor-1, got %q", req.Meta.ActorId)
+	}
+	if req.Meta.ActorType != pb.ActorType_ACTOR_TYPE_HUMAN {
+		t.Fatalf("expected actor_type human, got %v", req.Meta.ActorType)
+	}
+	if req.Meta.IdempotencyKey != "idem-1" {
+		t.Fatalf("expected idempotency_key idem-1, got %q", req.Meta.IdempotencyKey)
+	}
+	if req.Meta.PackId != "pack-1" {
+		t.Fatalf("expected pack_id pack-1, got %q", req.Meta.PackId)
+	}
+	if req.Meta.Capability != "repo.scan" {
+		t.Fatalf("expected capability repo.scan, got %q", req.Meta.Capability)
+	}
+	if len(req.Meta.RiskTags) != 2 || req.Meta.RiskTags[1] != "network" {
+		t.Fatalf("expected risk_tags trimmed, got %v", req.Meta.RiskTags)
+	}
+	if len(req.Meta.Requires) != 1 || req.Meta.Requires[0] != "git" {
+		t.Fatalf("expected requires trimmed, got %v", req.Meta.Requires)
+	}
+	if req.Meta.Labels["team"] != "blue" {
+		t.Fatalf("expected labels team=blue, got %v", req.Meta.Labels)
+	}
+}
+
+func TestEngineDelayStepCompletes(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-delay",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"wait": {ID: "wait", Type: StepTypeDelay, DelaySec: 1},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &WorkflowRun{
+		ID:         "run-delay",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Steps:      map[string]*StepRun{},
+		Status:     RunStatusPending,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no publishes for delay step, got %d", len(bus.published))
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusSucceeded {
+		t.Fatalf("expected run succeeded after delay, got %s", final.Status)
+	}
+	if final.Steps["wait"].Status != StepStatusSucceeded {
+		t.Fatalf("expected delay step succeeded, got %s", final.Steps["wait"].Status)
+	}
+}
+
+func TestEngineNotifyStepEmitsEvent(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-notify",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"notify": {ID: "notify", Type: StepTypeNotify, Input: map[string]any{"message": "hello"}},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &WorkflowRun{
+		ID:         "run-notify",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Steps:      map[string]*StepRun{},
+		Status:     RunStatusPending,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if len(bus.published) != 1 {
+		t.Fatalf("expected 1 publish for notify step, got %d", len(bus.published))
+	}
+	if bus.published[0].subject != capsdk.SubjectWorkflowEvent {
+		t.Fatalf("expected subject %s, got %s", capsdk.SubjectWorkflowEvent, bus.published[0].subject)
+	}
+	if alert := bus.published[0].packet.GetAlert(); alert == nil || alert.GetMessage() != "hello" {
+		t.Fatalf("expected alert message 'hello'")
+	}
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusSucceeded {
+		t.Fatalf("expected run succeeded after notify, got %s", final.Status)
+	}
+}
+
+func TestEngineConditionStepEvaluates(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-condition",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"cond": {ID: "cond", Type: StepTypeCondition, Condition: "input.allow", OutputPath: "decision.allowed"},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &WorkflowRun{
+		ID:         "run-condition",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Input:      map[string]any{"allow": true},
+		Steps:      map[string]*StepRun{},
+		Status:     RunStatusPending,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusSucceeded {
+		t.Fatalf("expected run succeeded, got %s", final.Status)
+	}
+	if final.Steps["cond"].Status != StepStatusSucceeded {
+		t.Fatalf("expected condition step succeeded, got %s", final.Steps["cond"].Status)
+	}
+	if final.Context == nil {
+		t.Fatalf("expected context to be recorded")
+	}
+	stepsRaw, ok := final.Context["steps"].(map[string]any)
+	if !ok || stepsRaw == nil {
+		t.Fatalf("expected steps context to be recorded")
+	}
+	entry, ok := stepsRaw["cond"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected condition output entry")
+	}
+	if entry["output"] != true {
+		t.Fatalf("expected condition output true, got %#v", entry["output"])
+	}
+	decisionRaw, ok := final.Context["decision"].(map[string]any)
+	if !ok || decisionRaw["allowed"] != true {
+		t.Fatalf("expected output path decision.allowed to be true")
 	}
 }

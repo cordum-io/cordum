@@ -58,28 +58,35 @@ func LoadTimeouts(path string) (*TimeoutsConfig, error) {
 	return &cfg, nil
 }
 
+// ParseTimeouts parses timeouts config data from YAML/JSON bytes.
+func ParseTimeouts(data []byte) (*TimeoutsConfig, error) {
+	if len(data) == 0 {
+		return defaultTimeouts(), nil
+	}
+	var cfg TimeoutsConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return defaultTimeouts(), fmt.Errorf("parse timeouts config: %w", err)
+	}
+	def := defaultTimeouts()
+	if cfg.Workflows == nil {
+		cfg.Workflows = def.Workflows
+	}
+	if cfg.Topics == nil {
+		cfg.Topics = def.Topics
+	}
+	if cfg.Reconciler == (ReconcilerTimeout{}) {
+		cfg.Reconciler = def.Reconciler
+	}
+	return &cfg, nil
+}
+
 func defaultTimeouts() *TimeoutsConfig {
 	return &TimeoutsConfig{
-		Workflows: map[string]WorkflowTimeout{
-			"code_review_demo": {
-				ChildTimeoutSeconds: 1200,
-				TotalTimeoutSeconds: 1800,
-				MaxRetries:          1,
-			},
-		},
-		Topics: map[string]TopicTimeout{
-			"job.code.llm": {
-				TimeoutSeconds: 1200,
-				MaxRetries:     0,
-			},
-			"job.chat.simple": {
-				TimeoutSeconds: 60,
-				MaxRetries:     0,
-			},
-		},
+		Workflows: map[string]WorkflowTimeout{},
+		Topics:    map[string]TopicTimeout{},
 		Reconciler: ReconcilerTimeout{
-			DispatchTimeoutSeconds: 120,
-			RunningTimeoutSeconds:  1500,
+			DispatchTimeoutSeconds: 300,
+			RunningTimeoutSeconds:  9000,
 			ScanIntervalSeconds:    30,
 		},
 	}

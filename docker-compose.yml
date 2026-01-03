@@ -3,8 +3,11 @@ version: "3.9"
 services:
   nats:
     image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data"]
     ports:
       - "4222:4222"
+    volumes:
+      - nats_data:/data
 
   redis:
     image: redis:7-alpine
@@ -24,16 +27,6 @@ services:
       - CONTEXT_ENGINE_ADDR=:50070
     ports:
       - "50070:50070"
-
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    environment:
-      - OLLAMA_KEEP_ALIVE=24h
-    volumes:
-      - ollama_data:/root/.ollama
 
   coretex-safety-kernel:
     restart: unless-stopped
@@ -64,11 +57,13 @@ services:
       - coretex-safety-kernel
     environment:
       - NATS_URL=nats://nats:4222
+      - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://redis:6379
       - SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051
       - POOL_CONFIG_PATH=/etc/coretex/pools.yaml
       - TIMEOUT_CONFIG_PATH=/etc/coretex/timeouts.yaml
       - JOB_META_TTL=168h
+      - WORKER_SNAPSHOT_INTERVAL=5s
     volumes:
       - ./config/pools.yaml:/etc/coretex/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/coretex/timeouts.yaml:ro
@@ -85,6 +80,7 @@ services:
       - coretex-scheduler
     environment:
       - NATS_URL=nats://nats:4222
+      - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://redis:6379
       - SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051
       - API_KEY=${CORETEX_API_KEY:-super-secret-key}
@@ -112,6 +108,7 @@ services:
       - coretex-scheduler
     environment:
       - NATS_URL=nats://nats:4222
+      - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://redis:6379
       - WORKFLOW_ENGINE_HTTP_ADDR=:9093
       - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
@@ -119,222 +116,5 @@ services:
     ports:
       - "9093:9093"
 
-  coretex-dashboard:
-    build:
-      context: ./web/dashboard
-      dockerfile: Dockerfile
-    depends_on:
-      - coretex-api-gateway
-    environment:
-      - CORETEX_DASHBOARD_API_KEY=${CORETEX_API_KEY:-super-secret-key}
-    ports:
-      - "3000:3000"
-
-  coretex-worker-echo:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-echo
-    depends_on:
-      - nats
-      - redis
-      - coretex-scheduler
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-chat:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-chat
-    depends_on:
-      - nats
-      - redis
-      - coretex-scheduler
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-chat-advanced:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-chat-advanced
-    depends_on:
-      - nats
-      - redis
-      - coretex-scheduler
-      - coretex-context-engine
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - CONTEXT_ENGINE_ADDR=coretex-context-engine:50070
-      - OLLAMA_URL=http://ollama:11434
-      - OLLAMA_MODEL=llama3
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-code-llm:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-code-llm
-    depends_on:
-      - nats
-      - redis
-      - coretex-scheduler
-      - coretex-context-engine
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - CONTEXT_ENGINE_ADDR=coretex-context-engine:50070
-      - OLLAMA_URL=http://ollama:11434
-      - OLLAMA_MODEL=llama3
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-orchestrator:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-orchestrator
-    depends_on:
-      - nats
-      - redis
-      - coretex-scheduler
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - REDIS_DATA_TTL=24h
-      - TIMEOUT_CONFIG_PATH=/etc/coretex/timeouts.yaml
-      - USE_PLANNER=true
-      - PLANNER_TOPIC=job.workflow.plan
-    volumes:
-      - ./config/timeouts.yaml:/etc/coretex/timeouts.yaml:ro
-
-  coretex-worker-planner:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-planner
-    depends_on:
-      - nats
-      - redis
-      - coretex-scheduler
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-repo-scan:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-repo-scan
-    depends_on:
-      - nats
-      - redis
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-repo-sast:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-repo-sast
-    depends_on:
-      - nats
-      - redis
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-repo-partition:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-repo-partition
-    depends_on:
-      - nats
-      - redis
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-repo-lint:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-repo-lint
-    depends_on:
-      - nats
-      - redis
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - REDIS_DATA_TTL=24h
-
-  coretex-worker-repo-tests:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-repo-tests
-    depends_on:
-      - nats
-      - redis
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-
-  coretex-worker-repo-report:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-repo-report
-    depends_on:
-      - nats
-      - redis
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-
-  coretex-worker-repo-orchestrator:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: coretex-worker-repo-orchestrator
-    depends_on:
-      - nats
-      - redis
-      - coretex-scheduler
-    environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://redis:6379
-      - TIMEOUT_CONFIG_PATH=/etc/coretex/timeouts.yaml
-      - REPO_REVIEW_MAX_FILES=500
-      - REPO_REVIEW_BATCH_SIZE=50
-      - REPO_REVIEW_MAX_BATCHES=5
-      - REPO_REVIEW_RUN_TESTS=false
-    volumes:
-      - ./config/timeouts.yaml:/etc/coretex/timeouts.yaml:ro
-
 volumes:
-  ollama_data:
+  nats_data:

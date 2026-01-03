@@ -17,6 +17,7 @@ const (
 	pointerPrefix   = "redis://"
 	// data TTL guards against unbounded Redis growth; configurable via env.
 	defaultDataTTL           = 24 * time.Hour
+	defaultRedisOpTimeout    = 2 * time.Second
 	envRedisDataTTLInSeconds = "REDIS_DATA_TTL_SECONDS"
 	envRedisDataTTLFallback  = "REDIS_DATA_TTL" // accepts ParseDuration values (e.g. 24h)
 )
@@ -71,11 +72,21 @@ func NewRedisStore(url string) (*RedisStore, error) {
 }
 
 func (s *RedisStore) PutContext(ctx context.Context, key string, data []byte) error {
-	return s.client.Set(ctx, key, data, s.dataTTL).Err()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRedisOpTimeout)
+	defer cancel()
+	return s.client.Set(cctx, key, data, s.dataTTL).Err()
 }
 
 func (s *RedisStore) GetContext(ctx context.Context, key string) ([]byte, error) {
-	val, err := s.client.Get(ctx, key).Bytes()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRedisOpTimeout)
+	defer cancel()
+	val, err := s.client.Get(cctx, key).Bytes()
 	if err != nil {
 		return nil, err
 	}
@@ -83,11 +94,21 @@ func (s *RedisStore) GetContext(ctx context.Context, key string) ([]byte, error)
 }
 
 func (s *RedisStore) PutResult(ctx context.Context, key string, data []byte) error {
-	return s.client.Set(ctx, key, data, s.dataTTL).Err()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRedisOpTimeout)
+	defer cancel()
+	return s.client.Set(cctx, key, data, s.dataTTL).Err()
 }
 
 func (s *RedisStore) GetResult(ctx context.Context, key string) ([]byte, error) {
-	val, err := s.client.Get(ctx, key).Bytes()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRedisOpTimeout)
+	defer cancel()
+	val, err := s.client.Get(cctx, key).Bytes()
 	if err != nil {
 		return nil, err
 	}

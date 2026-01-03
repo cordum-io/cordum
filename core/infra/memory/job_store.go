@@ -12,12 +12,14 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
 	jobStateKeyPrefix       = "job:state:"
 	jobResultPtrKeyPrefix   = "job:result_ptr:"
 	jobMetaKeyPrefix        = "job:meta:"
+	jobRequestKeyPrefix     = "job:req:"
 	jobEventsKeyPrefix      = "job:events:"
 	metaFieldTopic          = "topic"
 	metaFieldTenant         = "tenant"
@@ -26,9 +28,23 @@ const (
 	metaFieldMemory         = "memory_id"
 	metaFieldTraceID        = "trace_id"
 	metaFieldLabels         = "labels"
+	metaFieldActorID        = "actor_id"
+	metaFieldActorType      = "actor_type"
+	metaFieldIdempotencyKey = "idempotency_key"
+	metaFieldCapability     = "capability"
+	metaFieldRiskTags       = "risk_tags"
+	metaFieldRequires       = "requires"
+	metaFieldPackID         = "pack_id"
+	metaFieldAttempts       = "attempts"
 	metaFieldDeadline       = "deadline_unix"
 	metaFieldSafetyDecision = "safety_decision"
 	metaFieldSafetyReason   = "safety_reason"
+	metaFieldSafetyRuleID   = "safety_rule_id"
+	metaFieldSafetySnapshot = "safety_snapshot"
+	metaFieldSafetyChecked  = "safety_checked_at"
+	metaFieldSafetyConstraints = "safety_constraints"
+	metaFieldApprovalRequired  = "safety_approval_required"
+	metaFieldApprovalRef        = "safety_approval_ref"
 	envJobMetaTTL           = "JOB_META_TTL"
 	envJobMetaTTLSeconds    = "JOB_META_TTL_SECONDS"
 )
@@ -43,6 +59,7 @@ var (
 	}
 	allStates = []scheduler.JobState{
 		scheduler.JobStatePending,
+		scheduler.JobStateApproval,
 		scheduler.JobStateScheduled,
 		scheduler.JobStateDispatched,
 		scheduler.JobStateRunning,
@@ -53,23 +70,52 @@ var (
 		scheduler.JobStateDenied,
 	}
 	allowedTransitions = map[scheduler.JobState][]scheduler.JobState{
-		"":                           {scheduler.JobStatePending, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateFailed},
-		scheduler.JobStatePending:    {scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
-		scheduler.JobStateScheduled:  {scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
+		"":                          {scheduler.JobStatePending, scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateFailed},
+		scheduler.JobStatePending:   {scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
+		scheduler.JobStateApproval:  {scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
+		scheduler.JobStateScheduled: {scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout, scheduler.JobStateSucceeded, scheduler.JobStateCancelled},
 		scheduler.JobStateDispatched: {scheduler.JobStateRunning, scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout},
-		scheduler.JobStateRunning:    {scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout},
-		scheduler.JobStateSucceeded:  {},
-		scheduler.JobStateFailed:     {},
-		scheduler.JobStateCancelled:  {},
-		scheduler.JobStateTimeout:    {},
-		scheduler.JobStateDenied:     {},
+		scheduler.JobStateRunning:   {scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout},
+		scheduler.JobStateSucceeded: {},
+		scheduler.JobStateFailed:    {},
+		scheduler.JobStateCancelled: {},
+		scheduler.JobStateTimeout:   {},
+		scheduler.JobStateDenied:    {},
 	}
 )
 
 var defaultJobMetaTTL = 7 * 24 * time.Hour
 
+const (
+	microsPerSecond      = int64(1_000_000)
+	microsPerMillisecond = int64(1_000)
+	secondsThreshold     = int64(1_000_000_000_000)
+	millisThreshold      = int64(1_000_000_000_000_000)
+	microsThreshold      = int64(1_000_000_000_000_000_000)
+)
+
 func deadlineIndexKey() string {
 	return "job:deadline"
+}
+
+func nowUnixMicros() int64 {
+	return time.Now().UnixNano() / int64(time.Microsecond)
+}
+
+func normalizeTimestampMicrosUpper(ts int64) int64 {
+	if ts <= 0 {
+		return ts
+	}
+	switch {
+	case ts < secondsThreshold:
+		return ts*microsPerSecond + (microsPerSecond - 1)
+	case ts < millisThreshold:
+		return ts*microsPerMillisecond + (microsPerMillisecond - 1)
+	case ts < microsThreshold:
+		return ts
+	default:
+		return ts / microsPerMillisecond
+	}
 }
 
 // RedisJobStore implements scheduler.JobStore backed by Redis.
@@ -97,7 +143,7 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 			return nil
 		}
 
-		now := time.Now().Unix()
+		now := nowUnixMicros()
 		pipe := tx.TxPipeline()
 		pipe.HSet(ctx, metaKey, map[string]any{
 			"state":      string(scheduler.JobStateCancelled),
@@ -189,7 +235,7 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 		return fmt.Errorf("invalid jobID or state")
 	}
 
-	now := time.Now().Unix()
+	now := nowUnixMicros()
 	metaKey := jobMetaKey(jobID)
 
 	return s.client.Watch(ctx, func(tx *redis.Tx) error {
@@ -201,11 +247,22 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 		if !isAllowedTransition(prevState, state) {
 			return fmt.Errorf("invalid transition %s -> %s", prevState, state)
 		}
+		attempts := 0
+		if raw, err := tx.HGet(ctx, metaKey, metaFieldAttempts).Result(); err == nil {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+				attempts = parsed
+			}
+		}
+		if state == scheduler.JobStateScheduled && prevState != scheduler.JobStateScheduled {
+			attempts++
+		}
+		tenant, _ := tx.HGet(ctx, metaKey, metaFieldTenant).Result()
 
 		pipe := tx.TxPipeline()
 		pipe.HSet(ctx, metaKey, map[string]any{
 			"state":      string(state),
 			"updated_at": now,
+			metaFieldAttempts: attempts,
 		})
 		// keep legacy key for compatibility
 		pipe.Set(ctx, jobStateKey(jobID), string(state), 0)
@@ -218,6 +275,18 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 		idx := stateIndexKey(state)
 		if idx != "" {
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
+		}
+
+		if tenant != "" {
+			activeKey := tenantActiveKey(tenant)
+			if isActiveState(state) {
+				pipe.SAdd(ctx, activeKey, jobID)
+			} else if terminalStates[state] {
+				pipe.SRem(ctx, activeKey, jobID)
+			}
+			if s.metaTTL > 0 {
+				pipe.Expire(ctx, activeKey, s.metaTTL)
+			}
 		}
 
 		// Maintain global recent jobs list (score = updated_at)
@@ -262,7 +331,8 @@ func (s *RedisJobStore) ListRecentJobsByScore(ctx context.Context, cursor int64,
 	}
 	max := "+inf"
 	if cursor > 0 {
-		max = fmt.Sprintf("%d", cursor)
+		normalized := normalizeTimestampMicrosUpper(cursor)
+		max = fmt.Sprintf("%d", normalized)
 	}
 	members, err := s.client.ZRevRangeByScoreWithScores(ctx, "job:recent", &redis.ZRangeBy{
 		Max:   max,
@@ -313,8 +383,18 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 		tenant := meta[metaFieldTenant]
 		team := meta[metaFieldTeam]
 		principal := meta[metaFieldPrincipal]
+		actorID := meta[metaFieldActorID]
+		actorType := meta[metaFieldActorType]
+		idempotencyKey := meta[metaFieldIdempotencyKey]
+		capability := meta[metaFieldCapability]
+		packID := meta[metaFieldPackID]
+		riskTags := parseJSONStringSlice(meta[metaFieldRiskTags])
+		requires := parseJSONStringSlice(meta[metaFieldRequires])
+		attempts := parseInt(meta[metaFieldAttempts])
 		safetyDecision := meta[metaFieldSafetyDecision]
 		safetyReason := meta[metaFieldSafetyReason]
+		safetyRuleID := meta[metaFieldSafetyRuleID]
+		safetySnapshot := meta[metaFieldSafetySnapshot]
 		deadlineUnix, _ := strconv.ParseInt(meta[metaFieldDeadline], 10, 64)
 
 		out = append(out, scheduler.JobRecord{
@@ -326,8 +406,18 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 			Tenant:         tenant,
 			Team:           team,
 			Principal:      principal,
+			ActorID:        actorID,
+			ActorType:      actorType,
+			IdempotencyKey: idempotencyKey,
+			Capability:     capability,
+			RiskTags:       riskTags,
+			Requires:       requires,
+			PackID:         packID,
+			Attempts:       attempts,
 			SafetyDecision: safetyDecision,
 			SafetyReason:   safetyReason,
+			SafetyRuleID:   safetyRuleID,
+			SafetySnapshot: safetySnapshot,
 			DeadlineUnix:   deadlineUnix,
 		})
 	}
@@ -374,20 +464,70 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 		return fmt.Errorf("invalid job request")
 	}
 	metaKey := jobMetaKey(req.GetJobId())
+	meta := req.GetMeta()
 	tenantID := req.GetTenantId()
+	if meta != nil && meta.GetTenantId() != "" {
+		tenantID = meta.GetTenantId()
+	}
 	if tenantID == "" {
 		tenantID = req.GetEnv()["tenant_id"]
 	}
 	teamID := req.GetEnv()["team_id"]
+	actorID := ""
+	actorType := ""
+	idempotencyKey := ""
+	capability := ""
+	riskTags := []string{}
+	requires := []string{}
+	packID := ""
+	if meta != nil {
+		actorID = meta.GetActorId()
+		actorType = actorTypeString(meta.GetActorType())
+		idempotencyKey = meta.GetIdempotencyKey()
+		capability = meta.GetCapability()
+		riskTags = append(riskTags, meta.GetRiskTags()...)
+		requires = append(requires, meta.GetRequires()...)
+		packID = meta.GetPackId()
+	}
+	if actorID == "" {
+		actorID = req.GetPrincipalId()
+	}
 	fields := map[string]any{
 		metaFieldTopic:     req.GetTopic(),
 		metaFieldTenant:    tenantID,
 		metaFieldTeam:      teamID,
 		metaFieldPrincipal: req.GetPrincipalId(),
 		metaFieldMemory:    req.GetMemoryId(),
+		metaFieldAttempts:  0,
+	}
+	if actorID != "" {
+		fields[metaFieldActorID] = actorID
+	}
+	if actorType != "" {
+		fields[metaFieldActorType] = actorType
+	}
+	if idempotencyKey != "" {
+		fields[metaFieldIdempotencyKey] = idempotencyKey
+	}
+	if capability != "" {
+		fields[metaFieldCapability] = capability
+	}
+	if packID != "" {
+		fields[metaFieldPackID] = packID
+	}
+	if len(riskTags) > 0 {
+		if data, err := json.Marshal(riskTags); err == nil {
+			fields[metaFieldRiskTags] = string(data)
+		}
+	}
+	if len(requires) > 0 {
+		if data, err := json.Marshal(requires); err == nil {
+			fields[metaFieldRequires] = string(data)
+		}
 	}
 
-	if labels := req.GetLabels(); len(labels) > 0 {
+	labels := mergeLabels(req.GetLabels(), meta)
+	if len(labels) > 0 {
 		if data, err := json.Marshal(labels); err == nil {
 			fields[metaFieldLabels] = string(data)
 		}
@@ -408,7 +548,42 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
+	if idempotencyKey != "" {
+		_ = s.SetIdempotencyKey(ctx, idempotencyKey, req.GetJobId())
+	}
 	return nil
+}
+
+// SetJobRequest stores a serialized snapshot of the job request for replay/approval flows.
+func (s *RedisJobStore) SetJobRequest(ctx context.Context, req *pb.JobRequest) error {
+	if req == nil || req.GetJobId() == "" {
+		return fmt.Errorf("invalid job request")
+	}
+	payload, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal job request: %w", err)
+	}
+	key := jobRequestKey(req.GetJobId())
+	if s.metaTTL > 0 {
+		return s.client.Set(ctx, key, payload, s.metaTTL).Err()
+	}
+	return s.client.Set(ctx, key, payload, 0).Err()
+}
+
+// GetJobRequest retrieves a stored job request snapshot.
+func (s *RedisJobStore) GetJobRequest(ctx context.Context, jobID string) (*pb.JobRequest, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("jobID required")
+	}
+	data, err := s.client.Get(ctx, jobRequestKey(jobID)).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	var req pb.JobRequest
+	if err := protojson.Unmarshal(data, &req); err != nil {
+		return nil, fmt.Errorf("unmarshal job request: %w", err)
+	}
+	return &req, nil
 }
 
 // SetDeadline records a per-job deadline for enforcement.
@@ -447,12 +622,33 @@ func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64,
 		topic, _ := s.GetTopic(ctx, jobID)
 		tenant, _ := s.GetTenant(ctx, jobID)
 		principal, _ := s.GetPrincipal(ctx, jobID)
+		actorID, _ := s.GetActorID(ctx, jobID)
+		actorType, _ := s.GetActorType(ctx, jobID)
+		idempotencyKey, _ := s.GetIdempotencyKey(ctx, jobID)
+		capability, _ := s.GetCapability(ctx, jobID)
+		packID, _ := s.GetPackID(ctx, jobID)
+		riskTags, _ := s.GetRiskTags(ctx, jobID)
+		requires, _ := s.GetRequires(ctx, jobID)
+		attempts, _ := s.GetAttempts(ctx, jobID)
+		decision, _ := s.GetSafetyDecision(ctx, jobID)
 		out = append(out, scheduler.JobRecord{
 			ID:           jobID,
 			UpdatedAt:    int64(m.Score),
 			Topic:        topic,
 			Tenant:       tenant,
 			Principal:    principal,
+			ActorID:      actorID,
+			ActorType:    actorType,
+			IdempotencyKey: idempotencyKey,
+			Capability:   capability,
+			RiskTags:     riskTags,
+			Requires:     requires,
+			PackID:       packID,
+			Attempts:     attempts,
+			SafetyDecision: string(decision.Decision),
+			SafetyReason:   decision.Reason,
+			SafetyRuleID:   decision.RuleID,
+			SafetySnapshot: decision.PolicySnapshot,
 			DeadlineUnix: int64(m.Score),
 		})
 	}
@@ -468,6 +664,7 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.Job
 	if limit <= 0 {
 		limit = 100
 	}
+	updatedBeforeUnix = normalizeTimestampMicrosUpper(updatedBeforeUnix)
 	members, err := s.client.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
 		Min:    "-inf",
 		Max:    fmt.Sprintf("%d", updatedBeforeUnix),
@@ -485,8 +682,16 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.Job
 		}
 		topic, _ := s.GetTopic(ctx, jobID)
 		tenant, _ := s.GetTenant(ctx, jobID)
-		safetyDecision, safetyReason, _ := s.GetSafetyDecision(ctx, jobID)
 		principal, _ := s.GetPrincipal(ctx, jobID)
+		actorID, _ := s.GetActorID(ctx, jobID)
+		actorType, _ := s.GetActorType(ctx, jobID)
+		idempotencyKey, _ := s.GetIdempotencyKey(ctx, jobID)
+		capability, _ := s.GetCapability(ctx, jobID)
+		packID, _ := s.GetPackID(ctx, jobID)
+		riskTags, _ := s.GetRiskTags(ctx, jobID)
+		requires, _ := s.GetRequires(ctx, jobID)
+		attempts, _ := s.GetAttempts(ctx, jobID)
+		safetyDecision, _ := s.GetSafetyDecision(ctx, jobID)
 		deadlineUnix, _ := s.getDeadline(ctx, jobID)
 		out = append(out, scheduler.JobRecord{
 			ID:             jobID,
@@ -495,8 +700,18 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.Job
 			Topic:          topic,
 			Tenant:         tenant,
 			Principal:      principal,
-			SafetyDecision: safetyDecision,
-			SafetyReason:   safetyReason,
+			ActorID:        actorID,
+			ActorType:      actorType,
+			IdempotencyKey: idempotencyKey,
+			Capability:     capability,
+			RiskTags:       riskTags,
+			Requires:       requires,
+			PackID:         packID,
+			Attempts:       attempts,
+			SafetyDecision: string(safetyDecision.Decision),
+			SafetyReason:   safetyDecision.Reason,
+			SafetyRuleID:   safetyDecision.RuleID,
+			SafetySnapshot: safetyDecision.PolicySnapshot,
 			DeadlineUnix:   deadlineUnix,
 		})
 	}
@@ -526,8 +741,24 @@ func jobMetaKey(jobID string) string {
 	return jobMetaKeyPrefix + jobID
 }
 
+func jobRequestKey(jobID string) string {
+	return jobRequestKeyPrefix + jobID
+}
+
 func jobEventsKey(jobID string) string {
 	return jobEventsKeyPrefix + jobID
+}
+
+func jobDecisionKey(jobID string) string {
+	return "job:decisions:" + jobID
+}
+
+func jobIdempotencyKey(key string) string {
+	return "job:idempotency:" + key
+}
+
+func tenantActiveKey(tenant string) string {
+	return "job:tenant:active:" + tenant
 }
 
 func stateIndexKey(state scheduler.JobState) string {
@@ -606,27 +837,200 @@ func (s *RedisJobStore) GetPrincipal(ctx context.Context, jobID string) (string,
 	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldPrincipal).Result()
 }
 
-func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID, decision, reason string) error {
+func (s *RedisJobStore) GetActorID(ctx context.Context, jobID string) (string, error) {
+	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldActorID).Result()
+}
+
+func (s *RedisJobStore) GetActorType(ctx context.Context, jobID string) (string, error) {
+	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldActorType).Result()
+}
+
+func (s *RedisJobStore) GetIdempotencyKey(ctx context.Context, jobID string) (string, error) {
+	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldIdempotencyKey).Result()
+}
+
+func (s *RedisJobStore) GetCapability(ctx context.Context, jobID string) (string, error) {
+	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldCapability).Result()
+}
+
+func (s *RedisJobStore) GetPackID(ctx context.Context, jobID string) (string, error) {
+	return s.client.HGet(ctx, jobMetaKey(jobID), metaFieldPackID).Result()
+}
+
+func (s *RedisJobStore) GetRiskTags(ctx context.Context, jobID string) ([]string, error) {
+	raw, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldRiskTags).Result()
+	if err != nil {
+		return nil, err
+	}
+	return parseJSONStringSlice(raw), nil
+}
+
+func (s *RedisJobStore) GetRequires(ctx context.Context, jobID string) ([]string, error) {
+	raw, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldRequires).Result()
+	if err != nil {
+		return nil, err
+	}
+	return parseJSONStringSlice(raw), nil
+}
+
+func (s *RedisJobStore) GetAttempts(ctx context.Context, jobID string) (int, error) {
+	raw, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldAttempts).Result()
+	if err != nil {
+		return 0, err
+	}
+	return parseInt(raw), nil
+}
+
+func (s *RedisJobStore) CountActiveByTenant(ctx context.Context, tenant string) (int, error) {
+	if tenant == "" {
+		return 0, fmt.Errorf("tenant required")
+	}
+	count, err := s.client.SCard(ctx, tenantActiveKey(tenant)).Result()
+	if err != nil {
+		return 0, err
+	}
+	return int(count), nil
+}
+
+func (s *RedisJobStore) SetIdempotencyKey(ctx context.Context, key, jobID string) error {
+	if key == "" || jobID == "" {
+		return fmt.Errorf("idempotency key and jobID required")
+	}
+	ttl := s.metaTTL
+	if ttl <= 0 {
+		return s.client.SetNX(ctx, jobIdempotencyKey(key), jobID, 0).Err()
+	}
+	return s.client.SetNX(ctx, jobIdempotencyKey(key), jobID, ttl).Err()
+}
+
+func (s *RedisJobStore) GetJobByIdempotencyKey(ctx context.Context, key string) (string, error) {
+	if key == "" {
+		return "", fmt.Errorf("idempotency key required")
+	}
+	return s.client.Get(ctx, jobIdempotencyKey(key)).Result()
+}
+
+func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, record scheduler.SafetyDecisionRecord) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID required")
 	}
-	return s.client.HSet(ctx, jobMetaKey(jobID), map[string]any{
-		metaFieldSafetyDecision: decision,
-		metaFieldSafetyReason:   reason,
-	}).Err()
+	if record.CheckedAt == 0 {
+		record.CheckedAt = nowUnixMicros()
+	}
+	constraintsJSON := ""
+	if record.Constraints != nil {
+		if data, err := protojson.Marshal(record.Constraints); err == nil {
+			constraintsJSON = string(data)
+		}
+	}
+	fields := map[string]any{
+		metaFieldSafetyDecision: string(record.Decision),
+		metaFieldSafetyReason:   record.Reason,
+		metaFieldSafetyRuleID:   record.RuleID,
+		metaFieldSafetySnapshot: record.PolicySnapshot,
+		metaFieldSafetyChecked:  record.CheckedAt,
+		metaFieldApprovalRequired: record.ApprovalRequired,
+		metaFieldApprovalRef:       record.ApprovalRef,
+	}
+	if constraintsJSON != "" {
+		fields[metaFieldSafetyConstraints] = constraintsJSON
+	}
+
+	entry := map[string]any{
+		"decision":         string(record.Decision),
+		"reason":           record.Reason,
+		"rule_id":          record.RuleID,
+		"policy_snapshot":  record.PolicySnapshot,
+		"constraints":      json.RawMessage(constraintsJSON),
+		"approval_required": record.ApprovalRequired,
+		"approval_ref":      record.ApprovalRef,
+		"checked_at":        record.CheckedAt,
+	}
+	encoded, _ := json.Marshal(entry)
+
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, jobMetaKey(jobID), fields)
+	pipe.RPush(ctx, jobDecisionKey(jobID), string(encoded))
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+		pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
-func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (string, string, error) {
+func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (scheduler.SafetyDecisionRecord, error) {
 	meta := jobMetaKey(jobID)
-	decision, err := s.client.HGet(ctx, meta, metaFieldSafetyDecision).Result()
+	data, err := s.client.HGetAll(ctx, meta).Result()
 	if err != nil && err != redis.Nil {
-		return "", "", err
+		return scheduler.SafetyDecisionRecord{}, err
 	}
-	reason, err2 := s.client.HGet(ctx, meta, metaFieldSafetyReason).Result()
-	if err2 != nil && err2 != redis.Nil {
-		return decision, "", err2
+	record := scheduler.SafetyDecisionRecord{
+		Decision:       scheduler.SafetyDecision(data[metaFieldSafetyDecision]),
+		Reason:         data[metaFieldSafetyReason],
+		RuleID:         data[metaFieldSafetyRuleID],
+		PolicySnapshot: data[metaFieldSafetySnapshot],
+		ApprovalRef:    data[metaFieldApprovalRef],
 	}
-	return decision, reason, nil
+	if data[metaFieldApprovalRequired] == "true" {
+		record.ApprovalRequired = true
+	}
+	if raw := data[metaFieldSafetyChecked]; raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			record.CheckedAt = parsed
+		}
+	}
+	if raw := data[metaFieldSafetyConstraints]; raw != "" {
+		var constraints pb.PolicyConstraints
+		if err := protojson.Unmarshal([]byte(raw), &constraints); err == nil {
+			record.Constraints = &constraints
+		}
+	}
+	return record, nil
+}
+
+// ListSafetyDecisions returns recent safety decisions for a job (most recent first).
+func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, limit int64) ([]scheduler.SafetyDecisionRecord, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("jobID required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	raw, err := s.client.LRange(ctx, jobDecisionKey(jobID), -limit, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]scheduler.SafetyDecisionRecord, 0, len(raw))
+	for i := len(raw) - 1; i >= 0; i-- {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(raw[i]), &entry); err != nil {
+			continue
+		}
+		record := scheduler.SafetyDecisionRecord{
+			Decision:       scheduler.SafetyDecision(stringFromEntry(entry, "decision")),
+			Reason:         stringFromEntry(entry, "reason"),
+			RuleID:         stringFromEntry(entry, "rule_id"),
+			PolicySnapshot: stringFromEntry(entry, "policy_snapshot"),
+			ApprovalRef:    stringFromEntry(entry, "approval_ref"),
+		}
+		if val, ok := entry["approval_required"].(bool); ok {
+			record.ApprovalRequired = val
+		}
+		if val, ok := entry["checked_at"].(float64); ok {
+			record.CheckedAt = int64(val)
+		}
+		if rawConstraints, ok := entry["constraints"].(map[string]any); ok && rawConstraints != nil {
+			if data, err := json.Marshal(rawConstraints); err == nil {
+				var constraints pb.PolicyConstraints
+				if err := protojson.Unmarshal(data, &constraints); err == nil {
+					record.Constraints = &constraints
+				}
+			}
+		}
+		out = append(out, record)
+	}
+	return out, nil
 }
 
 func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]scheduler.JobRecord, error) {
@@ -653,6 +1057,9 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 			state, _ = s.GetState(ctx, jobID)
 		}
 		deadlineUnix, _ := strconv.ParseInt(meta[metaFieldDeadline], 10, 64)
+		riskTags := parseJSONStringSlice(meta[metaFieldRiskTags])
+		requires := parseJSONStringSlice(meta[metaFieldRequires])
+		attempts := parseInt(meta[metaFieldAttempts])
 		out = append(out, scheduler.JobRecord{
 			ID:             jobID,
 			TraceID:        traceID,
@@ -661,8 +1068,18 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 			Tenant:         meta[metaFieldTenant],
 			Team:           meta[metaFieldTeam],
 			Principal:      meta[metaFieldPrincipal],
+			ActorID:        meta[metaFieldActorID],
+			ActorType:      meta[metaFieldActorType],
+			IdempotencyKey: meta[metaFieldIdempotencyKey],
+			Capability:     meta[metaFieldCapability],
+			RiskTags:       riskTags,
+			Requires:       requires,
+			PackID:         meta[metaFieldPackID],
+			Attempts:       attempts,
 			SafetyDecision: meta[metaFieldSafetyDecision],
 			SafetyReason:   meta[metaFieldSafetyReason],
+			SafetyRuleID:   meta[metaFieldSafetyRuleID],
+			SafetySnapshot: meta[metaFieldSafetySnapshot],
 			DeadlineUnix:   deadlineUnix,
 		})
 	}
@@ -691,4 +1108,72 @@ func isAllowedTransition(from, to scheduler.JobState) bool {
 		}
 	}
 	return false
+}
+
+func isActiveState(state scheduler.JobState) bool {
+	if state == "" {
+		return false
+	}
+	return !terminalStates[state]
+}
+
+func parseJSONStringSlice(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func parseInt(raw string) int {
+	if raw == "" {
+		return 0
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return val
+}
+
+func actorTypeString(val pb.ActorType) string {
+	switch val {
+	case pb.ActorType_ACTOR_TYPE_HUMAN:
+		return "human"
+	case pb.ActorType_ACTOR_TYPE_SERVICE:
+		return "service"
+	default:
+		return ""
+	}
+}
+
+func mergeLabels(base map[string]string, meta *pb.JobMetadata) map[string]string {
+	if len(base) == 0 && (meta == nil || len(meta.GetLabels()) == 0) {
+		return nil
+	}
+	out := make(map[string]string)
+	for k, v := range base {
+		out[k] = v
+	}
+	if meta != nil {
+		for k, v := range meta.GetLabels() {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func stringFromEntry(entry map[string]any, key string) string {
+	if entry == nil {
+		return ""
+	}
+	if val, ok := entry[key]; ok {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	return ""
 }

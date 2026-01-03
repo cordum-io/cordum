@@ -5,3 +5,16 @@ tenants:
       - "job.*"
     deny_topics:
       - "sys.*"
+    allowed_repo_hosts: []
+    denied_repo_hosts: []
+    mcp:
+      # Allow/deny MCP servers/tools/resources when a job declares MCP labels.
+      # Leave lists empty to allow all MCP calls (when labels are set).
+      allow_servers: []
+      deny_servers: []
+      allow_tools: []
+      deny_tools: []
+      allow_resources: []
+      deny_resources: []
+      allow_actions: []
+      deny_actions: []

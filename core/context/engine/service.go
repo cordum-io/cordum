@@ -50,18 +50,6 @@ type historyEvent struct {
 	Timestamp int64  `json:"ts"`
 }
 
-type repoFile struct {
-	Path     string `json:"path"`
-	Language string `json:"language"`
-	Bytes    int64  `json:"bytes"`
-	Loc      int64  `json:"loc"`
-}
-
-type scanPayload struct {
-	RepoRoot string     `json:"repo_root"`
-	Files    []repoFile `json:"files"`
-}
-
 // BuildWindow assembles model-ready messages from logical payload and stored memory.
 func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (*pb.BuildWindowResponse, error) {
 	memoryID := req.GetMemoryId()
@@ -74,7 +62,7 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 	messages := []*pb.ModelMessage{}
 
 	// Pull recent history for CHAT/RAG.
-	if mode == pb.ContextMode_CONTEXT_MODE_CHAT || mode == pb.ContextMode_CONTEXT_MODE_RAG {
+	if memoryID != "" && (mode == pb.ContextMode_CONTEXT_MODE_CHAT || mode == pb.ContextMode_CONTEXT_MODE_RAG) {
 		events, _ := s.redis.LRange(ctx, s.historyKey(memoryID), -s.maxHistory, -1).Result()
 		for _, raw := range events {
 			var ev historyEvent
@@ -84,11 +72,18 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 		}
 	}
 
-	// RAG: attach repo chunks that match file_path when present.
-	if mode == pb.ContextMode_CONTEXT_MODE_RAG {
-		chunks := s.loadRepoChunks(ctx, memoryID)
+	// RAG: attach stored chunks that match file_path when present.
+	if memoryID != "" && mode == pb.ContextMode_CONTEXT_MODE_RAG {
 		filePath := s.extractFilePath(req.GetLogicalPayload())
-		if filePath != "" {
+		if filePath == "" {
+			if summary := s.loadSummary(ctx, memoryID); summary != "" {
+				messages = append(messages, &pb.ModelMessage{
+					Role:    "system",
+					Content: summary,
+				})
+			}
+		} else {
+			chunks := s.loadChunks(ctx, memoryID)
 			for _, ch := range chunks {
 				if strings.Contains(ch.Path, filePath) || strings.Contains(filePath, ch.Path) {
 					content := ch.Content
@@ -147,57 +142,26 @@ func (s *Service) UpdateMemory(ctx context.Context, req *pb.UpdateMemoryRequest)
 	assistantMsg := strings.TrimSpace(string(req.GetModelResponse()))
 
 	pipe := s.redis.Pipeline()
+	pushed := false
 	if userMsg != "" {
 		ev := historyEvent{Role: "user", Content: userMsg, Timestamp: time.Now().Unix()}
 		if data, err := json.Marshal(ev); err == nil {
 			pipe.RPush(ctx, s.historyKey(memoryID), data)
+			pushed = true
 		}
 	}
 	if assistantMsg != "" {
 		ev := historyEvent{Role: "assistant", Content: assistantMsg, Timestamp: time.Now().Unix()}
 		if data, err := json.Marshal(ev); err == nil {
 			pipe.RPush(ctx, s.historyKey(memoryID), data)
+			pushed = true
 		}
+	}
+	if pushed && s.maxHistory > 0 {
+		pipe.LTrim(ctx, s.historyKey(memoryID), -s.maxHistory, -1)
 	}
 	_, _ = pipe.Exec(ctx)
 	return &pb.UpdateMemoryResponse{}, nil
-}
-
-// IngestRepo stores repo scan metadata as chunk records for retrieval.
-func (s *Service) IngestRepo(ctx context.Context, req *pb.IngestRepoRequest) (*pb.IngestRepoResponse, error) {
-	var payload scanPayload
-	if len(req.GetScanResult()) > 0 {
-		_ = json.Unmarshal(req.GetScanResult(), &payload)
-	}
-	if payload.RepoRoot == "" {
-		payload.RepoRoot = req.GetRepoRoot()
-	}
-	if len(payload.Files) == 0 {
-		return &pb.IngestRepoResponse{}, nil
-	}
-	pipe := s.redis.Pipeline()
-	for idx, f := range payload.Files {
-		chunk := struct {
-			Path     string `json:"path"`
-			Language string `json:"language"`
-			Bytes    int64  `json:"bytes"`
-			Loc      int64  `json:"loc"`
-			Content  string `json:"content"`
-		}{
-			Path:     f.Path,
-			Language: f.Language,
-			Bytes:    f.Bytes,
-			Loc:      f.Loc,
-			Content:  "",
-		}
-		key := s.chunkKey(req.GetMemoryId(), idx)
-		if data, err := json.Marshal(chunk); err == nil {
-			pipe.Set(ctx, key, data, 0)
-			pipe.SAdd(ctx, s.chunkIndexKey(req.GetMemoryId()), key)
-		}
-	}
-	_, _ = pipe.Exec(ctx)
-	return &pb.IngestRepoResponse{}, nil
 }
 
 func (s *Service) historyKey(memoryID string) string {
@@ -212,6 +176,10 @@ func (s *Service) chunkKey(memoryID string, idx int) string {
 	return fmt.Sprintf("mem:%s:chunk:%d", memoryID, idx)
 }
 
+func (s *Service) summaryKey(memoryID string) string {
+	return fmt.Sprintf("mem:%s:summary", memoryID)
+}
+
 type chunkRecord struct {
 	Path     string `json:"path"`
 	Language string `json:"language"`
@@ -220,7 +188,10 @@ type chunkRecord struct {
 	Content  string `json:"content"`
 }
 
-func (s *Service) loadRepoChunks(ctx context.Context, memoryID string) []chunkRecord {
+func (s *Service) loadChunks(ctx context.Context, memoryID string) []chunkRecord {
+	if memoryID == "" {
+		return nil
+	}
 	keys, err := s.redis.SMembers(ctx, s.chunkIndexKey(memoryID)).Result()
 	if err != nil || len(keys) == 0 {
 		return nil
@@ -237,6 +208,17 @@ func (s *Service) loadRepoChunks(ctx context.Context, memoryID string) []chunkRe
 		}
 	}
 	return out
+}
+
+func (s *Service) loadSummary(ctx context.Context, memoryID string) string {
+	if memoryID == "" {
+		return ""
+	}
+	val, err := s.redis.Get(ctx, s.summaryKey(memoryID)).Result()
+	if err != nil {
+		return ""
+	}
+	return val
 }
 
 func (s *Service) extractUserMessage(payload []byte) string {

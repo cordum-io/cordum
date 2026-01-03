@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yaront1111/coretex-os/core/infra/config"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -64,13 +65,13 @@ func (c *SafetyClient) Close() error {
 }
 
 // Check forwards the request to the safety kernel; denies on error/timeout.
-func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecision, string) {
+func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecisionRecord, error) {
 	if c.isCircuitOpen() {
-		return SafetyDeny, "safety kernel circuit open"
+		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "safety kernel circuit open"}, nil
 	}
 
 	if !c.allowHalfOpenRequest() {
-		return SafetyDeny, "safety kernel circuit half-open (throttled)"
+		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "safety kernel circuit half-open (throttled)"}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), safetyTimeout)
@@ -85,9 +86,10 @@ func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecision, string) {
 		Budget:      req.GetBudget(),
 		Labels:      req.GetLabels(),
 		MemoryId:    req.GetMemoryId(),
+		Meta:        req.GetMeta(),
 	}
 	if env := req.GetEnv(); env != nil {
-		if eff := env[EffectiveConfigEnvVar]; eff != "" {
+		if eff := env[config.EffectiveConfigEnvVar]; eff != "" {
 			checkReq.EffectiveConfig = []byte(eff)
 		}
 	}
@@ -95,21 +97,36 @@ func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecision, string) {
 	resp, err := c.client.Check(ctx, checkReq)
 	if err != nil {
 		c.recordFailure()
-		return SafetyDeny, fmt.Sprintf("safety kernel error: %v", err)
+		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: fmt.Sprintf("safety kernel error: %v", err)}, nil
 	}
 	c.recordSuccess()
 
-	switch resp.GetDecision() {
+	record := SafetyDecisionRecord{
+		Decision:         decisionFromProto(resp.GetDecision()),
+		Reason:           resp.GetReason(),
+		RuleID:           resp.GetRuleId(),
+		PolicySnapshot:   resp.GetPolicySnapshot(),
+		Constraints:      resp.GetConstraints(),
+		ApprovalRequired: resp.GetApprovalRequired(),
+		ApprovalRef:      resp.GetApprovalRef(),
+	}
+	return record, nil
+}
+
+func decisionFromProto(dec pb.DecisionType) SafetyDecision {
+	switch dec {
 	case pb.DecisionType_DECISION_TYPE_ALLOW:
-		return SafetyAllow, ""
+		return SafetyAllow
 	case pb.DecisionType_DECISION_TYPE_DENY:
-		return SafetyDeny, resp.GetReason()
+		return SafetyDeny
 	case pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
-		return SafetyRequireHuman, resp.GetReason()
+		return SafetyRequireApproval
 	case pb.DecisionType_DECISION_TYPE_THROTTLE:
-		return SafetyThrottle, resp.GetReason()
+		return SafetyThrottle
+	case pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS:
+		return SafetyAllowWithConstraints
 	default:
-		return SafetyDeny, "unsupported decision"
+		return SafetyDeny
 	}
 }
 

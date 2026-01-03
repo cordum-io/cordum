@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yaront1111/coretex-os/core/infra/config"
+	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
 	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -28,29 +30,34 @@ func (f *fakeConfigProvider) Effective(ctx context.Context, orgID, teamID, workf
 }
 
 type fakeJobStore struct {
-	states  map[string]JobState
-	ptrs    map[string]string
-	topics  map[string]string
-	tenants map[string]string
-	teams   map[string]string
-	safety  map[string]struct{ decision, reason string }
-	locks   map[string]time.Time
+	states   map[string]JobState
+	ptrs     map[string]string
+	topics   map[string]string
+	tenants  map[string]string
+	teams    map[string]string
+	safety   map[string]SafetyDecisionRecord
+	attempts map[string]int
+	locks    map[string]time.Time
 }
 
 func newFakeJobStore() *fakeJobStore {
 	return &fakeJobStore{
-		states:  make(map[string]JobState),
-		ptrs:    make(map[string]string),
-		topics:  make(map[string]string),
-		tenants: make(map[string]string),
-		teams:   make(map[string]string),
-		safety:  make(map[string]struct{ decision, reason string }),
-		locks:   make(map[string]time.Time),
+		states:   make(map[string]JobState),
+		ptrs:     make(map[string]string),
+		topics:   make(map[string]string),
+		tenants:  make(map[string]string),
+		teams:    make(map[string]string),
+		safety:   make(map[string]SafetyDecisionRecord),
+		attempts: make(map[string]int),
+		locks:    make(map[string]time.Time),
 	}
 }
 
 func (s *fakeJobStore) SetState(_ context.Context, jobID string, state JobState) error {
 	s.states[jobID] = state
+	if state == JobStateScheduled {
+		s.attempts[jobID]++
+	}
 	return nil
 }
 
@@ -124,14 +131,21 @@ func (s *fakeJobStore) GetTeam(_ context.Context, jobID string) (string, error) 
 	return s.teams[jobID], nil
 }
 
-func (s *fakeJobStore) SetSafetyDecision(_ context.Context, jobID, decision, reason string) error {
-	s.safety[jobID] = struct{ decision, reason string }{decision: decision, reason: reason}
+func (s *fakeJobStore) SetSafetyDecision(_ context.Context, jobID string, record SafetyDecisionRecord) error {
+	s.safety[jobID] = record
 	return nil
 }
 
-func (s *fakeJobStore) GetSafetyDecision(_ context.Context, jobID string) (string, string, error) {
-	entry := s.safety[jobID]
-	return entry.decision, entry.reason, nil
+func (s *fakeJobStore) GetSafetyDecision(_ context.Context, jobID string) (SafetyDecisionRecord, error) {
+	return s.safety[jobID], nil
+}
+
+func (s *fakeJobStore) GetAttempts(_ context.Context, jobID string) (int, error) {
+	return s.attempts[jobID], nil
+}
+
+func (s *fakeJobStore) CountActiveByTenant(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 func (s *fakeJobStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (bool, error) {
@@ -161,7 +175,7 @@ func (b *fakeBus) Publish(subject string, packet *pb.BusPacket) error {
 	return nil
 }
 
-func (b *fakeBus) Subscribe(subject, queue string, handler func(*pb.BusPacket)) error {
+func (b *fakeBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
 	// Tests call handlers directly, so no-op is fine here.
 	return nil
 }
@@ -174,7 +188,7 @@ func TestEngineHandleHeartbeatStoresWorker(t *testing.T) {
 	packet := &pb.BusPacket{
 		SenderId:        "worker-1",
 		TraceId:         "trace-hb",
-		ProtocolVersion: 1,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		CreatedAt:       timestamppb.Now(),
 		Payload: &pb.BusPacket_Heartbeat{
 			Heartbeat: &pb.Heartbeat{
@@ -204,7 +218,7 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 
 	req := &pb.JobRequest{
 		JobId: "job-1",
-		Topic: "job.echo",
+		Topic: "job.default",
 	}
 
 	engine.processJob(req, "trace-123")
@@ -216,8 +230,8 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 		t.Fatalf("expected job state RUNNING, got %s", state)
 	}
 	msg := bus.published[0]
-	if msg.subject != "job.echo" {
-		t.Fatalf("expected subject job.echo, got %s", msg.subject)
+	if msg.subject != "job.default" {
+		t.Fatalf("expected subject job.default, got %s", msg.subject)
 	}
 	if got := msg.packet.GetJobRequest().JobId; got != "job-1" {
 		t.Fatalf("expected job_id job-1, got %s", got)
@@ -232,7 +246,7 @@ func TestCancelJobPublishesOnlyCancelSubject(t *testing.T) {
 	registry := NewMemoryRegistry()
 	jobStore := newFakeJobStore()
 	jobStore.states["job-1"] = JobStateRunning
-	jobStore.topics["job-1"] = "job.chat.advanced"
+	jobStore.topics["job-1"] = "job.default"
 
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
 
@@ -243,11 +257,11 @@ func TestCancelJobPublishesOnlyCancelSubject(t *testing.T) {
 	if len(bus.published) != 1 {
 		t.Fatalf("expected 1 publish, got %d", len(bus.published))
 	}
-	if bus.published[0].subject != "sys.job.cancel" {
-		t.Fatalf("expected publish to sys.job.cancel, got %s", bus.published[0].subject)
+	if bus.published[0].subject != capsdk.SubjectCancel {
+		t.Fatalf("expected publish to %s, got %s", capsdk.SubjectCancel, bus.published[0].subject)
 	}
-	if req := bus.published[0].packet.GetJobRequest(); req == nil || req.GetJobId() != "job-1" || req.GetTopic() != "sys.job.cancel" {
-		t.Fatalf("expected cancel job request payload for job-1")
+	if cancelReq := bus.published[0].packet.GetJobCancel(); cancelReq == nil || cancelReq.GetJobId() != "job-1" {
+		t.Fatalf("expected cancel payload for job-1")
 	}
 }
 
@@ -277,7 +291,7 @@ func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
 
 	req := &pb.JobRequest{
 		JobId: "job-ec",
-		Topic: "job.echo",
+		Topic: "job.default",
 		Env: map[string]string{
 			"step_id":   "step-1",
 			"tenant_id": "org-a",
@@ -294,9 +308,9 @@ func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
 	if jr == nil {
 		t.Fatalf("missing job request in packet")
 	}
-	val := jr.GetEnv()[EffectiveConfigEnvVar]
+	val := jr.GetEnv()[config.EffectiveConfigEnvVar]
 	if val == "" {
-		t.Fatalf("expected %s env var to be set", EffectiveConfigEnvVar)
+		t.Fatalf("expected %s env var to be set", config.EffectiveConfigEnvVar)
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(val), &parsed); err != nil {
@@ -320,8 +334,11 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 
 	engine.processJob(req, "trace-block")
 
-	if len(bus.published) != 0 {
-		t.Fatalf("expected 0 publishes when safety blocks, got %d", len(bus.published))
+	if len(bus.published) != 1 {
+		t.Fatalf("expected 1 publish to dlq when safety blocks, got %d", len(bus.published))
+	}
+	if bus.published[0].subject != capsdk.SubjectDLQ {
+		t.Fatalf("expected dlq subject, got %s", bus.published[0].subject)
 	}
 	if state := jobStore.states["job-blocked"]; state != JobStateDenied {
 		t.Fatalf("expected job state DENIED, got %s", state)

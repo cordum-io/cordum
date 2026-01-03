@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/yaront1111/coretex-os/core/infra/logging"
@@ -15,6 +16,7 @@ type Reconciler struct {
 	pollInterval    time.Duration
 	lockKey         string
 	lockTTL         time.Duration
+	mu              sync.RWMutex
 }
 
 func NewReconciler(store JobStore, dispatchTimeout, runningTimeout, pollInterval time.Duration) *Reconciler {
@@ -59,9 +61,28 @@ func (r *Reconciler) Start(ctx context.Context) {
 
 func (r *Reconciler) tick(ctx context.Context) {
 	now := time.Now()
-	r.handleTimeouts(ctx, JobStateDispatched, now.Add(-r.dispatchTimeout))
-	r.handleTimeouts(ctx, JobStateRunning, now.Add(-r.runningTimeout))
+	dispatchTimeout, runningTimeout := r.currentTimeouts()
+	r.handleTimeouts(ctx, JobStateDispatched, now.Add(-dispatchTimeout))
+	r.handleTimeouts(ctx, JobStateRunning, now.Add(-runningTimeout))
 	r.handleDeadlineExpirations(ctx, now)
+}
+
+// UpdateTimeouts replaces dispatch/running timeouts at runtime.
+func (r *Reconciler) UpdateTimeouts(dispatchTimeout, runningTimeout time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if dispatchTimeout > 0 {
+		r.dispatchTimeout = dispatchTimeout
+	}
+	if runningTimeout > 0 {
+		r.runningTimeout = runningTimeout
+	}
+}
+
+func (r *Reconciler) currentTimeouts() (time.Duration, time.Duration) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.dispatchTimeout, r.runningTimeout
 }
 
 func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff time.Time) {
@@ -71,7 +92,8 @@ func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff 
 	failed := make(map[string]int)
 
 	for i := 0; i < maxIterations; i++ {
-		records, err := r.store.ListJobsByState(ctx, state, cutoff.Unix(), 200)
+		cutoffMicros := cutoff.UnixNano() / int64(time.Microsecond)
+		records, err := r.store.ListJobsByState(ctx, state, cutoffMicros, 200)
 		if err != nil {
 			logging.Error("reconciler", "list jobs", "state", state, "error", err)
 			return

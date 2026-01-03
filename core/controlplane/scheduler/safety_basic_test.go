@@ -9,13 +9,12 @@ func NewSafetyBasic() *SafetyBasic {
 	return &SafetyBasic{}
 }
 
-func (s *SafetyBasic) Check(req *pb.JobRequest) (SafetyDecision, string) {
+func (s *SafetyBasic) Check(req *pb.JobRequest) (SafetyDecisionRecord, error) {
 	if req == nil {
-		return SafetyDeny, "nil job request"
+		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "nil job request"}, nil
 	}
 	if req.Topic == "sys.destroy" {
-		return SafetyDeny, "forbidden topic"
+		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "forbidden topic"}, nil
 	}
-	return SafetyAllow, ""
+	return SafetyDecisionRecord{Decision: SafetyAllow}, nil
 }
-
