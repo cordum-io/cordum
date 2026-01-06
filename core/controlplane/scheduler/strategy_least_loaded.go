@@ -201,6 +201,12 @@ func filterPlacementLabels(labels map[string]string) map[string]string {
 		if k == "preferred_worker_id" || k == "preferred_pool" {
 			continue
 		}
+		if k == "approval_granted" || k == "secrets_present" {
+			continue
+		}
+		if strings.HasPrefix(k, "coretex.") {
+			continue
+		}
 		// These labels are used for traceability/observability and should not constrain placement.
 		// Placement constraints should be expressed via dedicated labels (e.g. hardware/region),
 		// not workflow/run identifiers.

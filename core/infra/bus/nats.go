@@ -32,6 +32,9 @@ const (
 
 	streamSys  = "CORETEX_SYS"
 	streamJobs = "CORETEX_JOBS"
+
+	// LabelBusMsgID overrides JetStream msg-id for explicit resubmits.
+	LabelBusMsgID = "coretex.bus_msg_id"
 )
 
 var (
@@ -315,6 +318,11 @@ func computeMsgID(subject string, packet *pb.BusPacket) string {
 	switch payload := packet.Payload.(type) {
 	case *pb.BusPacket_JobRequest:
 		if payload.JobRequest != nil {
+			if payload.JobRequest.Labels != nil {
+				if override := strings.TrimSpace(payload.JobRequest.Labels[LabelBusMsgID]); override != "" {
+					return "jobreq:" + subject + ":" + override
+				}
+			}
 			id = payload.JobRequest.JobId
 			prefix = "jobreq:"
 		}

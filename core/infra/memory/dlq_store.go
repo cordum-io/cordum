@@ -108,6 +108,52 @@ func (s *DLQStore) List(ctx context.Context, limit int64) ([]DLQEntry, error) {
 	return out, nil
 }
 
+// ListByScore returns DLQ entries before the given cursor timestamp (unix seconds).
+func (s *DLQStore) ListByScore(ctx context.Context, cursorUnix int64, limit int64) ([]DLQEntry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if cursorUnix <= 0 {
+		cursorUnix = time.Now().UTC().Unix()
+	}
+	ids, err := s.client.ZRevRangeByScore(ctx, dlqIndexKey(), &redis.ZRangeBy{
+		Max:    fmt.Sprintf("%d", cursorUnix),
+		Min:    "-inf",
+		Offset: 0,
+		Count:  limit,
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []DLQEntry{}, nil
+	}
+	pipe := s.client.Pipeline()
+	cmds := make(map[string]*redis.StringCmd, len(ids))
+	for _, id := range ids {
+		cmds[id] = pipe.Get(ctx, dlqEntryKey(id))
+	}
+	_, _ = pipe.Exec(ctx)
+
+	out := make([]DLQEntry, 0, len(ids))
+	for _, id := range ids {
+		cmd := cmds[id]
+		if cmd == nil {
+			continue
+		}
+		data, err := cmd.Bytes()
+		if err != nil {
+			continue
+		}
+		var e DLQEntry
+		if err := json.Unmarshal(data, &e); err != nil {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
 // Get returns a single DLQ entry.
 func (s *DLQStore) Get(ctx context.Context, jobID string) (*DLQEntry, error) {
 	if jobID == "" {

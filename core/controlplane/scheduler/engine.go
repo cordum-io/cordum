@@ -291,23 +291,9 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) error {
 
 	e.attachEffectiveConfig(req)
 
-	record, err := e.safety.Check(req)
+	record, err := e.checkSafetyDecision(req)
 	if err != nil {
 		logging.Error("scheduler", "safety check failed", "job_id", jobID, "error", err)
-	}
-	if record.CheckedAt == 0 {
-		record.CheckedAt = time.Now().UTC().UnixNano() / int64(time.Microsecond)
-	}
-	if record.ApprovalRequired && (record.Decision == SafetyAllow || record.Decision == SafetyAllowWithConstraints) {
-		record.Decision = SafetyRequireApproval
-	}
-	if e.jobStore != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
-		if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
-			cancel()
-			return RetryAfter(err, retryDelayStore)
-		}
-		cancel()
 	}
 	switch record.Decision {
 	case SafetyAllow, SafetyAllowWithConstraints:
@@ -483,6 +469,62 @@ func reasonCodeForSchedulingError(err error) string {
 	default:
 		return "dispatch_failed"
 	}
+}
+
+func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, error) {
+	record := SafetyDecisionRecord{}
+	if req == nil {
+		return record, fmt.Errorf("missing job request")
+	}
+	jobID := strings.TrimSpace(req.JobId)
+	if jobID == "" {
+		return record, fmt.Errorf("missing job id")
+	}
+
+	approved := false
+	if req.Labels != nil {
+		if raw := strings.TrimSpace(req.Labels["approval_granted"]); raw != "" && strings.EqualFold(raw, "true") {
+			approved = true
+		}
+	}
+	if approved {
+		record = SafetyDecisionRecord{
+			Decision:  SafetyAllow,
+			Reason:    "approval granted",
+			CheckedAt: time.Now().UTC().UnixNano() / int64(time.Microsecond),
+		}
+		if e.jobStore != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+			if prev, err := e.jobStore.GetSafetyDecision(ctx, jobID); err == nil {
+				record.Constraints = prev.Constraints
+				record.PolicySnapshot = prev.PolicySnapshot
+				record.RuleID = prev.RuleID
+			}
+			if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+				cancel()
+				return record, err
+			}
+			cancel()
+		}
+		return record, nil
+	}
+
+	record, err := e.safety.Check(req)
+	if record.CheckedAt == 0 {
+		record.CheckedAt = time.Now().UTC().UnixNano() / int64(time.Microsecond)
+	}
+	if record.ApprovalRequired && (record.Decision == SafetyAllow || record.Decision == SafetyAllowWithConstraints) {
+		record.Decision = SafetyRequireApproval
+	}
+	if e.jobStore != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+		if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+			cancel()
+			return record, err
+		}
+		cancel()
+	}
+	return record, err
 }
 
 func (e *Engine) handleJobResult(res *pb.JobResult) error {

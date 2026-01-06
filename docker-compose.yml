@@ -116,5 +116,18 @@ services:
     ports:
       - "9093:9093"
 
+  coretex-dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    depends_on:
+      - coretex-api-gateway
+    environment:
+      - CORETEX_API_BASE_URL=http://localhost:8081
+      - CORETEX_API_KEY=${CORETEX_API_KEY:-super-secret-key}
+      - CORETEX_TENANT_ID=default
+    ports:
+      - "8082:8080"
+
 volumes:
   nats_data:

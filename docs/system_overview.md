@@ -35,6 +35,10 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
   - Enforces API key and CORS allowlist if configured.
 
+- Dashboard (`dashboard/`)
+  - React UI served via Nginx; connects to `/api/v1` and `/api/v1/stream`.
+  - Runtime config via `/config.json` (API base URL, API key, tenant).
+
 - Scheduler (`core/controlplane/scheduler`, `cmd/coretex-scheduler`)
   - Subscribes to `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.heartbeat`.
   - Calls Safety Kernel before dispatch (allow/deny/approve/throttle/constraints).
@@ -52,6 +56,8 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Stores workflow definitions and runs in Redis; maintains run timeline.
   - Dispatches ready steps as jobs (`sys.job.submit`).
   - Supports condition, delay, notify, for_each fan-out, retries/backoff, approvals, run cancel.
+  - `depends_on` enables DAG execution: independent steps run in parallel; steps wait for all deps to succeed.
+  - Failed/cancelled/timed-out deps block downstream steps (no implicit continue-on-error).
   - Supports rerun-from-step and dry-run mode.
   - Validates workflow input and step input/output schemas.
   - Subscribes to `sys.job.result` to advance runs; reconciler retries stuck runs.

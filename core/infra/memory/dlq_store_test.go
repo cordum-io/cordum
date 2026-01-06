@@ -64,3 +64,41 @@ func TestDLQStoreCRUD(t *testing.T) {
 		t.Fatalf("expected empty list, got %+v", list)
 	}
 }
+
+func TestDLQStoreListByScore(t *testing.T) {
+	store := newDLQStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	entries := []DLQEntry{
+		{JobID: "job-a", Status: "FAILED", CreatedAt: now.Add(-2 * time.Minute)},
+		{JobID: "job-b", Status: "FAILED", CreatedAt: now.Add(-1 * time.Minute)},
+		{JobID: "job-c", Status: "FAILED", CreatedAt: now.Add(-30 * time.Second)},
+	}
+	for _, entry := range entries {
+		if err := store.Add(ctx, entry); err != nil {
+			t.Fatalf("add: %v", err)
+		}
+	}
+
+	list, err := store.ListByScore(ctx, now.Unix(), 2)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(list))
+	}
+	if list[0].JobID != "job-c" || list[1].JobID != "job-b" {
+		t.Fatalf("unexpected order: %+v", list)
+	}
+
+	cursor := list[len(list)-1].CreatedAt.Unix() - 1
+	next, err := store.ListByScore(ctx, cursor, 2)
+	if err != nil {
+		t.Fatalf("list next: %v", err)
+	}
+	if len(next) != 1 || next[0].JobID != "job-a" {
+		t.Fatalf("unexpected next: %+v", next)
+	}
+}

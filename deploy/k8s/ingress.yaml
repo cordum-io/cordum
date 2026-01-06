@@ -25,3 +25,10 @@ spec:
                 name: coretex-api-gateway
                 port:
                   number: 8081
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: coretex-dashboard
+                port:
+                  number: 8080

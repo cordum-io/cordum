@@ -697,6 +697,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("DELETE /api/v1/workflows/{id}", s.instrumented("/api/v1/workflows/{id}", s.handleDeleteWorkflow))
 	mux.HandleFunc("POST /api/v1/workflows/{id}/runs", s.instrumented("/api/v1/workflows/{id}/runs", s.handleStartRun))
 	mux.HandleFunc("GET /api/v1/workflows/{id}/runs", s.instrumented("/api/v1/workflows/{id}/runs", s.handleListRuns))
+	mux.HandleFunc("GET /api/v1/workflow-runs", s.instrumented("/api/v1/workflow-runs", s.handleListAllRuns))
 	mux.HandleFunc("GET /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleGetRun))
 	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/timeline", s.instrumented("/api/v1/workflow-runs/{id}/timeline", s.handleGetRunTimeline))
 	mux.HandleFunc("DELETE /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleDeleteRun))
@@ -706,6 +707,13 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("GET /api/v1/config", s.instrumented("/api/v1/config", s.handleGetConfig))
 	mux.HandleFunc("GET /api/v1/config/effective", s.instrumented("/api/v1/config/effective", s.handleGetEffectiveConfig))
 	mux.HandleFunc("POST /api/v1/config", s.instrumented("/api/v1/config", s.handleSetConfig))
+
+	// 9.25 Packs
+	mux.HandleFunc("GET /api/v1/packs", s.instrumented("/api/v1/packs", s.handleListPacks))
+	mux.HandleFunc("GET /api/v1/packs/{id}", s.instrumented("/api/v1/packs/{id}", s.handleGetPack))
+	mux.HandleFunc("POST /api/v1/packs/install", s.instrumented("/api/v1/packs/install", s.handleInstallPack))
+	mux.HandleFunc("POST /api/v1/packs/{id}/uninstall", s.instrumented("/api/v1/packs/{id}/uninstall", s.handleUninstallPack))
+	mux.HandleFunc("POST /api/v1/packs/{id}/verify", s.instrumented("/api/v1/packs/{id}/verify", s.handleVerifyPack))
 
 	// 9.5 Schemas
 	mux.HandleFunc("POST /api/v1/schemas", s.instrumented("/api/v1/schemas", s.handleRegisterSchema))
@@ -721,6 +729,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 
 	// 10. DLQ
 	mux.HandleFunc("GET /api/v1/dlq", s.instrumented("/api/v1/dlq", s.handleListDLQ))
+	mux.HandleFunc("GET /api/v1/dlq/page", s.instrumented("/api/v1/dlq/page", s.handleListDLQPage))
 	mux.HandleFunc("DELETE /api/v1/dlq/{job_id}", s.instrumented("/api/v1/dlq/{job_id}", s.handleDeleteDLQ))
 	mux.HandleFunc("POST /api/v1/dlq/{job_id}/retry", s.instrumented("/api/v1/dlq/{job_id}/retry", s.handleRetryDLQ))
 
@@ -738,6 +747,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("POST /api/v1/policy/simulate", s.instrumented("/api/v1/policy/simulate", s.handlePolicySimulate))
 	mux.HandleFunc("POST /api/v1/policy/explain", s.instrumented("/api/v1/policy/explain", s.handlePolicyExplain))
 	mux.HandleFunc("GET /api/v1/policy/snapshots", s.instrumented("/api/v1/policy/snapshots", s.handlePolicySnapshots))
+	mux.HandleFunc("GET /api/v1/policy/rules", s.instrumented("/api/v1/policy/rules", s.handlePolicyRules))
+	mux.HandleFunc("GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
+	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleListPolicyBundleSnapshots))
+	mux.HandleFunc("POST /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleCapturePolicyBundleSnapshot))
+	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots/{id}", s.instrumented("/api/v1/policy/bundles/snapshots/{id}", s.handleGetPolicyBundleSnapshot))
 
 	// 7. Stream (WebSocket)
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
@@ -958,6 +972,27 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 			traceID = val
 		}
 	}
+	labels := map[string]string{}
+	workflowID := ""
+	runID := ""
+	stepID := ""
+	if s.jobStore != nil {
+		if req, err := s.jobStore.GetJobRequest(r.Context(), id); err == nil && req != nil {
+			if req.WorkflowId != "" {
+				workflowID = req.WorkflowId
+			}
+			if len(req.Labels) > 0 {
+				for k, v := range req.Labels {
+					labels[k] = v
+				}
+				if workflowID == "" {
+					workflowID = req.Labels["workflow_id"]
+				}
+				runID = req.Labels["run_id"]
+				stepID = req.Labels["step_id"]
+			}
+		}
+	}
 
 	errorMessage := ""
 	errorStatus := ""
@@ -999,6 +1034,10 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		"safety_constraints": safetyRecord.Constraints,
 		"approval_required":  safetyRecord.ApprovalRequired,
 		"approval_ref":       safetyRecord.ApprovalRef,
+		"labels":             labels,
+		"workflow_id":        workflowID,
+		"run_id":             runID,
+		"step_id":            stepID,
 	}
 	if errorMessage != "" {
 		resp["error_message"] = errorMessage
@@ -2012,6 +2051,22 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 	}
 }
 
+func normalizeTimestampSecondsUpper(ts int64) int64 {
+	if ts <= 0 {
+		return ts
+	}
+	switch {
+	case ts < secondsThreshold:
+		return ts
+	case ts < millisThreshold:
+		return ts / 1_000
+	case ts < microsThreshold:
+		return ts / 1_000_000
+	default:
+		return ts / 1_000_000_000
+	}
+}
+
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -2763,6 +2818,43 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(entries)
 }
 
+func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
+	if s.dlqStore == nil {
+		http.Error(w, "dlq store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	limit := int64(100)
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	cursor := int64(0)
+	if q := r.URL.Query().Get("cursor"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			cursor = v
+		}
+	}
+	entries, err := s.dlqStore.ListByScore(r.Context(), cursor, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var nextCursor *int64
+	if len(entries) == int(limit) {
+		last := entries[len(entries)-1]
+		if !last.CreatedAt.IsZero() {
+			nc := last.CreatedAt.Unix() - 1
+			nextCursor = &nc
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"items":       entries,
+		"next_cursor": nextCursor,
+	})
+}
+
 func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 	if s.dlqStore == nil {
 		http.Error(w, "dlq store unavailable", http.StatusServiceUnavailable)
@@ -2965,6 +3057,10 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		record, _ := s.jobStore.GetSafetyDecision(r.Context(), job.ID)
 		items = append(items, map[string]any{
 			"job":               job,
+			"decision":          record.Decision,
+			"policy_snapshot":   record.PolicySnapshot,
+			"policy_rule_id":    record.RuleID,
+			"policy_reason":     record.Reason,
 			"constraints":       record.Constraints,
 			"approval_required": record.ApprovalRequired,
 			"approval_ref":      record.ApprovalRef,
@@ -2987,6 +3083,14 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job store or bus unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	var body struct {
+		Reason string `json:"reason"`
+		Note   string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
 	jobID := r.PathValue("job_id")
 	if jobID == "" {
 		http.Error(w, "missing job_id", http.StatusBadRequest)
@@ -3004,6 +3108,21 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	req, err := s.jobStore.GetJobRequest(r.Context(), jobID)
 	if err != nil {
 		http.Error(w, "job request not found", http.StatusNotFound)
+		return
+	}
+	if req.Labels == nil {
+		req.Labels = map[string]string{}
+	}
+	req.Labels["approval_granted"] = "true"
+	if strings.TrimSpace(body.Reason) != "" {
+		req.Labels["approval_reason"] = strings.TrimSpace(body.Reason)
+	}
+	if strings.TrimSpace(body.Note) != "" {
+		req.Labels["approval_note"] = strings.TrimSpace(body.Note)
+	}
+	req.Labels[bus.LabelBusMsgID] = "approval:" + uuid.NewString()
+	if err := s.jobStore.SetJobRequest(r.Context(), req); err != nil {
+		http.Error(w, "failed to persist approval request", http.StatusInternalServerError)
 		return
 	}
 	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending); err != nil {
@@ -3033,6 +3152,14 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job store or bus unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	var body struct {
+		Reason string `json:"reason"`
+		Note   string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
 	jobID := r.PathValue("job_id")
 	if jobID == "" {
 		http.Error(w, "missing job_id", http.StatusBadRequest)
@@ -3043,6 +3170,10 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	traceID, _ := s.jobStore.GetTraceID(r.Context(), jobID)
+	errorMessage := "approval rejected"
+	if strings.TrimSpace(body.Reason) != "" {
+		errorMessage = strings.TrimSpace(body.Reason)
+	}
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        "api-gateway",
@@ -3053,7 +3184,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 				JobId:        jobID,
 				Status:       pb.JobStatus_JOB_STATUS_DENIED,
 				ErrorCode:    "approval_rejected",
-				ErrorMessage: "approval rejected",
+				ErrorMessage: errorMessage,
 			},
 		},
 	}
@@ -3079,6 +3210,99 @@ func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(runs)
+}
+
+func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
+	if s.workflowStore == nil {
+		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	limit := int64(50)
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	cursor := int64(0)
+	if q := r.URL.Query().Get("cursor"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			cursor = v
+		}
+	}
+	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
+	workflowFilter := strings.TrimSpace(r.URL.Query().Get("workflow_id"))
+	orgFilter := strings.TrimSpace(r.URL.Query().Get("org_id"))
+	teamFilter := strings.TrimSpace(r.URL.Query().Get("team_id"))
+	updatedAfter := int64(0)
+	if q := r.URL.Query().Get("updated_after"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil {
+			updatedAfter = v
+		}
+	}
+	updatedBefore := int64(0)
+	if q := r.URL.Query().Get("updated_before"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil {
+			updatedBefore = v
+		}
+	}
+
+	cursor = normalizeTimestampSecondsUpper(cursor)
+	updatedAfter = normalizeTimestampSecondsUpper(updatedAfter)
+	updatedBefore = normalizeTimestampSecondsUpper(updatedBefore)
+
+	runs, err := s.workflowStore.ListRuns(r.Context(), cursor, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	filtered := make([]*wf.WorkflowRun, 0, len(runs))
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		if statusFilter != "" && string(run.Status) != statusFilter {
+			continue
+		}
+		if workflowFilter != "" && run.WorkflowID != workflowFilter {
+			continue
+		}
+		if orgFilter != "" && run.OrgID != orgFilter {
+			continue
+		}
+		if teamFilter != "" && run.TeamID != teamFilter {
+			continue
+		}
+		updatedAt := run.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = run.CreatedAt
+		}
+		if updatedAfter > 0 && updatedAt.Unix() < updatedAfter {
+			continue
+		}
+		if updatedBefore > 0 && updatedAt.Unix() > updatedBefore {
+			continue
+		}
+		filtered = append(filtered, run)
+	}
+	var nextCursor *int64
+	if len(runs) == int(limit) {
+		last := runs[len(runs)-1]
+		if last != nil {
+			ts := last.UpdatedAt
+			if ts.IsZero() {
+				ts = last.CreatedAt
+			}
+			if !ts.IsZero() {
+				nc := ts.Unix() - 1
+				nextCursor = &nc
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"items":       filtered,
+		"next_cursor": nextCursor,
+	})
 }
 
 func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {

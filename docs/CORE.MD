@@ -71,6 +71,7 @@ Core workflow engine must support **vanilla steps** that don’t require package
 - `condition` (evaluated expression, boolean output)
 - `notify` (emits a SystemAlert on the bus)
 - `worker` (dispatches a job to a topic/pool)
+- `depends_on` DAG dependencies (steps run when all deps succeed; independent steps run in parallel)
 
 Required properties:
 - durable run state (crash/restart safe)
@@ -80,6 +81,7 @@ Required properties:
 - full run timeline (inputs/outputs pointers, status transitions)
 - schema validation for workflow input and step input/output
 - rerun-from-step and dry-run mode
+ - dependency gating: failed/cancelled/timed-out deps block downstream steps (no implicit continue-on-error)
 
 **Why packages need it:** packages are just workflows + workers. If the workflow engine isn’t bulletproof, the “Incident→PR” product will be unreliable.
 

@@ -876,19 +876,30 @@ Following HashiCorp's three-affordance pattern:
 │  POLICY                                                                    │
 │  ├─ GET  /api/v1/approvals                            → List approvals    │
 │  ├─ POST /api/v1/approvals/{id}/approve               → Approve           │
-│  ├─ POST /api/v1/approvals/{id}/deny                  → Deny              │
+│  ├─ POST /api/v1/approvals/{id}/reject                → Reject            │
+│  ├─ POST /api/v1/policy/evaluate                      → Evaluate policy   │
 │  ├─ POST /api/v1/policy/simulate                      → Simulate policy   │
 │  ├─ POST /api/v1/policy/explain                       → Explain decision  │
-│  └─ GET  /api/v1/policy/snapshots                     → Policy versions   │
+│  ├─ GET  /api/v1/policy/snapshots                     → Policy versions   │
+│  ├─ GET  /api/v1/policy/rules                         → Policy rules      │
+│  ├─ GET  /api/v1/policy/bundles                       → Policy bundles    │
+│  ├─ GET  /api/v1/policy/bundles/snapshots             → Bundle snapshots  │
+│  ├─ POST /api/v1/policy/bundles/snapshots             → Capture snapshot  │
+│  └─ GET  /api/v1/policy/bundles/snapshots/{id}        → Snapshot detail   │
 │                                                                             │
 │  PACKS                                                                     │
-│  ├─ GET  /api/v1/config?scope=system&id=packs         → Installed packs   │
-│  └─ (pack install/uninstall via CLI or future API)                        │
+│  ├─ GET  /api/v1/packs                                → Installed packs   │
+│  ├─ GET  /api/v1/packs/{id}                           → Pack detail       │
+│  ├─ POST /api/v1/packs/install                        → Install pack      │
+│  ├─ POST /api/v1/packs/{id}/verify                    → Verify pack       │
+│  └─ POST /api/v1/packs/{id}/uninstall                 → Uninstall pack    │
 │                                                                             │
 │  SYSTEM                                                                    │
 │  ├─ GET  /api/v1/workers                              → Worker list       │
 │  ├─ GET  /api/v1/dlq                                  → DLQ items         │
+│  ├─ GET  /api/v1/dlq/page                             → DLQ pagination    │
 │  ├─ POST /api/v1/dlq/{id}/retry                       → Retry DLQ item    │
+│  ├─ DEL  /api/v1/dlq/{id}                             → Delete DLQ item   │
 │  ├─ GET  /api/v1/config/effective                     → Effective config  │
 │  ├─ GET  /api/v1/schemas                              → Schema registry   │
 │  └─ GET  /api/v1/locks                                → Active locks      │
@@ -924,41 +935,41 @@ Following HashiCorp's three-affordance pattern:
 ## 9. Phased Implementation Plan
 
 ### Phase 1: Core Foundation (Weeks 1-3)
-- [ ] Project setup (Vite + React + TypeScript + Tailwind + shadcn/ui)
-- [ ] Authentication integration (API key header)
-- [ ] Base layout with navigation
-- [ ] Home page with attention items
-- [ ] Basic run list with filters
-- [ ] WebSocket connection for real-time updates
+- [x] Project setup (Vite + React + TypeScript + Tailwind + shadcn/ui)
+- [x] Authentication integration (API key header)
+- [x] Base layout with navigation
+- [x] Home page with attention items
+- [x] Basic run list with filters
+- [x] WebSocket connection for real-time updates
 
 ### Phase 2: Run Management (Weeks 4-5)
-- [ ] Run detail page with timeline view
-- [ ] DAG visualization with React Flow
-- [ ] Step details with input/output viewing
-- [ ] Run actions (cancel, rerun)
-- [ ] Slide-out drawer for quick view
+- [x] Run detail page with timeline view
+- [x] DAG visualization with React Flow
+- [x] Step details with input/output viewing
+- [x] Run actions (cancel, rerun)
+- [x] Slide-out drawer for quick view
 
 ### Phase 3: Policy & Approvals (Weeks 6-7)
-- [ ] Approvals inbox
-- [ ] Approve/deny actions with context preview
-- [ ] Policy rules list
-- [ ] Policy simulator
-- [ ] Decision audit log
+- [x] Approvals inbox
+- [x] Approve/deny actions with context preview
+- [x] Policy rules list
+- [x] Policy simulator
+- [x] Decision audit log
 
 ### Phase 4: Pack Management (Week 8)
-- [ ] Installed packs list
-- [ ] Pack detail view with resources
-- [ ] Worker health per pack
-- [ ] Pack verification status
+- [x] Installed packs list
+- [x] Pack detail view with resources
+- [x] Worker health per pack
+- [x] Pack verification status
 
 ### Phase 5: System & Polish (Weeks 9-10)
-- [ ] System health dashboard
-- [ ] DLQ management
-- [ ] Config viewer
-- [ ] Command palette (⌘K)
-- [ ] Saved views
-- [ ] Mobile responsive adjustments
-- [ ] Dark mode
+- [x] System health dashboard
+- [x] DLQ management
+- [x] Config viewer
+- [x] Command palette (⌘K)
+- [x] Saved views
+- [x] Mobile responsive adjustments
+- [x] Dark mode
 
 ### Phase 6: Advanced Features (Future)
 - [ ] Multi-tenant view switching

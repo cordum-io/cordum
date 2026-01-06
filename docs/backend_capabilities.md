@@ -42,6 +42,8 @@ This document tracks the current backend features, their status, and where they 
 - Storage: Redis workflows and runs (`core/workflow`), status indexes for reconciliation.
 - Execution: starts runs, dispatches ready steps as jobs (job ID = runID:stepID@attempt), consumes job results to advance run state.
 - Fan-out: `for_each` expression evaluated against run input/context; child jobs dispatched with index/item metadata; parent aggregated.
+- DAG deps: `depends_on` allows parallel independent steps; a step runs only after all dependencies succeed.
+- Failure semantics: failed/cancelled/timed-out deps block downstream steps (no implicit continue-on-error).
 - Dataflow: step `input` supports `${...}` expressions; step outputs are recorded in run context under `steps.<step_id>` and optionally `output_path`.
 - Step types: approval, delay (timer), notify (SystemAlert), condition (inline boolean output), worker.
 - Reliability: per-step retry/backoff (exponential), budget deadline hint from `timeout_sec`, approval steps pause/resume via API; job-result handling returns retryable errors (NAK) under transient store/lock failures so results aren’t dropped; reconciler replays terminal job states from JobStore and resumes delayed retries; tests cover fan-out/retry/approval/max_parallel.
