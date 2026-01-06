@@ -1,0 +1,202 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --bg: #f5efe6;
+  --surface: #fffaf2;
+  --surface-2: #eef4f1;
+  --text: #1f2a2e;
+  --muted: #5a6a70;
+  --accent: #0f7f7a;
+  --accent-2: #d4833a;
+  --success: #1f7a57;
+  --warning: #c58a1c;
+  --danger: #b83a3a;
+  --border: rgba(25, 36, 40, 0.12);
+  --ring: rgba(15, 127, 122, 0.35);
+  --shadow: rgba(18, 25, 28, 0.12);
+  --surface-glass: rgba(255, 252, 245, 0.7);
+  --bg-radial-1: rgba(15, 127, 122, 0.18);
+  --bg-radial-2: rgba(212, 131, 58, 0.16);
+  --bg-linear-1: #f6f1e8;
+  --bg-linear-2: #eef3f1;
+  --bg-linear-3: #f5efe5;
+  --overlay-1: rgba(0, 0, 0, 0.03);
+  --overlay-2: rgba(0, 0, 0, 0.02);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1416;
+  --surface: #141b1e;
+  --surface-2: #1b2529;
+  --text: #e5efec;
+  --muted: #a7b6b3;
+  --accent: #27b3a8;
+  --accent-2: #e49a52;
+  --success: #36b67c;
+  --warning: #d6a23e;
+  --danger: #e26a6a;
+  --border: rgba(229, 239, 236, 0.12);
+  --ring: rgba(39, 179, 168, 0.4);
+  --shadow: rgba(0, 0, 0, 0.45);
+  --surface-glass: rgba(20, 27, 30, 0.75);
+  --bg-radial-1: rgba(39, 179, 168, 0.2);
+  --bg-radial-2: rgba(228, 154, 82, 0.12);
+  --bg-linear-1: #0b1012;
+  --bg-linear-2: #0f171a;
+  --bg-linear-3: #111a1d;
+  --overlay-1: rgba(255, 255, 255, 0.04);
+  --overlay-2: rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme="dark"] .bg-white\/70 {
+  background-color: rgba(20, 27, 30, 0.82);
+}
+
+:root[data-theme="dark"] .bg-white\/80 {
+  background-color: rgba(20, 27, 30, 0.88);
+}
+
+:root[data-theme="dark"] .bg-white\/95 {
+  background-color: rgba(20, 27, 30, 0.96);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(900px circle at 10% -10%, var(--bg-radial-1), transparent 55%),
+    radial-gradient(700px circle at 90% 0%, var(--bg-radial-2), transparent 45%),
+    linear-gradient(120deg, var(--bg-linear-1) 0%, var(--bg-linear-2) 55%, var(--bg-linear-3) 100%);
+  position: relative;
+}
+
+pre {
+  font-family: "IBM Plex Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(120deg, var(--overlay-1) 0%, transparent 40%),
+    linear-gradient(90deg, var(--overlay-2) 0%, transparent 35%);
+  opacity: 0.25;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+::selection {
+  background: rgba(15, 127, 122, 0.2);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-scan {
+  0% {
+    box-shadow: 0 0 0 0 rgba(15, 127, 122, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(15, 127, 122, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(15, 127, 122, 0);
+  }
+}
+
+.animate-rise {
+  animation: rise-in 0.6s ease-out both;
+}
+
+.animate-scan {
+  animation: pulse-scan 2.8s ease-out infinite;
+}
+
+.glass-panel {
+  background: var(--surface-glass);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 10px 30px rgba(18, 25, 28, 0.08);
+}
+
+.surface-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 30px rgba(18, 25, 28, 0.08);
+}
+
+.attention-card {
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: var(--surface-glass);
+  padding: 18px 20px;
+  box-shadow: 0 18px 35px rgba(18, 25, 28, 0.12);
+}
+
+.list-row {
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface-glass);
+  padding: 14px 16px;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.list-row:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(15, 127, 122, 0.6), rgba(212, 131, 58, 0.5));
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.clip-triangle {
+  clip-path: polygon(50% 0, 0 100%, 100% 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-scan {
+    animation: none;
+  }
+}

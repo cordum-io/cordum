@@ -107,6 +107,45 @@ func TestWorkflowRunsCRUD(t *testing.T) {
 	}
 }
 
+func TestWorkflowListRunsAll(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	run1 := &WorkflowRun{
+		ID:         "run-a",
+		WorkflowID: "wf-1",
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+	}
+	run2 := &WorkflowRun{
+		ID:         "run-b",
+		WorkflowID: "wf-2",
+		OrgID:      "org-1",
+		Status:     RunStatusRunning,
+		Steps:      map[string]*StepRun{},
+	}
+	if err := store.CreateRun(ctx, run1); err != nil {
+		t.Fatalf("create run1: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := store.CreateRun(ctx, run2); err != nil {
+		t.Fatalf("create run2: %v", err)
+	}
+
+	list, err := store.ListRuns(ctx, time.Now().UTC().Unix(), 10)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(list))
+	}
+	if list[0].ID != "run-b" {
+		t.Fatalf("expected newest run-b first, got %s", list[0].ID)
+	}
+}
+
 func TestWorkflowDeleteRemovesIndexes(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()

@@ -392,3 +392,42 @@ spec:
   - name: http
     port: 9093
     targetPort: 9093
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coretex-dashboard
+  namespace: coretex
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: coretex-dashboard}
+  template:
+    metadata:
+      labels: {app: coretex-dashboard}
+    spec:
+      containers:
+      - name: dashboard
+        image: coretex-dashboard
+        env:
+        - name: CORETEX_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: coretex-api-key
+              key: API_KEY
+        - name: CORETEX_TENANT_ID
+          value: default
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coretex-dashboard
+  namespace: coretex
+spec:
+  selector: {app: coretex-dashboard}
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

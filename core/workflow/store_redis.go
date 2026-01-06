@@ -327,6 +327,53 @@ func (s *RedisStore) ListRunsByWorkflow(ctx context.Context, workflowID string, 
 	return out, nil
 }
 
+// ListRuns returns recent runs across all workflows, ordered by updated time.
+func (s *RedisStore) ListRuns(ctx context.Context, cursorUnix int64, limit int64) ([]*WorkflowRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if cursorUnix <= 0 {
+		cursorUnix = time.Now().UTC().Unix()
+	}
+	ids, err := s.client.ZRevRangeByScore(ctx, runAllIndexKey(), &redis.ZRangeBy{
+		Max:    fmt.Sprintf("%d", cursorUnix),
+		Min:    "-inf",
+		Offset: 0,
+		Count:  limit,
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []*WorkflowRun{}, nil
+	}
+
+	pipe := s.client.Pipeline()
+	cmds := make(map[string]*redis.StringCmd, len(ids))
+	for _, id := range ids {
+		cmds[id] = pipe.Get(ctx, runKey(id))
+	}
+	_, _ = pipe.Exec(ctx)
+
+	out := make([]*WorkflowRun, 0, len(ids))
+	for _, id := range ids {
+		cmd := cmds[id]
+		if cmd == nil {
+			continue
+		}
+		data, err := cmd.Bytes()
+		if err != nil {
+			continue
+		}
+		var run WorkflowRun
+		if err := json.Unmarshal(data, &run); err != nil {
+			continue
+		}
+		out = append(out, &run)
+	}
+	return out, nil
+}
+
 // AppendTimelineEvent records a workflow run event in append-only order.
 func (s *RedisStore) AppendTimelineEvent(ctx context.Context, runID string, event *TimelineEvent) error {
 	if runID == "" {

@@ -164,6 +164,8 @@ func main() {
 	dispatchTimeout, runningTimeout, scanInterval := reconcilerTimeouts(snapshot.Timeouts)
 	reconciler := scheduler.NewReconciler(jobStore, dispatchTimeout, runningTimeout, scanInterval)
 	go reconciler.Start(ctx)
+	pendingReplayer := scheduler.NewPendingReplayer(engine, jobStore, dispatchTimeout, scanInterval)
+	go pendingReplayer.Start(ctx)
 
 	go watchConfigChanges(ctx, configSvc, poolCfg, timeoutsCfg, strategy, reconciler)
 

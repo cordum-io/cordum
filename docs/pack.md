@@ -102,12 +102,13 @@ tests:
 - Topics: `job.<pack_id>.*`
 - Workflow IDs: `<pack_id>.<name>`
 - Schema IDs: `<pack_id>/<name>`
-- Pool names: must start with `<pack_id>`
+- Pool names **created by the pack** must start with `<pack_id>`. Packs may map topics to pre-existing pools.
 
 ## Install flow
 
 `coretexctl pack install <path|url>` performs:
 
+0) Acquire locks: `packs:global` + `pack:<id>` (single-writer semantics).
 1) Validate `pack.yaml` (namespacing, protocol version).
 2) Collision checks:
    - Schema/workflow id exists + different digest -> fail unless `--upgrade`.
@@ -117,15 +118,28 @@ tests:
 6) Apply policy fragments into config service bundle.
 7) Write pack registry record to `cfg:system:packs`.
 
+### Atomicity + rollback (best-effort)
+
+If any step after writes begin fails, the installer attempts to roll back:
+- revert config overlays to the previous snapshot
+- restore previous policy fragment values (or delete if newly added)
+- delete schemas/workflows created in this attempt; restore previous versions when upgrading
+
 ### Policy fragments
 
 Policy fragments are stored in `cfg:system:policy` under `bundles`:
 
 ```
-cfg:system:policy.data.bundles["<pack_id>/<version>/<name>"] = "<yaml>"
+cfg:system:policy.data.bundles["<pack_id>/<name>"] = {
+  content: "<yaml>",
+  version: "<pack_version>",
+  sha256: "<digest>",
+  installed_at: "<rfc3339>"
+}
 ```
 
 Safety kernel merges file/URL policy with config service fragments on load/reload.
+Snapshot hashes are combined (e.g. `baseSnapshot|cfg:<hash>`).
 
 Related env vars:
 - `SAFETY_POLICY_CONFIG_SCOPE` (default `system`)
@@ -139,6 +153,10 @@ Related env vars:
 Config overlays use **json_merge_patch** semantics:
 - `null` deletes a key (used by uninstall).
 - Supported top-level keys: `pools`, `timeouts`.
+
+`overlays.config[].key` targets a field inside a config document (`cfg:<scope>:<scope_id>`).
+For example, `scope: system` + `scope_id: default` + `key: pools` patches `cfg:system:default.data.pools`.
+If `scope_id` is omitted for system scope, the default is `default`.
 
 `pools` patch supports:
 - `topics`: map of `topic -> pool(s)`
@@ -164,6 +182,11 @@ On startup the scheduler bootstraps defaults from `config/pools.yaml` and
 
 `--purge` additionally deletes workflows and schemas that the pack installed.
 
+## Upgrade flow
+
+For upgrades, schemas/workflows are upserted; config and policy overlays replace previous values.
+Policy fragment keys are stable per pack+name so upgrades overwrite in place.
+
 ## CLI commands
 
 ```bash
@@ -181,7 +204,7 @@ coretexctl pack uninstall sre-investigator --purge
 Flags:
 - `--inactive` installs workflows/schemas but skips pool mappings (pack is INACTIVE).
 - `--upgrade` overwrites existing schemas/workflows if digest differs.
-- `--force` skips core version check when `minCoreVersion` is set.
+- `--force` bypasses `minCoreVersion` validation (currently advisory; requires `--force`).
 - `--dry-run` prints intent without writing.
 
 ## Pack registry
@@ -205,4 +228,3 @@ This maps directly to CAP `JobMetadata` during dispatch.
 - `compatibility.protocolVersion` must match the CAP wire protocol (currently `1`).
 - `minCoreVersion` is enforced only when gateway exposes build info; otherwise install
   requires `--force`.
-

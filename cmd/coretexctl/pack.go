@@ -230,6 +230,10 @@ func runPackInstall(args []string) {
 
 	appliedConfig := []packAppliedConfigOverlay{}
 	appliedPolicy := []packAppliedPolicyOverlay{}
+	appliedConfigChanges := []appliedConfigChange{}
+	appliedPolicyChanges := []appliedPolicyChange{}
+	appliedSchemas := []schemaPlan{}
+	appliedWorkflows := []workflowPlan{}
 	schemaDigests := map[string]string{}
 	workflowDigests := map[string]string{}
 	for _, plan := range schemaPlans {
@@ -244,17 +248,43 @@ func runPackInstall(args []string) {
 		return
 	}
 
+	rollback := func() {
+		for i := len(appliedConfigChanges) - 1; i >= 0; i-- {
+			_ = restoreConfigOverlay(ctx, client, appliedConfigChanges[i])
+		}
+		for i := len(appliedPolicyChanges) - 1; i >= 0; i-- {
+			_ = restorePolicyOverlay(ctx, client, appliedPolicyChanges[i])
+		}
+		for i := len(appliedWorkflows) - 1; i >= 0; i-- {
+			_ = rollbackWorkflow(ctx, client, appliedWorkflows[i])
+		}
+		for i := len(appliedSchemas) - 1; i >= 0; i-- {
+			_ = rollbackSchema(ctx, client, appliedSchemas[i])
+		}
+	}
+
+	installFail := func(err error) {
+		rollback()
+		fail(err.Error())
+	}
+
 	for _, plan := range schemaPlans {
 		if plan.Noop {
 			continue
 		}
-		check(client.registerSchema(ctx, plan.ID, plan.Schema))
+		if err := client.registerSchema(ctx, plan.ID, plan.Schema); err != nil {
+			installFail(err)
+		}
+		appliedSchemas = append(appliedSchemas, plan)
 	}
 	for _, plan := range workflowPlans {
 		if plan.Noop {
 			continue
 		}
-		check(client.createWorkflow(ctx, plan.Workflow))
+		if err := client.createWorkflow(ctx, plan.Workflow); err != nil {
+			installFail(err)
+		}
+		appliedWorkflows = append(appliedWorkflows, plan)
 	}
 
 	for _, overlay := range manifest.Overlays.Config {
@@ -262,16 +292,22 @@ func runPackInstall(args []string) {
 			continue
 		}
 		applied, err := applyConfigOverlay(ctx, client, overlay, manifest.Metadata.ID, bundle.Dir)
-		check(err)
-		if applied.Name != "" {
-			appliedConfig = append(appliedConfig, applied)
+		if err != nil {
+			installFail(err)
+		}
+		if applied.Overlay.Name != "" {
+			appliedConfig = append(appliedConfig, applied.Overlay)
+			appliedConfigChanges = append(appliedConfigChanges, applied)
 		}
 	}
 	for _, overlay := range manifest.Overlays.Policy {
 		applied, err := applyPolicyOverlay(ctx, client, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundle.Dir)
-		check(err)
-		if applied.Name != "" {
-			appliedPolicy = append(appliedPolicy, applied)
+		if err != nil {
+			installFail(err)
+		}
+		if applied.Overlay.Name != "" {
+			appliedPolicy = append(appliedPolicy, applied.Overlay)
+			appliedPolicyChanges = append(appliedPolicyChanges, applied)
 		}
 	}
 
@@ -411,17 +447,32 @@ func runPackVerify(args []string) {
 }
 
 type schemaPlan struct {
-	ID     string
-	Schema map[string]any
-	Digest string
-	Noop   bool
+	ID          string
+	Schema      map[string]any
+	Digest      string
+	Existing    map[string]any
+	HadExisting bool
+	Noop        bool
 }
 
 type workflowPlan struct {
-	ID       string
-	Workflow map[string]any
-	Digest   string
-	Noop     bool
+	ID          string
+	Workflow    map[string]any
+	Digest      string
+	Existing    map[string]any
+	HadExisting bool
+	Noop        bool
+}
+
+type appliedConfigChange struct {
+	Overlay  packAppliedConfigOverlay
+	Previous any
+}
+
+type appliedPolicyChange struct {
+	Overlay     packAppliedPolicyOverlay
+	Previous    any
+	HadPrevious bool
 }
 
 func planSchemas(ctx context.Context, client *restClient, dir string, manifest *packManifest, upgrade bool) ([]schemaPlan, error) {
@@ -438,6 +489,8 @@ func planSchemas(ctx context.Context, client *restClient, dir string, manifest *
 				return nil, err
 			}
 		} else {
+			plan.Existing = existing
+			plan.HadExisting = true
 			existingDigest, err := hashValue(existing)
 			if err != nil {
 				return nil, err
@@ -467,6 +520,8 @@ func planWorkflows(ctx context.Context, client *restClient, dir string, manifest
 				return nil, err
 			}
 		} else {
+			plan.Existing = existing
+			plan.HadExisting = true
 			existingDigest, err := hashWorkflow(existing)
 			if err != nil {
 				return nil, err
@@ -613,27 +668,23 @@ func hasPoolOverlay(overlays []packAppliedConfigOverlay) bool {
 	return false
 }
 
-func applyConfigOverlay(ctx context.Context, client *restClient, overlay packConfigOverlay, packID, dir string) (packAppliedConfigOverlay, error) {
+func applyConfigOverlay(ctx context.Context, client *restClient, overlay packConfigOverlay, packID, dir string) (appliedConfigChange, error) {
 	key := strings.TrimSpace(overlay.Key)
 	if key == "" {
-		return packAppliedConfigOverlay{}, errors.New("config overlay key required")
+		return appliedConfigChange{}, errors.New("config overlay key required")
 	}
 	strategy := strings.TrimSpace(overlay.Strategy)
 	if strategy != "" && strategy != "json_merge_patch" {
-		return packAppliedConfigOverlay{}, fmt.Errorf("unsupported config overlay strategy %q", strategy)
+		return appliedConfigChange{}, fmt.Errorf("unsupported config overlay strategy %q", strategy)
 	}
 	patch, err := loadPatchFile(dir, overlay.Path)
 	if err != nil {
-		return packAppliedConfigOverlay{}, err
+		return appliedConfigChange{}, err
 	}
 	patchMap, ok := patch.(map[string]any)
 	if !ok {
-		return packAppliedConfigOverlay{}, errors.New("config overlay patch must be a map")
+		return appliedConfigChange{}, errors.New("config overlay patch must be a map")
 	}
-	if err := validateConfigPatch(key, patchMap, packID); err != nil {
-		return packAppliedConfigOverlay{}, err
-	}
-
 	scope := strings.TrimSpace(overlay.Scope)
 	if scope == "" {
 		scope = "system"
@@ -645,7 +696,7 @@ func applyConfigOverlay(ctx context.Context, client *restClient, overlay packCon
 	doc, err := client.getConfig(ctx, scope, scopeID)
 	if err != nil {
 		if !isNotFound(err) {
-			return packAppliedConfigOverlay{}, err
+			return appliedConfigChange{}, err
 		}
 		doc = &configDoc{Scope: scope, ScopeID: scopeID, Data: map[string]any{}}
 	}
@@ -653,17 +704,24 @@ func applyConfigOverlay(ctx context.Context, client *restClient, overlay packCon
 		doc.Data = map[string]any{}
 	}
 	current := normalizeJSON(doc.Data[key])
+	if err := validateConfigPatch(key, patchMap, packID, current); err != nil {
+		return appliedConfigChange{}, err
+	}
+	before := deepCopy(current)
 	updated := mergePatch(current, patchMap)
 	doc.Data[key] = updated
 	if err := client.setConfig(ctx, doc); err != nil {
-		return packAppliedConfigOverlay{}, err
+		return appliedConfigChange{}, err
 	}
-	return packAppliedConfigOverlay{
-		Name:    overlay.Name,
-		Scope:   scope,
-		ScopeID: scopeID,
-		Key:     key,
-		Patch:   patchMap,
+	return appliedConfigChange{
+		Overlay: packAppliedConfigOverlay{
+			Name:    overlay.Name,
+			Scope:   scope,
+			ScopeID: scopeID,
+			Key:     key,
+			Patch:   patchMap,
+		},
+		Previous: before,
 	}, nil
 }
 
@@ -688,20 +746,40 @@ func removeConfigOverlay(ctx context.Context, client *restClient, overlay packAp
 	return client.setConfig(ctx, doc)
 }
 
-func applyPolicyOverlay(ctx context.Context, client *restClient, overlay packPolicyOverlay, packID, packVersion, dir string) (packAppliedPolicyOverlay, error) {
+func restoreConfigOverlay(ctx context.Context, client *restClient, change appliedConfigChange) error {
+	overlay := change.Overlay
+	doc, err := client.getConfig(ctx, overlay.Scope, overlay.ScopeID)
+	if err != nil {
+		if !isNotFound(err) {
+			return err
+		}
+		doc = &configDoc{Scope: overlay.Scope, ScopeID: overlay.ScopeID, Data: map[string]any{}}
+	}
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
+	}
+	if change.Previous == nil {
+		delete(doc.Data, overlay.Key)
+	} else {
+		doc.Data[overlay.Key] = deepCopy(change.Previous)
+	}
+	return client.setConfig(ctx, doc)
+}
+
+func applyPolicyOverlay(ctx context.Context, client *restClient, overlay packPolicyOverlay, packID, packVersion, dir string) (appliedPolicyChange, error) {
 	strategy := strings.TrimSpace(overlay.Strategy)
 	if strategy != "" && strategy != "bundle_fragment" {
-		return packAppliedPolicyOverlay{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
+		return appliedPolicyChange{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
 	}
 	content, err := os.ReadFile(filepath.Join(dir, overlay.Path))
 	if err != nil {
-		return packAppliedPolicyOverlay{}, err
+		return appliedPolicyChange{}, err
 	}
-	fragmentID := policyFragmentID(packID, packVersion, overlay.Name)
+	fragmentID := policyFragmentID(packID, overlay.Name)
 	doc, err := client.getConfig(ctx, policyConfigScope, policyConfigID)
 	if err != nil {
 		if !isNotFound(err) {
-			return packAppliedPolicyOverlay{}, err
+			return appliedPolicyChange{}, err
 		}
 		doc = &configDoc{Scope: policyConfigScope, ScopeID: policyConfigID, Data: map[string]any{}}
 	}
@@ -713,14 +791,26 @@ func applyPolicyOverlay(ctx context.Context, client *restClient, overlay packPol
 	if bundles == nil {
 		bundles = map[string]any{}
 	}
-	bundles[fragmentID] = string(content)
+	previous, hadPrevious := bundles[fragmentID]
+	installedAt := time.Now().UTC().Format(time.RFC3339)
+	sum := sha256.Sum256(content)
+	bundles[fragmentID] = map[string]any{
+		"content":      string(content),
+		"version":      packVersion,
+		"sha256":       hex.EncodeToString(sum[:]),
+		"installed_at": installedAt,
+	}
 	doc.Data[policyConfigKey] = bundles
 	if err := client.setConfig(ctx, doc); err != nil {
-		return packAppliedPolicyOverlay{}, err
+		return appliedPolicyChange{}, err
 	}
-	return packAppliedPolicyOverlay{
-		Name:       overlay.Name,
-		FragmentID: fragmentID,
+	return appliedPolicyChange{
+		Overlay: packAppliedPolicyOverlay{
+			Name:       overlay.Name,
+			FragmentID: fragmentID,
+		},
+		Previous:    deepCopy(previous),
+		HadPrevious: hadPrevious,
 	}, nil
 }
 
@@ -742,12 +832,51 @@ func removePolicyOverlay(ctx context.Context, client *restClient, overlay packAp
 	return client.setConfig(ctx, doc)
 }
 
-func policyFragmentID(packID, version, name string) string {
+func restorePolicyOverlay(ctx context.Context, client *restClient, change appliedPolicyChange) error {
+	doc, err := client.getConfig(ctx, policyConfigScope, policyConfigID)
+	if err != nil {
+		if !isNotFound(err) {
+			return err
+		}
+		doc = &configDoc{Scope: policyConfigScope, ScopeID: policyConfigID, Data: map[string]any{}}
+	}
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
+	}
+	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
+	bundles, _ := rawBundles.(map[string]any)
+	if bundles == nil {
+		bundles = map[string]any{}
+	}
+	if !change.HadPrevious {
+		delete(bundles, change.Overlay.FragmentID)
+	} else {
+		bundles[change.Overlay.FragmentID] = deepCopy(change.Previous)
+	}
+	doc.Data[policyConfigKey] = bundles
+	return client.setConfig(ctx, doc)
+}
+
+func policyFragmentID(packID, name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "default"
 	}
-	return fmt.Sprintf("%s/%s/%s", packID, version, name)
+	return fmt.Sprintf("%s/%s", packID, name)
+}
+
+func rollbackSchema(ctx context.Context, client *restClient, plan schemaPlan) error {
+	if plan.HadExisting && plan.Existing != nil {
+		return client.registerSchema(ctx, plan.ID, plan.Existing)
+	}
+	return client.deleteSchema(ctx, plan.ID)
+}
+
+func rollbackWorkflow(ctx context.Context, client *restClient, plan workflowPlan) error {
+	if plan.HadExisting && plan.Existing != nil {
+		return client.createWorkflow(ctx, plan.Existing)
+	}
+	return client.deleteWorkflow(ctx, plan.ID)
 }
 
 func runPolicySimulation(ctx context.Context, client *restClient, test packPolicySimulation, packID string) error {
@@ -969,10 +1098,10 @@ func loadPatchFile(dir, relPath string) (any, error) {
 	return loadDataFile(filepath.Join(dir, relPath))
 }
 
-func validateConfigPatch(key string, patch map[string]any, packID string) error {
+func validateConfigPatch(key string, patch map[string]any, packID string, current any) error {
 	switch strings.ToLower(key) {
 	case "pools":
-		return validatePoolsPatch(patch, packID)
+		return validatePoolsPatch(patch, packID, current)
 	case "timeouts":
 		return validateTimeoutsPatch(patch, packID)
 	default:
@@ -980,7 +1109,7 @@ func validateConfigPatch(key string, patch map[string]any, packID string) error 
 	}
 }
 
-func validatePoolsPatch(patch map[string]any, packID string) error {
+func validatePoolsPatch(patch map[string]any, packID string, current any) error {
 	rawTopics := normalizeJSON(patch["topics"])
 	if rawTopics != nil {
 		topics, ok := rawTopics.(map[string]any)
@@ -999,7 +1128,11 @@ func validatePoolsPatch(patch map[string]any, packID string) error {
 		if !ok {
 			return errors.New("pools.pools must be a map")
 		}
+		existingPools := extractPools(current)
 		for pool := range pools {
+			if _, ok := existingPools[pool]; ok {
+				continue
+			}
 			if !strings.HasPrefix(pool, packID) {
 				return fmt.Errorf("pool %q must be namespaced under %s", pool, packID)
 			}
@@ -1011,6 +1144,23 @@ func validatePoolsPatch(patch map[string]any, packID string) error {
 		}
 	}
 	return nil
+}
+
+func extractPools(current any) map[string]struct{} {
+	out := map[string]struct{}{}
+	currentMap, ok := normalizeJSON(current).(map[string]any)
+	if !ok || currentMap == nil {
+		return out
+	}
+	rawPools := normalizeJSON(currentMap["pools"])
+	pools, ok := rawPools.(map[string]any)
+	if !ok || pools == nil {
+		return out
+	}
+	for name := range pools {
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func validateTimeoutsPatch(patch map[string]any, packID string) error {
@@ -1127,6 +1277,21 @@ func normalizeJSON(value any) any {
 	default:
 		return v
 	}
+}
+
+func deepCopy(value any) any {
+	if value == nil {
+		return nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var out any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return value
+	}
+	return out
 }
 
 func hashValue(value any) (string, error) {
