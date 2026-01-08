@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { wsUrl } from "../lib/api";
+import { wsProtocols, wsUrl } from "../lib/api";
 import { useConfigStore } from "../state/config";
 import { useEventStore, type LiveEvent } from "../state/events";
 import type { BusPacket } from "../types/api";
@@ -114,8 +114,9 @@ export function useLiveBus() {
         return;
       }
       setStatus("connecting");
-      const url = wsUrl("/api/v1/stream", apiKey);
-      ws = new WebSocket(url);
+      const url = wsUrl("/api/v1/stream");
+      const protocols = wsProtocols(apiKey);
+      ws = protocols.length > 0 ? new WebSocket(url, protocols) : new WebSocket(url);
       ws.onopen = () => {
         retryRef.current = 0;
         setStatus("connected");

@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -54,6 +55,7 @@ const (
 	maxPromptChars        = 100000
 	defaultRateLimitRPS   = 50
 	defaultRateLimitBurst = 100
+	wsAPIKeyProtocol      = "coretex-api-key"
 )
 
 const (
@@ -98,7 +100,8 @@ type server struct {
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return isAllowedOrigin(r) },
+	CheckOrigin:  func(r *http.Request) bool { return isAllowedOrigin(r) },
+	Subprotocols: []string{wsAPIKeyProtocol},
 }
 
 type tokenBucket struct {
@@ -470,7 +473,7 @@ func Run(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("listen grpc (%s): %w", grpcAddr, err)
 	}
-	serverOpts := []grpc.ServerOption{grpc.Creds(insecure.NewCredentials())}
+	grpcCreds := insecure.NewCredentials()
 	if certFile := os.Getenv("GRPC_TLS_CERT"); certFile != "" {
 		keyFile := os.Getenv("GRPC_TLS_KEY")
 		if keyFile == "" {
@@ -478,11 +481,14 @@ func Run(cfg *config.Config) error {
 		} else if creds, err := credentials.NewServerTLSFromFile(certFile, keyFile); err != nil {
 			logging.Error("api-gateway", "grpc tls setup failed", "error", err)
 		} else {
-			serverOpts = []grpc.ServerOption{grpc.Creds(creds)}
+			grpcCreds = creds
 		}
 	}
 
-	grpcServer := grpc.NewServer(serverOpts...)
+	grpcServer := grpc.NewServer(
+		grpc.Creds(grpcCreds),
+		grpc.UnaryInterceptor(apiKeyUnaryInterceptor(requiredAPIKeyFromEnv())),
+	)
 	pb.RegisterCoretexApiServer(grpcServer, s)
 	reflection.Register(grpcServer)
 
@@ -749,9 +755,15 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("GET /api/v1/policy/snapshots", s.instrumented("/api/v1/policy/snapshots", s.handlePolicySnapshots))
 	mux.HandleFunc("GET /api/v1/policy/rules", s.instrumented("/api/v1/policy/rules", s.handlePolicyRules))
 	mux.HandleFunc("GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
+	mux.HandleFunc("GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
+	mux.HandleFunc("PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
+	mux.HandleFunc("POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
 	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleListPolicyBundleSnapshots))
 	mux.HandleFunc("POST /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleCapturePolicyBundleSnapshot))
 	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots/{id}", s.instrumented("/api/v1/policy/bundles/snapshots/{id}", s.handleGetPolicyBundleSnapshot))
+	mux.HandleFunc("POST /api/v1/policy/publish", s.instrumented("/api/v1/policy/publish", s.handlePublishPolicyBundles))
+	mux.HandleFunc("POST /api/v1/policy/rollback", s.instrumented("/api/v1/policy/rollback", s.handleRollbackPolicyBundles))
+	mux.HandleFunc("GET /api/v1/policy/audit", s.instrumented("/api/v1/policy/audit", s.handleListPolicyAudit))
 
 	// 7. Stream (WebSocket)
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
@@ -934,6 +946,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	safetyRecord, _ := s.jobStore.GetSafetyDecision(r.Context(), id)
+	approvalRecord, _ := s.jobStore.GetApprovalRecord(r.Context(), id)
 	topic, _ := s.jobStore.GetTopic(r.Context(), id)
 	tenant, _ := s.jobStore.GetTenant(r.Context(), id)
 	actorID, _ := s.jobStore.GetActorID(r.Context(), id)
@@ -1032,6 +1045,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		"safety_rule_id":     safetyRecord.RuleID,
 		"safety_snapshot":    safetyRecord.PolicySnapshot,
 		"safety_constraints": safetyRecord.Constraints,
+		"safety_job_hash":    safetyRecord.JobHash,
 		"approval_required":  safetyRecord.ApprovalRequired,
 		"approval_ref":       safetyRecord.ApprovalRef,
 		"labels":             labels,
@@ -1053,6 +1067,27 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if attemptsFromDLQ > 0 {
 		resp["attempts"] = attemptsFromDLQ
+	}
+	if approvalRecord.ApprovedBy != "" {
+		resp["approval_by"] = approvalRecord.ApprovedBy
+	}
+	if approvalRecord.ApprovedRole != "" {
+		resp["approval_role"] = approvalRecord.ApprovedRole
+	}
+	if approvalRecord.ApprovedAt != 0 {
+		resp["approval_at"] = approvalRecord.ApprovedAt
+	}
+	if approvalRecord.Reason != "" {
+		resp["approval_reason"] = approvalRecord.Reason
+	}
+	if approvalRecord.Note != "" {
+		resp["approval_note"] = approvalRecord.Note
+	}
+	if approvalRecord.PolicySnapshot != "" {
+		resp["approval_policy_snapshot"] = approvalRecord.PolicySnapshot
+	}
+	if approvalRecord.JobHash != "" {
+		resp["approval_job_hash"] = approvalRecord.JobHash
 	}
 	json.NewEncoder(w).Encode(resp)
 }
@@ -1658,7 +1693,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if required != "" {
 		key := normalizeAPIKey(r.Header.Get("X-API-Key"))
 		if key == "" {
-			key = normalizeAPIKey(r.URL.Query().Get("api_key"))
+			key = normalizeAPIKey(apiKeyFromWebSocket(r))
 		}
 		if key != required {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -1806,6 +1841,37 @@ func normalizeAPIKey(key string) string {
 	return strings.TrimSpace(key)
 }
 
+func apiKeyFromWebSocket(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	protocols := websocket.Subprotocols(r)
+	for i, protocol := range protocols {
+		if strings.EqualFold(protocol, wsAPIKeyProtocol) && i+1 < len(protocols) {
+			return decodeWSAPIKey(protocols[i+1])
+		}
+		if strings.HasPrefix(strings.ToLower(protocol), strings.ToLower(wsAPIKeyProtocol)+".") {
+			token := protocol[len(wsAPIKeyProtocol)+1:]
+			return decodeWSAPIKey(token)
+		}
+	}
+	return ""
+}
+
+func decodeWSAPIKey(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if decoded, err := base64.RawURLEncoding.DecodeString(raw); err == nil {
+		return string(decoded)
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil {
+		return string(decoded)
+	}
+	return raw
+}
+
 func requiredAPIKeyFromEnv() string {
 	if v := normalizeAPIKey(os.Getenv("CORETEX_SUPER_SECRET_API_TOKEN")); v != "" {
 		return v
@@ -1814,6 +1880,29 @@ func requiredAPIKeyFromEnv() string {
 		return v
 	}
 	return normalizeAPIKey(os.Getenv("API_KEY"))
+}
+
+func apiKeyUnaryInterceptor(required string) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if required == "" {
+			return handler(ctx, req)
+		}
+		key := ""
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			if raw := md.Get("x-api-key"); len(raw) > 0 {
+				key = normalizeAPIKey(raw[0])
+			}
+			if key == "" {
+				if raw := md.Get("api-key"); len(raw) > 0 {
+					key = normalizeAPIKey(raw[0])
+				}
+			}
+		}
+		if key != required {
+			return nil, status.Error(codes.Unauthenticated, "unauthorized")
+		}
+		return handler(ctx, req)
+	}
 }
 
 func addrFromEnv(key, fallback string) string {
@@ -1877,8 +1966,8 @@ func apiKeyMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		key := normalizeAPIKey(r.Header.Get("X-API-Key"))
-		if key == "" {
-			key = normalizeAPIKey(r.URL.Query().Get("api_key"))
+		if key == "" && websocket.IsWebSocketUpgrade(r) {
+			key = normalizeAPIKey(apiKeyFromWebSocket(r))
 		}
 		if key != required {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -3062,6 +3151,7 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			"policy_rule_id":    record.RuleID,
 			"policy_reason":     record.Reason,
 			"constraints":       record.Constraints,
+			"job_hash":          record.JobHash,
 			"approval_required": record.ApprovalRequired,
 			"approval_ref":      record.ApprovalRef,
 		})
@@ -3110,19 +3200,80 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job request not found", http.StatusNotFound)
 		return
 	}
+	safetyRecord, err := s.jobStore.GetSafetyDecision(r.Context(), jobID)
+	if err != nil {
+		http.Error(w, "safety decision unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !safetyRecord.ApprovalRequired && safetyRecord.Decision != scheduler.SafetyRequireApproval {
+		http.Error(w, "job not awaiting approval", http.StatusConflict)
+		return
+	}
+	if safetyRecord.JobHash == "" {
+		http.Error(w, "approval job hash unavailable", http.StatusConflict)
+		return
+	}
+	if safetyRecord.PolicySnapshot == "" {
+		http.Error(w, "approval policy snapshot unavailable", http.StatusConflict)
+		return
+	}
+	if s.safetyClient == nil {
+		http.Error(w, "safety kernel unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	snapResp, err := s.safetyClient.ListSnapshots(r.Context(), &pb.ListSnapshotsRequest{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	currentSnapshot := ""
+	if snapResp != nil && len(snapResp.Snapshots) > 0 {
+		currentSnapshot = strings.TrimSpace(snapResp.Snapshots[0])
+	}
+	if currentSnapshot == "" || currentSnapshot != safetyRecord.PolicySnapshot {
+		http.Error(w, "policy snapshot changed; re-evaluate before approving", http.StatusConflict)
+		return
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		http.Error(w, "failed to hash job request", http.StatusInternalServerError)
+		return
+	}
+	if hash != safetyRecord.JobHash {
+		http.Error(w, "job request changed; approval rejected", http.StatusConflict)
+		return
+	}
 	if req.Labels == nil {
 		req.Labels = map[string]string{}
 	}
 	req.Labels["approval_granted"] = "true"
-	if strings.TrimSpace(body.Reason) != "" {
-		req.Labels["approval_reason"] = strings.TrimSpace(body.Reason)
+	reason := strings.TrimSpace(body.Reason)
+	note := strings.TrimSpace(body.Note)
+	if reason != "" {
+		req.Labels["approval_reason"] = reason
 	}
-	if strings.TrimSpace(body.Note) != "" {
-		req.Labels["approval_note"] = strings.TrimSpace(body.Note)
+	if note != "" {
+		req.Labels["approval_note"] = note
 	}
 	req.Labels[bus.LabelBusMsgID] = "approval:" + uuid.NewString()
 	if err := s.jobStore.SetJobRequest(r.Context(), req); err != nil {
 		http.Error(w, "failed to persist approval request", http.StatusInternalServerError)
+		return
+	}
+	approvedBy := strings.TrimSpace(policyActorID(r))
+	if approvedBy == "" {
+		approvedBy = strings.TrimSpace(req.PrincipalId)
+	}
+	approvalRole := strings.TrimSpace(policyRole(r))
+	if err := s.jobStore.SetApprovalRecord(r.Context(), jobID, memory.ApprovalRecord{
+		ApprovedBy:     approvedBy,
+		ApprovedRole:   approvalRole,
+		Reason:         reason,
+		Note:           note,
+		PolicySnapshot: safetyRecord.PolicySnapshot,
+		JobHash:        safetyRecord.JobHash,
+	}); err != nil {
+		http.Error(w, "failed to persist approval record", http.StatusInternalServerError)
 		return
 	}
 	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending); err != nil {
@@ -3165,14 +3316,46 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing job_id", http.StatusBadRequest)
 		return
 	}
+	state, err := s.jobStore.GetState(r.Context(), jobID)
+	if err != nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	if state != scheduler.JobStateApproval {
+		http.Error(w, "job not awaiting approval", http.StatusConflict)
+		return
+	}
+	var principalID string
+	if req, err := s.jobStore.GetJobRequest(r.Context(), jobID); err == nil && req != nil {
+		principalID = strings.TrimSpace(req.PrincipalId)
+	}
+	safetyRecord, _ := s.jobStore.GetSafetyDecision(r.Context(), jobID)
+	reason := strings.TrimSpace(body.Reason)
+	note := strings.TrimSpace(body.Note)
+	approvedBy := strings.TrimSpace(policyActorID(r))
+	if approvedBy == "" {
+		approvedBy = principalID
+	}
+	approvalRole := strings.TrimSpace(policyRole(r))
+	if err := s.jobStore.SetApprovalRecord(r.Context(), jobID, memory.ApprovalRecord{
+		ApprovedBy:     approvedBy,
+		ApprovedRole:   approvalRole,
+		Reason:         reason,
+		Note:           note,
+		PolicySnapshot: safetyRecord.PolicySnapshot,
+		JobHash:        safetyRecord.JobHash,
+	}); err != nil {
+		http.Error(w, "failed to persist approval record", http.StatusInternalServerError)
+		return
+	}
 	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStateDenied); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	traceID, _ := s.jobStore.GetTraceID(r.Context(), jobID)
 	errorMessage := "approval rejected"
-	if strings.TrimSpace(body.Reason) != "" {
-		errorMessage = strings.TrimSpace(body.Reason)
+	if reason != "" {
+		errorMessage = reason
 	}
 	packet := &pb.BusPacket{
 		TraceId:         traceID,

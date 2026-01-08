@@ -11,6 +11,8 @@ This document summarizes the production-bound backend surface, where it lives in
   Code: `core/controlplane/scheduler/strategy_least_loaded.go`.
 - Reconciliation: timeouts for dispatched/running jobs; deadline expirations.
   Code: `core/controlplane/scheduler/reconciler.go`.
+- Pending replay: re-dispatches old PENDING jobs past the dispatch timeout.
+  Code: `core/controlplane/scheduler/pending_replayer.go`.
 
 ## Workflow engine
 - Store: Redis-backed workflows/runs and timeline.
@@ -21,7 +23,7 @@ This document summarizes the production-bound backend surface, where it lives in
   Code: `core/infra/schema`, `core/workflow/engine.go`.
 
 ## Safety kernel
-- Policy checks: allow/deny/require approval/constraints; snapshots and reload.
+- Policy checks: allow/deny/require approval/constraints; snapshots and reload from file/URL + config-service bundles (supports bundle `enabled=false`).
   Code: `core/controlplane/safetykernel/*`, `core/infra/config/safety_policy.go`.
 - Explain/simulate APIs exposed in gateway.
 
@@ -33,11 +35,12 @@ This document summarizes the production-bound backend surface, where it lives in
 ## API gateway
 - Jobs: submit/list/get/cancel with filters and cursor pagination.
 - Workflows: CRUD, runs start/get/list, approvals, rerun, timeline.
-- Policy: evaluate/simulate/explain + snapshots.
+- Policy: evaluate/simulate/explain + snapshots, bundle list/detail/update, bundle snapshots, publish/rollback, audit.
 - Schemas: register/get/list/delete.
 - Locks: acquire/release/renew/get.
 - Artifacts: put/get with retention.
 - DLQ: list/delete/retry.
+- Packs: install/list/show/verify/uninstall.
   Code: `core/controlplane/gateway/`.
 
 ## Artifacts, schemas, locks
@@ -52,6 +55,7 @@ This document summarizes the production-bound backend surface, where it lives in
 - SDK client + CAP runtime for workers.
   Code: `sdk/client`, `sdk/runtime`.
 - CLI: `cmd/coretexctl` (workflow/run/approval/dlq).
+- Pack CLI: `coretexctl pack ...`.
 
 ## Gaps / next
 - External artifact backends (S3) and secrets management (Vault/KMS).

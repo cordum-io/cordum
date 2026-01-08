@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -93,7 +94,7 @@ func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 }
 
-func TestHandleStreamHonorsAPIKeyQueryParam(t *testing.T) {
+func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
 	t.Setenv("API_KEY", "'super-secret-key'")
 
 	s := &server{
@@ -106,8 +107,10 @@ func TestHandleStreamHonorsAPIKeyQueryParam(t *testing.T) {
 	srv := newIPv4Server(t, apiKeyMiddleware(mux))
 	defer srv.Close()
 
-	okURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream?api_key=super-secret-key"
-	conn, _, err := websocket.DefaultDialer.Dial(okURL, nil)
+	okURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	token := base64.RawURLEncoding.EncodeToString([]byte("super-secret-key"))
+	dialer := websocket.Dialer{Subprotocols: []string{wsAPIKeyProtocol, token}}
+	conn, _, err := dialer.Dial(okURL, nil)
 	if err != nil {
 		t.Fatalf("websocket dial failed: %v", err)
 	}

@@ -45,6 +45,14 @@ const (
 	metaFieldSafetyConstraints = "safety_constraints"
 	metaFieldApprovalRequired  = "safety_approval_required"
 	metaFieldApprovalRef        = "safety_approval_ref"
+	metaFieldSafetyJobHash      = "safety_job_hash"
+	metaFieldApprovalBy         = "approval_by"
+	metaFieldApprovalRole       = "approval_role"
+	metaFieldApprovalAt         = "approval_at"
+	metaFieldApprovalReason     = "approval_reason"
+	metaFieldApprovalNote       = "approval_note"
+	metaFieldApprovalSnapshot   = "approval_policy_snapshot"
+	metaFieldApprovalJobHash    = "approval_job_hash"
 	envJobMetaTTL           = "JOB_META_TTL"
 	envJobMetaTTLSeconds    = "JOB_META_TTL_SECONDS"
 )
@@ -122,6 +130,17 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 type RedisJobStore struct {
 	client  *redis.Client
 	metaTTL time.Duration
+}
+
+// ApprovalRecord captures approval audit metadata stored on a job.
+type ApprovalRecord struct {
+	ApprovedBy      string
+	ApprovedRole    string
+	ApprovedAt      int64
+	Reason          string
+	Note            string
+	PolicySnapshot  string
+	JobHash         string
 }
 
 // CancelJob atomically cancels a job if it is not already terminal.
@@ -932,6 +951,9 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 		metaFieldApprovalRequired: record.ApprovalRequired,
 		metaFieldApprovalRef:       record.ApprovalRef,
 	}
+	if record.JobHash != "" {
+		fields[metaFieldSafetyJobHash] = record.JobHash
+	}
 	if constraintsJSON != "" {
 		fields[metaFieldSafetyConstraints] = constraintsJSON
 	}
@@ -944,6 +966,7 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 		"constraints":      json.RawMessage(constraintsJSON),
 		"approval_required": record.ApprovalRequired,
 		"approval_ref":      record.ApprovalRef,
+		"job_hash":          record.JobHash,
 		"checked_at":        record.CheckedAt,
 	}
 	encoded, _ := json.Marshal(entry)
@@ -959,6 +982,58 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	return err
 }
 
+// SetApprovalRecord stores approval audit metadata on the job.
+func (s *RedisJobStore) SetApprovalRecord(ctx context.Context, jobID string, record ApprovalRecord) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	if record.ApprovedAt == 0 {
+		record.ApprovedAt = nowUnixMicros()
+	}
+	fields := map[string]any{
+		metaFieldApprovalBy:       record.ApprovedBy,
+		metaFieldApprovalRole:     record.ApprovedRole,
+		metaFieldApprovalAt:       record.ApprovedAt,
+		metaFieldApprovalReason:   record.Reason,
+		metaFieldApprovalNote:     record.Note,
+		metaFieldApprovalSnapshot: record.PolicySnapshot,
+		metaFieldApprovalJobHash:  record.JobHash,
+	}
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, jobMetaKey(jobID), fields)
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// GetApprovalRecord loads approval audit metadata from the job.
+func (s *RedisJobStore) GetApprovalRecord(ctx context.Context, jobID string) (ApprovalRecord, error) {
+	if jobID == "" {
+		return ApprovalRecord{}, fmt.Errorf("jobID required")
+	}
+	meta := jobMetaKey(jobID)
+	data, err := s.client.HGetAll(ctx, meta).Result()
+	if err != nil && err != redis.Nil {
+		return ApprovalRecord{}, err
+	}
+	record := ApprovalRecord{
+		ApprovedBy:     data[metaFieldApprovalBy],
+		ApprovedRole:   data[metaFieldApprovalRole],
+		Reason:         data[metaFieldApprovalReason],
+		Note:           data[metaFieldApprovalNote],
+		PolicySnapshot: data[metaFieldApprovalSnapshot],
+		JobHash:        data[metaFieldApprovalJobHash],
+	}
+	if raw := data[metaFieldApprovalAt]; raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			record.ApprovedAt = parsed
+		}
+	}
+	return record, nil
+}
+
 func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (scheduler.SafetyDecisionRecord, error) {
 	meta := jobMetaKey(jobID)
 	data, err := s.client.HGetAll(ctx, meta).Result()
@@ -971,6 +1046,7 @@ func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (sc
 		RuleID:         data[metaFieldSafetyRuleID],
 		PolicySnapshot: data[metaFieldSafetySnapshot],
 		ApprovalRef:    data[metaFieldApprovalRef],
+		JobHash:        data[metaFieldSafetyJobHash],
 	}
 	if data[metaFieldApprovalRequired] == "true" {
 		record.ApprovalRequired = true
@@ -1013,6 +1089,7 @@ func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, l
 			RuleID:         stringFromEntry(entry, "rule_id"),
 			PolicySnapshot: stringFromEntry(entry, "policy_snapshot"),
 			ApprovalRef:    stringFromEntry(entry, "approval_ref"),
+			JobHash:        stringFromEntry(entry, "job_hash"),
 		}
 		if val, ok := entry["approval_required"].(bool); ok {
 			record.ApprovalRequired = val

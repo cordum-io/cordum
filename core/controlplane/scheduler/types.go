@@ -141,5 +141,6 @@ type SafetyDecisionRecord struct {
 	Constraints      *pb.PolicyConstraints `json:"constraints,omitempty"`
 	ApprovalRequired bool                  `json:"approval_required,omitempty"`
 	ApprovalRef      string                `json:"approval_ref,omitempty"`
+	JobHash          string                `json:"job_hash,omitempty"`
 	CheckedAt        int64                 `json:"checked_at,omitempty"`
 }

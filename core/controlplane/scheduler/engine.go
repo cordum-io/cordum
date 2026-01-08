@@ -488,25 +488,37 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 		}
 	}
 	if approved {
-		record = SafetyDecisionRecord{
-			Decision:  SafetyAllow,
-			Reason:    "approval granted",
-			CheckedAt: time.Now().UTC().UnixNano() / int64(time.Microsecond),
-		}
 		if e.jobStore != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
-			if prev, err := e.jobStore.GetSafetyDecision(ctx, jobID); err == nil {
-				record.Constraints = prev.Constraints
-				record.PolicySnapshot = prev.PolicySnapshot
-				record.RuleID = prev.RuleID
-			}
-			if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
-				cancel()
-				return record, err
-			}
+			prev, err := e.jobStore.GetSafetyDecision(ctx, jobID)
 			cancel()
+			if err == nil && prev.ApprovalRequired && prev.JobHash != "" {
+				hash, err := HashJobRequest(req)
+				if err == nil && hash == prev.JobHash {
+					record = SafetyDecisionRecord{
+						Decision:       SafetyAllow,
+						Reason:         "approval granted",
+						CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
+						Constraints:    prev.Constraints,
+						PolicySnapshot: prev.PolicySnapshot,
+						RuleID:         prev.RuleID,
+						JobHash:        prev.JobHash,
+					}
+					if e.jobStore != nil {
+						ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+						if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+							cancel()
+							return record, err
+						}
+						cancel()
+					}
+					return record, nil
+				}
+				logging.Info("scheduler", "approval label ignored (hash mismatch)", "job_id", jobID)
+			} else {
+				logging.Info("scheduler", "approval label ignored (no approval record)", "job_id", jobID)
+			}
 		}
-		return record, nil
 	}
 
 	record, err := e.safety.Check(req)
@@ -515,6 +527,13 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 	}
 	if record.ApprovalRequired && (record.Decision == SafetyAllow || record.Decision == SafetyAllowWithConstraints) {
 		record.Decision = SafetyRequireApproval
+	}
+	if record.Decision == SafetyRequireApproval || record.ApprovalRequired {
+		if hash, err := HashJobRequest(req); err == nil {
+			record.JobHash = hash
+		} else {
+			logging.Error("scheduler", "job hash failed", "job_id", jobID, "error", err)
+		}
 	}
 	if e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)

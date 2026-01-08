@@ -8,12 +8,16 @@ json_escape() {
 API_BASE=$(json_escape "${CORETEX_API_BASE_URL:-}")
 API_KEY=$(json_escape "${CORETEX_API_KEY:-}")
 TENANT_ID=$(json_escape "${CORETEX_TENANT_ID:-default}")
+PRINCIPAL_ID=$(json_escape "${CORETEX_PRINCIPAL_ID:-}")
+PRINCIPAL_ROLE=$(json_escape "${CORETEX_PRINCIPAL_ROLE:-}")
 
 cat > /usr/share/nginx/html/config.json <<CONFIGEOF
 {
   "apiBaseUrl": "${API_BASE}",
   "apiKey": "${API_KEY}",
-  "tenantId": "${TENANT_ID}"
+  "tenantId": "${TENANT_ID}",
+  "principalId": "${PRINCIPAL_ID}",
+  "principalRole": "${PRINCIPAL_ROLE}"
 }
 CONFIGEOF
 

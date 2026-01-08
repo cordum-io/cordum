@@ -45,6 +45,10 @@ CAP is the canonical contract; coretexOS does not duplicate these protos.
   - `context_ptr` (Redis URL, e.g., `redis://ctx:<job_id>`). `result_ptr` is carried on `JobResult`.
   - `memory_id` (long-lived memory namespace), `tenant_id`, `principal_id`, `labels` (routing + observability).
   - `adapter_id` (optional worker mode), `env` map (tenant fallback), workflow metadata (e.g. `parent_job_id`, `workflow_id`), plus `context_hints` and `budget` (token + deadline hints).
+
+Priority semantics:
+- The scheduler treats `priority` as metadata only (no preemption or queue ordering today).
+- Workers may choose to use it for local ordering, but core does not enforce it.
 - **JobResult**
   - `job_id`, `status` (`PENDING|SCHEDULED|DISPATCHED|RUNNING|SUCCEEDED|FAILED|CANCELLED|DENIED|TIMEOUT`), `result_ptr`, `worker_id`, `execution_ms`, optional `error_code`/`error_message`.
 - **JobProgress**

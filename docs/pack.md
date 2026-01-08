@@ -17,6 +17,15 @@ A pack is either:
 - a directory containing `pack.yaml`, or
 - a `.tgz` archive whose root contains `pack.yaml` (or a single top-level folder with it).
 
+### Bundle safety limits (gateway)
+
+To avoid zip-slip and oversized uploads, the gateway enforces:
+- Max upload size: 64 MiB
+- Max files: 2048
+- Max file size: 32 MiB
+- Max uncompressed size: 256 MiB
+- Absolute paths and `..` segments are rejected during extraction
+
 ### Directory layout (recommended)
 
 ```
@@ -140,6 +149,9 @@ cfg:system:policy.data.bundles["<pack_id>/<name>"] = {
 
 Safety kernel merges file/URL policy with config service fragments on load/reload.
 Snapshot hashes are combined (e.g. `baseSnapshot|cfg:<hash>`).
+
+Bundle entries may also include `enabled`, `author`, `message`, `created_at`, and `updated_at` (Policy Studio uses these).
+When omitted, bundles default to enabled.
 
 Related env vars:
 - `SAFETY_POLICY_CONFIG_SCOPE` (default `system`)

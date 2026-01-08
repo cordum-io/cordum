@@ -1,5 +1,7 @@
 {
   "apiBaseUrl": "",
   "apiKey": "",
-  "tenantId": "default"
+  "tenantId": "default",
+  "principalId": "dashboard",
+  "principalRole": "secops"
 }

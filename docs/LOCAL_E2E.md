@@ -6,6 +6,7 @@ This document captures end-to-end flows validated against the platform-only stac
 - Infra: NATS `4222`, Redis `6379`.
 - Control plane: scheduler, safety kernel, API gateway (HTTP `:8081`, gRPC `:8080`, metrics `:9092`), workflow engine (`:9093/health`).
 - Optional: context engine (`:50070`).
+- Optional UI: dashboard (`:8082`).
 
 ## Automated smoke
 

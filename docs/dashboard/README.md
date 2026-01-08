@@ -16,7 +16,9 @@ By default, the dashboard uses `/config.json` from `dashboard/public`. To point 
 {
   "apiBaseUrl": "http://localhost:8081",
   "apiKey": "super-secret-key",
-  "tenantId": "default"
+  "tenantId": "default",
+  "principalId": "dashboard",
+  "principalRole": "secops"
 }
 ```
 
@@ -27,8 +29,13 @@ The production container writes `config.json` at startup from environment variab
 - `CORETEX_API_BASE_URL` (empty = same origin)
 - `CORETEX_API_KEY`
 - `CORETEX_TENANT_ID`
+- `CORETEX_PRINCIPAL_ID`
+- `CORETEX_PRINCIPAL_ROLE` (set to `secops` to edit/publish policy bundles)
 
 If you host the dashboard on a different origin than the gateway, set `CORETEX_ALLOWED_ORIGINS` on the gateway to allow the dashboard origin.
+
+The live bus stream (`/api/v1/stream`) authenticates via WebSocket subprotocols:
+`Sec-WebSocket-Protocol: coretex-api-key, <base64url>` (the dashboard sets this automatically when an API key is configured).
 
 ## Docker Build
 
@@ -102,9 +109,20 @@ The policy rules list is sourced from:
 The policy diff view uses bundle snapshots stored in the config service:
 
 - `GET /api/v1/policy/bundles`
+- `GET /api/v1/policy/bundles/{id}`
+- `PUT /api/v1/policy/bundles/{id}` (requires `X-Principal-Role: secops`)
+- `POST /api/v1/policy/bundles/{id}/simulate`
 - `GET /api/v1/policy/bundles/snapshots`
 - `POST /api/v1/policy/bundles/snapshots` with `{ "note": "..." }`
 - `GET /api/v1/policy/bundles/snapshots/{id}`
+- `POST /api/v1/policy/publish` (requires `X-Principal-Role: secops`)
+- `POST /api/v1/policy/rollback` (requires `X-Principal-Role: secops`)
+- `GET /api/v1/policy/audit`
+
+Bundle IDs include `/` (e.g. `secops/workflows`). When calling the REST endpoints, replace `/` with `~`
+in the `{id}` path segment or use the `bundle_id` query parameter.
+
+The Policy Studio editor is read-only unless `principalRole` (or `X-Principal-Role`) is set to `secops`.
 
 ## DLQ Pagination
 
