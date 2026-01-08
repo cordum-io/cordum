@@ -30,6 +30,10 @@ const (
 	policyConfigScope = "system"
 	policyConfigID    = "policy"
 	policyConfigKey   = "bundles"
+
+	maxPackFiles             = 2048
+	maxPackFileBytes         = 32 << 20
+	maxPackUncompressedBytes = 256 << 20
 )
 
 type packManifest struct {
@@ -1027,7 +1031,11 @@ func lockOwner() string {
 }
 
 func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
-	payload, err := loadDataFile(filepath.Join(dir, relPath))
+	path, err := safeJoin(dir, relPath)
+	if err != nil {
+		return nil, "", err
+	}
+	payload, err := loadDataFile(path)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1043,7 +1051,11 @@ func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
 }
 
 func loadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
-	payload, err := loadDataFile(filepath.Join(dir, relPath))
+	path, err := safeJoin(dir, relPath)
+	if err != nil {
+		return nil, "", err
+	}
+	payload, err := loadDataFile(path)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1095,7 +1107,11 @@ func loadDataFile(path string) (any, error) {
 }
 
 func loadPatchFile(dir, relPath string) (any, error) {
-	return loadDataFile(filepath.Join(dir, relPath))
+	path, err := safeJoin(dir, relPath)
+	if err != nil {
+		return nil, err
+	}
+	return loadDataFile(path)
 }
 
 func validateConfigPatch(key string, patch map[string]any, packID string, current any) error {
@@ -1570,6 +1586,10 @@ func extractTarGz(path, dest string) error {
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
+	var (
+		files   int
+		totalSz int64
+	)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -1578,17 +1598,27 @@ func extractTarGz(path, dest string) error {
 		if err != nil {
 			return err
 		}
-		name := filepath.Clean(hdr.Name)
-		if strings.Contains(name, "..") || filepath.IsAbs(name) {
-			return fmt.Errorf("invalid archive path %q", hdr.Name)
+		target, err := safeJoin(dest, hdr.Name)
+		if err != nil {
+			return err
 		}
-		target := filepath.Join(dest, name)
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
 		case tar.TypeReg:
+			files++
+			if files > maxPackFiles {
+				return fmt.Errorf("pack archive exceeds max files (%d)", maxPackFiles)
+			}
+			if hdr.Size < 0 || hdr.Size > maxPackFileBytes {
+				return fmt.Errorf("pack file too large: %s", hdr.Name)
+			}
+			totalSz += hdr.Size
+			if totalSz > maxPackUncompressedBytes {
+				return fmt.Errorf("pack archive exceeds max size (%d bytes)", maxPackUncompressedBytes)
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
@@ -1596,7 +1626,7 @@ func extractTarGz(path, dest string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			if _, err := io.CopyN(out, tr, hdr.Size); err != nil && !errors.Is(err, io.EOF) {
 				out.Close()
 				return err
 			}
@@ -1604,6 +1634,25 @@ func extractTarGz(path, dest string) error {
 		}
 	}
 	return nil
+}
+
+func safeJoin(base, name string) (string, error) {
+	clean := filepath.Clean(strings.TrimSpace(name))
+	if clean == "." || clean == "" {
+		return "", fmt.Errorf("invalid archive path: %s", name)
+	}
+	if filepath.IsAbs(clean) {
+		return "", fmt.Errorf("absolute archive path: %s", name)
+	}
+	target := filepath.Join(base, clean)
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return "", fmt.Errorf("invalid archive path: %s", name)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("invalid archive path: %s", name)
+	}
+	return target, nil
 }
 
 func findPackRoot(dir string) (string, error) {

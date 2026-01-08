@@ -30,14 +30,14 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 ## Core components
 
 - API gateway (`core/controlplane/gateway`, `cmd/coretex-api-gateway`)
-  - HTTP/WS endpoints for jobs, workflows/runs, approvals, config, policy, DLQ, schemas, locks, artifacts, workers, traces.
+  - HTTP/WS endpoints for jobs, workflows/runs, approvals, config, policy (bundles + publish/rollback/audit), DLQ, schemas, locks, artifacts, workers, traces, packs.
   - gRPC service (`CoretexApi`) for job submit/status.
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
-  - Enforces API key and CORS allowlist if configured.
+  - Enforces API key and CORS allowlist if configured (HTTP `X-API-Key`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: coretex-api-key, <base64url>`).
 
 - Dashboard (`dashboard/`)
   - React UI served via Nginx; connects to `/api/v1` and `/api/v1/stream`.
-  - Runtime config via `/config.json` (API base URL, API key, tenant).
+  - Runtime config via `/config.json` (API base URL, API key, tenant, principal id/role).
 
 - Scheduler (`core/controlplane/scheduler`, `cmd/coretex-scheduler`)
   - Subscribes to `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.heartbeat`.
@@ -45,11 +45,12 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Routes jobs using pool mapping + least-loaded strategy, labels, and requires-based pool eligibility.
   - Persists job state in Redis and emits DLQ for non-success results.
   - Reconciler marks stale `DISPATCHED`/`RUNNING` jobs as `TIMEOUT`.
+  - Pending replayer retries `PENDING` jobs past the dispatch timeout to avoid stuck runs.
 
 - Safety Kernel (`core/controlplane/safetykernel`, `cmd/coretex-safety-kernel`)
   - gRPC `Check`, `Evaluate`, `Explain`, `Simulate`; uses `config/safety.yaml`.
   - Deny/allow by tenant/topic, plus MCP allow/deny lists and constraints.
-  - Loads policy bundles with snapshot hashing and hot reload.
+  - Loads policy bundles from file/URL plus config-service fragments (supports bundle `enabled=false`), with snapshot hashing and hot reload.
   - Applies effective config embedded in job env.
 
 - Workflow Engine (`core/workflow`, `core/controlplane/workflowengine`, `cmd/coretex-workflow-engine`)
@@ -78,6 +79,8 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 3) Scheduler:
    - Sets job state `PENDING`, resolves effective config, runs safety check.
    - Picks a subject (`worker.<id>.jobs` or `job.*`) and dispatches.
+   - Pending replayer replays old `PENDING` jobs past the dispatch timeout.
+   - If approval is required, state becomes `APPROVAL_REQUIRED`; approvals are bound to the policy snapshot + job hash before requeueing.
 4) Worker:
    - Loads context from `context_ptr`, runs work, writes `res:<job_id>`.
    - Publishes `BusPacket{JobResult}` to `sys.job.result`.
@@ -162,7 +165,7 @@ JetStream (optional):
 - `coretex-context-engine`
 - `coretexctl` (CLI)
 
-## Packages
+## Repo layout
 
 - `core/` control plane, infra, protocols, workflow engine.
 - `cmd/` platform binaries.

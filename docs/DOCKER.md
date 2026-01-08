@@ -1,10 +1,11 @@
 # Docker Compose Quickstart (platform only)
 
-This repo ships only the control-plane stack. Compose builds the platform binaries and runs:
+This repo ships the control-plane stack plus an optional dashboard UI. Compose builds the platform binaries and runs:
 
 - Infra: `nats`, `redis`
 - Control plane: `coretex-api-gateway`, `coretex-scheduler`, `coretex-safety-kernel`, `coretex-workflow-engine`
 - Optional: `coretex-context-engine` (generic memory helper)
+- Optional UI: `coretex-dashboard` (React UI served via Nginx)
 
 ## Services in `docker-compose.yml`
 
@@ -15,6 +16,7 @@ This repo ships only the control-plane stack. Compose builds the platform binari
 - `coretex-safety-kernel` (gRPC :50051)
 - `coretex-workflow-engine` (HTTP health :9093)
 - `coretex-context-engine` (gRPC :50070)
+- `coretex-dashboard` (UI :8082, talks to gateway)
 
 ## Bring up the stack
 
@@ -41,6 +43,9 @@ To override:
 cp .env.example .env
 # edit CORETEX_API_KEY
 ```
+
+HTTP requests must include `X-API-Key`; gRPC uses metadata `x-api-key`.
+WebSocket stream auth uses `Sec-WebSocket-Protocol: coretex-api-key, <base64url>` (the dashboard handles this automatically).
 
 ## Config mounts
 

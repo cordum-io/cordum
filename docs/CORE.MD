@@ -128,6 +128,7 @@ Core kernel must evaluate a request and return:
 
 Policy management (P0 minimum):
 - policy bundles loaded from file/URL + config service fragments (`cfg:system:policy` bundles)
+- config-service bundles may include metadata (`author`, `message`, timestamps) and an `enabled` toggle; SecOps overlays live under the `secops/` prefix
 - signed + hot reload to new `PolicySnapshot(version, hash)`
 - last-known-good fallback if verification fails
 - decision audit record for every request:  
@@ -367,13 +368,23 @@ These are additions that pay off massively later without turning core into produ
 
 ## 1) Policy “explain” + “simulate” APIs (SecOps will demand this)
 
-- `POST /policy/evaluate` → decision + matched `rule_id` + constraints
-- `POST /policy/simulate` → same, but **no side effects** (for CI / PR reviews)
-- `GET /policy/snapshots` → version/hash currently loaded
+- `POST /api/v1/policy/evaluate` → decision + matched `rule_id` + constraints
+- `POST /api/v1/policy/simulate` → same, but **no side effects** (for CI / PR reviews)
+- `GET /api/v1/policy/snapshots` → version/hash currently loaded
+- `GET /api/v1/policy/bundles` → list policy bundles
+- `GET /api/v1/policy/bundles/{id}` → bundle detail
+- `PUT /api/v1/policy/bundles/{id}` → update bundle (requires `X-Principal-Role: secops`)
+- `POST /api/v1/policy/bundles/{id}/simulate` → simulate against draft bundle
+- `POST /api/v1/policy/publish` → publish bundles (requires `X-Principal-Role: secops`)
+- `POST /api/v1/policy/rollback` → rollback bundles (requires `X-Principal-Role: secops`)
+- `GET /api/v1/policy/audit` → policy publish/rollback audit
 
 **Why:** makes policy changes reviewable and prevents “security theater”.
 
 **Status:** Implemented in gateway and safety kernel.
+
+Bundle IDs include `/` (e.g. `secops/workflows`). Replace `/` with `~` in the `{id}` path segment
+or use the `bundle_id` query parameter.
 
 ### Package integration
 - Package install pipelines can simulate policies before deployment.
@@ -496,7 +507,7 @@ Make it explicit:
 
 ---
 
-## 9) Minimal CLI for ops (not a dashboard)
+## 9) Ops surfaces (CLI + optional dashboard)
 
 Ship `coretexctl` that can:
 - create/run/delete workflows
@@ -504,9 +515,11 @@ Ship `coretexctl` that can:
 - inspect run timeline
 - retry DLQ
 
-**Why:** bring-up, debugging, demos without UI.
+Optional: a lightweight dashboard that talks to the gateway for run/status visibility.
 
-**Status:** Implemented (`cmd/coretexctl` + smoke script).
+**Why:** bring-up, debugging, demos without requiring a full UI stack.
+
+**Status:** Implemented (`cmd/coretexctl` + smoke script, plus `dashboard/`).
 
 ### Package integration
 - Ops can run: `coretexctl pack install <path|url>` / `coretexctl pack uninstall <id>` / `coretexctl pack verify <id>`

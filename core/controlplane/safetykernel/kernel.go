@@ -512,6 +512,9 @@ func extractPolicyFragment(value any) (string, bool) {
 	case string:
 		return v, true
 	case map[string]any:
+		if !bundleEnabled(v) {
+			return "", false
+		}
 		if raw, ok := v["content"].(string); ok {
 			return raw, true
 		}
@@ -523,6 +526,33 @@ func extractPolicyFragment(value any) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func bundleEnabled(bundle map[string]any) bool {
+	if bundle == nil {
+		return true
+	}
+	raw, ok := bundle["enabled"]
+	if !ok {
+		return true
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		return parseBool(v)
+	default:
+		return parseBool(fmt.Sprint(v))
+	}
+}
+
+func parseBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func combineSnapshots(base, extra string) string {

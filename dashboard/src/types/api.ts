@@ -160,8 +160,16 @@ export type JobDetail = {
   safety_rule_id?: string;
   safety_snapshot?: string;
   safety_constraints?: Record<string, unknown>;
+  safety_job_hash?: string;
   approval_required?: boolean;
   approval_ref?: string;
+  approval_by?: string;
+  approval_role?: string;
+  approval_at?: number;
+  approval_reason?: string;
+  approval_note?: string;
+  approval_policy_snapshot?: string;
+  approval_job_hash?: string;
   labels?: Record<string, string>;
   workflow_id?: string;
   run_id?: string;
@@ -201,6 +209,7 @@ export type ApprovalItem = {
   policy_rule_id?: string;
   policy_reason?: string;
   constraints?: Record<string, unknown>;
+  job_hash?: string;
   approval_required?: boolean;
   approval_ref?: string;
 };
@@ -318,7 +327,36 @@ export type PackVerifyResponse = {
 
 export type PolicyBundlesResponse = {
   bundles: Record<string, unknown>;
+  items?: PolicyBundleSummary[];
   updated_at?: string;
+};
+
+export type PolicyBundleSummary = {
+  id: string;
+  enabled: boolean;
+  source: string;
+  author?: string;
+  message?: string;
+  created_at?: string;
+  updated_at?: string;
+  version?: string;
+  installed_at?: string;
+  sha256?: string;
+};
+
+export type PolicyBundleDetail = {
+  id: string;
+  content: string;
+  enabled: boolean;
+  author?: string;
+  message?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type PolicyBundleSimulateRequest = {
+  request: Record<string, unknown>;
+  content?: string;
 };
 
 export type PolicyBundleSnapshotSummary = {
@@ -336,6 +374,34 @@ export type PolicyBundleSnapshot = {
   created_at: string;
   note?: string;
   bundles: Record<string, unknown>;
+};
+
+export type PolicyPublishResponse = {
+  snapshot_before?: string;
+  snapshot_after?: string;
+  published?: string[];
+};
+
+export type PolicyRollbackResponse = {
+  snapshot_before?: string;
+  snapshot_after?: string;
+  rollback_to?: string;
+};
+
+export type PolicyAuditEntry = {
+  id: string;
+  action: string;
+  actor_id?: string;
+  role?: string;
+  bundle_ids?: string[];
+  message?: string;
+  snapshot_before?: string;
+  snapshot_after?: string;
+  created_at: string;
+};
+
+export type PolicyAuditResponse = {
+  items: PolicyAuditEntry[];
 };
 
 export type PolicyRuleSource = {

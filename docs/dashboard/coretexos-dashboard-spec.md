@@ -883,9 +883,15 @@ Following HashiCorp's three-affordance pattern:
 │  ├─ GET  /api/v1/policy/snapshots                     → Policy versions   │
 │  ├─ GET  /api/v1/policy/rules                         → Policy rules      │
 │  ├─ GET  /api/v1/policy/bundles                       → Policy bundles    │
+│  ├─ GET  /api/v1/policy/bundles/{id}                  → Bundle detail     │
+│  ├─ PUT  /api/v1/policy/bundles/{id}                  → Update bundle     │
+│  ├─ POST /api/v1/policy/bundles/{id}/simulate         → Simulate bundle   │
 │  ├─ GET  /api/v1/policy/bundles/snapshots             → Bundle snapshots  │
 │  ├─ POST /api/v1/policy/bundles/snapshots             → Capture snapshot  │
-│  └─ GET  /api/v1/policy/bundles/snapshots/{id}        → Snapshot detail   │
+│  ├─ GET  /api/v1/policy/bundles/snapshots/{id}        → Snapshot detail   │
+│  ├─ POST /api/v1/policy/publish                       → Publish bundles   │
+│  ├─ POST /api/v1/policy/rollback                      → Rollback bundles  │
+│  └─ GET  /api/v1/policy/audit                         → Policy audit log  │
 │                                                                             │
 │  PACKS                                                                     │
 │  ├─ GET  /api/v1/packs                                → Installed packs   │
@@ -955,6 +961,9 @@ Following HashiCorp's three-affordance pattern:
 - [x] Policy rules list
 - [x] Policy simulator
 - [x] Decision audit log
+- [x] Policy Studio bundle editor
+- [x] Bundle simulation + publish/rollback
+- [x] Policy audit log
 
 ### Phase 4: Pack Management (Week 8)
 - [x] Installed packs list

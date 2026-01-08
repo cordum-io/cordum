@@ -14,16 +14,18 @@ Docs:
 - `docs/system_overview.md` for the full architecture.
 - `docs/AGENT_PROTOCOL.md` for bus and pointer semantics.
 - `docs/backend_capabilities.md` for feature coverage.
+- `docs/pack.md` for pack format and install/uninstall flows.
 - `docs/techinal_plan.md` for current + roadmap status.
 
 ## Architecture (current code)
 
 Components:
-- API gateway: HTTP/WS + gRPC for jobs, workflows/runs, approvals, config, policy, DLQ, schemas, locks, artifacts, traces.
+- API gateway: HTTP/WS + gRPC for jobs, workflows/runs, approvals, config, policy, DLQ, schemas, locks, artifacts, traces, packs.
 - Scheduler: safety gate, config-driven routing (pool + labels + requires), job state in Redis, reconciler timeouts.
-- Safety kernel: gRPC policy check using `config/safety.yaml` plus effective config (if provided); explain/simulate.
+- Safety kernel: gRPC policy check using `config/safety.yaml` plus config-service fragments; effective config snapshot passed via job env; explain/simulate.
 - Workflow engine: Redis-backed workflows/runs with for_each fan-out, retries/backoff, approvals, delay/notify/condition steps, reruns, timeline.
 - Context engine (optional): gRPC helper for context windows and memory in Redis.
+- Dashboard (optional): React UI served via Nginx; connects to `/api/v1` and `/api/v1/stream`.
 - External workers: subscribe to `job.*` or `worker.<id>.jobs`, publish results on `sys.job.result`.
 
 Bus subjects:
@@ -62,6 +64,8 @@ Requirements: Docker/Compose, curl, jq.
 docker compose build
 docker compose up -d
 ```
+
+Dashboard (optional, part of compose): `http://localhost:8082` (uses `CORETEX_API_KEY`).
 
 Platform smoke (create workflow + run + approve + delete):
 ```bash

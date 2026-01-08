@@ -43,6 +43,8 @@ function mergeOverrides(base: RuntimeConfig, overrides: Partial<RuntimeConfig>):
     apiBaseUrl: overrides.apiBaseUrl?.trim() || base.apiBaseUrl,
     apiKey: overrides.apiKey?.trim() || base.apiKey,
     tenantId: overrides.tenantId?.trim() || base.tenantId,
+    principalId: overrides.principalId?.trim() || base.principalId,
+    principalRole: overrides.principalRole?.trim() || base.principalRole,
   };
 }
 
@@ -50,11 +52,15 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   apiBaseUrl: "",
   apiKey: "",
   tenantId: "default",
+  principalId: "",
+  principalRole: "",
   loaded: false,
   defaults: {
     apiBaseUrl: "",
     apiKey: "",
     tenantId: "default",
+    principalId: "",
+    principalRole: "",
   },
   init: (runtime) => {
     const stored = readStored();
@@ -71,6 +77,8 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       apiBaseUrl: patch.apiBaseUrl?.trim() ?? current.apiBaseUrl,
       apiKey: patch.apiKey?.trim() ?? current.apiKey,
       tenantId: patch.tenantId?.trim() ?? current.tenantId,
+      principalId: patch.principalId?.trim() ?? current.principalId,
+      principalRole: patch.principalRole?.trim() ?? current.principalRole,
     };
     writeStored(updated);
     set(updated);

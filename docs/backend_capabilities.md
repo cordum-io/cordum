@@ -20,6 +20,7 @@ This document tracks the current backend features, their status, and where they 
 - Registry: in-memory with TTL expiry loop to drop dead workers.
 - Reliability: JetStream mode uses explicit ack/nak on durable subjects; scheduler is idempotent under redelivery (per-job lock + retryable errors).
 - Reconciler: timeout scans for dispatched/running; bounded retries + lock-based to avoid double processing.
+- Pending replayer: replays PENDING jobs past dispatch timeout to avoid stuck jobs.
 - DLQ: emits to `sys.job.dlq` on failures.
 - Hints & cancel: respects preferred worker/pool hints via labels; broadcasts job cancel packets to `sys.job.cancel` (best-effort).
 
@@ -28,10 +29,11 @@ This document tracks the current backend features, their status, and where they 
 - Workflows: create/upsert (`/api/v1/workflows`), list/get, runs start/get/list, approve step, cancel run, rerun, timeline.
 - Approvals: job approvals (`/api/v1/approvals/...`) and step approvals (`/api/v1/workflows/.../steps/.../approve`).
 - Config: Redis-backed config service (set/get via `/api/v1/config`, effective via `/api/v1/config/effective`).
-- Policy: evaluate/simulate/explain, list snapshots.
+- Policy: evaluate/simulate/explain + snapshots, bundle list/detail/update, bundle snapshots, publish/rollback, audit (writes require `X-Principal-Role: secops`).
 - Schemas: register/get/list/delete JSON schemas.
 - Locks: acquire/release/renew/get shared/exclusive locks.
 - Artifacts: put/get with retention class metadata.
+- Packs: install/list/show/verify/uninstall; pack registry stored in config service.
 - Stream: WS stream of bus packets (includes heartbeats and job events).
 - Memory: pointer reader (`GET /api/v1/memory?ptr=...`) used by operators or UI clients to inspect `redis://ctx:*`, `redis://res:*`, and `redis://mem:*` keys.
 - Security: CORS/WS origin allowlist (set `CORETEX_ALLOWED_ORIGINS` for non-local browser clients).

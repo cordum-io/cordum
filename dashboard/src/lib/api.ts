@@ -15,6 +15,11 @@ import type {
   PolicyBundleSnapshotsResponse,
   PolicyBundlesResponse,
   PolicyCheckResponse,
+  PolicyPublishResponse,
+  PolicyRollbackResponse,
+  PolicyAuditResponse,
+  PolicyBundleDetail,
+  PolicyBundleSimulateRequest,
   PolicyRulesResponse,
   SafetyDecisionRecord,
   TimelineEvent,
@@ -64,6 +69,12 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
   headers.set("Accept", "application/json");
   if (config.apiKey) {
     headers.set("X-API-Key", config.apiKey);
+  }
+  if (config.principalId) {
+    headers.set("X-Principal-Id", config.principalId);
+  }
+  if (config.principalRole) {
+    headers.set("X-Principal-Role", config.principalRole);
   }
 
   let body = options.body;
@@ -204,6 +215,23 @@ export const api = {
   listPolicySnapshots: () => apiRequest<Record<string, unknown>>(`/api/v1/policy/snapshots`),
   listPolicyRules: () => apiRequest<PolicyRulesResponse>("/api/v1/policy/rules"),
   getPolicyBundles: () => apiRequest<PolicyBundlesResponse>("/api/v1/policy/bundles"),
+  getPolicyBundle: (id: string) =>
+    apiRequest<PolicyBundleDetail>(`/api/v1/policy/bundles/${encodeBundleId(id)}`),
+  putPolicyBundle: (id: string, payload: { content: string; enabled?: boolean; author?: string; message?: string }) =>
+    apiRequest<{ id: string; updated_at: string }>(`/api/v1/policy/bundles/${encodeBundleId(id)}`, {
+      method: "PUT",
+      body: payload,
+    }),
+  simulatePolicyBundle: (id: string, payload: PolicyBundleSimulateRequest) =>
+    apiRequest<PolicyCheckResponse>(`/api/v1/policy/bundles/${encodeBundleId(id)}/simulate`, {
+      method: "POST",
+      body: payload,
+    }),
+  publishPolicyBundles: (payload: { bundle_ids?: string[]; author?: string; message?: string; note?: string }) =>
+    apiRequest<PolicyPublishResponse>("/api/v1/policy/publish", { method: "POST", body: payload }),
+  rollbackPolicyBundles: (payload: { snapshot_id: string; author?: string; message?: string; note?: string }) =>
+    apiRequest<PolicyRollbackResponse>("/api/v1/policy/rollback", { method: "POST", body: payload }),
+  listPolicyAudit: () => apiRequest<PolicyAuditResponse>("/api/v1/policy/audit"),
   listPolicyBundleSnapshots: () => apiRequest<PolicyBundleSnapshotsResponse>("/api/v1/policy/bundles/snapshots"),
   capturePolicyBundleSnapshot: (payload?: { note?: string }) =>
     apiRequest<PolicyBundleSnapshot>("/api/v1/policy/bundles/snapshots", { method: "POST", body: payload }),
@@ -212,12 +240,33 @@ export const api = {
   getTrace: (id: string) => apiRequest<Record<string, unknown>>(`/api/v1/traces/${id}`),
 };
 
-export function wsUrl(path: string, apiKey?: string): string {
+function encodeBundleId(id: string): string {
+  return encodeURIComponent(id.split("/").join("~"));
+}
+
+export function wsUrl(path: string): string {
   const base = resolveBaseUrl();
   const protocol = base.startsWith("https://") ? "wss" : "ws";
   const url = new URL(path, base.replace(/^https?/, protocol));
-  if (apiKey) {
-    url.searchParams.set("api_key", apiKey);
-  }
   return url.toString();
+}
+
+export function wsProtocols(apiKey?: string): string[] {
+  const token = encodeWsApiKey(apiKey);
+  if (!token) {
+    return [];
+  }
+  return ["coretex-api-key", token];
+}
+
+function encodeWsApiKey(apiKey?: string): string {
+  if (!apiKey) {
+    return "";
+  }
+  try {
+    const base64 = btoa(apiKey);
+    return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  } catch {
+    return "";
+  }
 }
