@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/yaront1111/coretex-os/core/configsvc"
-	"github.com/yaront1111/coretex-os/core/infra/config"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/config"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"gopkg.in/yaml.v3"
 )

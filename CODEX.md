@@ -1,6 +1,6 @@
-# coretexOS: Platform Philosophy Context
+# Cordum: Platform Philosophy Context
 
-You are building **coretexOS** - a platform for AI workflow orchestration. Before writing any code, understand this critical distinction:
+You are building **Cordum** - a platform for AI workflow orchestration. Before writing any code, understand this critical distinction:
 
 **We are building a PLATFORM, not a PRODUCT.**
 

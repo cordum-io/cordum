@@ -3,7 +3,7 @@ package scheduler
 import (
 	"errors"
 
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // NaiveStrategy forwards jobs directly to the requested topic.

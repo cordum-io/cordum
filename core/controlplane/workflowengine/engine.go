@@ -10,15 +10,15 @@ import (
 	"syscall"
 	"time"
 
-	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
-	"github.com/yaront1111/coretex-os/core/configsvc"
-	"github.com/yaront1111/coretex-os/core/infra/bus"
-	"github.com/yaront1111/coretex-os/core/infra/config"
-	"github.com/yaront1111/coretex-os/core/infra/logging"
-	"github.com/yaront1111/coretex-os/core/infra/memory"
-	"github.com/yaront1111/coretex-os/core/infra/schema"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
-	wf "github.com/yaront1111/coretex-os/core/workflow"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/schema"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
 )
 
 const (
@@ -27,7 +27,7 @@ const (
 	defaultWriteTimeout    = 5 * time.Second
 	defaultIdleTimeout     = 60 * time.Second
 	defaultShutdownTimeout = 3 * time.Second
-	workflowEngineQueue    = "coretex-workflow-engine"
+	workflowEngineQueue    = "cordum-workflow-engine"
 )
 
 // Run starts the workflow engine control-plane component.

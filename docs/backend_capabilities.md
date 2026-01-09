@@ -1,4 +1,4 @@
-# coretexOS Backend Capabilities (Redis + NATS)
+# Cordum Backend Capabilities (Redis + NATS)
 
 This document tracks the current backend features, their status, and where they are exercised. It is code-accurate as of this commit.
 
@@ -36,11 +36,11 @@ This document tracks the current backend features, their status, and where they 
 - Packs: install/list/show/verify/uninstall; pack registry stored in config service.
 - Stream: WS stream of bus packets (includes heartbeats and job events).
 - Memory: pointer reader (`GET /api/v1/memory?ptr=...`) used by operators or UI clients to inspect `redis://ctx:*`, `redis://res:*`, and `redis://mem:*` keys.
-- Security: CORS/WS origin allowlist (set `CORETEX_ALLOWED_ORIGINS` for non-local browser clients).
+- Security: CORS/WS origin allowlist (set `CORDUM_ALLOWED_ORIGINS` for non-local browser clients).
 - DLQ: list/delete/retry; retry rehydrates original context into a new job id and re-dispatches.
 
 ### Workflow Engine Service
-- Control plane: `cmd/coretex-workflow-engine` subscribes to `sys.job.result` (queue group) and advances runs independently from the gateway.
+- Control plane: `cmd/cordum-workflow-engine` (binary `cordum-workflow-engine`) subscribes to `sys.job.result` (queue group) and advances runs independently from the gateway.
 - Storage: Redis workflows and runs (`core/workflow`), status indexes for reconciliation.
 - Execution: starts runs, dispatches ready steps as jobs (job ID = runID:stepID@attempt), consumes job results to advance run state.
 - Fan-out: `for_each` expression evaluated against run input/context; child jobs dispatched with index/item metadata; parent aggregated.
@@ -77,6 +77,6 @@ This document tracks the current backend features, their status, and where they 
 - Workflow store/engine: `core/workflow/`
 - Config service: `core/configsvc/`
 - DLQ store: `core/infra/memory/dlq_store.go`
-- Gateway server/handlers: `core/controlplane/gateway/` (thin binary: `cmd/coretex-api-gateway/main.go`)
-- Safety kernel server: `core/controlplane/safetykernel/` (thin binary: `cmd/coretex-safety-kernel/main.go`)
+- Gateway server/handlers: `core/controlplane/gateway/` (thin binary: `cmd/cordum-api-gateway/main.go`, ships as `cordum-api-gateway`)
+- Safety kernel server: `core/controlplane/safetykernel/` (thin binary: `cmd/cordum-safety-kernel/main.go`, ships as `cordum-safety-kernel`)
 - Scheduler/job store: `core/controlplane/scheduler/`, `core/infra/memory/job_store.go`

@@ -17,7 +17,8 @@ var (
 
 func jsonEnabled() bool {
 	logFormatOnce.Do(func() {
-		switch strings.ToLower(strings.TrimSpace(os.Getenv("CORETEX_LOG_FORMAT"))) {
+		val := strings.TrimSpace(os.Getenv("CORDUM_LOG_FORMAT"))
+		switch strings.ToLower(val) {
 		case "json":
 			logAsJSON = true
 			log.SetFlags(0)

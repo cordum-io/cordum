@@ -16,7 +16,7 @@ type ViewState = {
   removeView: (id: string) => void;
 };
 
-const STORAGE_KEY = "coretex.dashboard.runviews";
+const STORAGE_KEY = "cordum.dashboard.runviews";
 
 function loadViews(): RunView[] {
   if (typeof window === "undefined") {

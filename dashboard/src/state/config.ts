@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { RuntimeConfig } from "../lib/runtime-config";
 
-const STORAGE_KEY = "coretex.dashboard.config";
+const STORAGE_KEY = "cordum.dashboard.config";
 
 type ConfigState = RuntimeConfig & {
   loaded: boolean;

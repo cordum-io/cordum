@@ -3,7 +3,7 @@ package registry
 import (
 	"testing"
 
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 func TestBuildSnapshot(t *testing.T) {

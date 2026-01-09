@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coretexos/cap/v2/coretex/agent/v1"
+	"github.com/cordum-io/cap/v2/cordum/agent/v1"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"

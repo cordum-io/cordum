@@ -3,8 +3,8 @@ package scheduler
 import (
 	"testing"
 
-	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 type recordingBus struct {

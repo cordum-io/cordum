@@ -1,6 +1,6 @@
-# coretexOS - AI Control Plane (Go + NATS)
+# Cordum - AI Control Plane (Go + NATS)
 
-coretexOS is a platform-only control plane for AI workloads. It uses NATS for the bus,
+Cordum (cordum.io) is a platform-only control plane for AI workloads. It uses NATS for the bus,
 Redis for state and payload pointers, and CAP v2 wire contracts for jobs, results, and heartbeats.
 Worker implementations and product packs live outside this repo.
 
@@ -41,11 +41,11 @@ Pointers and state:
 - Workflow runs: `wf:run:<run_id>` plus run indexes and timelines
 
 Protocol:
-- Bus and safety types are CAP v2 (`github.com/coretexos/cap/v2`, pinned in `go.mod`) via aliases in `core/protocol/pb/v1`.
-- API/Context protos live in `core/protocol/proto/v1`; generated Go types live in `core/protocol/pb/v1` and `sdk/gen/go/coretex/v1`.
+- Bus and safety types are CAP v2 (`github.com/cordum-io/cap/v2`, pinned in `go.mod`) via aliases in `core/protocol/pb/v1`.
+- API/Context protos live in `core/protocol/proto/v1`; generated Go types live in `core/protocol/pb/v1` and `sdk/gen/go/cordum/v1`.
 
 SDK:
-- Public Go SDK lives under `sdk/` (module `github.com/yaront1111/coretex-os/sdk`), including generated protos, a minimal gateway client, and a CAP worker runtime (`sdk/runtime`).
+- Public Go SDK lives under `sdk/` (module `github.com/cordum/cordum/sdk`), including generated protos, a minimal gateway client, and a CAP worker runtime (`sdk/runtime`).
 
 ## Topics -> pools (`config/pools.yaml`)
 
@@ -65,21 +65,21 @@ docker compose build
 docker compose up -d
 ```
 
-Dashboard (optional, part of compose): `http://localhost:8082` (uses `CORETEX_API_KEY`).
+Dashboard (optional, part of compose): `http://localhost:8082` (uses `CORDUM_API_KEY`).
 
 Platform smoke (create workflow + run + approve + delete):
 ```bash
 ./tools/scripts/platform_smoke.sh
 ```
 
-CLI smoke (coretexctl):
+CLI smoke (cordumctl):
 ```bash
-./tools/scripts/coretexctl_smoke.sh
+./tools/scripts/cordumctl_smoke.sh
 ```
 
 Inspect results:
 ```bash
-docker exec coretex-redis-1 redis-cli get res:<job_id>
+docker compose exec redis redis-cli get res:<job_id>
 ```
 
 Pointer inspection via gateway:
@@ -91,8 +91,8 @@ Pointer inspection via gateway:
   `GOCACHE=$(pwd)/.cache/go-build go test ./...`
 - Proto changes: edit `core/protocol/proto/v1`, then run `make proto`.
 - Docker images: `docker compose build` rebuilds all services.
-- Binaries: `make build` (all), or `make build SERVICE=coretex-scheduler` (one).
-- Container image: `make docker SERVICE=coretex-scheduler` (uses the root Dockerfile).
+- Binaries: `make build` (all), or `make build SERVICE=cordum-scheduler` (one).
+- Container image: `make docker SERVICE=cordum-scheduler` (uses the root Dockerfile).
 - Smoke: `make smoke` (runs `tools/scripts/platform_smoke.sh`).
 - Integration tests: `make test-integration` (opt-in, tagged).
 
@@ -106,14 +106,14 @@ Core:
 - `JOB_META_TTL` / `JOB_META_TTL_SECONDS` (job meta retention)
 - `REDIS_DATA_TTL` / `REDIS_DATA_TTL_SECONDS` (ctx/res retention)
 - `WORKER_SNAPSHOT_INTERVAL`
-- `CORETEX_LOG_FORMAT=json` (stdlib log, JSON output)
+- `CORDUM_LOG_FORMAT=json` (stdlib log, JSON output)
 
 Gateway:
 - `GATEWAY_GRPC_ADDR`, `GATEWAY_HTTP_ADDR`, `GATEWAY_METRICS_ADDR`
 - `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST`
 - `TENANT_ID`
-- API keys: `CORETEX_SUPER_SECRET_API_TOKEN`, `CORETEX_API_KEY`, or `API_KEY`
-- CORS/WS: `CORETEX_ALLOWED_ORIGINS`, `CORETEX_CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGINS`
+- API keys: `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, or `API_KEY`
+- CORS/WS: `CORDUM_ALLOWED_ORIGINS`, `CORDUM_CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGINS`
 - TLS: `GRPC_TLS_CERT`, `GRPC_TLS_KEY`
 
 Safety kernel:

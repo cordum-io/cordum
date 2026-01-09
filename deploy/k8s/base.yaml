@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: coretex
+  name: cordum
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: coretex-pools
-  namespace: coretex
+  name: cordum-pools
+  namespace: cordum
 data:
   pools.yaml: |
     topics:
@@ -16,8 +16,8 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: coretex-timeouts
-  namespace: coretex
+  name: cordum-timeouts
+  namespace: cordum
 data:
   timeouts.yaml: |
     workflows: {}
@@ -30,8 +30,8 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: coretex-safety
-  namespace: coretex
+  name: cordum-safety
+  namespace: cordum
 data:
   safety.yaml: |
     default_tenant: default
@@ -56,8 +56,8 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: coretex-api-key
-  namespace: coretex
+  name: cordum-api-key
+  namespace: cordum
 type: Opaque
 stringData:
   API_KEY: super-secret-key
@@ -66,7 +66,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nats
-  namespace: coretex
+  namespace: cordum
 spec:
   replicas: 1
   selector:
@@ -91,7 +91,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: nats
-  namespace: coretex
+  namespace: cordum
 spec:
   selector: {app: nats}
   ports:
@@ -103,7 +103,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis
-  namespace: coretex
+  namespace: cordum
 spec:
   replicas: 1
   selector:
@@ -126,7 +126,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
-  namespace: coretex
+  namespace: cordum
 spec:
   selector: {app: redis}
   ports:
@@ -137,19 +137,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: coretex-context-engine
-  namespace: coretex
+  name: cordum-context-engine
+  namespace: cordum
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: coretex-context-engine}
+    matchLabels: {app: cordum-context-engine}
   template:
     metadata:
-      labels: {app: coretex-context-engine}
+      labels: {app: cordum-context-engine}
     spec:
       containers:
       - name: context-engine
-        image: coretex-coretex-context-engine
+        image: cordum-context-engine
         env:
         - name: REDIS_URL
           value: redis://redis:6379
@@ -161,10 +161,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: coretex-context-engine
-  namespace: coretex
+  name: cordum-context-engine
+  namespace: cordum
 spec:
-  selector: {app: coretex-context-engine}
+  selector: {app: cordum-context-engine}
   ports:
   - name: grpc
     port: 50070
@@ -173,44 +173,44 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: coretex-safety-kernel
-  namespace: coretex
+  name: cordum-safety-kernel
+  namespace: cordum
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: coretex-safety-kernel}
+    matchLabels: {app: cordum-safety-kernel}
   template:
     metadata:
-      labels: {app: coretex-safety-kernel}
+      labels: {app: cordum-safety-kernel}
     spec:
       containers:
       - name: safety
-        image: coretex-coretex-safety-kernel
+        image: cordum-safety-kernel
         env:
         - name: NATS_URL
           value: nats://nats:4222
         - name: SAFETY_KERNEL_ADDR
           value: :50051
         - name: SAFETY_POLICY_PATH
-          value: /etc/coretex/safety.yaml
+          value: /etc/cordum/safety.yaml
         volumeMounts:
-        - name: coretex-safety
-          mountPath: /etc/coretex
+        - name: cordum-safety
+          mountPath: /etc/cordum
           readOnly: true
         ports:
         - containerPort: 50051
       volumes:
-      - name: coretex-safety
+      - name: cordum-safety
         configMap:
-          name: coretex-safety
+          name: cordum-safety
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: coretex-safety-kernel
-  namespace: coretex
+  name: cordum-safety-kernel
+  namespace: cordum
 spec:
-  selector: {app: coretex-safety-kernel}
+  selector: {app: cordum-safety-kernel}
   ports:
   - name: grpc
     port: 50051
@@ -219,19 +219,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: coretex-scheduler
-  namespace: coretex
+  name: cordum-scheduler
+  namespace: cordum
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: coretex-scheduler}
+    matchLabels: {app: cordum-scheduler}
   template:
     metadata:
-      labels: {app: coretex-scheduler}
+      labels: {app: cordum-scheduler}
     spec:
       containers:
       - name: scheduler
-        image: coretex-coretex-scheduler
+        image: cordum-scheduler
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -240,37 +240,37 @@ spec:
         - name: REDIS_URL
           value: redis://redis:6379
         - name: SAFETY_KERNEL_ADDR
-          value: coretex-safety-kernel:50051
+          value: cordum-safety-kernel:50051
         - name: POOL_CONFIG_PATH
-          value: /etc/coretex/pools.yaml
+          value: /etc/cordum/pools.yaml
         - name: TIMEOUT_CONFIG_PATH
-          value: /etc/coretex/timeouts.yaml
+          value: /etc/cordum/timeouts.yaml
         volumeMounts:
-        - name: coretex-pools
-          mountPath: /etc/coretex/pools.yaml
+        - name: cordum-pools
+          mountPath: /etc/cordum/pools.yaml
           subPath: pools.yaml
           readOnly: true
-        - name: coretex-timeouts
-          mountPath: /etc/coretex/timeouts.yaml
+        - name: cordum-timeouts
+          mountPath: /etc/cordum/timeouts.yaml
           subPath: timeouts.yaml
           readOnly: true
         ports:
         - containerPort: 9090
       volumes:
-      - name: coretex-pools
+      - name: cordum-pools
         configMap:
-          name: coretex-pools
-      - name: coretex-timeouts
+          name: cordum-pools
+      - name: cordum-timeouts
         configMap:
-          name: coretex-timeouts
+          name: cordum-timeouts
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: coretex-scheduler
-  namespace: coretex
+  name: cordum-scheduler
+  namespace: cordum
 spec:
-  selector: {app: coretex-scheduler}
+  selector: {app: cordum-scheduler}
   ports:
   - name: metrics
     port: 9090
@@ -279,19 +279,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: coretex-api-gateway
-  namespace: coretex
+  name: cordum-api-gateway
+  namespace: cordum
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: coretex-api-gateway}
+    matchLabels: {app: cordum-api-gateway}
   template:
     metadata:
-      labels: {app: coretex-api-gateway}
+      labels: {app: cordum-api-gateway}
     spec:
       containers:
       - name: gateway
-        image: coretex-coretex-api-gateway
+        image: cordum-api-gateway
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -300,7 +300,7 @@ spec:
         - name: REDIS_URL
           value: redis://redis:6379
         - name: SAFETY_KERNEL_ADDR
-          value: coretex-safety-kernel:50051
+          value: cordum-safety-kernel:50051
         - name: TENANT_ID
           value: default
         - name: API_RATE_LIMIT_RPS
@@ -314,17 +314,17 @@ spec:
         - name: API_KEY
           valueFrom:
             secretKeyRef:
-              name: coretex-api-key
+              name: cordum-api-key
               key: API_KEY
-        - name: CORETEX_API_KEY
+        - name: CORDUM_API_KEY
           valueFrom:
             secretKeyRef:
-              name: coretex-api-key
+              name: cordum-api-key
               key: API_KEY
-        - name: CORETEX_SUPER_SECRET_API_TOKEN
+        - name: CORDUM_SUPER_SECRET_API_TOKEN
           valueFrom:
             secretKeyRef:
-              name: coretex-api-key
+              name: cordum-api-key
               key: API_KEY
         ports:
         - containerPort: 8080
@@ -334,10 +334,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: coretex-api-gateway
-  namespace: coretex
+  name: cordum-api-gateway
+  namespace: cordum
 spec:
-  selector: {app: coretex-api-gateway}
+  selector: {app: cordum-api-gateway}
   ports:
   - name: grpc
     port: 8080
@@ -352,19 +352,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: coretex-workflow-engine
-  namespace: coretex
+  name: cordum-workflow-engine
+  namespace: cordum
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: coretex-workflow-engine}
+    matchLabels: {app: cordum-workflow-engine}
   template:
     metadata:
-      labels: {app: coretex-workflow-engine}
+      labels: {app: cordum-workflow-engine}
     spec:
       containers:
       - name: workflow-engine
-        image: coretex-coretex-workflow-engine
+        image: cordum-workflow-engine
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -384,10 +384,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: coretex-workflow-engine
-  namespace: coretex
+  name: cordum-workflow-engine
+  namespace: cordum
 spec:
-  selector: {app: coretex-workflow-engine}
+  selector: {app: cordum-workflow-engine}
   ports:
   - name: http
     port: 9093
@@ -396,26 +396,26 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: coretex-dashboard
-  namespace: coretex
+  name: cordum-dashboard
+  namespace: cordum
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: coretex-dashboard}
+    matchLabels: {app: cordum-dashboard}
   template:
     metadata:
-      labels: {app: coretex-dashboard}
+      labels: {app: cordum-dashboard}
     spec:
       containers:
       - name: dashboard
-        image: coretex-dashboard
+        image: cordum-dashboard
         env:
-        - name: CORETEX_API_KEY
+        - name: CORDUM_API_KEY
           valueFrom:
             secretKeyRef:
-              name: coretex-api-key
+              name: cordum-api-key
               key: API_KEY
-        - name: CORETEX_TENANT_ID
+        - name: CORDUM_TENANT_ID
           value: default
         ports:
         - containerPort: 8080
@@ -423,10 +423,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: coretex-dashboard
-  namespace: coretex
+  name: cordum-dashboard
+  namespace: cordum
 spec:
-  selector: {app: coretex-dashboard}
+  selector: {app: cordum-dashboard}
   ports:
   - name: http
     port: 8080

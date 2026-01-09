@@ -1,6 +1,6 @@
 package scheduler
 
-import pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+import pb "github.com/cordum/cordum/core/protocol/pb/v1"
 
 // SafetyBasic performs a minimal safety check for tests.
 type SafetyBasic struct{}

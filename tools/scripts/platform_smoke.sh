@@ -10,8 +10,8 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-API_BASE=${CORETEX_API_BASE:-http://localhost:8081}
-API_KEY=${CORETEX_API_KEY:-${CORETEX_SUPER_SECRET_API_TOKEN:-${API_KEY:-super-secret-key}}}
+API_BASE=${CORDUM_API_BASE:-http://localhost:8081}
+API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-super-secret-key}}}
 
 auth_header=("-H" "X-API-Key: ${API_KEY}")
 json_header=("-H" "Content-Type: application/json")

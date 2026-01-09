@@ -1,6 +1,6 @@
-# coretexOS Dashboard
+# Cordum Dashboard
 
-Production dashboard for coretexOS. Built with React 18, TypeScript, and Tailwind.
+Production dashboard for Cordum. Built with React 18, TypeScript, and Tailwind.
 
 ## Local Development
 
@@ -26,35 +26,35 @@ By default, the dashboard uses `/config.json` from `dashboard/public`. To point 
 
 The production container writes `config.json` at startup from environment variables:
 
-- `CORETEX_API_BASE_URL` (empty = same origin)
-- `CORETEX_API_KEY`
-- `CORETEX_TENANT_ID`
-- `CORETEX_PRINCIPAL_ID`
-- `CORETEX_PRINCIPAL_ROLE` (set to `secops` to edit/publish policy bundles)
+- `CORDUM_API_BASE_URL` (empty = same origin)
+- `CORDUM_API_KEY`
+- `CORDUM_TENANT_ID`
+- `CORDUM_PRINCIPAL_ID`
+- `CORDUM_PRINCIPAL_ROLE` (set to `secops` to edit/publish policy bundles)
 
-If you host the dashboard on a different origin than the gateway, set `CORETEX_ALLOWED_ORIGINS` on the gateway to allow the dashboard origin.
+If you host the dashboard on a different origin than the gateway, set `CORDUM_ALLOWED_ORIGINS` on the gateway to allow the dashboard origin.
 
 The live bus stream (`/api/v1/stream`) authenticates via WebSocket subprotocols:
-`Sec-WebSocket-Protocol: coretex-api-key, <base64url>` (the dashboard sets this automatically when an API key is configured).
+`Sec-WebSocket-Protocol: cordum-api-key, <base64url>` (the dashboard sets this automatically when an API key is configured).
 
 ## Docker Build
 
 ```bash
-docker build -t coretex-dashboard -f dashboard/Dockerfile dashboard
+docker build -t cordum-dashboard -f dashboard/Dockerfile dashboard
 ```
 
 Run the container and point it at the API gateway:
 
 ```bash
 docker run --rm -p 8082:8080 \
-  -e CORETEX_API_BASE_URL=http://localhost:8081 \
-  -e CORETEX_API_KEY=super-secret-key \
-  coretex-dashboard
+  -e CORDUM_API_BASE_URL=http://localhost:8081 \
+  -e CORDUM_API_KEY=super-secret-key \
+  cordum-dashboard
 ```
 
 ## Compose
 
-`docker-compose.yml` includes `coretex-dashboard` on port `8082`.
+`docker-compose.yml` includes `cordum-dashboard` on port `8082`.
 
 ## Workflow Authoring
 

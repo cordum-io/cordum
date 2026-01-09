@@ -14,12 +14,12 @@ services:
     ports:
       - "6379:6379"
 
-  coretex-context-engine:
+  cordum-context-engine:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        SERVICE: coretex-context-engine
+        SERVICE: cordum-context-engine
     depends_on:
       - redis
     environment:
@@ -28,64 +28,64 @@ services:
     ports:
       - "50070:50070"
 
-  coretex-safety-kernel:
+  cordum-safety-kernel:
     restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        SERVICE: coretex-safety-kernel
+        SERVICE: cordum-safety-kernel
     depends_on:
       - nats
     environment:
       - NATS_URL=nats://nats:4222
       - SAFETY_KERNEL_ADDR=:50051
-      - SAFETY_POLICY_PATH=/etc/coretex/safety.yaml
+      - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
     volumes:
-      - ./config/safety.yaml:/etc/coretex/safety.yaml:ro
+      - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
 
-  coretex-scheduler:
+  cordum-scheduler:
     restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        SERVICE: coretex-scheduler
+        SERVICE: cordum-scheduler
     depends_on:
       - nats
       - redis
-      - coretex-safety-kernel
+      - cordum-safety-kernel
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://redis:6379
-      - SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051
-      - POOL_CONFIG_PATH=/etc/coretex/pools.yaml
-      - TIMEOUT_CONFIG_PATH=/etc/coretex/timeouts.yaml
+      - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
+      - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
+      - TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml
       - JOB_META_TTL=168h
       - WORKER_SNAPSHOT_INTERVAL=5s
     volumes:
-      - ./config/pools.yaml:/etc/coretex/pools.yaml:ro
-      - ./config/timeouts.yaml:/etc/coretex/timeouts.yaml:ro
+      - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
+      - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
 
-  coretex-api-gateway:
+  cordum-api-gateway:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        SERVICE: coretex-api-gateway
+        SERVICE: cordum-api-gateway
     depends_on:
       - nats
       - redis
-      - coretex-scheduler
+      - cordum-scheduler
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://redis:6379
-      - SAFETY_KERNEL_ADDR=coretex-safety-kernel:50051
-      - API_KEY=${CORETEX_API_KEY:-super-secret-key}
-      - CORETEX_API_KEY=${CORETEX_API_KEY:-super-secret-key}
-      - CORETEX_SUPER_SECRET_API_TOKEN=${CORETEX_API_KEY:-super-secret-key}
+      - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
+      - API_KEY=${CORDUM_API_KEY:-super-secret-key}
+      - CORDUM_API_KEY=${CORDUM_API_KEY:-super-secret-key}
+      - CORDUM_SUPER_SECRET_API_TOKEN=${CORDUM_API_KEY:-super-secret-key}
       - TENANT_ID=default
       - API_RATE_LIMIT_RPS=50
       - API_RATE_LIMIT_BURST=100
@@ -96,16 +96,16 @@ services:
       - "8081:8081"
       - "9092:9092"
 
-  coretex-workflow-engine:
+  cordum-workflow-engine:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        SERVICE: coretex-workflow-engine
+        SERVICE: cordum-workflow-engine
     depends_on:
       - nats
       - redis
-      - coretex-scheduler
+      - cordum-scheduler
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
@@ -116,16 +116,16 @@ services:
     ports:
       - "9093:9093"
 
-  coretex-dashboard:
+  cordum-dashboard:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
     depends_on:
-      - coretex-api-gateway
+      - cordum-api-gateway
     environment:
-      - CORETEX_API_BASE_URL=http://localhost:8081
-      - CORETEX_API_KEY=${CORETEX_API_KEY:-super-secret-key}
-      - CORETEX_TENANT_ID=default
+      - CORDUM_API_BASE_URL=http://localhost:8081
+      - CORDUM_API_KEY=${CORDUM_API_KEY:-super-secret-key}
+      - CORDUM_TENANT_ID=default
     ports:
       - "8082:8080"
 

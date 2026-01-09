@@ -1,8 +1,8 @@
-# AGENTS.md – coretexOS AI Control Plane
+# AGENTS.md – Cordum AI Control Plane
 
 ## Mission
 
-You are helping build **coretexOS**, an AI Control Plane.
+You are helping build **Cordum**, an AI Control Plane.
 Core ideas:
 - NATS-based bus
 - Go control-plane (scheduler + safety)

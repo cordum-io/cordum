@@ -1,21 +1,21 @@
 PROTO_SRC = core/protocol/proto/v1
-PB_OUT    = sdk/gen/go/coretex/v1
+PB_OUT    = sdk/gen/go/cordum/v1
 PB_OUT_CORE = core/protocol/pb/v1
 PROTO_OUT = $(abspath $(PB_OUT))
 PROTO_OUT_CORE = $(abspath $(PB_OUT_CORE))
 PROTO_FILES = api.proto context.proto
 
 BIN_DIR ?= bin
-SERVICES = coretex-api-gateway coretex-scheduler coretex-safety-kernel coretex-workflow-engine coretex-context-engine coretexctl
+SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordumctl
 
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u "+%Y-%m-%dT%H:%M:%SZ")
 
 LDFLAGS = -s -w \
-	-X 'github.com/yaront1111/coretex-os/core/infra/buildinfo.Version=$(VERSION)' \
-	-X 'github.com/yaront1111/coretex-os/core/infra/buildinfo.Commit=$(COMMIT)' \
-	-X 'github.com/yaront1111/coretex-os/core/infra/buildinfo.Date=$(BUILD_DATE)'
+	-X 'github.com/cordum/cordum/core/infra/buildinfo.Version=$(VERSION)' \
+	-X 'github.com/cordum/cordum/core/infra/buildinfo.Commit=$(COMMIT)' \
+	-X 'github.com/cordum/cordum/core/infra/buildinfo.Date=$(BUILD_DATE)'
 
 proto:
 	@mkdir -p $(PROTO_OUT) $(PROTO_OUT_CORE)
@@ -52,8 +52,9 @@ test-integration:
 	go test -tags=integration ./...
 
 docker:
-	@test -n "$(SERVICE)" || (echo "SERVICE is required (e.g. SERVICE=coretex-scheduler)" && exit 1)
-	@IMAGE="${IMAGE:-coretex-$(SERVICE)}"; \
+	@test -n "$(SERVICE)" || (echo "SERVICE is required (e.g. SERVICE=cordum-scheduler)" && exit 1)
+	@BASE="$(SERVICE)"; BASE="$${BASE#cordum-}"; \
+	IMAGE="${IMAGE:-cordum-$${BASE}}"; \
 	docker build --build-arg SERVICE="$(SERVICE)" --build-arg VERSION="$(VERSION)" \
 		--build-arg COMMIT="$(COMMIT)" --build-arg BUILD_DATE="$(BUILD_DATE)" \
 		-t "$$IMAGE" .

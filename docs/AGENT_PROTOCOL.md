@@ -1,4 +1,4 @@
-# coretexOS Agent Protocol (NATS + Redis pointers)
+# Cordum Agent Protocol (NATS + Redis pointers)
 
 This document describes how control-plane components and external workers communicate on the bus, what goes into `context_ptr` / `result_ptr`, and how job state is tracked.
 
@@ -34,12 +34,12 @@ Because at-least-once delivery can redeliver, handlers must be idempotent:
 - Workers should use a per-job lock and cache the published `JobResult` metadata so a redelivery can republish without re-running work.
 - Retryable handler errors are returned as “retry after …” and translated into a NAK-with-delay; non-retryable errors are ACKed (won’t redeliver).
 
-## Wire Contracts (CAP – `github.com/coretexos/cap/v2/coretex/agent/v1`)
-CAP is the canonical contract; coretexOS does not duplicate these protos.
+## Wire Contracts (CAP – `github.com/cordum-io/cap/v2/cordum/agent/v1`)
+CAP is the canonical contract; Cordum does not duplicate these protos.
 - **Envelope: `BusPacket`**
   - `trace_id`, `sender_id`, `created_at`, `protocol_version` (current: `1`)
   - `payload` oneof: `JobRequest`, `JobResult`, `Heartbeat`, `SystemAlert`, `JobProgress`, `JobCancel`.
-  - `signature` is part of CAP but not enforced by coretexOS yet.
+  - `signature` is part of CAP but not enforced by Cordum yet.
 - **JobRequest**
   - `job_id` (UUID string), `topic` (e.g., `job.default`), `priority` (`INTERACTIVE|BATCH|CRITICAL`).
   - `context_ptr` (Redis URL, e.g., `redis://ctx:<job_id>`). `result_ptr` is carried on `JobResult`.
@@ -86,7 +86,7 @@ Priority semantics:
 - Jobs may include `JobMetadata` (`capability`, `risk_tags`, `requires`, `pack_id`) for policy and routing enforcement.
 
 ## Context Engine (non-bus)
-- gRPC service `ContextEngine` (`cmd/coretex-context-engine`) with RPCs:
+- gRPC service `ContextEngine` (`cmd/cordum-context-engine`, binary `cordum-context-engine`) with RPCs:
   - `BuildWindow(memory_id, mode, logical_payload, max_input_tokens, max_output_tokens)` → list of `ModelMessage`.
   - `UpdateMemory(memory_id, logical_payload, model_response, mode)` → appends chat history or summaries.
 - Uses the same Redis instance; keys are namespaced under `mem:<memory_id>:*`.

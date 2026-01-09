@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 

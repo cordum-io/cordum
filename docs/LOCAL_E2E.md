@@ -16,10 +16,10 @@ This document captures end-to-end flows validated against the platform-only stac
 ./tools/scripts/platform_smoke.sh
 ```
 
-### CLI smoke (coretexctl)
+### CLI smoke (cordumctl)
 
 ```bash
-./tools/scripts/coretexctl_smoke.sh
+./tools/scripts/cordumctl_smoke.sh
 ```
 
 ## Manual flow (no workers)
@@ -27,10 +27,10 @@ This document captures end-to-end flows validated against the platform-only stac
 1) Create a workflow with an approval step:
 
 ```bash
-export CORETEX_API_KEY=super-secret-key
+export CORDUM_API_KEY=super-secret-key
 curl -sS -X POST http://localhost:8081/api/v1/workflows \
   -H 'Content-Type: application/json' \
-  -H "X-API-Key: $CORETEX_API_KEY" \
+  -H "X-API-Key: $CORDUM_API_KEY" \
   -d '{"name":"local-e2e","org_id":"default","steps":{"approve":{"type":"approval"}}}'
 ```
 
@@ -39,7 +39,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows \
 ```bash
 curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs \
   -H 'Content-Type: application/json' \
-  -H "X-API-Key: $CORETEX_API_KEY" \
+  -H "X-API-Key: $CORDUM_API_KEY" \
   -d '{}'
 ```
 
@@ -48,7 +48,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs \
 ```bash
 curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs/<run_id>/steps/approve/approve \
   -H 'Content-Type: application/json' \
-  -H "X-API-Key: $CORETEX_API_KEY" \
+  -H "X-API-Key: $CORDUM_API_KEY" \
   -d '{"approved": true}'
 ```
 
@@ -56,10 +56,10 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs/<run_
 
 ```bash
 curl -sS -X DELETE http://localhost:8081/api/v1/workflow-runs/<run_id> \
-  -H "X-API-Key: $CORETEX_API_KEY"
+  -H "X-API-Key: $CORDUM_API_KEY"
 
 curl -sS -X DELETE http://localhost:8081/api/v1/workflows/<workflow_id> \
-  -H "X-API-Key: $CORETEX_API_KEY"
+  -H "X-API-Key: $CORDUM_API_KEY"
 ```
 
 ## Notes

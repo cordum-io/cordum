@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 type fakeReconcileStore struct {

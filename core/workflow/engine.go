@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
-	"github.com/yaront1111/coretex-os/core/infra/logging"
-	"github.com/yaront1111/coretex-os/core/infra/memory"
-	schemas "github.com/yaront1111/coretex-os/core/infra/schema"
-	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/memory"
+	schemas "github.com/cordum/cordum/core/infra/schema"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -1406,7 +1406,7 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 				if req.Env == nil {
 					req.Env = map[string]string{}
 				}
-				req.Env["CORETEX_EFFECTIVE_CONFIG"] = string(data)
+				req.Env["CORDUM_EFFECTIVE_CONFIG"] = string(data)
 			}
 		}
 	}

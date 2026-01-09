@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/yaront1111/coretex-os/core/infra/logging"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/infra/logging"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // PendingReplayer retries pending jobs that may have been missed or stalled.
@@ -30,7 +30,7 @@ func NewPendingReplayer(engine *Engine, store JobStore, pendingAge, pollInterval
 		store:        store,
 		pendingAge:   pendingAge,
 		pollInterval: pollInterval,
-		lockKey:      "coretex:replayer:pending",
+		lockKey:      "cordum:replayer:pending",
 		lockTTL:      pollInterval * 2,
 	}
 }

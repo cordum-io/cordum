@@ -1,8 +1,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: coretex
-  namespace: coretex
+  name: cordum
+  namespace: cordum
   annotations:
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
@@ -15,20 +15,20 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: coretex-api-gateway
+                name: cordum-api-gateway
                 port:
                   number: 8081
           - path: /health
             pathType: Prefix
             backend:
               service:
-                name: coretex-api-gateway
+                name: cordum-api-gateway
                 port:
                   number: 8081
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: coretex-dashboard
+                name: cordum-dashboard
                 port:
                   number: 8080

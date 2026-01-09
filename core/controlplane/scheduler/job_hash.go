@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yaront1111/coretex-os/core/infra/config"
-	"github.com/yaront1111/coretex-os/core/infra/bus"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/bus"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/proto"
 )
 

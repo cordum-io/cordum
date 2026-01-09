@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/yaront1111/coretex-os/core/configsvc"
-	"github.com/yaront1111/coretex-os/core/infra/locks"
-	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
-	wf "github.com/yaront1111/coretex-os/core/workflow"
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/locks"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	wf "github.com/cordum/cordum/core/workflow"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1027,7 +1027,7 @@ func getConfigDoc(ctx context.Context, svc *configsvc.Service, scope, scopeID st
 }
 
 func loadPackBundleFromUpload(file multipart.File) (string, func(), error) {
-	tmpDir, err := os.MkdirTemp("", "coretex-pack-*")
+	tmpDir, err := os.MkdirTemp("", "cordum-pack-*")
 	if err != nil {
 		return "", func() {}, err
 	}

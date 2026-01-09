@@ -256,7 +256,7 @@ export function wsProtocols(apiKey?: string): string[] {
   if (!token) {
     return [];
   }
-  return ["coretex-api-key", token];
+  return ["cordum-api-key", token];
 }
 
 function encodeWsApiKey(apiKey?: string): string {

@@ -3,7 +3,7 @@ package scheduler
 import (
 	"testing"
 
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 func routingForTopic(topic, pool string) PoolRouting {
@@ -140,5 +140,79 @@ func TestLeastLoadedStrategyMarksWorkerOverloadedWhenAtCapacity(t *testing.T) {
 	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
 	if err == nil {
 		t.Fatalf("expected error when all workers overloaded")
+	}
+}
+
+func TestFilterPlacementLabels(t *testing.T) {
+	labels := map[string]string{
+		"preferred_worker_id": "w1",
+		"preferred_pool":      "pool",
+		"approval_granted":    "true",
+		"secrets_present":     "true",
+		"cordum.trace":        "trace",
+		"workflow_id":         "wf",
+		"run_id":              "run",
+		"step_id":             "step",
+		"node_id":             "node",
+		"worker_id":           "worker",
+		"region":              "us-east",
+		"gpu":                 "true",
+	}
+	out := filterPlacementLabels(labels)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 placement labels, got %d", len(out))
+	}
+	if out["region"] != "us-east" || out["gpu"] != "true" {
+		t.Fatalf("unexpected placement labels: %#v", out)
+	}
+}
+
+func TestFilterEligiblePools(t *testing.T) {
+	pools := []string{"p1", "p2", "p3"}
+	configs := map[string]PoolProfile{
+		"p1": {Requires: []string{"linux", "gpu"}},
+		"p2": {Requires: []string{"linux"}},
+		"p3": {},
+	}
+	eligible := filterEligiblePools(pools, []string{"linux"}, configs)
+	if len(eligible) != 2 || eligible[0] != "p1" || eligible[1] != "p2" {
+		t.Fatalf("unexpected eligible pools: %#v", eligible)
+	}
+	eligible = filterEligiblePools(pools, nil, configs)
+	if len(eligible) != 3 {
+		t.Fatalf("expected all pools when no requires")
+	}
+}
+
+func TestPoolSatisfies(t *testing.T) {
+	if !poolSatisfies([]string{"GPU", " linux "}, []string{"gpu", "linux"}) {
+		t.Fatalf("expected pool to satisfy requirements")
+	}
+	if poolSatisfies([]string{"gpu"}, []string{"gpu", "linux"}) {
+		t.Fatalf("expected pool to miss requirements")
+	}
+	if poolSatisfies(nil, []string{"gpu"}) {
+		t.Fatalf("expected empty pool requires to fail")
+	}
+}
+
+func TestContainsPool(t *testing.T) {
+	if !containsPool([]string{"a", "b"}, "b") {
+		t.Fatalf("expected to find pool")
+	}
+	if containsPool([]string{"a", "b"}, "c") {
+		t.Fatalf("expected missing pool")
+	}
+}
+
+func TestIsOverloadedThresholds(t *testing.T) {
+	if !isOverloaded(&pb.Heartbeat{CpuLoad: 95}) {
+		t.Fatalf("expected cpu overload")
+	}
+	if !isOverloaded(&pb.Heartbeat{GpuUtilization: 95}) {
+		t.Fatalf("expected gpu overload")
+	}
+	if isOverloaded(&pb.Heartbeat{CpuLoad: 10, GpuUtilization: 10}) {
+		t.Fatalf("expected not overloaded")
 	}
 }
