@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // Bus abstracts the message bus so the scheduler can remain decoupled

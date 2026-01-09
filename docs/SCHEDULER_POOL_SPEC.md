@@ -5,9 +5,9 @@ This document describes how the scheduler routes jobs to pools, tracks state, an
 ## Subjects and subscriptions
 
 Scheduler subscribes to:
-- `sys.job.submit` (queue `coretex-scheduler`)
-- `sys.job.result` (queue `coretex-scheduler`)
-- `sys.job.cancel` (queue `coretex-scheduler`)
+- `sys.job.submit` (queue `cordum-scheduler`)
+- `sys.job.result` (queue `cordum-scheduler`)
+- `sys.job.cancel` (queue `cordum-scheduler`)
 - `sys.heartbeat` (fan-out)
 
 ## Topic -> pool config (`config/pools.yaml`)

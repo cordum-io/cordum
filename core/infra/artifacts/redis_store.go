@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/yaront1111/coretex-os/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/memory"
 )
 
 const (

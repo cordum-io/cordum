@@ -1,7 +1,7 @@
 syntax = "proto3";
 
-package coretex.v1;
-option go_package = "github.com/yaront1111/coretex-os/sdk/gen/go/coretex/v1";
+package cordum.v1;
+option go_package = "github.com/cordum/cordum/sdk/gen/go/cordum/v1";
 
 enum ContextMode {
   CONTEXT_MODE_UNSPECIFIED = 0;

@@ -14,7 +14,9 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 type stubMemStore struct {
@@ -159,6 +161,34 @@ func TestHandleGetMemoryFetchesContextByPointer(t *testing.T) {
 	}
 	if jsonVal["prompt"] != "hi" {
 		t.Fatalf("expected json.prompt=hi got=%v", jsonVal["prompt"])
+	}
+}
+
+func TestApiKeyFromWebSocketProtocols(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream", nil)
+	token := base64.RawURLEncoding.EncodeToString([]byte("secret"))
+	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+", "+token)
+	if got := apiKeyFromWebSocket(req); got != "secret" {
+		t.Fatalf("expected secret got %q", got)
+	}
+}
+
+func TestApiKeyUnaryInterceptor(t *testing.T) {
+	interceptor := apiKeyUnaryInterceptor("secret")
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-api-key", "secret"))
+	_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	ctx = metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-api-key", "bad"))
+	if _, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
+		return "ok", nil
+	}); err == nil {
+		t.Fatalf("expected auth error")
 	}
 }
 

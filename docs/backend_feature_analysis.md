@@ -54,8 +54,8 @@ This document summarizes the production-bound backend surface, where it lives in
 ## SDK and CLI
 - SDK client + CAP runtime for workers.
   Code: `sdk/client`, `sdk/runtime`.
-- CLI: `cmd/coretexctl` (workflow/run/approval/dlq).
-- Pack CLI: `coretexctl pack ...`.
+- CLI: `cmd/cordumctl` (workflow/run/approval/dlq), ships as `cordumctl`.
+- Pack CLI: `cordumctl pack ...`.
 
 ## Gaps / next
 - External artifact backends (S3) and secrets management (Vault/KMS).

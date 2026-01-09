@@ -5,11 +5,11 @@ json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
-API_BASE=$(json_escape "${CORETEX_API_BASE_URL:-}")
-API_KEY=$(json_escape "${CORETEX_API_KEY:-}")
-TENANT_ID=$(json_escape "${CORETEX_TENANT_ID:-default}")
-PRINCIPAL_ID=$(json_escape "${CORETEX_PRINCIPAL_ID:-}")
-PRINCIPAL_ROLE=$(json_escape "${CORETEX_PRINCIPAL_ROLE:-}")
+API_BASE=$(json_escape "${CORDUM_API_BASE_URL:-}")
+API_KEY=$(json_escape "${CORDUM_API_KEY:-}")
+TENANT_ID=$(json_escape "${CORDUM_TENANT_ID:-default}")
+PRINCIPAL_ID=$(json_escape "${CORDUM_PRINCIPAL_ID:-}")
+PRINCIPAL_ROLE=$(json_escape "${CORDUM_PRINCIPAL_ROLE:-}")
 
 cat > /usr/share/nginx/html/config.json <<CONFIGEOF
 {

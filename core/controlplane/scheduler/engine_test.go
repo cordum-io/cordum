@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yaront1111/coretex-os/core/infra/config"
-	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/infra/config"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

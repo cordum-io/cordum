@@ -13,7 +13,7 @@ type PinState = {
   removePin: (id: string) => void;
 };
 
-const STORAGE_KEY = "coretex.dashboard.pins";
+const STORAGE_KEY = "cordum.dashboard.pins";
 
 function loadPins(): PinnedItem[] {
   if (typeof window === "undefined") {

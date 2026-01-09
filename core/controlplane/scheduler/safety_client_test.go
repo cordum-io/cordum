@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -169,5 +169,45 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 	}
 	if client.failures != 0 || client.successes != 0 {
 		t.Fatalf("expected counters reset, failures=%d successes=%d", client.failures, client.successes)
+	}
+}
+
+func TestDecisionFromProto(t *testing.T) {
+	cases := map[pb.DecisionType]SafetyDecision{
+		pb.DecisionType_DECISION_TYPE_ALLOW:                  SafetyAllow,
+		pb.DecisionType_DECISION_TYPE_DENY:                   SafetyDeny,
+		pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:          SafetyRequireApproval,
+		pb.DecisionType_DECISION_TYPE_THROTTLE:               SafetyThrottle,
+		pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS: SafetyAllowWithConstraints,
+		pb.DecisionType_DECISION_TYPE_UNSPECIFIED:            SafetyDeny,
+	}
+	for dec, expect := range cases {
+		if got := decisionFromProto(dec); got != expect {
+			t.Fatalf("decision %v expected %v got %v", dec, expect, got)
+		}
+	}
+}
+
+func TestSafetyTransportCredentialsInsecure(t *testing.T) {
+	t.Setenv("SAFETY_KERNEL_TLS_CA", "")
+	t.Setenv("SAFETY_KERNEL_INSECURE", "true")
+	creds := safetyTransportCredentials()
+	if creds == nil {
+		t.Fatalf("expected credentials")
+	}
+	if creds.Info().SecurityProtocol != "insecure" {
+		t.Fatalf("expected insecure protocol, got %s", creds.Info().SecurityProtocol)
+	}
+}
+
+func TestSafetyTransportCredentialsFallback(t *testing.T) {
+	t.Setenv("SAFETY_KERNEL_TLS_CA", "/nonexistent")
+	t.Setenv("SAFETY_KERNEL_INSECURE", "")
+	creds := safetyTransportCredentials()
+	if creds == nil {
+		t.Fatalf("expected credentials")
+	}
+	if creds.Info().SecurityProtocol != "insecure" {
+		t.Fatalf("expected insecure fallback, got %s", creds.Info().SecurityProtocol)
 	}
 }

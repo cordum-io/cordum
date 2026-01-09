@@ -1,6 +1,6 @@
 # Packs (Technical + How-To)
 
-This document defines the pack format and installation flow for coretexOS.
+This document defines the pack format and installation flow for Cordum.
 Packs are installable overlays (workflows + schemas + config/policy fragments) that
 extend the platform **without core code changes**.
 
@@ -50,7 +50,7 @@ my-pack/
 Required fields:
 
 ```yaml
-apiVersion: coretexos.dev/v1alpha1
+apiVersion: cordum.io/v1alpha1
 kind: Pack
 
 metadata:
@@ -115,7 +115,7 @@ tests:
 
 ## Install flow
 
-`coretexctl pack install <path|url>` performs:
+`cordumctl pack install <path|url>` performs:
 
 0) Acquire locks: `packs:global` + `pack:<id>` (single-writer semantics).
 1) Validate `pack.yaml` (namespacing, protocol version).
@@ -186,7 +186,7 @@ On startup the scheduler bootstraps defaults from `config/pools.yaml` and
 
 ## Uninstall flow
 
-`coretexctl pack uninstall <id>`:
+`cordumctl pack uninstall <id>`:
 
 - Removes config overlays (merge patch deletion).
 - Removes policy fragments.
@@ -202,15 +202,15 @@ Policy fragment keys are stable per pack+name so upgrades overwrite in place.
 ## CLI commands
 
 ```bash
-coretexctl pack install ./my-pack
-coretexctl pack install https://example.com/my-pack.tgz
-coretexctl pack install ./my-pack --inactive
-coretexctl pack install ./my-pack --upgrade
-coretexctl pack list
-coretexctl pack show sre-investigator
-coretexctl pack verify sre-investigator
-coretexctl pack uninstall sre-investigator
-coretexctl pack uninstall sre-investigator --purge
+cordumctl pack install ./my-pack
+cordumctl pack install https://example.com/my-pack.tgz
+cordumctl pack install ./my-pack --inactive
+cordumctl pack install ./my-pack --upgrade
+cordumctl pack list
+cordumctl pack show sre-investigator
+cordumctl pack verify sre-investigator
+cordumctl pack uninstall sre-investigator
+cordumctl pack uninstall sre-investigator --purge
 ```
 
 Flags:

@@ -1,4 +1,4 @@
-# coretexOS Technical Plan (current + roadmap)
+# Cordum Technical Plan (current + roadmap)
 
 This document summarizes what is implemented today and what remains planned. For
 full current behavior, see `docs/system_overview.md`.
@@ -14,7 +14,7 @@ Architecture:
 - Public SDK module under `sdk/` (generated protos + minimal gateway client).
 - CAP protocol integration for bus and safety contracts.
 - Redis-backed artifact store, schema registry, and lock service.
-- coretexctl CLI for platform operations.
+- cordumctl CLI for platform operations.
 
 Workflow engine:
 - Redis-backed definitions and runs.

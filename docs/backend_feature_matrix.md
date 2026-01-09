@@ -17,6 +17,6 @@ This table tracks key backend features, their implementation status, and test co
 | Artifact store | Yes | None | Redis-backed store (`core/infra/artifacts`). |
 | Gateway HTTP/WS endpoints | Yes | Unit (`core/controlplane/gateway/gateway_test.go`) | Jobs, workflows, approvals, policy (bundles/publish/rollback/audit), schemas, locks, artifacts, DLQ. |
 | Worker runtime SDK | Yes | None | `sdk/runtime` CAP worker runtime. |
-| CLI (coretexctl) | Yes | None | `cmd/coretexctl` + smoke script. |
+| CLI (cordumctl) | Yes | None | `cmd/cordumctl` + smoke script; ships as `cordumctl`. |
 
 Keep this table updated when wiring new components.

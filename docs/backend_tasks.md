@@ -11,7 +11,7 @@ This is a living checklist to keep the platform core aligned with the plan.
 - Artifact store (Redis) with retention classes and gateway APIs.
 - Policy explain/simulate APIs and snapshot listing.
 - Run idempotency keys on workflow run creation.
-- coretexctl CLI + smoke script.
+- cordumctl CLI + smoke script.
 
 ## In progress / next
 - External artifact backends (S3) and secret management (Vault/KMS).

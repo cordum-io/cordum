@@ -1,6 +1,6 @@
-# coretexOS System Overview (current code)
+# Cordum System Overview (current code)
 
-This document describes the current architecture and runtime behavior of coretexOS as implemented
+This document describes the current architecture and runtime behavior of Cordum as implemented
 in this repository. It is intended to be code-accurate and is the primary reference for how the
 control plane and external workers interact.
 
@@ -29,17 +29,17 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 
 ## Core components
 
-- API gateway (`core/controlplane/gateway`, `cmd/coretex-api-gateway`)
+- API gateway (`core/controlplane/gateway`, `cmd/cordum-api-gateway`; binary `cordum-api-gateway`)
   - HTTP/WS endpoints for jobs, workflows/runs, approvals, config, policy (bundles + publish/rollback/audit), DLQ, schemas, locks, artifacts, workers, traces, packs.
-  - gRPC service (`CoretexApi`) for job submit/status.
+  - gRPC service (`CordumApi`) for job submit/status.
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
-  - Enforces API key and CORS allowlist if configured (HTTP `X-API-Key`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: coretex-api-key, <base64url>`).
+  - Enforces API key and CORS allowlist if configured (HTTP `X-API-Key`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>`).
 
 - Dashboard (`dashboard/`)
   - React UI served via Nginx; connects to `/api/v1` and `/api/v1/stream`.
   - Runtime config via `/config.json` (API base URL, API key, tenant, principal id/role).
 
-- Scheduler (`core/controlplane/scheduler`, `cmd/coretex-scheduler`)
+- Scheduler (`core/controlplane/scheduler`, `cmd/cordum-scheduler`; binary `cordum-scheduler`)
   - Subscribes to `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.heartbeat`.
   - Calls Safety Kernel before dispatch (allow/deny/approve/throttle/constraints).
   - Routes jobs using pool mapping + least-loaded strategy, labels, and requires-based pool eligibility.
@@ -47,13 +47,13 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Reconciler marks stale `DISPATCHED`/`RUNNING` jobs as `TIMEOUT`.
   - Pending replayer retries `PENDING` jobs past the dispatch timeout to avoid stuck runs.
 
-- Safety Kernel (`core/controlplane/safetykernel`, `cmd/coretex-safety-kernel`)
+- Safety Kernel (`core/controlplane/safetykernel`, `cmd/cordum-safety-kernel`; binary `cordum-safety-kernel`)
   - gRPC `Check`, `Evaluate`, `Explain`, `Simulate`; uses `config/safety.yaml`.
   - Deny/allow by tenant/topic, plus MCP allow/deny lists and constraints.
   - Loads policy bundles from file/URL plus config-service fragments (supports bundle `enabled=false`), with snapshot hashing and hot reload.
   - Applies effective config embedded in job env.
 
-- Workflow Engine (`core/workflow`, `core/controlplane/workflowengine`, `cmd/coretex-workflow-engine`)
+- Workflow Engine (`core/workflow`, `core/controlplane/workflowengine`, `cmd/cordum-workflow-engine`; binary `cordum-workflow-engine`)
   - Stores workflow definitions and runs in Redis; maintains run timeline.
   - Dispatches ready steps as jobs (`sys.job.submit`).
   - Supports condition, delay, notify, for_each fan-out, retries/backoff, approvals, run cancel.
@@ -63,7 +63,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Validates workflow input and step input/output schemas.
   - Subscribes to `sys.job.result` to advance runs; reconciler retries stuck runs.
 
-- Context Engine (`core/context/engine`, `cmd/coretex-context-engine`)
+- Context Engine (`core/context/engine`, `cmd/cordum-context-engine`; binary `cordum-context-engine`)
   - gRPC service for `BuildWindow` and `UpdateMemory`.
   - Maintains chat history and generic memory under `mem:<memory_id>:*`.
 
@@ -105,11 +105,11 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 
 - Bus and safety messages are CAP v2 types (no local duplicates):
   - `BusPacket`, `JobRequest`, `JobResult`, `Heartbeat`, `PolicyCheck*`
-  - See `github.com/coretexos/cap/v2/coretex/agent/v1`.
+  - See `github.com/cordum-io/cap/v2/cordum/agent/v1`.
 - Local gRPC APIs:
-  - `CoretexApi` (submit job, get status) in `core/protocol/proto/v1/api.proto`
+  - `CordumApi` (submit job, get status) in `core/protocol/proto/v1/api.proto` (gRPC service name).
   - `ContextEngine` in `core/protocol/proto/v1/context.proto`
-- Generated Go types live in `core/protocol/pb/v1` and `sdk/gen/go/coretex/v1`, exposed via the `sdk` module.
+- Generated Go types live in `core/protocol/pb/v1` and `sdk/gen/go/cordum/v1`, exposed via the `sdk` module.
 
 ## Bus subjects and delivery
 
@@ -158,12 +158,12 @@ JetStream (optional):
 
 ## Binaries (cmd)
 
-- `coretex-api-gateway`
-- `coretex-scheduler`
-- `coretex-safety-kernel`
-- `coretex-workflow-engine`
-- `coretex-context-engine`
-- `coretexctl` (CLI)
+- `cordum-api-gateway`
+- `cordum-scheduler`
+- `cordum-safety-kernel`
+- `cordum-workflow-engine`
+- `cordum-context-engine`
+- `cordumctl` (CLI)
 
 ## Repo layout
 

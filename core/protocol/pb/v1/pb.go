@@ -1,6 +1,6 @@
 package v1
 
-import agentv1 "github.com/coretexos/cap/v2/coretex/agent/v1"
+import agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 
 type (
 	// CAP bus and safety types.

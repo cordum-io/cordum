@@ -1,4 +1,4 @@
-module github.com/yaront1111/coretex-os
+module github.com/cordum/cordum
 
 go 1.24.0
 
@@ -6,14 +6,14 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
-	github.com/coretexos/cap/v2 v2.0.7
+	github.com/cordum-io/cap/v2 v2.0.9
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.48.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.5.1
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
-	github.com/yaront1111/coretex-os/sdk v0.0.0
+	github.com/cordum/cordum/sdk v0.0.0
 	google.golang.org/grpc v1.64.0
 	google.golang.org/protobuf v1.36.8
 	gopkg.in/yaml.v3 v3.0.1
@@ -42,6 +42,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 )
 
-replace github.com/coretexos/cap/v2 => ../cap
+replace github.com/cordum-io/cap/v2 => ../cap
 
-replace github.com/yaront1111/coretex-os/sdk => ./sdk
+replace github.com/cordum/cordum/sdk => ./sdk

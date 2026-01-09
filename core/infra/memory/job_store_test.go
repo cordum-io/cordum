@@ -2,11 +2,13 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 func TestRedisJobStoreStateAndResultPtr(t *testing.T) {
@@ -240,6 +242,345 @@ func TestRedisJobStoreListRecentJobsByScorePagination(t *testing.T) {
 	}
 }
 
+func TestRedisJobStoreApprovalRecord(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-approval"
+
+	record := ApprovalRecord{
+		ApprovedBy:     "alice",
+		ApprovedRole:   "secops",
+		Reason:         "ok",
+		Note:           "reviewed",
+		PolicySnapshot: "snap-1",
+		JobHash:        "hash-1",
+	}
+	if err := store.SetApprovalRecord(ctx, jobID, record); err != nil {
+		t.Fatalf("set approval record: %v", err)
+	}
+	got, err := store.GetApprovalRecord(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if got.ApprovedBy != record.ApprovedBy || got.ApprovedRole != record.ApprovedRole {
+		t.Fatalf("unexpected approval identity: %#v", got)
+	}
+	if got.Reason != record.Reason || got.Note != record.Note {
+		t.Fatalf("unexpected approval details: %#v", got)
+	}
+	if got.PolicySnapshot != record.PolicySnapshot || got.JobHash != record.JobHash {
+		t.Fatalf("unexpected approval linkage: %#v", got)
+	}
+}
+
+func TestRedisJobStoreCancelJob(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-cancel"
+	if err := store.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	state, err := store.CancelJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("cancel job: %v", err)
+	}
+	if state != scheduler.JobStateCancelled {
+		t.Fatalf("expected cancelled state, got %s", state)
+	}
+	updated, err := store.GetState(ctx, jobID)
+	if err != nil || updated != scheduler.JobStateCancelled {
+		t.Fatalf("expected cancelled state persisted, got %s err=%v", updated, err)
+	}
+
+	terminalID := "job-terminal"
+	if err := store.SetState(ctx, terminalID, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetState(ctx, terminalID, scheduler.JobStateScheduled); err != nil {
+		t.Fatalf("set scheduled state: %v", err)
+	}
+	if err := store.SetState(ctx, terminalID, scheduler.JobStateSucceeded); err != nil {
+		t.Fatalf("set terminal state: %v", err)
+	}
+	state, err = store.CancelJob(ctx, terminalID)
+	if err != nil {
+		t.Fatalf("cancel job terminal: %v", err)
+	}
+	if state != scheduler.JobStateSucceeded {
+		t.Fatalf("expected terminal state unchanged, got %s", state)
+	}
+}
+
+func TestRedisJobStoreTraceAndDeadlines(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-trace"
+	if err := store.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetTopic(ctx, jobID, "job.test"); err != nil {
+		t.Fatalf("set topic: %v", err)
+	}
+	if err := store.SetTenant(ctx, jobID, "tenant-1"); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	if err := store.AddJobToTrace(ctx, "trace-1", jobID); err != nil {
+		t.Fatalf("add to trace: %v", err)
+	}
+
+	traceJobs, err := store.GetTraceJobs(ctx, "trace-1")
+	if err != nil {
+		t.Fatalf("get trace jobs: %v", err)
+	}
+	if len(traceJobs) != 1 || traceJobs[0].ID != jobID {
+		t.Fatalf("unexpected trace jobs: %#v", traceJobs)
+	}
+	if traceJobs[0].Topic != "job.test" || traceJobs[0].Tenant != "tenant-1" {
+		t.Fatalf("unexpected trace job metadata: %#v", traceJobs[0])
+	}
+
+	deadline := time.Now().Add(-time.Minute)
+	if err := store.SetDeadline(ctx, jobID, deadline); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	expired, err := store.ListExpiredDeadlines(ctx, time.Now().Unix(), 10)
+	if err != nil {
+		t.Fatalf("list expired deadlines: %v", err)
+	}
+	if len(expired) == 0 || expired[0].ID != jobID {
+		t.Fatalf("expected expired job, got %#v", expired)
+	}
+}
+
+func TestRedisJobStoreCountActiveByTenant(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-active"
+	if err := store.SetTenant(ctx, jobID, "tenant-2"); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	if err := store.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	count, err := store.CountActiveByTenant(ctx, "tenant-2")
+	if err != nil {
+		t.Fatalf("count active: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 active job, got %d", count)
+	}
+	if err := store.SetState(ctx, jobID, scheduler.JobStateSucceeded); err != nil {
+		t.Fatalf("set terminal state: %v", err)
+	}
+	count, err = store.CountActiveByTenant(ctx, "tenant-2")
+	if err != nil {
+		t.Fatalf("count active: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 active jobs, got %d", count)
+	}
+}
+
+func TestRedisJobStoreSetJobMeta(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	req := &pb.JobRequest{
+		JobId:       "job-meta",
+		Topic:       "job.test",
+		PrincipalId: "principal",
+		Env: map[string]string{
+			"tenant_id": "tenant-1",
+			"team_id":   "team-1",
+		},
+		Labels: map[string]string{"req": "1"},
+		Meta: &pb.JobMetadata{
+			ActorType:      pb.ActorType_ACTOR_TYPE_HUMAN,
+			IdempotencyKey: "idem-1",
+			Capability:     "cap",
+			RiskTags:       []string{"risk"},
+			Requires:       []string{"gpu"},
+			PackId:         "pack-1",
+			Labels:         map[string]string{"meta": "2"},
+		},
+	}
+	if err := store.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if tenant, _ := store.GetTenant(context.Background(), req.JobId); tenant != "tenant-1" {
+		t.Fatalf("expected tenant set, got %s", tenant)
+	}
+	if team, _ := store.GetTeam(context.Background(), req.JobId); team != "team-1" {
+		t.Fatalf("expected team set, got %s", team)
+	}
+	if actorType, _ := store.GetActorType(context.Background(), req.JobId); actorType != "human" {
+		t.Fatalf("expected actor type human, got %s", actorType)
+	}
+	if idem, _ := store.GetIdempotencyKey(context.Background(), req.JobId); idem != "idem-1" {
+		t.Fatalf("expected idempotency key, got %s", idem)
+	}
+	if packID, _ := store.GetPackID(context.Background(), req.JobId); packID != "pack-1" {
+		t.Fatalf("expected pack id, got %s", packID)
+	}
+
+	rawLabels, err := store.client.HGet(context.Background(), jobMetaKey(req.JobId), metaFieldLabels).Result()
+	if err != nil {
+		t.Fatalf("read labels: %v", err)
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(rawLabels), &labels); err != nil {
+		t.Fatalf("decode labels: %v", err)
+	}
+	if labels["req"] != "1" || labels["meta"] != "2" {
+		t.Fatalf("expected merged labels, got %#v", labels)
+	}
+}
+
+func TestRedisJobStoreListSafetyDecisions(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	jobID := "job-decisions"
+	first := scheduler.SafetyDecisionRecord{
+		Decision:       scheduler.SafetyAllow,
+		Reason:         "ok",
+		ApprovalRequired: true,
+		Constraints:    &pb.PolicyConstraints{RedactionLevel: "low"},
+	}
+	if err := store.SetSafetyDecision(context.Background(), jobID, first); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+	second := scheduler.SafetyDecisionRecord{
+		Decision:       scheduler.SafetyDeny,
+		Reason:         "blocked",
+		Constraints:    &pb.PolicyConstraints{RedactionLevel: "high"},
+	}
+	if err := store.SetSafetyDecision(context.Background(), jobID, second); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	decisions, err := store.ListSafetyDecisions(context.Background(), jobID, 10)
+	if err != nil {
+		t.Fatalf("list safety decisions: %v", err)
+	}
+	if len(decisions) != 2 {
+		t.Fatalf("expected 2 decisions, got %d", len(decisions))
+	}
+	if decisions[0].Decision != scheduler.SafetyDeny {
+		t.Fatalf("expected most recent decision first")
+	}
+	if decisions[1].ApprovalRequired != true {
+		t.Fatalf("expected approval_required to decode")
+	}
+}
+
+func TestRedisJobStoreIdempotencyAndLocks(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.SetIdempotencyKey(ctx, "idem", "job-1"); err != nil {
+		t.Fatalf("set idempotency: %v", err)
+	}
+	jobID, err := store.GetJobByIdempotencyKey(ctx, "idem")
+	if err != nil || jobID != "job-1" {
+		t.Fatalf("unexpected idempotency lookup: %s err=%v", jobID, err)
+	}
+
+	ok, err := store.TryAcquireLock(ctx, "lock-1", time.Second)
+	if err != nil || !ok {
+		t.Fatalf("expected lock acquired")
+	}
+	if err := store.ReleaseLock(ctx, "lock-1"); err != nil {
+		t.Fatalf("release lock: %v", err)
+	}
+}
+
+func TestRedisJobStoreTraceAndPrincipal(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-trace-2"
+	if err := store.AddJobToTrace(ctx, "trace-2", jobID); err != nil {
+		t.Fatalf("add job to trace: %v", err)
+	}
+	traceID, err := store.GetTraceID(ctx, jobID)
+	if err != nil || traceID != "trace-2" {
+		t.Fatalf("expected trace id, got %s err=%v", traceID, err)
+	}
+	if err := store.SetPrincipal(ctx, jobID, "principal-1"); err != nil {
+		t.Fatalf("set principal: %v", err)
+	}
+	if principal, _ := store.GetPrincipal(ctx, jobID); principal != "principal-1" {
+		t.Fatalf("expected principal, got %s", principal)
+	}
+}
+
 func TestRedisJobStoreTopicMetadata(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -284,5 +625,112 @@ func TestRedisJobStoreTopicMetadata(t *testing.T) {
 	}
 	if record.Decision != scheduler.SafetyDeny || record.Reason != "forbidden" {
 		t.Fatalf("unexpected safety decision %s reason %s", record.Decision, record.Reason)
+	}
+}
+
+func TestRedisJobStoreJobRequestRoundTrip(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	req := &pb.JobRequest{
+		JobId:    "job-req",
+		Topic:    "job.test",
+		TenantId: "tenant",
+		Budget:   &pb.Budget{DeadlineMs: 10},
+	}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	got, err := store.GetJobRequest(context.Background(), "job-req")
+	if err != nil {
+		t.Fatalf("get job request: %v", err)
+	}
+	if got.GetJobId() != req.JobId || got.GetTopic() != req.Topic {
+		t.Fatalf("unexpected job request: %#v", got)
+	}
+}
+
+func TestRedisJobStoreDeadlinesAndTrace(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-deadline"
+	if err := store.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	_ = store.SetTopic(ctx, jobID, "job.test")
+	_ = store.SetTenant(ctx, jobID, "tenant")
+
+	past := time.Now().Add(-time.Minute)
+	if err := store.SetDeadline(ctx, jobID, past); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	jobs, err := store.ListExpiredDeadlines(ctx, time.Now().Unix(), 10)
+	if err != nil {
+		t.Fatalf("list expired: %v", err)
+	}
+	if len(jobs) == 0 || jobs[0].ID != jobID {
+		t.Fatalf("expected expired job")
+	}
+
+	traceID := "trace-1"
+	if err := store.AddJobToTrace(ctx, traceID, jobID); err != nil {
+		t.Fatalf("add trace: %v", err)
+	}
+	traceJobs, err := store.GetTraceJobs(ctx, traceID)
+	if err != nil {
+		t.Fatalf("get trace jobs: %v", err)
+	}
+	if len(traceJobs) != 1 || traceJobs[0].ID != jobID {
+		t.Fatalf("unexpected trace jobs: %#v", traceJobs)
+	}
+}
+
+func TestRedisJobStoreSafetyDecisionRoundTrip(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-safe"
+	record := scheduler.SafetyDecisionRecord{
+		Decision:       scheduler.SafetyDeny,
+		Reason:         "blocked",
+		RuleID:         "rule-1",
+		PolicySnapshot: "snap",
+		ApprovalRequired: true,
+		ApprovalRef:       "approval-1",
+		JobHash:          "hash",
+	}
+	if err := store.SetSafetyDecision(ctx, jobID, record); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+	got, err := store.GetSafetyDecision(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get safety decision: %v", err)
+	}
+	if got.Decision != record.Decision || got.RuleID != record.RuleID || got.ApprovalRef != record.ApprovalRef {
+		t.Fatalf("unexpected safety decision: %#v", got)
 	}
 }

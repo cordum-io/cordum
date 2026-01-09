@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yaront1111/coretex-os/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/logging"
 )
 
 // Reconciler periodically inspects job state to enforce timeouts and cleanup.
@@ -25,7 +25,7 @@ func NewReconciler(store JobStore, dispatchTimeout, runningTimeout, pollInterval
 		dispatchTimeout: dispatchTimeout,
 		runningTimeout:  runningTimeout,
 		pollInterval:    pollInterval,
-		lockKey:         "coretex:reconciler:default",
+		lockKey:         "cordum:reconciler:default",
 		lockTTL:         pollInterval * 2,
 	}
 }

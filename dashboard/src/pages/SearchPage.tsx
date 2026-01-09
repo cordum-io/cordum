@@ -93,7 +93,7 @@ export function SearchPage() {
             const next = event.target.value;
             setSearchParams(next ? { q: next } : {});
           }}
-          placeholder="Search across coretexOS"
+          placeholder="Search across Cordum"
         />
       </Card>
 

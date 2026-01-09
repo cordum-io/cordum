@@ -1,4 +1,4 @@
-# Coretex Platform Core: Must‑Have Features (Pack‑Ready)
+# Cordum Platform Core: Must‑Have Features (Pack‑Ready)
 
 This document defines what **must live in platform core** so that future **packages** (e.g., *SRE Investigator*, *MCP adapters*, *repo tooling*, etc.) can be installed and run **without touching core code**.
 
@@ -34,7 +34,7 @@ A package is an **overlay** on the platform:
 
 ## 1) Stable protocol contract (jobs + results + pointers)
 
-**Status:** Implemented using CAP v2 (`github.com/coretexos/cap/v2`) with aliases in `core/protocol/pb/v1`.
+**Status:** Implemented using CAP v2 (`github.com/cordum-io/cap/v2`) with aliases in `core/protocol/pb/v1`.
 
 Core must define and enforce:
 
@@ -62,7 +62,7 @@ Core must define and enforce:
 
 ## 2) Workflow Engine as a deterministic state machine
 
-**Status:** Implemented in `core/workflow` and `cmd/coretex-workflow-engine`.
+**Status:** Implemented in `core/workflow` and `cmd/cordum-workflow-engine` (binary `cordum-workflow-engine`).
 
 Core workflow engine must support **vanilla steps** that don’t require packages:
 
@@ -199,7 +199,7 @@ Core should ship a tiny Go library that defines:
 
 ## 7) Control‑plane APIs (gateway) that are pack‑agnostic
 
-**Status:** Implemented in `cmd/coretex-api-gateway` (HTTP/WS + gRPC).
+**Status:** Implemented in `cmd/cordum-api-gateway` (HTTP/WS + gRPC; binary `cordum-api-gateway`).
 
 At minimum:
 
@@ -509,7 +509,7 @@ Make it explicit:
 
 ## 9) Ops surfaces (CLI + optional dashboard)
 
-Ship `coretexctl` that can:
+Ship `cordumctl` that can:
 - create/run/delete workflows
 - approve/reject
 - inspect run timeline
@@ -519,10 +519,10 @@ Optional: a lightweight dashboard that talks to the gateway for run/status visib
 
 **Why:** bring-up, debugging, demos without requiring a full UI stack.
 
-**Status:** Implemented (`cmd/coretexctl` + smoke script, plus `dashboard/`).
+**Status:** Implemented (`cmd/cordumctl` + smoke script, plus `dashboard/`; ships as `cordumctl`).
 
 ### Package integration
-- Ops can run: `coretexctl pack install <path|url>` / `coretexctl pack uninstall <id>` / `coretexctl pack verify <id>`
+- Ops can run: `cordumctl pack install <path|url>` / `cordumctl pack uninstall <id>` / `cordumctl pack verify <id>`
 - CLI still drives core workflows and approvals with no packs installed.
 
 ---

@@ -6,15 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
-	"github.com/yaront1111/coretex-os/core/infra/bus"
-	"github.com/yaront1111/coretex-os/core/infra/logging"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
-	wf "github.com/yaront1111/coretex-os/core/workflow"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/logging"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
 )
 
 const (
-	reconcilerLockKey = "coretex:workflow-engine:reconciler:default"
+	reconcilerLockKey = "cordum:workflow-engine:reconciler:default"
 )
 
 type reconciler struct {
@@ -175,7 +175,7 @@ func jobStatusFromState(state scheduler.JobState) pb.JobStatus {
 }
 
 func runLockKey(runID string) string {
-	return "coretex:wf:run:lock:" + runID
+	return "cordum:wf:run:lock:" + runID
 }
 
 func splitJobID(jobID string) (runID, stepID string) {

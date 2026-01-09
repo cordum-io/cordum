@@ -1,11 +1,11 @@
-module github.com/yaront1111/coretex-os/sdk
+module github.com/cordum/cordum/sdk
 
 go 1.24.0
 
 toolchain go1.24.11
 
 require (
-	github.com/coretexos/cap/v2 v2.0.6
+	github.com/cordum-io/cap/v2 v2.0.9
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.48.0
 	google.golang.org/grpc v1.64.0
@@ -23,4 +23,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 )
 
-replace github.com/coretexos/cap/v2 => ../../cap
+replace github.com/cordum-io/cap/v2 => ../../cap

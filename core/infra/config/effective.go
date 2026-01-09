@@ -6,7 +6,7 @@ import (
 )
 
 // EffectiveConfigEnvVar carries the JSON-encoded effective config on job env.
-const EffectiveConfigEnvVar = "CORETEX_EFFECTIVE_CONFIG"
+const EffectiveConfigEnvVar = "CORDUM_EFFECTIVE_CONFIG"
 
 // ParseEffectiveSafety extracts safety config from the effective config payload.
 func ParseEffectiveSafety(payload []byte) (SafetyConfig, bool) {

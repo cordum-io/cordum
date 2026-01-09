@@ -10,21 +10,21 @@ import (
 
 	"sync/atomic"
 
-	"github.com/yaront1111/coretex-os/core/infra/config"
-	"github.com/yaront1111/coretex-os/core/infra/logging"
-	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/logging"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
-	schedulerQueue      = "coretex-scheduler"
-	defaultSenderID     = "coretex-scheduler"
+	schedulerQueue      = "cordum-scheduler"
+	defaultSenderID     = "cordum-scheduler"
 	protocolVersionV1   = capsdk.DefaultProtocolVersion
 	storeOpTimeout      = 2 * time.Second
 	dlqSubject          = capsdk.SubjectDLQ
-	jobLockPrefix       = "coretex:scheduler:job:"
+	jobLockPrefix       = "cordum:scheduler:job:"
 	jobLockTTL          = 30 * time.Second
 	retryDelayBusy      = 500 * time.Millisecond
 	retryDelayStore     = 1 * time.Second
@@ -679,10 +679,10 @@ func applyConstraints(req *pb.JobRequest, constraints *pb.PolicyConstraints) {
 		req.Env = map[string]string{}
 	}
 	if data, err := protojson.Marshal(constraints); err == nil {
-		req.Env["CORETEX_POLICY_CONSTRAINTS"] = string(data)
+		req.Env["CORDUM_POLICY_CONSTRAINTS"] = string(data)
 	}
 	if constraints.GetRedactionLevel() != "" {
-		req.Env["CORETEX_REDACTION_LEVEL"] = constraints.GetRedactionLevel()
+		req.Env["CORDUM_REDACTION_LEVEL"] = constraints.GetRedactionLevel()
 	}
 	if budgets := constraints.GetBudgets(); budgets != nil {
 		if req.Budget == nil {
@@ -694,13 +694,13 @@ func applyConstraints(req *pb.JobRequest, constraints *pb.PolicyConstraints) {
 			}
 		}
 		if maxArtifacts := budgets.GetMaxArtifactBytes(); maxArtifacts > 0 {
-			req.Env["CORETEX_MAX_ARTIFACT_BYTES"] = fmt.Sprintf("%d", maxArtifacts)
+			req.Env["CORDUM_MAX_ARTIFACT_BYTES"] = fmt.Sprintf("%d", maxArtifacts)
 		}
 		if maxConcurrent := budgets.GetMaxConcurrentJobs(); maxConcurrent > 0 {
-			req.Env["CORETEX_MAX_CONCURRENT_JOBS"] = fmt.Sprintf("%d", maxConcurrent)
+			req.Env["CORDUM_MAX_CONCURRENT_JOBS"] = fmt.Sprintf("%d", maxConcurrent)
 		}
 		if maxRetries := budgets.GetMaxRetries(); maxRetries > 0 {
-			req.Env["CORETEX_MAX_RETRIES"] = fmt.Sprintf("%d", maxRetries)
+			req.Env["CORDUM_MAX_RETRIES"] = fmt.Sprintf("%d", maxRetries)
 		}
 	}
 }

@@ -3,7 +3,7 @@ package registry
 import (
 	"time"
 
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 const SnapshotKey = "sys:workers:snapshot"

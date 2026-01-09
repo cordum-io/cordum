@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yaront1111/coretex-os/core/infra/config"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/infra/config"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

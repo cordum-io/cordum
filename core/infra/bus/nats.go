@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -30,11 +30,11 @@ const (
 	defaultAckWait = 10 * time.Minute
 	defaultMaxAge  = 7 * 24 * time.Hour
 
-	streamSys  = "CORETEX_SYS"
-	streamJobs = "CORETEX_JOBS"
+	streamSys  = "CORDUM_SYS"
+	streamJobs = "CORDUM_JOBS"
 
 	// LabelBusMsgID overrides JetStream msg-id for explicit resubmits.
-	LabelBusMsgID = "coretex.bus_msg_id"
+	LabelBusMsgID = "cordum.bus_msg_id"
 )
 
 var (
@@ -46,7 +46,7 @@ var (
 // NewNatsBus dials NATS at the provided URL.
 func NewNatsBus(url string) (*NatsBus, error) {
 	opts := []nats.Option{
-		nats.Name("coretex-bus"),
+		nats.Name("cordum-bus"),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2 * time.Second),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {

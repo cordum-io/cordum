@@ -902,7 +902,7 @@ export function PolicyPage() {
                           <Input
                             value={bundleDraft.author}
                             onChange={(event) => setBundleDraft((prev) => ({ ...prev, author: event.target.value }))}
-                            placeholder="secops@coretex"
+                            placeholder="secops@cordum.io"
                             disabled={!isEditableBundle}
                           />
                         </div>

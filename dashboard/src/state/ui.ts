@@ -12,11 +12,13 @@ type UiState = {
   toggleTheme: () => void;
 };
 
+const THEME_KEY = "cordum-theme";
+
 const resolveInitialTheme = (): ThemeMode => {
   if (typeof window === "undefined") {
     return "light";
   }
-  const stored = window.localStorage.getItem("coretex-theme");
+  const stored = window.localStorage.getItem(THEME_KEY);
   if (stored === "light" || stored === "dark") {
     return stored;
   }

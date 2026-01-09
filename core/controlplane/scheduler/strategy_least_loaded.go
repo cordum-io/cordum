@@ -5,9 +5,9 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/yaront1111/coretex-os/core/infra/bus"
-	"github.com/yaront1111/coretex-os/core/infra/logging"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/logging"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // LeastLoadedStrategy picks a worker from the pool configured for the job topic using a simple load score.
@@ -204,7 +204,7 @@ func filterPlacementLabels(labels map[string]string) map[string]string {
 		if k == "approval_granted" || k == "secrets_present" {
 			continue
 		}
-		if strings.HasPrefix(k, "coretex.") {
+		if strings.HasPrefix(k, "cordum.") {
 			continue
 		}
 		// These labels are used for traceability/observability and should not constrain placement.

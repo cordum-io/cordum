@@ -21,19 +21,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
-	"github.com/yaront1111/coretex-os/core/configsvc"
-	"github.com/yaront1111/coretex-os/core/controlplane/scheduler"
-	"github.com/yaront1111/coretex-os/core/infra/artifacts"
-	"github.com/yaront1111/coretex-os/core/infra/bus"
-	"github.com/yaront1111/coretex-os/core/infra/config"
-	"github.com/yaront1111/coretex-os/core/infra/locks"
-	"github.com/yaront1111/coretex-os/core/infra/logging"
-	"github.com/yaront1111/coretex-os/core/infra/memory"
-	infraMetrics "github.com/yaront1111/coretex-os/core/infra/metrics"
-	"github.com/yaront1111/coretex-os/core/infra/schema"
-	"github.com/yaront1111/coretex-os/core/infra/secrets"
-	capsdk "github.com/yaront1111/coretex-os/core/protocol/capsdk"
-	pb "github.com/yaront1111/coretex-os/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/artifacts"
+	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/locks"
+	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/memory"
+	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
+	"github.com/cordum/cordum/core/infra/schema"
+	"github.com/cordum/cordum/core/infra/secrets"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -44,7 +44,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	wf "github.com/yaront1111/coretex-os/core/workflow"
+	wf "github.com/cordum/cordum/core/workflow"
 )
 
 const (
@@ -55,7 +55,7 @@ const (
 	maxPromptChars        = 100000
 	defaultRateLimitRPS   = 50
 	defaultRateLimitBurst = 100
-	wsAPIKeyProtocol      = "coretex-api-key"
+	wsAPIKeyProtocol      = "cordum-api-key"
 )
 
 const (
@@ -73,7 +73,7 @@ const (
 )
 
 type server struct {
-	pb.UnimplementedCoretexApiServer
+	pb.UnimplementedCordumApiServer
 	memStore memory.Store
 	jobStore *memory.RedisJobStore // Typed for ListRecentJobs
 	bus      scheduler.Bus
@@ -376,7 +376,7 @@ func Run(cfg *config.Config) error {
 		tenantID = "default"
 	}
 
-	gwMetrics := infraMetrics.NewGatewayProm("coretex_api_gateway")
+	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
 	if err != nil {
@@ -489,7 +489,7 @@ func Run(cfg *config.Config) error {
 		grpc.Creds(grpcCreds),
 		grpc.UnaryInterceptor(apiKeyUnaryInterceptor(requiredAPIKeyFromEnv())),
 	)
-	pb.RegisterCoretexApiServer(grpcServer, s)
+	pb.RegisterCordumApiServer(grpcServer, s)
 	reflection.Register(grpcServer)
 
 	go func() {
@@ -557,7 +557,7 @@ func (s *server) startBusTaps() {
 						"job_id":       jobID,
 						"status":       jr.Status.String(),
 						"error":        map[string]any{"message": jr.ErrorMessage},
-						"processed_by": "coretex-scheduler",
+						"processed_by": "cordum-scheduler",
 						"completed_at": time.Now().UTC().Format(time.RFC3339),
 					}
 					if data, err := json.Marshal(body); err == nil {
@@ -625,7 +625,7 @@ func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) 
 	}
 
 	if s.jobStore != nil {
-		lockKey := "coretex:wf:run:lock:" + runID
+		lockKey := "cordum:wf:run:lock:" + runID
 		ok, err := s.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
 		if err != nil || !ok {
 			return
@@ -1799,7 +1799,11 @@ func isAllowedOrigin(r *http.Request) bool {
 }
 
 func allowedOriginsFromEnv() (map[string]struct{}, bool) {
-	for _, key := range []string{"CORETEX_ALLOWED_ORIGINS", "CORETEX_CORS_ALLOW_ORIGINS", "CORS_ALLOW_ORIGINS"} {
+	for _, key := range []string{
+		"CORDUM_ALLOWED_ORIGINS",
+		"CORDUM_CORS_ALLOW_ORIGINS",
+		"CORS_ALLOW_ORIGINS",
+	} {
 		raw := strings.TrimSpace(os.Getenv(key))
 		if raw == "" {
 			continue
@@ -1850,8 +1854,9 @@ func apiKeyFromWebSocket(r *http.Request) string {
 		if strings.EqualFold(protocol, wsAPIKeyProtocol) && i+1 < len(protocols) {
 			return decodeWSAPIKey(protocols[i+1])
 		}
-		if strings.HasPrefix(strings.ToLower(protocol), strings.ToLower(wsAPIKeyProtocol)+".") {
-			token := protocol[len(wsAPIKeyProtocol)+1:]
+		prefix := strings.ToLower(wsAPIKeyProtocol) + "."
+		if strings.HasPrefix(strings.ToLower(protocol), prefix) {
+			token := protocol[len(prefix):]
 			return decodeWSAPIKey(token)
 		}
 	}
@@ -1873,10 +1878,10 @@ func decodeWSAPIKey(raw string) string {
 }
 
 func requiredAPIKeyFromEnv() string {
-	if v := normalizeAPIKey(os.Getenv("CORETEX_SUPER_SECRET_API_TOKEN")); v != "" {
+	if v := normalizeAPIKey(os.Getenv("CORDUM_SUPER_SECRET_API_TOKEN")); v != "" {
 		return v
 	}
-	if v := normalizeAPIKey(os.Getenv("CORETEX_API_KEY")); v != "" {
+	if v := normalizeAPIKey(os.Getenv("CORDUM_API_KEY")); v != "" {
 		return v
 	}
 	return normalizeAPIKey(os.Getenv("API_KEY"))
@@ -2444,7 +2449,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	// Kick off execution
 	if s.workflowEng != nil {
 		if s.jobStore != nil {
-			lockKey := "coretex:wf:run:lock:" + runID
+			lockKey := "cordum:wf:run:lock:" + runID
 			ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
 			if err != nil {
 				_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
@@ -2507,7 +2512,7 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	}
 	wfID := newRun.WorkflowID
 	if s.jobStore != nil {
-		lockKey := "coretex:wf:run:lock:" + newID
+		lockKey := "cordum:wf:run:lock:" + newID
 		ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
 		if err != nil {
 			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
@@ -3067,7 +3072,7 @@ func (s *server) handleApproveStep(w http.ResponseWriter, r *http.Request) {
 
 	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
 	if s.jobStore != nil {
-		lockKey := "coretex:wf:run:lock:" + runID
+		lockKey := "cordum:wf:run:lock:" + runID
 		ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
 		if err != nil || !ok {
 			http.Error(w, "workflow run is busy, retry", http.StatusConflict)
@@ -3103,7 +3108,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 
 	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
 	if s.jobStore != nil {
-		lockKey := "coretex:wf:run:lock:" + runID
+		lockKey := "cordum:wf:run:lock:" + runID
 		ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
 		if err != nil || !ok {
 			http.Error(w, "workflow run is busy, retry", http.StatusConflict)
