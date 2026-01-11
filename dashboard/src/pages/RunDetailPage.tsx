@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import ReactFlow, { Background, Controls, type Edge, type Node } from "reactflow";
 import { api } from "../lib/api";
 import { formatDateTime, formatDuration } from "../lib/format";
 import { useEventStore } from "../state/events";
@@ -10,63 +9,10 @@ import { Button } from "../components/ui/Button";
 import { ApprovalStatusBadge, RunStatusBadge } from "../components/StatusBadge";
 import { Drawer } from "../components/ui/Drawer";
 import { Input } from "../components/ui/Input";
-import type { ApprovalItem, JobDetail, Workflow, WorkflowRun } from "../types/api";
+import { WorkflowCanvas } from "../components/workflow/WorkflowCanvas";
+import type { ApprovalItem, JobDetail } from "../types/api";
 
 const tabs = ["Overview", "Timeline", "DAG", "Input/Output", "Jobs", "Audit Log"] as const;
-
-function buildDag(workflow?: Workflow, run?: WorkflowRun) {
-  const steps = workflow?.steps || {};
-  const levels: Record<string, number> = {};
-
-  const computeLevel = (id: string): number => {
-    if (levels[id] !== undefined) {
-      return levels[id];
-    }
-    const deps = steps[id]?.depends_on || [];
-    if (deps.length === 0) {
-      levels[id] = 0;
-      return 0;
-    }
-    const level = Math.max(...deps.map((dep) => computeLevel(dep))) + 1;
-    levels[id] = level;
-    return level;
-  };
-
-  Object.keys(steps).forEach((id) => computeLevel(id));
-  const levelCounts: Record<number, number> = {};
-
-  const nodes: Node[] = Object.keys(steps).map((id) => {
-    const level = levels[id] ?? 0;
-    const index = levelCounts[level] || 0;
-    levelCounts[level] = index + 1;
-    const status = run?.steps?.[id]?.status;
-    return {
-      id,
-      data: {
-        label: `${steps[id]?.name || id}${status ? ` · ${status}` : ""}`,
-      },
-      position: { x: level * 240, y: index * 120 },
-      style: {
-        padding: "12px 16px",
-        borderRadius: "16px",
-        border: "1px solid var(--border)",
-        background: "rgba(255,255,255,0.9)",
-        fontSize: "12px",
-        fontWeight: 600,
-        color: "var(--text)",
-      },
-    };
-  });
-
-  const edges: Edge[] = [];
-  Object.entries(steps).forEach(([id, step]) => {
-    step.depends_on?.forEach((dep) => {
-      edges.push({ id: `${dep}-${id}`, source: dep, target: id, animated: false });
-    });
-  });
-
-  return { nodes, edges };
-}
 
 export function RunDetailPage() {
   const { runId } = useParams();
@@ -122,7 +68,6 @@ export function RunDetailPage() {
     enabled: Boolean(selectedJobId),
   });
 
-  const dag = useMemo(() => buildDag(workflowQuery.data, runQuery.data), [workflowQuery.data, runQuery.data]);
   const latestEvent = useEventStore((state) => state.events[0]);
 
   const approvalsByJob = useMemo(() => {
@@ -497,12 +442,7 @@ export function RunDetailPage() {
           )}
 
           {activeTab === "DAG" && (
-            <div className="h-[420px] rounded-2xl border border-border bg-white/70">
-              <ReactFlow nodes={dag.nodes} edges={dag.edges} fitView>
-                <Background gap={24} color="#cdd7d2" />
-                <Controls />
-              </ReactFlow>
-            </div>
+            <WorkflowCanvas workflow={workflowQuery.data} run={runQuery.data} height={460} />
           )}
 
           {activeTab === "Input/Output" && (

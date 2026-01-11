@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Textarea } from "../components/ui/Textarea";
 import { RunStatusBadge } from "../components/StatusBadge";
+import { WorkflowCanvas } from "../components/workflow/WorkflowCanvas";
 
 export function WorkflowDetailPage() {
   const { workflowId } = useParams();
@@ -56,18 +57,22 @@ export function WorkflowDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Workflow Steps</CardTitle>
+          <CardTitle>Workflow Canvas</CardTitle>
         </CardHeader>
-        <div className="grid gap-3 lg:grid-cols-2">
-          {Object.values(workflow.steps || {}).map((step) => (
-            <div key={step.id} className="rounded-2xl border border-border bg-white/70 p-4">
-              <div className="text-sm font-semibold text-ink">{step.name || step.id}</div>
-              <div className="text-xs text-muted">{step.type}</div>
-              {step.depends_on?.length ? (
-                <div className="mt-2 text-xs text-muted">Depends on: {step.depends_on.join(", ")}</div>
-              ) : null}
-            </div>
-          ))}
+        <WorkflowCanvas workflow={workflow} height={420} />
+        <div className="mt-5">
+          <div className="text-xs uppercase tracking-[0.2em] text-muted">Step details</div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {Object.values(workflow.steps || {}).map((step) => (
+              <div key={step.id} className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-sm font-semibold text-ink">{step.name || step.id}</div>
+                <div className="text-xs text-muted">{step.type}</div>
+                {step.depends_on?.length ? (
+                  <div className="mt-2 text-xs text-muted">Depends on: {step.depends_on.join(", ")}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
         </div>
       </Card>
 

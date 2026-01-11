@@ -10,11 +10,16 @@ Cordum (cordum.io) is a platform-only control plane for autonomous workflows and
 It uses NATS for the bus, Redis for state and payload pointers, and CAP v2 wire contracts for jobs,
 results, and heartbeats. Workers and product packs live outside this repo.
 
-What Cordum does:
-- Orchestrates workflows (runs, retries, approvals, timeouts) with crash-safe state.
-- Routes jobs to pools using config-driven topics and capability requirements.
-- Enforces safety policy (allow/deny/approve/constraints) before dispatch.
-- Provides API + CLI for workflows, runs, policy bundles, schemas, packs, and artifacts.
+See the full product docs at https://cordum.io (or the local `docs/README.md`).
+
+## Feature highlights
+
+- Workflow engine with retries/backoff, approvals, timeouts, delays, and crash-safe state.
+- Least-loaded scheduling with capability-aware pool routing.
+- Policy-before-dispatch (ALLOW/DENY/REQUIRE_APPROVAL/CONSTRAINTS).
+- Pack overlays for workflows, schemas, and policy/config fragments.
+- Durable job bus on NATS JetStream with Redis-backed pointers and auditability.
+- API + CLI for workflows, runs, policy bundles, schemas, packs, locks, and artifacts.
 
 ## Architecture (current code)
 
@@ -28,8 +33,18 @@ Core services:
 
 Control plane flow (simplified):
 
-Gateway -> Scheduler -> Safety Kernel -> NATS -> Workers
-                     -> Redis (job + run state)
+```
+Clients/UI
+   |
+   v
+API Gateway  --->  Redis (runs, jobs, pointers, config, policy, DLQ)
+   |
+   v
+Scheduler  --->  Safety Kernel (policy decision)
+   |
+   v
+NATS (JetStream bus)  --->  External workers (your code)
+```
 
 Protocol:
 - Bus and safety types are CAP v2 (`github.com/cordum-io/cap/v2`) via aliases in `core/protocol/pb/v1`.
@@ -38,6 +53,17 @@ Protocol:
 SDK:
 - Public Go SDK lives under `sdk/` (module `github.com/cordum/cordum/sdk`), including generated protos,
   a minimal gateway client, and a CAP worker runtime (`sdk/runtime`).
+
+## Why Cordum?
+
+Cordum is built for teams that need deterministic automation and policy control.
+
+| Capability | Cordum | Typical workflow engines |
+| --- | --- | --- |
+| Policy-before-dispatch | Built-in | External/custom |
+| Approval gates | Built-in | Manual |
+| Scheduling | Least-loaded + pool routing | Queue-based |
+| Pack overlays | Built-in | Plugins/scripts |
 
 ## Quickstart (Docker)
 

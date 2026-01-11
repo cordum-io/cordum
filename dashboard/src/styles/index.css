@@ -194,6 +194,227 @@ body::before {
   clip-path: polygon(50% 0, 0 100%, 100% 100%);
 }
 
+.workflow-canvas {
+  position: relative;
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: #f7f9fb;
+  box-shadow: 0 14px 30px rgba(18, 25, 28, 0.08);
+  overflow: hidden;
+}
+
+.workflow-canvas.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workflow-canvas__empty {
+  padding: 16px 20px;
+  border-radius: 16px;
+  border: 1px dashed var(--border);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.workflow-canvas .react-flow__pane {
+  cursor: grab;
+}
+
+.workflow-canvas .react-flow__controls {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+  padding: 4px;
+}
+
+.workflow-canvas .react-flow__controls button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+}
+
+.workflow-canvas .react-flow__controls button:hover {
+  background: rgba(15, 127, 122, 0.12);
+}
+
+.workflow-canvas .react-flow__background circle {
+  fill: #d0d7dd;
+}
+
+.workflow-node {
+  width: 220px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.1);
+  padding: 12px 14px;
+}
+
+.workflow-node__header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.workflow-node__icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: rgba(15, 127, 122, 0.12);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.workflow-node[data-type="approval"] .workflow-node__icon {
+  background: rgba(212, 131, 58, 0.18);
+  color: var(--accent-2);
+}
+
+.workflow-node[data-type="delay"] .workflow-node__icon,
+.workflow-node[data-type="wait"] .workflow-node__icon {
+  background: rgba(197, 138, 28, 0.16);
+  color: var(--warning);
+}
+
+.workflow-node[data-type="condition"] .workflow-node__icon,
+.workflow-node[data-type="if"] .workflow-node__icon {
+  background: rgba(31, 122, 87, 0.18);
+  color: var(--success);
+}
+
+.workflow-node__copy {
+  min-width: 0;
+}
+
+.workflow-node__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.workflow-node__type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.workflow-node__meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workflow-node__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.workflow-node__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #b0bcc2;
+}
+
+.workflow-node[data-status="succeeded"] .workflow-node__status-dot {
+  background: var(--success);
+}
+
+.workflow-node[data-status="running"] .workflow-node__status-dot,
+.workflow-node[data-status="in_progress"] .workflow-node__status-dot {
+  background: var(--accent);
+}
+
+.workflow-node[data-status="failed"] .workflow-node__status-dot,
+.workflow-node[data-status="timed_out"] .workflow-node__status-dot,
+.workflow-node[data-status="cancelled"] .workflow-node__status-dot {
+  background: var(--danger);
+}
+
+.workflow-node[data-status="queued"] .workflow-node__status-dot,
+.workflow-node[data-status="pending"] .workflow-node__status-dot,
+.workflow-node[data-status="blocked"] .workflow-node__status-dot {
+  background: var(--warning);
+}
+
+.workflow-handle {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  background: #ffffff;
+}
+
+.workflow-handle.react-flow__handle-left {
+  left: -7px;
+}
+
+.workflow-handle.react-flow__handle-right {
+  right: -7px;
+}
+
+:root[data-theme="dark"] .workflow-canvas {
+  background: #0f1518;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="dark"] .workflow-canvas__empty {
+  background: rgba(20, 27, 30, 0.85);
+}
+
+:root[data-theme="dark"] .workflow-canvas .react-flow__controls {
+  border-color: rgba(229, 239, 236, 0.12);
+  background: rgba(20, 27, 30, 0.9);
+}
+
+:root[data-theme="dark"] .workflow-canvas .react-flow__background circle {
+  fill: rgba(229, 239, 236, 0.15);
+}
+
+:root[data-theme="dark"] .workflow-canvas .react-flow__controls button {
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .workflow-node {
+  border-color: rgba(229, 239, 236, 0.12);
+  background: #141b1e;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="dark"] .workflow-node__icon {
+  background: rgba(39, 179, 168, 0.18);
+  color: var(--accent);
+}
+
+:root[data-theme="dark"] .workflow-handle {
+  background: #141b1e;
+  border-color: rgba(229, 239, 236, 0.2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-rise,
   .animate-scan {
