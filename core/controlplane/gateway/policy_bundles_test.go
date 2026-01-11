@@ -30,7 +30,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	})
 	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/test", bytes.NewReader(body))
 	putReq.SetPathValue("id", "secops/test")
-	putReq.Header.Set("X-Principal-Role", "secops")
+	putReq.Header.Set("X-Principal-Role", "admin")
 	putRec := httptest.NewRecorder()
 	s.handlePutPolicyBundle(putRec, putReq)
 	if putRec.Code != http.StatusOK {
@@ -39,6 +39,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles/secops/test", nil)
 	getReq.SetPathValue("id", "secops/test")
+	getReq.Header.Set("X-Principal-Role", "admin")
 	getRec := httptest.NewRecorder()
 	s.handleGetPolicyBundle(getRec, getReq)
 	if getRec.Code != http.StatusOK {
@@ -53,6 +54,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles", nil)
+	listReq.Header.Set("X-Principal-Role", "admin")
 	listRec := httptest.NewRecorder()
 	s.handlePolicyBundles(listRec, listReq)
 	if listRec.Code != http.StatusOK {
@@ -60,6 +62,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	}
 
 	rulesReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/rules", nil)
+	rulesReq.Header.Set("X-Principal-Role", "admin")
 	rulesRec := httptest.NewRecorder()
 	s.handlePolicyRules(rulesRec, rulesReq)
 	if rulesRec.Code != http.StatusOK {
@@ -74,6 +77,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	})
 	simReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/bundles/secops/test/simulate", bytes.NewReader(simBody))
 	simReq.SetPathValue("id", "secops/test")
+	simReq.Header.Set("X-Principal-Role", "admin")
 	simRec := httptest.NewRecorder()
 	s.handleSimulatePolicyBundle(simRec, simReq)
 	if simRec.Code != http.StatusOK {
@@ -97,7 +101,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 	})
 	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/test", bytes.NewReader(seed))
 	putReq.SetPathValue("id", "secops/test")
-	putReq.Header.Set("X-Principal-Role", "secops")
+	putReq.Header.Set("X-Principal-Role", "admin")
 	putReq.Header.Set("X-Principal-Id", "user1")
 	putRec := httptest.NewRecorder()
 	s.handlePutPolicyBundle(putRec, putReq)
@@ -106,7 +110,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 	}
 
 	pubReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/publish", bytes.NewReader([]byte(`{}`)))
-	pubReq.Header.Set("X-Principal-Role", "secops")
+	pubReq.Header.Set("X-Principal-Role", "admin")
 	pubReq.Header.Set("X-Principal-Id", "user1")
 	pubRec := httptest.NewRecorder()
 	s.handlePublishPolicyBundles(pubRec, pubReq)
@@ -123,6 +127,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 	}
 
 	snapReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles/snapshots", nil)
+	snapReq.Header.Set("X-Principal-Role", "admin")
 	snapRec := httptest.NewRecorder()
 	s.handleListPolicyBundleSnapshots(snapRec, snapReq)
 	if snapRec.Code != http.StatusOK {
@@ -131,7 +136,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 
 	rbBody, _ := json.Marshal(map[string]any{"snapshot_id": rollbackID})
 	rbReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/rollback", bytes.NewReader(rbBody))
-	rbReq.Header.Set("X-Principal-Role", "secops")
+	rbReq.Header.Set("X-Principal-Role", "admin")
 	rbReq.Header.Set("X-Principal-Id", "user1")
 	rbRec := httptest.NewRecorder()
 	s.handleRollbackPolicyBundles(rbRec, rbReq)
@@ -140,6 +145,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 	}
 
 	auditReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit", nil)
+	auditReq.Header.Set("X-Principal-Role", "admin")
 	auditRec := httptest.NewRecorder()
 	s.handleListPolicyAudit(auditRec, auditReq)
 	if auditRec.Code != http.StatusOK {

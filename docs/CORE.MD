@@ -128,7 +128,7 @@ Core kernel must evaluate a request and return:
 
 Policy management (P0 minimum):
 - policy bundles loaded from file/URL + config service fragments (`cfg:system:policy` bundles)
-- config-service bundles may include metadata (`author`, `message`, timestamps) and an `enabled` toggle; SecOps overlays live under the `secops/` prefix
+- config-service bundles may include metadata (`author`, `message`, timestamps) and an `enabled` toggle; admin overlays live under the `secops/` prefix
 - signed + hot reload to new `PolicySnapshot(version, hash)`
 - last-known-good fallback if verification fails
 - decision audit record for every request:  
@@ -143,7 +143,7 @@ Safety kernel config-service source can be tuned via `SAFETY_POLICY_CONFIG_SCOPE
 - Packages do **not** implement security. They declare:
   - topics/tools they need
   - capability labels + risk tags
-- SecOps installs policy overlays that:
+- Admins install policy overlays that:
   - allow/deny specific capabilities
   - require approvals for risky actions (prod writes, PR creation, shell exec)
   - impose constraints (max diff size, deny-paths, network restrictions)
@@ -342,6 +342,13 @@ P2 core should evolve to:
 - protocol version negotiation
 - “last-known-good” configs/policies
 
+## 16) Enterprise licensing and entitlements
+
+Status: Planned. Enterprise features are licensed add-ons (SSO/SAML, advanced
+RBAC, SIEM export, support SLA, custom pack development, managed/on-prem
+deployment). Enterprise binaries and tooling live in the enterprise and tools
+repos; this repo stays platform-only.
+
 ---
 
 # Pack‑Ready Hooks to Include *Now* (even before packages exist)
@@ -366,17 +373,17 @@ Workflow steps support a `meta` block that maps to `JobMetadata`, so package tem
 
 These are additions that pay off massively later without turning core into product soup.
 
-## 1) Policy “explain” + “simulate” APIs (SecOps will demand this)
+## 1) Policy “explain” + “simulate” APIs (security teams will demand this)
 
 - `POST /api/v1/policy/evaluate` → decision + matched `rule_id` + constraints
 - `POST /api/v1/policy/simulate` → same, but **no side effects** (for CI / PR reviews)
 - `GET /api/v1/policy/snapshots` → version/hash currently loaded
 - `GET /api/v1/policy/bundles` → list policy bundles
 - `GET /api/v1/policy/bundles/{id}` → bundle detail
-- `PUT /api/v1/policy/bundles/{id}` → update bundle (requires `X-Principal-Role: secops`)
+- `PUT /api/v1/policy/bundles/{id}` → update bundle (requires `X-Principal-Role: admin`)
 - `POST /api/v1/policy/bundles/{id}/simulate` → simulate against draft bundle
-- `POST /api/v1/policy/publish` → publish bundles (requires `X-Principal-Role: secops`)
-- `POST /api/v1/policy/rollback` → rollback bundles (requires `X-Principal-Role: secops`)
+- `POST /api/v1/policy/publish` → publish bundles (requires `X-Principal-Role: admin`)
+- `POST /api/v1/policy/rollback` → rollback bundles (requires `X-Principal-Role: admin`)
 - `GET /api/v1/policy/audit` → policy publish/rollback audit
 
 **Why:** makes policy changes reviewable and prevents “security theater”.
@@ -388,7 +395,7 @@ or use the `bundle_id` query parameter.
 
 ### Package integration
 - Package install pipelines can simulate policies before deployment.
-- SecOps can validate “will SRE Investigator be allowed to open PRs in prod?” before enabling.
+- Admins can validate “will SRE Investigator be allowed to open PRs in prod?” before enabling.
 
 ---
 

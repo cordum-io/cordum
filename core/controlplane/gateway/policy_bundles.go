@@ -124,6 +124,10 @@ func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	bundles, updatedAt, err := s.loadPolicyBundles(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -141,6 +145,10 @@ func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
@@ -194,6 +202,10 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	bundleID := bundleIDFromRequest(r)
 	if bundleID == "" {
 		http.Error(w, "bundle id required", http.StatusBadRequest)
@@ -233,8 +245,8 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if !policyEditorAllowed(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -360,8 +372,8 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if !policyEditorAllowed(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	var body policyPublishRequest
@@ -380,7 +392,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 	}
 	targets := resolvePublishTargets(bundles, body.BundleIDs)
 	if len(targets) == 0 {
-		http.Error(w, "no secops bundles to publish", http.StatusBadRequest)
+		http.Error(w, "no policy bundles to publish", http.StatusBadRequest)
 		return
 	}
 	beforeSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), bundles, body.Note)
@@ -444,8 +456,8 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if !policyEditorAllowed(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	var body policyRollbackRequest
@@ -516,6 +528,10 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	entries, err := s.loadPolicyAudit(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -528,6 +544,10 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	snapshots, _, err := s.loadPolicySnapshots(r.Context())
@@ -551,6 +571,10 @@ func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.
 func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	var body struct {
@@ -598,6 +622,10 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 func (s *server) handleGetPolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	snapshotID := strings.TrimSpace(r.PathValue("id"))
@@ -1450,13 +1478,19 @@ func policyEditorAllowed(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
+	if auth := authFromRequest(r); auth != nil && auth.Role != "" {
+		return roleAllowed(auth.Role, "admin")
+	}
 	role := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Principal-Role")))
-	return role == "secops"
+	return normalizeRole(role) == "admin"
 }
 
 func policyActorID(r *http.Request) string {
 	if r == nil {
 		return ""
+	}
+	if auth := authFromRequest(r); auth != nil && auth.PrincipalID != "" {
+		return auth.PrincipalID
 	}
 	return strings.TrimSpace(r.Header.Get("X-Principal-Id"))
 }
@@ -1465,5 +1499,8 @@ func policyRole(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	return strings.TrimSpace(r.Header.Get("X-Principal-Role"))
+	if auth := authFromRequest(r); auth != nil && auth.Role != "" {
+		return normalizeRole(auth.Role)
+	}
+	return normalizeRole(strings.TrimSpace(r.Header.Get("X-Principal-Role")))
 }

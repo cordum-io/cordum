@@ -29,13 +29,13 @@ This document tracks the current backend features, their status, and where they 
 - Workflows: create/upsert (`/api/v1/workflows`), list/get, runs start/get/list, approve step, cancel run, rerun, timeline.
 - Approvals: job approvals (`/api/v1/approvals/...`) and step approvals (`/api/v1/workflows/.../steps/.../approve`).
 - Config: Redis-backed config service (set/get via `/api/v1/config`, effective via `/api/v1/config/effective`).
-- Policy: evaluate/simulate/explain + snapshots, bundle list/detail/update, bundle snapshots, publish/rollback, audit (writes require `X-Principal-Role: secops`).
+- Policy: evaluate/simulate/explain + snapshots, bundle list/detail/update, bundle snapshots, publish/rollback, audit (admin role enforced when enterprise RBAC is enabled).
 - Schemas: register/get/list/delete JSON schemas.
 - Locks: acquire/release/renew/get shared/exclusive locks.
 - Artifacts: put/get with retention class metadata.
 - Packs: install/list/show/verify/uninstall; pack registry stored in config service.
 - Stream: WS stream of bus packets (includes heartbeats and job events).
-- Memory: pointer reader (`GET /api/v1/memory?ptr=...`) used by operators or UI clients to inspect `redis://ctx:*`, `redis://res:*`, and `redis://mem:*` keys.
+- Memory: pointer reader (`GET /api/v1/memory?ptr=...`) used by admins or UI clients to inspect `redis://ctx:*`, `redis://res:*`, and `redis://mem:*` keys.
 - Security: CORS/WS origin allowlist (set `CORDUM_ALLOWED_ORIGINS` for non-local browser clients).
 - DLQ: list/delete/retry; retry rehydrates original context into a new job id and re-dispatches.
 

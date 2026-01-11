@@ -100,22 +100,38 @@ func TestAddrFromEnv(t *testing.T) {
 	}
 }
 
-func TestRequiredAPIKeyFromEnv(t *testing.T) {
+func TestLoadAPIKeys(t *testing.T) {
 	t.Setenv("CORDUM_SUPER_SECRET_API_TOKEN", "super")
 	t.Setenv("CORDUM_API_KEY", "cordum")
 	t.Setenv("API_KEY", "api")
-	if got := requiredAPIKeyFromEnv(); got != "super" {
-		t.Fatalf("expected super secret key, got %s", got)
+
+	keys, required, err := loadBasicAPIKeys()
+	if err != nil {
+		t.Fatalf("load api keys: %v", err)
+	}
+	if !required {
+		t.Fatalf("expected api key required")
+	}
+	if _, ok := keys["super"]; !ok {
+		t.Fatalf("expected super secret key in key map")
 	}
 
 	t.Setenv("CORDUM_SUPER_SECRET_API_TOKEN", "")
-	if got := requiredAPIKeyFromEnv(); got != "cordum" {
-		t.Fatalf("expected cordum api key, got %s", got)
+	keys, _, err = loadBasicAPIKeys()
+	if err != nil {
+		t.Fatalf("load api keys: %v", err)
+	}
+	if _, ok := keys["cordum"]; !ok {
+		t.Fatalf("expected cordum api key in key map")
 	}
 
 	t.Setenv("CORDUM_API_KEY", "")
-	if got := requiredAPIKeyFromEnv(); got != "api" {
-		t.Fatalf("expected api key, got %s", got)
+	keys, _, err = loadBasicAPIKeys()
+	if err != nil {
+		t.Fatalf("load api keys: %v", err)
+	}
+	if _, ok := keys["api"]; !ok {
+		t.Fatalf("expected api key in key map")
 	}
 }
 

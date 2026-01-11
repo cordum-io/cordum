@@ -38,7 +38,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -87,6 +86,7 @@ type server struct {
 	metrics infraMetrics.GatewayMetrics
 	tenant  string
 	started time.Time
+	auth    AuthProvider
 
 	workflowStore  *wf.RedisStore
 	workflowEng    *wf.Engine
@@ -363,10 +363,15 @@ func buildPolicyCheckRequest(ctx context.Context, req *policyCheckRequest, cfgSv
 }
 
 func Run(cfg *config.Config) error {
+	return RunWithAuth(cfg, nil)
+}
+
+// RunWithAuth starts the gateway with a custom auth provider. When nil, a basic
+// single-tenant provider is used.
+func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if cfg == nil {
 		cfg = config.Load()
 	}
-
 	grpcAddr := addrFromEnv(envGatewayGrpcAddr, defaultGrpcAddr)
 	httpAddr := addrFromEnv(envGatewayHTTPAddr, defaultHttpAddr)
 	metricsAddr := addrFromEnv(envGatewayMetricsAddr, defaultMetricsAddr)
@@ -377,6 +382,13 @@ func Run(cfg *config.Config) error {
 	}
 
 	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
+	if provider == nil {
+		basic, err := newBasicAuthProvider(tenantID)
+		if err != nil {
+			return fmt.Errorf("init auth: %w", err)
+		}
+		provider = basic
+	}
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
 	if err != nil {
@@ -438,6 +450,9 @@ func Run(cfg *config.Config) error {
 	if cfg.SafetyKernelAddr != "" {
 		conn, client, err := dialSafetyKernel(cfg.SafetyKernelAddr)
 		if err != nil {
+			if os.Getenv("SAFETY_KERNEL_TLS_REQUIRED") == "true" {
+				return fmt.Errorf("safety kernel dial failed: %w", err)
+			}
 			logging.Error("api-gateway", "safety kernel dial failed", "error", err)
 		} else {
 			safetyConn = conn
@@ -455,6 +470,7 @@ func Run(cfg *config.Config) error {
 		eventsCh:       make(chan *pb.BusPacket, 512),
 		metrics:        gwMetrics,
 		tenant:         tenantID,
+		auth:           provider,
 		started:        time.Now().UTC(),
 		workflowStore:  workflowStore,
 		workflowEng:    workflowEng,
@@ -487,7 +503,7 @@ func Run(cfg *config.Config) error {
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(grpcCreds),
-		grpc.UnaryInterceptor(apiKeyUnaryInterceptor(requiredAPIKeyFromEnv())),
+		grpc.UnaryInterceptor(apiKeyUnaryInterceptor(s.auth)),
 	)
 	pb.RegisterCordumApiServer(grpcServer, s)
 	reflection.Register(grpcServer)
@@ -769,7 +785,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
 
 	// CORS Middleware
-	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(mux)))
+	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(s.auth, mux)))
 
 	logging.Info("api-gateway", "http listening", "addr", httpAddr)
 	if err := http.ListenAndServe(httpAddr, handler); err != nil {
@@ -782,6 +798,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 // --- Handlers ---
 
 func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	s.workerMu.RLock()
 	out := make([]*pb.Heartbeat, 0, len(s.workers))
 	for _, hb := range s.workers {
@@ -885,8 +905,14 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	updatedAfter = normalizeTimestampMicrosLower(updatedAfter)
 	updatedBefore = normalizeTimestampMicrosUpper(updatedBefore)
 
+	resolvedTenant, err := s.resolveTenant(r, tenantFilter)
+	if err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
+	tenantFilter = resolvedTenant
+
 	var jobs []scheduler.JobRecord
-	var err error
 	if traceFilter != "" {
 		jobs, err = s.jobStore.GetTraceJobs(r.Context(), traceFilter)
 	} else if cursor > 0 {
@@ -949,6 +975,10 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	approvalRecord, _ := s.jobStore.GetApprovalRecord(r.Context(), id)
 	topic, _ := s.jobStore.GetTopic(r.Context(), id)
 	tenant, _ := s.jobStore.GetTenant(r.Context(), id)
+	if err := s.requireTenantAccess(r, tenant); err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
 	actorID, _ := s.jobStore.GetActorID(r.Context(), id)
 	actorType, _ := s.jobStore.GetActorType(r.Context(), id)
 	idempotencyKey, _ := s.jobStore.GetIdempotencyKey(r.Context(), id)
@@ -1102,6 +1132,12 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
+	if tenant, _ := s.jobStore.GetTenant(r.Context(), id); tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
+	}
 	limit := int64(50)
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
@@ -1120,6 +1156,10 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 	if s.memStore == nil {
 		http.Error(w, "memory store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 
@@ -1361,6 +1401,14 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 		Retention:   parseRetention(req.Retention),
 		Labels:      req.Labels,
 	}
+	if auth := authFromRequest(r); auth != nil && auth.Tenant != "" {
+		if meta.Labels == nil {
+			meta.Labels = map[string]string{}
+		}
+		if _, exists := meta.Labels["tenant_id"]; !exists {
+			meta.Labels["tenant_id"] = auth.Tenant
+		}
+	}
 	ptr, err := s.artifactStore.Put(r.Context(), content, meta)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1392,6 +1440,14 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if auth := authFromRequest(r); auth != nil && auth.Tenant != "" {
+		if meta.Labels != nil {
+			if tenant := strings.TrimSpace(meta.Labels["tenant_id"]); tenant != "" && tenant != auth.Tenant {
+				http.Error(w, "tenant access denied", http.StatusForbidden)
+				return
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"artifact_ptr":   ptr,
@@ -1401,10 +1457,20 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
+	}
+	if tenant, _ := s.jobStore.GetTenant(r.Context(), id); tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
 	}
 
 	state, err := s.jobStore.CancelJob(r.Context(), id)
@@ -1482,6 +1548,19 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	orgID, err := s.resolveTenant(r, req.OrgId)
+	if err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
+	req.OrgId = orgID
+	req.TenantId = orgID
+	principalID, err := s.resolvePrincipal(r, req.PrincipalId)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
 	if req.IdempotencyKey != "" && s.jobStore != nil {
 		if existingID, err := s.jobStore.GetJobByIdempotencyKey(r.Context(), req.IdempotencyKey); err == nil && existingID != "" {
 			traceID, _ := s.jobStore.GetTraceID(r.Context(), existingID)
@@ -1502,14 +1581,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	ctxPtr := memory.PointerForKey(ctxKey)
 	jobPriority := parsePriority(req.Priority)
 
-	// Use OrgId from request, or server's tenant fallback
-	orgID := req.OrgId
-	if orgID == "" {
-		orgID = s.tenant
-	}
 	teamID := req.TeamId
 	projectID := req.ProjectId
-	principalID := req.PrincipalId
 
 	secretsPresent := secrets.ContainsSecretRefs(req.Prompt) || secrets.ContainsSecretRefs(req.Context)
 	if secretsPresent {
@@ -1682,21 +1755,21 @@ func (s *server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
+	filtered := make([]scheduler.JobRecord, 0, len(jobs))
+	for _, job := range jobs {
+		if err := s.requireTenantAccess(r, job.Tenant); err != nil {
+			continue
+		}
+		filtered = append(filtered, job)
+	}
 	// Enrich with details if needed, but for now list is enough
-	json.NewEncoder(w).Encode(jobs)
+	json.NewEncoder(w).Encode(filtered)
 }
 
 func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
-	// Honor API key on WS as well
-	required := requiredAPIKeyFromEnv()
-	if required != "" {
-		key := normalizeAPIKey(r.Header.Get("X-API-Key"))
-		if key == "" {
-			key = normalizeAPIKey(apiKeyFromWebSocket(r))
-		}
-		if key != required {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if s.auth != nil {
+		if err := s.requireRole(r, "admin"); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
 	}
@@ -1877,35 +1950,16 @@ func decodeWSAPIKey(raw string) string {
 	return raw
 }
 
-func requiredAPIKeyFromEnv() string {
-	if v := normalizeAPIKey(os.Getenv("CORDUM_SUPER_SECRET_API_TOKEN")); v != "" {
-		return v
-	}
-	if v := normalizeAPIKey(os.Getenv("CORDUM_API_KEY")); v != "" {
-		return v
-	}
-	return normalizeAPIKey(os.Getenv("API_KEY"))
-}
-
-func apiKeyUnaryInterceptor(required string) grpc.UnaryServerInterceptor {
+func apiKeyUnaryInterceptor(auth AuthProvider) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if required == "" {
+		if auth == nil {
 			return handler(ctx, req)
 		}
-		key := ""
-		if md, ok := metadata.FromIncomingContext(ctx); ok {
-			if raw := md.Get("x-api-key"); len(raw) > 0 {
-				key = normalizeAPIKey(raw[0])
-			}
-			if key == "" {
-				if raw := md.Get("api-key"); len(raw) > 0 {
-					key = normalizeAPIKey(raw[0])
-				}
-			}
-		}
-		if key != required {
+		authCtx, err := auth.AuthenticateGRPC(ctx)
+		if err != nil {
 			return nil, status.Error(codes.Unauthenticated, "unauthorized")
 		}
+		ctx = context.WithValue(ctx, authContextKey{}, authCtx)
 		return handler(ctx, req)
 	}
 }
@@ -1918,6 +1972,9 @@ func addrFromEnv(key, fallback string) string {
 }
 
 func dialSafetyKernel(addr string) (*grpc.ClientConn, pb.SafetyKernelClient, error) {
+	if os.Getenv("SAFETY_KERNEL_TLS_REQUIRED") == "true" && strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CA")) == "" {
+		return nil, nil, fmt.Errorf("SAFETY_KERNEL_TLS_CA required")
+	}
 	creds := safetyTransportCredentials()
 	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
@@ -1959,10 +2016,9 @@ func rateLimitMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// apiKeyMiddleware enforces a static API key if API_KEY is set.
-func apiKeyMiddleware(next http.Handler) http.Handler {
-	required := requiredAPIKeyFromEnv()
-	if required == "" {
+// apiKeyMiddleware enforces API key auth and injects auth context.
+func apiKeyMiddleware(auth AuthProvider, next http.Handler) http.Handler {
+	if auth == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1970,15 +2026,13 @@ func apiKeyMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		key := normalizeAPIKey(r.Header.Get("X-API-Key"))
-		if key == "" && websocket.IsWebSocketUpgrade(r) {
-			key = normalizeAPIKey(apiKeyFromWebSocket(r))
-		}
-		if key != required {
+		authCtx, err := auth.AuthenticateHTTP(r)
+		if err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), authContextKey{}, authCtx)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -2222,6 +2276,10 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	var req createWorkflowRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -2230,9 +2288,19 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	if req.ID == "" {
 		req.ID = uuid.NewString()
 	}
+	orgID, err := s.resolveTenant(r, req.OrgID)
+	if err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
+	req.OrgID = orgID
 
 	// Preserve existing fields on upsert for callers that send partial payloads.
 	if existing, err := s.workflowStore.GetWorkflow(r.Context(), req.ID); err == nil && existing != nil {
+		if existing.OrgID != "" && existing.OrgID != req.OrgID {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
 		if req.OrgID == "" {
 			req.OrgID = existing.OrgID
 		}
@@ -2308,6 +2376,10 @@ func (s *server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	if err := s.requireTenantAccess(r, wfDef.OrgID); err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(wfDef)
 }
@@ -2317,10 +2389,20 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
+	}
+	if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), id); err == nil && wfDef != nil {
+		if err := s.requireTenantAccess(r, wfDef.OrgID); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
 	}
 	if err := s.workflowStore.DeleteWorkflow(r.Context(), id); err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -2338,7 +2420,11 @@ func (s *server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	orgID := r.URL.Query().Get("org_id")
+	orgID, err := s.resolveTenant(r, r.URL.Query().Get("org_id"))
+	if err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
 	list, err := s.workflowStore.ListWorkflows(r.Context(), orgID, 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -2351,6 +2437,10 @@ func (s *server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {
 		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	wfID := r.PathValue("id")
@@ -2375,15 +2465,29 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if wfDef != nil {
+		if err := s.requireTenantAccess(r, wfDef.OrgID); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
+	}
 	if wfDef != nil && len(wfDef.InputSchema) > 0 {
 		if err := schema.ValidateMap(wfDef.InputSchema, payload); err != nil {
 			http.Error(w, fmt.Sprintf("input schema validation failed: %v", err), http.StatusBadRequest)
 			return
 		}
 	}
-	orgID := r.URL.Query().Get("org_id")
-	if orgID == "" {
-		orgID = s.tenant
+	orgID, err := s.resolveTenant(r, r.URL.Query().Get("org_id"))
+	if err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
+	if wfDef != nil && wfDef.OrgID != "" && orgID != "" && orgID != wfDef.OrgID {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
+	if orgID == "" && wfDef != nil {
+		orgID = wfDef.OrgID
 	}
 	teamID := r.URL.Query().Get("team_id")
 	dryRun := parseBool(r.URL.Query().Get("dry_run"))
@@ -2475,6 +2579,10 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow engine unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	runID := r.PathValue("id")
 	if runID == "" {
 		http.Error(w, "missing run id", http.StatusBadRequest)
@@ -2487,6 +2595,10 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	if err := s.requireTenantAccess(r, origRun.OrgID); err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
 		return
 	}
 	if limit := s.maxConcurrentRuns(r.Context(), origRun.OrgID, origRun.TeamID); limit > 0 {
@@ -2540,13 +2652,32 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	var req configUpsertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
+	scope := configsvc.Scope(req.Scope)
+	if scope == configsvc.ScopeSystem {
+		if err := s.requireRole(r, "admin"); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+	}
+	if scope == configsvc.ScopeOrg {
+		tenant, err := s.resolveTenant(r, req.ScopeID)
+		if err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
+		req.ScopeID = tenant
+	}
 	doc := &configsvc.Document{
-		Scope:   configsvc.Scope(req.Scope),
+		Scope:   scope,
 		ScopeID: req.ScopeID,
 		Data:    req.Data,
 		Meta:    req.Meta,
@@ -2571,6 +2702,20 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	if scope == string(configsvc.ScopeSystem) && scopeID == "" {
 		scopeID = "default"
 	}
+	if configsvc.Scope(scope) == configsvc.ScopeSystem {
+		if err := s.requireRole(r, "admin"); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+	}
+	if configsvc.Scope(scope) == configsvc.ScopeOrg {
+		tenant, err := s.resolveTenant(r, scopeID)
+		if err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
+		scopeID = tenant
+	}
 	doc, err := s.configSvc.Get(r.Context(), configsvc.Scope(scope), scopeID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -2589,7 +2734,11 @@ func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	orgID := r.URL.Query().Get("org_id")
+	orgID, err := s.resolveTenant(r, r.URL.Query().Get("org_id"))
+	if err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
 	teamID := r.URL.Query().Get("team_id")
 	wfID := r.URL.Query().Get("workflow_id")
 	stepID := r.URL.Query().Get("step_id")
@@ -2616,6 +2765,10 @@ type schemaRegisterRequest struct {
 func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 	if s.schemaRegistry == nil {
 		http.Error(w, "schema registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	var req schemaRegisterRequest
@@ -2736,6 +2889,10 @@ func (s *server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	var req lockRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -2760,6 +2917,10 @@ func (s *server) handleReleaseLock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	var req lockRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -2781,6 +2942,10 @@ func (s *server) handleReleaseLock(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleRenewLock(w http.ResponseWriter, r *http.Request) {
 	if s.lockStore == nil {
 		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	var req lockRequest
@@ -2862,6 +3027,22 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
+	tenant, err := s.resolveTenant(r, req.Tenant)
+	if err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
+	req.Tenant = tenant
+	req.OrgId = tenant
+	principalID, err := s.resolvePrincipal(r, req.PrincipalId)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	req.PrincipalId = principalID
+	if req.Meta != nil {
+		req.Meta.TenantId = tenant
+	}
 	checkReq, err := buildPolicyCheckRequest(r.Context(), &req, s.configSvc, s.tenant)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2897,6 +3078,10 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dlq store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	limit := int64(100)
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
@@ -2908,6 +3093,17 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if s.jobStore != nil {
+		filtered := make([]memory.DLQEntry, 0, len(entries))
+		for _, entry := range entries {
+			tenant, _ := s.jobStore.GetTenant(r.Context(), entry.JobID)
+			if err := s.requireTenantAccess(r, tenant); err != nil {
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+		entries = filtered
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entries)
 }
@@ -2915,6 +3111,10 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 	if s.dlqStore == nil {
 		http.Error(w, "dlq store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	limit := int64(100)
@@ -2933,6 +3133,17 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if s.jobStore != nil {
+		filtered := make([]memory.DLQEntry, 0, len(entries))
+		for _, entry := range entries {
+			tenant, _ := s.jobStore.GetTenant(r.Context(), entry.JobID)
+			if err := s.requireTenantAccess(r, tenant); err != nil {
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+		entries = filtered
 	}
 	var nextCursor *int64
 	if len(entries) == int(limit) {
@@ -2954,10 +3165,22 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dlq store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	jobID := r.PathValue("job_id")
 	if jobID == "" {
 		http.Error(w, "missing job_id", http.StatusBadRequest)
 		return
+	}
+	if s.jobStore != nil {
+		if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
+			if err := s.requireTenantAccess(r, tenant); err != nil {
+				http.Error(w, "tenant access denied", http.StatusForbidden)
+				return
+			}
+		}
 	}
 	if err := s.dlqStore.Delete(r.Context(), jobID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -2971,10 +3194,20 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dlq, job, or memory store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	jobID := r.PathValue("job_id")
 	if jobID == "" {
 		http.Error(w, "missing job_id", http.StatusBadRequest)
 		return
+	}
+	if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
 	}
 	entry, err := s.dlqStore.Get(r.Context(), jobID)
 	if err != nil {
@@ -3062,12 +3295,24 @@ func (s *server) handleApproveStep(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow engine unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	wfID := r.PathValue("id")
 	runID := r.PathValue("run_id")
 	stepID := r.PathValue("step_id")
 	if wfID == "" || runID == "" || stepID == "" {
 		http.Error(w, "missing identifiers", http.StatusBadRequest)
 		return
+	}
+	if s.workflowStore != nil {
+		if run, err := s.workflowStore.GetRun(r.Context(), runID); err == nil && run != nil {
+			if err := s.requireTenantAccess(r, run.OrgID); err != nil {
+				http.Error(w, "tenant access denied", http.StatusForbidden)
+				return
+			}
+		}
 	}
 
 	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
@@ -3100,10 +3345,22 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow engine unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	runID := r.PathValue("run_id")
 	if runID == "" {
 		http.Error(w, "missing run_id", http.StatusBadRequest)
 		return
+	}
+	if s.workflowStore != nil {
+		if run, err := s.workflowStore.GetRun(r.Context(), runID); err == nil && run != nil {
+			if err := s.requireTenantAccess(r, run.OrgID); err != nil {
+				http.Error(w, "tenant access denied", http.StatusForbidden)
+				return
+			}
+		}
 	}
 
 	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
@@ -3129,6 +3386,10 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	limit := int64(100)
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
@@ -3148,6 +3409,9 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(jobs))
 	for _, job := range jobs {
+		if err := s.requireTenantAccess(r, job.Tenant); err != nil {
+			continue
+		}
 		record, _ := s.jobStore.GetSafetyDecision(r.Context(), job.ID)
 		items = append(items, map[string]any{
 			"job":               job,
@@ -3178,6 +3442,10 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job store or bus unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	var body struct {
 		Reason string `json:"reason"`
 		Note   string `json:"note"`
@@ -3199,6 +3467,12 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	if state != scheduler.JobStateApproval {
 		http.Error(w, "job not awaiting approval", http.StatusConflict)
 		return
+	}
+	if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
 	}
 	req, err := s.jobStore.GetJobRequest(r.Context(), jobID)
 	if err != nil {
@@ -3308,6 +3582,10 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job store or bus unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	var body struct {
 		Reason string `json:"reason"`
 		Note   string `json:"note"`
@@ -3329,6 +3607,12 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	if state != scheduler.JobStateApproval {
 		http.Error(w, "job not awaiting approval", http.StatusConflict)
 		return
+	}
+	if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
 	}
 	var principalID string
 	if req, err := s.jobStore.GetJobRequest(r.Context(), jobID); err == nil && req != nil {
@@ -3391,6 +3675,12 @@ func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing workflow id", http.StatusBadRequest)
 		return
 	}
+	if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
+		if err := s.requireTenantAccess(r, wfDef.OrgID); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
+	}
 	runs, err := s.workflowStore.ListRunsByWorkflow(r.Context(), wfID, 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -3437,6 +3727,13 @@ func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
 	cursor = normalizeTimestampSecondsUpper(cursor)
 	updatedAfter = normalizeTimestampSecondsUpper(updatedAfter)
 	updatedBefore = normalizeTimestampSecondsUpper(updatedBefore)
+
+	resolvedOrg, err := s.resolveTenant(r, orgFilter)
+	if err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
+	orgFilter = resolvedOrg
 
 	runs, err := s.workflowStore.ListRuns(r.Context(), cursor, limit)
 	if err != nil {
@@ -3508,6 +3805,10 @@ func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	if err := s.requireTenantAccess(r, run.OrgID); err != nil {
+		http.Error(w, "tenant access denied", http.StatusForbidden)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(run)
 }
@@ -3521,6 +3822,12 @@ func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		http.Error(w, "missing run id", http.StatusBadRequest)
 		return
+	}
+	if run, err := s.workflowStore.GetRun(r.Context(), id); err == nil && run != nil {
+		if err := s.requireTenantAccess(r, run.OrgID); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
 	}
 	limit := int64(200)
 	if q := r.URL.Query().Get("limit"); q != "" {
@@ -3542,10 +3849,20 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
+	}
+	if run, err := s.workflowStore.GetRun(r.Context(), id); err == nil && run != nil {
+		if err := s.requireTenantAccess(r, run.OrgID); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
 	}
 	if err := s.workflowStore.DeleteRun(r.Context(), id); err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -3581,12 +3898,20 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	ctxPtr := memory.PointerForKey(ctxKey)
 	jobPriority := parsePriority(req.GetPriority())
 
-	// Use OrgId from request, or server's tenant fallback
+	// Use tenant from auth context when available.
 	orgID := req.GetOrgId()
+	principalID := req.GetPrincipalId()
+	if auth := authFromContext(ctx); auth != nil {
+		if auth.Tenant != "" {
+			orgID = auth.Tenant
+		}
+		if auth.PrincipalID != "" {
+			principalID = auth.PrincipalID
+		}
+	}
 	if orgID == "" {
 		orgID = s.tenant
 	}
-	principalID := req.GetPrincipalId()
 
 	payloadReq := submitJobRequest{
 		Prompt:         req.GetPrompt(),
@@ -3759,6 +4084,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 }
 
 func (s *server) GetJobStatus(ctx context.Context, req *pb.GetJobStatusRequest) (*pb.GetJobStatusResponse, error) {
+	if auth := authFromContext(ctx); auth != nil && auth.Tenant != "" && s.jobStore != nil {
+		if tenant, _ := s.jobStore.GetTenant(ctx, req.GetJobId()); tenant != "" && tenant != auth.Tenant && !auth.AllowCrossTenant {
+			return nil, status.Error(codes.PermissionDenied, "tenant access denied")
+		}
+	}
 	state, err := s.jobStore.GetState(ctx, req.GetJobId())
 	if err != nil {
 		state = "UNKNOWN"

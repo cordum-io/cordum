@@ -123,11 +123,30 @@ function normalizeBundleId(value: string): string {
   return trimmed.startsWith("secops/") ? trimmed : `secops/${trimmed}`;
 }
 
+function normalizeRole(role: string): string {
+  const trimmed = role.trim().toLowerCase();
+  if (trimmed === "secops" || trimmed === "operator") {
+    return "admin";
+  }
+  return trimmed;
+}
+
+function bundleSourceLabel(source?: string): string {
+  const trimmed = source?.trim().toLowerCase();
+  if (!trimmed) {
+    return "core";
+  }
+  if (trimmed === "secops") {
+    return "admin";
+  }
+  return trimmed;
+}
+
 export function PolicyPage() {
   const queryClient = useQueryClient();
   const principalRole = useConfigStore((state) => state.principalRole);
   const principalId = useConfigStore((state) => state.principalId);
-  const canEditPolicy = principalRole.trim().toLowerCase() === "secops";
+  const canEditPolicy = normalizeRole(principalRole) === "admin";
   const [searchParams] = useSearchParams();
   const approvalsQuery = useInfiniteQuery({
     queryKey: ["approvals"],
@@ -271,8 +290,8 @@ export function PolicyPage() {
   const isEditableBundle = isSecopsBundle && canEditPolicy;
   const bundleAccessLabel = isSecopsBundle
     ? canEditPolicy
-      ? "Editable secops bundle"
-      : "Read-only (secops role required)"
+      ? "Editable admin bundle"
+      : "Read-only (admin role required)"
     : "Read-only bundle";
 
   const policyBundleDetailQuery = useQuery({
@@ -550,7 +569,7 @@ export function PolicyPage() {
     [bundleItems]
   );
   const allSecopsSelected = secopsBundles.length > 0 && secopsBundles.every((item) => publishSelection.has(item.id));
-  const publishLabel = publishSelection.size ? "Publish selected" : "Publish all secops";
+  const publishLabel = publishSelection.size ? "Publish selected" : "Publish all admin bundles";
   const canPublish = canEditPolicy && secopsBundles.length > 0;
 
   const togglePublishSelection = (bundleId: string) => {
@@ -778,7 +797,7 @@ export function PolicyPage() {
           <Card>
           <CardHeader>
             <CardTitle>Policy Bundles</CardTitle>
-            <div className="text-xs text-muted">Edit secops bundles, inspect pack fragments, and preview content.</div>
+            <div className="text-xs text-muted">Edit admin bundles (secops/*), inspect pack fragments, and preview content.</div>
           </CardHeader>
           <div className="rounded-2xl border border-border bg-white/70 p-3 text-xs text-muted">
             <div>
@@ -786,7 +805,7 @@ export function PolicyPage() {
               {principalId ? ` · Principal ${principalId}` : ""}
               {canEditPolicy ? " · Editing enabled" : " · Read-only"}
             </div>
-            {!canEditPolicy ? <div className="mt-1">Set `principalRole` to `secops` in config.json to edit/publish.</div> : null}
+            {!canEditPolicy ? <div className="mt-1">Set `principalRole` to `admin` in config.json to edit/publish.</div> : null}
           </div>
           <div className="grid gap-4 lg:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
               <div className="space-y-4">
@@ -828,7 +847,7 @@ export function PolicyPage() {
                   <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Filter</label>
                   <Select value={bundleFilter} onChange={(event) => setBundleFilter(event.target.value as typeof bundleFilter)}>
                     <option value="all">All bundles</option>
-                    <option value="secops">SecOps</option>
+                    <option value="secops">Admin</option>
                     <option value="pack">Packs</option>
                     <option value="core">Core</option>
                   </Select>
@@ -850,7 +869,7 @@ export function PolicyPage() {
                             <div>
                               <div className="text-sm font-semibold text-ink">{bundle.id}</div>
                               <div className="text-xs text-muted">
-                                {bundle.source || "core"}
+                                {bundleSourceLabel(bundle.source)}
                                 {bundle.updated_at ? ` · Updated ${formatRelative(bundle.updated_at)}` : ""}
                                 {bundle.installed_at ? ` · Installed ${formatRelative(bundle.installed_at)}` : ""}
                               </div>
@@ -877,7 +896,7 @@ export function PolicyPage() {
                         <div className="text-xs text-muted">{bundleAccessLabel}</div>
                         </div>
                         <Badge variant={selectedBundle?.source === "secops" ? "info" : "default"}>
-                          {selectedBundle?.source || "core"}
+                          {bundleSourceLabel(selectedBundle?.source)}
                         </Badge>
                       </div>
                       <div className="mt-3 grid gap-3 lg:grid-cols-2">
@@ -902,7 +921,7 @@ export function PolicyPage() {
                           <Input
                             value={bundleDraft.author}
                             onChange={(event) => setBundleDraft((prev) => ({ ...prev, author: event.target.value }))}
-                            placeholder="secops@cordum.io"
+                            placeholder="admin@cordum.io"
                             disabled={!isEditableBundle}
                           />
                         </div>
@@ -957,12 +976,12 @@ export function PolicyPage() {
           <Card>
             <CardHeader>
               <CardTitle>Publish & Rollback</CardTitle>
-              <div className="text-xs text-muted">Publish secops bundles and roll back with snapshots.</div>
+              <div className="text-xs text-muted">Publish admin bundles (secops/*) and roll back with snapshots.</div>
             </CardHeader>
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">SecOps bundles</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Admin bundles (secops/*)</div>
                   <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted">
                     <input
                       type="checkbox"
@@ -992,7 +1011,7 @@ export function PolicyPage() {
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted">
-                    No secops bundles available yet.
+                    No admin bundles available yet.
                   </div>
                 )}
                 <div className="space-y-2">
@@ -1012,9 +1031,9 @@ export function PolicyPage() {
                     placeholder="Snapshot note (optional)"
                   />
                   {!canEditPolicy ? (
-                    <div className="text-xs text-muted">Publishing requires `principalRole=secops`.</div>
+                    <div className="text-xs text-muted">Publishing requires `principalRole=admin`.</div>
                   ) : publishSelection.size === 0 ? (
-                    <div className="text-xs text-muted">No bundles selected; publish will include all secops bundles.</div>
+                    <div className="text-xs text-muted">No bundles selected; publish will include all admin bundles.</div>
                   ) : null}
                   <div className="flex flex-wrap gap-2">
                     <Button

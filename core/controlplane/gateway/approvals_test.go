@@ -52,7 +52,7 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 	httpReq.SetPathValue("job_id", jobID)
 	httpReq.Header.Set("X-Principal-Id", "alice")
-	httpReq.Header.Set("X-Principal-Role", "secops")
+	httpReq.Header.Set("X-Principal-Role", "admin")
 	rr := httptest.NewRecorder()
 
 	s.handleApproveJob(rr, httpReq)
@@ -74,8 +74,8 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	if record.ApprovedBy != "alice" {
 		t.Fatalf("expected approved_by alice got %q", record.ApprovedBy)
 	}
-	if record.ApprovedRole != "secops" {
-		t.Fatalf("expected approved_role secops got %q", record.ApprovedRole)
+	if record.ApprovedRole != "admin" {
+		t.Fatalf("expected approved_role admin got %q", record.ApprovedRole)
 	}
 	if record.PolicySnapshot != "snap-1" {
 		t.Fatalf("expected policy snapshot snap-1 got %q", record.PolicySnapshot)
@@ -168,7 +168,7 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(body))
 	httpReq.SetPathValue("job_id", jobID)
 	httpReq.Header.Set("X-Principal-Id", "bob")
-	httpReq.Header.Set("X-Principal-Role", "secops")
+	httpReq.Header.Set("X-Principal-Role", "admin")
 	rr := httptest.NewRecorder()
 	s.handleRejectJob(rr, httpReq)
 
@@ -268,7 +268,7 @@ func TestGetJobIncludesApprovalMetadata(t *testing.T) {
 	}
 	if err := s.jobStore.SetApprovalRecord(context.Background(), jobID, memory.ApprovalRecord{
 		ApprovedBy:     "carol",
-		ApprovedRole:   "secops",
+		ApprovedRole:   "admin",
 		Reason:         "ok",
 		Note:           "note",
 		PolicySnapshot: "snap-1",

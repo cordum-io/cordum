@@ -207,6 +207,10 @@ func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	records, _, err := s.loadPackRegistry(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -224,6 +228,10 @@ func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleGetPack(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -252,6 +260,10 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.lockStore == nil {
 		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxPackUploadBytes)
@@ -403,7 +415,7 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	if inactive || !hasPoolOverlay(appliedConfig) {
 		status = "INACTIVE"
 	}
-	installedBy := strings.TrimSpace(r.Header.Get("X-Actor-ID"))
+	installedBy := strings.TrimSpace(policyActorID(r))
 
 	record := packRecord{
 		ID:          manifest.Metadata.ID,
@@ -439,6 +451,10 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil || s.workflowStore == nil || s.schemaRegistry == nil {
 		http.Error(w, "pack dependencies unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if s.lockStore == nil {
@@ -509,6 +525,10 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
 	if s.safetyClient == nil {
 		http.Error(w, "safety kernel unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -915,6 +935,17 @@ func (s *server) runPolicySimulation(ctx context.Context, test packPolicySimulat
 			ActorId:   test.Request.ActorId,
 			ActorType: test.Request.ActorType,
 		},
+	}
+	if auth := authFromContext(ctx); auth != nil {
+		if auth.Tenant != "" {
+			request.Tenant = auth.Tenant
+			if request.Meta != nil {
+				request.Meta.TenantId = auth.Tenant
+			}
+		}
+		if auth.PrincipalID != "" && request.Meta != nil && request.Meta.ActorId == "" {
+			request.Meta.ActorId = auth.PrincipalID
+		}
 	}
 	if request.Meta != nil {
 		if request.Meta.PackId == "" {
