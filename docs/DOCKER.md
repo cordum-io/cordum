@@ -47,6 +47,14 @@ cp .env.example .env
 HTTP requests must include `X-API-Key`; gRPC uses metadata `x-api-key`.
 WebSocket stream auth uses `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` (the dashboard handles this automatically).
 
+For multiple API keys, set `CORDUM_API_KEYS` (comma-separated or JSON). Example:
+
+```
+CORDUM_API_KEYS=key-a,key-b
+```
+
+Enterprise deployments (multi-tenant keys, RBAC, SSO, SIEM export) are configured in the enterprise repo.
+
 ## Config mounts
 
 Compose mounts:

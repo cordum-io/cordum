@@ -3,5 +3,5 @@
   "apiKey": "",
   "tenantId": "default",
   "principalId": "dashboard",
-  "principalRole": "secops"
+  "principalRole": "admin"
 }

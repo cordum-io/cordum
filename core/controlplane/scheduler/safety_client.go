@@ -202,6 +202,6 @@ func safetyTransportCredentials() credentials.TransportCredentials {
 	if os.Getenv("SAFETY_KERNEL_INSECURE") == "true" {
 		return insecure.NewCredentials()
 	}
-	// Default to insecure to preserve compatibility; operators can set SAFETY_KERNEL_TLS_CA to enable TLS.
+	// Default to insecure to preserve compatibility; admins can set SAFETY_KERNEL_TLS_CA to enable TLS.
 	return insecure.NewCredentials()
 }

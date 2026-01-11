@@ -258,7 +258,7 @@ func TestRedisJobStoreApprovalRecord(t *testing.T) {
 
 	record := ApprovalRecord{
 		ApprovedBy:     "alice",
-		ApprovedRole:   "secops",
+		ApprovedRole:   "admin",
 		Reason:         "ok",
 		Note:           "reviewed",
 		PolicySnapshot: "snap-1",

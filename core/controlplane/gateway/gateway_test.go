@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
-	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -98,15 +98,20 @@ func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 
 func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
 	t.Setenv("API_KEY", "'super-secret-key'")
+	provider, err := newBasicAuthProvider("default")
+	if err != nil {
+		t.Fatalf("auth init: %v", err)
+	}
 
 	s := &server{
 		clients:  make(map[*websocket.Conn]chan *pb.BusPacket),
 		eventsCh: make(chan *pb.BusPacket, 1),
+		auth:     provider,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
-	srv := newIPv4Server(t, apiKeyMiddleware(mux))
+	srv := newIPv4Server(t, apiKeyMiddleware(provider, mux))
 	defer srv.Close()
 
 	okURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
@@ -174,10 +179,15 @@ func TestApiKeyFromWebSocketProtocols(t *testing.T) {
 }
 
 func TestApiKeyUnaryInterceptor(t *testing.T) {
-	interceptor := apiKeyUnaryInterceptor("secret")
+	t.Setenv("CORDUM_API_KEYS", "secret")
+	provider, err := newBasicAuthProvider("default")
+	if err != nil {
+		t.Fatalf("auth init: %v", err)
+	}
+	interceptor := apiKeyUnaryInterceptor(provider)
 
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-api-key", "secret"))
-	_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
+	_, err = interceptor(ctx, nil, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
 		return "ok", nil
 	})
 	if err != nil {

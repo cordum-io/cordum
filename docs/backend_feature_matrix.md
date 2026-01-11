@@ -16,6 +16,8 @@ This table tracks key backend features, their implementation status, and test co
 | Locks service | Yes | Unit (`core/infra/locks/redis_store_test.go`) | Shared/exclusive locks with TTL. |
 | Artifact store | Yes | None | Redis-backed store (`core/infra/artifacts`). |
 | Gateway HTTP/WS endpoints | Yes | Unit (`core/controlplane/gateway/gateway_test.go`) | Jobs, workflows, approvals, policy (bundles/publish/rollback/audit), schemas, locks, artifacts, DLQ. |
+| Auth (OSS) | Yes | Unit (gateway tests) | API key allowlist (`CORDUM_API_KEYS`/`CORDUM_API_KEY`) with single-tenant default. |
+| Auth (enterprise) | Yes | Unit (enterprise tests) | Multi-tenant API keys and RBAC enforced by the enterprise auth provider. |
 | Worker runtime SDK | Yes | None | `sdk/runtime` CAP worker runtime. |
 | CLI (cordumctl) | Yes | None | `cmd/cordumctl` + smoke script; ships as `cordumctl`. |
 

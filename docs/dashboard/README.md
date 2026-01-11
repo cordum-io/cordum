@@ -18,7 +18,7 @@ By default, the dashboard uses `/config.json` from `dashboard/public`. To point 
   "apiKey": "super-secret-key",
   "tenantId": "default",
   "principalId": "dashboard",
-  "principalRole": "secops"
+  "principalRole": "admin"
 }
 ```
 
@@ -30,7 +30,7 @@ The production container writes `config.json` at startup from environment variab
 - `CORDUM_API_KEY`
 - `CORDUM_TENANT_ID`
 - `CORDUM_PRINCIPAL_ID`
-- `CORDUM_PRINCIPAL_ROLE` (set to `secops` to edit/publish policy bundles)
+- `CORDUM_PRINCIPAL_ROLE` (set to `admin` to edit/publish policy bundles when RBAC is enforced)
 
 If you host the dashboard on a different origin than the gateway, set `CORDUM_ALLOWED_ORIGINS` on the gateway to allow the dashboard origin.
 
@@ -110,19 +110,21 @@ The policy diff view uses bundle snapshots stored in the config service:
 
 - `GET /api/v1/policy/bundles`
 - `GET /api/v1/policy/bundles/{id}`
-- `PUT /api/v1/policy/bundles/{id}` (requires `X-Principal-Role: secops`)
+- `PUT /api/v1/policy/bundles/{id}` (requires admin role when enterprise RBAC is enabled)
 - `POST /api/v1/policy/bundles/{id}/simulate`
 - `GET /api/v1/policy/bundles/snapshots`
 - `POST /api/v1/policy/bundles/snapshots` with `{ "note": "..." }`
 - `GET /api/v1/policy/bundles/snapshots/{id}`
-- `POST /api/v1/policy/publish` (requires `X-Principal-Role: secops`)
-- `POST /api/v1/policy/rollback` (requires `X-Principal-Role: secops`)
+- `POST /api/v1/policy/publish` (requires admin role when enterprise RBAC is enabled)
+- `POST /api/v1/policy/rollback` (requires admin role when enterprise RBAC is enabled)
 - `GET /api/v1/policy/audit`
 
 Bundle IDs include `/` (e.g. `secops/workflows`). When calling the REST endpoints, replace `/` with `~`
 in the `{id}` path segment or use the `bundle_id` query parameter.
 
-The Policy Studio editor is read-only unless `principalRole` (or `X-Principal-Role`) is set to `secops`.
+The Policy Studio editor is read-only unless `principalRole` (or `X-Principal-Role`) is set to `admin`.
+
+Backend enforcement of admin-only actions is provided by the enterprise auth provider.
 
 ## DLQ Pagination
 

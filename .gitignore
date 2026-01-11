@@ -22,3 +22,9 @@ generated/
 .cache/
 bin/
 AGENTS.md
+docs/private/
+tools/private/
+enterprise/
+licenses/
+keys/
+secrets/
