@@ -125,6 +125,7 @@ Core kernel must evaluate a request and return:
 - `REQUIRE_APPROVAL`
 - `ALLOW_WITH_CONSTRAINTS`  
   *(rewrite budgets, sandbox, command allowlist, redaction level)*
+- Optional **remediations** that suggest safer alternatives (topic/capability/label tweaks).
 
 Policy management (P0 minimum):
 - policy bundles loaded from file/URL + config service fragments (`cfg:system:policy` bundles)
@@ -148,6 +149,7 @@ Safety kernel config-service source can be tuned via `SAFETY_POLICY_CONFIG_SCOPE
   - require approvals for risky actions (prod writes, PR creation, shell exec)
   - impose constraints (max diff size, deny-paths, network restrictions)
 - Kernel gates every job/run/tool call **before execution**.
+- When policy provides remediations, the gateway can apply them to create a new job without hand-editing inputs.
 
 ---
 
@@ -206,7 +208,7 @@ At minimum:
 - Workflows: `create/list/get/delete`
 - Runs: `start/get/list/cancel/delete`, `rerun`, `timeline`
 - Approvals: job approvals + workflow step approvals
-- Jobs: `submit/status/get result pointer`
+- Jobs: `submit/status/get result pointer`, `cancel`, `remediate`
 - DLQ: `list/retry/delete`
 - Policy: `evaluate/simulate/explain` + snapshot list
 - Config: `get/set/effective`

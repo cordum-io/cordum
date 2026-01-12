@@ -46,6 +46,26 @@ Expected output:
 ./tools/scripts/cordumctl_smoke.sh
 ```
 
+## Run the hello pack (optional)
+
+This demo installs a tiny pack and a Go worker that echoes workflow input.
+
+```bash
+# In one terminal, start the worker
+cd examples/hello-worker-go
+go run .
+
+# In another terminal, install the pack
+cd ../../
+./cmd/cordumctl/cordumctl pack install ./examples/hello-pack
+
+# Trigger a run
+curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
+  -H "X-API-Key: ${CORDUM_API_KEY:-super-secret-key}" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello from pack","author":"demo"}'
+```
+
 ## Open the dashboard (optional)
 
 ```text

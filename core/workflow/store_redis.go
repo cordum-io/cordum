@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -16,7 +17,7 @@ const (
 
 // RedisStore persists workflow definitions and runs in Redis.
 type RedisStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRedisWorkflowStore constructs a Redis-backed workflow store.
@@ -24,11 +25,10 @@ func NewRedisWorkflowStore(url string) (*RedisStore, error) {
 	if url == "" {
 		url = defaultWorkflowRedisURL
 	}
-	opts, err := redis.ParseURL(url)
+	client, err := redisutil.NewClient(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {

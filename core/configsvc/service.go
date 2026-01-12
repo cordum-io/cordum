@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -32,7 +33,7 @@ type Document struct {
 
 // Service persists config documents and resolves effective config with simple override semantics.
 type Service struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // EffectiveSnapshot includes the merged config plus version/hash metadata.
@@ -47,11 +48,10 @@ func New(url string) (*Service, error) {
 	if url == "" {
 		url = "redis://localhost:6379"
 	}
-	opts, err := redis.ParseURL(url)
+	client, err := redisutil.NewClient(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {

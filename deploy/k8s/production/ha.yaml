@@ -1,0 +1,63 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cordum-api-gateway
+  namespace: cordum
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cordum-api-gateway
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cordum-scheduler
+  namespace: cordum
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cordum-scheduler
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cordum-workflow-engine
+  namespace: cordum
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cordum-workflow-engine
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cordum-safety-kernel
+  namespace: cordum
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cordum-safety-kernel
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cordum-api-gateway
+  namespace: cordum
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cordum-api-gateway
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

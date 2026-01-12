@@ -1,0 +1,193 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-api-gateway
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: gateway
+        env:
+        - name: NATS_URL
+          value: tls://nats:4222
+        - name: REDIS_URL
+          value: rediss://redis:6379
+        - name: NATS_TLS_CA
+          value: /etc/cordum/tls/client/ca.crt
+        - name: NATS_TLS_CERT
+          value: /etc/cordum/tls/client/tls.crt
+        - name: NATS_TLS_KEY
+          value: /etc/cordum/tls/client/tls.key
+        - name: NATS_TLS_SERVER_NAME
+          value: nats
+        - name: NATS_JS_REPLICAS
+          value: "3"
+        - name: REDIS_TLS_CA
+          value: /etc/cordum/tls/client/ca.crt
+        - name: REDIS_TLS_CERT
+          value: /etc/cordum/tls/client/tls.crt
+        - name: REDIS_TLS_KEY
+          value: /etc/cordum/tls/client/tls.key
+        - name: REDIS_TLS_SERVER_NAME
+          value: redis
+        - name: REDIS_CLUSTER_ADDRESSES
+          value: cordum-redis-0.cordum-redis.cordum.svc:6379,cordum-redis-1.cordum-redis.cordum.svc:6379,cordum-redis-2.cordum-redis.cordum.svc:6379,cordum-redis-3.cordum-redis.cordum.svc:6379,cordum-redis-4.cordum-redis.cordum.svc:6379,cordum-redis-5.cordum-redis.cordum.svc:6379
+        volumeMounts:
+        - name: cordum-client-tls
+          mountPath: /etc/cordum/tls/client
+          readOnly: true
+      volumes:
+      - name: cordum-client-tls
+        secret:
+          secretName: cordum-client-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-scheduler
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: scheduler
+        env:
+        - name: NATS_URL
+          value: tls://nats:4222
+        - name: REDIS_URL
+          value: rediss://redis:6379
+        - name: NATS_TLS_CA
+          value: /etc/cordum/tls/client/ca.crt
+        - name: NATS_TLS_CERT
+          value: /etc/cordum/tls/client/tls.crt
+        - name: NATS_TLS_KEY
+          value: /etc/cordum/tls/client/tls.key
+        - name: NATS_TLS_SERVER_NAME
+          value: nats
+        - name: NATS_JS_REPLICAS
+          value: "3"
+        - name: REDIS_TLS_CA
+          value: /etc/cordum/tls/client/ca.crt
+        - name: REDIS_TLS_CERT
+          value: /etc/cordum/tls/client/tls.crt
+        - name: REDIS_TLS_KEY
+          value: /etc/cordum/tls/client/tls.key
+        - name: REDIS_TLS_SERVER_NAME
+          value: redis
+        - name: REDIS_CLUSTER_ADDRESSES
+          value: cordum-redis-0.cordum-redis.cordum.svc:6379,cordum-redis-1.cordum-redis.cordum.svc:6379,cordum-redis-2.cordum-redis.cordum.svc:6379,cordum-redis-3.cordum-redis.cordum.svc:6379,cordum-redis-4.cordum-redis.cordum.svc:6379,cordum-redis-5.cordum-redis.cordum.svc:6379
+        volumeMounts:
+        - name: cordum-client-tls
+          mountPath: /etc/cordum/tls/client
+          readOnly: true
+      volumes:
+      - name: cordum-client-tls
+        secret:
+          secretName: cordum-client-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-workflow-engine
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: workflow-engine
+        env:
+        - name: NATS_URL
+          value: tls://nats:4222
+        - name: REDIS_URL
+          value: rediss://redis:6379
+        - name: NATS_TLS_CA
+          value: /etc/cordum/tls/client/ca.crt
+        - name: NATS_TLS_CERT
+          value: /etc/cordum/tls/client/tls.crt
+        - name: NATS_TLS_KEY
+          value: /etc/cordum/tls/client/tls.key
+        - name: NATS_TLS_SERVER_NAME
+          value: nats
+        - name: NATS_JS_REPLICAS
+          value: "3"
+        - name: REDIS_TLS_CA
+          value: /etc/cordum/tls/client/ca.crt
+        - name: REDIS_TLS_CERT
+          value: /etc/cordum/tls/client/tls.crt
+        - name: REDIS_TLS_KEY
+          value: /etc/cordum/tls/client/tls.key
+        - name: REDIS_TLS_SERVER_NAME
+          value: redis
+        - name: REDIS_CLUSTER_ADDRESSES
+          value: cordum-redis-0.cordum-redis.cordum.svc:6379,cordum-redis-1.cordum-redis.cordum.svc:6379,cordum-redis-2.cordum-redis.cordum.svc:6379,cordum-redis-3.cordum-redis.cordum.svc:6379,cordum-redis-4.cordum-redis.cordum.svc:6379,cordum-redis-5.cordum-redis.cordum.svc:6379
+        volumeMounts:
+        - name: cordum-client-tls
+          mountPath: /etc/cordum/tls/client
+          readOnly: true
+      volumes:
+      - name: cordum-client-tls
+        secret:
+          secretName: cordum-client-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-safety-kernel
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: safety
+        env:
+        - name: NATS_URL
+          value: tls://nats:4222
+        - name: NATS_TLS_CA
+          value: /etc/cordum/tls/client/ca.crt
+        - name: NATS_TLS_CERT
+          value: /etc/cordum/tls/client/tls.crt
+        - name: NATS_TLS_KEY
+          value: /etc/cordum/tls/client/tls.key
+        - name: NATS_TLS_SERVER_NAME
+          value: nats
+        volumeMounts:
+        - name: cordum-client-tls
+          mountPath: /etc/cordum/tls/client
+          readOnly: true
+      volumes:
+      - name: cordum-client-tls
+        secret:
+          secretName: cordum-client-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-context-engine
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: context-engine
+        env:
+        - name: REDIS_URL
+          value: rediss://redis:6379
+        - name: REDIS_TLS_CA
+          value: /etc/cordum/tls/client/ca.crt
+        - name: REDIS_TLS_CERT
+          value: /etc/cordum/tls/client/tls.crt
+        - name: REDIS_TLS_KEY
+          value: /etc/cordum/tls/client/tls.key
+        - name: REDIS_TLS_SERVER_NAME
+          value: redis
+        - name: REDIS_CLUSTER_ADDRESSES
+          value: cordum-redis-0.cordum-redis.cordum.svc:6379,cordum-redis-1.cordum-redis.cordum.svc:6379,cordum-redis-2.cordum-redis.cordum.svc:6379,cordum-redis-3.cordum-redis.cordum.svc:6379,cordum-redis-4.cordum-redis.cordum.svc:6379,cordum-redis-5.cordum-redis.cordum.svc:6379
+        volumeMounts:
+        - name: cordum-client-tls
+          mountPath: /etc/cordum/tls/client
+          readOnly: true
+      volumes:
+      - name: cordum-client-tls
+        secret:
+          secretName: cordum-client-tls

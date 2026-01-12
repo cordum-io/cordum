@@ -18,9 +18,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
-	"github.com/redis/go-redis/v9"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -34,6 +31,9 @@ import (
 	"github.com/cordum/cordum/core/infra/secrets"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -41,6 +41,7 @@ import (
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	wf "github.com/cordum/cordum/core/workflow"
@@ -699,6 +700,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("GET /api/v1/jobs/{id}", s.instrumented("/api/v1/jobs/{id}", s.handleGetJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/decisions", s.instrumented("/api/v1/jobs/{id}/decisions", s.handleListJobDecisions))
 	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", s.instrumented("/api/v1/jobs/{id}/cancel", s.handleCancelJob))
+	mux.HandleFunc("POST /api/v1/jobs/{id}/remediate", s.instrumented("/api/v1/jobs/{id}/remediate", s.handleRemediateJob))
 
 	// 4.5 Memory pointers (debug)
 	mux.HandleFunc("GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
@@ -1053,35 +1055,36 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"id":                 id,
-		"state":              state,
-		"trace_id":           traceID,
-		"context_ptr":        ctxPtr,
-		"context":            contextData,
-		"result_ptr":         resPtr,
-		"result":             resultData,
-		"topic":              topic,
-		"tenant":             tenant,
-		"actor_id":           actorID,
-		"actor_type":         actorType,
-		"idempotency_key":    idempotencyKey,
-		"capability":         capability,
-		"pack_id":            packID,
-		"risk_tags":          riskTags,
-		"requires":           requires,
-		"attempts":           attempts,
-		"safety_decision":    string(safetyRecord.Decision),
-		"safety_reason":      safetyRecord.Reason,
-		"safety_rule_id":     safetyRecord.RuleID,
-		"safety_snapshot":    safetyRecord.PolicySnapshot,
-		"safety_constraints": safetyRecord.Constraints,
-		"safety_job_hash":    safetyRecord.JobHash,
-		"approval_required":  safetyRecord.ApprovalRequired,
-		"approval_ref":       safetyRecord.ApprovalRef,
-		"labels":             labels,
-		"workflow_id":        workflowID,
-		"run_id":             runID,
-		"step_id":            stepID,
+		"id":                  id,
+		"state":               state,
+		"trace_id":            traceID,
+		"context_ptr":         ctxPtr,
+		"context":             contextData,
+		"result_ptr":          resPtr,
+		"result":              resultData,
+		"topic":               topic,
+		"tenant":              tenant,
+		"actor_id":            actorID,
+		"actor_type":          actorType,
+		"idempotency_key":     idempotencyKey,
+		"capability":          capability,
+		"pack_id":             packID,
+		"risk_tags":           riskTags,
+		"requires":            requires,
+		"attempts":            attempts,
+		"safety_decision":     string(safetyRecord.Decision),
+		"safety_reason":       safetyRecord.Reason,
+		"safety_rule_id":      safetyRecord.RuleID,
+		"safety_snapshot":     safetyRecord.PolicySnapshot,
+		"safety_constraints":  safetyRecord.Constraints,
+		"safety_remediations": safetyRecord.Remediations,
+		"safety_job_hash":     safetyRecord.JobHash,
+		"approval_required":   safetyRecord.ApprovalRequired,
+		"approval_ref":        safetyRecord.ApprovalRef,
+		"labels":              labels,
+		"workflow_id":         workflowID,
+		"run_id":              runID,
+		"step_id":             stepID,
 	}
 	if errorMessage != "" {
 		resp["error_message"] = errorMessage
@@ -1531,6 +1534,173 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		"id":    id,
 		"state": scheduler.JobStateCancelled,
 	})
+}
+
+type remediateJobRequest struct {
+	RemediationID string `json:"remediation_id"`
+}
+
+func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
+	if s.jobStore == nil || s.bus == nil || s.memStore == nil {
+		http.Error(w, "job store or bus unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	var body remediateJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	origReq, err := s.jobStore.GetJobRequest(r.Context(), jobID)
+	if err != nil || origReq == nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	if tenant := strings.TrimSpace(origReq.GetTenantId()); tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
+		}
+	}
+	safetyRecord, err := s.jobStore.GetSafetyDecision(r.Context(), jobID)
+	if err != nil || len(safetyRecord.Remediations) == 0 {
+		http.Error(w, "no remediations available", http.StatusConflict)
+		return
+	}
+	var remediation *pb.PolicyRemediation
+	if id := strings.TrimSpace(body.RemediationID); id != "" {
+		for _, rem := range safetyRecord.Remediations {
+			if rem != nil && rem.GetId() == id {
+				remediation = rem
+				break
+			}
+		}
+		if remediation == nil {
+			http.Error(w, "remediation not found", http.StatusNotFound)
+			return
+		}
+	} else if len(safetyRecord.Remediations) == 1 {
+		remediation = safetyRecord.Remediations[0]
+	} else {
+		http.Error(w, "remediation_id required", http.StatusBadRequest)
+		return
+	}
+
+	newJobID := uuid.NewString()
+	traceID, _ := s.jobStore.GetTraceID(r.Context(), jobID)
+	if traceID == "" {
+		traceID = uuid.NewString()
+	}
+
+	ctxPtr := origReq.GetContextPtr()
+	if ctxPtr != "" {
+		if key, err := memory.KeyFromPointer(ctxPtr); err == nil {
+			if data, err := s.memStore.GetContext(r.Context(), key); err == nil {
+				newKey := memory.MakeContextKey(newJobID)
+				if err := s.memStore.PutContext(r.Context(), newKey, data); err == nil {
+					ctxPtr = memory.PointerForKey(newKey)
+				}
+			}
+		}
+	}
+
+	newReq, ok := proto.Clone(origReq).(*pb.JobRequest)
+	if !ok || newReq == nil {
+		http.Error(w, "failed to clone job request", http.StatusInternalServerError)
+		return
+	}
+	newReq.JobId = newJobID
+	newReq.ParentJobId = origReq.GetJobId()
+	if ctxPtr != "" {
+		newReq.ContextPtr = ctxPtr
+	}
+	if remediation.GetReplacementTopic() != "" {
+		newReq.Topic = remediation.GetReplacementTopic()
+	}
+	if newReq.Meta == nil {
+		newReq.Meta = &pb.JobMetadata{}
+	}
+	if remediation.GetReplacementCapability() != "" {
+		newReq.Meta.Capability = remediation.GetReplacementCapability()
+	}
+
+	labels := map[string]string{}
+	for key, value := range origReq.GetLabels() {
+		lower := strings.ToLower(strings.TrimSpace(key))
+		if strings.HasPrefix(lower, "approval_") || key == bus.LabelBusMsgID {
+			continue
+		}
+		labels[key] = value
+	}
+	labels["remediation_of"] = origReq.GetJobId()
+	if remediation.GetId() != "" {
+		labels["remediation_id"] = remediation.GetId()
+	}
+	for key, value := range remediation.GetAddLabels() {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		labels[key] = value
+	}
+	for _, key := range remediation.GetRemoveLabels() {
+		delete(labels, key)
+	}
+	if len(labels) > 0 {
+		newReq.Labels = labels
+		newReq.Meta.Labels = labels
+	} else {
+		newReq.Labels = nil
+		newReq.Meta.Labels = nil
+	}
+
+	if err := s.jobStore.SetState(r.Context(), newJobID, scheduler.JobStatePending); err != nil {
+		http.Error(w, "failed to initialize job state", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.jobStore.SetTopic(r.Context(), newJobID, newReq.GetTopic()); err != nil {
+		http.Error(w, "failed to set job topic", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.jobStore.SetTenant(r.Context(), newJobID, newReq.GetTenantId()); err != nil {
+		http.Error(w, "failed to set job tenant", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.jobStore.AddJobToTrace(r.Context(), traceID, newJobID); err != nil {
+		http.Error(w, "failed to add job to trace", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.jobStore.SetJobMeta(r.Context(), newReq); err != nil {
+		http.Error(w, "failed to persist job metadata", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.jobStore.SetJobRequest(r.Context(), newReq); err != nil {
+		http.Error(w, "failed to persist job request", http.StatusServiceUnavailable)
+		return
+	}
+
+	packet := &pb.BusPacket{
+		TraceId:         traceID,
+		SenderId:        "api-gateway",
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobRequest{
+			JobRequest: newReq,
+		},
+	}
+	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+		http.Error(w, "failed to enqueue job", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"job_id": newJobID, "trace_id": traceID})
 }
 
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {

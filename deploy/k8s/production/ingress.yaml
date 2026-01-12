@@ -1,0 +1,39 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cordum
+  namespace: cordum
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  tls:
+  - hosts:
+    - cordum.example.com
+    secretName: cordum-ingress-tls
+  rules:
+  - host: cordum.example.com
+    http:
+      paths:
+      - path: /api/v1
+        pathType: Prefix
+        backend:
+          service:
+            name: cordum-api-gateway
+            port:
+              number: 8081
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: cordum-api-gateway
+            port:
+              number: 8081
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: cordum-dashboard
+            port:
+              number: 8080

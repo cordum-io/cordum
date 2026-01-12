@@ -8,27 +8,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/cordum/cordum/core/infra/memory"
 )
 
 const (
-	defaultRedisURL           = "redis://localhost:6379"
-	defaultShortTTL           = 24 * time.Hour
-	defaultStandardTTL        = 7 * 24 * time.Hour
-	defaultAuditTTL           = 30 * 24 * time.Hour
-	envArtifactTTLShort       = "ARTIFACT_TTL_SHORT"
-	envArtifactTTLStandard    = "ARTIFACT_TTL_STANDARD"
-	envArtifactTTLAudit       = "ARTIFACT_TTL_AUDIT"
+	defaultRedisURL        = "redis://localhost:6379"
+	defaultShortTTL        = 24 * time.Hour
+	defaultStandardTTL     = 7 * 24 * time.Hour
+	defaultAuditTTL        = 30 * 24 * time.Hour
+	envArtifactTTLShort    = "ARTIFACT_TTL_SHORT"
+	envArtifactTTLStandard = "ARTIFACT_TTL_STANDARD"
+	envArtifactTTLAudit    = "ARTIFACT_TTL_AUDIT"
 )
 
 // RedisStore implements artifact storage using Redis.
 type RedisStore struct {
-	client     *redis.Client
-	ttlShort   time.Duration
+	client      redis.UniversalClient
+	ttlShort    time.Duration
 	ttlStandard time.Duration
-	ttlAudit   time.Duration
+	ttlAudit    time.Duration
 }
 
 // NewRedisStore constructs an artifact store backed by Redis.
@@ -36,11 +37,10 @@ func NewRedisStore(url string) (*RedisStore, error) {
 	if url == "" {
 		url = defaultRedisURL
 	}
-	opts, err := redis.ParseURL(url)
+	client, err := redisutil.NewClient(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {

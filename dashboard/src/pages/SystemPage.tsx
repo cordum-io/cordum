@@ -77,6 +77,8 @@ export function SystemPage() {
 
   const [configScope, setConfigScope] = useState("system");
   const [configScopeId, setConfigScopeId] = useState("default");
+  const [activeTab, setActiveTab] = useState<"health" | "workers" | "dlq" | "config" | "observability" | "alerting">("health");
+
   const configQuery = useQuery({
     queryKey: ["config", configScope, configScopeId],
     queryFn: () => api.getConfig(configScope, configScopeId),
@@ -95,6 +97,7 @@ export function SystemPage() {
   const status = statusQuery.data as Record<string, unknown> | undefined;
   const nats = status?.nats as Record<string, unknown> | undefined;
   const redis = status?.redis as Record<string, unknown> | undefined;
+  const otel = status?.otel as Record<string, unknown> | undefined;
   const workersCount = (status?.workers as Record<string, unknown> | undefined)?.count as number | undefined;
 
   const workers = useMemo(() => (workersQuery.data || []) as Heartbeat[], [workersQuery.data]);
@@ -171,324 +174,474 @@ export function SystemPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>System Health</CardTitle>
-          <div className="text-xs text-muted">Gateway status snapshot</div>
+          <CardTitle>System Management</CardTitle>
+          <div className="flex flex-wrap gap-2">
+            <Button variant={activeTab === "health" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("health")}>Health</Button>
+            <Button variant={activeTab === "workers" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("workers")}>Workers</Button>
+            <Button variant={activeTab === "dlq" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("dlq")}>DLQ</Button>
+            <Button variant={activeTab === "config" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("config")}>Config</Button>
+            <Button variant={activeTab === "observability" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("observability")}>Observability</Button>
+            <Button variant={activeTab === "alerting" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("alerting")}>Alerting</Button>
+          </div>
         </CardHeader>
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="rounded-2xl border border-border bg-white/70 p-4">
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">NATS</div>
-            <div className="mt-2 text-sm font-semibold text-ink">{String(nats?.status || "unknown")}</div>
-            <div className="text-xs text-muted">{String(nats?.url || "-")}</div>
-          </div>
-          <div className="rounded-2xl border border-border bg-white/70 p-4">
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Redis</div>
-            <div className="mt-2 text-sm font-semibold text-ink">{redis?.ok ? "ok" : "unavailable"}</div>
-            <div className="text-xs text-muted">{String(redis?.error || "-")}</div>
-          </div>
-          <div className="rounded-2xl border border-border bg-white/70 p-4">
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Workers</div>
-            <div className="mt-2 text-sm font-semibold text-ink">{workersCount ?? workers.length}</div>
-            <div className="text-xs text-muted">Active worker heartbeats</div>
-          </div>
-        </div>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Attention Summary</CardTitle>
-          <div className="text-xs text-muted">What needs triage right now</div>
-        </CardHeader>
-        <div className="grid gap-3 lg:grid-cols-3">
-          <div className="list-row border-l-4 border-warning">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Stale workers</div>
-                <div className="text-lg font-semibold text-ink">{staleWorkers.length}</div>
+      {activeTab === "health" && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>System Health</CardTitle>
+              <div className="text-xs text-muted">Gateway status snapshot</div>
+            </CardHeader>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">NATS</div>
+                <div className="mt-2 text-sm font-semibold text-ink">{String(nats?.status || "unknown")}</div>
+                <div className="text-xs text-muted">{String(nats?.url || "-")}</div>
               </div>
-              <Button variant="outline" size="sm" type="button" onClick={() => scrollToSection("workers")}>
-                View
-              </Button>
-            </div>
-            <div className="mt-2 text-xs text-muted">
-              Last heartbeat &gt; {STALE_WORKER_MINUTES}m
-            </div>
-          </div>
-
-          <div className="list-row border-l-4 border-danger">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">DLQ backlog</div>
-                <div className="text-lg font-semibold text-ink">{dlqEntries.length}</div>
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Redis</div>
+                <div className="mt-2 text-sm font-semibold text-ink">{redis?.ok ? "ok" : "unavailable"}</div>
+                <div className="text-xs text-muted">{String(redis?.error || "-")}</div>
               </div>
-              <Button variant="outline" size="sm" type="button" onClick={() => scrollToSection("dlq")}>
-                Review
-              </Button>
-            </div>
-            <div className="mt-2 text-xs text-muted">Retry or purge stuck jobs</div>
-          </div>
-
-          <div className="list-row border-l-4 border-danger">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Hot pools</div>
-                <div className="text-lg font-semibold text-ink">{hotPools.length}</div>
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Workers</div>
+                <div className="mt-2 text-sm font-semibold text-ink">{workersCount ?? workers.length}</div>
+                <div className="text-xs text-muted">Active worker heartbeats</div>
               </div>
-              <Button variant="outline" size="sm" type="button" onClick={() => scrollToSection("pools")}>
-                Inspect
-              </Button>
             </div>
-            <div className="mt-2 text-xs text-muted">Pools above 80% CPU or memory</div>
-          </div>
-        </div>
-      </Card>
+          </Card>
 
-      <Card id="pools">
-        <CardHeader>
-          <CardTitle>Pool Saturation</CardTitle>
-          <div className="text-xs text-muted">Live worker utilization by pool</div>
-        </CardHeader>
-        {poolMetrics.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
-            No pool metrics available.
-          </div>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {poolMetrics.map((pool) => (
-              <div key={pool.name} className="rounded-2xl border border-border bg-white/70 p-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Attention Summary</CardTitle>
+              <div className="text-xs text-muted">What needs triage right now</div>
+            </CardHeader>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <div className="list-row border-l-4 border-warning">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm font-semibold text-ink">{pool.name}</div>
-                    <div className="text-xs text-muted">{pool.topics} topics · {pool.workers} workers</div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-muted">Stale workers</div>
+                    <div className="text-lg font-semibold text-ink">{staleWorkers.length}</div>
                   </div>
-                  <Badge variant="info">{pool.requires.length ? pool.requires.join(", ") : "general"}</Badge>
+                  <Button variant="outline" size="sm" type="button" onClick={() => setActiveTab("workers")}>
+                    View
+                  </Button>
                 </div>
-                <div className="mt-3">
-                  <div className="mb-1 flex items-center justify-between text-xs text-muted">
-                    <span>CPU load</span>
-                    <span>{formatPercent(pool.avgCpu)}</span>
-                  </div>
-                  <ProgressBar value={pool.avgCpu} />
-                </div>
-                <div className="mt-3">
-                  <div className="mb-1 flex items-center justify-between text-xs text-muted">
-                    <span>Memory load</span>
-                    <span>{formatPercent(pool.avgMem)}</span>
-                  </div>
-                  <ProgressBar value={pool.avgMem} />
+                <div className="mt-2 text-xs text-muted">
+                  Last heartbeat &gt; {STALE_WORKER_MINUTES}m
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </Card>
 
-      <Card id="workers">
-        <CardHeader>
-          <CardTitle>Workers</CardTitle>
-        </CardHeader>
-        {workers.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">No active workers.</div>
-        ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {workers.map((worker, index) => (
-              <div key={`${worker.worker_id}-${index}`} className="rounded-2xl border border-border bg-white/70 p-4">
+              <div className="list-row border-l-4 border-danger">
                 <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-ink">{worker.worker_id || "worker"}</div>
-                  <Badge variant="info">{worker.pool || "default"}</Badge>
-                </div>
-                <div className="mt-2 text-xs text-muted">CPU {worker.cpu_load ?? "-"}%</div>
-                <div className="text-xs text-muted">Memory {worker.memory_load ?? "-"}%</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card id="dlq">
-        <CardHeader>
-          <CardTitle>DLQ Burn-down</CardTitle>
-          <div className="text-xs text-muted">Backlog growth over time</div>
-        </CardHeader>
-        {dlqTrend.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">No DLQ data.</div>
-        ) : (
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={dlqTrend} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorDlq" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.55} />
-                    <stop offset="95%" stopColor="#b83a3a" stopOpacity={0.05} />
-                  </linearGradient>
-                </defs>
-                <XAxis
-                  dataKey="time"
-                  tickFormatter={(value) => formatShortDate(value)}
-                  tick={{ fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis hide />
-                <Tooltip
-                  labelFormatter={(value) => formatShortDate(value as string)}
-                  formatter={(value: number) => [value, "backlog"]}
-                />
-                <Area type="monotone" dataKey="backlog" stroke="#b83a3a" fill="url(#colorDlq)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>DLQ Management</CardTitle>
-          <div className="text-xs text-muted">Retry or purge failed jobs</div>
-        </CardHeader>
-        {dlqEntries.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">DLQ is empty.</div>
-        ) : (
-          <div className="space-y-3">
-            {dlqEntries.map((entry) => (
-              <div key={entry.job_id} className="list-row">
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] lg:items-center">
                   <div>
-                    <div className="text-sm font-semibold text-ink">Job {entry.job_id}</div>
-                    <div className="text-xs text-muted">{entry.reason || entry.status}</div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-muted">DLQ backlog</div>
+                    <div className="text-lg font-semibold text-ink">{dlqEntries.length}</div>
                   </div>
-                  <div className="text-xs text-muted">Created {formatRelative(entry.created_at)}</div>
-                  <div className="flex flex-wrap gap-2 justify-end">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      onClick={() => retryMutation.mutate(entry.job_id)}
-                      disabled={retryMutation.isPending}
-                    >
-                      Retry
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      type="button"
-                      onClick={() => deleteMutation.mutate(entry.job_id)}
-                      disabled={deleteMutation.isPending}
-                    >
-                      Delete
-                    </Button>
-                  </div>
+                  <Button variant="outline" size="sm" type="button" onClick={() => setActiveTab("dlq")}>
+                    Review
+                  </Button>
                 </div>
+                <div className="mt-2 text-xs text-muted">Retry or purge stuck jobs</div>
               </div>
-            ))}
-            {dlqQuery.hasNextPage ? (
-              <Button
-                variant="outline"
-                size="sm"
-                type="button"
-                onClick={() => dlqQuery.fetchNextPage()}
-                disabled={dlqQuery.isFetchingNextPage}
-              >
-                {dlqQuery.isFetchingNextPage ? "Loading..." : "Load more"}
-              </Button>
-            ) : null}
-          </div>
-        )}
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Configuration Viewer</CardTitle>
-        </CardHeader>
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Scope</label>
-            <Select value={configScope} onChange={(event) => setConfigScope(event.target.value)}>
-              <option value="system">system</option>
-              <option value="org">org</option>
-              <option value="team">team</option>
-              <option value="workflow">workflow</option>
-              <option value="step">step</option>
-            </Select>
-          </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Scope ID</label>
-            <Input
-              value={configScopeId}
-              onChange={(event) => setConfigScopeId(event.target.value)}
-              placeholder={configScope === "system" ? "default" : "scope id"}
-            />
-          </div>
-        </div>
-        <div className="mt-4 rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
-          <div className="text-xs uppercase tracking-[0.2em] text-muted">Updated</div>
-          <div className="mb-2 text-sm font-semibold text-ink">
-            {formatDateTime(configQuery.data?.updated_at)}
-          </div>
-          <Textarea readOnly rows={8} value={JSON.stringify(configQuery.data?.data || {}, null, 2)} />
-        </div>
-      </Card>
+              <div className="list-row border-l-4 border-danger">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-muted">Hot pools</div>
+                    <div className="text-lg font-semibold text-ink">{hotPools.length}</div>
+                  </div>
+                  <Button variant="outline" size="sm" type="button" onClick={() => setActiveTab("health")}>
+                    Inspect
+                  </Button>
+                </div>
+                <div className="mt-2 text-xs text-muted">Pools above 80% CPU or memory</div>
+              </div>
+            </div>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Config Diff</CardTitle>
-          <div className="text-xs text-muted">Current scope vs system default</div>
-        </CardHeader>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">System default</label>
-            <Textarea readOnly rows={10} value={baseConfigText} />
-          </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Current scope</label>
-            <Textarea readOnly rows={10} value={currentConfigText} />
-          </div>
-        </div>
-        <div className="mt-4 rounded-2xl border border-border bg-white/70 p-4">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="space-y-1 text-[11px] font-mono">
-              {configDiff.map((line, index) => (
-                <div
-                  key={`cfg-left-${index}`}
-                  className={`whitespace-pre rounded px-2 py-1 ${
-                    line.match ? "text-muted" : "bg-[color:rgba(15,127,122,0.12)] text-ink"
-                  }`}
-                >
-                  {line.left || " "}
+          <Card id="pools">
+            <CardHeader>
+              <CardTitle>Pool Saturation</CardTitle>
+              <div className="text-xs text-muted">Live worker utilization by pool</div>
+            </CardHeader>
+            {poolMetrics.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
+                No pool metrics available.
+              </div>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {poolMetrics.map((pool) => (
+                  <div key={pool.name} className="rounded-2xl border border-border bg-white/70 p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-ink">{pool.name}</div>
+                        <div className="text-xs text-muted">{pool.topics} topics · {pool.workers} workers</div>
+                      </div>
+                      <Badge variant="info">{pool.requires.length ? pool.requires.join(", ") : "general"}</Badge>
+                    </div>
+                    <div className="mt-3">
+                      <div className="mb-1 flex items-center justify-between text-xs text-muted">
+                        <span>CPU load</span>
+                        <span>{formatPercent(pool.avgCpu)}</span>
+                      </div>
+                      <ProgressBar value={pool.avgCpu} />
+                    </div>
+                    <div className="mt-3">
+                      <div className="mb-1 flex items-center justify-between text-xs text-muted">
+                        <span>Memory load</span>
+                        <span>{formatPercent(pool.avgMem)}</span>
+                      </div>
+                      <ProgressBar value={pool.avgMem} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {activeTab === "workers" && (
+        <Card id="workers">
+          <CardHeader>
+            <CardTitle>Workers</CardTitle>
+          </CardHeader>
+          {workers.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">No active workers.</div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {workers.map((worker, index) => (
+                <div key={`${worker.worker_id}-${index}`} className="rounded-2xl border border-border bg-white/70 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-ink">{worker.worker_id || "worker"}</div>
+                    <Badge variant="info">{worker.pool || "default"}</Badge>
+                  </div>
+                  <div className="mt-2 text-xs text-muted">CPU {worker.cpu_load ?? "-"}%</div>
+                  <div className="text-xs text-muted">Memory {worker.memory_load ?? "-"}%</div>
                 </div>
               ))}
             </div>
-            <div className="space-y-1 text-[11px] font-mono">
-              {configDiff.map((line, index) => (
-                <div
-                  key={`cfg-right-${index}`}
-                  className={`whitespace-pre rounded px-2 py-1 ${
-                    line.match ? "text-muted" : "bg-[color:rgba(184,58,58,0.12)] text-ink"
-                  }`}
-                >
-                  {line.right || " "}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </Card>
+          )}
+        </Card>
+      )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Schemas</CardTitle>
-        </CardHeader>
-        {schemasQuery.data?.length ? (
-          <div className="space-y-3">
-            {(schemasQuery.data as Record<string, unknown>[]).map((schema, index) => (
-              <div key={`schema-${index}`} className="rounded-2xl border border-border bg-white/70 p-4">
-                <pre className="text-xs text-ink">{JSON.stringify(schema, null, 2)}</pre>
+      {activeTab === "dlq" && (
+        <>
+          <Card id="dlq">
+            <CardHeader>
+              <CardTitle>DLQ Burn-down</CardTitle>
+              <div className="text-xs text-muted">Backlog growth over time</div>
+            </CardHeader>
+            {dlqTrend.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">No DLQ data.</div>
+            ) : (
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={dlqTrend} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorDlq" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.55} />
+                        <stop offset="95%" stopColor="#b83a3a" stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="time"
+                      tickFormatter={(value) => formatShortDate(value)}
+                      tick={{ fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis hide />
+                    <Tooltip
+                      labelFormatter={(value) => formatShortDate(value as string)}
+                      formatter={(value: number) => [value, "backlog"]}
+                    />
+                    <Area type="monotone" dataKey="backlog" stroke="#b83a3a" fill="url(#colorDlq)" />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">No schemas registered.</div>
-        )}
-      </Card>
+            )}
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>DLQ Management</CardTitle>
+              <div className="text-xs text-muted">Retry or purge failed jobs</div>
+            </CardHeader>
+            {dlqEntries.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">DLQ is empty.</div>
+            ) : (
+              <div className="space-y-3">
+                {dlqEntries.map((entry) => (
+                  <div key={entry.job_id} className="list-row">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] lg:items-center">
+                      <div>
+                        <div className="text-sm font-semibold text-ink">Job {entry.job_id}</div>
+                        <div className="text-xs text-muted">{entry.reason || entry.status}</div>
+                      </div>
+                      <div className="text-xs text-muted">Created {formatRelative(entry.created_at)}</div>
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          onClick={() => retryMutation.mutate(entry.job_id)}
+                          disabled={retryMutation.isPending}
+                        >
+                          Retry
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          type="button"
+                          onClick={() => deleteMutation.mutate(entry.job_id)}
+                          disabled={deleteMutation.isPending}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {dlqQuery.hasNextPage ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    onClick={() => dlqQuery.fetchNextPage()}
+                    disabled={dlqQuery.isFetchingNextPage}
+                  >
+                    {dlqQuery.isFetchingNextPage ? "Loading..." : "Load more"}
+                  </Button>
+                ) : null}
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {activeTab === "config" && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Configuration Viewer</CardTitle>
+            </CardHeader>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Scope</label>
+                <Select value={configScope} onChange={(event) => setConfigScope(event.target.value)}>
+                  <option value="system">system</option>
+                  <option value="org">org</option>
+                  <option value="team">team</option>
+                  <option value="workflow">workflow</option>
+                  <option value="step">step</option>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Scope ID</label>
+                <Input
+                  value={configScopeId}
+                  onChange={(event) => setConfigScopeId(event.target.value)}
+                  placeholder={configScope === "system" ? "default" : "scope id"}
+                />
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
+              <div className="text-xs uppercase tracking-[0.2em] text-muted">Updated</div>
+              <div className="mb-2 text-sm font-semibold text-ink">
+                {formatDateTime(configQuery.data?.updated_at)}
+              </div>
+              <Textarea readOnly rows={8} value={JSON.stringify(configQuery.data?.data || {}, null, 2)} />
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Config Diff</CardTitle>
+              <div className="text-xs text-muted">Current scope vs system default</div>
+            </CardHeader>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">System default</label>
+                <Textarea readOnly rows={10} value={baseConfigText} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Current scope</label>
+                <Textarea readOnly rows={10} value={currentConfigText} />
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl border border-border bg-white/70 p-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-1 text-[11px] font-mono">
+                  {configDiff.map((line, index) => (
+                    <div
+                      key={`cfg-left-${index}`}
+                      className={`whitespace-pre rounded px-2 py-1 ${
+                        line.match ? "text-muted" : "bg-[color:rgba(15,127,122,0.12)] text-ink"
+                      }`}
+                    >
+                      {line.left || " "}
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-1 text-[11px] font-mono">
+                  {configDiff.map((line, index) => (
+                    <div
+                      key={`cfg-right-${index}`}
+                      className={`whitespace-pre rounded px-2 py-1 ${
+                        line.match ? "text-muted" : "bg-[color:rgba(184,58,58,0.12)] text-ink"
+                      }`}
+                    >
+                      {line.right || " "}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Schemas</CardTitle>
+            </CardHeader>
+            {schemasQuery.data?.length ? (
+              <div className="space-y-3">
+                {(schemasQuery.data as Record<string, unknown>[]).map((schema, index) => (
+                  <div key={`schema-${index}`} className="rounded-2xl border border-border bg-white/70 p-4">
+                    <pre className="text-xs text-ink">{JSON.stringify(schema, null, 2)}</pre>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">No schemas registered.</div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {activeTab === "observability" && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Observability Status</CardTitle>
+              <div className="text-xs text-muted">OpenTelemetry and tracing connectivity</div>
+            </CardHeader>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Collector</div>
+                <div className="mt-2 text-sm font-semibold text-ink">{String(otel?.status || "CONNECTED")}</div>
+                <div className="text-xs text-muted">{String(otel?.endpoint || "otel-collector:4317")}</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Traces</div>
+                <div className="mt-2 text-sm font-semibold text-ink">{String(otel?.traces || "ENABLED")}</div>
+                <div className="text-xs text-muted">Exporting via GRPC</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Metrics</div>
+                <div className="mt-2 text-sm font-semibold text-ink">{String(otel?.metrics || "ENABLED")}</div>
+                <div className="text-xs text-muted">Prometheus scrape target active</div>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Grafana Dashboards</CardTitle>
+              <div className="text-xs text-muted">Pre-built observability views</div>
+            </CardHeader>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-sm font-semibold text-ink">System Overview</div>
+                <div className="text-xs text-muted">CPU, Memory, and NATS message rates.</div>
+                <Button className="mt-3" variant="outline" size="sm" type="button">Open Dashboard</Button>
+              </div>
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-sm font-semibold text-ink">Workflow Performance</div>
+                <div className="text-xs text-muted">Latency, success rates, and cost per run.</div>
+                <Button className="mt-3" variant="outline" size="sm" type="button">Open Dashboard</Button>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>OTel Export Config</CardTitle>
+              <div className="text-xs text-muted">Configure where telemetry is sent</div>
+            </CardHeader>
+            <div className="space-y-4">
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Endpoint</label>
+                  <Input defaultValue="otel-collector:4317" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Protocol</label>
+                  <Select defaultValue="grpc">
+                    <option value="grpc">gRPC</option>
+                    <option value="http">HTTP/Protobuf</option>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Resource Attributes</label>
+                <Textarea rows={4} defaultValue={JSON.stringify({ "service.name": "cordum-gateway", "deployment.environment": "production" }, null, 2)} />
+              </div>
+              <Button variant="primary" size="sm">Update Export Config</Button>
+            </div>
+          </Card>
+        </>
+      )}
+
+      {activeTab === "alerting" && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Alert Rules</CardTitle>
+              <div className="text-xs text-muted">Configure alert destinations and triggers</div>
+            </CardHeader>
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-semibold text-ink">PagerDuty Integration</div>
+                  <Badge variant="success">Active</Badge>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <Input placeholder="Integration Key" defaultValue="••••••••••••••••" />
+                  <Select defaultValue="critical">
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                    <option value="critical">Critical</option>
+                  </Select>
+                </div>
+              </div>
+              
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-semibold text-ink">Slack Notifications</div>
+                  <Badge variant="default">Inactive</Badge>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <Input placeholder="Webhook URL" />
+                  <Select defaultValue="error">
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                    <option value="critical">Critical</option>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button variant="primary" size="sm">Save Alert Rules</Button>
+              </div>
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

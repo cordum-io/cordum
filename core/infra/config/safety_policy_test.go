@@ -61,14 +61,41 @@ func TestEvaluateLegacyRules(t *testing.T) {
 	}
 }
 
+func TestEvaluateRemediations(t *testing.T) {
+	policy := &SafetyPolicy{
+		Rules: []PolicyRule{
+			{
+				ID:       "rule-remediate",
+				Decision: "deny",
+				Match: PolicyMatch{
+					Tenants: []string{"t1"},
+					Topics:  []string{"job.db.delete"},
+				},
+				Remediations: []PolicyRemediation{
+					{
+						ID:               "archive",
+						Title:            "Archive instead of delete",
+						Summary:          "Use archive flow for safer retention",
+						ReplacementTopic: "job.db.archive",
+					},
+				},
+			},
+		},
+	}
+	dec := policy.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.db.delete"})
+	if len(dec.Remediations) != 1 || dec.Remediations[0].ReplacementTopic != "job.db.archive" {
+		t.Fatalf("expected remediation in decision: %#v", dec.Remediations)
+	}
+}
+
 func TestNormalizeDecision(t *testing.T) {
 	cases := map[string]string{
-		"permit":             "allow",
-		"block":              "deny",
-		"require-approval":   "require_approval",
+		"permit":                 "allow",
+		"block":                  "deny",
+		"require-approval":       "require_approval",
 		"allow_with_constraints": "allow_with_constraints",
-		"throttle":           "throttle",
-		"":                   "allow",
+		"throttle":               "throttle",
+		"":                       "allow",
 	}
 	for input, expect := range cases {
 		if got := normalizeDecision(input); got != expect {
@@ -87,7 +114,7 @@ func TestMatchRuleSecretsAndMCP(t *testing.T) {
 	}
 	input := PolicyInput{
 		SecretsPresent: true,
-		MCP: MCPRequest{Server: "srv"},
+		MCP:            MCPRequest{Server: "srv"},
 	}
 	if !matchRule(match, input) {
 		t.Fatalf("expected rule to match")

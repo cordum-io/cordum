@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 	"gopkg.in/yaml.v3"
 )
@@ -1226,6 +1226,7 @@ func evaluatePolicyCheck(policy *config.SafetyPolicy, snapshot string, req *pb.P
 		Constraints:      constraints,
 		ApprovalRequired: approvalRequired,
 		ApprovalRef:      approvalRef,
+		Remediations:     toProtoRemediations(policyDecision.Remediations),
 	}
 }
 
@@ -1325,6 +1326,26 @@ func toProtoConstraints(c config.PolicyConstraints) *pb.PolicyConstraints {
 		},
 		RedactionLevel: c.RedactionLevel,
 	}
+}
+
+func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRemediation {
+	if len(remediations) == 0 {
+		return nil
+	}
+	out := make([]*pb.PolicyRemediation, 0, len(remediations))
+	for _, rem := range remediations {
+		r := rem
+		out = append(out, &pb.PolicyRemediation{
+			Id:                    r.ID,
+			Title:                 r.Title,
+			Summary:               r.Summary,
+			ReplacementTopic:      r.ReplacementTopic,
+			ReplacementCapability: r.ReplacementCapability,
+			AddLabels:             r.AddLabels,
+			RemoveLabels:          append([]string{}, r.RemoveLabels...),
+		})
+	}
+	return out
 }
 
 func isConstraintsEmpty(c config.PolicyConstraints) bool {

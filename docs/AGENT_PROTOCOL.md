@@ -20,7 +20,7 @@ This document describes how control-plane components and external workers commun
 - `sys.workflow.event` – workflow engine event emissions (SystemAlert).
 - `job.*` – worker pools (map lives in `config/pools.yaml`, e.g., `job.default`, `job.batch`).
 - `worker.<worker_id>.jobs` – direct, worker-targeted delivery (used by the scheduler for least-loaded dispatch).
-Default subject constants are defined in `core/protocol/capsdk` (mirrors CAP v2.0.7 spec for Go).
+Default subject constants are defined in `core/protocol/capsdk` (mirrors CAP v2.0.9 spec for Go).
 
 ## Delivery Semantics (JetStream)
 
@@ -57,6 +57,9 @@ Priority semantics:
   - `job_id`, `reason`, `requested_by`.
 - **Heartbeat**
   - `worker_id`, `region`, `type`, `cpu_load`, `gpu_utilization`, `active_jobs`, `capabilities`, `pool`, `max_parallel_jobs`.
+- **PolicyCheckResponse**
+  - `decision`, `reason`, `policy_snapshot`, `constraints`, `approval_required`, `approval_ref`.
+  - `remediations` (optional suggestions with `replacement_topic`, `replacement_capability`, label add/remove).
 
 ## Pointer Scheme (Redis)
 - Contexts live at `ctx:<job_id>` (or a derived key) with pointer `redis://ctx:<job_id>`.
@@ -84,6 +87,7 @@ Priority semantics:
 - Gateway sets `JobRequest.tenant_id` and also includes an `env["tenant_id"]` fallback; scheduler writes decision/reason into JobStore for observability.
 - MCP calls should set `JobRequest.labels` (`mcp.server`, `mcp.tool`, `mcp.resource`, `mcp.action`) so the Safety Kernel can enforce MCP allow/deny rules.
 - Jobs may include `JobMetadata` (`capability`, `risk_tags`, `requires`, `pack_id`) for policy and routing enforcement.
+- Safety decisions may include `remediations`; the gateway can apply one via `POST /api/v1/jobs/{id}/remediate` to create a new job with safer topic/capability/labels.
 
 ## Context Engine (non-bus)
 - gRPC service `ContextEngine` (`cmd/cordum-context-engine`, binary `cordum-context-engine`) with RPCs:

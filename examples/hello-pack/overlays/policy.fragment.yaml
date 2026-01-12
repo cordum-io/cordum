@@ -1,0 +1,10 @@
+version: v1
+rules:
+  - id: hello-pack-allow
+    decision: allow
+    reason: allow hello-pack echo jobs
+    match:
+      topics:
+        - "job.hello-pack.*"
+      pack_ids:
+        - "hello-pack"

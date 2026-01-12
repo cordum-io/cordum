@@ -18,11 +18,12 @@ type SafetyPolicy struct {
 }
 
 type PolicyRule struct {
-	ID         string           `yaml:"id"`
-	Match      PolicyMatch      `yaml:"match"`
-	Decision   string           `yaml:"decision"` // allow|deny|require_approval|allow_with_constraints|throttle
-	Reason     string           `yaml:"reason"`
-	Constraints PolicyConstraints `yaml:"constraints"`
+	ID           string              `yaml:"id"`
+	Match        PolicyMatch         `yaml:"match"`
+	Decision     string              `yaml:"decision"` // allow|deny|require_approval|allow_with_constraints|throttle
+	Reason       string              `yaml:"reason"`
+	Constraints  PolicyConstraints   `yaml:"constraints"`
+	Remediations []PolicyRemediation `yaml:"remediations"`
 }
 
 type PolicyMatch struct {
@@ -47,18 +48,29 @@ type PolicyConstraints struct {
 	RedactionLevel string               `yaml:"redaction_level"`
 }
 
+// PolicyRemediation suggests a safer alternative when a request is denied.
+type PolicyRemediation struct {
+	ID                    string            `yaml:"id"`
+	Title                 string            `yaml:"title"`
+	Summary               string            `yaml:"summary"`
+	ReplacementTopic      string            `yaml:"replacement_topic"`
+	ReplacementCapability string            `yaml:"replacement_capability"`
+	AddLabels             map[string]string `yaml:"add_labels"`
+	RemoveLabels          []string          `yaml:"remove_labels"`
+}
+
 type BudgetConstraints struct {
-	MaxRuntimeMs    int64 `yaml:"max_runtime_ms"`
-	MaxRetries      int32 `yaml:"max_retries"`
-	MaxArtifactBytes int64 `yaml:"max_artifact_bytes"`
+	MaxRuntimeMs      int64 `yaml:"max_runtime_ms"`
+	MaxRetries        int32 `yaml:"max_retries"`
+	MaxArtifactBytes  int64 `yaml:"max_artifact_bytes"`
 	MaxConcurrentJobs int32 `yaml:"max_concurrent_jobs"`
 }
 
 type SandboxProfile struct {
-	Isolated        bool     `yaml:"isolated"`
+	Isolated         bool     `yaml:"isolated"`
 	NetworkAllowlist []string `yaml:"network_allowlist"`
-	FsReadOnly      []string `yaml:"fs_read_only"`
-	FsReadWrite     []string `yaml:"fs_read_write"`
+	FsReadOnly       []string `yaml:"fs_read_only"`
+	FsReadWrite      []string `yaml:"fs_read_write"`
 }
 
 type ToolchainConstraints struct {
@@ -122,6 +134,7 @@ type PolicyDecision struct {
 	RuleID           string
 	Constraints      PolicyConstraints
 	ApprovalRequired bool
+	Remediations     []PolicyRemediation
 }
 
 // MCPRequest describes an MCP invocation for policy evaluation.
@@ -177,6 +190,7 @@ func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 				RuleID:           rule.ID,
 				Constraints:      rule.Constraints,
 				ApprovalRequired: decision == "require_approval",
+				Remediations:     rule.Remediations,
 			}
 		}
 	}

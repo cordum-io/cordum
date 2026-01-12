@@ -8,9 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/memory"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 func TestHandleSubmitJobHTTP(t *testing.T) {
@@ -148,4 +149,86 @@ func TestHandleCancelJob(t *testing.T) {
 		t.Fatalf("unexpected cancel subject: %s", bus.published[len(bus.published)-1].subject)
 	}
 
+}
+
+func TestHandleRemediateJob(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	orig := &pb.JobRequest{
+		JobId:    "job-remediate",
+		Topic:    "job.db.delete",
+		TenantId: "default",
+		Labels:   map[string]string{"env": "prod", "keep": "yes"},
+		Meta:     &pb.JobMetadata{Capability: "db.delete", Labels: map[string]string{"env": "prod", "keep": "yes"}},
+	}
+	if err := s.jobStore.SetJobRequest(ctx, orig); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := s.jobStore.SetJobMeta(ctx, orig); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	record := scheduler.SafetyDecisionRecord{
+		Decision: scheduler.SafetyDeny,
+		Remediations: []*pb.PolicyRemediation{
+			{
+				Id:                    "archive",
+				Title:                 "Archive instead of delete",
+				ReplacementTopic:      "job.db.archive",
+				ReplacementCapability: "db.archive",
+				AddLabels:             map[string]string{"policy": "remediation"},
+				RemoveLabels:          []string{"env"},
+			},
+		},
+	}
+	if err := s.jobStore.SetSafetyDecision(ctx, orig.GetJobId(), record); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"remediation_id":"archive"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/"+orig.GetJobId()+"/remediate", body)
+	req.SetPathValue("id", orig.GetJobId())
+	rec := httptest.NewRecorder()
+	s.handleRemediateJob(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	newID := resp["job_id"]
+	if newID == "" || newID == orig.GetJobId() {
+		t.Fatalf("expected new job id")
+	}
+
+	newReq, err := s.jobStore.GetJobRequest(ctx, newID)
+	if err != nil || newReq == nil {
+		t.Fatalf("load new job request: %v", err)
+	}
+	if newReq.GetTopic() != "job.db.archive" {
+		t.Fatalf("unexpected new topic: %s", newReq.GetTopic())
+	}
+	if newReq.GetMeta().GetCapability() != "db.archive" {
+		t.Fatalf("unexpected new capability: %s", newReq.GetMeta().GetCapability())
+	}
+	if _, ok := newReq.GetLabels()["env"]; ok {
+		t.Fatalf("expected env label removed")
+	}
+	if newReq.GetLabels()["policy"] != "remediation" {
+		t.Fatalf("expected remediation label applied")
+	}
+	if newReq.GetLabels()["keep"] != "yes" {
+		t.Fatalf("expected existing label retained")
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) == 0 {
+		t.Fatalf("expected publish")
+	}
+	if bus.published[len(bus.published)-1].subject != capsdk.SubjectSubmit {
+		t.Fatalf("unexpected publish subject: %s", bus.published[len(bus.published)-1].subject)
+	}
 }

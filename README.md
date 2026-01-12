@@ -86,6 +86,11 @@ CLI smoke (cordumctl):
 ./tools/scripts/cordumctl_smoke.sh
 ```
 
+## Examples
+
+- `examples/hello-pack` - minimal pack (workflow + schema + policy/config overlays)
+- `examples/hello-worker-go` - Go worker that consumes `job.hello-pack.echo`
+
 ## Docs
 
 Start here:
@@ -115,12 +120,16 @@ Resources:
 ## Enterprise
 
 Enterprise features are delivered by the `cordum-enterprise` repo and require a signed license.
-Current enterprise-only capabilities:
+Enterprise-only capabilities (available in enterprise binaries):
 - Enterprise auth provider (multi-tenant API keys + RBAC)
 - License enforcement on enterprise binaries
 
-Planned enterprise extensions (roadmap):
-- SSO/SAML, SIEM export, advanced RBAC, support tooling
+Enterprise offering includes (roadmap and commercial program):
+- SSO/SAML integration
+- SIEM and audit log export
+- Dedicated support + SLA
+- Custom pack development
+- Managed or on-prem deployment assistance
 
 ## Development and tests
 

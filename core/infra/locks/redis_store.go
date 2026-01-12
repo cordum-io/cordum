@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -16,7 +17,7 @@ const (
 )
 
 type RedisStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRedisStore constructs a Redis-backed lock store.
@@ -24,11 +25,10 @@ func NewRedisStore(url string) (*RedisStore, error) {
 	if url == "" {
 		url = defaultRedisURL
 	}
-	opts, err := redis.ParseURL(url)
+	client, err := redisutil.NewClient(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {

@@ -3,5 +3,6 @@
   "apiKey": "",
   "tenantId": "default",
   "principalId": "dashboard",
-  "principalRole": "admin"
+  "principalRole": "admin",
+  "traceUrlTemplate": "https://app.datadoghq.com/apm/trace/{{trace_id}}"
 }

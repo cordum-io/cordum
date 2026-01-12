@@ -1,0 +1,84 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cordum-api-gateway
+  namespace: cordum
+spec:
+  namespaceSelector:
+    matchNames:
+    - cordum
+  selector:
+    matchLabels:
+      app: cordum-api-gateway
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cordum-scheduler
+  namespace: cordum
+spec:
+  namespaceSelector:
+    matchNames:
+    - cordum
+  selector:
+    matchLabels:
+      app: cordum-scheduler
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cordum-nats
+  namespace: cordum
+spec:
+  namespaceSelector:
+    matchNames:
+    - cordum
+  selector:
+    matchLabels:
+      app: cordum-nats-monitor
+  endpoints:
+  - port: monitor
+    interval: 30s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cordum-platform
+  namespace: cordum
+spec:
+  groups:
+  - name: cordum.platform
+    rules:
+    - alert: CordumGatewayDown
+      expr: sum by (service) (up{namespace="cordum", service="cordum-api-gateway"}) == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Cordum API gateway is down
+        description: No targets for cordum-api-gateway have been reachable for 5m.
+    - alert: CordumSchedulerDown
+      expr: sum by (service) (up{namespace="cordum", service="cordum-scheduler"}) == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Cordum scheduler is down
+        description: No targets for cordum-scheduler have been reachable for 5m.
+    - alert: CordumNATSDown
+      expr: sum by (service) (up{namespace="cordum", service="cordum-nats-monitor"}) == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Cordum NATS is down
+        description: No NATS monitoring targets have been reachable for 5m.

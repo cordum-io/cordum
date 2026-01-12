@@ -25,11 +25,17 @@ This folder contains the public documentation for Cordum core.
 - `docs/pack.md` - pack format + install/uninstall rules
 - `cmd/cordumctl` - CLI with `cordumctl pack` subcommands
 
+## Examples
+
+- `examples/hello-pack` - minimal pack bundle
+- `examples/hello-worker-go` - Go worker consuming `job.hello-pack.echo`
+
 ## Operations
 
 - `docs/SCHEDULER_POOL_SPEC.md` - pool routing config
 - `docs/backend_capabilities.md` - feature coverage
 - `docs/backend_feature_matrix.md` - feature/test matrix
+- `docs/production.md` - production readiness checklist
 
 ## Dashboards
 

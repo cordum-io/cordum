@@ -76,6 +76,47 @@ func TestCheckMCPPolicyRequiresFieldWhenAllowlistSet(t *testing.T) {
 	}
 }
 
+func TestCheckReturnsRemediations(t *testing.T) {
+	srv := &server{policy: &config.SafetyPolicy{
+		DefaultTenant: "default",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "deny-delete",
+				Decision: "deny",
+				Match: config.PolicyMatch{
+					Tenants: []string{"default"},
+					Topics:  []string{"job.db.delete"},
+				},
+				Remediations: []config.PolicyRemediation{
+					{
+						ID:               "archive",
+						Title:            "Archive instead",
+						Summary:          "Use archive flow for retention",
+						ReplacementTopic: "job.db.archive",
+					},
+				},
+			},
+		},
+	}}
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-5",
+		Topic:  "job.db.delete",
+		Tenant: "default",
+	}
+
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(resp.GetRemediations()) != 1 {
+		t.Fatalf("expected remediation, got %d", len(resp.GetRemediations()))
+	}
+	if resp.GetRemediations()[0].GetReplacementTopic() != "job.db.archive" {
+		t.Fatalf("unexpected remediation topic")
+	}
+}
+
 func TestCheckAppliesEffectiveConfigDeny(t *testing.T) {
 	srv := &server{policy: &config.SafetyPolicy{
 		DefaultTenant: "default",
@@ -85,10 +126,10 @@ func TestCheckAppliesEffectiveConfigDeny(t *testing.T) {
 	}}
 
 	req := &pb.PolicyCheckRequest{
-		JobId:            "job-3",
-		Topic:            "job.deny",
-		Tenant:           "default",
-		EffectiveConfig:  []byte(`{"safety":{"denied_topics":["job.deny"]}}`),
+		JobId:           "job-3",
+		Topic:           "job.deny",
+		Tenant:          "default",
+		EffectiveConfig: []byte(`{"safety":{"denied_topics":["job.deny"]}}`),
 	}
 
 	resp, err := srv.Check(context.Background(), req)

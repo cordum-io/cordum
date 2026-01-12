@@ -12,9 +12,9 @@ Authentication:
 
 Common endpoints:
 - Workflows: `GET/POST /api/v1/workflows`, `GET/DELETE /api/v1/workflows/{id}`
-- Workflow runs: `POST /api/v1/workflows/{id}/runs`, `GET /api/v1/workflow-runs/{run_id}`
-- Jobs: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `POST /api/v1/jobs/submit`
-- Approvals: `POST /api/v1/workflows/{id}/runs/{run_id}/steps/{step}/approve`
+- Workflow runs: `POST /api/v1/workflows/{id}/runs`, `GET /api/v1/workflow-runs/{run_id}`, `POST /api/v1/workflow-runs/{run_id}/rerun`
+- Jobs: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `POST /api/v1/jobs`, `POST /api/v1/jobs/{id}/cancel`, `POST /api/v1/jobs/{id}/remediate`
+- Approvals: `POST /api/v1/workflows/{id}/runs/{run_id}/steps/{step}/approve`, `POST /api/v1/approvals/{job_id}/approve`, `POST /api/v1/approvals/{job_id}/reject`
 - Policy: `POST /api/v1/policy/evaluate`, `POST /api/v1/policy/simulate`, `GET /api/v1/policy/snapshots`
 - Config: `GET/POST /api/v1/config/{scope}/{id}`
 - Schemas: `GET/POST /api/v1/schemas`, `GET /api/v1/schemas/{id}`

@@ -45,6 +45,9 @@ my-pack/
 
 `deploy/` artifacts are informational only. Core does not deploy workers.
 
+Example pack (in this repo):
+- `examples/hello-pack` (minimal workflow + schema + overlays)
+
 ## pack.yaml schema (v0)
 
 Required fields:
@@ -149,6 +152,27 @@ cfg:system:policy.data.bundles["<pack_id>/<name>"] = {
 
 Safety kernel merges file/URL policy with config service fragments on load/reload.
 Snapshot hashes are combined (e.g. `baseSnapshot|cfg:<hash>`).
+
+Policy rules may include **remediations** to suggest safer alternatives:
+
+```yaml
+rules:
+  - id: deny-prod-delete
+    match:
+      topics: ["job.db.delete"]
+    decision: deny
+    reason: "Production deletes are blocked"
+    remediations:
+      - id: archive
+        title: "Archive instead of delete"
+        summary: "Route to a retention-safe workflow"
+        replacement_topic: "job.db.archive"
+        replacement_capability: "db.archive"
+        add_labels:
+          reason: "policy_remediation"
+```
+
+Remediations are surfaced on job detail and can be applied via `POST /api/v1/jobs/{id}/remediate`.
 
 Bundle entries may also include `enabled`, `author`, `message`, `created_at`, and `updated_at` (Policy Studio uses these).
 When omitted, bundles default to enabled.

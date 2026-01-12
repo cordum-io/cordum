@@ -12,7 +12,7 @@ import { Input } from "../components/ui/Input";
 import { WorkflowCanvas } from "../components/workflow/WorkflowCanvas";
 import type { ApprovalItem, JobDetail } from "../types/api";
 
-const tabs = ["Overview", "Timeline", "DAG", "Input/Output", "Jobs", "Audit Log"] as const;
+const tabs = ["Overview", "Timeline", "DAG", "Input/Output", "Jobs", "Logs", "Audit Log"] as const;
 
 export function RunDetailPage() {
   const { runId } = useParams();
@@ -93,8 +93,13 @@ export function RunDetailPage() {
   }, [latestEvent, runId, runQuery.data, queryClient]);
 
   const rerunMutation = useMutation({
-    mutationFn: (id: string) => api.rerunRun(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["run", runId] }),
+    mutationFn: (payload: { runId: string; fromStep?: string }) =>
+      api.rerunRun(payload.runId, { fromStep: payload.fromStep }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["run", runId] });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+      queryClient.invalidateQueries({ queryKey: ["timeline", runId] });
+    },
   });
 
   const cancelMutation = useMutation({
@@ -262,7 +267,7 @@ export function RunDetailPage() {
               variant="subtle"
               size="sm"
               type="button"
-              onClick={() => rerunMutation.mutate(run.id)}
+              onClick={() => rerunMutation.mutate({ runId: run.id })}
               disabled={rerunMutation.isPending}
             >
               Rerun
@@ -287,7 +292,7 @@ export function RunDetailPage() {
               variant="outline"
               size="sm"
               type="button"
-              onClick={() => rerunMutation.mutate(run.id)}
+              onClick={() => rerunMutation.mutate({ runId: run.id })}
               disabled={rerunMutation.isPending}
             >
               Rerun
@@ -403,6 +408,15 @@ export function RunDetailPage() {
                             Approve
                           </Button>
                           <Button
+                            variant="outline"
+                            size="sm"
+                            type="button"
+                            onClick={() => rerunMutation.mutate({ runId: run.id, fromStep: step.step_id })}
+                            disabled={rerunMutation.isPending}
+                          >
+                            Replay from step
+                          </Button>
+                          <Button
                             variant="danger"
                             size="sm"
                             type="button"
@@ -483,6 +497,15 @@ export function RunDetailPage() {
                           >
                             View job
                           </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            type="button"
+                            onClick={() => rerunMutation.mutate({ runId: run.id, fromStep: step.step_id })}
+                            disabled={rerunMutation.isPending}
+                          >
+                            Replay from step
+                          </Button>
                         </div>
                       </div>
                       {step.job_id && approval ? (
@@ -518,6 +541,24 @@ export function RunDetailPage() {
                     </div>
                   );
                 })
+              )}
+            </div>
+          )}
+
+          {activeTab === "Logs" && (
+            <div className="rounded-2xl border border-border bg-black p-4 font-mono text-xs text-green-400 h-96 overflow-y-auto">
+              <div>[INFO] Run {run.id} started at {formatDateTime(run.started_at || run.created_at)}</div>
+              <div>[INFO] Workflow: {workflowQuery.data?.name || run.workflow_id}</div>
+              {timelineQuery.data?.map((event, i) => (
+                <div key={i}>
+                  [{formatDateTime(event.time)}] [{event.type.toUpperCase()}] {event.message || event.step_id ? `Step ${event.step_id}` : ""}
+                </div>
+              ))}
+              {run.status === "failed" && (
+                <div className="text-red-400">[ERROR] Run failed: {failureReason}</div>
+              )}
+              {run.status === "succeeded" && (
+                <div>[INFO] Run completed successfully</div>
               )}
             </div>
           )}
