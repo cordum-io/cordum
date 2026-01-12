@@ -17,6 +17,52 @@ A pack is either:
 - a directory containing `pack.yaml`, or
 - a `.tgz` archive whose root contains `pack.yaml` (or a single top-level folder with it).
 
+## Marketplace catalogs
+
+Cordum can discover and install packs from catalog JSON files. Catalogs are configured
+in the config service under `cfg:system:pack_catalogs`:
+
+Official catalog source: `https://github.com/cordum-io/cordum-packs` (published to `https://packs.cordum.io`).
+
+```json
+{
+  "catalogs": [
+    {
+      "id": "official",
+      "title": "Cordum Official",
+      "url": "https://packs.cordum.io/catalog.json",
+      "enabled": true
+    }
+  ]
+}
+```
+
+Gateway endpoints:
+- `GET /api/v1/marketplace/packs` (merged catalog view + installed status)
+- `POST /api/v1/marketplace/install` (install by catalog or URL)
+
+Install by catalog:
+
+```json
+{
+  "catalog_id": "official",
+  "pack_id": "sre-k8s-triage",
+  "version": "0.3.1"
+}
+```
+
+Install by URL (sha256 required):
+
+```json
+{
+  "url": "https://packs.cordum.io/packs/sre-k8s-triage/0.3.1/pack.tgz",
+  "sha256": "<sha256>"
+}
+```
+
+The gateway downloads the bundle, verifies sha256, and runs the same install flow as
+`cordumctl pack install`. Only `http`/`https` URLs are supported.
+
 ### Bundle safety limits (gateway)
 
 To avoid zip-slip and oversized uploads, the gateway enforces:
@@ -47,6 +93,9 @@ my-pack/
 
 Example pack (in this repo):
 - `examples/hello-pack` (minimal workflow + schema + overlays)
+
+External reference pack:
+- `cordum-packs/packs/mcp-bridge` (MCP stdio bridge + pack)
 
 ## pack.yaml schema (v0)
 

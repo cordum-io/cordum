@@ -1,6 +1,7 @@
 import { memo, useMemo } from "react";
 import ReactFlow, {
   Background,
+  BackgroundVariant,
   Controls,
   Handle,
   MarkerType,
@@ -157,7 +158,7 @@ export function WorkflowCanvas({ workflow, run, height = 420 }: WorkflowCanvasPr
         nodesDraggable={false}
         nodesConnectable={false}
       >
-        <Background variant="dots" gap={22} size={1} color="#d0d7dd" />
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d0d7dd" />
         <Controls position="bottom-left" />
       </ReactFlow>
     </div>

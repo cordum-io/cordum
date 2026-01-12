@@ -11,6 +11,12 @@ setup.
 
 ## Start the stack
 
+One command (recommended):
+
+```bash
+./cmd/cordumctl/cordumctl up
+```
+
 ```bash
 docker compose build
 docker compose up -d

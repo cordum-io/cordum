@@ -8,6 +8,7 @@ This folder contains the public documentation for Cordum core.
 - `docs/DOCKER.md` - docker compose + env setup
 - `docs/LOCAL_E2E.md` - local end-to-end walkthrough
 - `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)
+- `cmd/cordumctl/cordumctl up` - one-command local stack launcher
 
 ## Architecture
 
@@ -24,11 +25,13 @@ This folder contains the public documentation for Cordum core.
 
 - `docs/pack.md` - pack format + install/uninstall rules
 - `cmd/cordumctl` - CLI with `cordumctl pack` subcommands
+- `cordum-packs` - official pack bundles + catalog published to `https://packs.cordum.io`
 
 ## Examples
 
 - `examples/hello-pack` - minimal pack bundle
 - `examples/hello-worker-go` - Go worker consuming `job.hello-pack.echo`
+- `cordum-packs/packs/mcp-bridge` - MCP stdio bridge + pack (packs monorepo)
 
 ## Operations
 
@@ -52,5 +55,5 @@ This folder contains the public documentation for Cordum core.
 
 ## Engineering notes
 
-Internal engineering notes and planning docs live in `cordum-tools/docs/internal` to keep
+Internal engineering notes and planning docs live in a private tooling repo to keep
 the core repo public-facing.

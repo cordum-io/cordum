@@ -31,6 +31,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 
 - API gateway (`core/controlplane/gateway`, `cmd/cordum-api-gateway`; binary `cordum-api-gateway`)
   - HTTP/WS endpoints for jobs, workflows/runs, approvals, config, policy (bundles + publish/rollback/audit), DLQ, schemas, locks, artifacts, workers, traces, packs.
+  - Marketplace endpoints for pack discovery/installs (catalogs configured via `cfg:system:pack_catalogs`).
   - gRPC service (`CordumApi`) for job submit/status.
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
   - Enforces API key and CORS allowlist if configured (HTTP `X-API-Key`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>`).
@@ -76,6 +77,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Subscribe to job topics or direct subjects; honor `sys.job.cancel`.
   - Write results to Redis and publish `sys.job.result`.
   - Use the CAP runtime in `sdk/runtime` for consistent heartbeats/progress/cancel.
+  - MCP integration lives in `cordum-packs/packs/mcp-bridge`, which exposes MCP tools/resources over stdio and submits MCP tool calls as Cordum jobs.
 
 ## Job lifecycle (single job)
 

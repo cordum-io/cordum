@@ -5,12 +5,16 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/cordum-io/cordum)](go.mod)
 [![Docker Compose](https://img.shields.io/badge/compose-ready-0f766e)](docker-compose.yml)
 [![Docs](https://img.shields.io/badge/docs-cordum--docs-0ea5e9)](docs/README.md)
+![CI](https://github.com/cordum-io/cordum/workflows/CI/badge.svg)
+![CodeQL](https://github.com/cordum-io/cordum/workflows/CodeQL/badge.svg)
+[![Website](https://img.shields.io/badge/website-cordum.io-blue)](https://cordum.io)
+[![WebsiteDocs](https://img.shields.io/badge/docs-cordum.io%2Fdocs-0ea5e9)](https://cordum.io/docs)
 
 Cordum (cordum.io) is a platform-only control plane for autonomous workflows and external workers.
 It uses NATS for the bus, Redis for state and payload pointers, and CAP v2 wire contracts for jobs,
 results, and heartbeats. Workers and product packs live outside this repo.
 
-See the full product docs at https://cordum.io (or the local `docs/README.md`).
+See the full product docs at [Cordum](https://cordum.io) (or the local `docs/README.md`).
 
 ## Feature highlights
 
@@ -70,6 +74,12 @@ Cordum is built for teams that need deterministic automation and policy control.
 Requirements: Docker/Compose, curl, jq.
 
 ```bash
+./cmd/cordumctl/cordumctl up
+```
+
+Or manually:
+
+```bash
 docker compose build
 docker compose up -d
 ```
@@ -90,6 +100,7 @@ CLI smoke (cordumctl):
 
 - `examples/hello-pack` - minimal pack (workflow + schema + policy/config overlays)
 - `examples/hello-worker-go` - Go worker that consumes `job.hello-pack.echo`
+- `cordum-packs/packs/mcp-bridge` - MCP stdio bridge + pack (packs monorepo)
 
 ## Docs
 
@@ -114,7 +125,7 @@ Resources:
 
 - `cordum`: core control plane (this repo)
 - `cordum-enterprise`: enterprise binaries (license check + enterprise auth provider)
-- `cordum-tools`: license generation tooling
+- `cordum-packs`: official pack bundles + worker projects
 - `cap`: protocol contracts and SDKs (`github.com/cordum-io/cap/v2`)
 
 ## Enterprise

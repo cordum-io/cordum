@@ -10,20 +10,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/locks"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	wf "github.com/cordum/cordum/core/workflow"
+	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,15 +32,23 @@ const (
 	packRegistryScope = "system"
 	packRegistryID    = "packs"
 
+	packCatalogScope = "system"
+	packCatalogID    = "pack_catalogs"
+
 	policyConfigScope = "system"
 	policyConfigID    = "policy"
 	policyConfigKey   = "bundles"
 
-	maxPackUploadBytes      = 64 << 20
-	maxPackFiles            = 2048
-	maxPackFileBytes        = 32 << 20
+	maxPackUploadBytes       = 64 << 20
+	maxPackFiles             = 2048
+	maxPackFileBytes         = 32 << 20
 	maxPackUncompressedBytes = 256 << 20
+	maxCatalogBytes          = 8 << 20
+
+	marketplaceCacheTTL = 30 * time.Second
 )
+
+var errMarketplaceNotFound = errors.New("marketplace pack not found")
 
 type packManifest struct {
 	APIVersion    string            `yaml:"apiVersion"`
@@ -202,6 +211,117 @@ type packVerifyResult struct {
 	Ok       bool   `json:"ok"`
 }
 
+type packInstallOptions struct {
+	Force       bool
+	Upgrade     bool
+	Inactive    bool
+	Owner       string
+	InstalledBy string
+}
+
+type packInstallError struct {
+	Status int
+	Err    error
+}
+
+func (e *packInstallError) Error() string {
+	if e == nil || e.Err == nil {
+		return "pack install failed"
+	}
+	return e.Err.Error()
+}
+
+type marketplaceCatalogConfig struct {
+	Catalogs []marketplaceCatalog `json:"catalogs"`
+}
+
+type marketplaceCatalog struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Enabled *bool  `json:"enabled"`
+}
+
+type marketplaceCatalogFile struct {
+	UpdatedAt string                   `json:"updated_at"`
+	Packs     []marketplaceCatalogPack `json:"packs"`
+}
+
+type marketplaceCatalogPack struct {
+	ID           string   `json:"id"`
+	Version      string   `json:"version"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	Author       string   `json:"author"`
+	Homepage     string   `json:"homepage"`
+	Source       string   `json:"source"`
+	License      string   `json:"license"`
+	URL          string   `json:"url"`
+	Sha256       string   `json:"sha256"`
+	Capabilities []string `json:"capabilities"`
+	Requires     []string `json:"requires"`
+	RiskTags     []string `json:"risk_tags"`
+}
+
+type marketplaceCatalogStatus struct {
+	ID        string `json:"id"`
+	Title     string `json:"title,omitempty"`
+	URL       string `json:"url"`
+	Enabled   bool   `json:"enabled"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type marketplacePackItem struct {
+	ID               string   `json:"id"`
+	Version          string   `json:"version"`
+	Title            string   `json:"title,omitempty"`
+	Description      string   `json:"description,omitempty"`
+	Author           string   `json:"author,omitempty"`
+	Homepage         string   `json:"homepage,omitempty"`
+	Source           string   `json:"source,omitempty"`
+	License          string   `json:"license,omitempty"`
+	URL              string   `json:"url,omitempty"`
+	Sha256           string   `json:"sha256,omitempty"`
+	CatalogID        string   `json:"catalog_id,omitempty"`
+	CatalogTitle     string   `json:"catalog_title,omitempty"`
+	Capabilities     []string `json:"capabilities,omitempty"`
+	Requires         []string `json:"requires,omitempty"`
+	RiskTags         []string `json:"risk_tags,omitempty"`
+	InstalledVersion string   `json:"installed_version,omitempty"`
+	InstalledStatus  string   `json:"installed_status,omitempty"`
+	InstalledAt      string   `json:"installed_at,omitempty"`
+}
+
+type marketplaceResponse struct {
+	Catalogs  []marketplaceCatalogStatus `json:"catalogs"`
+	Items     []marketplacePackItem      `json:"items"`
+	FetchedAt string                     `json:"fetched_at,omitempty"`
+	Cached    bool                       `json:"cached,omitempty"`
+}
+
+type marketplaceCache struct {
+	Response  marketplaceResponse
+	FetchedAt time.Time
+}
+
+type marketplaceCatalogEntry struct {
+	Pack         marketplaceCatalogPack
+	CatalogID    string
+	CatalogTitle string
+}
+
+type marketplaceInstallRequest struct {
+	CatalogID string `json:"catalog_id"`
+	PackID    string `json:"pack_id"`
+	Version   string `json:"version"`
+	URL       string `json:"url"`
+	Sha256    string `json:"sha256"`
+	Force     bool   `json:"force"`
+	Upgrade   bool   `json:"upgrade"`
+	Inactive  bool   `json:"inactive"`
+}
+
 func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
 		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
@@ -253,6 +373,115 @@ func (s *server) handleGetPack(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(rec)
 }
 
+func (s *server) handleMarketplacePacks(w http.ResponseWriter, r *http.Request) {
+	if s.configSvc == nil {
+		http.Error(w, "config service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	resp, err := s.marketplaceSnapshot(r.Context(), false)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request) {
+	if s.configSvc == nil || s.schemaRegistry == nil || s.workflowStore == nil {
+		http.Error(w, "pack dependencies unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if s.lockStore == nil {
+		http.Error(w, "lock store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	var req marketplaceInstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json payload", http.StatusBadRequest)
+		return
+	}
+	installURL := strings.TrimSpace(req.URL)
+	expectedSha := strings.TrimSpace(req.Sha256)
+	if installURL == "" {
+		catalogID := strings.TrimSpace(req.CatalogID)
+		packID := strings.TrimSpace(req.PackID)
+		if catalogID == "" || packID == "" {
+			http.Error(w, "catalog_id and pack_id required", http.StatusBadRequest)
+			return
+		}
+		entry, err := s.findMarketplaceEntry(r.Context(), catalogID, packID, strings.TrimSpace(req.Version))
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errMarketplaceNotFound) {
+				status = http.StatusNotFound
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+		installURL = strings.TrimSpace(entry.Pack.URL)
+		expectedSha = strings.TrimSpace(entry.Pack.Sha256)
+	}
+	if installURL == "" {
+		http.Error(w, "download url required", http.StatusBadRequest)
+		return
+	}
+	if expectedSha == "" {
+		http.Error(w, "sha256 required", http.StatusBadRequest)
+		return
+	}
+	packFile, digest, cleanup, err := downloadPackBundle(r.Context(), installURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer cleanup()
+	if !strings.EqualFold(digest, expectedSha) {
+		http.Error(w, "sha256 mismatch", http.StatusBadRequest)
+		return
+	}
+	fp, err := os.Open(packFile)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	bundleDir, cleanupDir, err := loadPackBundleFromReader(fp)
+	_ = fp.Close()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer cleanupDir()
+
+	record, err := s.installPackFromDir(r.Context(), bundleDir, packInstallOptions{
+		Force:       req.Force,
+		Upgrade:     req.Upgrade,
+		Inactive:    req.Inactive,
+		Owner:       packLockOwner(r),
+		InstalledBy: strings.TrimSpace(policyActorID(r)),
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		var installErr *packInstallError
+		if errors.As(err, &installErr) {
+			status = installErr.Status
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(record)
+}
+
 func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil || s.schemaRegistry == nil || s.workflowStore == nil {
 		http.Error(w, "pack dependencies unavailable", http.StatusServiceUnavailable)
@@ -281,50 +510,68 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bundle must be .tgz", http.StatusBadRequest)
 		return
 	}
-	bundleDir, cleanup, err := loadPackBundleFromUpload(file)
+	bundleDir, cleanup, err := loadPackBundleFromReader(file)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer cleanup()
 
+	record, err := s.installPackFromDir(r.Context(), bundleDir, packInstallOptions{
+		Force:       parseBool(r.FormValue("force")),
+		Upgrade:     parseBool(r.FormValue("upgrade")),
+		Inactive:    parseBool(r.FormValue("inactive")),
+		Owner:       packLockOwner(r),
+		InstalledBy: strings.TrimSpace(policyActorID(r)),
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		var installErr *packInstallError
+		if errors.As(err, &installErr) {
+			status = installErr.Status
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(record)
+}
+
+func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts packInstallOptions) (packRecord, error) {
+	if s == nil {
+		return packRecord{}, &packInstallError{Status: http.StatusServiceUnavailable, Err: errors.New("gateway unavailable")}
+	}
 	manifest, err := loadPackManifest(bundleDir)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	if err := validatePackManifest(manifest); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	if err := ensureProtocolCompatible(manifest); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
-	force := parseBool(r.FormValue("force"))
-	if manifest.Compatibility.MinCoreVersion != "" && !force {
-		http.Error(w, "minCoreVersion set; rerun with force", http.StatusBadRequest)
-		return
+	if manifest.Compatibility.MinCoreVersion != "" && !opts.Force {
+		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: errors.New("minCoreVersion set; rerun with force")}
 	}
-	upgrade := parseBool(r.FormValue("upgrade"))
-	inactive := parseBool(r.FormValue("inactive"))
-	owner := packLockOwner(r)
-	release, err := acquirePackLocks(r.Context(), s.lockStore, manifest.Metadata.ID, owner)
+	owner := strings.TrimSpace(opts.Owner)
+	if owner == "" {
+		owner = packLockOwner(nil)
+	}
+	release, err := acquirePackLocks(ctx, s.lockStore, manifest.Metadata.ID, owner)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
+		return packRecord{}, &packInstallError{Status: http.StatusConflict, Err: err}
 	}
 	defer release()
 
-	schemaPlans, err := s.planSchemas(r.Context(), bundleDir, manifest, upgrade)
+	schemaPlans, err := s.planSchemas(ctx, bundleDir, manifest, opts.Upgrade)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
-	workflowPlans, err := s.planWorkflows(r.Context(), bundleDir, manifest, upgrade)
+	workflowPlans, err := s.planWorkflows(ctx, bundleDir, manifest, opts.Upgrade)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 
 	appliedConfig := []packAppliedConfigOverlay{}
@@ -344,30 +591,26 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 
 	rollback := func() {
 		for i := len(appliedConfigChanges) - 1; i >= 0; i-- {
-			_ = s.restoreConfigOverlay(r.Context(), appliedConfigChanges[i])
+			_ = s.restoreConfigOverlay(ctx, appliedConfigChanges[i])
 		}
 		for i := len(appliedPolicyChanges) - 1; i >= 0; i-- {
-			_ = s.restorePolicyOverlay(r.Context(), appliedPolicyChanges[i])
+			_ = s.restorePolicyOverlay(ctx, appliedPolicyChanges[i])
 		}
 		for i := len(appliedWorkflows) - 1; i >= 0; i-- {
-			_ = s.rollbackWorkflow(r.Context(), appliedWorkflows[i])
+			_ = s.rollbackWorkflow(ctx, appliedWorkflows[i])
 		}
 		for i := len(appliedSchemas) - 1; i >= 0; i-- {
-			_ = s.rollbackSchema(r.Context(), appliedSchemas[i])
+			_ = s.rollbackSchema(ctx, appliedSchemas[i])
 		}
-	}
-	installFail := func(err error) {
-		rollback()
 	}
 
 	for _, plan := range schemaPlans {
 		if plan.Noop {
 			continue
 		}
-		if err := s.registerSchema(r.Context(), plan.ID, plan.Schema); err != nil {
-			installFail(err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		if err := s.registerSchema(ctx, plan.ID, plan.Schema); err != nil {
+			rollback()
+			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		appliedSchemas = append(appliedSchemas, plan)
 	}
@@ -375,23 +618,21 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		if plan.Noop {
 			continue
 		}
-		if err := s.registerWorkflow(r.Context(), plan.Workflow); err != nil {
-			installFail(err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		if err := s.registerWorkflow(ctx, plan.Workflow); err != nil {
+			rollback()
+			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		appliedWorkflows = append(appliedWorkflows, plan)
 	}
 
 	for _, overlay := range manifest.Overlays.Config {
-		if shouldSkipConfigOverlay(inactive, overlay) {
+		if shouldSkipConfigOverlay(opts.Inactive, overlay) {
 			continue
 		}
-		applied, err := s.applyConfigOverlay(r.Context(), overlay, manifest.Metadata.ID, bundleDir)
+		applied, err := s.applyConfigOverlay(ctx, overlay, manifest.Metadata.ID, bundleDir)
 		if err != nil {
-			installFail(err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			rollback()
+			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		if applied.Overlay.Name != "" {
 			appliedConfig = append(appliedConfig, applied.Overlay)
@@ -399,11 +640,10 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, overlay := range manifest.Overlays.Policy {
-		applied, err := s.applyPolicyOverlay(r.Context(), overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundleDir)
+		applied, err := s.applyPolicyOverlay(ctx, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundleDir)
 		if err != nil {
-			installFail(err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			rollback()
+			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		if applied.Overlay.Name != "" {
 			appliedPolicy = append(appliedPolicy, applied.Overlay)
@@ -412,10 +652,10 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := "ACTIVE"
-	if inactive || !hasPoolOverlay(appliedConfig) {
+	if opts.Inactive || !hasPoolOverlay(appliedConfig) {
 		status = "INACTIVE"
 	}
-	installedBy := strings.TrimSpace(policyActorID(r))
+	installedBy := strings.TrimSpace(opts.InstalledBy)
 
 	record := packRecord{
 		ID:          manifest.Metadata.ID,
@@ -438,14 +678,11 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		},
 		Tests: manifest.Tests,
 	}
-	if err := s.updatePackRegistry(r.Context(), record); err != nil {
+	if err := s.updatePackRegistry(ctx, record); err != nil {
 		rollback()
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return packRecord{}, &packInstallError{Status: http.StatusInternalServerError, Err: err}
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(record)
+	return record, nil
 }
 
 func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
@@ -566,6 +803,368 @@ func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
 		"pack_id": packID,
 		"results": results,
 	})
+}
+
+func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketplaceResponse, error) {
+	if s == nil {
+		return marketplaceResponse{}, errors.New("marketplace unavailable")
+	}
+	if !refresh {
+		s.marketplaceMu.Lock()
+		cache := s.marketplaceCache
+		if !cache.FetchedAt.IsZero() && time.Since(cache.FetchedAt) < marketplaceCacheTTL {
+			resp := cache.Response
+			resp.Cached = true
+			if resp.FetchedAt == "" {
+				resp.FetchedAt = cache.FetchedAt.UTC().Format(time.RFC3339)
+			}
+			s.marketplaceMu.Unlock()
+			return resp, nil
+		}
+		s.marketplaceMu.Unlock()
+	}
+	catalogs, entries, err := s.loadMarketplaceEntries(ctx)
+	if err != nil {
+		return marketplaceResponse{}, err
+	}
+	resp, err := s.buildMarketplaceResponse(ctx, catalogs, entries)
+	if err != nil {
+		return marketplaceResponse{}, err
+	}
+	fetchedAt := time.Now().UTC()
+	resp.FetchedAt = fetchedAt.Format(time.RFC3339)
+	s.marketplaceMu.Lock()
+	s.marketplaceCache = marketplaceCache{Response: resp, FetchedAt: fetchedAt}
+	s.marketplaceMu.Unlock()
+	return resp, nil
+}
+
+func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatalogStatus, []marketplaceCatalogEntry, error) {
+	catalogs, err := s.loadPackCatalogs(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	statuses := make([]marketplaceCatalogStatus, 0, len(catalogs))
+	entries := []marketplaceCatalogEntry{}
+	for idx, catalog := range catalogs {
+		id := strings.TrimSpace(catalog.ID)
+		if id == "" {
+			id = fmt.Sprintf("catalog-%d", idx+1)
+		}
+		enabled := true
+		if catalog.Enabled != nil {
+			enabled = *catalog.Enabled
+		}
+		status := marketplaceCatalogStatus{
+			ID:      id,
+			Title:   strings.TrimSpace(catalog.Title),
+			URL:     strings.TrimSpace(catalog.URL),
+			Enabled: enabled,
+		}
+		if !enabled {
+			statuses = append(statuses, status)
+			continue
+		}
+		catalogFile, err := fetchMarketplaceCatalog(ctx, status.URL)
+		if err != nil {
+			status.Error = err.Error()
+			statuses = append(statuses, status)
+			continue
+		}
+		status.UpdatedAt = catalogFile.UpdatedAt
+		statuses = append(statuses, status)
+		for _, pack := range catalogFile.Packs {
+			entries = append(entries, marketplaceCatalogEntry{
+				Pack:         pack,
+				CatalogID:    id,
+				CatalogTitle: status.Title,
+			})
+		}
+	}
+	return statuses, entries, nil
+}
+
+func (s *server) loadPackCatalogs(ctx context.Context) ([]marketplaceCatalog, error) {
+	if s.configSvc == nil {
+		return nil, errors.New("config service unavailable")
+	}
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packCatalogScope), packCatalogID)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if doc == nil || doc.Data == nil {
+		return nil, nil
+	}
+	payload, err := json.Marshal(normalizeJSON(doc.Data))
+	if err != nil {
+		return nil, err
+	}
+	var cfg marketplaceCatalogConfig
+	if err := json.Unmarshal(payload, &cfg); err != nil {
+		return nil, err
+	}
+	return cfg.Catalogs, nil
+}
+
+func fetchMarketplaceCatalog(ctx context.Context, catalogURL string) (*marketplaceCatalogFile, error) {
+	if _, err := validateMarketplaceURL(catalogURL); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, catalogURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("catalog fetch failed: %s", resp.Status)
+	}
+	limit := int64(maxCatalogBytes) + 1
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > int64(maxCatalogBytes) {
+		return nil, fmt.Errorf("catalog exceeds max size (%d bytes)", maxCatalogBytes)
+	}
+	var out marketplaceCatalogFile
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *server) buildMarketplaceResponse(ctx context.Context, catalogs []marketplaceCatalogStatus, entries []marketplaceCatalogEntry) (marketplaceResponse, error) {
+	records := map[string]packRecord{}
+	if s.configSvc != nil {
+		var err error
+		records, _, err = s.loadPackRegistry(ctx)
+		if err != nil {
+			return marketplaceResponse{}, err
+		}
+	}
+	latest := map[string]marketplaceCatalogEntry{}
+	for _, entry := range entries {
+		id := strings.TrimSpace(entry.Pack.ID)
+		version := strings.TrimSpace(entry.Pack.Version)
+		url := strings.TrimSpace(entry.Pack.URL)
+		sha := strings.TrimSpace(entry.Pack.Sha256)
+		if id == "" || version == "" || url == "" || sha == "" {
+			continue
+		}
+		if existing, ok := latest[id]; ok {
+			if compareVersions(version, existing.Pack.Version) <= 0 {
+				continue
+			}
+		}
+		latest[id] = entry
+	}
+	items := make([]marketplacePackItem, 0, len(latest))
+	for _, entry := range latest {
+		pack := entry.Pack
+		item := marketplacePackItem{
+			ID:           pack.ID,
+			Version:      pack.Version,
+			Title:        pack.Title,
+			Description:  pack.Description,
+			Author:       pack.Author,
+			Homepage:     pack.Homepage,
+			Source:       pack.Source,
+			License:      pack.License,
+			URL:          pack.URL,
+			Sha256:       pack.Sha256,
+			CatalogID:    entry.CatalogID,
+			CatalogTitle: entry.CatalogTitle,
+			Capabilities: pack.Capabilities,
+			Requires:     pack.Requires,
+			RiskTags:     pack.RiskTags,
+		}
+		if rec, ok := records[pack.ID]; ok {
+			item.InstalledVersion = rec.Version
+			item.InstalledStatus = rec.Status
+			item.InstalledAt = rec.InstalledAt
+		}
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+	return marketplaceResponse{
+		Catalogs: catalogs,
+		Items:    items,
+	}, nil
+}
+
+func (s *server) findMarketplaceEntry(ctx context.Context, catalogID, packID, version string) (marketplaceCatalogEntry, error) {
+	catalogID = strings.TrimSpace(catalogID)
+	packID = strings.TrimSpace(packID)
+	version = strings.TrimSpace(version)
+	if packID == "" {
+		return marketplaceCatalogEntry{}, errMarketplaceNotFound
+	}
+	_, entries, err := s.loadMarketplaceEntries(ctx)
+	if err != nil {
+		return marketplaceCatalogEntry{}, err
+	}
+	var best marketplaceCatalogEntry
+	found := false
+	for _, entry := range entries {
+		if catalogID != "" && entry.CatalogID != catalogID {
+			continue
+		}
+		if strings.TrimSpace(entry.Pack.ID) != packID {
+			continue
+		}
+		if strings.TrimSpace(entry.Pack.URL) == "" || strings.TrimSpace(entry.Pack.Sha256) == "" {
+			continue
+		}
+		if version != "" {
+			if strings.TrimSpace(entry.Pack.Version) != version {
+				continue
+			}
+			return entry, nil
+		}
+		if !found || compareVersions(entry.Pack.Version, best.Pack.Version) > 0 {
+			best = entry
+			found = true
+		}
+	}
+	if !found {
+		return marketplaceCatalogEntry{}, errMarketplaceNotFound
+	}
+	return best, nil
+}
+
+func compareVersions(a, b string) int {
+	pa, oka := parseVersion(a)
+	pb, okb := parseVersion(b)
+	if oka && okb {
+		max := len(pa)
+		if len(pb) > max {
+			max = len(pb)
+		}
+		for i := 0; i < max; i++ {
+			ai := 0
+			bi := 0
+			if i < len(pa) {
+				ai = pa[i]
+			}
+			if i < len(pb) {
+				bi = pb[i]
+			}
+			if ai > bi {
+				return 1
+			}
+			if ai < bi {
+				return -1
+			}
+		}
+		return 0
+	}
+	na := normalizeVersion(a)
+	nb := normalizeVersion(b)
+	if na == nb {
+		return 0
+	}
+	if na > nb {
+		return 1
+	}
+	return -1
+}
+
+func normalizeVersion(version string) string {
+	version = strings.TrimSpace(version)
+	if strings.HasPrefix(version, "v") {
+		version = strings.TrimPrefix(version, "v")
+	}
+	return version
+}
+
+func parseVersion(version string) ([]int, bool) {
+	version = normalizeVersion(version)
+	if version == "" {
+		return nil, false
+	}
+	if strings.ContainsAny(version, "+-") {
+		return nil, false
+	}
+	parts := strings.Split(version, ".")
+	out := make([]int, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			return nil, false
+		}
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, value)
+	}
+	return out, true
+}
+
+func downloadPackBundle(ctx context.Context, rawURL string) (string, string, func(), error) {
+	parsed, err := validateMarketplaceURL(rawURL)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", func() {}, fmt.Errorf("download failed: %s", resp.Status)
+	}
+	tmpFile, err := os.CreateTemp("", "cordum-pack-*.tgz")
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	cleanup := func() { _ = os.Remove(tmpFile.Name()) }
+	hasher := sha256.New()
+	limit := int64(maxPackUploadBytes) + 1
+	limited := &io.LimitedReader{R: resp.Body, N: limit}
+	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), limited)
+	if err != nil {
+		_ = tmpFile.Close()
+		cleanup()
+		return "", "", func() {}, err
+	}
+	if err := tmpFile.Close(); err != nil {
+		cleanup()
+		return "", "", func() {}, err
+	}
+	if written > int64(maxPackUploadBytes) {
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("pack download exceeds max size (%d bytes)", maxPackUploadBytes)
+	}
+	return tmpFile.Name(), hex.EncodeToString(hasher.Sum(nil)), cleanup, nil
+}
+
+func validateMarketplaceURL(rawURL string) (*url.URL, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return nil, errors.New("url required")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return nil, errors.New("url host required")
+	}
+	return parsed, nil
 }
 
 func (s *server) planSchemas(ctx context.Context, dir string, manifest *packManifest, upgrade bool) ([]schemaPlan, error) {
@@ -927,13 +1526,13 @@ func (s *server) runPolicySimulation(ctx context.Context, test packPolicySimulat
 		Topic:  test.Request.Topic,
 		Tenant: test.Request.TenantId,
 		Meta: &policyMetaRequest{
-			TenantId:  test.Request.TenantId,
+			TenantId:   test.Request.TenantId,
 			Capability: test.Request.Capability,
-			RiskTags:  test.Request.RiskTags,
-			Requires:  test.Request.Requires,
-			PackId:    test.Request.PackId,
-			ActorId:   test.Request.ActorId,
-			ActorType: test.Request.ActorType,
+			RiskTags:   test.Request.RiskTags,
+			Requires:   test.Request.Requires,
+			PackId:     test.Request.PackId,
+			ActorId:    test.Request.ActorId,
+			ActorType:  test.Request.ActorType,
 		},
 	}
 	if auth := authFromContext(ctx); auth != nil {
@@ -1057,12 +1656,12 @@ func getConfigDoc(ctx context.Context, svc *configsvc.Service, scope, scopeID st
 	return doc, nil
 }
 
-func loadPackBundleFromUpload(file multipart.File) (string, func(), error) {
+func loadPackBundleFromReader(src io.Reader) (string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "cordum-pack-*")
 	if err != nil {
 		return "", func() {}, err
 	}
-	if err := extractTarGzReader(file, tmpDir); err != nil {
+	if err := extractTarGzReader(src, tmpDir); err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return "", func() {}, err
 	}
@@ -1185,7 +1784,7 @@ func validatePoolsPatch(patch map[string]any, packID string, current any) error 
 		}
 		for topic := range topics {
 			if !strings.HasPrefix(topic, "job."+packID+".") {
-				return fmt.Errorf("topic %q must be namespaced under job.%s.*", topic, packID)
+				return fmt.Errorf("pools topic %q must be namespaced under job.%s.*", topic, packID)
 			}
 		}
 	}
@@ -1195,30 +1794,39 @@ func validatePoolsPatch(patch map[string]any, packID string, current any) error 
 		if !ok {
 			return errors.New("pools.pools must be a map")
 		}
+		existingPools := extractPools(current)
 		for poolName := range pools {
+			if _, ok := existingPools[poolName]; ok {
+				continue
+			}
 			if !strings.HasPrefix(poolName, packID) {
 				return fmt.Errorf("pool %q must be prefixed with %s", poolName, packID)
 			}
 		}
 	}
-	if current != nil {
-		currentMap, _ := normalizeJSON(current).(map[string]any)
-		if currentMap != nil {
-			if rawPools == nil {
-				return nil
-			}
-			pools, _ := normalizeJSON(patch["pools"]).(map[string]any)
-			if pools == nil {
-				return nil
-			}
-			for poolName := range pools {
-				if _, ok := currentMap[poolName]; ok {
-					continue
-				}
-			}
+	for key := range patch {
+		if key != "topics" && key != "pools" {
+			return fmt.Errorf("unsupported pools overlay key %q", key)
 		}
 	}
 	return nil
+}
+
+func extractPools(current any) map[string]struct{} {
+	out := map[string]struct{}{}
+	currentMap, ok := normalizeJSON(current).(map[string]any)
+	if !ok || currentMap == nil {
+		return out
+	}
+	rawPools := normalizeJSON(currentMap["pools"])
+	pools, ok := rawPools.(map[string]any)
+	if !ok || pools == nil {
+		return out
+	}
+	for name := range pools {
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func validateTimeoutsPatch(patch map[string]any, packID string) error {
@@ -1226,16 +1834,32 @@ func validateTimeoutsPatch(patch map[string]any, packID string) error {
 		return nil
 	}
 	rawTopics := normalizeJSON(patch["topics"])
-	if rawTopics == nil {
-		return nil
+	if rawTopics != nil {
+		topics, ok := rawTopics.(map[string]any)
+		if !ok {
+			return errors.New("timeouts.topics must be a map")
+		}
+		for topic := range topics {
+			if !strings.HasPrefix(topic, "job."+packID+".") {
+				return fmt.Errorf("timeouts topic %q must be namespaced under job.%s.*", topic, packID)
+			}
+		}
 	}
-	topics, ok := rawTopics.(map[string]any)
-	if !ok {
-		return errors.New("timeouts.topics must be a map")
+	rawWorkflows := normalizeJSON(patch["workflows"])
+	if rawWorkflows != nil {
+		workflows, ok := rawWorkflows.(map[string]any)
+		if !ok {
+			return errors.New("timeouts.workflows must be a map")
+		}
+		for wf := range workflows {
+			if !strings.HasPrefix(wf, packID+".") {
+				return fmt.Errorf("timeout workflow %q must be namespaced under %s.", wf, packID)
+			}
+		}
 	}
-	for topic := range topics {
-		if !strings.HasPrefix(topic, "job."+packID+".") {
-			return fmt.Errorf("timeout topic %q must be namespaced under job.%s.*", topic, packID)
+	for key := range patch {
+		if key != "topics" && key != "workflows" {
+			return fmt.Errorf("unsupported timeouts overlay key %q", key)
 		}
 	}
 	return nil

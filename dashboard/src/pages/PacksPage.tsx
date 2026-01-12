@@ -8,42 +8,7 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Drawer } from "../components/ui/Drawer";
 import { Input } from "../components/ui/Input";
-import type { Heartbeat, PackRecord, PackVerifyResponse } from "../types/api";
-
-const registryPacks = [
-  {
-    id: "slack-integration",
-    title: "Slack Integration",
-    description: "Send notifications and interactive messages to Slack channels.",
-    version: "v1.2.0",
-    author: "Cordum Community",
-    capabilities: ["notify", "chat"],
-  },
-  {
-    id: "github-actions",
-    title: "GitHub Actions",
-    description: "Trigger and monitor GitHub Actions workflows from Cordum.",
-    version: "v0.9.5",
-    author: "Cordum Community",
-    capabilities: ["ci", "git"],
-  },
-  {
-    id: "kubernetes-ops",
-    title: "Kubernetes Ops",
-    description: "Manage K8s resources, scale deployments, and restart pods.",
-    version: "v2.1.0",
-    author: "Cordum Community",
-    capabilities: ["k8s", "infra"],
-  },
-  {
-    id: "pagerduty-sync",
-    title: "PagerDuty Sync",
-    description: "Synchronize incidents and on-call schedules with PagerDuty.",
-    version: "v1.0.2",
-    author: "Cordum Community",
-    capabilities: ["incident", "oncall"],
-  },
-];
+import type { Heartbeat, MarketplacePack, PackRecord, PackVerifyResponse } from "../types/api";
 
 function statusVariant(status?: string): "success" | "warning" | "danger" | "default" {
   const normalized = (status || "").toUpperCase();
@@ -95,8 +60,18 @@ export function PacksPage() {
     queryKey: ["workers"],
     queryFn: () => api.listWorkers(),
   });
+  const marketplaceQuery = useQuery({
+    queryKey: ["marketplace"],
+    queryFn: () => api.listMarketplacePacks(),
+    enabled: activeTab === "registry",
+  });
   const packs = useMemo(() => packsQuery.data?.items ?? [], [packsQuery.data]);
   const workers = useMemo(() => (workersQuery.data || []) as Heartbeat[], [workersQuery.data]);
+  const marketplacePacks = useMemo(
+    () => (marketplaceQuery.data?.items || []) as MarketplacePack[],
+    [marketplaceQuery.data],
+  );
+  const marketplaceCatalogs = useMemo(() => marketplaceQuery.data?.catalogs || [], [marketplaceQuery.data]);
   const packWorkers = useMemo(() => {
     const map = new Map<string, Heartbeat[]>();
     packs.forEach((pack) => {
@@ -123,6 +98,8 @@ export function PacksPage() {
   const [forceInstall, setForceInstall] = useState(false);
   const [upgradeInstall, setUpgradeInstall] = useState(false);
   const [inactiveInstall, setInactiveInstall] = useState(false);
+  const [marketplaceForce, setMarketplaceForce] = useState(false);
+  const [marketplaceInactive, setMarketplaceInactive] = useState(false);
   const [purgeOnUninstall, setPurgeOnUninstall] = useState(false);
   const [selectedPack, setSelectedPack] = useState<PackRecord | null>(null);
   const [verifyResults, setVerifyResults] = useState<Record<string, PackVerifyResponse>>({});
@@ -189,6 +166,20 @@ export function PacksPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["packs"] });
       setBundleFile(null);
+    },
+  });
+  const installMarketplaceMutation = useMutation({
+    mutationFn: (payload: {
+      catalog_id?: string;
+      pack_id?: string;
+      version?: string;
+      force?: boolean;
+      upgrade?: boolean;
+      inactive?: boolean;
+    }) => api.installMarketplacePack(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["packs"] });
+      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
     },
   });
 
@@ -369,32 +360,111 @@ export function PacksPage() {
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle>Pack Registry</CardTitle>
-            <div className="text-xs text-muted">Community and official packs from the Cordum registry</div>
+            <CardTitle>Marketplace</CardTitle>
+            <div className="text-xs text-muted">Available packs from configured catalogs</div>
           </CardHeader>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {registryPacks.map((pack) => (
-              <div key={pack.id} className="rounded-2xl border border-border bg-white/70 p-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-semibold text-ink">{pack.title}</div>
-                    <div className="text-xs text-muted">{pack.author}</div>
-                  </div>
-                  <Badge variant="info">{pack.version}</Badge>
-                </div>
-                <div className="mt-3 text-sm text-muted">{pack.description}</div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {pack.capabilities.map((cap) => (
-                    <Badge key={cap} variant="default">{cap}</Badge>
-                  ))}
-                </div>
-                <div className="mt-4 flex gap-2">
-                  <Button variant="primary" size="sm" type="button" onClick={() => {}}>Install</Button>
-                  <Button variant="outline" size="sm" type="button">View Source</Button>
-                </div>
-              </div>
-            ))}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-4 text-xs text-muted">
+            <div>
+              {marketplaceCatalogs.length} catalogs ·{" "}
+              {marketplaceQuery.data?.fetched_at ? `Updated ${formatRelative(marketplaceQuery.data.fetched_at)}` : "Awaiting refresh"}
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={marketplaceForce}
+                  onChange={(event) => setMarketplaceForce(event.target.checked)}
+                />
+                Force install
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={marketplaceInactive}
+                  onChange={(event) => setMarketplaceInactive(event.target.checked)}
+                />
+                Install inactive
+              </label>
+            </div>
           </div>
+          {marketplaceQuery.isLoading ? (
+            <div className="text-sm text-muted">Loading marketplace...</div>
+          ) : marketplacePacks.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
+              No marketplace packs available yet. Configure `cfg:system:pack_catalogs` to enable discovery.
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {marketplacePacks.map((pack) => {
+                const upgradeAvailable = Boolean(pack.installed_version && pack.installed_version !== pack.version);
+                const installDisabled = Boolean(pack.installed_version && !upgradeAvailable);
+                const sourceUrl = pack.source || pack.homepage || pack.url || "";
+                return (
+                  <div key={`${pack.catalog_id || "catalog"}:${pack.id}`} className="rounded-2xl border border-border bg-white/70 p-5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-ink">{pack.title || pack.id}</div>
+                        <div className="text-xs text-muted">{pack.author || pack.catalog_title || "Cordum Community"}</div>
+                      </div>
+                      {pack.installed_status ? (
+                        <Badge variant={statusVariant(pack.installed_status)}>Installed</Badge>
+                      ) : (
+                        <Badge variant="info">{pack.version}</Badge>
+                      )}
+                    </div>
+                    <div className="mt-3 text-sm text-muted">{pack.description || "No description provided."}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(pack.capabilities || []).slice(0, 4).map((cap) => (
+                        <Badge key={`${pack.id}-cap-${cap}`} variant="default">{cap}</Badge>
+                      ))}
+                      {(pack.requires || []).slice(0, 2).map((req) => (
+                        <Badge key={`${pack.id}-req-${req}`} variant="warning">{req}</Badge>
+                      ))}
+                      {(pack.risk_tags || []).slice(0, 2).map((tag) => (
+                        <Badge key={`${pack.id}-risk-${tag}`} variant="danger">{tag}</Badge>
+                      ))}
+                    </div>
+                    {pack.installed_version ? (
+                      <div className="mt-3 text-xs text-muted">
+                        Installed {pack.installed_version}
+                        {upgradeAvailable ? ` · Upgrade available (${pack.version})` : ""}
+                      </div>
+                    ) : null}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button
+                        variant={upgradeAvailable ? "primary" : "outline"}
+                        size="sm"
+                        type="button"
+                        disabled={installDisabled || installMarketplaceMutation.isPending || !pack.catalog_id}
+                        onClick={() =>
+                          installMarketplaceMutation.mutate({
+                            catalog_id: pack.catalog_id,
+                            pack_id: pack.id,
+                            version: pack.version,
+                            upgrade: upgradeAvailable,
+                            force: marketplaceForce,
+                            inactive: marketplaceInactive,
+                          })
+                        }
+                      >
+                        {upgradeAvailable ? "Upgrade" : installDisabled ? "Installed" : "Install"}
+                      </Button>
+                      {sourceUrl ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          onClick={() => window.open(sourceUrl, "_blank", "noopener,noreferrer")}
+                        >
+                          View Source
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
       )}
 

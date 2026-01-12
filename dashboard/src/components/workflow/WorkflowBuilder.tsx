@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
 import ReactFlow, {
   Background,
+  BackgroundVariant,
   Controls,
   Handle,
   MarkerType,
@@ -192,7 +193,7 @@ export function WorkflowBuilder({ initialWorkflow, onChange, height = 500 }: Wor
           defaultEdgeOptions={defaultEdgeOptions}
           fitView
         >
-          <Background variant="dots" gap={22} size={1} color="#d0d7dd" />
+          <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d0d7dd" />
           <Controls position="bottom-left" />
         </ReactFlow>
       </div>

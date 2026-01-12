@@ -27,5 +27,4 @@ and is licensed under BUSL-1.1.
 ## Where to look
 
 - Enterprise repo: `cordum-enterprise`
-- Licensing tooling: `cordum-tools`
 - License docs: `cordum-enterprise/docs/license.md`
