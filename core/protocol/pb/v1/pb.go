@@ -27,6 +27,7 @@ type (
 	PolicyCheckRequest              = agentv1.PolicyCheckRequest
 	PolicyCheckResponse             = agentv1.PolicyCheckResponse
 	PolicyConstraints               = agentv1.PolicyConstraints
+	PolicyRemediation               = agentv1.PolicyRemediation
 	BudgetConstraints               = agentv1.BudgetConstraints
 	SandboxProfile                  = agentv1.SandboxProfile
 	ToolchainConstraints            = agentv1.ToolchainConstraints

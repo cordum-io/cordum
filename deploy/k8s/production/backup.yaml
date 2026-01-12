@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cordum-backups
+  namespace: cordum
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cordum-redis-backup
+  namespace: cordum
+spec:
+  schedule: "0 * * * *"
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: redis-backup
+            image: redis:7
+            command:
+            - sh
+            - -c
+            - |
+              set -e
+              ts=$(date -u +%Y%m%dT%H%M%SZ)
+              redis-cli --tls \
+                --cacert /etc/cordum/tls/client/ca.crt \
+                --cert /etc/cordum/tls/client/tls.crt \
+                --key /etc/cordum/tls/client/tls.key \
+                -h cordum-redis-0.cordum-redis.cordum.svc -p 6379 \
+                --rdb /backup/redis-${ts}.rdb
+            volumeMounts:
+            - name: backup
+              mountPath: /backup
+            - name: client-tls
+              mountPath: /etc/cordum/tls/client
+              readOnly: true
+          volumes:
+          - name: backup
+            persistentVolumeClaim:
+              claimName: cordum-backups
+          - name: client-tls
+            secret:
+              secretName: cordum-client-tls
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cordum-nats-backup
+  namespace: cordum
+spec:
+  schedule: "0 * * * *"
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: nats-backup
+            image: natsio/nats-box:0.15.0
+            command:
+            - sh
+            - -c
+            - |
+              set -e
+              ts=$(date -u +%Y%m%dT%H%M%SZ)
+              mkdir -p /backup/nats-${ts}
+              nats --server tls://cordum-nats:4222 \
+                --tlscacert /etc/cordum/tls/client/ca.crt \
+                --tlscert /etc/cordum/tls/client/tls.crt \
+                --tlskey /etc/cordum/tls/client/tls.key \
+                stream snapshot CORDUM_SYS /backup/nats-${ts}/CORDUM_SYS.snapshot
+              nats --server tls://cordum-nats:4222 \
+                --tlscacert /etc/cordum/tls/client/ca.crt \
+                --tlscert /etc/cordum/tls/client/tls.crt \
+                --tlskey /etc/cordum/tls/client/tls.key \
+                stream snapshot CORDUM_JOBS /backup/nats-${ts}/CORDUM_JOBS.snapshot
+            volumeMounts:
+            - name: backup
+              mountPath: /backup
+            - name: client-tls
+              mountPath: /etc/cordum/tls/client
+              readOnly: true
+          volumes:
+          - name: backup
+            persistentVolumeClaim:
+              claimName: cordum-backups
+          - name: client-tls
+            secret:
+              secretName: cordum-client-tls

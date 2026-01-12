@@ -4,6 +4,7 @@ export type RuntimeConfig = {
   tenantId: string;
   principalId: string;
   principalRole: string;
+  traceUrlTemplate: string;
 };
 
 const defaultConfig: RuntimeConfig = {
@@ -12,6 +13,7 @@ const defaultConfig: RuntimeConfig = {
   tenantId: "default",
   principalId: "",
   principalRole: "",
+  traceUrlTemplate: "",
 };
 
 function envConfig(): Partial<RuntimeConfig> {
@@ -20,12 +22,14 @@ function envConfig(): Partial<RuntimeConfig> {
   const tenantId = import.meta.env.VITE_TENANT_ID as string | undefined;
   const principalId = import.meta.env.VITE_PRINCIPAL_ID as string | undefined;
   const principalRole = import.meta.env.VITE_PRINCIPAL_ROLE as string | undefined;
+  const traceUrlTemplate = import.meta.env.VITE_TRACE_URL_TEMPLATE as string | undefined;
   return {
     apiBaseUrl: base?.trim() || undefined,
     apiKey: apiKey?.trim() || undefined,
     tenantId: tenantId?.trim() || undefined,
     principalId: principalId?.trim() || undefined,
     principalRole: principalRole?.trim() || undefined,
+    traceUrlTemplate: traceUrlTemplate?.trim() || undefined,
   };
 }
 

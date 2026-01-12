@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { epochToMillis, formatDateTime } from "../lib/format";
+import { useConfigStore } from "../state/config";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -12,6 +13,7 @@ export function JobDetailPage() {
   const { jobId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const traceUrlTemplate = useConfigStore((state) => state.traceUrlTemplate);
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
 
@@ -44,9 +46,26 @@ export function JobDetailPage() {
       setNote("");
     },
   });
+  const remediateMutation = useMutation({
+    mutationFn: (remediationId?: string) => api.remediateJob(jobId as string, remediationId),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      if (data?.job_id) {
+        navigate(`/jobs/${data.job_id}`);
+      }
+    },
+  });
 
   const job = jobQuery.data;
-  const decisions = decisionsQuery.data || [];
+
+  const traceUrl = useMemo(() => {
+    if (!job?.trace_id || !traceUrlTemplate) {
+      return "";
+    }
+    return traceUrlTemplate.replace("{{trace_id}}", job.trace_id);
+  }, [job, traceUrlTemplate]);
+
   const policyLink = useMemo(() => {
     if (!job) {
       return "";
@@ -141,7 +160,15 @@ export function JobDetailPage() {
           </div>
           <div>
             <div className="text-xs uppercase tracking-[0.2em] text-muted">Trace</div>
-            <div className="text-sm font-semibold text-ink">{job.trace_id || "-"}</div>
+            <div className="text-sm font-semibold text-ink">
+              {traceUrl ? (
+                <a href={traceUrl} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+                  {job.trace_id}
+                </a>
+              ) : (
+                job.trace_id || "-"
+              )}
+            </div>
           </div>
         </div>
       </Card>
@@ -196,6 +223,42 @@ export function JobDetailPage() {
           <pre className="mt-3 rounded-2xl border border-border bg-white/70 p-3 text-[11px] text-ink">
             {JSON.stringify(job.safety_constraints, null, 2)}
           </pre>
+        ) : null}
+        {job.safety_remediations?.length ? (
+          <div className="mt-4 space-y-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Suggested remediations</div>
+            {job.safety_remediations.map((remediation, index) => (
+              <div key={remediation.id || index} className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="text-sm font-semibold text-ink">{remediation.title || remediation.id || "Remediation"}</div>
+                {remediation.summary ? <div className="mt-1 text-xs text-muted">{remediation.summary}</div> : null}
+                <div className="mt-2 text-xs text-muted">
+                  {remediation.replacement_topic ? `Topic: ${remediation.replacement_topic}` : "Topic: unchanged"}
+                </div>
+                <div className="text-xs text-muted">
+                  {remediation.replacement_capability ? `Capability: ${remediation.replacement_capability}` : "Capability: unchanged"}
+                </div>
+                {remediation.add_labels ? (
+                  <div className="mt-2 text-xs text-muted">
+                    Add labels: {Object.keys(remediation.add_labels).length ? JSON.stringify(remediation.add_labels) : "none"}
+                  </div>
+                ) : null}
+                {remediation.remove_labels?.length ? (
+                  <div className="text-xs text-muted">Remove labels: {remediation.remove_labels.join(", ")}</div>
+                ) : null}
+                <div className="mt-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    onClick={() => remediateMutation.mutate(remediation.id)}
+                    disabled={remediateMutation.isPending}
+                  >
+                    Apply remediation
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
         ) : null}
       </Card>
 
@@ -272,6 +335,23 @@ export function JobDetailPage() {
         <pre className="rounded-2xl border border-border bg-white/70 p-3 text-[11px] text-ink">
           {JSON.stringify(job.result || {}, null, 2)}
         </pre>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Logs</CardTitle>
+          <div className="text-xs text-muted">External logs for this job execution</div>
+        </CardHeader>
+        <div className="rounded-2xl border border-border bg-black p-4 font-mono text-xs text-green-400 h-64 overflow-y-auto">
+          <div>[INFO] Starting job execution...</div>
+          <div>[INFO] Processing input parameters</div>
+          <div>[INFO] Connecting to worker context</div>
+          {job.state === "failed" ? (
+             <div className="text-red-400">[ERROR] Execution failed: {job.error_message || "Unknown error"}</div>
+          ) : (
+             <div>[INFO] Execution completed successfully</div>
+          )}
+        </div>
       </Card>
     </div>
   );

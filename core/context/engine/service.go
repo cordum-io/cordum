@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -19,7 +20,7 @@ const (
 // Service implements the ContextEngine RPC service.
 type Service struct {
 	pb.UnimplementedContextEngineServer
-	redis      *redis.Client
+	redis      redis.UniversalClient
 	maxHistory int64
 }
 
@@ -28,11 +29,10 @@ func NewService(redisURL string) (*Service, error) {
 	if redisURL == "" {
 		redisURL = "redis://localhost:6379"
 	}
-	opts, err := redis.ParseURL(redisURL)
+	client, err := redisutil.NewClient(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {

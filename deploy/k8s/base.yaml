@@ -1,3 +1,5 @@
+# Core stack manifest. For enterprise gateway, apply the overlay from
+# cordum-enterprise/deploy/k8s/enterprise-gateway.yaml after this file.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -86,6 +88,17 @@ spec:
           tcpSocket: {port: 4222}
           initialDelaySeconds: 5
           periodSeconds: 10
+        readinessProbe:
+          tcpSocket: {port: 4222}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
 ---
 apiVersion: v1
 kind: Service
@@ -121,6 +134,17 @@ spec:
           tcpSocket: {port: 6379}
           initialDelaySeconds: 5
           periodSeconds: 10
+        readinessProbe:
+          tcpSocket: {port: 6379}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
 ---
 apiVersion: v1
 kind: Service
@@ -147,6 +171,10 @@ spec:
     metadata:
       labels: {app: cordum-context-engine}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
       - name: context-engine
         image: cordum-context-engine
@@ -157,6 +185,21 @@ spec:
           value: :50070
         ports:
         - containerPort: 50070
+        livenessProbe:
+          tcpSocket: {port: 50070}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket: {port: 50070}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
 ---
 apiVersion: v1
 kind: Service
@@ -183,6 +226,10 @@ spec:
     metadata:
       labels: {app: cordum-safety-kernel}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
       - name: safety
         image: cordum-safety-kernel
@@ -199,6 +246,21 @@ spec:
           readOnly: true
         ports:
         - containerPort: 50051
+        livenessProbe:
+          tcpSocket: {port: 50051}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket: {port: 50051}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
       volumes:
       - name: cordum-safety
         configMap:
@@ -229,6 +291,10 @@ spec:
     metadata:
       labels: {app: cordum-scheduler}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
       - name: scheduler
         image: cordum-scheduler
@@ -256,6 +322,25 @@ spec:
           readOnly: true
         ports:
         - containerPort: 9090
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 150m
+            memory: 256Mi
+          limits:
+            cpu: 750m
+            memory: 768Mi
       volumes:
       - name: cordum-pools
         configMap:
@@ -289,6 +374,10 @@ spec:
     metadata:
       labels: {app: cordum-api-gateway}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
       - name: gateway
         image: cordum-api-gateway
@@ -330,6 +419,25 @@ spec:
         - containerPort: 8080
         - containerPort: 8081
         - containerPort: 9092
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -362,6 +470,10 @@ spec:
     metadata:
       labels: {app: cordum-workflow-engine}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
       - name: workflow-engine
         image: cordum-workflow-engine
@@ -380,6 +492,25 @@ spec:
           value: "200"
         ports:
         - containerPort: 9093
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9093
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9093
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 150m
+            memory: 256Mi
+          limits:
+            cpu: 750m
+            memory: 768Mi
 ---
 apiVersion: v1
 kind: Service
@@ -406,6 +537,10 @@ spec:
     metadata:
       labels: {app: cordum-dashboard}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
       containers:
       - name: dashboard
         image: cordum-dashboard
@@ -419,6 +554,25 @@ spec:
           value: default
         ports:
         - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
 ---
 apiVersion: v1
 kind: Service

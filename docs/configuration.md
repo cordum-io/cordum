@@ -20,6 +20,9 @@ Shared across services:
 - `NATS_USE_JETSTREAM` (`0|1`)
 - `POOL_CONFIG_PATH`, `TIMEOUT_CONFIG_PATH`
 - `SAFETY_KERNEL_ADDR`
+- NATS TLS: `NATS_TLS_CA`, `NATS_TLS_CERT`, `NATS_TLS_KEY`, `NATS_TLS_INSECURE`, `NATS_TLS_SERVER_NAME`
+- Redis TLS: `REDIS_TLS_CA`, `REDIS_TLS_CERT`, `REDIS_TLS_KEY`, `REDIS_TLS_INSECURE`, `REDIS_TLS_SERVER_NAME`
+- Redis clustering: `REDIS_CLUSTER_ADDRESSES` (comma-separated host:port seeds)
 
 ## Gateway
 
@@ -35,6 +38,7 @@ Shared across services:
 - `JOB_META_TTL` / `JOB_META_TTL_SECONDS`
 - `WORKER_SNAPSHOT_INTERVAL`
 - `NATS_JS_ACK_WAIT`, `NATS_JS_MAX_AGE`
+- `NATS_JS_REPLICAS` (JetStream stream replication factor)
 
 ## Workflow engine
 
@@ -47,5 +51,6 @@ Shared across services:
 - `SAFETY_KERNEL_ADDR`, `SAFETY_POLICY_PATH`
 - TLS server: `SAFETY_KERNEL_TLS_CERT`, `SAFETY_KERNEL_TLS_KEY`
 - TLS client: `SAFETY_KERNEL_TLS_CA`, `SAFETY_KERNEL_INSECURE`
+- Decision cache: `SAFETY_DECISION_CACHE_TTL` (e.g. `5s`, `250ms`)
 
 For full details, see `docs/DOCKER.md`.

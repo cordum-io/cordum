@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,18 +24,17 @@ type DLQEntry struct {
 
 // DLQStore persists DLQ entries in Redis.
 type DLQStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 func NewDLQStore(url string) (*DLQStore, error) {
 	if url == "" {
 		url = defaultRedisURL
 	}
-	opts, err := redis.ParseURL(url)
+	client, err := redisutil.NewClient(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {

@@ -92,6 +92,14 @@ Bulk approval/rejection supports optional `reason` + `note` payloads:
 
 Approve/Reject buttons appear in the Policy inbox, the Job detail view, and the Run detail Overview/Jobs tabs when a job is marked `approval_required`.
 
+## Remediations
+
+When Safety Kernel returns remediations, the Job detail view shows suggested alternatives and can apply them:
+
+- `POST /api/v1/jobs/{job_id}/remediate` (optional body `{ "remediation_id": "..." }`)
+
+Applied remediations create a new job with updated topic/capability/labels.
+
 ## Decision Audit Log
 
 Job detail displays a safety decision history using:

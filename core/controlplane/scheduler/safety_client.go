@@ -109,6 +109,7 @@ func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecisionRecord, error) {
 		Constraints:      resp.GetConstraints(),
 		ApprovalRequired: resp.GetApprovalRequired(),
 		ApprovalRef:      resp.GetApprovalRef(),
+		Remediations:     resp.GetRemediations(),
 	}
 	return record, nil
 }

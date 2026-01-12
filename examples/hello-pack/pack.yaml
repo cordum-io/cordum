@@ -1,0 +1,44 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: hello-pack
+  version: 0.1.0
+  title: Hello Pack
+  description: Minimal pack that echoes workflow input.
+
+compatibility:
+  protocolVersion: 1
+
+topics:
+  - name: job.hello-pack.echo
+    capability: hello.echo
+    riskTags: []
+    requires: []
+
+resources:
+  schemas:
+    - id: hello-pack/HelloInput
+      path: schemas/HelloInput.json
+    - id: hello-pack/HelloOutput
+      path: schemas/HelloOutput.json
+  workflows:
+    - id: hello-pack.echo
+      path: workflows/echo.yaml
+
+overlays:
+  config:
+    - name: pools
+      scope: system
+      key: pools
+      strategy: json_merge_patch
+      path: overlays/pools.patch.yaml
+    - name: timeouts
+      scope: system
+      key: timeouts
+      strategy: json_merge_patch
+      path: overlays/timeouts.patch.yaml
+  policy:
+    - name: safety
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml

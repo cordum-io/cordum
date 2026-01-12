@@ -96,6 +96,16 @@ export type StepRun = {
   children?: Record<string, StepRun>;
 };
 
+export type PolicyRemediation = {
+  id?: string;
+  title?: string;
+  summary?: string;
+  replacement_topic?: string;
+  replacement_capability?: string;
+  add_labels?: Record<string, string>;
+  remove_labels?: string[];
+};
+
 export type TimelineEvent = {
   time: string;
   type: string;
@@ -160,6 +170,7 @@ export type JobDetail = {
   safety_rule_id?: string;
   safety_snapshot?: string;
   safety_constraints?: Record<string, unknown>;
+  safety_remediations?: PolicyRemediation[];
   safety_job_hash?: string;
   approval_required?: boolean;
   approval_ref?: string;
@@ -220,6 +231,7 @@ export type SafetyDecisionRecord = {
   rule_id?: string;
   policy_snapshot?: string;
   constraints?: Record<string, unknown>;
+  remediations?: PolicyRemediation[];
   approval_required?: boolean;
   approval_ref?: string;
   checked_at?: number;

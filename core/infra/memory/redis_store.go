@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -33,7 +34,7 @@ type Store interface {
 
 // RedisStore implements Store using Redis.
 type RedisStore struct {
-	client  *redis.Client
+	client  redis.UniversalClient
 	dataTTL time.Duration
 }
 
@@ -55,12 +56,10 @@ func NewRedisStore(url string) (*RedisStore, error) {
 		}
 	}
 
-	opts, err := redis.ParseURL(url)
+	client, err := redisutil.NewClient(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-
-	client := redis.NewClient(opts)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -122,7 +121,7 @@ func (s *RedisStore) Close() error {
 
 // Client exposes the underlying Redis client for advanced operations (lists/sets/etc).
 // Prefer using Store methods where possible.
-func (s *RedisStore) Client() *redis.Client {
+func (s *RedisStore) Client() redis.UniversalClient {
 	return s.client
 }
 

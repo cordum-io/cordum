@@ -143,7 +143,11 @@ export const api = {
     }),
   cancelRun: (workflowId: string, runId: string) =>
     apiRequest<void>(`/api/v1/workflows/${workflowId}/runs/${runId}/cancel`, { method: "POST" }),
-  rerunRun: (runId: string) => apiRequest<void>(`/api/v1/workflow-runs/${runId}/rerun`, { method: "POST" }),
+  rerunRun: (runId: string, options?: { fromStep?: string; dryRun?: boolean }) =>
+    apiRequest<{ run_id: string }>(`/api/v1/workflow-runs/${runId}/rerun`, {
+      method: "POST",
+      body: options ? { from_step: options.fromStep, dry_run: options.dryRun } : undefined,
+    }),
   approveStep: (workflowId: string, runId: string, stepId: string, approved: boolean) =>
     apiRequest<void>(`/api/v1/workflows/${workflowId}/runs/${runId}/steps/${stepId}/approve`, {
       method: "POST",
@@ -157,6 +161,11 @@ export const api = {
     apiRequest<{ job_id: string }>(`/api/v1/approvals/${jobId}/approve`, { method: "POST", body: payload }),
   rejectJob: (jobId: string, payload?: { reason?: string; note?: string }) =>
     apiRequest<{ job_id: string }>(`/api/v1/approvals/${jobId}/reject`, { method: "POST", body: payload }),
+  remediateJob: (jobId: string, remediationId?: string) =>
+    apiRequest<{ job_id: string; trace_id?: string }>(`/api/v1/jobs/${jobId}/remediate`, {
+      method: "POST",
+      body: remediationId ? { remediation_id: remediationId } : undefined,
+    }),
   listPacks: () => apiRequest<PackListResponse>("/api/v1/packs"),
   getPack: (id: string) => apiRequest<PackRecord>(`/api/v1/packs/${id}`),
   installPack: (bundle: File, options?: { force?: boolean; upgrade?: boolean; inactive?: boolean }) => {

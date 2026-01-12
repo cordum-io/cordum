@@ -1,0 +1,70 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-allow-nats
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: nats
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: nats
+    - podSelector:
+        matchLabels:
+          app: cordum-api-gateway
+    - podSelector:
+        matchLabels:
+          app: cordum-scheduler
+    - podSelector:
+        matchLabels:
+          app: cordum-workflow-engine
+    - podSelector:
+        matchLabels:
+          app: cordum-safety-kernel
+    - podSelector:
+        matchLabels:
+          app: cordum-context-engine
+    ports:
+    - protocol: TCP
+      port: 4222
+    - protocol: TCP
+      port: 6222
+    - protocol: TCP
+      port: 8222
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-allow-redis
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: redis
+    - podSelector:
+        matchLabels:
+          app: cordum-api-gateway
+    - podSelector:
+        matchLabels:
+          app: cordum-scheduler
+    - podSelector:
+        matchLabels:
+          app: cordum-workflow-engine
+    - podSelector:
+        matchLabels:
+          app: cordum-context-engine
+    ports:
+    - protocol: TCP
+      port: 6379

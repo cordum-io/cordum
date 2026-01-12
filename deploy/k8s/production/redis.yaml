@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cordum-redis-config
+  namespace: cordum
+data:
+  redis.conf: |
+    port 0
+    tls-port 6379
+    tls-cert-file /etc/redis/tls/tls.crt
+    tls-key-file /etc/redis/tls/tls.key
+    tls-ca-cert-file /etc/redis/tls/ca.crt
+    tls-auth-clients yes
+    protected-mode yes
+    appendonly yes
+    dir /data
+    cluster-enabled yes
+    cluster-config-file nodes.conf
+    cluster-node-timeout 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-redis
+  namespace: cordum
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cordum-redis
+  namespace: cordum
+spec:
+  serviceName: cordum-redis
+  replicas: 6
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: redis
+        image: redis:7
+        args: ["redis-server", "/etc/redis/redis.conf"]
+        ports:
+        - name: redis
+          containerPort: 6379
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        volumeMounts:
+        - name: config
+          mountPath: /etc/redis/redis.conf
+          subPath: redis.conf
+          readOnly: true
+        - name: tls
+          mountPath: /etc/redis/tls
+          readOnly: true
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: config
+        configMap:
+          name: cordum-redis-config
+      - name: tls
+        secret:
+          secretName: cordum-redis-server-tls
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cordum-redis-cluster-init
+  namespace: cordum
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: redis-init
+        image: redis:7
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          nodes="cordum-redis-0.cordum-redis.cordum.svc:6379 cordum-redis-1.cordum-redis.cordum.svc:6379 cordum-redis-2.cordum-redis.cordum.svc:6379 cordum-redis-3.cordum-redis.cordum.svc:6379 cordum-redis-4.cordum-redis.cordum.svc:6379 cordum-redis-5.cordum-redis.cordum.svc:6379"
+          for node in $nodes; do
+            host="${node%%:*}"
+            until redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key -h "$host" -p 6379 ping | grep -q PONG; do
+              sleep 2
+            done
+          done
+          redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key --cluster create $nodes --cluster-replicas 1 --cluster-yes
+        volumeMounts:
+        - name: client-tls
+          mountPath: /etc/cordum/tls/client
+          readOnly: true
+      volumes:
+      - name: client-tls
+        secret:
+          secretName: cordum-client-tls

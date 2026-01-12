@@ -55,6 +55,8 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Deny/allow by tenant/topic, plus MCP allow/deny lists and constraints.
   - Loads policy bundles from file/URL plus config-service fragments (supports bundle `enabled=false`), with snapshot hashing and hot reload.
   - Applies effective config embedded in job env.
+  - Returns optional remediations; gateway can apply them to create a new job with safer topic/capability/labels.
+  - Optional decision cache (`SAFETY_DECISION_CACHE_TTL`) keeps latency low for repeated checks.
 
 - Workflow Engine (`core/workflow`, `core/controlplane/workflowengine`, `cmd/cordum-workflow-engine`; binary `cordum-workflow-engine`)
   - Stores workflow definitions and runs in Redis; maintains run timeline.
@@ -84,6 +86,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
    - Picks a subject (`worker.<id>.jobs` or `job.*`) and dispatches.
    - Pending replayer replays old `PENDING` jobs past the dispatch timeout.
    - If approval is required, state becomes `APPROVAL_REQUIRED`; approvals are bound to the policy snapshot + job hash before requeueing.
+   - If remediations are returned, the gateway can apply one via `POST /api/v1/jobs/{id}/remediate` (creates a new job).
 4) Worker:
    - Loads context from `context_ptr`, runs work, writes `res:<job_id>`.
    - Publishes `BusPacket{JobResult}` to `sys.job.result`.

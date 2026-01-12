@@ -126,7 +126,7 @@ export function RunsPage() {
   });
 
   const rerunMutation = useMutation({
-    mutationFn: (runId: string) => api.rerunRun(runId),
+    mutationFn: (payload: { runId: string }) => api.rerunRun(payload.runId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs"] }),
   });
 
@@ -352,7 +352,7 @@ export function RunsPage() {
               <Button
                 variant="outline"
                 type="button"
-                onClick={() => rerunMutation.mutate(selectedRun.id)}
+                onClick={() => rerunMutation.mutate({ runId: selectedRun.id })}
                 disabled={rerunMutation.isPending}
               >
                 Rerun

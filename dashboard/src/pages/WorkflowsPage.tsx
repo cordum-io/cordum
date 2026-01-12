@@ -9,6 +9,7 @@ import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Textarea } from "../components/ui/Textarea";
 import { Drawer } from "../components/ui/Drawer";
+import { WorkflowBuilder } from "../components/workflow/WorkflowBuilder";
 import type { Workflow } from "../types/api";
 
 export function WorkflowsPage() {
@@ -26,11 +27,12 @@ export function WorkflowsPage() {
   });
 
   const runStats = useMemo(() => {
-    const map = new Map<string, { total: number; success: number }>();
+    const map = new Map<string, { total: number; success: number; cost: number }>();
     workflowsQuery.data?.forEach((workflow, index) => {
       const runs = runQueries[index]?.data || [];
       const success = runs.filter((run) => run.status === "succeeded").length;
-      map.set(workflow.id, { total: runs.length, success });
+      const cost = runs.reduce((sum, run) => sum + (run.total_cost || 0), 0);
+      map.set(workflow.id, { total: runs.length, success, cost });
     });
     return map;
   }, [runQueries, workflowsQuery.data]);
@@ -39,6 +41,7 @@ export function WorkflowsPage() {
   const [payload, setPayload] = useState("{}" as string);
   const [payloadError, setPayloadError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"json" | "visual">("json");
   const [createPayload, setCreatePayload] = useState(`{\n  \"id\": \"incident-triage\",\n  \"org_id\": \"default\",\n  \"name\": \"Incident Triage\",\n  \"version\": \"1.0.0\",\n  \"timeout_sec\": 900,\n  \"created_by\": \"ops\",\n  \"steps\": {\n    \"ingest\": {\n      \"name\": \"Ingest\",\n      \"type\": \"worker\",\n      \"topic\": \"job.default\"\n    },\n    \"approve\": {\n      \"name\": \"Approval\",\n      \"type\": \"approval\",\n      \"depends_on\": [\"ingest\"]\n    }\n  }\n}`);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -60,6 +63,18 @@ export function WorkflowsPage() {
     },
     onError: (error: Error) => setCreateError(error.message),
   });
+
+  const handleBuilderChange = (workflow: Partial<Workflow>) => {
+    setCreatePayload(JSON.stringify(workflow, null, 2));
+  };
+
+  const currentWorkflowData = useMemo(() => {
+    try {
+      return JSON.parse(createPayload);
+    } catch {
+      return {};
+    }
+  }, [createPayload]);
 
   return (
     <div className="space-y-6">
@@ -98,7 +113,7 @@ export function WorkflowsPage() {
                     </div>
                   </div>
                   <div className="mt-3 text-xs text-muted">
-                    {stats ? `${stats.total} runs · ${successRate}% success` : "No runs yet"}
+                    {stats ? `${stats.total} runs · ${successRate}% success · $${stats.cost.toFixed(4)} est. cost` : "No runs yet"}
                   </div>
                 </div>
               );
@@ -148,11 +163,25 @@ export function WorkflowsPage() {
         ) : null}
       </Drawer>
 
-      <Drawer open={createOpen} onClose={() => setCreateOpen(false)}>
+      <Drawer open={createOpen} onClose={() => setCreateOpen(false)} size="lg">
         <div className="space-y-4">
-          <div className="text-xs uppercase tracking-[0.2em] text-muted">Create Workflow</div>
-          <h3 className="text-xl font-semibold text-ink">Define workflow JSON</h3>
-          <Textarea rows={12} value={createPayload} onChange={(event) => setCreatePayload(event.target.value)} />
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-muted">Create Workflow</div>
+              <h3 className="text-xl font-semibold text-ink">Design workflow</h3>
+            </div>
+            <div className="flex gap-2">
+              <Button size="xs" variant={viewMode === "json" ? "primary" : "outline"} onClick={() => setViewMode("json")}>JSON</Button>
+              <Button size="xs" variant={viewMode === "visual" ? "primary" : "outline"} onClick={() => setViewMode("visual")}>Visual</Button>
+            </div>
+          </div>
+
+          {viewMode === "json" ? (
+            <Textarea rows={16} value={createPayload} onChange={(event) => setCreatePayload(event.target.value)} />
+          ) : (
+            <WorkflowBuilder initialWorkflow={currentWorkflowData} onChange={handleBuilderChange} />
+          )}
+
           {createError ? <div className="text-xs text-danger">{createError}</div> : null}
           <div className="flex gap-2">
             <Button

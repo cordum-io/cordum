@@ -19,14 +19,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/protobuf/proto"
 )
 
 type server struct {
@@ -35,12 +36,21 @@ type server struct {
 	policy    *config.SafetyPolicy
 	snapshot  string
 	snapshots []string
+	cacheMu   sync.Mutex
+	cacheTTL  time.Duration
+	cache     map[string]cacheEntry
 }
 
 const (
 	defaultPolicyConfigID  = "policy"
 	defaultPolicyConfigKey = "bundles"
+	envDecisionCacheTTL    = "SAFETY_DECISION_CACHE_TTL"
 )
+
+type cacheEntry struct {
+	resp    *pb.PolicyCheckResponse
+	expires time.Time
+}
 
 // Run starts the Safety Kernel gRPC server and blocks until it exits.
 func Run(cfg *config.Config) error {
@@ -73,7 +83,10 @@ func Run(cfg *config.Config) error {
 		}
 	}
 
-	srv := &server{}
+	srv := &server{
+		cacheTTL: parseDurationEnv(envDecisionCacheTTL),
+		cache:    map[string]cacheEntry{},
+	}
 	srv.setPolicy(policy, snapshot)
 	if loader.ShouldWatch() {
 		go srv.watchPolicy(loader)
@@ -132,6 +145,21 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		defaultTenant = strings.TrimSpace(policy.DefaultTenant)
 	}
 	s.mu.RUnlock()
+
+	cacheKey := ""
+	if s.cacheTTL > 0 {
+		cacheKey = cacheKeyForRequest(req, snapshot)
+		if cacheKey != "" {
+			if cached := s.getCachedDecision(cacheKey); cached != nil {
+				out := clonePolicyResponse(cached)
+				if out.GetApprovalRequired() {
+					out.ApprovalRef = req.GetJobId()
+				}
+				out.PolicySnapshot = snapshot
+				return out, nil
+			}
+		}
+	}
 
 	if tenant == "" {
 		tenant = defaultTenant
@@ -208,7 +236,7 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		approvalRef = req.GetJobId()
 	}
 
-	return &pb.PolicyCheckResponse{
+	resp := &pb.PolicyCheckResponse{
 		Decision:         decision,
 		Reason:           reason,
 		PolicySnapshot:   snapshot,
@@ -216,7 +244,105 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		Constraints:      constraints,
 		ApprovalRequired: approvalRequired,
 		ApprovalRef:      approvalRef,
-	}, nil
+		Remediations:     toProtoRemediations(policyDecision.Remediations),
+	}
+
+	if cacheKey != "" && s.cacheTTL > 0 {
+		cacheResp := clonePolicyResponse(resp)
+		cacheResp.ApprovalRef = ""
+		s.setCachedDecision(cacheKey, cacheResp)
+	}
+
+	return resp, nil
+}
+
+func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
+	if req == nil {
+		return ""
+	}
+	clone, ok := proto.Clone(req).(*pb.PolicyCheckRequest)
+	if !ok || clone == nil {
+		return ""
+	}
+	clone.JobId = ""
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return snapshot + ":" + hex.EncodeToString(sum[:])
+}
+
+func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.cache == nil {
+		return nil
+	}
+	entry, ok := s.cache[key]
+	if !ok {
+		return nil
+	}
+	if time.Now().After(entry.expires) {
+		delete(s.cache, key)
+		return nil
+	}
+	return entry.resp
+}
+
+func (s *server) setCachedDecision(key string, resp *pb.PolicyCheckResponse) {
+	if key == "" || resp == nil || s.cacheTTL <= 0 {
+		return
+	}
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.cache == nil {
+		s.cache = map[string]cacheEntry{}
+	}
+	s.cache[key] = cacheEntry{resp: resp, expires: time.Now().Add(s.cacheTTL)}
+}
+
+func clonePolicyResponse(resp *pb.PolicyCheckResponse) *pb.PolicyCheckResponse {
+	if resp == nil {
+		return nil
+	}
+	clone, ok := proto.Clone(resp).(*pb.PolicyCheckResponse)
+	if !ok || clone == nil {
+		return resp
+	}
+	return clone
+}
+
+func parseDurationEnv(key string) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRemediation {
+	if len(remediations) == 0 {
+		return nil
+	}
+	out := make([]*pb.PolicyRemediation, 0, len(remediations))
+	for _, rem := range remediations {
+		r := rem
+		out = append(out, &pb.PolicyRemediation{
+			Id:                    r.ID,
+			Title:                 r.Title,
+			Summary:               r.Summary,
+			ReplacementTopic:      r.ReplacementTopic,
+			ReplacementCapability: r.ReplacementCapability,
+			AddLabels:             r.AddLabels,
+			RemoveLabels:          append([]string{}, r.RemoveLabels...),
+		})
+	}
+	return out
 }
 
 func policyMetaFromRequest(req *pb.PolicyCheckRequest) config.PolicyMeta {

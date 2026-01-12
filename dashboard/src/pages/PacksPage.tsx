@@ -10,6 +10,41 @@ import { Drawer } from "../components/ui/Drawer";
 import { Input } from "../components/ui/Input";
 import type { Heartbeat, PackRecord, PackVerifyResponse } from "../types/api";
 
+const registryPacks = [
+  {
+    id: "slack-integration",
+    title: "Slack Integration",
+    description: "Send notifications and interactive messages to Slack channels.",
+    version: "v1.2.0",
+    author: "Cordum Community",
+    capabilities: ["notify", "chat"],
+  },
+  {
+    id: "github-actions",
+    title: "GitHub Actions",
+    description: "Trigger and monitor GitHub Actions workflows from Cordum.",
+    version: "v0.9.5",
+    author: "Cordum Community",
+    capabilities: ["ci", "git"],
+  },
+  {
+    id: "kubernetes-ops",
+    title: "Kubernetes Ops",
+    description: "Manage K8s resources, scale deployments, and restart pods.",
+    version: "v2.1.0",
+    author: "Cordum Community",
+    capabilities: ["k8s", "infra"],
+  },
+  {
+    id: "pagerduty-sync",
+    title: "PagerDuty Sync",
+    description: "Synchronize incidents and on-call schedules with PagerDuty.",
+    version: "v1.0.2",
+    author: "Cordum Community",
+    capabilities: ["incident", "oncall"],
+  },
+];
+
 function statusVariant(status?: string): "success" | "warning" | "danger" | "default" {
   const normalized = (status || "").toUpperCase();
   if (normalized === "ACTIVE") {
@@ -51,6 +86,7 @@ function subjectMatches(pattern: string, subject: string): boolean {
 export function PacksPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<"installed" | "registry">("installed");
   const packsQuery = useQuery({
     queryKey: ["packs"],
     queryFn: () => api.listPacks(),
@@ -135,6 +171,7 @@ export function PacksPage() {
     const match = packs.find((pack) => pack.id === packId);
     if (match) {
       setSelectedPack(match);
+      setActiveTab("installed");
     }
   }, [packs, searchParams]);
 
@@ -171,151 +208,195 @@ export function PacksPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Install Pack</CardTitle>
-          <div className="text-xs text-muted">Upload a .tgz bundle and configure install options</div>
-        </CardHeader>
-        <div className="space-y-3">
-          <Input
-            type="file"
-            accept=".tgz,.tar.gz"
-            onChange={(event) => setBundleFile(event.target.files?.[0] || null)}
-          />
-          <div className="flex flex-wrap gap-4 text-xs text-muted">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={forceInstall}
-                onChange={(event) => setForceInstall(event.target.checked)}
-              />
-              Force install (ignore minCoreVersion)
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={upgradeInstall}
-                onChange={(event) => setUpgradeInstall(event.target.checked)}
-              />
-              Upgrade existing pack
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={inactiveInstall}
-                onChange={(event) => setInactiveInstall(event.target.checked)}
-              />
-              Install inactive
-            </label>
+          <CardTitle>Packs</CardTitle>
+          <div className="flex gap-2">
+            <Button variant={activeTab === "installed" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("installed")}>Installed</Button>
+            <Button variant={activeTab === "registry" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("registry")}>Registry</Button>
           </div>
-          <Button
-            variant="primary"
-            type="button"
-            onClick={() => installMutation.mutate()}
-            disabled={!bundleFile || installMutation.isPending}
-          >
-            {installMutation.isPending ? "Installing..." : "Install pack"}
-          </Button>
-        </div>
+        </CardHeader>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Packs</CardTitle>
-          <div className="text-xs text-muted">Installed pack registry</div>
-        </CardHeader>
-        <div className="mb-4 flex items-center justify-between text-xs text-muted">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={purgeOnUninstall}
-              onChange={(event) => setPurgeOnUninstall(event.target.checked)}
-            />
-            Purge resources on uninstall
-          </label>
-          <div>Loaded {packs.length} packs</div>
-        </div>
-        {packsQuery.isLoading ? (
-          <div className="text-sm text-muted">Loading packs...</div>
-        ) : packs.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
-            No packs installed yet. Upload a bundle to get started.
-          </div>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {packs.map((pack) => {
-              const verify = verifyResults[pack.id];
-              const verifyOk = verify?.results.filter((result) => result.ok).length ?? 0;
-              const verifyTotal = verify?.results.length ?? 0;
-              const topics = pack.manifest?.topics || [];
-              const packWorkerList = packWorkers.get(pack.id) || [];
-              const cpuValues = packWorkerList.map((worker) => worker.cpu_load).filter((v): v is number => typeof v === "number");
-              const memValues = packWorkerList.map((worker) => worker.memory_load).filter((v): v is number => typeof v === "number");
-              const avgCpu = cpuValues.length ? cpuValues.reduce((sum, v) => sum + v, 0) / cpuValues.length : undefined;
-              const avgMem = memValues.length ? memValues.reduce((sum, v) => sum + v, 0) / memValues.length : undefined;
-              const resourceCount =
-                (pack.resources?.schemas ? Object.keys(pack.resources.schemas).length : 0) +
-                (pack.resources?.workflows ? Object.keys(pack.resources.workflows).length : 0);
-              return (
-                <div key={pack.id} className="rounded-2xl border border-border bg-white/70 p-5">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-semibold text-ink">{pack.manifest?.metadata?.title || pack.id}</div>
+      {activeTab === "installed" ? (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Install Pack</CardTitle>
+              <div className="text-xs text-muted">Upload a .tgz bundle and configure install options</div>
+            </CardHeader>
+            <div className="space-y-3">
+              <Input
+                type="file"
+                accept=".tgz,.tar.gz"
+                onChange={(event) => setBundleFile(event.target.files?.[0] || null)}
+              />
+              <div className="flex flex-wrap gap-4 text-xs text-muted">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={forceInstall}
+                    onChange={(event) => setForceInstall(event.target.checked)}
+                  />
+                  Force install (ignore minCoreVersion)
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={upgradeInstall}
+                    onChange={(event) => setUpgradeInstall(event.target.checked)}
+                  />
+                  Upgrade existing pack
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={inactiveInstall}
+                    onChange={(event) => setInactiveInstall(event.target.checked)}
+                  />
+                  Install inactive
+                </label>
+              </div>
+              <Button
+                variant="primary"
+                type="button"
+                onClick={() => installMutation.mutate()}
+                disabled={!bundleFile || installMutation.isPending}
+              >
+                {installMutation.isPending ? "Installing..." : "Install pack"}
+              </Button>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Installed Packs</CardTitle>
+              <div className="text-xs text-muted">Installed pack registry</div>
+            </CardHeader>
+            <div className="mb-4 flex items-center justify-between text-xs text-muted">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={purgeOnUninstall}
+                  onChange={(event) => setPurgeOnUninstall(event.target.checked)}
+                />
+                Purge resources on uninstall
+              </label>
+              <div>Loaded {packs.length} packs</div>
+            </div>
+            {packsQuery.isLoading ? (
+              <div className="text-sm text-muted">Loading packs...</div>
+            ) : packs.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
+                No packs installed yet. Upload a bundle to get started.
+              </div>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {packs.map((pack) => {
+                  const verify = verifyResults[pack.id];
+                  const verifyOk = verify?.results.filter((result) => result.ok).length ?? 0;
+                  const verifyTotal = verify?.results.length ?? 0;
+                  const topics = pack.manifest?.topics || [];
+                  const packWorkerList = packWorkers.get(pack.id) || [];
+                  const cpuValues = packWorkerList.map((worker) => worker.cpu_load).filter((v): v is number => typeof v === "number");
+                  const memValues = packWorkerList.map((worker) => worker.memory_load).filter((v): v is number => typeof v === "number");
+                  const avgCpu = cpuValues.length ? cpuValues.reduce((sum, v) => sum + v, 0) / cpuValues.length : undefined;
+                  const avgMem = memValues.length ? memValues.reduce((sum, v) => sum + v, 0) / memValues.length : undefined;
+                  const resourceCount =
+                    (pack.resources?.schemas ? Object.keys(pack.resources.schemas).length : 0) +
+                    (pack.resources?.workflows ? Object.keys(pack.resources.workflows).length : 0);
+                  return (
+                    <div key={pack.id} className="rounded-2xl border border-border bg-white/70 p-5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-semibold text-ink">{pack.manifest?.metadata?.title || pack.id}</div>
+                          <div className="text-xs text-muted">
+                            {pack.manifest?.metadata?.description || "No description"}
+                          </div>
+                        </div>
+                        <Badge variant={statusVariant(pack.status)}>{pack.status}</Badge>
+                      </div>
+                      <div className="mt-3 text-xs text-muted">Version {pack.version || "-"}</div>
+                      <div className="text-xs text-muted">Installed {formatRelative(pack.installed_at)}</div>
                       <div className="text-xs text-muted">
-                        {pack.manifest?.metadata?.description || "No description"}
+                        Workers {packWorkerList.length} · CPU {formatPercent(avgCpu)} · Mem {formatPercent(avgMem)}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted">
+                        <span>{resourceCount} resources</span>
+                        <span>{pack.overlays?.config?.length || 0} config overlays</span>
+                        <span>{pack.overlays?.policy?.length || 0} policy overlays</span>
+                      </div>
+                      {topics.length ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {topics.slice(0, 4).map((topic, index) => (
+                            <Badge key={`${pack.id}-topic-${index}`}>{topic.name || "topic"}</Badge>
+                          ))}
+                        </div>
+                      ) : null}
+                      {verify ? (
+                        <div className="mt-3 text-xs text-muted">
+                          Verify: {verifyOk}/{verifyTotal} simulations passed
+                        </div>
+                      ) : null}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button variant="outline" size="sm" type="button" onClick={() => setSelectedPack(pack)}>
+                          Details
+                        </Button>
+                        <Button
+                          variant="subtle"
+                          size="sm"
+                          type="button"
+                          onClick={() => verifyMutation.mutate(pack.id)}
+                          disabled={verifyMutation.isPending}
+                        >
+                          Verify
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          type="button"
+                          onClick={() => uninstallMutation.mutate(pack.id)}
+                          disabled={uninstallMutation.isPending}
+                        >
+                          Uninstall
+                        </Button>
                       </div>
                     </div>
-                    <Badge variant={statusVariant(pack.status)}>{pack.status}</Badge>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        </>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Pack Registry</CardTitle>
+            <div className="text-xs text-muted">Community and official packs from the Cordum registry</div>
+          </CardHeader>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {registryPacks.map((pack) => (
+              <div key={pack.id} className="rounded-2xl border border-border bg-white/70 p-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-ink">{pack.title}</div>
+                    <div className="text-xs text-muted">{pack.author}</div>
                   </div>
-                  <div className="mt-3 text-xs text-muted">Version {pack.version || "-"}</div>
-                  <div className="text-xs text-muted">Installed {formatRelative(pack.installed_at)}</div>
-                  <div className="text-xs text-muted">
-                    Workers {packWorkerList.length} · CPU {formatPercent(avgCpu)} · Mem {formatPercent(avgMem)}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted">
-                    <span>{resourceCount} resources</span>
-                    <span>{pack.overlays?.config?.length || 0} config overlays</span>
-                    <span>{pack.overlays?.policy?.length || 0} policy overlays</span>
-                  </div>
-                  {topics.length ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {topics.slice(0, 4).map((topic, index) => (
-                        <Badge key={`${pack.id}-topic-${index}`}>{topic.name || "topic"}</Badge>
-                      ))}
-                    </div>
-                  ) : null}
-                  {verify ? (
-                    <div className="mt-3 text-xs text-muted">
-                      Verify: {verifyOk}/{verifyTotal} simulations passed
-                    </div>
-                  ) : null}
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button variant="outline" size="sm" type="button" onClick={() => setSelectedPack(pack)}>
-                      Details
-                    </Button>
-                    <Button
-                      variant="subtle"
-                      size="sm"
-                      type="button"
-                      onClick={() => verifyMutation.mutate(pack.id)}
-                      disabled={verifyMutation.isPending}
-                    >
-                      Verify
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      type="button"
-                      onClick={() => uninstallMutation.mutate(pack.id)}
-                      disabled={uninstallMutation.isPending}
-                    >
-                      Uninstall
-                    </Button>
-                  </div>
+                  <Badge variant="info">{pack.version}</Badge>
                 </div>
-              );
-            })}
+                <div className="mt-3 text-sm text-muted">{pack.description}</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {pack.capabilities.map((cap) => (
+                    <Badge key={cap} variant="default">{cap}</Badge>
+                  ))}
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <Button variant="primary" size="sm" type="button" onClick={() => {}}>Install</Button>
+                  <Button variant="outline" size="sm" type="button">View Source</Button>
+                </div>
+              </div>
+            ))}
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
 
       <Drawer open={Boolean(selectedPack)} onClose={() => setSelectedPack(null)}>
         {selectedPack ? (

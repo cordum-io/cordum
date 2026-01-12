@@ -1,16 +1,19 @@
 package bus
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -23,9 +26,15 @@ type NatsBus struct {
 }
 
 const (
-	envUseJetStream = "NATS_USE_JETSTREAM"
-	envJSAckWait    = "NATS_JS_ACK_WAIT"
-	envJSMaxAge     = "NATS_JS_MAX_AGE"
+	envUseJetStream      = "NATS_USE_JETSTREAM"
+	envJSAckWait         = "NATS_JS_ACK_WAIT"
+	envJSMaxAge          = "NATS_JS_MAX_AGE"
+	envJSReplicas        = "NATS_JS_REPLICAS"
+	envNATSTLSCA         = "NATS_TLS_CA"
+	envNATSTLSCert       = "NATS_TLS_CERT"
+	envNATSTLSKey        = "NATS_TLS_KEY"
+	envNATSTLSInsecure   = "NATS_TLS_INSECURE"
+	envNATSTLSServerName = "NATS_TLS_SERVER_NAME"
 
 	defaultAckWait = 10 * time.Minute
 	defaultMaxAge  = 7 * 24 * time.Hour
@@ -58,6 +67,11 @@ func NewNatsBus(url string) (*NatsBus, error) {
 		nats.ClosedHandler(func(nc *nats.Conn) {
 			log.Printf("[BUS] connection closed")
 		}),
+	}
+	if tlsConfig, err := natsTLSConfigFromEnv(); err != nil {
+		return nil, err
+	} else if tlsConfig != nil {
+		opts = append(opts, nats.Secure(tlsConfig))
 	}
 
 	nc, err := nats.Connect(url, opts...)
@@ -215,6 +229,61 @@ func initJetStreamEnabled() bool {
 	}
 }
 
+func natsTLSConfigFromEnv() (*tls.Config, error) {
+	caPath := strings.TrimSpace(os.Getenv(envNATSTLSCA))
+	certPath := strings.TrimSpace(os.Getenv(envNATSTLSCert))
+	keyPath := strings.TrimSpace(os.Getenv(envNATSTLSKey))
+	serverName := strings.TrimSpace(os.Getenv(envNATSTLSServerName))
+	insecure := parseBoolEnv(envNATSTLSInsecure)
+
+	if caPath == "" && certPath == "" && keyPath == "" && serverName == "" && !insecure {
+		return nil, nil
+	}
+
+	cfg := &tls.Config{}
+	if serverName != "" {
+		cfg.ServerName = serverName
+	}
+	if insecure {
+		cfg.InsecureSkipVerify = true
+	}
+	if caPath != "" {
+		pem, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("nats tls ca read: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if ok := pool.AppendCertsFromPEM(pem); !ok {
+			return nil, fmt.Errorf("nats tls ca parse: %s", caPath)
+		}
+		cfg.RootCAs = pool
+	}
+	if certPath != "" || keyPath != "" {
+		if certPath == "" || keyPath == "" {
+			return nil, fmt.Errorf("nats tls cert/key must be set together")
+		}
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("nats tls keypair: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return cfg, nil
+}
+
+func parseBoolEnv(key string) bool {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return false
+	}
+	switch strings.ToLower(val) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func (b *NatsBus) initJetStreamFromEnv() {
 	if b == nil || b.nc == nil {
 		return
@@ -232,6 +301,12 @@ func (b *NatsBus) initJetStreamFromEnv() {
 	if v := strings.TrimSpace(os.Getenv(envJSMaxAge)); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			maxAge = d
+		}
+	}
+	replicas := 1
+	if v := strings.TrimSpace(os.Getenv(envJSReplicas)); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			replicas = parsed
 		}
 	}
 
@@ -253,6 +328,7 @@ func (b *NatsBus) initJetStreamFromEnv() {
 			Retention:  nats.LimitsPolicy,
 			Storage:    nats.FileStorage,
 			MaxAge:     maxAge,
+			Replicas:   replicas,
 			Duplicates: 2 * time.Minute,
 		})
 		if err == nil {
@@ -271,7 +347,7 @@ func (b *NatsBus) initJetStreamFromEnv() {
 	b.js = js
 	b.jsEnabled = true
 	b.ackWait = ackWait
-	log.Printf("[BUS] jetstream enabled ack_wait=%s", ackWait)
+	log.Printf("[BUS] jetstream enabled ack_wait=%s replicas=%d", ackWait, replicas)
 }
 
 func isDurableSubject(subject string) bool {

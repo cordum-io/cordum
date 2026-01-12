@@ -45,6 +45,7 @@ function mergeOverrides(base: RuntimeConfig, overrides: Partial<RuntimeConfig>):
     tenantId: overrides.tenantId?.trim() || base.tenantId,
     principalId: overrides.principalId?.trim() || base.principalId,
     principalRole: overrides.principalRole?.trim() || base.principalRole,
+    traceUrlTemplate: overrides.traceUrlTemplate?.trim() || base.traceUrlTemplate,
   };
 }
 
@@ -54,6 +55,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   tenantId: "default",
   principalId: "",
   principalRole: "",
+  traceUrlTemplate: "",
   loaded: false,
   defaults: {
     apiBaseUrl: "",
@@ -61,6 +63,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     tenantId: "default",
     principalId: "",
     principalRole: "",
+    traceUrlTemplate: "",
   },
   init: (runtime) => {
     const stored = readStored();
@@ -79,6 +82,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       tenantId: patch.tenantId?.trim() ?? current.tenantId,
       principalId: patch.principalId?.trim() ?? current.principalId,
       principalRole: patch.principalRole?.trim() ?? current.principalRole,
+      traceUrlTemplate: patch.traceUrlTemplate?.trim() ?? current.traceUrlTemplate,
     };
     writeStored(updated);
     set(updated);
