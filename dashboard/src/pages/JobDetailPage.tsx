@@ -58,6 +58,7 @@ export function JobDetailPage() {
   });
 
   const job = jobQuery.data;
+  const decisions = decisionsQuery.data || [];
 
   const traceUrl = useMemo(() => {
     if (!job?.trace_id || !traceUrlTemplate) {

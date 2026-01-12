@@ -15,6 +15,8 @@ const WorkflowDetailPage = lazy(() => import("../pages/WorkflowDetailPage").then
 const PacksPage = lazy(() => import("../pages/PacksPage").then((m) => ({ default: m.PacksPage })));
 const PolicyPage = lazy(() => import("../pages/PolicyPage").then((m) => ({ default: m.PolicyPage })));
 const SystemPage = lazy(() => import("../pages/SystemPage").then((m) => ({ default: m.SystemPage })));
+const ToolsPage = lazy(() => import("../pages/ToolsPage").then((m) => ({ default: m.ToolsPage })));
+const TracePage = lazy(() => import("../pages/TracePage").then((m) => ({ default: m.TracePage })));
 const SearchPage = lazy(() => import("../pages/SearchPage").then((m) => ({ default: m.SearchPage })));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
@@ -43,6 +45,8 @@ export function App() {
       { id: "packs", title: "Go to Packs", group: "Navigation", onSelect: () => navigate("/packs") },
       { id: "policy", title: "Go to Policy", group: "Navigation", onSelect: () => navigate("/policy") },
       { id: "system", title: "Go to System", group: "Navigation", onSelect: () => navigate("/system") },
+      { id: "tools", title: "Go to Tools", group: "Navigation", onSelect: () => navigate("/tools") },
+      { id: "trace", title: "Trace Explorer", group: "Navigation", onSelect: () => navigate("/trace") },
       { id: "search", title: "Open Search", group: "Navigation", onSelect: () => navigate("/search") },
       {
         id: "start-run",
@@ -85,6 +89,9 @@ export function App() {
             <Route path="/packs" element={<PacksPage />} />
             <Route path="/policy" element={<PolicyPage />} />
             <Route path="/system" element={<SystemPage />} />
+            <Route path="/tools" element={<ToolsPage />} />
+            <Route path="/trace" element={<TracePage />} />
+            <Route path="/trace/:id" element={<TracePage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>

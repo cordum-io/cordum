@@ -119,6 +119,16 @@ export type TimelineEvent = {
   data?: Record<string, unknown>;
 };
 
+export type JobStatus = 
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "approval"
+  | "denied"
+  | "timed_out";
+
 export type JobRecord = {
   id: string;
   trace_id?: string;
@@ -252,6 +262,54 @@ export type JobsResponse = {
   next_cursor?: number | null;
 };
 
+export type Lock = {
+  resource: string;
+  owner: string;
+  mode: "exclusive" | "shared";
+  expires_at: string;
+  ttl_ms: number;
+};
+
+export type ArtifactMetadata = {
+  content_type: string;
+  retention: "short" | "standard" | "audit";
+  labels?: Record<string, string>;
+};
+
+export type ArtifactResponse = {
+  artifact_ptr: string;
+  content_base64?: string;
+  metadata?: ArtifactMetadata;
+  size_bytes?: number;
+};
+
+export type MemoryResult = {
+  pointer: string;
+  key: string;
+  kind: "context" | "result" | "memory";
+  size_bytes: number;
+  base64: string;
+  text?: string;
+  json?: unknown;
+};
+
+export type TraceSpan = {
+  trace_id: string;
+  job_id: string;
+  parent_job_id?: string;
+  topic: string;
+  status: string;
+  start_time: string;
+  end_time?: string;
+  duration_ms?: number;
+  error?: string;
+};
+
+export type TraceResponse = {
+  trace_id: string;
+  spans: TraceSpan[];
+};
+
 export type ConfigDocument = {
   scope: string;
   scope_id: string;
@@ -335,6 +393,43 @@ export type PackVerifyResult = {
 export type PackVerifyResponse = {
   pack_id: string;
   results: PackVerifyResult[];
+};
+
+export type MarketplaceCatalog = {
+  id: string;
+  title?: string;
+  url?: string;
+  enabled?: boolean;
+  updated_at?: string;
+  error?: string;
+};
+
+export type MarketplacePack = {
+  id: string;
+  version: string;
+  title?: string;
+  description?: string;
+  author?: string;
+  homepage?: string;
+  source?: string;
+  license?: string;
+  url?: string;
+  sha256?: string;
+  catalog_id?: string;
+  catalog_title?: string;
+  capabilities?: string[];
+  requires?: string[];
+  risk_tags?: string[];
+  installed_version?: string;
+  installed_status?: string;
+  installed_at?: string;
+};
+
+export type MarketplaceResponse = {
+  catalogs: MarketplaceCatalog[];
+  items: MarketplacePack[];
+  fetched_at?: string;
+  cached?: boolean;
 };
 
 export type PolicyBundlesResponse = {

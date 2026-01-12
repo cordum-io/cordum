@@ -18,11 +18,17 @@ enterprise layer can evolve without forking core.
 - Enterprise deployment notes and ops docs.
 - Commercial EULA.
 
-## Tools repo (`cordum-tools`)
+## Tools repo (internal)
 
 - License generation and signing tools.
 - Internal scripts and operational runbooks.
-- Apache-2.0 licensed tooling.
+- Private/internal only (not public).
+
+## Packs repo (`cordum-packs`)
+
+- Official pack bundles and public catalog.
+- Builds `catalog.json` + `.tgz` bundles published to `https://packs.cordum.io`.
+- Keeps pack content decoupled from the core control-plane repo.
 
 ## Rules
 

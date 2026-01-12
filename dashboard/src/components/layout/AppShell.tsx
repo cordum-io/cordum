@@ -3,6 +3,7 @@ import {
   Activity,
   Boxes,
   Gauge,
+  GitGraph,
   LayoutGrid,
   ListChecks,
   Moon,
@@ -10,6 +11,7 @@ import {
   Shield,
   Sun,
   Workflow,
+  Wrench,
 } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -30,6 +32,8 @@ const navItems = [
   { path: "/packs", label: "Packs", icon: Boxes },
   { path: "/policy", label: "Policy", icon: Shield },
   { path: "/system", label: "System", icon: Gauge },
+  { path: "/tools", label: "Tools", icon: Wrench },
+  { path: "/trace", label: "Trace", icon: GitGraph },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

@@ -23,6 +23,8 @@ func main() {
 	args := os.Args[2:]
 
 	switch cmd {
+	case "up":
+		runUpCmd(args)
 	case "workflow":
 		runWorkflowCmd(args)
 	case "run":
@@ -215,6 +217,7 @@ func usage() {
 	fmt.Print(`cordumctl - Cordum platform CLI
 
 Usage:
+  cordumctl up [--file docker-compose.yml] [--build] [--detach]
   cordumctl workflow create --file workflow.json
   cordumctl workflow delete <workflow_id>
   cordumctl run start <workflow_id> [--input input.json] [--dry-run]

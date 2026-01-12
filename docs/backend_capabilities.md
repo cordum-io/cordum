@@ -34,6 +34,7 @@ This document tracks the current backend features, their status, and where they 
 - Locks: acquire/release/renew/get shared/exclusive locks.
 - Artifacts: put/get with retention class metadata.
 - Packs: install/list/show/verify/uninstall; pack registry stored in config service.
+- Marketplace: list catalogs + install by catalog/URL (`cfg:system:pack_catalogs`).
 - Stream: WS stream of bus packets (includes heartbeats and job events).
 - Memory: pointer reader (`GET /api/v1/memory?ptr=...`) used by admins or UI clients to inspect `redis://ctx:*`, `redis://res:*`, and `redis://mem:*` keys.
 - Security: CORS/WS origin allowlist (set `CORDUM_ALLOWED_ORIGINS` for non-local browser clients).

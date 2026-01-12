@@ -9,6 +9,12 @@ RUN apk add --no-cache ca-certificates git
 COPY go.mod go.sum ./
 COPY sdk/go.mod ./sdk/go.mod
 ARG USE_LOCAL_CAP=0
+ARG GOPRIVATE=github.com/cordum-io/cap/v2
+ARG GONOSUMDB=github.com/cordum-io/cap/v2
+ARG GONOPROXY=github.com/cordum-io/cap/v2
+ENV GOPRIVATE=${GOPRIVATE}
+ENV GONOSUMDB=${GONOSUMDB}
+ENV GONOPROXY=${GONOPROXY}
 RUN if [ "${USE_LOCAL_CAP}" != "1" ]; then \
       go mod edit -dropreplace github.com/cordum-io/cap/v2; \
     fi

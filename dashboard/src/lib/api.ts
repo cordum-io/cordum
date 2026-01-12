@@ -1,6 +1,7 @@
 import { useConfigStore } from "../state/config";
 import type {
   ApprovalsResponse,
+  ArtifactResponse,
   ConfigDocument,
   DLQEntry,
   DLQResponse,
@@ -8,6 +9,9 @@ import type {
   Heartbeat,
   JobDetail,
   JobsResponse,
+  Lock,
+  MarketplaceResponse,
+  MemoryResult,
   PackListResponse,
   PackRecord,
   PackVerifyResponse,
@@ -168,6 +172,7 @@ export const api = {
     }),
   listPacks: () => apiRequest<PackListResponse>("/api/v1/packs"),
   getPack: (id: string) => apiRequest<PackRecord>(`/api/v1/packs/${id}`),
+  listMarketplacePacks: () => apiRequest<MarketplaceResponse>("/api/v1/marketplace/packs"),
   installPack: (bundle: File, options?: { force?: boolean; upgrade?: boolean; inactive?: boolean }) => {
     const form = new FormData();
     form.append("bundle", bundle);
@@ -182,6 +187,16 @@ export const api = {
     }
     return apiRequest<PackRecord>("/api/v1/packs/install", { method: "POST", body: form });
   },
+  installMarketplacePack: (payload: {
+    catalog_id?: string;
+    pack_id?: string;
+    version?: string;
+    url?: string;
+    sha256?: string;
+    force?: boolean;
+    upgrade?: boolean;
+    inactive?: boolean;
+  }) => apiRequest<PackRecord>("/api/v1/marketplace/install", { method: "POST", body: payload }),
   uninstallPack: (id: string, purge?: boolean) =>
     apiRequest<PackRecord>(`/api/v1/packs/${id}/uninstall`, { method: "POST", body: { purge: Boolean(purge) } }),
   verifyPack: (id: string) => apiRequest<PackVerifyResponse>(`/api/v1/packs/${id}/verify`, { method: "POST" }),
@@ -246,7 +261,33 @@ export const api = {
     apiRequest<PolicyBundleSnapshot>("/api/v1/policy/bundles/snapshots", { method: "POST", body: payload }),
   getPolicyBundleSnapshot: (id: string) =>
     apiRequest<PolicyBundleSnapshot>(`/api/v1/policy/bundles/snapshots/${id}`),
-  getTrace: (id: string) => apiRequest<Record<string, unknown>>(`/api/v1/traces/${id}`),
+  getTrace: (id: string) => apiRequest<Record<string, unknown>[]>(`/api/v1/traces/${id}`),
+  
+  // Power User Tools
+  getLock: (resource: string) => apiRequest<Lock>("/api/v1/locks", { query: { resource } }),
+  acquireLock: (resource: string, owner: string, ttlMs: number, mode: "exclusive" | "shared" = "exclusive") =>
+    apiRequest<Lock>("/api/v1/locks/acquire", {
+      method: "POST",
+      body: { resource, owner, ttl_ms: ttlMs, mode },
+    }),
+  releaseLock: (resource: string, owner: string) =>
+    apiRequest<{ lock: Lock; released: boolean }>("/api/v1/locks/release", {
+      method: "POST",
+      body: { resource, owner },
+    }),
+  renewLock: (resource: string, owner: string, ttlMs: number) =>
+    apiRequest<Lock>("/api/v1/locks/renew", {
+      method: "POST",
+      body: { resource, owner, ttl_ms: ttlMs },
+    }),
+  getMemory: (ptr?: string, key?: string) =>
+    apiRequest<MemoryResult>("/api/v1/memory", { query: { ptr, key } }),
+  getArtifact: (ptr: string) => apiRequest<ArtifactResponse>(`/api/v1/artifacts/${encodeURIComponent(ptr)}`),
+  putArtifact: (content: string, contentType: string, retention: "short" | "standard" | "audit" = "standard", labels?: Record<string, string>) =>
+    apiRequest<ArtifactResponse>("/api/v1/artifacts", {
+      method: "POST",
+      body: { content, content_type: contentType, retention, labels },
+    }),
 };
 
 function encodeBundleId(id: string): string {

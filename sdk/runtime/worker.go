@@ -251,18 +251,28 @@ func (w *Worker) sendHeartbeat() error {
 	return w.publish(SubjectHeartbeat, packet)
 }
 
-func (w *Worker) packet(traceID string, payload isBusPacketPayload) *v1.BusPacket {
-	return &v1.BusPacket{
+func (w *Worker) packet(traceID string, payload any) *v1.BusPacket {
+	packet := &v1.BusPacket{
 		TraceId:         traceID,
 		SenderId:        w.cfg.WorkerID,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: DefaultProtocolVersion,
-		Payload:         payload,
 	}
-}
-
-type isBusPacketPayload interface {
-	isBusPacket_Payload()
+	switch p := payload.(type) {
+	case *v1.BusPacket_JobProgress:
+		packet.Payload = p
+	case *v1.BusPacket_JobResult:
+		packet.Payload = p
+	case *v1.BusPacket_Heartbeat:
+		packet.Payload = p
+	case *v1.BusPacket_Alert:
+		packet.Payload = p
+	case *v1.BusPacket_JobCancel:
+		packet.Payload = p
+	case *v1.BusPacket_JobRequest:
+		packet.Payload = p
+	}
+	return packet
 }
 
 func (w *Worker) publish(subject string, packet *v1.BusPacket) error {

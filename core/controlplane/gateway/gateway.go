@@ -98,6 +98,9 @@ type server struct {
 	schemaRegistry *schema.Registry
 	safetyConn     *grpc.ClientConn
 	safetyClient   pb.SafetyKernelClient
+
+	marketplaceMu    sync.Mutex
+	marketplaceCache marketplaceCache
 }
 
 var upgrader = websocket.Upgrader{
@@ -738,6 +741,8 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("POST /api/v1/packs/install", s.instrumented("/api/v1/packs/install", s.handleInstallPack))
 	mux.HandleFunc("POST /api/v1/packs/{id}/uninstall", s.instrumented("/api/v1/packs/{id}/uninstall", s.handleUninstallPack))
 	mux.HandleFunc("POST /api/v1/packs/{id}/verify", s.instrumented("/api/v1/packs/{id}/verify", s.handleVerifyPack))
+	mux.HandleFunc("GET /api/v1/marketplace/packs", s.instrumented("/api/v1/marketplace/packs", s.handleMarketplacePacks))
+	mux.HandleFunc("POST /api/v1/marketplace/install", s.instrumented("/api/v1/marketplace/install", s.handleMarketplaceInstall))
 
 	// 9.5 Schemas
 	mux.HandleFunc("POST /api/v1/schemas", s.instrumented("/api/v1/schemas", s.handleRegisterSchema))
