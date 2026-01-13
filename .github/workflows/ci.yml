@@ -121,6 +121,9 @@ jobs:
     - name: Verify binaries
       run: |
         for binary in bin/*; do
-          echo "Testing $binary..."
-          $binary --version || $binary version || echo "Binary built: $binary"
+          echo "Built $binary"
+          if [ ! -x "$binary" ] || [ ! -s "$binary" ]; then
+            echo "Binary not executable or empty: $binary"
+            exit 1
+          fi
         done
