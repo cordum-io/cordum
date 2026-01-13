@@ -33,6 +33,20 @@ func (b *recordingBus) Subscribe(subject, queue string, handler func(*pb.BusPack
 	return nil
 }
 
+func (b *recordingBus) Count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.published)
+}
+
+func (b *recordingBus) Snapshot() []pubMsg {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]pubMsg, len(b.published))
+	copy(out, b.published)
+	return out
+}
+
 func newWorkflowStore(t *testing.T) *RedisStore {
 	t.Helper()
 	srv, err := miniredis.Run()
@@ -87,8 +101,8 @@ func TestEngineForEachFanoutAndAggregateSuccess(t *testing.T) {
 	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if len(bus.published) != 2 {
-		t.Fatalf("expected 2 fan-out publishes, got %d", len(bus.published))
+	if bus.Count() != 2 {
+		t.Fatalf("expected 2 fan-out publishes, got %d", bus.Count())
 	}
 
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
@@ -149,8 +163,8 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if len(bus.published) != 1 {
-		t.Fatalf("expected 1 publish, got %d", len(bus.published))
+	if bus.Count() != 1 {
+		t.Fatalf("expected 1 publish, got %d", bus.Count())
 	}
 
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
@@ -160,8 +174,8 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 
 	// Wait for backoff retry to trigger.
 	time.Sleep(1200 * time.Millisecond)
-	if len(bus.published) < 2 {
-		t.Fatalf("expected retry publish, got %d", len(bus.published))
+	if bus.Count() < 2 {
+		t.Fatalf("expected retry publish, got %d", bus.Count())
 	}
 
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
@@ -207,8 +221,8 @@ func TestEngineApprovalPausesAndResumes(t *testing.T) {
 	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no publishes before approval, got %d", len(bus.published))
+	if bus.Count() != 0 {
+		t.Fatalf("expected no publishes before approval, got %d", bus.Count())
 	}
 	stored, _ := store.GetRun(context.Background(), run.ID)
 	if stored.Status != RunStatusWaiting {
@@ -218,8 +232,8 @@ func TestEngineApprovalPausesAndResumes(t *testing.T) {
 	if err := engine.ApproveStep(context.Background(), run.ID, "approve", true); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if len(bus.published) != 1 {
-		t.Fatalf("expected downstream publish after approval, got %d", len(bus.published))
+	if bus.Count() != 1 {
+		t.Fatalf("expected downstream publish after approval, got %d", bus.Count())
 	}
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:  runID + ":work@1",
@@ -277,10 +291,11 @@ func TestEngineStepMetadataPropagates(t *testing.T) {
 	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if len(bus.published) != 1 {
-		t.Fatalf("expected 1 publish, got %d", len(bus.published))
+	if bus.Count() != 1 {
+		t.Fatalf("expected 1 publish, got %d", bus.Count())
 	}
-	req := bus.published[0].packet.GetJobRequest()
+	msgs := bus.Snapshot()
+	req := msgs[0].packet.GetJobRequest()
 	if req == nil {
 		t.Fatalf("expected job request")
 	}
@@ -350,8 +365,8 @@ func TestEngineDelayStepCompletes(t *testing.T) {
 	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no publishes for delay step, got %d", len(bus.published))
+	if bus.Count() != 0 {
+		t.Fatalf("expected no publishes for delay step, got %d", bus.Count())
 	}
 
 	time.Sleep(1200 * time.Millisecond)
@@ -396,13 +411,14 @@ func TestEngineNotifyStepEmitsEvent(t *testing.T) {
 	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if len(bus.published) != 1 {
-		t.Fatalf("expected 1 publish for notify step, got %d", len(bus.published))
+	if bus.Count() != 1 {
+		t.Fatalf("expected 1 publish for notify step, got %d", bus.Count())
 	}
-	if bus.published[0].subject != capsdk.SubjectWorkflowEvent {
-		t.Fatalf("expected subject %s, got %s", capsdk.SubjectWorkflowEvent, bus.published[0].subject)
+	msgs := bus.Snapshot()
+	if msgs[0].subject != capsdk.SubjectWorkflowEvent {
+		t.Fatalf("expected subject %s, got %s", capsdk.SubjectWorkflowEvent, msgs[0].subject)
 	}
-	if alert := bus.published[0].packet.GetAlert(); alert == nil || alert.GetMessage() != "hello" {
+	if alert := msgs[0].packet.GetAlert(); alert == nil || alert.GetMessage() != "hello" {
 		t.Fatalf("expected alert message 'hello'")
 	}
 	final, _ := store.GetRun(context.Background(), run.ID)
