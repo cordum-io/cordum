@@ -155,7 +155,16 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 	var resultState scheduler.JobState
 	err := s.client.Watch(ctx, func(tx *redis.Tx) error {
 		current, err := tx.HGet(ctx, metaKey, "state").Result()
-		if err != nil && err != redis.Nil {
+		if err == redis.Nil {
+			legacy, lerr := tx.Get(ctx, jobStateKey(jobID)).Result()
+			if lerr == redis.Nil {
+				return redis.Nil
+			}
+			if lerr != nil {
+				return lerr
+			}
+			current = legacy
+		} else if err != nil {
 			return err
 		}
 		currState := scheduler.JobState(current)
@@ -568,7 +577,8 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 		return err
 	}
 	if idempotencyKey != "" {
-		_ = s.SetIdempotencyKey(ctx, idempotencyKey, req.GetJobId())
+		tenantID := scheduler.ExtractTenant(req)
+		_ = s.SetIdempotencyKeyScoped(ctx, tenantID, idempotencyKey, req.GetJobId())
 	}
 	return nil
 }
@@ -776,6 +786,18 @@ func jobIdempotencyKey(key string) string {
 	return "job:idempotency:" + key
 }
 
+func jobIdempotencyKeyScoped(tenant, key string) string {
+	tenant = strings.TrimSpace(tenant)
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	if tenant == "" {
+		return jobIdempotencyKey(key)
+	}
+	return jobIdempotencyKey(tenant + ":" + key)
+}
+
 func tenantActiveKey(tenant string) string {
 	return "job:tenant:active:" + tenant
 }
@@ -911,22 +933,116 @@ func (s *RedisJobStore) CountActiveByTenant(ctx context.Context, tenant string) 
 	return int(count), nil
 }
 
-func (s *RedisJobStore) SetIdempotencyKey(ctx context.Context, key, jobID string) error {
+func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, key, jobID string) (bool, string, error) {
+	if key == "" || jobID == "" {
+		return false, "", fmt.Errorf("idempotency key and jobID required")
+	}
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		idKey := jobIdempotencyKeyScoped("", key)
+		if idKey == "" {
+			return false, "", fmt.Errorf("idempotency key required")
+		}
+		ok, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
+		if err != nil {
+			return false, "", err
+		}
+		if ok {
+			return true, jobID, nil
+		}
+		existing, err := s.client.Get(ctx, idKey).Result()
+		if err != nil && err != redis.Nil {
+			return false, "", err
+		}
+		return false, existing, nil
+	}
+
+	legacyID, err := s.client.Get(ctx, jobIdempotencyKey(key)).Result()
+	if err == nil && legacyID != "" {
+		legacyTenant, terr := s.GetTenant(ctx, legacyID)
+		if terr != nil && terr != redis.Nil {
+			return false, "", terr
+		}
+		if legacyTenant == "" || legacyTenant == tenant {
+			return false, legacyID, nil
+		}
+	} else if err != nil && err != redis.Nil {
+		return false, "", err
+	}
+
+	idKey := jobIdempotencyKeyScoped(tenant, key)
+	if idKey == "" {
+		return false, "", fmt.Errorf("idempotency key required")
+	}
+	ok, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
+	if err != nil {
+		return false, "", err
+	}
+	if ok {
+		return true, jobID, nil
+	}
+	existing, err := s.client.Get(ctx, idKey).Result()
+	if err != nil && err != redis.Nil {
+		return false, "", err
+	}
+	return false, existing, nil
+}
+
+func (s *RedisJobStore) SetIdempotencyKeyScoped(ctx context.Context, tenant, key, jobID string) error {
 	if key == "" || jobID == "" {
 		return fmt.Errorf("idempotency key and jobID required")
 	}
-	ttl := s.metaTTL
-	if ttl <= 0 {
-		return s.client.SetNX(ctx, jobIdempotencyKey(key), jobID, 0).Err()
+	idKey := jobIdempotencyKeyScoped(tenant, key)
+	if idKey == "" {
+		return fmt.Errorf("idempotency key required")
 	}
-	return s.client.SetNX(ctx, jobIdempotencyKey(key), jobID, ttl).Err()
+	_, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
+	return err
 }
 
-func (s *RedisJobStore) GetJobByIdempotencyKey(ctx context.Context, key string) (string, error) {
+func (s *RedisJobStore) GetJobByIdempotencyKeyScoped(ctx context.Context, tenant, key string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("idempotency key required")
 	}
-	return s.client.Get(ctx, jobIdempotencyKey(key)).Result()
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		return s.client.Get(ctx, jobIdempotencyKey(key)).Result()
+	}
+
+	idKey := jobIdempotencyKeyScoped(tenant, key)
+	if idKey == "" {
+		return "", fmt.Errorf("idempotency key required")
+	}
+	if val, err := s.client.Get(ctx, idKey).Result(); err == nil {
+		return val, nil
+	} else if err != redis.Nil {
+		return "", err
+	}
+
+	legacyID, err := s.client.Get(ctx, jobIdempotencyKey(key)).Result()
+	if err != nil {
+		return "", err
+	}
+	if legacyID == "" {
+		return "", redis.Nil
+	}
+	legacyTenant, terr := s.GetTenant(ctx, legacyID)
+	if terr != nil && terr != redis.Nil {
+		return "", terr
+	}
+	if legacyTenant != "" && legacyTenant != tenant {
+		return "", redis.Nil
+	}
+	_ = s.SetIdempotencyKeyScoped(ctx, tenant, key, legacyID)
+	return legacyID, nil
+}
+
+func (s *RedisJobStore) SetIdempotencyKey(ctx context.Context, key, jobID string) error {
+	return s.SetIdempotencyKeyScoped(ctx, "", key, jobID)
+}
+
+func (s *RedisJobStore) GetJobByIdempotencyKey(ctx context.Context, key string) (string, error) {
+	return s.GetJobByIdempotencyKeyScoped(ctx, "", key)
 }
 
 func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, record scheduler.SafetyDecisionRecord) error {

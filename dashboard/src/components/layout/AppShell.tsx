@@ -77,8 +77,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-h-screen">
         <aside className="hidden w-64 flex-col gap-6 border-r border-border bg-[color:var(--surface-glass)] px-6 py-8 backdrop-blur-xl lg:flex">
           <div className="space-y-2">
-            <div className="text-xs uppercase tracking-[0.25em] text-muted">Cordum</div>
-            <h1 className="font-display text-2xl font-semibold text-ink">Control Plane</h1>
+            <div className="flex items-center gap-3">
+              <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-9 w-9" />
+              <div>
+                <div className="text-xs uppercase tracking-[0.25em] text-muted">Cordum</div>
+                <h1 className="font-display text-2xl font-semibold text-ink">Control Plane</h1>
+              </div>
+            </div>
             <p className="text-xs text-muted">AI orchestration, safety, and runtime clarity.</p>
           </div>
           <nav className="mt-6 flex flex-1 flex-col gap-3">
@@ -144,7 +149,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-muted">{location.pathname}</p>
-                <h2 className="font-display text-xl font-semibold text-ink">Cordum Console</h2>
+                <div className="flex items-center gap-2">
+                  <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-6 w-6" />
+                  <h2 className="font-display text-xl font-semibold text-ink">Cordum Console</h2>
+                </div>
               </div>
               <div className="flex flex-1 flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
                 <div className="relative flex-1 lg:max-w-md">

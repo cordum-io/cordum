@@ -24,6 +24,13 @@ in the config service under `cfg:system:pack_catalogs`:
 
 Official catalog source: `https://github.com/cordum-io/cordum-packs` (published to `https://packs.cordum.io`).
 
+The gateway seeds `cfg:system:pack_catalogs` with the official catalog if the
+document is missing or empty. Override or disable with:
+- `CORDUM_PACK_CATALOG_URL`
+- `CORDUM_PACK_CATALOG_ID`
+- `CORDUM_PACK_CATALOG_TITLE`
+- `CORDUM_PACK_CATALOG_DEFAULT_DISABLED=1`
+
 ```json
 {
   "catalogs": [
@@ -289,7 +296,7 @@ cordumctl pack uninstall sre-investigator --purge
 Flags:
 - `--inactive` installs workflows/schemas but skips pool mappings (pack is INACTIVE).
 - `--upgrade` overwrites existing schemas/workflows if digest differs.
-- `--force` bypasses `minCoreVersion` validation (currently advisory; requires `--force`).
+- `--force` bypasses `minCoreVersion` validation.
 - `--dry-run` prints intent without writing.
 
 ## Pack registry
@@ -311,5 +318,5 @@ This maps directly to CAP `JobMetadata` during dispatch.
 ## Compatibility
 
 - `compatibility.protocolVersion` must match the CAP wire protocol (currently `1`).
-- `minCoreVersion` is enforced only when gateway exposes build info; otherwise install
-  requires `--force`.
+- `minCoreVersion` is enforced when the gateway build version is a valid semver.
+  Dev/unknown builds skip the check; `--force` always bypasses it.
