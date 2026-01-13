@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 )
 
 type fakeReconcileStore struct {
+	mu      sync.RWMutex
 	states  map[string]JobState
 	updated map[string]int64
 	tenants map[string]string
@@ -39,6 +41,8 @@ func toUnixMicros(t time.Time) int64 {
 }
 
 func (s *fakeReconcileStore) SetState(_ context.Context, jobID string, state JobState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.fail {
 		return errors.New("forced failure")
 	}
@@ -51,6 +55,8 @@ func (s *fakeReconcileStore) SetState(_ context.Context, jobID string, state Job
 }
 
 func (s *fakeReconcileStore) GetState(_ context.Context, jobID string) (JobState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.states[jobID], nil
 }
 
@@ -67,11 +73,15 @@ func (s *fakeReconcileStore) SetJobMeta(_ context.Context, _ *pb.JobRequest) err
 }
 
 func (s *fakeReconcileStore) SetDeadline(_ context.Context, jobID string, deadline time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.dead[jobID] = deadline.Unix()
 	return nil
 }
 
 func (s *fakeReconcileStore) ListExpiredDeadlines(_ context.Context, nowUnix int64, limit int64) ([]JobRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []JobRecord
 	for id, ts := range s.dead {
 		if ts <= nowUnix {
@@ -85,6 +95,8 @@ func (s *fakeReconcileStore) ListExpiredDeadlines(_ context.Context, nowUnix int
 }
 
 func (s *fakeReconcileStore) ListJobsByState(_ context.Context, state JobState, updatedBeforeUnix int64, _ int64) ([]JobRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []JobRecord
 	for id, st := range s.states {
 		if st != state {
@@ -114,33 +126,47 @@ func (s *fakeReconcileStore) GetTopic(_ context.Context, jobID string) (string, 
 }
 
 func (s *fakeReconcileStore) SetTenant(_ context.Context, jobID, tenant string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.tenants[jobID] = tenant
 	return nil
 }
 
 func (s *fakeReconcileStore) GetTenant(_ context.Context, jobID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.tenants[jobID], nil
 }
 
 func (s *fakeReconcileStore) SetTeam(_ context.Context, jobID, team string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.teams[jobID] = team
 	return nil
 }
 
 func (s *fakeReconcileStore) GetTeam(_ context.Context, jobID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.teams[jobID], nil
 }
 
 func (s *fakeReconcileStore) SetSafetyDecision(_ context.Context, jobID string, record SafetyDecisionRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.safety[jobID] = record
 	return nil
 }
 
 func (s *fakeReconcileStore) GetSafetyDecision(_ context.Context, jobID string) (SafetyDecisionRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.safety[jobID], nil
 }
 
 func (s *fakeReconcileStore) GetAttempts(_ context.Context, jobID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.attempts[jobID], nil
 }
 
@@ -149,6 +175,8 @@ func (s *fakeReconcileStore) CountActiveByTenant(_ context.Context, _ string) (i
 }
 
 func (s *fakeReconcileStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.locks == nil {
 		s.locks = make(map[string]time.Time)
 	}
@@ -160,11 +188,15 @@ func (s *fakeReconcileStore) TryAcquireLock(_ context.Context, key string, ttl t
 }
 
 func (s *fakeReconcileStore) ReleaseLock(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.locks, key)
 	return nil
 }
 
 func (s *fakeReconcileStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	state := s.states[jobID]
 	if terminalStates[state] {
 		return state, nil
@@ -197,17 +229,17 @@ func TestReconcilerTimeouts(t *testing.T) {
 	cancel()
 	time.Sleep(10 * time.Millisecond)
 
-	if store.states["dispatched-old"] != JobStateTimeout {
-		t.Fatalf("expected dispatched-old to be TIMEOUT, got %s", store.states["dispatched-old"])
+	if state, _ := store.GetState(context.Background(), "dispatched-old"); state != JobStateTimeout {
+		t.Fatalf("expected dispatched-old to be TIMEOUT, got %s", state)
 	}
-	if store.states["running-old"] != JobStateTimeout {
-		t.Fatalf("expected running-old to be TIMEOUT, got %s", store.states["running-old"])
+	if state, _ := store.GetState(context.Background(), "running-old"); state != JobStateTimeout {
+		t.Fatalf("expected running-old to be TIMEOUT, got %s", state)
 	}
-	if store.states["dispatched-fresh"] != JobStateDispatched {
-		t.Fatalf("expected dispatched-fresh to remain DISPATCHED, got %s", store.states["dispatched-fresh"])
+	if state, _ := store.GetState(context.Background(), "dispatched-fresh"); state != JobStateDispatched {
+		t.Fatalf("expected dispatched-fresh to remain DISPATCHED, got %s", state)
 	}
-	if store.states["succeeded-old"] != JobStateSucceeded {
-		t.Fatalf("terminal state should be unchanged, got %s", store.states["succeeded-old"])
+	if state, _ := store.GetState(context.Background(), "succeeded-old"); state != JobStateSucceeded {
+		t.Fatalf("terminal state should be unchanged, got %s", state)
 	}
 }
 
