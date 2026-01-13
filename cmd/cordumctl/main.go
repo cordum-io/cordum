@@ -50,7 +50,7 @@ func runWorkflowCmd(args []string) {
 	case "create":
 		fs := newFlagSet("workflow create")
 		file := fs.String("file", "", "workflow json file")
-		fs.Parse(args[1:])
+		fs.ParseArgs(args[1:])
 		client := newClient(*fs.gateway, *fs.apiKey)
 		if *file == "" {
 			fail("workflow file required")
@@ -62,7 +62,7 @@ func runWorkflowCmd(args []string) {
 		fmt.Println(id)
 	case "delete":
 		fs := newFlagSet("workflow delete")
-		fs.Parse(args[1:])
+		fs.ParseArgs(args[1:])
 		if fs.NArg() < 1 {
 			fail("workflow id required")
 		}
@@ -85,7 +85,7 @@ func runRunCmd(args []string) {
 		input := fs.String("input", "", "input json file")
 		dryRun := fs.Bool("dry-run", false, "start in dry-run mode")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		fs.Parse(args[1:])
+		fs.ParseArgs(args[1:])
 		if fs.NArg() < 1 {
 			fail("workflow id required")
 		}
@@ -102,7 +102,7 @@ func runRunCmd(args []string) {
 		fmt.Println(runID)
 	case "delete":
 		fs := newFlagSet("run delete")
-		fs.Parse(args[1:])
+		fs.ParseArgs(args[1:])
 		if fs.NArg() < 1 {
 			fail("run id required")
 		}
@@ -110,7 +110,7 @@ func runRunCmd(args []string) {
 		check(client.DeleteRun(context.Background(), fs.Arg(0)))
 	case "timeline":
 		fs := newFlagSet("run timeline")
-		fs.Parse(args[1:])
+		fs.ParseArgs(args[1:])
 		if fs.NArg() < 1 {
 			fail("run id required")
 		}
@@ -134,7 +134,7 @@ func runApprovalCmd(args []string) {
 		fs := newFlagSet("approval step")
 		approve := fs.Bool("approve", false, "approve the step")
 		reject := fs.Bool("reject", false, "reject the step")
-		fs.Parse(args[1:])
+		fs.ParseArgs(args[1:])
 		if fs.NArg() < 3 {
 			fail("usage: approval step <workflow_id> <run_id> <step_id>")
 		}
@@ -147,7 +147,7 @@ func runApprovalCmd(args []string) {
 		fs := newFlagSet("approval job")
 		approve := fs.Bool("approve", false, "approve the job")
 		reject := fs.Bool("reject", false, "reject the job")
-		fs.Parse(args[1:])
+		fs.ParseArgs(args[1:])
 		if fs.NArg() < 1 {
 			fail("usage: approval job <job_id>")
 		}
@@ -170,7 +170,7 @@ func runDLQCmd(args []string) {
 	switch args[0] {
 	case "retry":
 		fs := newFlagSet("dlq retry")
-		fs.Parse(args[1:])
+		fs.ParseArgs(args[1:])
 		if fs.NArg() < 1 {
 			fail("usage: dlq retry <job_id>")
 		}
@@ -193,6 +193,12 @@ func newFlagSet(name string) *flagSet {
 	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base url")
 	apiKey := fs.String("api-key", envOr("CORDUM_API_KEY", ""), "api key")
 	return &flagSet{FlagSet: fs, gateway: gateway, apiKey: apiKey}
+}
+
+func (fs *flagSet) ParseArgs(args []string) {
+	if err := fs.Parse(args); err != nil {
+		fail(err.Error())
+	}
 }
 
 func newClient(gateway, apiKey string) *sdk.Client {

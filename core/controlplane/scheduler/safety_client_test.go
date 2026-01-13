@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"testing"
@@ -26,27 +27,37 @@ func (s *safetyTestServer) Check(ctx context.Context, req *pb.PolicyCheckRequest
 	}, nil
 }
 
-func startTestSafetyServer(decision pb.DecisionType, reason string) (*grpc.ClientConn, func()) {
+func startTestSafetyServer(t *testing.T, decision pb.DecisionType, reason string) (*grpc.ClientConn, func()) {
+	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
 	pb.RegisterSafetyKernelServer(srv, &safetyTestServer{decision: decision, reason: reason})
 
-	go srv.Serve(lis)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Serve(lis)
+	}()
 
 	dialer := func(context.Context, string) (net.Conn, error) {
 		return lis.Dial()
 	}
-	conn, _ := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial safety kernel: %v", err)
+	}
 	cleanup := func() {
 		srv.Stop()
-		lis.Close()
-		conn.Close()
+		_ = lis.Close()
+		_ = conn.Close()
+		if err := <-errCh; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Fatalf("safety kernel serve error: %v", err)
+		}
 	}
 	return conn, cleanup
 }
 
 func TestSafetyClientAllow(t *testing.T) {
-	conn, cleanup := startTestSafetyServer(pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	conn, cleanup := startTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
 	defer cleanup()
 
 	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn}
@@ -60,7 +71,7 @@ func TestSafetyClientAllow(t *testing.T) {
 }
 
 func TestSafetyClientDeny(t *testing.T) {
-	conn, cleanup := startTestSafetyServer(pb.DecisionType_DECISION_TYPE_DENY, "blocked")
+	conn, cleanup := startTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_DENY, "blocked")
 	defer cleanup()
 
 	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn}
