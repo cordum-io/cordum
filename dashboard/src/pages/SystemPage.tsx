@@ -10,7 +10,7 @@ import { Select } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
 import { Input } from "../components/ui/Input";
 import { ProgressBar } from "../components/ProgressBar";
-import type { DLQEntry, Heartbeat } from "../types/api";
+import type { DLQEntry, Heartbeat, LicenseInfo } from "../types/api";
 
 type DiffLine = {
   left: string;
@@ -99,6 +99,11 @@ export function SystemPage() {
   const redis = status?.redis as Record<string, unknown> | undefined;
   const otel = status?.otel as Record<string, unknown> | undefined;
   const workersCount = (status?.workers as Record<string, unknown> | undefined)?.count as number | undefined;
+  const license = status?.license as LicenseInfo | undefined;
+  const licenseMode = (license?.mode || "community").toLowerCase();
+  const licenseLabel = licenseMode === "enterprise" ? "Enterprise" : "Community";
+  const licenseStatus = license?.status || (licenseMode === "enterprise" ? "unknown" : "active");
+  const licensePlan = license?.plan || licenseLabel;
 
   const workers = useMemo(() => (workersQuery.data || []) as Heartbeat[], [workersQuery.data]);
   const dlqEntries = useMemo(
@@ -193,7 +198,7 @@ export function SystemPage() {
               <CardTitle>System Health</CardTitle>
               <div className="text-xs text-muted">Gateway status snapshot</div>
             </CardHeader>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-4">
               <div className="rounded-2xl border border-border bg-white/70 p-4">
                 <div className="text-xs uppercase tracking-[0.2em] text-muted">NATS</div>
                 <div className="mt-2 text-sm font-semibold text-ink">{String(nats?.status || "unknown")}</div>
@@ -208,6 +213,24 @@ export function SystemPage() {
                 <div className="text-xs uppercase tracking-[0.2em] text-muted">Workers</div>
                 <div className="mt-2 text-sm font-semibold text-ink">{workersCount ?? workers.length}</div>
                 <div className="text-xs text-muted">Active worker heartbeats</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-white/70 p-4">
+                <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-muted">
+                  <span>License</span>
+                  <Badge variant={licenseMode === "enterprise" ? "info" : "default"}>{licenseLabel}</Badge>
+                </div>
+                <div className="mt-2 text-sm font-semibold text-ink">{licensePlan}</div>
+                <div className="text-xs text-muted">
+                  {licenseMode === "enterprise"
+                    ? `Status: ${licenseStatus}`
+                    : "Self-hosted community license"}
+                </div>
+                {licenseMode === "enterprise" && (license?.expires_at || license?.org_id) ? (
+                  <div className="text-xs text-muted">
+                    {license?.org_id ? `Org: ${license.org_id}` : "Org: -"}{" "}
+                    {license?.expires_at ? `• Expires ${formatDateTime(license.expires_at)}` : ""}
+                  </div>
+                ) : null}
               </div>
             </div>
           </Card>

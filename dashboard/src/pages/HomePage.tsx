@@ -310,10 +310,7 @@ export function HomePage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Pinned Items</CardTitle>
-            <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/workflows")}>
-              Manage
-            </Button>
+            <CardTitle>Pinned Workflows</CardTitle>
           </CardHeader>
           {pinned.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">

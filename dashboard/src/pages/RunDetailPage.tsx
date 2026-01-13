@@ -297,15 +297,9 @@ export function RunDetailPage() {
             >
               Rerun
             </Button>
-            <Button
-              variant="subtle"
-              size="sm"
-              type="button"
-              onClick={() => navigate(`/workflows/${run.workflow_id}`)}
-            >
-              Open workflow
-            </Button>
-            <Button
+                                    <Button variant="subtle" size="sm" type="button" onClick={() => navigate(`/workflows/${run.workflow_id}`)}>
+                                      Open workflow
+                                    </Button>            <Button
               variant="danger"
               size="sm"
               type="button"

@@ -432,6 +432,20 @@ export type MarketplaceResponse = {
   cached?: boolean;
 };
 
+export type LicenseInfo = {
+  mode?: string;
+  status?: string;
+  plan?: string;
+  org_id?: string;
+  license_id?: string;
+  deployment_type?: string;
+  issued_at?: string;
+  not_before?: string;
+  expires_at?: string;
+  features?: string[];
+  limits?: Record<string, number>;
+};
+
 export type PolicyBundlesResponse = {
   bundles: Record<string, unknown>;
   items?: PolicyBundleSummary[];

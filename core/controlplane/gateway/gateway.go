@@ -424,6 +424,9 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		return fmt.Errorf("connect redis config service: %w", err)
 	}
 	defer configSvc.Close()
+	if err := seedDefaultPackCatalogs(context.Background(), configSvc); err != nil {
+		logging.Error("api-gateway", "seed pack catalogs failed", "error", err)
+	}
 	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis schema registry: %w", err)
@@ -525,7 +528,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 // startBusTaps subscribes to heartbeats and system events once for the lifetime of the gateway.
 func (s *server) startBusTaps() {
 	// Heartbeats -> worker registry snapshot
-	_ = s.bus.Subscribe(capsdk.SubjectHeartbeat, "", func(p *pb.BusPacket) error {
+	if err := s.bus.Subscribe(capsdk.SubjectHeartbeat, "", func(p *pb.BusPacket) error {
 		if hb := p.GetHeartbeat(); hb != nil {
 			s.workerMu.Lock()
 			s.workers[hb.WorkerId] = hb
@@ -537,11 +540,13 @@ func (s *server) startBusTaps() {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		logging.Error("api-gateway", "bus subscribe failed", "subject", capsdk.SubjectHeartbeat, "error", err)
+	}
 
 	// DLQ tap to persist entries
 	if s.dlqStore != nil {
-		_ = s.bus.Subscribe(capsdk.SubjectDLQ, "", func(p *pb.BusPacket) error {
+		if err := s.bus.Subscribe(capsdk.SubjectDLQ, "", func(p *pb.BusPacket) error {
 			if jr := p.GetJobResult(); jr != nil {
 				jobID := strings.TrimSpace(jr.JobId)
 				topic := ""
@@ -589,13 +594,15 @@ func (s *server) startBusTaps() {
 				}
 			}
 			return nil
-		})
+		}); err != nil {
+			logging.Error("api-gateway", "bus subscribe failed", "subject", capsdk.SubjectDLQ, "error", err)
+		}
 	}
 
 	// Event taps -> broadcast channel
 	for _, subj := range []string{"sys.job.>", "sys.audit.>"} {
 		subject := subj
-		_ = s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
+		if err := s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
 			if subject == "sys.job.>" {
 				s.handleWorkflowJobResult(context.Background(), p.GetJobResult())
 			}
@@ -604,7 +611,9 @@ func (s *server) startBusTaps() {
 			default:
 			}
 			return nil
-		})
+		}); err != nil {
+			logging.Error("api-gateway", "bus subscribe failed", "subject", subject, "error", err)
+		}
 	}
 
 	// Broadcast loop to WS clients
@@ -1483,6 +1492,10 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 
 	state, err := s.jobStore.CancelJob(r.Context(), id)
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "job not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, fmt.Sprintf("failed to cancel job: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1736,22 +1749,34 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.IdempotencyKey != "" && s.jobStore != nil {
-		if existingID, err := s.jobStore.GetJobByIdempotencyKey(r.Context(), req.IdempotencyKey); err == nil && existingID != "" {
-			traceID, _ := s.jobStore.GetTraceID(r.Context(), existingID)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{
-				"job_id":   existingID,
-				"trace_id": traceID,
-			})
-			return
-		} else if err != nil && !errors.Is(err, redis.Nil) {
-			logging.Error("api-gateway", "idempotency lookup failed", "error", err)
-		}
-	}
-
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
+	if key := strings.TrimSpace(req.IdempotencyKey); key != "" && s.jobStore != nil {
+		reserved, existingID, err := s.jobStore.TrySetIdempotencyKeyScoped(r.Context(), orgID, key, jobID)
+		if err != nil {
+			http.Error(w, "idempotency reservation failed", http.StatusInternalServerError)
+			return
+		}
+		if !reserved {
+			if existingID == "" {
+				existingID, err = s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)
+			}
+			if err == nil && existingID != "" {
+				traceID, _ := s.jobStore.GetTraceID(r.Context(), existingID)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{
+					"job_id":   existingID,
+					"trace_id": traceID,
+				})
+				return
+			}
+			if err != nil && !errors.Is(err, redis.Nil) {
+				logging.Error("api-gateway", "idempotency lookup failed", "error", err)
+			}
+			http.Error(w, "idempotency key already used", http.StatusConflict)
+			return
+		}
+	}
 	ctxKey := memory.MakeContextKey(jobID)
 	ctxPtr := memory.PointerForKey(ctxKey)
 	jobPriority := parsePriority(req.Priority)
@@ -4058,21 +4083,6 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
 
-	if key := strings.TrimSpace(req.GetIdempotencyKey()); key != "" && s.jobStore != nil {
-		if existingID, err := s.jobStore.GetJobByIdempotencyKey(ctx, key); err == nil && existingID != "" {
-			traceID, _ := s.jobStore.GetTraceID(ctx, existingID)
-			return &pb.SubmitJobResponse{JobId: existingID, TraceId: traceID}, nil
-		} else if err != nil && !errors.Is(err, redis.Nil) {
-			logging.Error("api-gateway", "idempotency lookup failed", "error", err)
-		}
-	}
-
-	jobID := uuid.NewString()
-	traceID := uuid.NewString()
-	ctxKey := memory.MakeContextKey(jobID)
-	ctxPtr := memory.PointerForKey(ctxKey)
-	jobPriority := parsePriority(req.GetPriority())
-
 	// Use tenant from auth context when available.
 	orgID := req.GetOrgId()
 	principalID := req.GetPrincipalId()
@@ -4087,6 +4097,32 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	if orgID == "" {
 		orgID = s.tenant
 	}
+
+	jobID := uuid.NewString()
+	traceID := uuid.NewString()
+	if key := strings.TrimSpace(req.GetIdempotencyKey()); key != "" && s.jobStore != nil {
+		reserved, existingID, err := s.jobStore.TrySetIdempotencyKeyScoped(ctx, orgID, key, jobID)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "idempotency reservation failed")
+		}
+		if !reserved {
+			if existingID == "" {
+				existingID, err = s.jobStore.GetJobByIdempotencyKeyScoped(ctx, orgID, key)
+			}
+			if err == nil && existingID != "" {
+				traceID, _ := s.jobStore.GetTraceID(ctx, existingID)
+				return &pb.SubmitJobResponse{JobId: existingID, TraceId: traceID}, nil
+			}
+			if err != nil && !errors.Is(err, redis.Nil) {
+				logging.Error("api-gateway", "idempotency lookup failed", "error", err)
+			}
+			return nil, status.Error(codes.AlreadyExists, "idempotency key already used")
+		}
+	}
+
+	ctxKey := memory.MakeContextKey(jobID)
+	ctxPtr := memory.PointerForKey(ctxKey)
+	jobPriority := parsePriority(req.GetPriority())
 
 	payloadReq := submitJobRequest{
 		Prompt:         req.GetPrompt(),

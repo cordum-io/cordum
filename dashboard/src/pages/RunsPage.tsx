@@ -223,12 +223,10 @@ export function RunsPage() {
               ))}
             </Select>
           </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Workflow</label>
-            <Select value={workflowFilter} onChange={(event) => setWorkflowFilter(event.target.value)}>
-              <option value="all">Any</option>
-              {workflowsQuery.data?.map((workflow) => (
-                <option key={workflow.id} value={workflow.id}>
+                      <div>
+                                      <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Workflow</label>
+                                      <Select value={workflowFilter} onChange={(event) => setWorkflowFilter(event.target.value)}>
+                                        <option value="all">All workflows</option>              {workflowsQuery.data?.map((workflow) => (                <option key={workflow.id} value={workflow.id}>
                   {workflow.name || workflow.id}
                 </option>
               ))}
@@ -244,8 +242,7 @@ export function RunsPage() {
               ))}
             </Select>
           </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Search</label>
+          <div className="flex-1 lg:max-w-xs">
             <Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Run id or workflow" />
           </div>
         </div>

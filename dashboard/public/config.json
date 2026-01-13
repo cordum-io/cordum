@@ -1,6 +1,6 @@
 {
-  "apiBaseUrl": "",
-  "apiKey": "",
+  "apiBaseUrl": "http://localhost:8085",
+  "apiKey": "ent-key",
   "tenantId": "default",
   "principalId": "dashboard",
   "principalRole": "admin",

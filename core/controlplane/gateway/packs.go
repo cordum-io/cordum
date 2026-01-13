@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/locks"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -32,8 +33,16 @@ const (
 	packRegistryScope = "system"
 	packRegistryID    = "packs"
 
-	packCatalogScope = "system"
-	packCatalogID    = "pack_catalogs"
+	packCatalogScope        = "system"
+	packCatalogID           = "pack_catalogs"
+	defaultPackCatalogID    = "official"
+	defaultPackCatalogTitle = "Cordum Official"
+	defaultPackCatalogURL   = "https://packs.cordum.io/catalog.json"
+
+	envPackCatalogID             = "CORDUM_PACK_CATALOG_ID"
+	envPackCatalogTitle          = "CORDUM_PACK_CATALOG_TITLE"
+	envPackCatalogURL            = "CORDUM_PACK_CATALOG_URL"
+	envPackCatalogDisableDefault = "CORDUM_PACK_CATALOG_DEFAULT_DISABLED"
 
 	policyConfigScope = "system"
 	policyConfigID    = "policy"
@@ -49,6 +58,73 @@ const (
 )
 
 var errMarketplaceNotFound = errors.New("marketplace pack not found")
+
+func seedDefaultPackCatalogs(ctx context.Context, svc *configsvc.Service) error {
+	if svc == nil {
+		return nil
+	}
+	disabled := strings.TrimSpace(os.Getenv(envPackCatalogDisableDefault))
+	if disabled != "" {
+		switch strings.ToLower(disabled) {
+		case "1", "true", "yes":
+			return nil
+		}
+	}
+	catalogURL := strings.TrimSpace(os.Getenv(envPackCatalogURL))
+	if catalogURL == "" {
+		catalogURL = defaultPackCatalogURL
+	}
+	if catalogURL == "" {
+		return nil
+	}
+	title := strings.TrimSpace(os.Getenv(envPackCatalogTitle))
+	if title == "" {
+		title = defaultPackCatalogTitle
+	}
+	catalogID := strings.TrimSpace(os.Getenv(envPackCatalogID))
+	if catalogID == "" {
+		catalogID = defaultPackCatalogID
+	}
+
+	doc, err := svc.Get(ctx, configsvc.Scope(packCatalogScope), packCatalogID)
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			return err
+		}
+		doc = &configsvc.Document{
+			Scope:   configsvc.Scope(packCatalogScope),
+			ScopeID: packCatalogID,
+			Data:    map[string]any{},
+		}
+	}
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
+	}
+	if existing, ok := doc.Data["catalogs"]; ok && existing != nil {
+		switch typed := existing.(type) {
+		case []any:
+			if len(typed) > 0 {
+				return nil
+			}
+		case []map[string]any:
+			if len(typed) > 0 {
+				return nil
+			}
+		default:
+			return nil
+		}
+	}
+
+	doc.Data["catalogs"] = []map[string]any{
+		{
+			"id":      catalogID,
+			"title":   title,
+			"url":     catalogURL,
+			"enabled": true,
+		},
+	}
+	return svc.Set(ctx, doc)
+}
 
 type packManifest struct {
 	APIVersion    string            `yaml:"apiVersion"`
@@ -553,7 +629,9 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	if manifest.Compatibility.MinCoreVersion != "" && !opts.Force {
-		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: errors.New("minCoreVersion set; rerun with force")}
+		if err := ensureCoreVersionCompatible(manifest.Compatibility.MinCoreVersion); err != nil {
+			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		}
 	}
 	owner := strings.TrimSpace(opts.Owner)
 	if owner == "" {
@@ -1746,6 +1824,67 @@ func ensureProtocolCompatible(manifest *packManifest) error {
 		return fmt.Errorf("protocolVersion %d not supported (expected %d)", manifest.Compatibility.ProtocolVersion, capsdk.DefaultProtocolVersion)
 	}
 	return nil
+}
+
+func ensureCoreVersionCompatible(minCoreVersion string) error {
+	minCoreVersion = strings.TrimSpace(minCoreVersion)
+	if minCoreVersion == "" {
+		return nil
+	}
+	minParsed, ok := parseSemver(minCoreVersion)
+	if !ok {
+		return fmt.Errorf("invalid minCoreVersion %q", minCoreVersion)
+	}
+	coreParsed, ok := parseSemver(buildinfo.Version)
+	if !ok {
+		// Allow installs on dev/unknown builds; use --force to bypass explicitly.
+		return nil
+	}
+	if compareSemver(coreParsed, minParsed) < 0 {
+		return fmt.Errorf("core version %s does not satisfy minCoreVersion %s", buildinfo.Version, minCoreVersion)
+	}
+	return nil
+}
+
+func parseSemver(raw string) ([3]int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return [3]int{}, false
+	}
+	raw = strings.TrimPrefix(raw, "v")
+	raw = strings.SplitN(raw, "-", 2)[0]
+	parts := strings.Split(raw, ".")
+	if len(parts) < 2 {
+		return [3]int{}, false
+	}
+	var out [3]int
+	for i := 0; i < 3; i++ {
+		if i >= len(parts) {
+			out[i] = 0
+			continue
+		}
+		if parts[i] == "" {
+			return [3]int{}, false
+		}
+		n, err := strconv.Atoi(parts[i])
+		if err != nil {
+			return [3]int{}, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
+
+func compareSemver(left, right [3]int) int {
+	for i := 0; i < 3; i++ {
+		if left[i] < right[i] {
+			return -1
+		}
+		if left[i] > right[i] {
+			return 1
+		}
+	}
+	return 0
 }
 
 func shouldSkipConfigOverlay(inactive bool, overlay packConfigOverlay) bool {

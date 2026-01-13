@@ -27,6 +27,9 @@ export function WorkflowDetailPage() {
     onError: (error: Error) => setPayloadError(error.message),
   });
 
+  if (workflowsQuery.isLoading) {
+    return <div className="text-sm text-muted">Loading...</div>;
+  }
   if (!workflow) {
     return <div className="text-sm text-muted">Workflow not found.</div>;
   }
@@ -60,20 +63,6 @@ export function WorkflowDetailPage() {
           <CardTitle>Workflow Canvas</CardTitle>
         </CardHeader>
         <WorkflowCanvas workflow={workflow} height={420} />
-        <div className="mt-5">
-          <div className="text-xs uppercase tracking-[0.2em] text-muted">Step details</div>
-          <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            {Object.values(workflow.steps || {}).map((step) => (
-              <div key={step.id} className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="text-sm font-semibold text-ink">{step.name || step.id}</div>
-                <div className="text-xs text-muted">{step.type}</div>
-                {step.depends_on?.length ? (
-                  <div className="mt-2 text-xs text-muted">Depends on: {step.depends_on.join(", ")}</div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
       </Card>
 
       <Card>

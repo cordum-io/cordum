@@ -43,6 +43,8 @@ services:
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
+    ports:
+      - "50051:50051"
 
   cordum-scheduler:
     restart: unless-stopped

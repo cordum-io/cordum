@@ -103,6 +103,8 @@ export function PacksPage() {
   const [purgeOnUninstall, setPurgeOnUninstall] = useState(false);
   const [selectedPack, setSelectedPack] = useState<PackRecord | null>(null);
   const [verifyResults, setVerifyResults] = useState<Record<string, PackVerifyResponse>>({});
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [marketplaceError, setMarketplaceError] = useState<string | null>(null);
   const selectedPackWorkers = useMemo(() => {
     if (!selectedPack) {
       return [];
@@ -163,9 +165,14 @@ export function PacksPage() {
         inactive: inactiveInstall,
       });
     },
+    onMutate: () => setInstallError(null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["packs"] });
       setBundleFile(null);
+      setInstallError(null);
+    },
+    onError: (err) => {
+      setInstallError(err instanceof Error ? err.message : "Install failed");
     },
   });
   const installMarketplaceMutation = useMutation({
@@ -177,9 +184,14 @@ export function PacksPage() {
       upgrade?: boolean;
       inactive?: boolean;
     }) => api.installMarketplacePack(payload),
+    onMutate: () => setMarketplaceError(null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["packs"] });
       queryClient.invalidateQueries({ queryKey: ["marketplace"] });
+      setMarketplaceError(null);
+    },
+    onError: (err) => {
+      setMarketplaceError(err instanceof Error ? err.message : "Install failed");
     },
   });
 
@@ -254,6 +266,7 @@ export function PacksPage() {
               >
                 {installMutation.isPending ? "Installing..." : "Install pack"}
               </Button>
+              {installError ? <div className="text-xs text-danger">{installError}</div> : null}
             </div>
           </Card>
 
@@ -387,6 +400,7 @@ export function PacksPage() {
               </label>
             </div>
           </div>
+          {marketplaceError ? <div className="mb-4 text-xs text-danger">{marketplaceError}</div> : null}
           {marketplaceQuery.isLoading ? (
             <div className="text-sm text-muted">Loading marketplace...</div>
           ) : marketplacePacks.length === 0 ? (
@@ -487,8 +501,7 @@ export function PacksPage() {
                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Impact</div>
                 <div className="mt-2 rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
                   <div>Topics: {selectedPackImpact.topicsCount}</div>
-                  <div>Workflows: {selectedPackImpact.workflowsCount}</div>
-                  <div>Schemas: {selectedPackImpact.schemasCount}</div>
+                                          <div>Workflows: {selectedPackImpact.workflowsCount}</div>                  <div>Schemas: {selectedPackImpact.schemasCount}</div>
                   <div>Policy fragments: {selectedPackImpact.policyFragments.length}</div>
                   <div>Config overlays: {selectedPackImpact.configOverlays.length}</div>
                 </div>

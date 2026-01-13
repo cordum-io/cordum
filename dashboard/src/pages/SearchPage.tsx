@@ -84,7 +84,7 @@ export function SearchPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Global Search</CardTitle>
+          <CardTitle>Search</CardTitle>
           <div className="text-xs text-muted">Search runs, workflows, packs, and jobs</div>
         </CardHeader>
         <Input
@@ -133,34 +133,32 @@ export function SearchPage() {
             )}
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Workflows</CardTitle>
-              <div className="text-xs text-muted">Top matches</div>
-            </CardHeader>
-            {workflows.length === 0 ? (
-              <div className="text-sm text-muted">No matching workflows.</div>
-            ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Workflows</CardTitle>
+              </CardHeader>
               <div className="space-y-3">
-                {workflows.map((workflow) => (
-                  <div key={workflow.id} className="rounded-2xl border border-border bg-white/70 p-3">
-                    <div className="text-sm font-semibold text-ink">{workflow.name || workflow.id}</div>
-                    <div className="text-xs text-muted">{workflow.description || "No description"}</div>
-                    <div className="mt-2 flex justify-end">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        onClick={() => navigate(`/workflows/${workflow.id}`)}
-                      >
-                        Open
-                      </Button>
-                    </div>
+                {workflows.length === 0 ? (
+                  <div className="text-sm text-muted">No matching workflows.</div>
+                ) : (
+                  workflows.map((workflow) => (                <div key={workflow.id} className="rounded-2xl border border-border bg-white/70 p-3">
+                  <div className="text-sm font-semibold text-ink">{workflow.name || workflow.id}</div>
+                  <div className="text-xs text-muted">{workflow.description || "No description"}</div>
+                  <div className="mt-2 flex justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      onClick={() => navigate(`/workflows/${workflow.id}`)}
+                    >
+                      Open
+                    </Button>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))
             )}
-          </Card>
+          </div>
+        </Card>
 
           <Card>
             <CardHeader>

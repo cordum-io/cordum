@@ -369,7 +369,7 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) error {
 		if err != nil {
 			return RetryAfter(err, retryDelayStore)
 		}
-		if int64(active) > maxConcurrent {
+		if int64(active) >= maxConcurrent {
 			logging.Info("scheduler", "tenant concurrency limit reached",
 				"job_id", jobID,
 				"tenant", tenant,
