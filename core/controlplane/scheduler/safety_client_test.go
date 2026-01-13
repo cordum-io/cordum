@@ -41,7 +41,7 @@ func startTestSafetyServer(t *testing.T, decision pb.DecisionType, reason string
 	dialer := func(context.Context, string) (net.Conn, error) {
 		return lis.Dial()
 	}
-	conn, err := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial safety kernel: %v", err)
 	}
@@ -133,13 +133,19 @@ func TestSafetyClientCircuitOpens(t *testing.T) {
 	req := &pb.JobRequest{JobId: "1", Topic: "job.default"}
 
 	for i := 0; i < safetyCircuitFailBudget; i++ {
-		record, _ := client.Check(req)
+		record, err := client.Check(req)
+		if err != nil {
+			t.Fatalf("check failed: %v", err)
+		}
 		if record.Decision != SafetyDeny {
 			t.Fatalf("expected deny on failure %d", i)
 		}
 	}
 
-	record, _ := client.Check(req)
+	record, err := client.Check(req)
+	if err != nil {
+		t.Fatalf("check failed: %v", err)
+	}
 	if record.Decision != SafetyDeny || record.Reason != "safety kernel circuit open" {
 		t.Fatalf("expected circuit open deny, got %v reason=%s", record.Decision, record.Reason)
 	}
@@ -151,7 +157,9 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 
 	// Trip the circuit open.
 	for i := 0; i < safetyCircuitFailBudget; i++ {
-		client.Check(req)
+		if _, err := client.Check(req); err != nil {
+			t.Fatalf("check failed: %v", err)
+		}
 	}
 
 	// Force transition into half-open state.
@@ -163,12 +171,18 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 	// Swap client to a successful responder to allow closing.
 	client.client = allowSafetyKernelClient{}
 
-	record, _ := client.Check(req)
+	record, err := client.Check(req)
+	if err != nil {
+		t.Fatalf("check failed: %v", err)
+	}
 	if record.Decision != SafetyAllow {
 		t.Fatalf("expected allow during half-open probe, got %v", record.Decision)
 	}
 	// Second success should close the circuit.
-	record, _ = client.Check(req)
+	record, err = client.Check(req)
+	if err != nil {
+		t.Fatalf("check failed: %v", err)
+	}
 	if record.Decision != SafetyAllow {
 		t.Fatalf("expected allow during half-open probe, got %v", record.Decision)
 	}

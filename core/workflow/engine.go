@@ -1318,13 +1318,16 @@ func defaultContextModeForTopic(topic string) string {
 }
 
 func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *WorkflowRun, step *Step, stepID, jobID string) *pb.JobRequest {
+	if run == nil {
+		run = &WorkflowRun{}
+	}
 	subject := step.Topic
 	if subject == "" {
 		subject = "job.workflow." + wfDef.ID
 	}
 
 	priority := pb.JobPriority_JOB_PRIORITY_BATCH
-	if run != nil && run.Input != nil {
+	if run.Input != nil {
 		if raw, ok := run.Input["priority"]; ok {
 			if s, ok := raw.(string); ok {
 				switch strings.ToLower(strings.TrimSpace(s)) {
@@ -1339,7 +1342,7 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 		}
 	}
 	memoryID := "run:" + run.ID
-	if run != nil && run.Input != nil {
+	if run.Input != nil {
 		if raw, ok := run.Input["memory_id"]; ok {
 			if s, ok := raw.(string); ok {
 				if trimmed := strings.TrimSpace(s); trimmed != "" {
@@ -1391,14 +1394,12 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 			req.PrincipalId = meta.GetActorId()
 		}
 	}
-	if run != nil {
-		if run.DryRun || run.Metadata["dry_run"] == "true" {
-			req.Env["dry_run"] = "true"
-			if req.Labels == nil {
-				req.Labels = map[string]string{}
-			}
-			req.Labels["dry_run"] = "true"
+	if run.DryRun || run.Metadata["dry_run"] == "true" {
+		req.Env["dry_run"] = "true"
+		if req.Labels == nil {
+			req.Labels = map[string]string{}
 		}
+		req.Labels["dry_run"] = "true"
 	}
 	if e.config != nil {
 		if cfg, err := e.config.Effective(ctx, run.OrgID, run.TeamID, wfDef.ID, stepID); err == nil && cfg != nil {

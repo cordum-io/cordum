@@ -12,7 +12,9 @@ func runUpCmd(args []string) {
 	file := fs.String("file", "docker-compose.yml", "compose file path")
 	build := fs.Bool("build", true, "build images before starting")
 	detach := fs.Bool("detach", true, "run in background")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fail(err.Error())
+	}
 
 	if err := runCompose(*file, *build, *detach); err != nil {
 		fail(err.Error())

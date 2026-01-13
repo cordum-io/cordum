@@ -72,18 +72,18 @@ func TestStartHealthServer(t *testing.T) {
 
 func TestReconcilerHandleJobResultNoop(t *testing.T) {
 	r := newReconciler(nil, nil, nil, 10*time.Millisecond, 1)
-	if err := r.HandleJobResult(nil, &pb.JobResult{JobId: ""}); err != nil {
+	if err := r.HandleJobResult(context.Background(), &pb.JobResult{JobId: ""}); err != nil {
 		t.Fatalf("expected nil error")
 	}
-	if err := r.HandleJobResult(nil, &pb.JobResult{JobId: "run:step"}); err != nil {
+	if err := r.HandleJobResult(context.Background(), &pb.JobResult{JobId: "run:step"}); err != nil {
 		t.Fatalf("expected nil error when engine nil")
 	}
 }
 
 func TestReconcilerReconcileRunEarlyReturn(t *testing.T) {
 	r := newReconciler(nil, nil, nil, 10*time.Millisecond, 1)
-	r.reconcileRun(nil, "")
-	r.reconcileRun(nil, "run")
+	r.reconcileRun(context.Background(), "")
+	r.reconcileRun(context.Background(), "run")
 }
 
 func TestSplitJobIDMulti(t *testing.T) {

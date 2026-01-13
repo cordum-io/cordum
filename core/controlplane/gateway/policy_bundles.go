@@ -1495,17 +1495,6 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policyAuditEntry) 
 	return s.configSvc.Set(ctx, doc)
 }
 
-func policyEditorAllowed(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	if auth := authFromRequest(r); auth != nil && auth.Role != "" {
-		return roleAllowed(auth.Role, "admin")
-	}
-	role := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Principal-Role")))
-	return normalizeRole(role) == "admin"
-}
-
 func policyActorID(r *http.Request) string {
 	if r == nil {
 		return ""

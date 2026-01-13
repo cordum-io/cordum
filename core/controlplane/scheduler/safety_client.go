@@ -46,7 +46,7 @@ const (
 // NewSafetyClient dials the safety kernel at addr.
 func NewSafetyClient(addr string) (*SafetyClient, error) {
 	creds := safetyTransportCredentials()
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, fmt.Errorf("dial safety kernel: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -25,9 +26,32 @@ func NewClient(ctx context.Context, addr string) (pb.ContextEngineClient, func()
 		ctx, cancel = context.WithTimeout(ctx, defaultDialTimeout)
 		defer cancel()
 	}
-	conn, err := grpc.DialContext(ctx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial context engine: %w", err)
 	}
-	return pb.NewContextEngineClient(conn), func() { conn.Close() }, nil
+	if err := waitForReady(ctx, conn); err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("dial context engine: %w", err)
+	}
+	return pb.NewContextEngineClient(conn), func() { _ = conn.Close() }, nil
+}
+
+func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if state == connectivity.Shutdown {
+			return fmt.Errorf("connection shutdown")
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return fmt.Errorf("connection timeout")
+		}
+	}
 }

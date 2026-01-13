@@ -78,7 +78,7 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 
 	cfg := &tls.Config{}
 	if existing != nil {
-		*cfg = *existing
+		cfg = existing.Clone()
 	}
 	if serverName != "" {
 		cfg.ServerName = serverName

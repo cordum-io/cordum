@@ -67,18 +67,6 @@ var (
 		scheduler.JobStateTimeout:   true,
 		scheduler.JobStateDenied:    true,
 	}
-	allStates = []scheduler.JobState{
-		scheduler.JobStatePending,
-		scheduler.JobStateApproval,
-		scheduler.JobStateScheduled,
-		scheduler.JobStateDispatched,
-		scheduler.JobStateRunning,
-		scheduler.JobStateSucceeded,
-		scheduler.JobStateFailed,
-		scheduler.JobStateCancelled,
-		scheduler.JobStateTimeout,
-		scheduler.JobStateDenied,
-	}
 	allowedTransitions = map[scheduler.JobState][]scheduler.JobState{
 		"":                           {scheduler.JobStatePending, scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateFailed},
 		scheduler.JobStatePending:    {scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},

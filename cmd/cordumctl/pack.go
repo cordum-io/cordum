@@ -199,7 +199,7 @@ func runPackInstall(args []string) {
 	force := fs.Bool("force", false, "skip core version check")
 	upgrade := fs.Bool("upgrade", false, "overwrite existing resources")
 	inactive := fs.Bool("inactive", false, "install without pool mappings")
-	fs.Parse(args)
+	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
 		fail("pack path or url required")
 	}
@@ -348,7 +348,7 @@ func runPackInstall(args []string) {
 func runPackUninstall(args []string) {
 	fs := newFlagSet("pack uninstall")
 	purge := fs.Bool("purge", false, "delete workflows and schemas")
-	fs.Parse(args)
+	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}
@@ -389,7 +389,7 @@ func runPackUninstall(args []string) {
 
 func runPackList(args []string) {
 	fs := newFlagSet("pack list")
-	fs.Parse(args)
+	fs.ParseArgs(args)
 	client := newRestClient(*fs.gateway, *fs.apiKey)
 	ctx := context.Background()
 	records, err := listPackRecords(ctx, client)
@@ -411,7 +411,7 @@ func runPackList(args []string) {
 
 func runPackShow(args []string) {
 	fs := newFlagSet("pack show")
-	fs.Parse(args)
+	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}
@@ -427,7 +427,7 @@ func runPackShow(args []string) {
 
 func runPackVerify(args []string) {
 	fs := newFlagSet("pack verify")
-	fs.Parse(args)
+	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}

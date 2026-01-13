@@ -224,19 +224,6 @@ func headerValue(r *http.Request, name string) string {
 	return strings.TrimSpace(r.Header.Get(name))
 }
 
-func roleAllowed(role string, allowed ...string) bool {
-	role = normalizeRole(role)
-	if role == "" {
-		return false
-	}
-	for _, candidate := range allowed {
-		if role == normalizeRole(candidate) {
-			return true
-		}
-	}
-	return false
-}
-
 func normalizeRole(role string) string {
 	role = strings.ToLower(strings.TrimSpace(role))
 	if role == "secops" || role == "operator" {
