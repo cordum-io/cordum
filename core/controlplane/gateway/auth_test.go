@@ -27,20 +27,6 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 	return provider
 }
 
-func requestWithAuth(t *testing.T, provider AuthProvider, headers map[string]string) (*http.Request, *AuthContext) {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-	ctx, err := provider.AuthenticateHTTP(req)
-	if err != nil {
-		t.Fatalf("authenticate: %v", err)
-	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, ctx))
-	return req, ctx
-}
-
 func requestWithAuthContext(auth *AuthContext) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
 	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, auth))

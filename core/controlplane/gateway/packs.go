@@ -1156,9 +1156,7 @@ func compareVersions(a, b string) int {
 
 func normalizeVersion(version string) string {
 	version = strings.TrimSpace(version)
-	if strings.HasPrefix(version, "v") {
-		version = strings.TrimPrefix(version, "v")
-	}
+	version = strings.TrimPrefix(version, "v")
 	return version
 }
 

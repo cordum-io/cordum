@@ -696,7 +696,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	// 1. Health
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 
 	// 2. Workers (RPC via NATS)
@@ -825,7 +825,7 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	}
 	s.workerMu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -969,7 +969,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		nc := filtered[len(filtered)-1].UpdatedAt - 1
 		nextCursor = &nc
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"items":       filtered,
 		"next_cursor": nextCursor,
 	})
@@ -1136,7 +1136,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	if approvalRecord.JobHash != "" {
 		resp["approval_job_hash"] = approvalRecord.JobHash
 	}
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) {
@@ -1504,7 +1504,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if state != scheduler.JobStateCancelled {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":     id,
 			"state":  state,
 			"reason": "job already terminal",
@@ -1548,7 +1548,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	_ = s.bus.Publish(capsdk.SubjectCancel, cancelBusPacket)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":    id,
 		"state": scheduler.JobStateCancelled,
 	})
@@ -1764,7 +1764,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			if err == nil && existingID != "" {
 				traceID, _ := s.jobStore.GetTraceID(r.Context(), existingID)
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{
+				_ = json.NewEncoder(w).Encode(map[string]string{
 					"job_id":   existingID,
 					"trace_id": traceID,
 				})
@@ -1937,7 +1937,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	logging.Info("api-gateway", "job submitted http", "job_id", jobID)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"job_id":   jobID,
 		"trace_id": traceID,
 	})
@@ -1963,7 +1963,7 @@ func (s *server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, job)
 	}
 	// Enrich with details if needed, but for now list is enough
-	json.NewEncoder(w).Encode(filtered)
+	_ = json.NewEncoder(w).Encode(filtered)
 }
 
 func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -2176,7 +2176,7 @@ func dialSafetyKernel(addr string) (*grpc.ClientConn, pb.SafetyKernelClient, err
 		return nil, nil, fmt.Errorf("SAFETY_KERNEL_TLS_CA required")
 	}
 	creds := safetyTransportCredentials()
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, nil, err
 	}
