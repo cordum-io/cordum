@@ -198,7 +198,9 @@ func TestEngineHandleHeartbeatStoresWorker(t *testing.T) {
 		},
 	}
 
-	engine.HandlePacket(packet)
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("handle packet: %v", err)
+	}
 
 	snapshot := registry.Snapshot()
 	if len(snapshot) != 1 {
@@ -221,7 +223,9 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	engine.processJob(req, "trace-123")
+	if err := engine.processJob(req, "trace-123"); err != nil {
+		t.Fatalf("process job: %v", err)
+	}
 
 	if len(bus.published) != 1 {
 		t.Fatalf("expected 1 publish, got %d", len(bus.published))
@@ -274,7 +278,9 @@ func TestHandleJobResultTreatsCompletedAsSucceeded(t *testing.T) {
 		Status: pb.JobStatus_JOB_STATUS_COMPLETED,
 	}
 
-	engine.handleJobResult(res)
+	if err := engine.handleJobResult(res); err != nil {
+		t.Fatalf("handle job result: %v", err)
+	}
 
 	if got := store.states["job-completed"]; got != JobStateSucceeded {
 		t.Fatalf("expected COMPLETED to map to SUCCEEDED state, got %s", got)
@@ -299,7 +305,9 @@ func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
 		},
 	}
 
-	engine.processJob(req, "trace-ec")
+	if err := engine.processJob(req, "trace-ec"); err != nil {
+		t.Fatalf("process job: %v", err)
+	}
 
 	if len(bus.published) != 1 {
 		t.Fatalf("expected 1 publish with effective config injected")
@@ -332,7 +340,9 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 		Topic: "sys.destroy",
 	}
 
-	engine.processJob(req, "trace-block")
+	if err := engine.processJob(req, "trace-block"); err != nil {
+		t.Fatalf("process job: %v", err)
+	}
 
 	if len(bus.published) != 1 {
 		t.Fatalf("expected 1 publish to dlq when safety blocks, got %d", len(bus.published))
@@ -355,7 +365,9 @@ func TestProcessJobSkipsInvalidRequest(t *testing.T) {
 		Topic: "",
 	}
 
-	engine.processJob(req, "trace-invalid")
+	if err := engine.processJob(req, "trace-invalid"); err != nil {
+		t.Fatalf("process job: %v", err)
+	}
 
 	if len(bus.published) != 0 {
 		t.Fatalf("expected 0 publishes for invalid request, got %d", len(bus.published))
@@ -375,7 +387,9 @@ func TestHandleJobResultUpdatesState(t *testing.T) {
 		WorkerId:  "worker-1",
 	}
 
-	engine.handleJobResult(res)
+	if err := engine.handleJobResult(res); err != nil {
+		t.Fatalf("handle job result: %v", err)
+	}
 
 	if state := jobStore.states["job-1"]; state != JobStateSucceeded {
 		t.Fatalf("expected job state SUCCEEDED, got %s", state)
