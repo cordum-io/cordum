@@ -44,11 +44,20 @@ jobs:
         name: codecov-umbrella
 
     - name: Run benchmarks
-      run: go test -bench=. -benchmem ./... | tee benchmark.txt
+      run: go test -run=^$ -bench=. -benchmem ./... | tee benchmark.txt
+
+    - name: Check benchmark output
+      id: benchmark_check
+      run: |
+        if grep -q '^Benchmark' benchmark.txt; then
+          echo "has_benchmark=true" >> $GITHUB_OUTPUT
+        else
+          echo "has_benchmark=false" >> $GITHUB_OUTPUT
+        fi
 
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' && steps.benchmark_check.outputs.has_benchmark == 'true'
       with:
         tool: 'go'
         output-file-path: benchmark.txt
