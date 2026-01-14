@@ -16,6 +16,14 @@ results, and heartbeats. Workers and product packs live outside this repo.
 
 See the full product docs at [Cordum](https://cordum.io) (or the local `docs/README.md`).
 
+## Getting started (1 minute)
+
+![Getting started](docs/assets/getting-started.gif)
+
+1. `./cmd/cordumctl/cordumctl up`
+2. Open `http://localhost:8082` (dashboard).
+3. Run `./tools/scripts/platform_smoke.sh`.
+
 ## Feature highlights
 
 - Workflow engine with retries/backoff, approvals, timeouts, delays, and crash-safe state.
