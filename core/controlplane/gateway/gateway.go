@@ -803,6 +803,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	// 7. Stream (WebSocket)
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
 
+	// Extension routes (enterprise auth, SSO, etc.)
+	if registrar, ok := s.auth.(RouteRegistrar); ok {
+		registrar.RegisterRoutes(mux, s.instrumented)
+	}
+
 	// CORS Middleware
 	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(s.auth, mux)))
 
@@ -2046,7 +2051,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, X-Principal-Id, X-Principal-Role")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Principal-Id, X-Principal-Role")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -2241,6 +2246,10 @@ func apiKeyMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" || !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if publicPaths, ok := auth.(PublicPathProvider); ok && publicPaths.IsPublicPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -2465,8 +2474,31 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		fn(rec, r)
+		duration := time.Since(start)
 		if s.metrics != nil {
-			s.metrics.ObserveRequest(r.Method, route, fmt.Sprintf("%d", rec.status), time.Since(start).Seconds())
+			s.metrics.ObserveRequest(r.Method, route, fmt.Sprintf("%d", rec.status), duration.Seconds())
+		}
+		if exporter, ok := s.auth.(AuditExporter); ok {
+			authCtx := authFromRequest(r)
+			event := AuditEvent{
+				Time:       start.UTC(),
+				Method:     r.Method,
+				Route:      route,
+				Path:       r.URL.Path,
+				Status:     rec.status,
+				DurationMs: duration.Milliseconds(),
+				RemoteAddr: r.RemoteAddr,
+				UserAgent:  r.UserAgent(),
+				RequestID:  strings.TrimSpace(r.Header.Get("X-Request-Id")),
+			}
+			if authCtx != nil {
+				event.Tenant = authCtx.Tenant
+				event.Principal = authCtx.PrincipalID
+				event.Role = authCtx.Role
+			}
+			if err := exporter.ExportAudit(r.Context(), event); err != nil {
+				logging.Error("api-gateway", "audit export failed", "error", err)
+			}
 		}
 	}
 }
