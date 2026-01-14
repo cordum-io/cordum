@@ -60,6 +60,27 @@ func TestValidatePackManifest(t *testing.T) {
 	if err := validatePackManifest(manifest); err != nil {
 		t.Fatalf("expected valid manifest: %v", err)
 	}
+
+	manifest = &packManifest{
+		Metadata: packMetadata{ID: "pack1", Version: "1.0.0"},
+		Compatibility: packCompatibility{
+			MinCoreVersion: "not-a-version",
+		},
+		Topics: []packTopic{{Name: "job.pack1.topic"}},
+		Resources: packResources{
+			Schemas:   []packResource{{ID: "pack1/schema", Path: "schemas/a.json"}},
+			Workflows: []packResource{{ID: "pack1.workflow", Path: "workflows/a.json"}},
+		},
+	}
+	if err := validatePackManifest(manifest); err == nil {
+		t.Fatalf("expected error for invalid minCoreVersion")
+	}
+
+	manifest.Compatibility.MinCoreVersion = "0.6.0"
+	manifest.Compatibility.MaxCoreVersion = "1.2.3"
+	if err := validatePackManifest(manifest); err != nil {
+		t.Fatalf("expected valid core version constraints: %v", err)
+	}
 }
 
 func TestEnsureProtocolCompatible(t *testing.T) {
@@ -102,12 +123,12 @@ func TestPolicyFragmentID(t *testing.T) {
 
 func TestNormalizeDecision(t *testing.T) {
 	cases := map[string]string{
-		"allow":                      "ALLOW",
-		"DECISION_TYPE_DENY":         "DENY",
-		"require_human":              "REQUIRE_APPROVAL",
-		"allow_with_constraints":     "ALLOW_WITH_CONSTRAINTS",
-		"DECISION_TYPE_THROTTLE":     "THROTTLE",
-		"custom":                     "CUSTOM",
+		"allow":                  "ALLOW",
+		"DECISION_TYPE_DENY":     "DENY",
+		"require_human":          "REQUIRE_APPROVAL",
+		"allow_with_constraints": "ALLOW_WITH_CONSTRAINTS",
+		"DECISION_TYPE_THROTTLE": "THROTTLE",
+		"custom":                 "CUSTOM",
 	}
 	for raw, expect := range cases {
 		if got := normalizeDecision(raw); got != expect {

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -216,12 +217,14 @@ func runPackInstall(args []string) {
 	if err := ensureProtocolCompatible(manifest); err != nil {
 		fail(err.Error())
 	}
-	if manifest.Compatibility.MinCoreVersion != "" && !*force {
-		fail("minCoreVersion set but gateway version not available; rerun with --force to proceed")
-	}
 
 	client := newRestClient(*fs.gateway, *fs.apiKey)
 	ctx := context.Background()
+	if !*force {
+		if err := enforceCoreVersion(ctx, client, manifest); err != nil {
+			fail(err.Error())
+		}
+	}
 	owner := lockOwner()
 	release, err := acquirePackLocks(ctx, client, manifest.Metadata.ID, owner)
 	check(err)
@@ -620,6 +623,16 @@ func validatePackManifest(manifest *packManifest) error {
 	if strings.TrimSpace(manifest.Metadata.Version) == "" {
 		return errors.New("metadata.version required")
 	}
+	if minVersion := strings.TrimSpace(manifest.Compatibility.MinCoreVersion); minVersion != "" {
+		if _, ok := parseSemver(minVersion); !ok {
+			return fmt.Errorf("compatibility.minCoreVersion must be semver: %q", minVersion)
+		}
+	}
+	if maxVersion := strings.TrimSpace(manifest.Compatibility.MaxCoreVersion); maxVersion != "" {
+		if _, ok := parseSemver(maxVersion); !ok {
+			return fmt.Errorf("compatibility.maxCoreVersion must be semver: %q", maxVersion)
+		}
+	}
 	for _, topic := range manifest.Topics {
 		if topic.Name == "" {
 			return errors.New("topic name required")
@@ -655,6 +668,159 @@ func ensureProtocolCompatible(manifest *packManifest) error {
 		return fmt.Errorf("protocolVersion %d not supported (expected %d)", manifest.Compatibility.ProtocolVersion, capsdk.DefaultProtocolVersion)
 	}
 	return nil
+}
+
+func enforceCoreVersion(ctx context.Context, client *restClient, manifest *packManifest) error {
+	if manifest == nil || client == nil {
+		return nil
+	}
+	minVersion := strings.TrimSpace(manifest.Compatibility.MinCoreVersion)
+	maxVersion := strings.TrimSpace(manifest.Compatibility.MaxCoreVersion)
+	if minVersion == "" && maxVersion == "" {
+		return nil
+	}
+
+	gatewayVersion, err := fetchGatewayVersion(ctx, client)
+	if err != nil {
+		fmt.Printf("warning: gateway version unavailable (%v); skipping core version check\n", err)
+		return nil
+	}
+	if gatewayVersion == "" {
+		fmt.Println("warning: gateway version unavailable; skipping core version check")
+		return nil
+	}
+	parsedGateway, ok := parseSemver(gatewayVersion)
+	if !ok {
+		fmt.Printf("warning: gateway version %q not semver; skipping core version check\n", gatewayVersion)
+		return nil
+	}
+	if minVersion != "" {
+		parsedMin, _ := parseSemver(minVersion)
+		if compareSemver(parsedGateway, parsedMin) < 0 {
+			return fmt.Errorf("gateway version %s is below minCoreVersion %s", gatewayVersion, minVersion)
+		}
+	}
+	if maxVersion != "" {
+		parsedMax, _ := parseSemver(maxVersion)
+		if compareSemver(parsedGateway, parsedMax) > 0 {
+			return fmt.Errorf("gateway version %s is above maxCoreVersion %s", gatewayVersion, maxVersion)
+		}
+	}
+	return nil
+}
+
+func fetchGatewayVersion(ctx context.Context, client *restClient) (string, error) {
+	var resp struct {
+		Build struct {
+			Version string `json:"version"`
+		} `json:"build"`
+	}
+	if err := client.doJSON(ctx, http.MethodGet, "/api/v1/status", nil, &resp); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resp.Build.Version), nil
+}
+
+type semver struct {
+	major int
+	minor int
+	patch int
+	pre   string
+}
+
+func parseSemver(raw string) (semver, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return semver{}, false
+	}
+	if strings.HasPrefix(value, "v") {
+		value = value[1:]
+	}
+	main := value
+	pre := ""
+	if idx := strings.IndexAny(value, "-+"); idx >= 0 {
+		main = value[:idx]
+		if value[idx] == '-' {
+			pre = value[idx+1:]
+			if plus := strings.Index(pre, "+"); plus >= 0 {
+				pre = pre[:plus]
+			}
+		}
+	}
+	parts := strings.Split(main, ".")
+	if len(parts) < 2 || len(parts) > 3 {
+		return semver{}, false
+	}
+	major, ok := parseSemverInt(parts[0])
+	if !ok {
+		return semver{}, false
+	}
+	minor, ok := parseSemverInt(parts[1])
+	if !ok {
+		return semver{}, false
+	}
+	patch := 0
+	if len(parts) == 3 {
+		val, ok := parseSemverInt(parts[2])
+		if !ok {
+			return semver{}, false
+		}
+		patch = val
+	}
+	return semver{major: major, minor: minor, patch: patch, pre: pre}, true
+}
+
+func parseSemverInt(raw string) (int, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return val, true
+}
+
+func compareSemver(left, right semver) int {
+	if left.major != right.major {
+		if left.major < right.major {
+			return -1
+		}
+		return 1
+	}
+	if left.minor != right.minor {
+		if left.minor < right.minor {
+			return -1
+		}
+		return 1
+	}
+	if left.patch != right.patch {
+		if left.patch < right.patch {
+			return -1
+		}
+		return 1
+	}
+	if left.pre == right.pre {
+		return 0
+	}
+	if left.pre == "" {
+		return 1
+	}
+	if right.pre == "" {
+		return -1
+	}
+	if left.pre < right.pre {
+		return -1
+	}
+	if left.pre > right.pre {
+		return 1
+	}
+	return 0
 }
 
 func shouldSkipConfigOverlay(inactive bool, overlay packConfigOverlay) bool {
