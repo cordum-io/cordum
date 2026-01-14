@@ -17,6 +17,9 @@ One command (recommended):
 ./cmd/cordumctl/cordumctl up
 ```
 
+`cordumctl up` sets `COMPOSE_HTTP_TIMEOUT` and `DOCKER_CLIENT_TIMEOUT` to `1800`
+seconds if they are not already set. Override them in your shell if needed.
+
 ```bash
 docker compose build
 docker compose up -d
