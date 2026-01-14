@@ -492,7 +492,7 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 			ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
 			prev, err := e.jobStore.GetSafetyDecision(ctx, jobID)
 			cancel()
-			if err == nil && prev.ApprovalRequired && prev.JobHash != "" {
+			if err == nil && (prev.ApprovalRequired || prev.Decision == SafetyRequireApproval) && prev.JobHash != "" {
 				hash, err := HashJobRequest(req)
 				if err == nil && hash == prev.JobHash {
 					record = SafetyDecisionRecord{
