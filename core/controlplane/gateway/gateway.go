@@ -965,7 +965,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	var nextCursor *int64
-	if len(filtered) == int(limit) {
+	if int64(len(filtered)) == limit {
 		nc := filtered[len(filtered)-1].UpdatedAt - 1
 		nextCursor = &nc
 	}
@@ -3346,7 +3346,7 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 		entries = filtered
 	}
 	var nextCursor *int64
-	if len(entries) == int(limit) {
+	if int64(len(entries)) == limit {
 		last := entries[len(entries)-1]
 		if !last.CreatedAt.IsZero() {
 			nc := last.CreatedAt.Unix() - 1
@@ -3626,7 +3626,7 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	var nextCursor *int64
-	if len(jobs) == int(limit) {
+	if int64(len(jobs)) == limit {
 		nc := jobs[len(jobs)-1].UpdatedAt - 1
 		nextCursor = &nc
 	}
@@ -3970,7 +3970,7 @@ func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, run)
 	}
 	var nextCursor *int64
-	if len(runs) == int(limit) {
+	if int64(len(runs)) == limit {
 		last := runs[len(runs)-1]
 		if last != nil {
 			ts := last.UpdatedAt

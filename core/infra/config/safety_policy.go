@@ -224,7 +224,7 @@ func legacyRules(p *SafetyPolicy) []PolicyRule {
 			out = append(out, PolicyRule{
 				ID:       fmt.Sprintf("legacy:%s:deny:%d", tenant, idx+1),
 				Decision: "deny",
-				Reason:   fmt.Sprintf("topic '%s' denied by tenant policy", pat),
+				Reason:   fmt.Sprintf("topic %q denied by tenant policy", pat),
 				Match: PolicyMatch{
 					Tenants: []string{tenant},
 					Topics:  []string{pat},
@@ -399,10 +399,10 @@ func mcpUsed(req MCPRequest) bool {
 
 func matchMCPField(field, value string, allow, deny []string) (bool, string) {
 	if containsString(deny, value) {
-		return false, fmt.Sprintf("mcp %s '%s' denied", field, value)
+		return false, fmt.Sprintf("mcp %s %q denied", field, value)
 	}
 	if len(allow) > 0 && !containsString(allow, value) {
-		return false, fmt.Sprintf("mcp %s '%s' not allowed", field, value)
+		return false, fmt.Sprintf("mcp %s %q not allowed", field, value)
 	}
 	return true, ""
 }

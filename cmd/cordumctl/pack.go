@@ -589,6 +589,7 @@ func loadPackManifest(dir string) (*packManifest, error) {
 	var data []byte
 	var err error
 	for _, path := range paths {
+		// #nosec G304 -- pack manifest is read from the local pack directory.
 		data, err = os.ReadFile(path)
 		if err == nil {
 			break
@@ -775,7 +776,12 @@ func applyPolicyOverlay(ctx context.Context, client *restClient, overlay packPol
 	if strategy != "" && strategy != "bundle_fragment" {
 		return appliedPolicyChange{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
 	}
-	content, err := os.ReadFile(filepath.Join(dir, overlay.Path))
+	path, err := safeJoin(dir, overlay.Path)
+	if err != nil {
+		return appliedPolicyChange{}, err
+	}
+	// #nosec G304 -- path is validated within the pack directory.
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return appliedPolicyChange{}, err
 	}
@@ -1092,6 +1098,7 @@ func hashWorkflow(workflow map[string]any) (string, error) {
 }
 
 func loadDataFile(path string) (any, error) {
+	// #nosec G304 -- path is validated by safeJoin at call sites.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -1575,6 +1582,7 @@ func isTarGz(path string) bool {
 }
 
 func extractTarGz(path, dest string) error {
+	// #nosec G304 -- pack archive path is provided by the local operator.
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -1604,7 +1612,7 @@ func extractTarGz(path, dest string) error {
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := os.MkdirAll(target, 0o750); err != nil {
 				return err
 			}
 		case tar.TypeReg:
@@ -1619,10 +1627,10 @@ func extractTarGz(path, dest string) error {
 			if totalSz > maxPackUncompressedBytes {
 				return fmt.Errorf("pack archive exceeds max size (%d bytes)", maxPackUncompressedBytes)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
 			}

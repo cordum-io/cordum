@@ -206,6 +206,7 @@ func newClient(gateway, apiKey string) *sdk.Client {
 }
 
 func loadJSON(path string, out any) {
+	// #nosec G304 -- CLI explicitly reads local files provided by the operator.
 	data, err := os.ReadFile(path)
 	check(err)
 	if err := json.Unmarshal(data, out); err != nil {

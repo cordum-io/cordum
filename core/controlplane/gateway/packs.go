@@ -485,8 +485,14 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid json payload", http.StatusBadRequest)
 		return
 	}
+	allowedHosts, err := s.marketplaceAllowedHosts(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	installURL := strings.TrimSpace(req.URL)
 	expectedSha := strings.TrimSpace(req.Sha256)
+	fromCatalog := false
 	if installURL == "" {
 		catalogID := strings.TrimSpace(req.CatalogID)
 		packID := strings.TrimSpace(req.PackID)
@@ -505,6 +511,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		}
 		installURL = strings.TrimSpace(entry.Pack.URL)
 		expectedSha = strings.TrimSpace(entry.Pack.Sha256)
+		fromCatalog = true
 	}
 	if installURL == "" {
 		http.Error(w, "download url required", http.StatusBadRequest)
@@ -514,7 +521,17 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		http.Error(w, "sha256 required", http.StatusBadRequest)
 		return
 	}
-	packFile, digest, cleanup, err := downloadPackBundle(r.Context(), installURL)
+	if fromCatalog {
+		if host := hostFromURL(installURL); host != "" {
+			allowedHosts[host] = struct{}{}
+		}
+	}
+	parsed, err := validateMarketplaceURL(installURL, allowedHosts)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	packFile, digest, cleanup, err := downloadPackBundle(r.Context(), parsed)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -524,6 +541,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		http.Error(w, "sha256 mismatch", http.StatusBadRequest)
 		return
 	}
+	// #nosec G304 -- packFile is a temp file path created by this process.
 	fp, err := os.Open(packFile)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -988,7 +1006,7 @@ func (s *server) loadPackCatalogs(ctx context.Context) ([]marketplaceCatalog, er
 }
 
 func fetchMarketplaceCatalog(ctx context.Context, catalogURL string) (*marketplaceCatalogFile, error) {
-	if _, err := validateMarketplaceURL(catalogURL); err != nil {
+	if _, err := validateMarketplaceURL(catalogURL, nil); err != nil {
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, catalogURL, nil)
@@ -1183,10 +1201,9 @@ func parseVersion(version string) ([]int, bool) {
 	return out, true
 }
 
-func downloadPackBundle(ctx context.Context, rawURL string) (string, string, func(), error) {
-	parsed, err := validateMarketplaceURL(rawURL)
-	if err != nil {
-		return "", "", func() {}, err
+func downloadPackBundle(ctx context.Context, parsed *url.URL) (string, string, func(), error) {
+	if parsed == nil {
+		return "", "", func() {}, errors.New("url required")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
@@ -1225,7 +1242,7 @@ func downloadPackBundle(ctx context.Context, rawURL string) (string, string, fun
 	return tmpFile.Name(), hex.EncodeToString(hasher.Sum(nil)), cleanup, nil
 }
 
-func validateMarketplaceURL(rawURL string) (*url.URL, error) {
+func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*url.URL, error) {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
 		return nil, errors.New("url required")
@@ -1237,10 +1254,69 @@ func validateMarketplaceURL(rawURL string) (*url.URL, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
 	}
-	if parsed.Host == "" {
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
 		return nil, errors.New("url host required")
 	}
+	if allowedHosts != nil {
+		if len(allowedHosts) == 0 {
+			return nil, errors.New("marketplace host allowlist is empty")
+		}
+		if _, ok := allowedHosts[host]; !ok {
+			return nil, fmt.Errorf("url host %q not allowed", host)
+		}
+	}
 	return parsed, nil
+}
+
+func hostFromURL(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return ""
+	}
+	return host
+}
+
+func (s *server) marketplaceAllowedHosts(ctx context.Context) (map[string]struct{}, error) {
+	hosts := map[string]struct{}{}
+	catalogs, err := s.loadPackCatalogs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(catalogs) == 0 {
+		disabled := strings.TrimSpace(os.Getenv(envPackCatalogDisableDefault))
+		if disabled != "" {
+			switch strings.ToLower(disabled) {
+			case "1", "true", "yes":
+				return hosts, nil
+			}
+		}
+		catalogURL := strings.TrimSpace(os.Getenv(envPackCatalogURL))
+		if catalogURL == "" {
+			catalogURL = defaultPackCatalogURL
+		}
+		if host := hostFromURL(catalogURL); host != "" {
+			hosts[host] = struct{}{}
+		}
+		return hosts, nil
+	}
+	for _, catalog := range catalogs {
+		enabled := true
+		if catalog.Enabled != nil {
+			enabled = *catalog.Enabled
+		}
+		if !enabled {
+			continue
+		}
+		if host := hostFromURL(catalog.URL); host != "" {
+			hosts[host] = struct{}{}
+		}
+	}
+	return hosts, nil
 }
 
 func (s *server) planSchemas(ctx context.Context, dir string, manifest *packManifest, upgrade bool) ([]schemaPlan, error) {
@@ -2309,7 +2385,7 @@ func extractTarGzReader(src io.Reader, dest string) error {
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := os.MkdirAll(target, 0o750); err != nil {
 				return err
 			}
 		case tar.TypeReg:
@@ -2324,10 +2400,10 @@ func extractTarGzReader(src io.Reader, dest string) error {
 			if totalSz > maxPackUncompressedBytes {
 				return fmt.Errorf("pack archive exceeds max size (%d bytes)", maxPackUncompressedBytes)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
 			}
