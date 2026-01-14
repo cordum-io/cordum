@@ -6,14 +6,16 @@ import {
   GitGraph,
   LayoutGrid,
   ListChecks,
+  LogOut,
   Moon,
   Network,
   Shield,
   Sun,
+  UserCircle,
   Workflow,
   Wrench,
 } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
@@ -23,6 +25,7 @@ import { cn } from "../../lib/utils";
 import { useUiStore } from "../../state/ui";
 import { useEventStore } from "../../state/events";
 import { useConfigStore } from "../../state/config";
+import { useAuthConfig } from "../../hooks/useAuthConfig";
 
 const navItems = [
   { path: "/", label: "Home", icon: LayoutGrid },
@@ -46,6 +49,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   const toggleTheme = useUiStore((state) => state.toggleTheme);
   const wsStatus = useEventStore((state) => state.status);
   const apiBaseUrl = useConfigStore((state) => state.apiBaseUrl);
+  const apiKey = useConfigStore((state) => state.apiKey);
+  const updateConfig = useConfigStore((state) => state.update);
+  const { data: authConfig } = useAuthConfig();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const requiresAuth = !!authConfig && (authConfig.password_enabled || authConfig.saml_enabled);
+  const sessionQuery = useQuery({
+    queryKey: ["auth-session"],
+    queryFn: () => api.getSession(),
+    enabled: requiresAuth && !!apiKey,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const user = sessionQuery.data?.user;
   const approvalsQuery = useQuery({
     queryKey: ["approvals", "nav"],
     queryFn: () => api.listApprovals(200),
@@ -71,6 +87,25 @@ export function AppShell({ children }: { children: ReactNode }) {
       window.localStorage.setItem("cordum-theme", theme);
     }
   }, [theme]);
+
+  const displayName = user?.display_name || user?.email || user?.username || "Signed in";
+  const roleLabel = user?.roles?.length ? user.roles.join(", ") : "";
+  const tenantLabel = user?.tenant || authConfig?.default_tenant || "default";
+
+  const onLogout = async () => {
+    if (loggingOut) {
+      return;
+    }
+    setLoggingOut(true);
+    try {
+      await api.logout();
+    } catch {
+      // Ignore logout failures; clear local session anyway.
+    }
+    updateConfig({ apiKey: "", principalId: "", principalRole: "" });
+    setLoggingOut(false);
+    navigate("/login");
+  };
 
   return (
     <div className="min-h-screen">
@@ -179,6 +214,24 @@ export function AppShell({ children }: { children: ReactNode }) {
                 >
                   Command
                 </button>
+                {requiresAuth && apiKey ? (
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 rounded-full border border-border bg-white/70 px-3 py-2 text-xs text-ink">
+                      <UserCircle className="h-4 w-4" />
+                      <div className="leading-tight">
+                        <div className="text-xs font-semibold">{displayName}</div>
+                        <div className="text-[10px] text-muted">
+                          {tenantLabel}
+                          {roleLabel ? ` · ${roleLabel}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                    <Button variant="outline" size="sm" type="button" onClick={onLogout} disabled={loggingOut}>
+                      <LogOut className="h-4 w-4" />
+                      {loggingOut ? "Logging out" : "Logout"}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             </div>
             <nav className="mt-4 flex gap-2 overflow-x-auto pb-2 lg:hidden">
