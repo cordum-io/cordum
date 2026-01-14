@@ -3,9 +3,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { Info } from "lucide-react";
 import { api } from "../lib/api";
 import { formatRelative } from "../lib/format";
+import { decisionTypeMeta } from "../lib/status";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
@@ -64,23 +66,16 @@ function buildLineDiff(left: string, right: string): DiffLine[] {
 }
 
 function decisionBadgeMeta(decision?: string): { label: string; variant: "success" | "warning" | "danger" | "info" | "default" } {
-  const normalized = (decision || "").toUpperCase();
-  if (!normalized) {
-    return { label: "UNKNOWN", variant: "default" };
-  }
-  if (normalized.includes("DENY")) {
-    return { label: normalized.replace("DECISION_TYPE_", ""), variant: "danger" };
-  }
-  if (normalized.includes("REQUIRE")) {
-    return { label: normalized.replace("DECISION_TYPE_", ""), variant: "warning" };
-  }
-  if (normalized.includes("ALLOW_WITH")) {
-    return { label: normalized.replace("DECISION_TYPE_", ""), variant: "info" };
-  }
-  if (normalized.includes("ALLOW")) {
-    return { label: normalized.replace("DECISION_TYPE_", ""), variant: "success" };
-  }
-  return { label: normalized.replace("DECISION_TYPE_", ""), variant: "default" };
+  const meta = decisionTypeMeta(decision);
+  const toneToVariant: Record<string, "success" | "warning" | "danger" | "info" | "default"> = {
+    success: "success",
+    warning: "warning",
+    danger: "danger",
+    info: "info",
+    muted: "default",
+    accent: "info",
+  };
+  return { label: meta.label, variant: toneToVariant[meta.tone] || "default" };
 }
 
 function isSafeApproval(item: ApprovalItem): boolean {
@@ -237,6 +232,7 @@ export function PolicyPage() {
   const [snapshotNote, setSnapshotNote] = useState("");
   const [showSafeOnly, setShowSafeOnly] = useState(false);
   const [activeTab, setActiveTab] = useState<"inbox" | "studio" | "explorer">("inbox");
+  const [confirmBulkApprove, setConfirmBulkApprove] = useState<{ ids: string[]; type: "selected" | "safe" } | null>(null);
   const [bundleFilter, setBundleFilter] = useState<"all" | "secops" | "pack" | "core">("all");
   const [selectedBundleId, setSelectedBundleId] = useState("");
   const [bundleDraft, setBundleDraft] = useState<BundleDraft>({
@@ -625,13 +621,19 @@ export function PolicyPage() {
                       />
                       Select all
                     </label>
-                    <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+                    <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted" title="Safe = no risk_tags, no requires constraints, no policy constraints">
                       <input
                         type="checkbox"
                         checked={showSafeOnly}
                         onChange={(event) => setShowSafeOnly(event.target.checked)}
                       />
                       Only safe
+                      <span className="relative group">
+                        <Info className="h-3 w-3 text-muted cursor-help" />
+                        <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-48 p-2 text-[10px] normal-case tracking-normal font-normal bg-ink text-white rounded-lg shadow-lg z-10">
+                          Safe items have no risk_tags, no requires constraints, and no policy constraints applied.
+                        </span>
+                      </span>
                     </label>
                     <div className="flex flex-1 flex-col gap-2 lg:flex-row lg:items-center">
                       <Input
@@ -646,13 +648,7 @@ export function PolicyPage() {
                         variant="primary"
                         size="sm"
                         type="button"
-                        onClick={() =>
-                          bulkApproveMutation.mutate({
-                            ids: Array.from(selectedIds),
-                            reason: bulkReason || undefined,
-                            note: bulkNote || undefined,
-                          })
-                        }
+                        onClick={() => setConfirmBulkApprove({ ids: Array.from(selectedIds), type: "selected" })}
                         disabled={selectedCount === 0 || bulkApproveMutation.isPending || bulkRejectMutation.isPending}
                       >
                         Approve {selectedCount || ""}
@@ -661,13 +657,7 @@ export function PolicyPage() {
                         variant="subtle"
                         size="sm"
                         type="button"
-                        onClick={() =>
-                          bulkApproveMutation.mutate({
-                            ids: safeApprovals.map((item) => item.job.id),
-                            reason: bulkReason || undefined,
-                            note: bulkNote || undefined,
-                          })
-                        }
+                        onClick={() => setConfirmBulkApprove({ ids: safeApprovals.map((item) => item.job.id), type: "safe" })}
                         disabled={safeApprovals.length === 0 || bulkApproveMutation.isPending || bulkRejectMutation.isPending}
                       >
                         Approve all safe {safeApprovals.length ? `(${safeApprovals.length})` : ""}
@@ -697,6 +687,8 @@ export function PolicyPage() {
                   {visibleApprovals.map((item) => {
                     const decision = decisionBadgeMeta(item.decision);
                     const safe = isSafeApproval(item);
+                    const riskTags = item.job.risk_tags || [];
+                    const hasRisks = riskTags.length > 0;
                     return (
                       <div key={item.job.id} className="list-row">
                         <div className="grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
@@ -711,10 +703,57 @@ export function PolicyPage() {
                               <div className="text-xs text-muted">Topic {item.job.topic || "-"}</div>
                             </div>
                           </div>
-                          <div className="text-xs text-muted">
-                            Tenant {item.job.tenant || "default"}
-                            {item.job.pack_id ? ` · Pack ${item.job.pack_id}` : ""}
-                            {item.policy_reason ? ` · ${item.policy_reason}` : ""}
+                          <div className="flex flex-col gap-1">
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                              {item.job.actor_id ? (
+                                <span>
+                                  <span className="text-ink/70">Actor:</span>{" "}
+                                  {item.job.actor_type ? `${item.job.actor_type}/` : ""}
+                                  {item.job.actor_id}
+                                </span>
+                              ) : null}
+                              {item.job.capability ? (
+                                <span>
+                                  <span className="text-ink/70">Cap:</span> {item.job.capability}
+                                </span>
+                              ) : null}
+                              {item.job.pack_id ? (
+                                <span>
+                                  <span className="text-ink/70">Pack:</span> {item.job.pack_id}
+                                </span>
+                              ) : null}
+                              <span>
+                                <span className="text-ink/70">Tenant:</span> {item.job.tenant || "default"}
+                              </span>
+                            </div>
+                            {hasRisks ? (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="text-xs text-ink/70">Risk:</span>
+                                {riskTags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="inline-flex items-center rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium text-danger"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                              {item.policy_rule_id ? (
+                                <span>
+                                  <span className="text-ink/70">Rule:</span> {item.policy_rule_id}
+                                </span>
+                              ) : null}
+                              {item.policy_snapshot ? (
+                                <span title={item.policy_snapshot}>
+                                  <span className="text-ink/70">Snapshot:</span> {item.policy_snapshot.slice(0, 8)}
+                                </span>
+                              ) : null}
+                              {item.policy_reason ? (
+                                <span className="text-warning">{item.policy_reason}</span>
+                              ) : null}
+                            </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 justify-end">
                             {safe ? <Badge variant="success">SAFE</Badge> : null}
@@ -732,6 +771,16 @@ export function PolicyPage() {
                           >
                             Details
                           </Button>
+                          <Link to={`/jobs/${item.job.id}`}>
+                            <Button variant="outline" size="sm" type="button">
+                              Job
+                            </Button>
+                          </Link>
+                          <Link to={`/jobs/${item.job.id}?tab=safety`}>
+                            <Button variant="outline" size="sm" type="button">
+                              Decisions
+                            </Button>
+                          </Link>
                           <Button
                             variant="primary"
                             size="sm"
@@ -1489,6 +1538,72 @@ export function PolicyPage() {
             </div>
           </Card>
         </>
+      ) : null}
+
+      {confirmBulkApprove ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl dark:bg-[color:var(--surface-muted)]">
+            <div className="text-lg font-semibold text-ink">Confirm Bulk Approval</div>
+            <div className="mt-2 text-sm text-muted">
+              You are about to approve {confirmBulkApprove.ids.length} job{confirmBulkApprove.ids.length === 1 ? "" : "s"}.
+            </div>
+            <div className="mt-4 max-h-48 overflow-y-auto rounded-xl border border-border bg-white/70 p-3">
+              <div className="space-y-2 text-xs">
+                {confirmBulkApprove.ids.slice(0, 10).map((id) => {
+                  const item = approvals.find((a) => a.job.id === id);
+                  if (!item) return null;
+                  const riskTags = item.job.risk_tags || [];
+                  return (
+                    <div key={id} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-white/50 p-2">
+                      <div>
+                        <div className="font-medium text-ink">{item.job.topic || `Job ${id.slice(0, 8)}`}</div>
+                        <div className="text-muted">
+                          {item.job.capability ? `Cap: ${item.job.capability}` : ""}
+                          {item.job.pack_id ? ` · Pack: ${item.job.pack_id}` : ""}
+                        </div>
+                      </div>
+                      {riskTags.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {riskTags.map((tag) => (
+                            <span key={tag} className="rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium text-danger">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="rounded bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">safe</span>
+                      )}
+                    </div>
+                  );
+                })}
+                {confirmBulkApprove.ids.length > 10 ? (
+                  <div className="text-center text-muted">...and {confirmBulkApprove.ids.length - 10} more</div>
+                ) : null}
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" type="button" onClick={() => setConfirmBulkApprove(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                type="button"
+                onClick={() => {
+                  bulkApproveMutation.mutate({
+                    ids: confirmBulkApprove.ids,
+                    reason: bulkReason || undefined,
+                    note: bulkNote || undefined,
+                  });
+                  setConfirmBulkApprove(null);
+                }}
+                disabled={bulkApproveMutation.isPending}
+              >
+                Confirm Approval ({confirmBulkApprove.ids.length})
+              </Button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       <Drawer open={Boolean(selectedApproval)} onClose={() => setSelectedApproval(null)}>

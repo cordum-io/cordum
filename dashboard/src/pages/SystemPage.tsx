@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../lib/api";
 import { formatDateTime, formatPercent, formatRelative, formatShortDate } from "../lib/format";
+import { getDLQGuidance, getGuidanceSeverityBg } from "../lib/dlq-guidance";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
@@ -397,37 +399,103 @@ export function SystemPage() {
               <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">DLQ is empty.</div>
             ) : (
               <div className="space-y-3">
-                {dlqEntries.map((entry) => (
-                  <div key={entry.job_id} className="list-row">
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] lg:items-center">
-                      <div>
-                        <div className="text-sm font-semibold text-ink">Job {entry.job_id}</div>
-                        <div className="text-xs text-muted">{entry.reason || entry.status}</div>
+                {dlqEntries.map((entry) => {
+                  const guidance = getDLQGuidance(entry);
+                  return (
+                    <div key={entry.job_id} className="list-row">
+                      <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] lg:items-center">
+                        <div>
+                          <div className="text-sm font-semibold text-ink">
+                            <Link to={`/jobs/${entry.job_id}`} className="hover:underline">
+                              Job {entry.job_id.slice(0, 8)}
+                            </Link>
+                            {entry.topic ? (
+                              <span className="ml-2 text-xs font-normal text-muted">
+                                {entry.topic}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="text-xs text-muted">
+                            {entry.reason_code ? (
+                              <span className="font-mono text-warning">{entry.reason_code}</span>
+                            ) : null}
+                            {entry.reason_code && entry.reason ? " · " : ""}
+                            {entry.reason || entry.status}
+                          </div>
+                          {entry.attempts ? (
+                            <div className="text-xs text-muted">
+                              Attempts: {entry.attempts}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="text-xs text-muted">Created {formatRelative(entry.created_at)}</div>
+                        <div className="flex flex-wrap gap-2 justify-end">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            type="button"
+                            onClick={() => retryMutation.mutate(entry.job_id)}
+                            disabled={retryMutation.isPending}
+                          >
+                            Retry
+                          </Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            type="button"
+                            onClick={() => deleteMutation.mutate(entry.job_id)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </div>
-                      <div className="text-xs text-muted">Created {formatRelative(entry.created_at)}</div>
-                      <div className="flex flex-wrap gap-2 justify-end">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          onClick={() => retryMutation.mutate(entry.job_id)}
-                          disabled={retryMutation.isPending}
+                      {guidance ? (
+                        <div
+                          className={`mt-3 rounded-lg border p-3 ${getGuidanceSeverityBg(guidance.severity)}`}
                         >
-                          Retry
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          type="button"
-                          onClick={() => deleteMutation.mutate(entry.job_id)}
-                          disabled={deleteMutation.isPending}
-                        >
-                          Delete
-                        </Button>
-                      </div>
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-medium text-ink">{guidance.title}</div>
+                              <div className="mt-1 text-xs text-muted">{guidance.description}</div>
+                            </div>
+                            {guidance.action ? (
+                              guidance.action.href ? (
+                                <Link to={guidance.action.href}>
+                                  <Button variant="outline" size="sm" type="button">
+                                    {guidance.action.label}
+                                  </Button>
+                                </Link>
+                              ) : guidance.action.onClick === "retry" ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  type="button"
+                                  onClick={() => retryMutation.mutate(entry.job_id)}
+                                  disabled={retryMutation.isPending}
+                                >
+                                  {guidance.action.label}
+                                </Button>
+                              ) : guidance.action.onClick === "view_job" ? (
+                                <Link to={`/jobs/${entry.job_id}`}>
+                                  <Button variant="outline" size="sm" type="button">
+                                    {guidance.action.label}
+                                  </Button>
+                                </Link>
+                              ) : guidance.action.onClick === "view_decision" ? (
+                                <Link to={`/jobs/${entry.job_id}?tab=safety`}>
+                                  <Button variant="outline" size="sm" type="button">
+                                    {guidance.action.label}
+                                  </Button>
+                                </Link>
+                              ) : null
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {dlqQuery.hasNextPage ? (
                   <Button
                     variant="outline"

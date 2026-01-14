@@ -4,7 +4,7 @@ import { cn } from "../../lib/utils";
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("surface-card rounded-3xl p-6", className)}
+      className={cn("surface-card rounded-3xl p-6 transition-shadow duration-300", className)}
       {...props}
     />
   );

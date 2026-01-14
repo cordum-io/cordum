@@ -26,15 +26,21 @@ const timeOptions = [
 function runProgress(run: WorkflowRun) {
   const steps = Object.values(run.steps || {});
   if (steps.length === 0) {
-    return { percent: 0, activeStep: "" };
+    return { percent: 0, activeStep: "", activeStatus: "" };
   }
   const completed = steps.filter((step) =>
     ["succeeded", "failed", "cancelled", "timed_out"].includes(step.status)
   ).length;
-  const active = steps.find((step) => ["running", "waiting"].includes(step.status));
+  // First look for running/waiting steps
+  let active = steps.find((step) => ["running", "waiting"].includes(step.status));
+  // If none, look for pending steps (queued but not started)
+  if (!active) {
+    active = steps.find((step) => step.status === "pending");
+  }
   return {
     percent: Math.round((completed / steps.length) * 100),
     activeStep: active?.step_id || "",
+    activeStatus: active?.status || "",
   };
 }
 
@@ -284,7 +290,16 @@ export function RunsPage() {
                     </div>
                     <div>
                       <div className="mb-2 flex items-center justify-between text-xs text-muted">
-                        <span>{progress.activeStep ? `Step: ${progress.activeStep}` : "Preparing"}</span>
+                        <span>
+                          {progress.activeStep ? (
+                            <>
+                              Step: {progress.activeStep}
+                              {progress.activeStatus ? ` · ${progress.activeStatus === "waiting" ? "awaiting approval" : progress.activeStatus}` : ""}
+                            </>
+                          ) : (
+                            "Queued"
+                          )}
+                        </span>
                         <span>{progress.percent}%</span>
                       </div>
                       <ProgressBar value={progress.percent} />

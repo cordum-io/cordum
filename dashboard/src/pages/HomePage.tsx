@@ -1,10 +1,12 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { Play, XCircle, Save, Trash2, RotateCcw } from "lucide-react";
 import { api } from "../lib/api";
 import { formatCount, formatRelative, formatShortDate, epochToMillis } from "../lib/format";
-import { useAllRuns } from "../hooks/useWorkflows";
+import { getDLQGuidance, getGuidanceSeverityBg } from "../lib/dlq-guidance";
+import { useAllRuns, useWorkflows } from "../hooks/useWorkflows";
 import { useEventStore } from "../state/events";
 import { usePinStore } from "../state/pins";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
@@ -12,20 +14,60 @@ import { MetricCard } from "../components/MetricCard";
 import { ProgressBar } from "../components/ProgressBar";
 import { RunStatusBadge } from "../components/StatusBadge";
 import { Button } from "../components/ui/Button";
-import type { JobRecord, WorkflowRun } from "../types/api";
+import { Drawer } from "../components/ui/Drawer";
+import { Textarea } from "../components/ui/Textarea";
+import { Input } from "../components/ui/Input";
+import type { JobRecord, StepRun, WorkflowRun, Workflow } from "../types/api";
+
+type RunPreset = {
+  id: string;
+  name: string;
+  workflowId: string;
+  payload: string;
+};
+
+function loadPresets(): RunPreset[] {
+  try {
+    const stored = localStorage.getItem("cordum-run-presets");
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePresets(presets: RunPreset[]) {
+  localStorage.setItem("cordum-run-presets", JSON.stringify(presets));
+}
+
+function countFanoutChildren(step: StepRun): { total: number; completed: number } {
+  const children = Object.values(step.children || {});
+  if (children.length === 0) return { total: 0, completed: 0 };
+  const completed = children.filter((c) =>
+    ["succeeded", "failed", "cancelled", "timed_out"].includes(c.status)
+  ).length;
+  return { total: children.length, completed };
+}
 
 function runProgress(run: WorkflowRun) {
   const steps = Object.values(run.steps || {});
   if (steps.length === 0) {
-    return { percent: 0, activeStep: "" };
+    return { percent: 0, activeStep: "", activeStatus: "", fanout: null as { total: number; completed: number } | null };
   }
   const completed = steps.filter((step) =>
     ["succeeded", "failed", "cancelled", "timed_out"].includes(step.status)
   ).length;
-  const active = steps.find((step) => ["running", "waiting"].includes(step.status));
+  // First look for running/waiting steps
+  let active = steps.find((step) => ["running", "waiting"].includes(step.status));
+  // If none, look for pending steps (queued but not started)
+  if (!active) {
+    active = steps.find((step) => step.status === "pending");
+  }
+  const fanout = active ? countFanoutChildren(active) : null;
   return {
     percent: Math.round((completed / steps.length) * 100),
     activeStep: active?.step_id || "",
+    activeStatus: active?.status || "",
+    fanout: fanout && fanout.total > 0 ? fanout : null,
   };
 }
 
@@ -73,6 +115,7 @@ function jobUpdatedAt(updatedAt?: number): string {
 
 export function HomePage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const approvalsQuery = useQuery({
     queryKey: ["approvals", "summary"],
     queryFn: () => api.listApprovals(20),
@@ -92,6 +135,74 @@ export function HomePage() {
   const { runs, isLoading } = useAllRuns({ limit: 120 });
   const events = useEventStore((state) => state.events.slice(0, 6));
   const pinned = usePinStore((state) => state.items);
+  const removePinned = usePinStore((state) => state.removeItem);
+  const workflowsQuery = useWorkflows();
+  const workflowMap = useMemo(() => {
+    const map = new Map<string, { id: string; name?: string; input_schema?: Record<string, unknown> }>();
+    workflowsQuery.data?.forEach((w) => map.set(w.id, w));
+    return map;
+  }, [workflowsQuery.data]);
+
+  const cancelMutation = useMutation({
+    mutationFn: ({ workflowId, runId }: { workflowId: string; runId: string }) =>
+      api.cancelRun(workflowId, runId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs"] }),
+  });
+
+  const rerunMutation = useMutation({
+    mutationFn: (payload: { runId: string }) => api.rerunRun(payload.runId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs"] }),
+  });
+
+  // Run drawer state
+  const [runDrawerWorkflow, setRunDrawerWorkflow] = useState<Workflow | null>(null);
+  const [runPayload, setRunPayload] = useState("{}");
+  const [runPayloadError, setRunPayloadError] = useState<string | null>(null);
+  const [presets, setPresets] = useState<RunPreset[]>(loadPresets);
+  const [newPresetName, setNewPresetName] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState("");
+
+  const startRunMutation = useMutation({
+    mutationFn: ({ workflowId, body }: { workflowId: string; body: Record<string, unknown> }) =>
+      api.startRun(workflowId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+      setRunDrawerWorkflow(null);
+      setRunPayload("{}");
+    },
+    onError: (error: Error) => setRunPayloadError(error.message),
+  });
+
+  const workflowPresets = useMemo(
+    () => presets.filter((p) => p.workflowId === runDrawerWorkflow?.id),
+    [presets, runDrawerWorkflow]
+  );
+
+  const handleSavePreset = () => {
+    if (!newPresetName.trim() || !runDrawerWorkflow) return;
+    const newPreset: RunPreset = {
+      id: `${Date.now()}`,
+      name: newPresetName.trim(),
+      workflowId: runDrawerWorkflow.id,
+      payload: runPayload,
+    };
+    const updated = [...presets, newPreset];
+    setPresets(updated);
+    savePresets(updated);
+    setNewPresetName("");
+  };
+
+  const handleDeletePreset = (id: string) => {
+    const updated = presets.filter((p) => p.id !== id);
+    setPresets(updated);
+    savePresets(updated);
+    if (selectedPresetId === id) setSelectedPresetId("");
+  };
+
+  const handleLoadPreset = (preset: RunPreset) => {
+    setRunPayload(preset.payload);
+    setSelectedPresetId(preset.id);
+  };
   const policyCount = useMemo(() => {
     const data = policyQuery.data as { snapshots?: string[] } | undefined;
     return data?.snapshots?.length ?? 0;
@@ -226,10 +337,27 @@ export function HomePage() {
               {attentionFailedRuns.map((run) => (
                 <div key={run.id} className="list-row">
                   <div className="flex items-center justify-between text-xs text-muted">
-                    <span>Run {run.id.slice(0, 8)}</span>
+                    <Link to={`/runs/${run.id}`} className="hover:underline">
+                      Run {run.id.slice(0, 8)}
+                    </Link>
                     <span>{formatRelative(runTimestamp(run))}</span>
                   </div>
-                  <div className="text-sm font-semibold text-ink">{run.workflow_id}</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-ink">{run.workflow_id}</div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        rerunMutation.mutate({ runId: run.id });
+                      }}
+                      disabled={rerunMutation.isPending}
+                      title="Rerun this workflow"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -251,15 +379,36 @@ export function HomePage() {
           <div className="mt-2 text-xs text-muted">Oldest entry {dlqOldest}</div>
           {attentionDlq.length ? (
             <div className="mt-3 space-y-2">
-              {attentionDlq.map((entry) => (
-                <div key={entry.job_id} className="list-row">
-                  <div className="flex items-center justify-between text-xs text-muted">
-                    <span>Job {entry.job_id.slice(0, 8)}</span>
-                    <span>{formatRelative(entry.created_at)}</span>
+              {attentionDlq.map((entry) => {
+                const guidance = getDLQGuidance(entry);
+                return (
+                  <div key={entry.job_id} className="list-row">
+                    <div className="flex items-center justify-between text-xs text-muted">
+                      <Link to={`/jobs/${entry.job_id}`} className="hover:underline">
+                        Job {entry.job_id.slice(0, 8)}
+                      </Link>
+                      <span>{formatRelative(entry.created_at)}</span>
+                    </div>
+                    <div className="text-sm font-semibold text-ink">
+                      {entry.reason_code ? (
+                        <span className="font-mono text-warning">{entry.reason_code}</span>
+                      ) : (
+                        entry.reason || entry.status || "Failed job"
+                      )}
+                    </div>
+                    {guidance ? (
+                      <div className={`mt-2 rounded-lg border p-2 text-xs ${getGuidanceSeverityBg(guidance.severity)}`}>
+                        <div className="font-medium text-ink">{guidance.title}</div>
+                        {guidance.action?.href ? (
+                          <Link to={guidance.action.href} className="text-accent hover:underline">
+                            {guidance.action.label}
+                          </Link>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="text-sm font-semibold text-ink">{entry.reason || entry.status || "Failed job"}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="mt-3 text-sm text-muted">DLQ is clear.</div>
@@ -284,22 +433,60 @@ export function HomePage() {
           ) : (
             <div className="space-y-4">
               {liveRuns.map((run) => {
-                const { percent, activeStep } = runProgress(run);
+                const { percent, activeStep, activeStatus, fanout } = runProgress(run);
+                const statusLabel = activeStatus === "waiting" ? "awaiting approval" : activeStatus === "running" ? "executing" : activeStatus === "pending" ? "queued" : activeStatus;
                 return (
                   <div key={run.id} className="rounded-2xl border border-border bg-white/70 p-4">
                     <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
                       <div>
-                        <div className="text-sm font-semibold text-ink">{run.workflow_id}</div>
-                        <div className="text-xs text-muted">Run {run.id.slice(0, 8)}</div>
+                        <Link to={`/runs/${run.id}`} className="text-sm font-semibold text-ink hover:underline">
+                          {run.workflow_id}
+                        </Link>
+                        <div className="text-xs text-muted">
+                          Run {run.id.slice(0, 8)} · {formatRelative(runTimestamp(run))}
+                        </div>
                       </div>
-                      <RunStatusBadge status={run.status} />
+                      <div className="flex items-center gap-2">
+                        <RunStatusBadge status={run.status} />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          onClick={() => cancelMutation.mutate({ workflowId: run.workflow_id, runId: run.id })}
+                          disabled={cancelMutation.isPending}
+                          title="Cancel run"
+                        >
+                          <XCircle className="h-3 w-3" />
+                        </Button>
+                      </div>
                     </div>
                     <div className="mt-3">
                       <div className="mb-2 flex items-center justify-between text-xs text-muted">
-                        <span>{activeStep ? `Step: ${activeStep}` : "Starting"}</span>
+                        <span>
+                          {activeStep ? (
+                            <>
+                              Step: <span className="font-medium text-ink">{activeStep}</span>
+                              {statusLabel ? ` · ${statusLabel}` : ""}
+                            </>
+                          ) : (
+                            "Queued"
+                          )}
+                          {fanout ? (
+                            <span className="ml-2 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                              {fanout.completed}/{fanout.total} items
+                            </span>
+                          ) : null}
+                        </span>
                         <span>{percent}%</span>
                       </div>
                       <ProgressBar value={percent} />
+                    </div>
+                    <div className="mt-2 flex justify-end">
+                      <Link to={`/runs/${run.id}`}>
+                        <Button variant="ghost" size="sm" type="button">
+                          View timeline
+                        </Button>
+                      </Link>
                     </div>
                   </div>
                 );
@@ -318,12 +505,53 @@ export function HomePage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {pinned.map((item) => (
-                <div key={item.id} className="rounded-2xl border border-border bg-white/70 p-3">
-                  <div className="text-sm font-semibold text-ink">{item.label}</div>
-                  <div className="text-xs text-muted">{item.detail || item.type}</div>
-                </div>
-              ))}
+              {pinned.map((item) => {
+                const isWorkflow = item.type === "workflow";
+                const workflow = isWorkflow ? workflowMap.get(item.id) : null;
+                return (
+                  <div key={item.id} className="rounded-2xl border border-border bg-white/70 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <Link
+                          to={isWorkflow ? `/workflows/${item.id}` : `/system?tab=workers`}
+                          className="text-sm font-semibold text-ink hover:underline"
+                        >
+                          {item.label}
+                        </Link>
+                        <div className="text-xs text-muted">{item.detail || item.type}</div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {isWorkflow && workflow ? (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            type="button"
+                            title="Start new run"
+                            onClick={() => {
+                              setRunDrawerWorkflow(workflow as Workflow);
+                              setRunPayload("{}");
+                              setRunPayloadError(null);
+                              setSelectedPresetId("");
+                            }}
+                          >
+                            <Play className="h-3 w-3" />
+                            Run
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          onClick={() => removePinned(item.id)}
+                          title="Unpin"
+                        >
+                          <XCircle className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </Card>
@@ -395,6 +623,128 @@ export function HomePage() {
           )}
         </Card>
       </section>
+
+      {/* Run Workflow Drawer */}
+      <Drawer open={Boolean(runDrawerWorkflow)} onClose={() => setRunDrawerWorkflow(null)}>
+        {runDrawerWorkflow ? (
+          <div className="space-y-5">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-muted">Start Run</div>
+              <div className="mt-1 text-lg font-semibold text-ink">
+                {runDrawerWorkflow.name || runDrawerWorkflow.id}
+              </div>
+            </div>
+
+            {/* Presets */}
+            {workflowPresets.length > 0 ? (
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Saved Presets</div>
+                <div className="mt-2 space-y-2">
+                  {workflowPresets.map((preset) => (
+                    <div
+                      key={preset.id}
+                      className={`flex items-center justify-between rounded-xl border p-2 ${
+                        selectedPresetId === preset.id ? "border-accent bg-accent/5" : "border-border"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleLoadPreset(preset)}
+                        className="flex-1 text-left text-sm font-medium text-ink hover:text-accent"
+                      >
+                        {preset.name}
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        onClick={() => handleDeletePreset(preset.id)}
+                        title="Delete preset"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Input Schema Info */}
+            {runDrawerWorkflow.input_schema ? (
+              <div className="rounded-xl border border-border bg-white/50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Input Schema</div>
+                <pre className="mt-2 max-h-32 overflow-auto text-[10px] text-muted">
+                  {JSON.stringify(runDrawerWorkflow.input_schema, null, 2)}
+                </pre>
+              </div>
+            ) : null}
+
+            {/* Payload Input */}
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Input Payload (JSON)</div>
+              <Textarea
+                rows={6}
+                value={runPayload}
+                onChange={(event) => {
+                  setRunPayload(event.target.value);
+                  setRunPayloadError(null);
+                }}
+                className="mt-2 font-mono text-xs"
+              />
+              {runPayloadError ? (
+                <div className="mt-1 text-xs text-danger">{runPayloadError}</div>
+              ) : null}
+            </div>
+
+            {/* Save Preset */}
+            <div className="flex gap-2">
+              <Input
+                value={newPresetName}
+                onChange={(event) => setNewPresetName(event.target.value)}
+                placeholder="Preset name"
+                className="flex-1"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={handleSavePreset}
+                disabled={!newPresetName.trim()}
+              >
+                <Save className="h-3 w-3" />
+                Save
+              </Button>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => setRunDrawerWorkflow(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                type="button"
+                onClick={() => {
+                  setRunPayloadError(null);
+                  try {
+                    const body = JSON.parse(runPayload || "{}");
+                    startRunMutation.mutate({ workflowId: runDrawerWorkflow.id, body });
+                  } catch (error) {
+                    setRunPayloadError(error instanceof Error ? error.message : "Invalid JSON");
+                  }
+                }}
+                disabled={startRunMutation.isPending}
+              >
+                {startRunMutation.isPending ? "Starting..." : "Launch Run"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
     </div>
   );
 }
