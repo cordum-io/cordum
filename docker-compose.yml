@@ -125,9 +125,11 @@ services:
     depends_on:
       - cordum-api-gateway
     environment:
-      - CORDUM_API_BASE_URL=http://localhost:8081
+      - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-http://localhost:8081}
       - CORDUM_API_KEY=${CORDUM_API_KEY:-super-secret-key}
-      - CORDUM_TENANT_ID=default
+      - CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default}
+      - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-}
+      - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-}
     ports:
       - "8082:8080"
 

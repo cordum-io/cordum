@@ -874,8 +874,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"time":           now.Format(time.RFC3339),
 		"uptime_seconds": uptimeSeconds,
 		"nats": map[string]any{
@@ -890,7 +889,15 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"workers": map[string]any{
 			"count": workersCount,
 		},
-	})
+	}
+	if provider, ok := s.auth.(LicenseInfoProvider); ok {
+		if info := provider.LicenseInfo(); info != nil {
+			resp["license"] = info
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
