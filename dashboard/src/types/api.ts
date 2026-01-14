@@ -601,3 +601,34 @@ export type BusPacket = {
     };
   };
 };
+
+export type AuthConfig = {
+  password_enabled: boolean;
+  saml_enabled: boolean;
+  saml_login_url?: string;
+  saml_metadata_url?: string;
+  session_ttl: string;
+  require_rbac: boolean;
+  require_principal: boolean;
+  default_tenant: string;
+};
+
+export type AuthUser = {
+  id: string;
+  username: string;
+  email?: string;
+  display_name?: string;
+  tenant: string;
+  roles?: string[];
+  disabled?: boolean;
+  source?: string;
+  created_at?: string;
+  updated_at?: string;
+  last_login_at?: string;
+};
+
+export type AuthLoginResponse = {
+  token: string;
+  expires_at: string;
+  user: AuthUser;
+};

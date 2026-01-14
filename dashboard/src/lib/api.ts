@@ -27,6 +27,8 @@ import type {
   PolicyRulesResponse,
   SafetyDecisionRecord,
   TimelineEvent,
+  AuthConfig,
+  AuthLoginResponse,
   Workflow,
   WorkflowRun,
   WorkflowRunsResponse,
@@ -118,6 +120,11 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 }
 
 export const api = {
+  getAuthConfig: () => apiRequest<AuthConfig>("/api/v1/auth/config"),
+  login: (payload: { username: string; password: string; tenant?: string }) =>
+    apiRequest<AuthLoginResponse>("/api/v1/auth/login", { method: "POST", body: payload }),
+  logout: () => apiRequest<void>("/api/v1/auth/logout", { method: "POST" }),
+  getSession: () => apiRequest<AuthLoginResponse>("/api/v1/auth/session"),
   listWorkflows: () => apiRequest<Workflow[]>("/api/v1/workflows"),
   getWorkflow: (id: string) => apiRequest<Workflow>(`/api/v1/workflows/${id}`),
   createWorkflow: (payload: Record<string, unknown>) =>

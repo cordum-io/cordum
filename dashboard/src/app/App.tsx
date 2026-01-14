@@ -1,9 +1,11 @@
-import { Suspense, lazy, useEffect, useMemo } from "react";
-import { Route, Routes, useNavigate } from "react-router-dom";
+import { Suspense, lazy, useEffect, useMemo, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AppShell } from "../components/layout/AppShell";
 import { CommandPalette } from "../components/CommandPalette";
 import { useLiveBus } from "../hooks/useLiveBus";
 import { useUiStore } from "../state/ui";
+import { useAuthConfig } from "../hooks/useAuthConfig";
+import { useConfigStore } from "../state/config";
 
 const HomePage = lazy(() => import("../pages/HomePage").then((m) => ({ default: m.HomePage })));
 const RunsPage = lazy(() => import("../pages/RunsPage").then((m) => ({ default: m.RunsPage })));
@@ -19,8 +21,26 @@ const ToolsPage = lazy(() => import("../pages/ToolsPage").then((m) => ({ default
 const TracePage = lazy(() => import("../pages/TracePage").then((m) => ({ default: m.TracePage })));
 const SearchPage = lazy(() => import("../pages/SearchPage").then((m) => ({ default: m.SearchPage })));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
+const LoginPage = lazy(() => import("../pages/LoginPage").then((m) => ({ default: m.LoginPage })));
+const AuthCallbackPage = lazy(() => import("../pages/AuthCallbackPage").then((m) => ({ default: m.AuthCallbackPage })));
 
-export function App() {
+function AuthGate({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  const apiKey = useConfigStore((state) => state.apiKey);
+  const loaded = useConfigStore((state) => state.loaded);
+  const { data: authConfig, isLoading } = useAuthConfig();
+
+  if (!loaded || isLoading) {
+    return <div className="min-h-screen bg-[color:var(--surface-muted)] p-8 text-sm text-muted">Loading console...</div>;
+  }
+  const requiresAuth = !!authConfig && (authConfig.password_enabled || authConfig.saml_enabled);
+  if (requiresAuth && !apiKey) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+  return <>{children}</>;
+}
+
+function MainApp() {
   useLiveBus();
   const navigate = useNavigate();
   const setCommandOpen = useUiStore((state) => state.setCommandOpen);
@@ -76,27 +96,44 @@ export function App() {
   return (
     <>
       <AppShell>
-        <Suspense fallback={<div className="text-sm text-muted">Loading dashboard...</div>}>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/search" element={<SearchPage />} />
-            <Route path="/runs" element={<RunsPage />} />
-            <Route path="/runs/:runId" element={<RunDetailPage />} />
-            <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/jobs/:jobId" element={<JobDetailPage />} />
-            <Route path="/workflows" element={<WorkflowsPage />} />
-            <Route path="/workflows/:workflowId" element={<WorkflowDetailPage />} />
-            <Route path="/packs" element={<PacksPage />} />
-            <Route path="/policy" element={<PolicyPage />} />
-            <Route path="/system" element={<SystemPage />} />
-            <Route path="/tools" element={<ToolsPage />} />
-            <Route path="/trace" element={<TracePage />} />
-            <Route path="/trace/:id" element={<TracePage />} />
-            <Route path="*" element={<NotFoundPage />} />
-          </Routes>
-        </Suspense>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/search" element={<SearchPage />} />
+          <Route path="/runs" element={<RunsPage />} />
+          <Route path="/runs/:runId" element={<RunDetailPage />} />
+          <Route path="/jobs" element={<JobsPage />} />
+          <Route path="/jobs/:jobId" element={<JobDetailPage />} />
+          <Route path="/workflows" element={<WorkflowsPage />} />
+          <Route path="/workflows/:workflowId" element={<WorkflowDetailPage />} />
+          <Route path="/packs" element={<PacksPage />} />
+          <Route path="/policy" element={<PolicyPage />} />
+          <Route path="/system" element={<SystemPage />} />
+          <Route path="/tools" element={<ToolsPage />} />
+          <Route path="/trace" element={<TracePage />} />
+          <Route path="/trace/:id" element={<TracePage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
       </AppShell>
       <CommandPalette items={actions} />
     </>
+  );
+}
+
+export function App() {
+  return (
+    <Suspense fallback={<div className="text-sm text-muted">Loading dashboard...</div>}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        <Route
+          path="/*"
+          element={
+            <AuthGate>
+              <MainApp />
+            </AuthGate>
+          }
+        />
+      </Routes>
+    </Suspense>
   );
 }

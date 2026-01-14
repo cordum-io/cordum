@@ -2,10 +2,36 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+type publicPathAuth struct {
+	called bool
+}
+
+var errUnauthorized = errors.New("unauthorized")
+
+func (p *publicPathAuth) AuthenticateHTTP(*http.Request) (*AuthContext, error) {
+	p.called = true
+	return nil, errUnauthorized
+}
+
+func (p *publicPathAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
+	return nil, errUnauthorized
+}
+
+func (p *publicPathAuth) RequireRole(*http.Request, ...string) error { return nil }
+
+func (p *publicPathAuth) ResolveTenant(*http.Request, string, string) (string, error) { return "", nil }
+
+func (p *publicPathAuth) RequireTenantAccess(*http.Request, string) error { return nil }
+
+func (p *publicPathAuth) ResolvePrincipal(*http.Request, string) (string, error) { return "", nil }
+
+func (p *publicPathAuth) IsPublicPath(path string) bool { return path == "/api/v1/auth/config" }
 
 func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider {
 	t.Helper()
@@ -162,5 +188,21 @@ func TestAuthContextHelpers(t *testing.T) {
 	}
 	if got := authFromRequest(requestWithAuthContext(&AuthContext{Tenant: "team"})); got == nil || got.Tenant != "team" {
 		t.Fatalf("expected auth context from request")
+	}
+}
+
+func TestAPIKeyMiddlewareSkipsPublicPaths(t *testing.T) {
+	auth := &publicPathAuth{}
+	handler := apiKeyMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if auth.called {
+		t.Fatalf("expected auth not to be called for public path")
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
 	}
 }
