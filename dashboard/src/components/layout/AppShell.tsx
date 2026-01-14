@@ -78,7 +78,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <aside className="hidden w-64 flex-col gap-6 border-r border-border bg-[color:var(--surface-glass)] px-6 py-8 backdrop-blur-xl lg:flex">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-9 w-9" />
+              <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-9 w-auto object-contain dark:brightness-0 dark:invert" />
               <div>
                 <div className="text-xs uppercase tracking-[0.25em] text-muted">Cordum</div>
                 <h1 className="font-display text-2xl font-semibold text-ink">Control Plane</h1>
@@ -150,7 +150,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-muted">{location.pathname}</p>
                 <div className="flex items-center gap-2">
-                  <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-6 w-6" />
+                  <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-6 w-auto object-contain dark:brightness-0 dark:invert" />
                   <h2 className="font-display text-xl font-semibold text-ink">Cordum Console</h2>
                 </div>
               </div>
