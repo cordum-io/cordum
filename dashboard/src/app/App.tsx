@@ -15,6 +15,7 @@ const RunDetailPage = lazy(() => import("../pages/RunDetailPage").then((m) => ({
 const WorkflowsPage = lazy(() => import("../pages/WorkflowsPage").then((m) => ({ default: m.WorkflowsPage })));
 const WorkflowDetailPage = lazy(() => import("../pages/WorkflowDetailPage").then((m) => ({ default: m.WorkflowDetailPage })));
 const PacksPage = lazy(() => import("../pages/PacksPage").then((m) => ({ default: m.PacksPage })));
+const PoolsPage = lazy(() => import("../pages/PoolsPage").then((m) => ({ default: m.PoolsPage })));
 const PolicyPage = lazy(() => import("../pages/PolicyPage").then((m) => ({ default: m.PolicyPage })));
 const SystemPage = lazy(() => import("../pages/SystemPage").then((m) => ({ default: m.SystemPage })));
 const ToolsPage = lazy(() => import("../pages/ToolsPage").then((m) => ({ default: m.ToolsPage })));
@@ -63,6 +64,7 @@ function MainApp() {
       { id: "jobs", title: "Go to Jobs", group: "Navigation", onSelect: () => navigate("/jobs") },
       { id: "workflows", title: "Go to Workflows", group: "Navigation", onSelect: () => navigate("/workflows") },
       { id: "packs", title: "Go to Packs", group: "Navigation", onSelect: () => navigate("/packs") },
+      { id: "pools", title: "Go to Pools & Workers", group: "Navigation", onSelect: () => navigate("/pools") },
       { id: "policy", title: "Go to Policy", group: "Navigation", onSelect: () => navigate("/policy") },
       { id: "system", title: "Go to System", group: "Navigation", onSelect: () => navigate("/system") },
       { id: "tools", title: "Go to Tools", group: "Navigation", onSelect: () => navigate("/tools") },
@@ -106,6 +108,7 @@ function MainApp() {
           <Route path="/workflows" element={<WorkflowsPage />} />
           <Route path="/workflows/:workflowId" element={<WorkflowDetailPage />} />
           <Route path="/packs" element={<PacksPage />} />
+          <Route path="/pools" element={<PoolsPage />} />
           <Route path="/policy" element={<PolicyPage />} />
           <Route path="/system" element={<SystemPage />} />
           <Route path="/tools" element={<ToolsPage />} />

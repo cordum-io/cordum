@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { epochToMillis, formatRelative } from "../lib/format";
 import { useUiStore } from "../state/ui";
@@ -153,26 +153,66 @@ export function JobsPage() {
         ) : (
           <div className="space-y-3">
             {filteredJobs.map((job) => (
-              <button
-                key={job.id}
-                type="button"
-                onClick={() => navigate(`/jobs/${job.id}`)}
-                className="list-row text-left"
-              >
+              <div key={job.id} className="list-row">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] lg:items-center">
                   <div>
-                    <div className="text-sm font-semibold text-ink">Job {job.id.slice(0, 10)}</div>
+                    <Link
+                      to={`/jobs/${job.id}`}
+                      className="text-sm font-semibold text-ink hover:underline"
+                    >
+                      Job {job.id.slice(0, 10)}
+                    </Link>
                     <div className="text-xs text-muted">Topic {job.topic || "-"}</div>
+                    {job.risk_tags && job.risk_tags.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {job.risk_tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium text-danger"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="text-xs text-muted">
-                    Tenant {job.tenant || "default"} · Pack {job.pack_id || "-"}
+                    <div>Tenant {job.tenant || "default"}</div>
+                    <div>Pack {job.pack_id || "-"}</div>
+                    {job.capability ? <div>Cap: {job.capability}</div> : null}
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <JobStatusBadge state={job.state} />
                     <div className="text-xs text-muted">{formatRelative(jobUpdatedAt(job))}</div>
                   </div>
                 </div>
-              </button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Link to={`/jobs/${job.id}`}>
+                    <Button variant="outline" size="sm" type="button">
+                      Details
+                    </Button>
+                  </Link>
+                  <Link to={`/jobs/${job.id}?tab=safety`}>
+                    <Button variant="outline" size="sm" type="button">
+                      Decisions
+                    </Button>
+                  </Link>
+                  {job.run_id ? (
+                    <Link to={`/runs/${job.run_id}`}>
+                      <Button variant="outline" size="sm" type="button">
+                        Run Timeline
+                      </Button>
+                    </Link>
+                  ) : null}
+                  {job.trace_id ? (
+                    <Link to={`/trace/${job.trace_id}`}>
+                      <Button variant="outline" size="sm" type="button">
+                        Trace
+                      </Button>
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
             ))}
           </div>
         )}

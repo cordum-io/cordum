@@ -71,7 +71,32 @@ export function jobStatusMeta(state?: string): StatusMeta {
 
 export function approvalStatusMeta(isRequired?: boolean): StatusMeta {
   if (isRequired) {
-    return { label: "Approval Required", tone: "warning", shape: "shield", icon: ShieldAlert };
+    return { label: "Awaiting Approval", tone: "warning", shape: "shield", icon: ShieldAlert };
   }
-  return { label: "Approved", tone: "success", shape: "shield", icon: ShieldCheck };
+  return { label: "Approval Granted", tone: "success", shape: "shield", icon: ShieldCheck };
+}
+
+export type DecisionType = "allow" | "deny" | "require_approval" | "throttle" | "allow_with_constraints" | "unknown";
+
+export function decisionTypeMeta(decision?: string): { label: string; shortLabel: string; type: DecisionType; tone: StatusTone } {
+  const normalized = (decision || "").toUpperCase().replace("DECISION_TYPE_", "");
+  if (!normalized) {
+    return { label: "Unknown", shortLabel: "?", type: "unknown", tone: "muted" };
+  }
+  if (normalized.includes("DENY")) {
+    return { label: "Denied", shortLabel: "DENY", type: "deny", tone: "danger" };
+  }
+  if (normalized.includes("REQUIRE_APPROVAL") || normalized.includes("REQUIRE-APPROVAL")) {
+    return { label: "Requires Approval", shortLabel: "APPROVAL", type: "require_approval", tone: "warning" };
+  }
+  if (normalized.includes("THROTTLE")) {
+    return { label: "Throttled", shortLabel: "THROTTLE", type: "throttle", tone: "warning" };
+  }
+  if (normalized.includes("ALLOW_WITH") || normalized.includes("ALLOW-WITH")) {
+    return { label: "Allowed with Constraints", shortLabel: "CONSTRAINED", type: "allow_with_constraints", tone: "info" };
+  }
+  if (normalized.includes("ALLOW")) {
+    return { label: "Allowed", shortLabel: "ALLOW", type: "allow", tone: "success" };
+  }
+  return { label: normalized, shortLabel: normalized.slice(0, 10), type: "unknown", tone: "muted" };
 }

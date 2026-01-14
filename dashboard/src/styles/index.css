@@ -120,6 +120,37 @@ body::before {
   }
 }
 
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @keyframes pulse-scan {
   0% {
     box-shadow: 0 0 0 0 rgba(15, 127, 122, 0.4);
@@ -133,11 +164,101 @@ body::before {
 }
 
 .animate-rise {
-  animation: rise-in 0.6s ease-out both;
+  animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .animate-scan {
   animation: pulse-scan 2.8s ease-out infinite;
+}
+
+.animate-slide-in {
+  animation: slide-in-right 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out both;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Smooth transitions */
+.transition-smooth {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-duration: 200ms;
+}
+
+.transition-colors-smooth {
+  transition-property: color, background-color, border-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-duration: 150ms;
+}
+
+/* Shadow utilities */
+.shadow-glow {
+  box-shadow:
+    0 1px 2px rgba(15, 127, 122, 0.1),
+    0 4px 12px rgba(15, 127, 122, 0.15),
+    0 0 0 1px rgba(15, 127, 122, 0.05);
+}
+
+.shadow-glow:hover {
+  box-shadow:
+    0 2px 4px rgba(15, 127, 122, 0.12),
+    0 8px 20px rgba(15, 127, 122, 0.2),
+    0 0 0 1px rgba(15, 127, 122, 0.08);
+}
+
+.shadow-lift {
+  box-shadow:
+    0 1px 2px rgba(184, 58, 58, 0.1),
+    0 4px 12px rgba(184, 58, 58, 0.15);
+}
+
+.shadow-lift:hover {
+  box-shadow:
+    0 2px 4px rgba(184, 58, 58, 0.12),
+    0 8px 20px rgba(184, 58, 58, 0.2);
+}
+
+.shadow-soft {
+  box-shadow:
+    0 1px 3px rgba(18, 25, 28, 0.06),
+    0 6px 16px rgba(18, 25, 28, 0.08);
+}
+
+:root[data-theme="dark"] .shadow-glow {
+  box-shadow:
+    0 1px 2px rgba(39, 179, 168, 0.15),
+    0 4px 12px rgba(39, 179, 168, 0.2),
+    0 0 0 1px rgba(39, 179, 168, 0.1);
+}
+
+:root[data-theme="dark"] .shadow-glow:hover {
+  box-shadow:
+    0 2px 4px rgba(39, 179, 168, 0.2),
+    0 8px 20px rgba(39, 179, 168, 0.28),
+    0 0 0 1px rgba(39, 179, 168, 0.15);
+}
+
+:root[data-theme="dark"] .shadow-lift {
+  box-shadow:
+    0 1px 2px rgba(226, 106, 106, 0.15),
+    0 4px 12px rgba(226, 106, 106, 0.2);
+}
+
+:root[data-theme="dark"] .shadow-lift:hover {
+  box-shadow:
+    0 2px 4px rgba(226, 106, 106, 0.2),
+    0 8px 20px rgba(226, 106, 106, 0.28);
+}
+
+:root[data-theme="dark"] .shadow-soft {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.2),
+    0 6px 16px rgba(0, 0, 0, 0.35);
 }
 
 .glass-panel {
@@ -151,6 +272,17 @@ body::before {
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: 0 12px 30px rgba(18, 25, 28, 0.08);
+  transition:
+    box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.surface-card:hover {
+  box-shadow: 0 16px 40px rgba(18, 25, 28, 0.1);
+}
+
+:root[data-theme="dark"] .surface-card:hover {
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 .attention-card {
@@ -159,6 +291,18 @@ body::before {
   background: var(--surface-glass);
   padding: 18px 20px;
   box-shadow: 0 18px 35px rgba(18, 25, 28, 0.12);
+  transition:
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.attention-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 22px 45px rgba(18, 25, 28, 0.14);
+}
+
+:root[data-theme="dark"] .attention-card:hover {
+  box-shadow: 0 22px 45px rgba(0, 0, 0, 0.5);
 }
 
 .list-row {
@@ -166,12 +310,21 @@ body::before {
   border: 1px solid var(--border);
   background: var(--surface-glass);
   padding: 14px 16px;
-  transition: border-color 0.2s ease, transform 0.2s ease;
+  transition:
+    border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .list-row:hover {
   border-color: var(--accent);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(18, 25, 28, 0.1);
+}
+
+:root[data-theme="dark"] .list-row:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 .gradient-border {
