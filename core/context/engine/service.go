@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -117,9 +118,14 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 		outTokens = 1024
 	}
 
+	inputTokens32 := int32(inputTokens)
+	if inputTokens > math.MaxInt32 {
+		inputTokens32 = math.MaxInt32
+	}
+
 	return &pb.BuildWindowResponse{
 		Messages:     messages,
-		InputTokens:  int32(inputTokens),
+		InputTokens:  inputTokens32,
 		OutputTokens: outTokens,
 	}, nil
 }

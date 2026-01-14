@@ -402,6 +402,7 @@ var (
 
 func file_api_proto_rawDescGZIP() []byte {
 	file_api_proto_rawDescOnce.Do(func() {
+		// #nosec G103 -- generated code uses unsafe for protobuf internals.
 		file_api_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_api_proto_rawDesc), len(file_api_proto_rawDesc)))
 	})
 	return file_api_proto_rawDescData

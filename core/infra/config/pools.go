@@ -55,6 +55,7 @@ func LoadPoolConfig(path string) (*PoolsConfig, error) {
 		return nil, errors.New("pool config path is empty")
 	}
 
+	// #nosec G304 -- pool config path is operator-provided.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read pool config: %w", err)

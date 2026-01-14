@@ -493,7 +493,34 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	installURL := strings.TrimSpace(req.URL)
 	expectedSha := strings.TrimSpace(req.Sha256)
 	fromCatalog := false
-	if installURL == "" {
+	if installURL != "" {
+		if expectedSha == "" {
+			http.Error(w, "sha256 required", http.StatusBadRequest)
+			return
+		}
+		entry, err := s.findMarketplaceEntryByURL(r.Context(), installURL)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errMarketplaceNotFound) {
+				status = http.StatusNotFound
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+		entryURL := strings.TrimSpace(entry.Pack.URL)
+		entrySha := strings.TrimSpace(entry.Pack.Sha256)
+		if entryURL == "" || entrySha == "" {
+			http.Error(w, "marketplace entry missing url or sha256", http.StatusBadRequest)
+			return
+		}
+		if !strings.EqualFold(expectedSha, entrySha) {
+			http.Error(w, "sha256 mismatch", http.StatusBadRequest)
+			return
+		}
+		installURL = entryURL
+		expectedSha = entrySha
+		fromCatalog = true
+	} else {
 		catalogID := strings.TrimSpace(req.CatalogID)
 		packID := strings.TrimSpace(req.PackID)
 		if catalogID == "" || packID == "" {
@@ -1135,6 +1162,23 @@ func (s *server) findMarketplaceEntry(ctx context.Context, catalogID, packID, ve
 	return best, nil
 }
 
+func (s *server) findMarketplaceEntryByURL(ctx context.Context, rawURL string) (marketplaceCatalogEntry, error) {
+	urlTrim := strings.TrimSpace(rawURL)
+	if urlTrim == "" {
+		return marketplaceCatalogEntry{}, errMarketplaceNotFound
+	}
+	_, entries, err := s.loadMarketplaceEntries(ctx)
+	if err != nil {
+		return marketplaceCatalogEntry{}, err
+	}
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.Pack.URL) == urlTrim {
+			return entry, nil
+		}
+	}
+	return marketplaceCatalogEntry{}, errMarketplaceNotFound
+}
+
 func compareVersions(a, b string) int {
 	pa, oka := parseVersion(a)
 	pb, okb := parseVersion(b)
@@ -1584,7 +1628,12 @@ func (s *server) applyPolicyOverlay(ctx context.Context, overlay packPolicyOverl
 	if strategy != "" && strategy != "bundle_fragment" {
 		return appliedPolicyChange{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
 	}
-	content, err := os.ReadFile(filepath.Join(dir, overlay.Path))
+	path, err := safeJoin(dir, overlay.Path)
+	if err != nil {
+		return appliedPolicyChange{}, err
+	}
+	// #nosec G304 -- path is validated by safeJoin.
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return appliedPolicyChange{}, err
 	}
@@ -1833,6 +1882,7 @@ func loadPackManifest(dir string) (*packManifest, error) {
 	var data []byte
 	var err error
 	for _, path := range paths {
+		// #nosec G304 -- pack manifest is read from the extracted bundle directory.
 		data, err = os.ReadFile(path)
 		if err == nil {
 			break
@@ -2155,6 +2205,7 @@ func workflowToMap(workflow *wf.Workflow) map[string]any {
 }
 
 func loadDataFile(path string) (any, error) {
+	// #nosec G304 -- path is validated by safeJoin at call sites.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -2403,6 +2454,7 @@ func extractTarGzReader(src io.Reader, dest string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 				return err
 			}
+			// #nosec G304 -- target path is validated by safeJoin.
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
