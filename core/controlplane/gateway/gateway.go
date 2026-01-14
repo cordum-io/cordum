@@ -55,7 +55,8 @@ const (
 	maxPromptChars        = 100000
 	defaultRateLimitRPS   = 50
 	defaultRateLimitBurst = 100
-	wsAPIKeyProtocol      = "cordum-api-key"
+	// #nosec G101 -- protocol label, not a credential.
+	wsAPIKeyProtocol = "cordum-api-key"
 )
 
 const (
@@ -637,7 +638,9 @@ func (s *server) startBusTaps() {
 				}
 				s.clientsMu.Unlock()
 				for _, conn := range slowClients {
-					conn.Close()
+					if err := conn.Close(); err != nil {
+						logging.Error("api-gateway", "ws client close failed", "error", err)
+					}
 				}
 			}
 		}
@@ -804,7 +807,15 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(s.auth, mux)))
 
 	logging.Info("api-gateway", "http listening", "addr", httpAddr)
-	if err := http.ListenAndServe(httpAddr, handler); err != nil {
+	srv := &http.Server{
+		Addr:              httpAddr,
+		Handler:           handler,
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		logging.Error("api-gateway", "http server error", "error", err)
 		return err
 	}

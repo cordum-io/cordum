@@ -69,9 +69,8 @@ Install by URL (sha256 required):
 
 The gateway downloads the bundle, verifies sha256, and runs the same install flow as
 `cordumctl pack install`. Only `http`/`https` URLs are supported.
-Direct URL installs are limited to hosts present in enabled marketplace catalogs
-(the default catalog host is allowed unless disabled). Add a catalog entry for any
-additional hosts you want to allow.
+Direct URL installs must match a pack URL present in an enabled marketplace catalog
+and the provided sha256 must match the catalog entry.
 
 ### Bundle safety limits (gateway)
 

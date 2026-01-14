@@ -35,6 +35,7 @@ func LoadTimeouts(path string) (*TimeoutsConfig, error) {
 	if path == "" {
 		return defaultTimeouts(), nil
 	}
+	// #nosec G304 -- timeouts config path is operator-provided.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		// Return defaults if file missing

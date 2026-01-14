@@ -240,7 +240,7 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 		return nil, nil
 	}
 
-	cfg := &tls.Config{}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if serverName != "" {
 		cfg.ServerName = serverName
 	}
@@ -248,6 +248,7 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 		cfg.InsecureSkipVerify = true
 	}
 	if caPath != "" {
+		// #nosec G304 -- CA path is configured by the operator.
 		pem, err := os.ReadFile(caPath)
 		if err != nil {
 			return nil, fmt.Errorf("nats tls ca read: %w", err)

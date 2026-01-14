@@ -1557,7 +1557,23 @@ func isURL(raw string) bool {
 }
 
 func downloadToTemp(raw string) (string, error) {
-	resp, err := http.Get(raw)
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("url host required")
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	// #nosec G107 -- URL is operator-provided and validated.
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -1630,15 +1646,20 @@ func extractTarGz(path, dest string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 				return err
 			}
+			// #nosec G304 -- target path is validated by safeJoin.
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
 			}
 			if _, err := io.CopyN(out, tr, hdr.Size); err != nil && !errors.Is(err, io.EOF) {
-				out.Close()
+				if cerr := out.Close(); cerr != nil {
+					return cerr
+				}
 				return err
 			}
-			out.Close()
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

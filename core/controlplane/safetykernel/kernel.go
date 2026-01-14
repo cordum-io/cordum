@@ -812,6 +812,7 @@ func readPolicySource(source string) ([]byte, error) {
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 		return fetchPolicyURL(source)
 	}
+	// #nosec G304 -- policy path is configured by the operator.
 	return os.ReadFile(source)
 }
 
@@ -852,6 +853,7 @@ func readSignature(source string) ([]byte, error) {
 		return decodeKey(raw)
 	}
 	if path := strings.TrimSpace(os.Getenv("SAFETY_POLICY_SIGNATURE_PATH")); path != "" {
+		// #nosec G304 -- signature path is configured by the operator.
 		return os.ReadFile(path)
 	}
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
@@ -859,6 +861,7 @@ func readSignature(source string) ([]byte, error) {
 	}
 	sigPath := source + ".sig"
 	if _, err := os.Stat(sigPath); err == nil {
+		// #nosec G304 -- signature path is derived from the policy source.
 		return os.ReadFile(sigPath)
 	}
 	return nil, errors.New("policy signature required but not found")

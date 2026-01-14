@@ -76,9 +76,12 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 		return existing, nil
 	}
 
-	cfg := &tls.Config{}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if existing != nil {
 		cfg = existing.Clone()
+		if cfg.MinVersion < tls.VersionTLS12 {
+			cfg.MinVersion = tls.VersionTLS12
+		}
 	}
 	if serverName != "" {
 		cfg.ServerName = serverName
@@ -88,6 +91,7 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 	}
 
 	if caPath != "" {
+		// #nosec G304 -- CA path is configured by the operator.
 		pem, err := os.ReadFile(caPath)
 		if err != nil {
 			return nil, fmt.Errorf("redis tls ca read: %w", err)
@@ -112,7 +116,7 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}
-	if cfg.MinVersion == 0 {
+	if cfg.MinVersion < tls.VersionTLS12 {
 		cfg.MinVersion = tls.VersionTLS12
 	}
 

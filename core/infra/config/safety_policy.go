@@ -150,6 +150,7 @@ func LoadSafetyPolicy(path string) (*SafetyPolicy, error) {
 	if path == "" {
 		return nil, nil
 	}
+	// #nosec G304 -- policy path is operator-provided.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
