@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,8 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 		t.Fatalf("unexpected workers list")
 	}
 
+	s.auth = stubLicenseAuth{info: &LicenseInfo{Mode: "enterprise", Status: "active", Plan: "Enterprise"}}
+
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	statusRec := httptest.NewRecorder()
 	s.handleStatus(statusRec, statusReq)
@@ -43,4 +46,36 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 	if !ok || workersInfo["count"].(float64) != 1 {
 		t.Fatalf("unexpected workers count in status")
 	}
+
+	licenseInfo, ok := status["license"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected license info in status")
+	}
+	if mode, ok := licenseInfo["mode"].(string); !ok || mode != "enterprise" {
+		t.Fatalf("unexpected license mode: %#v", licenseInfo["mode"])
+	}
 }
+
+type stubLicenseAuth struct {
+	info *LicenseInfo
+}
+
+func (s stubLicenseAuth) AuthenticateHTTP(*http.Request) (*AuthContext, error) { return &AuthContext{}, nil }
+
+func (s stubLicenseAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
+	return &AuthContext{}, nil
+}
+
+func (s stubLicenseAuth) RequireRole(*http.Request, ...string) error { return nil }
+
+func (s stubLicenseAuth) ResolveTenant(_ *http.Request, requested, _ string) (string, error) {
+	return requested, nil
+}
+
+func (s stubLicenseAuth) RequireTenantAccess(*http.Request, string) error { return nil }
+
+func (s stubLicenseAuth) ResolvePrincipal(_ *http.Request, requested string) (string, error) {
+	return requested, nil
+}
+
+func (s stubLicenseAuth) LicenseInfo() *LicenseInfo { return s.info }
