@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cordum/cordum/core/infra/buildinfo"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -46,6 +47,13 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 	if !ok || workersInfo["count"].(float64) != 1 {
 		t.Fatalf("unexpected workers count in status")
 	}
+	buildInfo, ok := status["build"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected build info in status")
+	}
+	if version, ok := buildInfo["version"].(string); !ok || version != buildinfo.Version {
+		t.Fatalf("unexpected build version: %#v", buildInfo["version"])
+	}
 
 	licenseInfo, ok := status["license"].(map[string]any)
 	if !ok {
@@ -60,7 +68,9 @@ type stubLicenseAuth struct {
 	info *LicenseInfo
 }
 
-func (s stubLicenseAuth) AuthenticateHTTP(*http.Request) (*AuthContext, error) { return &AuthContext{}, nil }
+func (s stubLicenseAuth) AuthenticateHTTP(*http.Request) (*AuthContext, error) {
+	return &AuthContext{}, nil
+}
 
 func (s stubLicenseAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
 	return &AuthContext{}, nil

@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/artifacts"
+	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/locks"
@@ -882,6 +883,11 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"time":           now.Format(time.RFC3339),
 		"uptime_seconds": uptimeSeconds,
+		"build": map[string]any{
+			"version": buildinfo.Version,
+			"commit":  buildinfo.Commit,
+			"date":    buildinfo.Date,
+		},
 		"nats": map[string]any{
 			"connected": natsConnected,
 			"status":    natsStatus,

@@ -322,3 +322,4 @@ This maps directly to CAP `JobMetadata` during dispatch.
 - `compatibility.protocolVersion` must match the CAP wire protocol (currently `1`).
 - `minCoreVersion` is enforced when the gateway build version is a valid semver.
   Dev/unknown builds skip the check; `--force` always bypasses it.
+- Gateway build version is read from `GET /api/v1/status` (`build.version`).
