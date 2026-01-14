@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  cordum-dashboard:
+    environment:
+      # Point the dashboard at the enterprise gateway and rely on login sessions.
+      - CORDUM_API_BASE_URL=${CORDUM_ENTERPRISE_API_BASE_URL:-http://localhost:8085}
+      - CORDUM_API_KEY=
+      # TODO(enterprise): add a setup script to transition community -> enterprise + license.
