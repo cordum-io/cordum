@@ -751,7 +751,7 @@ func legacyPolicyRules(value any) []map[string]any {
 			out = append(out, map[string]any{
 				"id":       fmt.Sprintf("legacy:%s:deny:%d", tenant, idx+1),
 				"decision": "deny",
-				"reason":   fmt.Sprintf("topic '%s' denied by tenant policy", topic),
+				"reason":   fmt.Sprintf("topic %q denied by tenant policy", topic),
 				"match":    match,
 			})
 		}
@@ -1200,11 +1200,11 @@ func evaluatePolicyCheck(policy *config.SafetyPolicy, snapshot string, req *pb.P
 	if eff, ok := config.ParseEffectiveSafety(req.GetEffectiveConfig()); ok {
 		if matchAny(eff.DeniedTopics, topic) {
 			decision = pb.DecisionType_DECISION_TYPE_DENY
-			reason = fmt.Sprintf("topic '%s' denied by effective config", topic)
+			reason = fmt.Sprintf("topic %q denied by effective config", topic)
 		}
 		if len(eff.AllowedTopics) > 0 && !matchAny(eff.AllowedTopics, topic) {
 			decision = pb.DecisionType_DECISION_TYPE_DENY
-			reason = fmt.Sprintf("topic '%s' not allowed by effective config", topic)
+			reason = fmt.Sprintf("topic %q not allowed by effective config", topic)
 		}
 		if ok, mcpReason := config.MCPAllowed(eff.MCP, input.MCP); !ok {
 			decision = pb.DecisionType_DECISION_TYPE_DENY

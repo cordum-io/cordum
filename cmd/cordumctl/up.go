@@ -52,6 +52,7 @@ func runCompose(composeFile string, build, detach bool) error {
 
 func runDockerCompose(args []string) error {
 	if path, err := exec.LookPath("docker"); err == nil {
+		// #nosec G204 -- args are constructed from validated CLI flags.
 		cmd := exec.Command(path, append([]string{"compose"}, args...)...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -60,6 +61,7 @@ func runDockerCompose(args []string) error {
 		}
 	}
 	if path, err := exec.LookPath("docker-compose"); err == nil {
+		// #nosec G204 -- args are constructed from validated CLI flags.
 		cmd := exec.Command(path, args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
