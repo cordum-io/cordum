@@ -733,9 +733,7 @@ func parseSemver(raw string) (semver, bool) {
 	if value == "" {
 		return semver{}, false
 	}
-	if strings.HasPrefix(value, "v") {
-		value = value[1:]
-	}
+	value = strings.TrimPrefix(value, "v")
 	main := value
 	pre := ""
 	if idx := strings.IndexAny(value, "-+"); idx >= 0 {
