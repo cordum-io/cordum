@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../lib/api";
 import { formatDateTime, formatPercent, formatRelative, formatShortDate } from "../lib/format";
@@ -12,6 +12,7 @@ import { Select } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
 import { Input } from "../components/ui/Input";
 import { ProgressBar } from "../components/ProgressBar";
+import { useConfigStore } from "../state/config";
 import type { DLQEntry, Heartbeat, LicenseInfo } from "../types/api";
 
 type DiffLine = {
@@ -27,6 +28,70 @@ type DlqTrendPoint = {
 };
 
 const STALE_WORKER_MINUTES = 2;
+const TAB_OPTIONS = ["health", "workers", "dlq", "config", "observability", "alerting"] as const;
+type SystemTab = (typeof TAB_OPTIONS)[number];
+
+function resolveTab(value: string | null): SystemTab {
+  if (!value) {
+    return "health";
+  }
+  return TAB_OPTIONS.includes(value as SystemTab) ? (value as SystemTab) : "health";
+}
+
+const SEVERITY_OPTIONS = ["info", "warning", "error", "critical"] as const;
+type AlertSeverity = (typeof SEVERITY_OPTIONS)[number];
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asBool(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function asSeverity(value: unknown, fallback: AlertSeverity): AlertSeverity {
+  const candidate = asString(value, fallback);
+  return SEVERITY_OPTIONS.includes(candidate as AlertSeverity) ? (candidate as AlertSeverity) : fallback;
+}
+
+function parseJsonObject(value: string, label: string): { parsed: Record<string, unknown>; error?: string } {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { parsed: {} };
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { parsed: {}, error: `${label} must be a JSON object.` };
+    }
+    return { parsed: parsed as Record<string, unknown> };
+  } catch {
+    return { parsed: {}, error: `${label} must be valid JSON.` };
+  }
+}
+
+function resolveGrafanaUrl(baseUrl: string, path: string): string {
+  if (!path) {
+    return "";
+  }
+  const trimmed = path.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
+  }
+  if (!baseUrl) {
+    return "";
+  }
+  const base = baseUrl.replace(/\/$/, "");
+  const suffix = trimmed.replace(/^\//, "");
+  return `${base}/${suffix}`;
+}
 
 function buildLineDiff(left: string, right: string): DiffLine[] {
   const leftLines = left.split("\n");
@@ -62,7 +127,12 @@ function buildDlqTrend(entries: DLQEntry[]): DlqTrendPoint[] {
 }
 
 export function SystemPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const activeTab = resolveTab(tabParam);
   const queryClient = useQueryClient();
+  const principalRole = useConfigStore((state) => state.principalRole);
+  const canEditConfig = principalRole === "admin";
   const statusQuery = useQuery({ queryKey: ["status"], queryFn: () => api.getStatus() });
   const workersQuery = useQuery({ queryKey: ["workers"], queryFn: () => api.listWorkers() });
   const dlqQuery = useInfiniteQuery({
@@ -79,12 +149,83 @@ export function SystemPage() {
 
   const [configScope, setConfigScope] = useState("system");
   const [configScopeId, setConfigScopeId] = useState("default");
-  const [activeTab, setActiveTab] = useState<"health" | "workers" | "dlq" | "config" | "observability" | "alerting">("health");
+  const [otelEnabled, setOtelEnabled] = useState(false);
+  const [otelEndpoint, setOtelEndpoint] = useState("");
+  const [otelProtocol, setOtelProtocol] = useState("grpc");
+  const [otelHeadersText, setOtelHeadersText] = useState("{}");
+  const [otelResourceAttrsText, setOtelResourceAttrsText] = useState("{}");
+  const [grafanaBaseUrl, setGrafanaBaseUrl] = useState("");
+  const [grafanaSystemDashboard, setGrafanaSystemDashboard] = useState("");
+  const [grafanaWorkflowDashboard, setGrafanaWorkflowDashboard] = useState("");
+  const [pagerDutyEnabled, setPagerDutyEnabled] = useState(false);
+  const [pagerDutyKey, setPagerDutyKey] = useState("");
+  const [pagerDutySeverity, setPagerDutySeverity] = useState<AlertSeverity>("critical");
+  const [slackEnabled, setSlackEnabled] = useState(false);
+  const [slackWebhook, setSlackWebhook] = useState("");
+  const [slackSeverity, setSlackSeverity] = useState<AlertSeverity>("error");
+  const [observabilityError, setObservabilityError] = useState<string | null>(null);
+  const [alertingError, setAlertingError] = useState<string | null>(null);
+  const setTab = (next: SystemTab) => {
+    const updated = new URLSearchParams(searchParams);
+    if (next === "health") {
+      updated.delete("tab");
+    } else {
+      updated.set("tab", next);
+    }
+    setSearchParams(updated, { replace: true });
+  };
 
   const configQuery = useQuery({
     queryKey: ["config", configScope, configScopeId],
     queryFn: () => api.getConfig(configScope, configScopeId),
   });
+
+  const systemConfigData = useMemo(() => asRecord(systemConfigQuery.data?.data), [systemConfigQuery.data]);
+
+  const saveConfigMutation = useMutation({
+    mutationFn: (payload: { scopeId: string; data: Record<string, unknown>; meta?: Record<string, string> }) =>
+      api.setConfig("system", payload.scopeId, payload.data, payload.meta),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["config"] }),
+  });
+
+  useEffect(() => {
+    if (tabParam && !TAB_OPTIONS.includes(tabParam as SystemTab)) {
+      const updated = new URLSearchParams(searchParams);
+      updated.delete("tab");
+      setSearchParams(updated, { replace: true });
+    }
+  }, [tabParam, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!systemConfigQuery.data) {
+      return;
+    }
+    const observability = asRecord(systemConfigData.observability);
+    const otel = asRecord(observability.otel);
+    const grafana = asRecord(observability.grafana);
+    const dashboards = asRecord(grafana.dashboards);
+    const alerting = asRecord(systemConfigData.alerting);
+    const pagerDuty = asRecord(alerting.pagerduty);
+    const slack = asRecord(alerting.slack);
+
+    setOtelEnabled(asBool(otel.enabled));
+    setOtelEndpoint(asString(otel.endpoint));
+    setOtelProtocol(asString(otel.protocol, "grpc"));
+    setOtelHeadersText(JSON.stringify(asRecord(otel.headers), null, 2));
+    setOtelResourceAttrsText(JSON.stringify(asRecord(otel.resource_attributes), null, 2));
+    setGrafanaBaseUrl(asString(grafana.base_url));
+    setGrafanaSystemDashboard(asString(dashboards.system_overview));
+    setGrafanaWorkflowDashboard(asString(dashboards.workflow_performance));
+
+    setPagerDutyEnabled(asBool(pagerDuty.enabled));
+    setPagerDutyKey(asString(pagerDuty.integration_key));
+    setPagerDutySeverity(asSeverity(pagerDuty.severity, "critical"));
+    setSlackEnabled(asBool(slack.enabled));
+    setSlackWebhook(asString(slack.webhook_url));
+    setSlackSeverity(asSeverity(slack.severity, "error"));
+    setObservabilityError(null);
+    setAlertingError(null);
+  }, [systemConfigQuery.data, systemConfigData]);
 
   const retryMutation = useMutation({
     mutationFn: (jobId: string) => api.retryDLQ(jobId),
@@ -99,7 +240,6 @@ export function SystemPage() {
   const status = statusQuery.data as Record<string, unknown> | undefined;
   const nats = status?.nats as Record<string, unknown> | undefined;
   const redis = status?.redis as Record<string, unknown> | undefined;
-  const otel = status?.otel as Record<string, unknown> | undefined;
   const workersCount = (status?.workers as Record<string, unknown> | undefined)?.count as number | undefined;
   const license = status?.license as LicenseInfo | undefined;
   const licenseMode = (license?.mode || "community").toLowerCase();
@@ -163,14 +303,97 @@ export function SystemPage() {
     [poolMetrics]
   );
 
-  const scrollToSection = (id: string) => {
-    if (typeof document === "undefined") {
+  const otelStatusLabel = otelEnabled ? (otelEndpoint ? "configured" : "missing endpoint") : "disabled";
+  const otelStatusVariant = otelEnabled ? (otelEndpoint ? "success" : "warning") : "default";
+  const grafanaSystemUrl = resolveGrafanaUrl(grafanaBaseUrl, grafanaSystemDashboard);
+  const grafanaWorkflowUrl = resolveGrafanaUrl(grafanaBaseUrl, grafanaWorkflowDashboard);
+  const grafanaConfigured = Boolean(grafanaBaseUrl || grafanaSystemDashboard || grafanaWorkflowDashboard);
+  const grafanaStatusVariant = grafanaConfigured ? "info" : "default";
+  const pagerDutyStatusLabel = pagerDutyEnabled ? (pagerDutyKey ? "active" : "needs key") : "disabled";
+  const pagerDutyStatusVariant = pagerDutyEnabled ? (pagerDutyKey ? "success" : "warning") : "default";
+  const slackStatusLabel = slackEnabled ? (slackWebhook ? "active" : "needs webhook") : "disabled";
+  const slackStatusVariant = slackEnabled ? (slackWebhook ? "success" : "warning") : "default";
+
+  const handleSaveObservability = () => {
+    setObservabilityError(null);
+    const headersResult = parseJsonObject(otelHeadersText, "Headers");
+    if (headersResult.error) {
+      setObservabilityError(headersResult.error);
       return;
     }
-    const node = document.getElementById(id);
-    if (node) {
-      node.scrollIntoView({ behavior: "smooth", block: "start" });
+    const attrsResult = parseJsonObject(otelResourceAttrsText, "Resource attributes");
+    if (attrsResult.error) {
+      setObservabilityError(attrsResult.error);
+      return;
     }
+    const currentObservability = asRecord(systemConfigData.observability);
+    const currentGrafana = asRecord(currentObservability.grafana);
+    const updatedData: Record<string, unknown> = {
+      ...systemConfigData,
+      observability: {
+        ...currentObservability,
+        otel: {
+          enabled: otelEnabled,
+          endpoint: otelEndpoint.trim(),
+          protocol: otelProtocol === "http" ? "http" : "grpc",
+          headers: headersResult.parsed,
+          resource_attributes: attrsResult.parsed,
+        },
+        grafana: {
+          ...currentGrafana,
+          base_url: grafanaBaseUrl.trim(),
+          dashboards: {
+            system_overview: grafanaSystemDashboard.trim(),
+            workflow_performance: grafanaWorkflowDashboard.trim(),
+          },
+        },
+      },
+    };
+    saveConfigMutation.mutate(
+      { scopeId: systemConfigQuery.data?.scope_id || "default", data: updatedData, meta: { source: "dashboard", section: "observability" } },
+      {
+        onError: (err) => {
+          setObservabilityError(err instanceof Error ? err.message : "Failed to save observability config.");
+        },
+      }
+    );
+  };
+
+  const handleSaveAlerting = () => {
+    setAlertingError(null);
+    if (pagerDutyEnabled && !pagerDutyKey.trim()) {
+      setAlertingError("PagerDuty integration key is required when enabled.");
+      return;
+    }
+    if (slackEnabled && !slackWebhook.trim()) {
+      setAlertingError("Slack webhook URL is required when enabled.");
+      return;
+    }
+    const currentAlerting = asRecord(systemConfigData.alerting);
+    const updatedData: Record<string, unknown> = {
+      ...systemConfigData,
+      alerting: {
+        ...currentAlerting,
+        pagerduty: {
+          enabled: pagerDutyEnabled,
+          integration_key: pagerDutyKey.trim(),
+          severity: pagerDutySeverity,
+        },
+        slack: {
+          enabled: slackEnabled,
+          webhook_url: slackWebhook.trim(),
+          severity: slackSeverity,
+        },
+      },
+    };
+    saveConfigMutation.mutate(
+      { scopeId: systemConfigQuery.data?.scope_id || "default", data: updatedData, meta: { source: "dashboard", section: "alerting" } },
+      {
+        onError: (err) => {
+          setAlertingError(err instanceof Error ? err.message : "Failed to save alerting config.");
+        },
+      }
+    );
   };
 
   const baseConfigText = useMemo(() => JSON.stringify(systemConfigQuery.data?.data || {}, null, 2), [systemConfigQuery.data]);
@@ -183,12 +406,12 @@ export function SystemPage() {
         <CardHeader>
           <CardTitle>System Management</CardTitle>
           <div className="flex flex-wrap gap-2">
-            <Button variant={activeTab === "health" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("health")}>Health</Button>
-            <Button variant={activeTab === "workers" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("workers")}>Workers</Button>
-            <Button variant={activeTab === "dlq" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("dlq")}>DLQ</Button>
-            <Button variant={activeTab === "config" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("config")}>Config</Button>
-            <Button variant={activeTab === "observability" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("observability")}>Observability</Button>
-            <Button variant={activeTab === "alerting" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("alerting")}>Alerting</Button>
+            <Button variant={activeTab === "health" ? "primary" : "outline"} size="sm" onClick={() => setTab("health")}>Health</Button>
+            <Button variant={activeTab === "workers" ? "primary" : "outline"} size="sm" onClick={() => setTab("workers")}>Workers</Button>
+            <Button variant={activeTab === "dlq" ? "primary" : "outline"} size="sm" onClick={() => setTab("dlq")}>DLQ</Button>
+            <Button variant={activeTab === "config" ? "primary" : "outline"} size="sm" onClick={() => setTab("config")}>Config</Button>
+            <Button variant={activeTab === "observability" ? "primary" : "outline"} size="sm" onClick={() => setTab("observability")}>Observability</Button>
+            <Button variant={activeTab === "alerting" ? "primary" : "outline"} size="sm" onClick={() => setTab("alerting")}>Alerting</Button>
           </div>
         </CardHeader>
       </Card>
@@ -249,7 +472,7 @@ export function SystemPage() {
                     <div className="text-xs uppercase tracking-[0.2em] text-muted">Stale workers</div>
                     <div className="text-lg font-semibold text-ink">{staleWorkers.length}</div>
                   </div>
-                  <Button variant="outline" size="sm" type="button" onClick={() => setActiveTab("workers")}>
+                  <Button variant="outline" size="sm" type="button" onClick={() => setTab("workers")}>
                     View
                   </Button>
                 </div>
@@ -264,7 +487,7 @@ export function SystemPage() {
                     <div className="text-xs uppercase tracking-[0.2em] text-muted">DLQ backlog</div>
                     <div className="text-lg font-semibold text-ink">{dlqEntries.length}</div>
                   </div>
-                  <Button variant="outline" size="sm" type="button" onClick={() => setActiveTab("dlq")}>
+                  <Button variant="outline" size="sm" type="button" onClick={() => setTab("dlq")}>
                     Review
                   </Button>
                 </div>
@@ -277,7 +500,7 @@ export function SystemPage() {
                     <div className="text-xs uppercase tracking-[0.2em] text-muted">Hot pools</div>
                     <div className="text-lg font-semibold text-ink">{hotPools.length}</div>
                   </div>
-                  <Button variant="outline" size="sm" type="button" onClick={() => setActiveTab("health")}>
+                  <Button variant="outline" size="sm" type="button" onClick={() => setTab("health")}>
                     Inspect
                   </Button>
                 </div>
@@ -617,70 +840,171 @@ export function SystemPage() {
           <Card>
             <CardHeader>
               <CardTitle>Observability Status</CardTitle>
-              <div className="text-xs text-muted">OpenTelemetry and tracing connectivity</div>
+              <div className="text-xs text-muted">OpenTelemetry export and dashboards</div>
             </CardHeader>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-2">
               <div className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Collector</div>
-                <div className="mt-2 text-sm font-semibold text-ink">{String(otel?.status || "CONNECTED")}</div>
-                <div className="text-xs text-muted">{String(otel?.endpoint || "otel-collector:4317")}</div>
+                <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-muted">
+                  <span>OpenTelemetry</span>
+                  <Badge variant={otelStatusVariant}>{otelStatusLabel}</Badge>
+                </div>
+                <div className="mt-2 text-sm font-semibold text-ink">{otelEndpoint || "-"}</div>
+                <div className="text-xs text-muted">Protocol {otelProtocol.toUpperCase()}</div>
               </div>
               <div className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Traces</div>
-                <div className="mt-2 text-sm font-semibold text-ink">{String(otel?.traces || "ENABLED")}</div>
-                <div className="text-xs text-muted">Exporting via GRPC</div>
+                <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-muted">
+                  <span>Grafana</span>
+                  <Badge variant={grafanaStatusVariant}>{grafanaConfigured ? "configured" : "disabled"}</Badge>
+                </div>
+                <div className="mt-2 text-sm font-semibold text-ink">{grafanaBaseUrl || "-"}</div>
+                <div className="text-xs text-muted">
+                  Dashboards {grafanaSystemDashboard || grafanaWorkflowDashboard ? "set" : "not set"}
+                </div>
               </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Metrics</div>
-                <div className="mt-2 text-sm font-semibold text-ink">{String(otel?.metrics || "ENABLED")}</div>
-                <div className="text-xs text-muted">Prometheus scrape target active</div>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>OpenTelemetry Export</CardTitle>
+              <div className="text-xs text-muted">Configure where telemetry is sent</div>
+            </CardHeader>
+            <div className="space-y-4">
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  checked={otelEnabled}
+                  onChange={(event) => setOtelEnabled(event.target.checked)}
+                  disabled={!canEditConfig || saveConfigMutation.isPending}
+                />
+                Enable OpenTelemetry export
+              </label>
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Endpoint</label>
+                  <Input
+                    value={otelEndpoint}
+                    onChange={(event) => setOtelEndpoint(event.target.value)}
+                    placeholder="otel-collector:4317"
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Protocol</label>
+                  <Select
+                    value={otelProtocol}
+                    onChange={(event) => setOtelProtocol(event.target.value)}
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  >
+                    <option value="grpc">gRPC</option>
+                    <option value="http">HTTP/Protobuf</option>
+                  </Select>
+                </div>
               </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Headers (JSON)</label>
+                  <Textarea
+                    rows={6}
+                    value={otelHeadersText}
+                    onChange={(event) => setOtelHeadersText(event.target.value)}
+                    placeholder='{"authorization":"Bearer ..."}'
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Resource Attributes (JSON)</label>
+                  <Textarea
+                    rows={6}
+                    value={otelResourceAttrsText}
+                    onChange={(event) => setOtelResourceAttrsText(event.target.value)}
+                    placeholder='{"service.name":"cordum-gateway"}'
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                </div>
+              </div>
+              {observabilityError ? <div className="text-xs text-danger">{observabilityError}</div> : null}
+              {!canEditConfig ? <div className="text-xs text-muted">Admin role required to update system config.</div> : null}
+              <Button
+                variant="primary"
+                size="sm"
+                type="button"
+                onClick={handleSaveObservability}
+                disabled={!canEditConfig || saveConfigMutation.isPending}
+              >
+                {saveConfigMutation.isPending ? "Saving..." : "Save Observability"}
+              </Button>
             </div>
           </Card>
 
           <Card>
             <CardHeader>
               <CardTitle>Grafana Dashboards</CardTitle>
-              <div className="text-xs text-muted">Pre-built observability views</div>
-            </CardHeader>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="text-sm font-semibold text-ink">System Overview</div>
-                <div className="text-xs text-muted">CPU, Memory, and NATS message rates.</div>
-                <Button className="mt-3" variant="outline" size="sm" type="button">Open Dashboard</Button>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="text-sm font-semibold text-ink">Workflow Performance</div>
-                <div className="text-xs text-muted">Latency, success rates, and cost per run.</div>
-                <Button className="mt-3" variant="outline" size="sm" type="button">Open Dashboard</Button>
-              </div>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>OTel Export Config</CardTitle>
-              <div className="text-xs text-muted">Configure where telemetry is sent</div>
+              <div className="text-xs text-muted">Link external observability views</div>
             </CardHeader>
             <div className="space-y-4">
-              <div className="grid gap-3 lg:grid-cols-2">
-                <div>
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Endpoint</label>
-                  <Input defaultValue="otel-collector:4317" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Protocol</label>
-                  <Select defaultValue="grpc">
-                    <option value="grpc">gRPC</option>
-                    <option value="http">HTTP/Protobuf</option>
-                  </Select>
-                </div>
-              </div>
               <div>
-                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Resource Attributes</label>
-                <Textarea rows={4} defaultValue={JSON.stringify({ "service.name": "cordum-gateway", "deployment.environment": "production" }, null, 2)} />
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Base URL</label>
+                <Input
+                  value={grafanaBaseUrl}
+                  onChange={(event) => setGrafanaBaseUrl(event.target.value)}
+                  placeholder="https://grafana.example.com"
+                  disabled={!canEditConfig || saveConfigMutation.isPending}
+                />
               </div>
-              <Button variant="primary" size="sm">Update Export Config</Button>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-2xl border border-border bg-white/70 p-4">
+                  <div className="text-sm font-semibold text-ink">System Overview</div>
+                  <div className="text-xs text-muted">CPU, Memory, and NATS message rates.</div>
+                  <Input
+                    className="mt-3"
+                    value={grafanaSystemDashboard}
+                    onChange={(event) => setGrafanaSystemDashboard(event.target.value)}
+                    placeholder="d/abcd/system-overview or full URL"
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                  <Button
+                    className="mt-3"
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    onClick={() => window.open(grafanaSystemUrl, "_blank", "noopener,noreferrer")}
+                    disabled={!grafanaSystemUrl}
+                  >
+                    Open Dashboard
+                  </Button>
+                </div>
+                <div className="rounded-2xl border border-border bg-white/70 p-4">
+                  <div className="text-sm font-semibold text-ink">Workflow Performance</div>
+                  <div className="text-xs text-muted">Latency, success rates, and cost per run.</div>
+                  <Input
+                    className="mt-3"
+                    value={grafanaWorkflowDashboard}
+                    onChange={(event) => setGrafanaWorkflowDashboard(event.target.value)}
+                    placeholder="d/abcd/workflow-performance or full URL"
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                  <Button
+                    className="mt-3"
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    onClick={() => window.open(grafanaWorkflowUrl, "_blank", "noopener,noreferrer")}
+                    disabled={!grafanaWorkflowUrl}
+                  >
+                    Open Dashboard
+                  </Button>
+                </div>
+              </div>
+              <Button
+                variant="primary"
+                size="sm"
+                type="button"
+                onClick={handleSaveObservability}
+                disabled={!canEditConfig || saveConfigMutation.isPending}
+              >
+                {saveConfigMutation.isPending ? "Saving..." : "Save Grafana Links"}
+              </Button>
             </div>
           </Card>
         </>
@@ -690,22 +1014,42 @@ export function SystemPage() {
         <>
           <Card>
             <CardHeader>
-              <CardTitle>Alert Rules</CardTitle>
-              <div className="text-xs text-muted">Configure alert destinations and triggers</div>
+              <CardTitle>Alert Destinations</CardTitle>
+              <div className="text-xs text-muted">Route critical events to on-call systems</div>
             </CardHeader>
             <div className="space-y-4">
               <div className="rounded-2xl border border-border bg-white/70 p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-sm font-semibold text-ink">PagerDuty Integration</div>
-                  <Badge variant="success">Active</Badge>
+                  <Badge variant={pagerDutyStatusVariant}>{pagerDutyStatusLabel}</Badge>
                 </div>
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  <input
+                    type="checkbox"
+                    checked={pagerDutyEnabled}
+                    onChange={(event) => setPagerDutyEnabled(event.target.checked)}
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                  Enable PagerDuty alerts
+                </label>
                 <div className="grid gap-3 lg:grid-cols-2">
-                  <Input placeholder="Integration Key" defaultValue="••••••••••••••••" />
-                  <Select defaultValue="critical">
-                    <option value="info">Info</option>
-                    <option value="warning">Warning</option>
-                    <option value="error">Error</option>
-                    <option value="critical">Critical</option>
+                  <Input
+                    type="password"
+                    placeholder="Integration Key"
+                    value={pagerDutyKey}
+                    onChange={(event) => setPagerDutyKey(event.target.value)}
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                  <Select
+                    value={pagerDutySeverity}
+                    onChange={(event) => setPagerDutySeverity(event.target.value as AlertSeverity)}
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  >
+                    {SEVERITY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
                   </Select>
                 </div>
               </div>
@@ -713,22 +1057,52 @@ export function SystemPage() {
               <div className="rounded-2xl border border-border bg-white/70 p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-sm font-semibold text-ink">Slack Notifications</div>
-                  <Badge variant="default">Inactive</Badge>
+                  <Badge variant={slackStatusVariant}>{slackStatusLabel}</Badge>
                 </div>
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  <input
+                    type="checkbox"
+                    checked={slackEnabled}
+                    onChange={(event) => setSlackEnabled(event.target.checked)}
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                  Enable Slack alerts
+                </label>
                 <div className="grid gap-3 lg:grid-cols-2">
-                  <Input placeholder="Webhook URL" />
-                  <Select defaultValue="error">
-                    <option value="info">Info</option>
-                    <option value="warning">Warning</option>
-                    <option value="error">Error</option>
-                    <option value="critical">Critical</option>
+                  <Input
+                    type="password"
+                    placeholder="https://hooks.slack.com/services/..."
+                    value={slackWebhook}
+                    onChange={(event) => setSlackWebhook(event.target.value)}
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  />
+                  <Select
+                    value={slackSeverity}
+                    onChange={(event) => setSlackSeverity(event.target.value as AlertSeverity)}
+                    disabled={!canEditConfig || saveConfigMutation.isPending}
+                  >
+                    {SEVERITY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
                   </Select>
                 </div>
               </div>
 
               <div className="flex justify-end">
-                <Button variant="primary" size="sm">Save Alert Rules</Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  type="button"
+                  onClick={handleSaveAlerting}
+                  disabled={!canEditConfig || saveConfigMutation.isPending}
+                >
+                  {saveConfigMutation.isPending ? "Saving..." : "Save Alerting"}
+                </Button>
               </div>
+              {alertingError ? <div className="text-xs text-danger">{alertingError}</div> : null}
+              {!canEditConfig ? <div className="text-xs text-muted">Admin role required to update system config.</div> : null}
             </div>
           </Card>
         </>

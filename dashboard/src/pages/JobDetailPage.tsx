@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { epochToMillis, formatDateTime } from "../lib/format";
 import { useConfigStore } from "../state/config";
@@ -12,6 +12,8 @@ import { JobStatusBadge } from "../components/StatusBadge";
 export function JobDetailPage() {
   const { jobId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
   const queryClient = useQueryClient();
   const traceUrlTemplate = useConfigStore((state) => state.traceUrlTemplate);
   const [reason, setReason] = useState("");
@@ -60,6 +62,27 @@ export function JobDetailPage() {
   const job = jobQuery.data;
   const decisions = decisionsQuery.data || [];
 
+  useEffect(() => {
+    if (!job || !tabParam || typeof document === "undefined") {
+      return;
+    }
+    const targetId =
+      tabParam === "safety" || tabParam === "decisions"
+        ? "job-safety"
+        : tabParam === "audit"
+        ? "job-audit"
+        : tabParam === "logs"
+        ? "job-logs"
+        : "";
+    if (!targetId) {
+      return;
+    }
+    const node = document.getElementById(targetId);
+    if (node) {
+      node.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [job, tabParam]);
+
   const traceUrl = useMemo(() => {
     if (!job?.trace_id || !traceUrlTemplate) {
       return "";
@@ -100,6 +123,30 @@ export function JobDetailPage() {
       params.set("requires", job.requires.join(","));
     }
     return `/policy?${params.toString()}`;
+  }, [job]);
+
+  const logLines = useMemo(() => {
+    if (!job) {
+      return [];
+    }
+    const lines: Array<{ level: "INFO" | "WARN" | "ERROR"; message: string }> = [];
+    lines.push({ level: "INFO", message: `Job ${job.id} is ${job.state}` });
+    if (job.last_state && job.last_state !== job.state) {
+      lines.push({ level: "INFO", message: `Previous state: ${job.last_state}` });
+    }
+    if (job.approval_required) {
+      lines.push({ level: "WARN", message: "Approval required before execution." });
+    }
+    if (job.error_message) {
+      lines.push({ level: "ERROR", message: job.error_message });
+    }
+    if (job.error_status) {
+      lines.push({ level: "ERROR", message: `Status: ${job.error_status}` });
+    }
+    if (job.error_code) {
+      lines.push({ level: "ERROR", message: `Code: ${job.error_code}` });
+    }
+    return lines;
   }, [job]);
 
   if (jobQuery.isLoading) {
@@ -207,7 +254,7 @@ export function JobDetailPage() {
         </Card>
       ) : null}
 
-      <Card>
+      <Card id="job-safety">
         <CardHeader>
           <CardTitle>Policy Decision</CardTitle>
           <div className="text-xs text-muted">Safety evaluation details</div>
@@ -263,7 +310,7 @@ export function JobDetailPage() {
         ) : null}
       </Card>
 
-      <Card>
+      <Card id="job-audit">
         <CardHeader>
           <CardTitle>Decision Audit Log</CardTitle>
           <div className="text-xs text-muted">Policy checks recorded for this job</div>
@@ -338,19 +385,20 @@ export function JobDetailPage() {
         </pre>
       </Card>
 
-      <Card>
+      <Card id="job-logs">
         <CardHeader>
           <CardTitle>Logs</CardTitle>
           <div className="text-xs text-muted">External logs for this job execution</div>
         </CardHeader>
         <div className="rounded-2xl border border-border bg-black p-4 font-mono text-xs text-green-400 h-64 overflow-y-auto">
-          <div>[INFO] Starting job execution...</div>
-          <div>[INFO] Processing input parameters</div>
-          <div>[INFO] Connecting to worker context</div>
-          {job.state === "failed" ? (
-             <div className="text-red-400">[ERROR] Execution failed: {job.error_message || "Unknown error"}</div>
+          {logLines.length ? (
+            logLines.map((line, index) => (
+              <div key={`log-${index}`} className={line.level === "ERROR" ? "text-red-400" : line.level === "WARN" ? "text-yellow-300" : undefined}>
+                [{line.level}] {line.message}
+              </div>
+            ))
           ) : (
-             <div>[INFO] Execution completed successfully</div>
+            <div className="text-muted">No logs recorded for this job yet.</div>
           )}
         </div>
       </Card>

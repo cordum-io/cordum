@@ -37,6 +37,49 @@ If you host the dashboard on a different origin than the gateway, set `CORDUM_AL
 The live bus stream (`/api/v1/stream`) authenticates via WebSocket subprotocols:
 `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` (the dashboard sets this automatically when an API key is configured).
 
+## System Config: Observability + Alerting
+
+The System page writes observability and alerting settings into the config service
+(scope `system`, scope_id `default`) via `POST /api/v1/config`. Admin role is required
+when enterprise RBAC is enabled.
+
+Example:
+
+```json
+{
+  "observability": {
+    "otel": {
+      "enabled": true,
+      "endpoint": "otel-collector:4317",
+      "protocol": "grpc",
+      "headers": {},
+      "resource_attributes": {
+        "service.name": "cordum-gateway"
+      }
+    },
+    "grafana": {
+      "base_url": "https://grafana.example.com",
+      "dashboards": {
+        "system_overview": "d/abcd/system-overview",
+        "workflow_performance": "d/wxyz/workflow-performance"
+      }
+    }
+  },
+  "alerting": {
+    "pagerduty": {
+      "enabled": true,
+      "integration_key": "pd-key",
+      "severity": "critical"
+    },
+    "slack": {
+      "enabled": true,
+      "webhook_url": "https://hooks.slack.com/services/...",
+      "severity": "error"
+    }
+  }
+}
+```
+
 ## Docker Build
 
 ```bash

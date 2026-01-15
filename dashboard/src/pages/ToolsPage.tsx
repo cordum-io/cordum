@@ -52,6 +52,14 @@ function ArtifactsTool() {
       setUploadContent("");
     },
   });
+  let decodedContent = "";
+  if (getQuery.data?.content_base64) {
+    try {
+      decodedContent = atob(getQuery.data.content_base64);
+    } catch {
+      decodedContent = "";
+    }
+  }
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -84,11 +92,7 @@ function ArtifactsTool() {
               <div>Retention: {getQuery.data.metadata?.retention || "standard"}</div>
               <div>Size: {getQuery.data.content_base64?.length || 0} bytes (encoded)</div>
             </div>
-            <Textarea 
-              readOnly 
-              rows={10} 
-              value={getQuery.data.content_base64 ? atob(getQuery.data.content_base64) : ""} 
-            />
+            <Textarea readOnly rows={10} value={decodedContent} />
           </div>
         ) : null}
       </Card>
@@ -135,6 +139,9 @@ function LocksTool() {
   const [owner, setOwner] = useState("admin-tool");
   const [ttl, setTtl] = useState("30000");
   const [lookupResource, setLookupResource] = useState("");
+  const ttlValue = Number.parseInt(ttl, 10);
+  const ttlMs = Number.isFinite(ttlValue) ? ttlValue : 0;
+  const ttlInvalid = ttlMs <= 0;
 
   const getQuery = useQuery({
     queryKey: ["lock", lookupResource],
@@ -144,7 +151,7 @@ function LocksTool() {
   });
 
   const acquireMutation = useMutation({
-    mutationFn: () => api.acquireLock(resource, owner, parseInt(ttl)),
+    mutationFn: () => api.acquireLock(resource, owner, ttlMs),
     onSuccess: () => setLookupResource(resource),
   });
 
@@ -183,7 +190,7 @@ function LocksTool() {
             <Button 
               variant="primary" 
               onClick={() => acquireMutation.mutate()}
-              disabled={!resource || acquireMutation.isPending}
+              disabled={!resource || ttlInvalid || acquireMutation.isPending}
             >
               Acquire
             </Button>
