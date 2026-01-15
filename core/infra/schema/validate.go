@@ -24,7 +24,7 @@ func ValidateSchema(id string, schema []byte, value any) error {
 	}
 	payload, err := normalizeValue(value)
 	if err != nil {
-		return err
+		return fmt.Errorf("normalize payload: %w", err)
 	}
 	if err := compiled.Validate(payload); err != nil {
 		return fmt.Errorf("schema validation failed: %w", err)

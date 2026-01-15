@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SafetyPolicy",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "version": {"type": "string"},
+    "default_tenant": {"type": "string"},
+    "rules": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/rule"}
+    },
+    "tenants": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/definitions/tenantPolicy"}
+    }
+  },
+  "definitions": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "match": {"$ref": "#/definitions/policyMatch"},
+        "decision": {
+          "type": "string",
+          "enum": ["allow", "permit", "deny", "block", "require_approval", "require-approval", "require_human", "allow_with_constraints", "allow-with-constraints", "throttle"]
+        },
+        "reason": {"type": "string"},
+        "constraints": {"$ref": "#/definitions/constraints"},
+        "remediations": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/remediation"}
+        }
+      }
+    },
+    "policyMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tenants": {"type": "array", "items": {"type": "string"}},
+        "topics": {"type": "array", "items": {"type": "string"}},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "risk_tags": {"type": "array", "items": {"type": "string"}},
+        "requires": {"type": "array", "items": {"type": "string"}},
+        "pack_ids": {"type": "array", "items": {"type": "string"}},
+        "actor_ids": {"type": "array", "items": {"type": "string"}},
+        "actor_types": {"type": "array", "items": {"type": "string"}},
+        "labels": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "secrets_present": {"type": "boolean"},
+        "mcp": {"$ref": "#/definitions/mcpPolicy"}
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "budgets": {"$ref": "#/definitions/budgetConstraints"},
+        "sandbox": {"$ref": "#/definitions/sandboxProfile"},
+        "toolchain": {"$ref": "#/definitions/toolchainConstraints"},
+        "diff": {"$ref": "#/definitions/diffConstraints"},
+        "redaction_level": {"type": "string"}
+      }
+    },
+    "budgetConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_runtime_ms": {"type": "integer", "minimum": 0},
+        "max_retries": {"type": "integer", "minimum": 0},
+        "max_artifact_bytes": {"type": "integer", "minimum": 0},
+        "max_concurrent_jobs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "sandboxProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "isolated": {"type": "boolean"},
+        "network_allowlist": {"type": "array", "items": {"type": "string"}},
+        "fs_read_only": {"type": "array", "items": {"type": "string"}},
+        "fs_read_write": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "toolchainConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_tools": {"type": "array", "items": {"type": "string"}},
+        "allowed_commands": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "diffConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_files": {"type": "integer", "minimum": 0},
+        "max_lines": {"type": "integer", "minimum": 0},
+        "deny_path_globs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "replacement_topic": {"type": "string"},
+        "replacement_capability": {"type": "string"},
+        "add_labels": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "remove_labels": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "mcpPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_servers": {"type": "array", "items": {"type": "string"}},
+        "deny_servers": {"type": "array", "items": {"type": "string"}},
+        "allow_tools": {"type": "array", "items": {"type": "string"}},
+        "deny_tools": {"type": "array", "items": {"type": "string"}},
+        "allow_resources": {"type": "array", "items": {"type": "string"}},
+        "deny_resources": {"type": "array", "items": {"type": "string"}},
+        "allow_actions": {"type": "array", "items": {"type": "string"}},
+        "deny_actions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "tenantPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_topics": {"type": "array", "items": {"type": "string"}},
+        "deny_topics": {"type": "array", "items": {"type": "string"}},
+        "allowed_repo_hosts": {"type": "array", "items": {"type": "string"}},
+        "denied_repo_hosts": {"type": "array", "items": {"type": "string"}},
+        "max_concurrent_jobs": {"type": "integer", "minimum": 0},
+        "mcp": {"$ref": "#/definitions/mcpPolicy"}
+      }
+    }
+  }
+}

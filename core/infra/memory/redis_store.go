@@ -58,7 +58,7 @@ func NewRedisStore(url string) (*RedisStore, error) {
 
 	client, err := redisutil.NewClient(url)
 	if err != nil {
-		return nil, fmt.Errorf("parse redis url: %w", err)
+		return nil, fmt.Errorf("create redis client: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

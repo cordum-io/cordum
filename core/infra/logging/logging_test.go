@@ -56,6 +56,27 @@ func TestErrorJSONFormat(t *testing.T) {
 	}
 }
 
+func TestWarnTextFormat(t *testing.T) {
+	logFormatOnce = sync.Once{}
+	logAsJSON = false
+
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	})
+
+	Warn("worker", "slow", "key", "val")
+	got := strings.TrimSpace(buf.String())
+	if !strings.Contains(got, "[WORKER] WARN slow") || !strings.Contains(got, "key=val") {
+		t.Fatalf("unexpected log output: %s", got)
+	}
+}
+
 func TestFormatFields(t *testing.T) {
 	out := formatFields("a", 1, "b")
 	if !strings.Contains(out, "a=1") || !strings.Contains(out, "b=(missing)") {

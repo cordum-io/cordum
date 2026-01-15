@@ -29,13 +29,16 @@ func ParsePoolsConfig(data []byte) (*PoolsConfig, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
+	if err := validateConfigSchema("pools", poolsSchemaFile, data); err != nil {
+		return nil, err
+	}
 	var raw rawPoolsConfig
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse pool config: %w", err)
 	}
 	topics, err := parseTopicPools(raw.Topics)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse pool topics: %w", err)
 	}
 	if len(topics) == 0 {
 		return nil, errors.New("pool config has no topics")
@@ -58,35 +61,24 @@ func LoadPoolConfig(path string) (*PoolsConfig, error) {
 	// #nosec G304 -- pool config path is operator-provided.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read pool config: %w", err)
+		return nil, fmt.Errorf("read pool config %s: %w", path, err)
+	}
+	if len(data) == 0 {
+		return nil, errors.New("pool config is empty")
 	}
 
-	var raw rawPoolsConfig
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse pool config: %w", err)
-	}
-	topics, err := parseTopicPools(raw.Topics)
+	cfg, err := ParsePoolsConfig(data)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load pool config %s: %w", path, err)
 	}
-	if len(topics) == 0 {
-		return nil, errors.New("pool config has no topics")
-	}
-	if raw.Pools == nil {
-		raw.Pools = map[string]PoolConfig{}
-	}
-
-	return &PoolsConfig{
-		Topics: topics,
-		Pools:  raw.Pools,
-	}, nil
+	return cfg, nil
 }
 
 // LoadPoolTopics returns a single-pool mapping for legacy callers.
 func LoadPoolTopics(path string) (map[string]string, error) {
 	cfg, err := LoadPoolConfig(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load pool topics: %w", err)
 	}
 	return cfg.TopicToPool(), nil
 }

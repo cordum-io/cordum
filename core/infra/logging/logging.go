@@ -36,6 +36,15 @@ func Info(component, msg string, kv ...interface{}) {
 	log.Printf("[%s] %s%s", strings.ToUpper(component), msg, formatFields(kv...))
 }
 
+// Warn logs a warning message with key/value fields using a consistent prefix.
+func Warn(component, msg string, kv ...interface{}) {
+	if jsonEnabled() {
+		logJSON("WARN", component, msg, kv...)
+		return
+	}
+	log.Printf("[%s] WARN %s%s", strings.ToUpper(component), msg, formatFields(kv...))
+}
+
 // Error logs an error message with key/value fields using a consistent prefix.
 func Error(component, msg string, kv ...interface{}) {
 	if jsonEnabled() {

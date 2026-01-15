@@ -514,9 +514,9 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 					}
 					return record, nil
 				}
-				logging.Info("scheduler", "approval label ignored (hash mismatch)", "job_id", jobID)
+				logging.Warn("scheduler", "approval label ignored (hash mismatch)", "job_id", jobID)
 			} else {
-				logging.Info("scheduler", "approval label ignored (no approval record)", "job_id", jobID)
+				logging.Warn("scheduler", "approval label ignored (no approval record)", "job_id", jobID)
 			}
 		}
 	}

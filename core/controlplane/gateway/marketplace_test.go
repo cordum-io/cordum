@@ -63,6 +63,7 @@ steps:
 				Version:     "1.0.0",
 				Title:       "Demo Pack",
 				Description: "Marketplace demo",
+				Image:       "https://example.com/demo.png",
 				URL:         "http://invalid.local/demo-pack.tgz",
 				Sha256:      hex.EncodeToString(sum[:]),
 			},
@@ -114,6 +115,9 @@ steps:
 	}
 	if resp.Items[0].InstalledVersion != "0.9.0" {
 		t.Fatalf("expected installed version, got %s", resp.Items[0].InstalledVersion)
+	}
+	if resp.Items[0].Image != "https://example.com/demo.png" {
+		t.Fatalf("expected image, got %s", resp.Items[0].Image)
 	}
 }
 

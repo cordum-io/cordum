@@ -69,14 +69,14 @@ func NewNatsBus(url string) (*NatsBus, error) {
 		}),
 	}
 	if tlsConfig, err := natsTLSConfigFromEnv(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nats tls config: %w", err)
 	} else if tlsConfig != nil {
 		opts = append(opts, nats.Secure(tlsConfig))
 	}
 
 	nc, err := nats.Connect(url, opts...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect nats %s: %w", url, err)
 	}
 	b := &NatsBus{nc: nc, ackWait: defaultAckWait}
 	b.initJetStreamFromEnv()
@@ -111,7 +111,7 @@ func (b *NatsBus) Publish(subject string, packet *pb.BusPacket) error {
 	}
 	data, err := proto.Marshal(packet)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal bus packet: %w", err)
 	}
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		msgID := computeMsgID(subject, packet)
@@ -120,9 +120,15 @@ func (b *NatsBus) Publish(subject string, packet *pb.BusPacket) error {
 		} else {
 			_, err = b.js.Publish(subject, data)
 		}
-		return err
+		if err != nil {
+			return fmt.Errorf("publish %s: %w", subject, err)
+		}
+		return nil
 	}
-	return b.nc.Publish(subject, data)
+	if err := b.nc.Publish(subject, data); err != nil {
+		return fmt.Errorf("publish %s: %w", subject, err)
+	}
+	return nil
 }
 
 // Subscribe attaches a subscription that decodes protobuf packets and invokes the handler.
@@ -177,7 +183,10 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 		} else {
 			_, err = b.js.QueueSubscribe(subject, queue, cb, opts...)
 		}
-		return err
+		if err != nil {
+			return fmt.Errorf("subscribe %s: %w", subject, err)
+		}
+		return nil
 	}
 
 	cb := func(msg *nats.Msg) {
@@ -192,10 +201,16 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	}
 	if queue == "" {
 		_, err := b.nc.Subscribe(subject, cb)
-		return err
+		if err != nil {
+			return fmt.Errorf("subscribe %s: %w", subject, err)
+		}
+		return nil
 	}
 	_, err := b.nc.QueueSubscribe(subject, queue, cb)
-	return err
+	if err != nil {
+		return fmt.Errorf("subscribe %s: %w", subject, err)
+	}
+	return nil
 }
 
 func (b *NatsBus) IsConnected() bool {

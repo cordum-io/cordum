@@ -31,3 +31,13 @@ Use the generated SDK under `sdk/` or the protobufs in `core/protocol/pb/v1`.
 
 For message types and envelopes, see `docs/AGENT_PROTOCOL.md` and the CAP repo
 (`github.com/cordum-io/cap/v2`).
+
+## OpenAPI (generated)
+
+Generate OpenAPI specs from the protobufs:
+
+```bash
+make openapi
+```
+
+Output is written to `docs/api/openapi/` (merged as `cordum.swagger.json`).

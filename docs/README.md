@@ -19,6 +19,7 @@ This folder contains the public documentation for Cordum core.
 ## API and configuration
 
 - `docs/api.md` - REST/gRPC overview
+- `make openapi` - generate OpenAPI specs from protobufs in `docs/api/openapi`
 - `docs/configuration.md` - config files + env vars
 
 ## Packs
@@ -39,6 +40,7 @@ This folder contains the public documentation for Cordum core.
 - `docs/backend_capabilities.md` - feature coverage
 - `docs/backend_feature_matrix.md` - feature/test matrix
 - `docs/production.md` - production readiness checklist
+- `make coverage` / `make coverage-core` - coverage reports (core target >= 80%)
 
 ## Dashboards
 
