@@ -110,16 +110,16 @@ func (e *Engine) Start() error {
 	// Heartbeats must be broadcast to all schedulers to keep a complete view
 	// of the worker pool when running multiple scheduler replicas.
 	if err := e.bus.Subscribe(capsdk.SubjectHeartbeat, "", e.HandlePacket); err != nil {
-		return err
+		return fmt.Errorf("subscribe heartbeat: %w", err)
 	}
 	if err := e.bus.Subscribe(capsdk.SubjectSubmit, schedulerQueue, e.HandlePacket); err != nil {
-		return err
+		return fmt.Errorf("subscribe submit: %w", err)
 	}
 	if err := e.bus.Subscribe(capsdk.SubjectResult, schedulerQueue, e.HandlePacket); err != nil {
-		return err
+		return fmt.Errorf("subscribe result: %w", err)
 	}
 	if err := e.bus.Subscribe(capsdk.SubjectCancel, schedulerQueue, e.HandlePacket); err != nil {
-		return err
+		return fmt.Errorf("subscribe cancel: %w", err)
 	}
 	return nil
 }
@@ -624,7 +624,7 @@ func (e *Engine) setJobState(jobID string, state JobState) error {
 	defer cancel()
 	if err := e.jobStore.SetState(ctx, jobID, state); err != nil {
 		logging.Error("scheduler", "failed to set job state", "job_id", jobID, "state", state, "error", err)
-		return err
+		return fmt.Errorf("set job state: %w", err)
 	}
 	return nil
 }
@@ -637,7 +637,7 @@ func (e *Engine) setResultPtr(jobID, ptr string) error {
 	defer cancel()
 	if err := e.jobStore.SetResultPtr(ctx, jobID, ptr); err != nil {
 		logging.Error("scheduler", "failed to persist result ptr", "job_id", jobID, "error", err)
-		return err
+		return fmt.Errorf("set result ptr: %w", err)
 	}
 	return nil
 }
@@ -745,10 +745,10 @@ func (e *Engine) CancelJob(ctx context.Context, jobID string) error {
 	defer cancel()
 	_, err := e.jobStore.CancelJob(cctx, jobID)
 	if err != nil {
-		return err
+		return fmt.Errorf("cancel job: %w", err)
 	}
 	e.publishCancel(jobID, "cancelled by request")
-	return err
+	return nil
 }
 
 func (e *Engine) incJobsReceived(topic string) {

@@ -22,6 +22,8 @@ A pack is either:
 Cordum can discover and install packs from catalog JSON files. Catalogs are configured
 in the config service under `cfg:system:pack_catalogs`:
 
+Catalog entries may include an optional `image` URL for UI pack cards.
+
 Official catalog source: `https://github.com/cordum-io/cordum-packs` (published to `https://packs.cordum.io`).
 
 The gateway seeds `cfg:system:pack_catalogs` with the official catalog if the
@@ -119,6 +121,7 @@ metadata:
   version: 0.3.1
   title: SRE Investigator
   description: Incident triage + evidence collection.
+  image: https://cdn.simpleicons.org/slack
 
 compatibility:
   protocolVersion: 1

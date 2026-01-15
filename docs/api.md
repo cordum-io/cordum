@@ -20,6 +20,7 @@ Common endpoints:
 - Schemas: `GET/POST /api/v1/schemas`, `GET /api/v1/schemas/{id}`
 - Packs: `GET/POST /api/v1/packs`, `GET /api/v1/packs/{id}`
 - Marketplace: `GET /api/v1/marketplace/packs`, `POST /api/v1/marketplace/install`
+- Marketplace items include optional `image` URLs for UI pack cards.
 - Artifacts: `GET/POST /api/v1/artifacts`
 - Locks: `POST /api/v1/locks/acquire`, `POST /api/v1/locks/release`
 - DLQ: `GET /api/v1/dlq`, `POST /api/v1/dlq/replay`

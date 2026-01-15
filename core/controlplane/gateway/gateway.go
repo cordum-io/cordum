@@ -822,8 +822,12 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 		IdleTimeout:       60 * time.Second,
 	}
 	if err := srv.ListenAndServe(); err != nil {
+		if errors.Is(err, http.ErrServerClosed) {
+			logging.Info("api-gateway", "http server closed")
+			return nil
+		}
 		logging.Error("api-gateway", "http server error", "error", err)
-		return err
+		return fmt.Errorf("http server failed: %w", err)
 	}
 	return nil
 }

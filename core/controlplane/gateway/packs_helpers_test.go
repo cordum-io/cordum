@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cordum/cordum/core/infra/buildinfo"
 	wf "github.com/cordum/cordum/core/workflow"
 )
 
@@ -134,5 +135,34 @@ func TestPackPathHelpers(t *testing.T) {
 	root, err = findPackRoot(parent)
 	if err != nil || root != nested {
 		t.Fatalf("expected nested pack root, got %s err=%v", root, err)
+	}
+}
+
+func TestSemverHelpers(t *testing.T) {
+	if _, ok := parseSemver("1"); ok {
+		t.Fatalf("expected short semver invalid")
+	}
+	if _, ok := parseSemver("v1.2.3"); !ok {
+		t.Fatalf("expected valid semver")
+	}
+	if compareSemver([3]int{1, 2, 3}, [3]int{1, 2, 4}) != -1 {
+		t.Fatalf("expected compare semver less")
+	}
+	if compareSemver([3]int{2, 0, 0}, [3]int{1, 9, 9}) != 1 {
+		t.Fatalf("expected compare semver greater")
+	}
+
+	orig := buildinfo.Version
+	buildinfo.Version = "1.2.0"
+	t.Cleanup(func() { buildinfo.Version = orig })
+
+	if err := ensureCoreVersionCompatible("1.3.0"); err == nil {
+		t.Fatalf("expected minCoreVersion error")
+	}
+	if err := ensureCoreVersionCompatible("1.2.0"); err != nil {
+		t.Fatalf("expected minCoreVersion ok: %v", err)
+	}
+	if err := ensureCoreVersionCompatible("bad"); err == nil {
+		t.Fatalf("expected invalid minCoreVersion error")
 	}
 }
