@@ -10,6 +10,7 @@ Compose mounts these files from `config/`:
 - `config/pools.yaml` - topic -> pool routing
 - `config/timeouts.yaml` - per-topic and per-workflow timeouts
 - `config/safety.yaml` - safety kernel policy
+- `config/system.yaml` - system config template for the config service (budgets, rate limits, observability, alerting)
 
 ## Core environment variables
 

@@ -24,7 +24,7 @@ const REASON_CODE_MAP: Record<string, ReasonCodeMapping> = {
     title: "Topic not mapped to pool",
     description:
       "This topic has no pool routing configured. Map the topic to a worker pool in your pools configuration or pack overlays.",
-    action: { label: "View Pools", href: "/system?tab=config" },
+    action: { label: "View Pools", href: "/pools" },
     severity: "warning",
   },
   no_workers: {

@@ -88,3 +88,24 @@ slo:
   error_rate_budget: 0.01
   timeout_seconds: 60
   critical: false
+observability:
+  otel:
+    enabled: false
+    endpoint: ""
+    protocol: "grpc"
+    headers: {}
+    resource_attributes: {}
+  grafana:
+    base_url: ""
+    dashboards:
+      system_overview: ""
+      workflow_performance: ""
+alerting:
+  pagerduty:
+    enabled: false
+    integration_key: ""
+    severity: "critical"
+  slack:
+    enabled: false
+    webhook_url: ""
+    severity: "error"

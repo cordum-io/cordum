@@ -247,6 +247,11 @@ export const api = {
   listSchemas: () => apiRequest<Record<string, unknown>[]>("/api/v1/schemas"),
   getConfig: (scope: string, scopeId: string) =>
     apiRequest<ConfigDocument>("/api/v1/config", { query: { scope, scope_id: scopeId } }),
+  setConfig: (scope: string, scopeId: string, data: Record<string, unknown>, meta?: Record<string, string>) =>
+    apiRequest<void>("/api/v1/config", {
+      method: "POST",
+      body: { scope, scope_id: scopeId, data, meta },
+    }),
   getEffectiveConfig: (params?: {
     org_id?: string;
     team_id?: string;

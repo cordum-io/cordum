@@ -159,7 +159,10 @@ export function WorkflowCreatePage() {
             <Input
               type="number"
               value={workflowData.timeout_sec || 900}
-              onChange={(e) => handleMetaChange("timeout_sec", parseInt(e.target.value) || 900)}
+              onChange={(e) => {
+                const parsed = Number.parseInt(e.target.value, 10);
+                handleMetaChange("timeout_sec", Number.isFinite(parsed) ? parsed : 900);
+              }}
               placeholder="900"
             />
           </div>
