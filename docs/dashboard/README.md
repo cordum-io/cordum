@@ -37,6 +37,12 @@ If you host the dashboard on a different origin than the gateway, set `CORDUM_AL
 The live bus stream (`/api/v1/stream`) authenticates via WebSocket subprotocols:
 `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` (the dashboard sets this automatically when an API key is configured).
 
+## Caching Headers
+
+The dashboard nginx config sets `index.html` and `config.json` to no-cache to
+avoid stale asset references after deploys. The `/assets/` bundle is served with
+long-lived immutable cache headers.
+
 ## System Config: Observability + Alerting
 
 The System page writes observability and alerting settings into the config service

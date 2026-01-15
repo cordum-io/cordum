@@ -23,7 +23,7 @@ const (
 func NewClient(url string) (redis.UniversalClient, error) {
 	opts, err := ParseOptions(url)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse redis options: %w", err)
 	}
 	addrs := parseAddrListEnv(envRedisClusterAddrs)
 	if len(addrs) == 0 {
@@ -43,10 +43,10 @@ func NewClient(url string) (redis.UniversalClient, error) {
 func ParseOptions(url string) (*redis.Options, error) {
 	opts, err := redis.ParseURL(url)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
 	if err := applyTLSFromEnv(opts); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("apply redis tls config: %w", err)
 	}
 	return opts, nil
 }
@@ -57,7 +57,7 @@ func applyTLSFromEnv(opts *redis.Options) error {
 	}
 	tlsConfig, err := tlsConfigFromEnv(opts.TLSConfig)
 	if err != nil {
-		return err
+		return fmt.Errorf("build tls config: %w", err)
 	}
 	if tlsConfig != nil {
 		opts.TLSConfig = tlsConfig

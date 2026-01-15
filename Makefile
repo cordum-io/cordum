@@ -4,6 +4,7 @@ PB_OUT_CORE = core/protocol/pb/v1
 PROTO_OUT = $(abspath $(PB_OUT))
 PROTO_OUT_CORE = $(abspath $(PB_OUT_CORE))
 PROTO_FILES = api.proto context.proto
+OPENAPI_OUT = docs/api/openapi
 
 BIN_DIR ?= bin
 SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordumctl
@@ -51,6 +52,15 @@ test:
 test-integration:
 	go test -tags=integration ./...
 
+coverage:
+	./tools/scripts/coverage.sh
+
+coverage-core:
+	MIN_COVERAGE=80 ./tools/scripts/check_coverage.sh
+
+openapi:
+	./tools/scripts/gen_openapi.sh
+
 docker:
 	@test -n "$(SERVICE)" || (echo "SERVICE is required (e.g. SERVICE=cordum-scheduler)" && exit 1)
 	@BASE="$(SERVICE)"; BASE="$${BASE#cordum-}"; \
@@ -71,4 +81,4 @@ dev-down:
 dev-logs:
 	docker compose logs -f
 
-.PHONY: proto build build-all $(SERVICES:%=build-%) test test-integration docker smoke dev-up dev-down dev-logs
+.PHONY: proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke dev-up dev-down dev-logs

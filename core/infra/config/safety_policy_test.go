@@ -139,3 +139,10 @@ func TestMCPAllowed(t *testing.T) {
 		t.Fatalf("expected allowed tool")
 	}
 }
+
+func TestParseSafetyPolicyInvalidDecision(t *testing.T) {
+	_, err := ParseSafetyPolicy([]byte("rules:\n  - id: rule1\n    decision: maybe\n"))
+	if err == nil {
+		t.Fatalf("expected schema validation error")
+	}
+}

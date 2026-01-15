@@ -47,3 +47,13 @@ func TestParseTimeoutsInvalid(t *testing.T) {
 		t.Fatalf("expected defaults on parse error")
 	}
 }
+
+func TestParseTimeoutsSchemaInvalid(t *testing.T) {
+	cfg, err := ParseTimeouts([]byte("reconciler:\n  dispatch_timeout_seconds: -5\n"))
+	if err == nil {
+		t.Fatalf("expected schema error")
+	}
+	if cfg == nil || cfg.Reconciler.DispatchTimeoutSeconds == 0 {
+		t.Fatalf("expected defaults on schema error")
+	}
+}

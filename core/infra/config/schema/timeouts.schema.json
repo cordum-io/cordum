@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TimeoutsConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "workflows": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "child_timeout_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_timeout_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_retries": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "topics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_retries": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "reconciler": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_timeout_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "running_timeout_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scan_interval_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

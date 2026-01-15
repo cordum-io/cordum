@@ -6,6 +6,7 @@ Thanks for helping improve Cordum.
 
 - Go toolchain: `go 1.24`
 - Tests: `go test ./...`
+- Coverage: `make coverage` (all) or `make coverage-core` (enforces 80% on `core/`)
 - Format: `gofmt -w` on Go files
 
 ## Development workflow
@@ -36,7 +37,9 @@ License on the Change Date (see `LICENSE`).
 ## Code guidelines
 
 - Use standard library `log` for logging.
+- Use `logging.Info/Warn/Error` for consistent levels where applicable.
 - Avoid panics in library code; return errors.
+- Wrap external errors with context using `fmt.Errorf("context: %w", err)`.
 - Keep functions small and focused.
 - Follow existing naming conventions (`NewXxx`, `Engine`, `XxxStrategy`).
 

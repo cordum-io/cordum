@@ -331,6 +331,7 @@ type marketplaceCatalogPack struct {
 	Author       string   `json:"author"`
 	Homepage     string   `json:"homepage"`
 	Source       string   `json:"source"`
+	Image        string   `json:"image"`
 	License      string   `json:"license"`
 	URL          string   `json:"url"`
 	Sha256       string   `json:"sha256"`
@@ -356,6 +357,7 @@ type marketplacePackItem struct {
 	Author           string   `json:"author,omitempty"`
 	Homepage         string   `json:"homepage,omitempty"`
 	Source           string   `json:"source,omitempty"`
+	Image            string   `json:"image,omitempty"`
 	License          string   `json:"license,omitempty"`
 	URL              string   `json:"url,omitempty"`
 	Sha256           string   `json:"sha256,omitempty"`
@@ -1099,6 +1101,7 @@ func (s *server) buildMarketplaceResponse(ctx context.Context, catalogs []market
 			Author:       pack.Author,
 			Homepage:     pack.Homepage,
 			Source:       pack.Source,
+			Image:        pack.Image,
 			License:      pack.License,
 			URL:          pack.URL,
 			Sha256:       pack.Sha256,

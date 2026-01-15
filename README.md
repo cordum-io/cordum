@@ -7,6 +7,7 @@
 [![Docs](https://img.shields.io/badge/docs-cordum--docs-0ea5e9)](docs/README.md)
 ![CI](https://github.com/cordum-io/cordum/workflows/CI/badge.svg)
 ![CodeQL](https://github.com/cordum-io/cordum/workflows/CodeQL/badge.svg)
+![Coverage Target](https://img.shields.io/badge/coverage-target%2080%25-22c55e)
 [![Website](https://img.shields.io/badge/website-cordum.io-blue)](https://cordum.io)
 [![WebsiteDocs](https://img.shields.io/badge/docs-cordum.io%2Fdocs-0ea5e9)](https://cordum.io/docs)
 

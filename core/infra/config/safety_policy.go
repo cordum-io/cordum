@@ -156,9 +156,13 @@ func LoadSafetyPolicy(path string) (*SafetyPolicy, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("read safety policy %s: %w", path, err)
 	}
-	return ParseSafetyPolicy(data)
+	policy, err := ParseSafetyPolicy(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse safety policy %s: %w", path, err)
+	}
+	return policy, nil
 }
 
 // ParseSafetyPolicy parses a policy bundle from YAML bytes.
@@ -166,9 +170,12 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
+	if err := validateConfigSchema("safety policy", safetyPolicySchemaFile, data); err != nil {
+		return nil, err
+	}
 	var policy SafetyPolicy
 	if err := yaml.Unmarshal(data, &policy); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse safety policy: %w", err)
 	}
 	if policy.Tenants == nil {
 		policy.Tenants = map[string]TenantPolicy{}

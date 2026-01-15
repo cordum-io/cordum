@@ -339,6 +339,7 @@ export type PackRecord = {
       version?: string;
       title?: string;
       description?: string;
+      image?: string;
     };
     compatibility?: {
       protocolVersion?: number;
@@ -412,6 +413,7 @@ export type MarketplacePack = {
   author?: string;
   homepage?: string;
   source?: string;
+  image?: string;
   license?: string;
   url?: string;
   sha256?: string;

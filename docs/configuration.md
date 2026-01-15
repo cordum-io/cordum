@@ -12,6 +12,10 @@ Compose mounts these files from `config/`:
 - `config/safety.yaml` - safety kernel policy
 - `config/system.yaml` - system config template for the config service (budgets, rate limits, observability, alerting)
 
+The control plane validates pool/timeout/safety files against embedded JSON
+schemas (see `core/infra/config/schema/`). Invalid configs return errors and,
+for timeouts, fall back to defaults.
+
 ## Core environment variables
 
 Shared across services:
