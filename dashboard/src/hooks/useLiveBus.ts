@@ -91,6 +91,32 @@ function eventFromPacket(packet: BusPacket) {
       eventType: "job_cancel",
     };
   }
+  if (payload.chatMessage) {
+    const msg = payload.chatMessage;
+    return {
+      id: msg.id || randomId(),
+      timestamp: msg.createdAt || packet.createdAt || new Date().toISOString(),
+      title: `Chat: ${msg.role || "agent"}`,
+      detail: msg.content?.slice(0, 100) || "",
+      severity: "info" as const,
+      source: packet.senderId,
+      runId: msg.runId,
+      jobId: msg.jobId,
+      eventType: "chat_message",
+      // Extended data for chat store consumption
+      chatData: {
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        stepId: msg.stepId,
+        jobId: msg.jobId,
+        agentId: msg.agentId,
+        agentName: msg.agentName,
+        createdAt: msg.createdAt,
+        metadata: msg.metadata,
+      },
+    };
+  }
   return null;
 }
 

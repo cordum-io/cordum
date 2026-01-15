@@ -599,6 +599,18 @@ export type BusPacket = {
       jobId?: string;
       reason?: string;
     };
+    chatMessage?: {
+      id?: string;
+      runId?: string;
+      role?: "user" | "agent" | "system";
+      content?: string;
+      stepId?: string;
+      jobId?: string;
+      agentId?: string;
+      agentName?: string;
+      createdAt?: string;
+      metadata?: Record<string, unknown>;
+    };
   };
 };
 

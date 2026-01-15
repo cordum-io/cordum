@@ -297,7 +297,7 @@ export function RunsPage() {
                               {progress.activeStatus ? ` · ${progress.activeStatus === "waiting" ? "awaiting approval" : progress.activeStatus}` : ""}
                             </>
                           ) : (
-                            "Queued"
+                            <span className="capitalize">{run.status || "pending"}</span>
                           )}
                         </span>
                         <span>{progress.percent}%</span>
