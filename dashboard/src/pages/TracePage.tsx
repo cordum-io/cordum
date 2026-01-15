@@ -90,13 +90,13 @@ export function TracePage() {
             </div>
           </CardHeader>
           <div className="space-y-1 mt-4">
-            {jobs.map((job) => {
+            {jobs.map((job, index) => {
               const start = new Date(job.created_at || 0).getTime();
               const offset = Math.max(0, start - startTime);
               // A simple visual offset for hierarchy, though a real tree would be better
               // For now, simple waterfall by time
               return (
-                <div key={job.job_id} className="relative group">
+                <div key={job.job_id || index} className="relative group">
                   <div 
                     className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/50 border border-transparent hover:border-border transition-colors"
                     style={{ marginLeft: `${Math.min(offset / 1000, 20)}px` }} // visual indentation by delay (fake tree)
@@ -110,7 +110,7 @@ export function TracePage() {
                       <div className="text-sm font-semibold text-ink flex items-center gap-2">
                         {job.topic}
                         <span className="text-[10px] font-normal text-muted font-mono bg-white/50 px-1 rounded">
-                          {job.job_id.slice(0, 8)}
+                          {job.job_id?.slice(0, 8) || "unknown"}
                         </span>
                       </div>
                       {job.error_message ? (
