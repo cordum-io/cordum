@@ -1479,3 +1479,100 @@ body::before {
 :root[data-theme="dark"] .step-output-viewer__copy {
   background: #1b2529;
 }
+
+/* ============================================
+   NODE CONFIG PANEL - PRESETS & AUTOFILL
+   ============================================ */
+
+.node-config-panel__combo {
+  display: flex;
+  gap: 0;
+}
+
+.node-config-panel__combo input {
+  flex: 1;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.node-config-panel__dropdown-trigger {
+  width: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 12px 12px 0;
+  background: rgba(15, 127, 122, 0.06);
+  font-size: 10px;
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+  appearance: none;
+}
+
+.node-config-panel__dropdown-trigger:hover {
+  background: rgba(15, 127, 122, 0.12);
+}
+
+.node-config-panel__dropdown-trigger:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.node-config-panel__input-with-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.node-config-panel__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.node-config-panel__preset-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.node-config-panel__preset-btn:hover {
+  background: rgba(15, 127, 122, 0.08);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.node-config-panel__preset-btn:active {
+  transform: scale(0.96);
+}
+
+.node-config-panel__select.mb-2 {
+  margin-bottom: 8px;
+}
+
+:root[data-theme="dark"] .node-config-panel__dropdown-trigger {
+  background: rgba(39, 179, 168, 0.1);
+  border-color: rgba(229, 239, 236, 0.12);
+}
+
+:root[data-theme="dark"] .node-config-panel__dropdown-trigger:hover {
+  background: rgba(39, 179, 168, 0.18);
+}
+
+:root[data-theme="dark"] .node-config-panel__preset-btn {
+  background: #141b1e;
+  border-color: rgba(229, 239, 236, 0.12);
+}
+
+:root[data-theme="dark"] .node-config-panel__preset-btn:hover {
+  background: rgba(39, 179, 168, 0.12);
+  border-color: var(--accent);
+}
