@@ -1,64 +1,41 @@
-import { useCallback, useMemo, useState, useEffect } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import ReactFlow, {
   Background,
   BackgroundVariant,
   Controls,
-  Handle,
+  MiniMap,
   MarkerType,
-  Position,
   addEdge,
   useNodesState,
   useEdgesState,
   type Connection,
   type Edge,
   type Node,
-  type NodeProps,
+  type ReactFlowInstance,
+  type XYPosition,
 } from "reactflow";
+import "reactflow/dist/style.css";
+
 import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
+import { BuilderSidebar } from "./BuilderSidebar";
+import { NodeConfigPanel } from "./NodeConfigPanel";
+import { builderNodeTypes } from "./nodeTypes";
+import { NODE_CONFIGS, generateStepId } from "./nodes";
+import type {
+  BuilderNode,
+  BuilderNodeData,
+  BuilderEdge,
+  DragData,
+  BuilderNodeType,
+  WorkerNodeData,
+} from "./types";
 import type { Workflow, Step } from "../../types/api";
-
-type WorkflowNodeData = {
-  title: string;
-  type?: string;
-  topic?: string;
-  onDelete: (id: string) => void;
-  onUpdate: (id: string, data: Partial<WorkflowNodeData>) => void;
-};
-
-const WorkflowNode = ({ id, data }: NodeProps<WorkflowNodeData>) => {
-  return (
-    <div className="workflow-node" data-type={(data.type || "step").toLowerCase()}>
-      <Handle type="target" position={Position.Left} className="workflow-handle" />
-      <div className="workflow-node__header">
-        <div className="workflow-node__copy">
-          <Input 
-            className="text-xs font-semibold bg-transparent border-none p-0 h-auto focus:ring-0" 
-            value={data.title} 
-            onChange={(e) => data.onUpdate(id, { title: e.target.value })}
-          />
-          <div className="text-[10px] text-muted uppercase mt-1">{data.type || "worker"}</div>
-        </div>
-        <button 
-          onClick={() => data.onDelete(id)}
-          className="text-muted hover:text-danger ml-2"
-        >
-          ×
-        </button>
-      </div>
-      <Handle type="source" position={Position.Right} className="workflow-handle" />
-    </div>
-  );
-};
-
-const nodeTypes = {
-  workflowNode: WorkflowNode,
-};
 
 const defaultEdgeOptions = {
   type: "smoothstep",
   markerEnd: { type: MarkerType.ArrowClosed, color: "#9aa7b0" },
   style: { stroke: "#9aa7b0", strokeWidth: 1.4 },
+  animated: false,
 };
 
 type WorkflowBuilderProps = {
@@ -67,32 +44,130 @@ type WorkflowBuilderProps = {
   height?: number;
 };
 
-export function WorkflowBuilder({ initialWorkflow, onChange, height = 500 }: WorkflowBuilderProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+export function WorkflowBuilder({
+  initialWorkflow,
+  onChange,
+  height = 600,
+}: WorkflowBuilderProps) {
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const [nodes, setNodes, onNodesChange] = useNodesState<BuilderNodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Initialize from props
+  // Get selected node
+  const selectedNode = selectedNodeId
+    ? (nodes.find((n) => n.id === selectedNodeId) as BuilderNode | undefined)
+    : null;
+
+  // Delete node handler
+  const deleteNode = useCallback(
+    (id: string) => {
+      setNodes((nds) => nds.filter((node) => node.id !== id));
+      setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
+      if (selectedNodeId === id) {
+        setSelectedNodeId(null);
+      }
+    },
+    [setNodes, setEdges, selectedNodeId]
+  );
+
+  // Select node handler
+  const selectNode = useCallback((id: string) => {
+    setSelectedNodeId(id);
+    setNodes((nds) =>
+      nds.map((node) => ({
+        ...node,
+        data: { ...node.data, selected: node.id === id },
+      }))
+    );
+  }, [setNodes]);
+
+  // Update node handler
+  const updateNode = useCallback(
+    (id: string, newData: Partial<BuilderNodeData>) => {
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id === id) {
+            return { ...node, data: { ...node.data, ...newData } };
+          }
+          return node;
+        })
+      );
+    },
+    [setNodes]
+  );
+
+  // Create node from type
+  const createNode = useCallback(
+    (type: BuilderNodeType, position: XYPosition, extraData?: Partial<BuilderNodeData>): BuilderNode => {
+      const config = NODE_CONFIGS[type];
+      const stepId = generateStepId(type);
+      return {
+        id: stepId,
+        type,
+        position,
+        data: {
+          ...config.defaultData,
+          ...extraData,
+          stepId,
+          label: extraData?.label || config.defaultData.label || config.label,
+          onDelete: deleteNode,
+          onSelect: selectNode,
+        } as BuilderNodeData,
+      };
+    },
+    [deleteNode, selectNode]
+  );
+
+  // Initialize from workflow
   useEffect(() => {
     if (!initialWorkflow?.steps) return;
-    
-    const steps = initialWorkflow.steps;
-    const initialNodes: Node<WorkflowNodeData>[] = Object.entries(steps).map(([id, step], index) => ({
-      id,
-      type: "workflowNode",
-      data: { 
-        title: step.name || id, 
-        type: step.type, 
-        topic: step.topic,
-        onDelete: (nodeId) => deleteNode(nodeId),
-        onUpdate: (nodeId, newData) => updateNode(nodeId, newData)
-      },
-      position: { x: index * 250, y: 100 },
-    }));
 
-    const initialEdges: Edge[] = [];
-    Object.entries(steps).forEach(([id, step]) => {
+    const steps = initialWorkflow.steps;
+    const stepEntries = Object.entries(steps);
+
+    // Calculate positions in a grid layout
+    const initialNodes: BuilderNode[] = stepEntries.map(([id, step], index) => {
+      const row = Math.floor(index / 3);
+      const col = index % 3;
+      const nodeType = mapStepTypeToNodeType(step.type);
+
+      return {
+        id,
+        type: nodeType,
+        position: { x: col * 300 + 100, y: row * 200 + 100 },
+        data: {
+          nodeType,
+          stepId: id,
+          label: step.name || id,
+          topic: step.topic,
+          packId: step.meta?.pack_id,
+          capability: step.meta?.capability,
+          riskTags: step.meta?.risk_tags,
+          requires: step.meta?.requires,
+          timeoutSec: step.timeout_sec,
+          condition: step.condition,
+          delaySec: step.delay_sec,
+          delayUntil: step.delay_until,
+          forEach: step.for_each,
+          maxParallel: step.max_parallel,
+          onDelete: deleteNode,
+          onSelect: selectNode,
+        } as BuilderNodeData,
+      };
+    });
+
+    // Create edges from depends_on
+    const initialEdges: BuilderEdge[] = [];
+    stepEntries.forEach(([id, step]) => {
       step.depends_on?.forEach((dep) => {
-        initialEdges.push({ id: `${dep}-${id}`, source: dep, target: id });
+        initialEdges.push({
+          id: `${dep}-${id}`,
+          source: dep,
+          target: id,
+        });
       });
     });
 
@@ -100,73 +175,103 @@ export function WorkflowBuilder({ initialWorkflow, onChange, height = 500 }: Wor
     setEdges(initialEdges);
   }, []);
 
-  const deleteNode = useCallback((id: string) => {
-    setNodes((nds) => nds.filter((node) => node.id !== id));
-    setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
-  }, [setNodes, setEdges]);
-
-  const updateNode = useCallback((id: string, newData: Partial<WorkflowNodeData>) => {
-    setNodes((nds) => 
-      nds.map((node) => {
-        if (node.id === id) {
-          return { ...node, data: { ...node.data, ...newData } };
-        }
-        return node;
-      })
-    );
-  }, [setNodes]);
-
+  // Handle connection
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+    (params: Connection) => {
+      // Add edge with proper source handle for condition/loop nodes
+      setEdges((eds) =>
+        addEdge(
+          {
+            ...params,
+            data: params.sourceHandle ? { condition: params.sourceHandle } : undefined,
+          },
+          eds
+        )
+      );
+    },
     [setEdges]
   );
 
-  const addStep = () => {
-    const id = `step-${nodes.length + 1}`;
-    const newNode: Node<WorkflowNodeData> = {
-      id,
-      type: "workflowNode",
-      data: { 
-        title: `New Step ${nodes.length + 1}`, 
-        type: "worker",
-        onDelete: (nodeId) => deleteNode(nodeId),
-        onUpdate: (nodeId, newData) => updateNode(nodeId, newData)
-      },
-      position: { x: nodes.length * 50, y: nodes.length * 50 },
-    };
-    setNodes((nds) => nds.concat(newNode));
-  };
+  // Handle drag over
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }, []);
 
-  const addApproval = () => {
-    const id = `approval-${nodes.length + 1}`;
-    const newNode: Node<WorkflowNodeData> = {
-      id,
-      type: "workflowNode",
-      data: { 
-        title: `New Approval ${nodes.length + 1}`, 
-        type: "approval",
-        onDelete: (nodeId) => deleteNode(nodeId),
-        onUpdate: (nodeId, newData) => updateNode(nodeId, newData)
-      },
-      position: { x: nodes.length * 50, y: nodes.length * 50 },
-    };
-    setNodes((nds) => nds.concat(newNode));
-  };
+  // Handle drop
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      setIsDragging(false);
 
-  // Sync changes back
+      if (!reactFlowInstance || !reactFlowWrapper.current) return;
+
+      const dataStr = event.dataTransfer.getData("application/json");
+      if (!dataStr) return;
+
+      try {
+        const dragData: DragData = JSON.parse(dataStr);
+        const bounds = reactFlowWrapper.current.getBoundingClientRect();
+        const position = reactFlowInstance.screenToFlowPosition({
+          x: event.clientX - bounds.left,
+          y: event.clientY - bounds.top,
+        });
+
+        let newNode: BuilderNode;
+
+        if (dragData.type === "node") {
+          newNode = createNode(dragData.nodeType, position);
+        } else if (dragData.type === "pack") {
+          // Create worker node with pack topic data
+          newNode = createNode("worker", position, {
+            label: dragData.topic.topicName,
+            topic: dragData.topic.topicName,
+            packId: dragData.topic.packId,
+            capability: dragData.topic.capability,
+            riskTags: dragData.topic.riskTags,
+            requires: dragData.topic.requires,
+          } as Partial<WorkerNodeData>);
+        } else {
+          return;
+        }
+
+        setNodes((nds) => nds.concat(newNode));
+        selectNode(newNode.id);
+      } catch {
+        // Invalid drag data
+      }
+    },
+    [reactFlowInstance, createNode, setNodes, selectNode]
+  );
+
+  // Sync changes back to workflow
   useEffect(() => {
     const steps: Record<string, Partial<Step>> = {};
+
     nodes.forEach((node) => {
-      const stepDeps = edges
+      const data = node.data as BuilderNodeData;
+      const deps = edges
         .filter((edge) => edge.target === node.id)
         .map((edge) => edge.source);
-      
+
       steps[node.id] = {
         id: node.id,
-        name: node.data.title,
-        type: node.data.type,
-        topic: node.data.topic || "job.default",
-        depends_on: stepDeps.length > 0 ? stepDeps : undefined,
+        name: data.label,
+        type: mapNodeTypeToStepType(data.nodeType),
+        topic: (data as WorkerNodeData).topic || "job.default",
+        depends_on: deps.length > 0 ? deps : undefined,
+        condition: (data as { condition?: string }).condition,
+        delay_sec: (data as { delaySec?: number }).delaySec,
+        delay_until: (data as { delayUntil?: string }).delayUntil,
+        for_each: (data as { forEach?: string }).forEach,
+        max_parallel: (data as { maxParallel?: number }).maxParallel,
+        timeout_sec: (data as { timeoutSec?: number }).timeoutSec,
+        meta: {
+          pack_id: (data as WorkerNodeData).packId,
+          capability: (data as WorkerNodeData).capability,
+          risk_tags: (data as WorkerNodeData).riskTags,
+          requires: (data as WorkerNodeData).requires,
+        },
       };
     });
 
@@ -176,27 +281,158 @@ export function WorkflowBuilder({ initialWorkflow, onChange, height = 500 }: Wor
     });
   }, [nodes, edges]);
 
+  // Add node from toolbar
+  const addNodeFromType = (type: BuilderNodeType) => {
+    const position = {
+      x: Math.random() * 200 + 100,
+      y: Math.random() * 200 + 100,
+    };
+    const newNode = createNode(type, position);
+    setNodes((nds) => nds.concat(newNode));
+    selectNode(newNode.id);
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <Button size="sm" variant="outline" onClick={addStep}>+ Worker Step</Button>
-        <Button size="sm" variant="outline" onClick={addApproval}>+ Approval Step</Button>
+    <div className="workflow-builder">
+      {/* Toolbar */}
+      <div className="workflow-builder__toolbar">
+        <Button size="sm" variant="outline" onClick={() => addNodeFromType("worker")}>
+          + Worker
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => addNodeFromType("approval")}>
+          + Approval
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => addNodeFromType("condition")}>
+          + Condition
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => addNodeFromType("delay")}>
+          + Delay
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => addNodeFromType("loop")}>
+          + Loop
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => addNodeFromType("parallel")}>
+          + Parallel
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => addNodeFromType("subworkflow")}>
+          + Subworkflow
+        </Button>
       </div>
-      <div className="workflow-canvas border rounded-2xl overflow-hidden" style={{ height }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          nodeTypes={nodeTypes}
-          defaultEdgeOptions={defaultEdgeOptions}
-          fitView
+
+      {/* Main content */}
+      <div className="workflow-builder__content" style={{ height }}>
+        {/* Sidebar */}
+        <BuilderSidebar
+          onDragStart={() => setIsDragging(true)}
+          onDragEnd={() => setIsDragging(false)}
+        />
+
+        {/* Canvas */}
+        <div
+          ref={reactFlowWrapper}
+          className={`workflow-builder__canvas ${isDragging ? "workflow-builder__canvas--dragging" : ""}`}
         >
-          <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d0d7dd" />
-          <Controls position="bottom-left" />
-        </ReactFlow>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onInit={setReactFlowInstance}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+            nodeTypes={builderNodeTypes}
+            defaultEdgeOptions={defaultEdgeOptions}
+            fitView
+            snapToGrid
+            snapGrid={[15, 15]}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d0d7dd" />
+            <Controls position="bottom-left" />
+            <MiniMap
+              nodeColor={(node) => {
+                const data = node.data as BuilderNodeData;
+                switch (data.nodeType) {
+                  case "worker":
+                    return "#0f7f7a";
+                  case "approval":
+                    return "#f59e0b";
+                  case "condition":
+                    return "#3b82f6";
+                  case "delay":
+                    return "#9aa7b0";
+                  case "loop":
+                    return "#a855f7";
+                  case "parallel":
+                    return "#06b6d4";
+                  case "subworkflow":
+                    return "#6366f1";
+                  default:
+                    return "#9aa7b0";
+                }
+              }}
+              position="bottom-right"
+            />
+          </ReactFlow>
+        </div>
+
+        {/* Config Panel */}
+        <NodeConfigPanel
+          node={selectedNode || null}
+          onUpdate={updateNode}
+          onClose={() => setSelectedNodeId(null)}
+        />
       </div>
     </div>
   );
+}
+
+// Map step type to builder node type
+function mapStepTypeToNodeType(stepType?: string): BuilderNodeType {
+  switch (stepType?.toLowerCase()) {
+    case "approval":
+      return "approval";
+    case "condition":
+    case "if":
+      return "condition";
+    case "delay":
+    case "wait":
+    case "timer":
+      return "delay";
+    case "loop":
+    case "foreach":
+    case "for_each":
+      return "loop";
+    case "parallel":
+    case "fan_out":
+      return "parallel";
+    case "subworkflow":
+    case "workflow":
+    case "call":
+      return "subworkflow";
+    default:
+      return "worker";
+  }
+}
+
+// Map builder node type to step type
+function mapNodeTypeToStepType(nodeType: BuilderNodeType): string {
+  switch (nodeType) {
+    case "worker":
+      return "worker";
+    case "approval":
+      return "approval";
+    case "condition":
+      return "condition";
+    case "delay":
+      return "delay";
+    case "loop":
+      return "loop";
+    case "parallel":
+      return "parallel";
+    case "subworkflow":
+      return "subworkflow";
+    default:
+      return "worker";
+  }
 }

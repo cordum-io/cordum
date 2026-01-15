@@ -2,12 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { api } from './api';
 
 // Mock the config store
+const updateMock = vi.fn();
 vi.mock('../state/config', () => ({
   useConfigStore: {
     getState: vi.fn(() => ({
       apiBaseUrl: '/api',
       apiKey: 'test-key',
       principalId: 'user-123',
+      principalRole: 'admin',
+      update: updateMock,
     })),
   },
 }));
@@ -51,5 +54,16 @@ describe('API Client', () => {
     });
 
     await expect(api.listWorkflows()).rejects.toThrow('Internal Server Error');
+  });
+
+  it('clears api key on unauthorized', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => 'unauthorized',
+    });
+
+    await expect(api.listWorkflows()).rejects.toThrow('unauthorized');
+    expect(updateMock).toHaveBeenCalledWith({ apiKey: '', principalId: '', principalRole: '' });
   });
 });

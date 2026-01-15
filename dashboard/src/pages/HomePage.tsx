@@ -434,7 +434,8 @@ export function HomePage() {
             <div className="space-y-4">
               {liveRuns.map((run) => {
                 const { percent, activeStep, activeStatus, fanout } = runProgress(run);
-                const statusLabel = activeStatus === "waiting" ? "awaiting approval" : activeStatus === "running" ? "executing" : activeStatus === "pending" ? "queued" : activeStatus;
+                const runStatus = run.status;
+                const statusLabel = activeStatus === "waiting" ? "awaiting approval" : activeStatus === "running" ? "executing" : activeStatus === "pending" ? "preparing" : activeStatus || runStatus;
                 return (
                   <div key={run.id} className="rounded-2xl border border-border bg-white/70 p-4">
                     <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
@@ -469,7 +470,7 @@ export function HomePage() {
                               {statusLabel ? ` · ${statusLabel}` : ""}
                             </>
                           ) : (
-                            "Queued"
+                            <span className="capitalize">{runStatus || "pending"}</span>
                           )}
                           {fanout ? (
                             <span className="ml-2 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">

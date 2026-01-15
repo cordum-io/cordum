@@ -1,4 +1,5 @@
 import { useConfigStore } from "../state/config";
+import type { ChatMessage, ChatResponse } from "../types/chat";
 import type {
   ApprovalsResponse,
   ArtifactResponse,
@@ -106,6 +107,12 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
       body: body as BodyInit | null | undefined,
       signal: controller.signal,
     });
+    if (res.status === 401) {
+      const updater = useConfigStore.getState().update;
+      if (typeof updater === "function") {
+        updater({ apiKey: "", principalId: "", principalRole: "" });
+      }
+    }
     if (!res.ok) {
       const message = await res.text();
       throw new Error(message || `Request failed (${res.status})`);
@@ -145,6 +152,15 @@ export const api = {
   getRunTimeline: (id: string, limit = 200) =>
     apiRequest<TimelineEvent[]>(`/api/v1/workflow-runs/${id}/timeline`, {
       query: { limit },
+    }),
+  getRunChat: (runId: string, limit = 100, cursor?: number) =>
+    apiRequest<ChatResponse>(`/api/v1/workflow-runs/${runId}/chat`, {
+      query: { limit, cursor },
+    }),
+  sendChatMessage: (runId: string, payload: { content: string; metadata?: Record<string, unknown> }) =>
+    apiRequest<ChatMessage>(`/api/v1/workflow-runs/${runId}/chat`, {
+      method: "POST",
+      body: payload,
     }),
   startRun: (workflowId: string, payload: Record<string, unknown>, query?: Record<string, string>) =>
     apiRequest<{ run_id: string }>(`/api/v1/workflows/${workflowId}/runs`, {

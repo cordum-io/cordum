@@ -10,9 +10,11 @@ import { ApprovalStatusBadge, RunStatusBadge } from "../components/StatusBadge";
 import { Drawer } from "../components/ui/Drawer";
 import { Input } from "../components/ui/Input";
 import { WorkflowCanvas } from "../components/workflow/WorkflowCanvas";
+import { ChatPanel } from "../components/chat/ChatPanel";
+import { useRunChat } from "../hooks/useRunChat";
 import type { ApprovalItem, JobDetail } from "../types/api";
 
-const tabs = ["Overview", "Timeline", "DAG", "Input/Output", "Jobs", "Logs", "Audit Log"] as const;
+const tabs = ["Overview", "Timeline", "Chat", "DAG", "Input/Output", "Jobs", "Logs", "Audit Log"] as const;
 
 export function RunDetailPage() {
   const { runId } = useParams();
@@ -22,6 +24,9 @@ export function RunDetailPage() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [approvalReason, setApprovalReason] = useState("");
   const [approvalNote, setApprovalNote] = useState("");
+
+  // Chat hook for real-time agent conversation
+  const chat = useRunChat(runId);
 
   const runQuery = useQuery({
     queryKey: ["run", runId],
@@ -447,6 +452,17 @@ export function RunDetailPage() {
                 <div className="text-sm text-muted">No timeline events recorded yet.</div>
               )}
             </div>
+          )}
+
+          {activeTab === "Chat" && (
+            <ChatPanel
+              runId={run.id}
+              runStatus={run.status}
+              messages={chat.messages}
+              isLoading={chat.isLoading}
+              isSending={chat.isSending}
+              onSendMessage={chat.sendMessage}
+            />
           )}
 
           {activeTab === "DAG" && (

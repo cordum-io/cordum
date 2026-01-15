@@ -40,7 +40,7 @@ function writeStored(cfg: RuntimeConfig) {
 
 function mergeOverrides(base: RuntimeConfig, overrides: Partial<RuntimeConfig>): RuntimeConfig {
   return {
-    apiBaseUrl: overrides.apiBaseUrl?.trim() || base.apiBaseUrl,
+    apiBaseUrl: base.apiBaseUrl?.trim() || overrides.apiBaseUrl?.trim() || "",
     apiKey: overrides.apiKey?.trim() || base.apiKey,
     tenantId: overrides.tenantId?.trim() || base.tenantId,
     principalId: overrides.principalId?.trim() || base.principalId,
@@ -73,6 +73,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       defaults: runtime,
       loaded: true,
     });
+    writeStored(merged);
   },
   update: (patch) => {
     const current = get();
