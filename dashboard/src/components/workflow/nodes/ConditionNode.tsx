@@ -33,29 +33,7 @@ function ConditionNodeComponent({ id, data, selected }: NodeProps<ConditionNodeD
         </div>
       </div>
 
-      {/* Two output handles for true/false branches */}
-      <div className="builder-node__outputs">
-        <div className="builder-node__output builder-node__output--true">
-          <span className="builder-node__output-label">True</span>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="true"
-            className="builder-handle builder-handle--true"
-            style={{ top: "30%" }}
-          />
-        </div>
-        <div className="builder-node__output builder-node__output--false">
-          <span className="builder-node__output-label">False</span>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="false"
-            className="builder-handle builder-handle--false"
-            style={{ top: "70%" }}
-          />
-        </div>
-      </div>
+      <Handle type="source" position={Position.Right} id="output" className="builder-handle" />
     </div>
   );
 }

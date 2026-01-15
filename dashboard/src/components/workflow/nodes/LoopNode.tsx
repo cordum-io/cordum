@@ -40,29 +40,7 @@ function LoopNodeComponent({ id, data, selected }: NodeProps<LoopNodeData>) {
         )}
       </div>
 
-      {/* Two output handles: body (per item) and done (after all) */}
-      <div className="builder-node__outputs">
-        <div className="builder-node__output builder-node__output--body">
-          <span className="builder-node__output-label">Body</span>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="body"
-            className="builder-handle builder-handle--body"
-            style={{ top: "30%" }}
-          />
-        </div>
-        <div className="builder-node__output builder-node__output--done">
-          <span className="builder-node__output-label">Done</span>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="done"
-            className="builder-handle builder-handle--done"
-            style={{ top: "70%" }}
-          />
-        </div>
-      </div>
+      <Handle type="source" position={Position.Right} id="output" className="builder-handle" />
     </div>
   );
 }

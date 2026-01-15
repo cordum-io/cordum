@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, ChevronDown, ChevronRight, Package, Layers } from "lucide-react";
 import { api } from "../../lib/api";
-import { ALL_NODE_TYPES, NODE_CONFIGS } from "./nodes";
+import { NODE_CONFIGS, SUPPORTED_NODE_TYPES } from "./nodes";
 import type { BuilderNodeType, DragData, PackTopic } from "./types";
 
 type Props = {
@@ -66,7 +66,7 @@ export function BuilderSidebar({ onDragStart, onDragEnd }: Props) {
   });
 
   // Filter by search
-  const filteredNodes = ALL_NODE_TYPES.filter((type) =>
+  const filteredNodes = SUPPORTED_NODE_TYPES.filter((type) =>
     NODE_CONFIGS[type].label.toLowerCase().includes(searchTerm.toLowerCase())
   );
   const filteredTopics = packTopics.filter(

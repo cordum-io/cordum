@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { X, Settings, AlertTriangle, ChevronDown, Zap } from "lucide-react";
+import { X, Settings, AlertTriangle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { Input } from "../ui/Input";
@@ -13,15 +13,6 @@ type Props = {
 };
 
 // Preset options
-const APPROVER_ROLES = [
-  { value: "admin", label: "Admin" },
-  { value: "reviewer", label: "Reviewer" },
-  { value: "manager", label: "Manager" },
-  { value: "security", label: "Security Team" },
-  { value: "compliance", label: "Compliance" },
-  { value: "owner", label: "Owner" },
-];
-
 const CONDITION_TEMPLATES = [
   { value: "{{ input.value == true }}", label: "Input is true" },
   { value: "{{ input.value == false }}", label: "Input is false" },
@@ -62,6 +53,10 @@ const TIMEOUT_PRESETS = [
 
 export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
   const [localData, setLocalData] = useState<Partial<BuilderNodeData>>({});
+  const parseOptionalInt = (value: string) => {
+    const parsed = parseInt(value, 10);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  };
 
   // Fetch workflows for subworkflow selector
   const workflowsQuery = useQuery({
@@ -153,6 +148,7 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
   };
 
   const nodeType = node.data.nodeType;
+  const isUnsupported = nodeType === "parallel" || nodeType === "subworkflow";
 
   return (
     <div className="node-config-panel">
@@ -167,6 +163,13 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
       </div>
 
       <div className="node-config-panel__content">
+        {isUnsupported && (
+          <div className="node-config-panel__info">
+            <AlertTriangle className="h-4 w-4 text-warning" />
+            <span>This node type is not supported by the current workflow engine.</span>
+          </div>
+        )}
+
         {/* Common fields */}
         <div className="node-config-panel__section">
           <label className="node-config-panel__label">Label</label>
@@ -185,6 +188,32 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
             placeholder="Optional description"
           />
         </div>
+
+        {nodeType !== "condition" && (
+          <div className="node-config-panel__section">
+            <label className="node-config-panel__label">Run Condition (optional)</label>
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) handleChange("condition", e.target.value);
+              }}
+              className="node-config-panel__select mb-2"
+            >
+              <option value="">Choose a template...</option>
+              {CONDITION_TEMPLATES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            <Input
+              value={(localData as { condition?: string }).condition || ""}
+              onChange={(e) => handleChange("condition", e.target.value)}
+              placeholder="{{ steps.check.output == true }}"
+            />
+            <div className="node-config-panel__hint">
+              When false, the step is skipped and marked succeeded.
+            </div>
+          </div>
+        )}
 
         {/* Worker fields */}
         {nodeType === "worker" && (
@@ -264,8 +293,8 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
               <div className="node-config-panel__input-with-presets">
                 <Input
                   type="number"
-                  value={(localData as { timeoutSec?: number }).timeoutSec || ""}
-                  onChange={(e) => handleChange("timeoutSec", parseInt(e.target.value) || undefined)}
+                  value={(localData as { timeoutSec?: number }).timeoutSec ?? ""}
+                  onChange={(e) => handleChange("timeoutSec", parseOptionalInt(e.target.value))}
                   placeholder="300"
                 />
                 <div className="node-config-panel__presets">
@@ -290,8 +319,8 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
               <div className="node-config-panel__input-with-presets">
                 <Input
                   type="number"
-                  value={(localData as { retry?: { maxRetries?: number } }).retry?.maxRetries || ""}
-                  onChange={(e) => handleNestedChange("retry", "maxRetries", parseInt(e.target.value) || undefined)}
+                  value={(localData as { retry?: { maxRetries?: number } }).retry?.maxRetries ?? ""}
+                  onChange={(e) => handleNestedChange("retry", "maxRetries", parseOptionalInt(e.target.value))}
                   placeholder="3"
                 />
                 <div className="node-config-panel__presets">
@@ -313,45 +342,10 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
 
         {/* Approval fields */}
         {nodeType === "approval" && (
-          <>
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Approver Role</label>
-              <select
-                value={(localData as { approverRole?: string }).approverRole || ""}
-                onChange={(e) => handleChange("approverRole", e.target.value)}
-                className="node-config-panel__select"
-              >
-                <option value="">Select a role...</option>
-                {APPROVER_ROLES.map((r) => (
-                  <option key={r.value} value={r.value}>{r.label}</option>
-                ))}
-              </select>
-              <div className="node-config-panel__hint">
-                Or enter a custom role below
-              </div>
-              <Input
-                value={(localData as { approverRole?: string }).approverRole || ""}
-                onChange={(e) => handleChange("approverRole", e.target.value)}
-                placeholder="Custom role..."
-                className="mt-2"
-              />
-            </div>
-
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Approval Policy</label>
-              <select
-                value={(localData as { approvalPolicy?: string }).approvalPolicy || ""}
-                onChange={(e) => handleChange("approvalPolicy", e.target.value)}
-                className="node-config-panel__select"
-              >
-                <option value="">Default policy</option>
-                <option value="any">Any approver</option>
-                <option value="all">All approvers</option>
-                <option value="majority">Majority vote</option>
-                <option value="escalate">Escalate to manager</option>
-              </select>
-            </div>
-          </>
+          <div className="node-config-panel__info">
+            <AlertTriangle className="h-4 w-4 text-warning" />
+            <span>Approvals are enforced by safety policy, not the workflow definition.</span>
+          </div>
         )}
 
         {/* Condition fields */}
@@ -377,13 +371,8 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
                 placeholder="{{ input.value == true }}"
               />
               <div className="node-config-panel__hint">
-                Use template syntax to reference step outputs
+                Condition steps evaluate the expression and store a boolean result.
               </div>
-            </div>
-
-            <div className="node-config-panel__info">
-              <AlertTriangle className="h-4 w-4 text-warning" />
-              <span>This node has two outputs: True and False</span>
             </div>
           </>
         )}
@@ -395,8 +384,8 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
               <label className="node-config-panel__label">Delay (seconds)</label>
               <Input
                 type="number"
-                value={(localData as { delaySec?: number }).delaySec || ""}
-                onChange={(e) => handleChange("delaySec", parseInt(e.target.value) || undefined)}
+                value={(localData as { delaySec?: number }).delaySec ?? ""}
+                onChange={(e) => handleChange("delaySec", parseOptionalInt(e.target.value))}
                 placeholder="60"
               />
               <div className="node-config-panel__presets mt-2">
@@ -459,8 +448,8 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
               <div className="node-config-panel__input-with-presets">
                 <Input
                   type="number"
-                  value={(localData as { maxParallel?: number }).maxParallel || ""}
-                  onChange={(e) => handleChange("maxParallel", parseInt(e.target.value) || undefined)}
+                  value={(localData as { maxParallel?: number }).maxParallel ?? ""}
+                  onChange={(e) => handleChange("maxParallel", parseOptionalInt(e.target.value))}
                   placeholder="1"
                 />
                 <div className="node-config-panel__presets">
@@ -480,7 +469,7 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
 
             <div className="node-config-panel__info">
               <AlertTriangle className="h-4 w-4 text-warning" />
-              <span>This node has two outputs: Body (per item) and Done (after all)</span>
+              <span>Downstream steps run after the loop completes.</span>
             </div>
           </>
         )}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { NODE_CONFIGS, ALL_NODE_TYPES, generateStepId } from "./index";
+import { NODE_CONFIGS, ALL_NODE_TYPES, SUPPORTED_NODE_TYPES, generateStepId } from "./index";
 import type { BuilderNodeType } from "../types";
 
 describe("NODE_CONFIGS", () => {
@@ -49,13 +49,12 @@ describe("NODE_CONFIGS", () => {
   });
 
   describe("condition node", () => {
-    it("should have two outputs for branching", () => {
+    it("should have a single output", () => {
       const config = NODE_CONFIGS.condition;
       expect(config.label).toBe("Condition");
       expect(config.icon).toBe("IF");
-      expect(config.outputs).toHaveLength(2);
-      expect(config.outputs.map((o) => o.id)).toContain("true");
-      expect(config.outputs.map((o) => o.id)).toContain("false");
+      expect(config.outputs).toHaveLength(1);
+      expect(config.outputs[0].id).toBe("output");
       expect(config.defaultData.nodeType).toBe("condition");
       expect(config.defaultData.condition).toBeDefined();
     });
@@ -73,13 +72,12 @@ describe("NODE_CONFIGS", () => {
   });
 
   describe("loop node", () => {
-    it("should have two outputs for iteration", () => {
+    it("should have a single output", () => {
       const config = NODE_CONFIGS.loop;
       expect(config.label).toBe("Loop");
       expect(config.icon).toBe("LP");
-      expect(config.outputs).toHaveLength(2);
-      expect(config.outputs.map((o) => o.id)).toContain("body");
-      expect(config.outputs.map((o) => o.id)).toContain("done");
+      expect(config.outputs).toHaveLength(1);
+      expect(config.outputs[0].id).toBe("output");
       expect(config.defaultData.nodeType).toBe("loop");
       expect(config.defaultData.forEach).toBeDefined();
       expect(config.defaultData.maxParallel).toBe(1);
@@ -124,6 +122,23 @@ describe("ALL_NODE_TYPES", () => {
     expect(ALL_NODE_TYPES).toHaveLength(expectedTypes.length);
     expectedTypes.forEach((type) => {
       expect(ALL_NODE_TYPES).toContain(type);
+    });
+  });
+});
+
+describe("SUPPORTED_NODE_TYPES", () => {
+  it("should contain only engine-backed node types", () => {
+    const expectedTypes: BuilderNodeType[] = [
+      "worker",
+      "approval",
+      "condition",
+      "delay",
+      "loop",
+    ];
+
+    expect(SUPPORTED_NODE_TYPES).toHaveLength(expectedTypes.length);
+    expectedTypes.forEach((type) => {
+      expect(SUPPORTED_NODE_TYPES).toContain(type);
     });
   });
 });
