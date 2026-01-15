@@ -13,6 +13,7 @@ const JobsPage = lazy(() => import("../pages/JobsPage").then((m) => ({ default: 
 const JobDetailPage = lazy(() => import("../pages/JobDetailPage").then((m) => ({ default: m.JobDetailPage })));
 const RunDetailPage = lazy(() => import("../pages/RunDetailPage").then((m) => ({ default: m.RunDetailPage })));
 const WorkflowsPage = lazy(() => import("../pages/WorkflowsPage").then((m) => ({ default: m.WorkflowsPage })));
+const WorkflowCreatePage = lazy(() => import("../pages/WorkflowCreatePage").then((m) => ({ default: m.WorkflowCreatePage })));
 const WorkflowDetailPage = lazy(() => import("../pages/WorkflowDetailPage").then((m) => ({ default: m.WorkflowDetailPage })));
 const PacksPage = lazy(() => import("../pages/PacksPage").then((m) => ({ default: m.PacksPage })));
 const PoolsPage = lazy(() => import("../pages/PoolsPage").then((m) => ({ default: m.PoolsPage })));
@@ -106,6 +107,7 @@ function MainApp() {
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:jobId" element={<JobDetailPage />} />
           <Route path="/workflows" element={<WorkflowsPage />} />
+          <Route path="/workflows/new" element={<WorkflowCreatePage />} />
           <Route path="/workflows/:workflowId" element={<WorkflowDetailPage />} />
           <Route path="/packs" element={<PacksPage />} />
           <Route path="/pools" element={<PoolsPage />} />
