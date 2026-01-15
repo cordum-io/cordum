@@ -2,12 +2,12 @@ package gateway
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/gorilla/websocket"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/locks"
@@ -15,12 +15,14 @@ import (
 	"github.com/cordum/cordum/core/infra/schema"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
+	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 )
 
 type stubBus struct {
 	mu        sync.Mutex
 	published []publishedMessage
+	subs      map[string][]func(*pb.BusPacket) error
 }
 
 type publishedMessage struct {
@@ -35,7 +37,59 @@ func (b *stubBus) Publish(subject string, packet *pb.BusPacket) error {
 	return nil
 }
 
-func (b *stubBus) Subscribe(string, string, func(*pb.BusPacket) error) error { return nil }
+func (b *stubBus) Subscribe(subject, _ string, handler func(*pb.BusPacket) error) error {
+	if handler == nil {
+		return nil
+	}
+	b.mu.Lock()
+	if b.subs == nil {
+		b.subs = map[string][]func(*pb.BusPacket) error{}
+	}
+	b.subs[subject] = append(b.subs[subject], handler)
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *stubBus) emit(subject string, packet *pb.BusPacket) {
+	b.mu.Lock()
+	var handlers []func(*pb.BusPacket) error
+	for sub, subs := range b.subs {
+		if subjectMatches(sub, subject) {
+			handlers = append(handlers, subs...)
+		}
+	}
+	b.mu.Unlock()
+	for _, handler := range handlers {
+		_ = handler(packet)
+	}
+}
+
+func subjectMatches(pattern, subject string) bool {
+	if pattern == subject {
+		return true
+	}
+	if strings.HasSuffix(pattern, ">") {
+		prefix := strings.TrimSuffix(pattern, ">")
+		return strings.HasPrefix(subject, prefix)
+	}
+	if strings.Contains(pattern, "*") {
+		pParts := strings.Split(pattern, ".")
+		sParts := strings.Split(subject, ".")
+		if len(pParts) != len(sParts) {
+			return false
+		}
+		for i, part := range pParts {
+			if part == "*" {
+				continue
+			}
+			if part != sParts[i] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
 
 type stubSafetyClient struct {
 	mu        sync.Mutex

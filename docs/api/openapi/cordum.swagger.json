@@ -1,0 +1,371 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "api.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "CordumApi"
+    },
+    {
+      "name": "ContextEngine"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/cordum.v1.ContextEngine/BuildWindow": {
+      "post": {
+        "operationId": "ContextEngine_BuildWindow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1BuildWindowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1BuildWindowRequest"
+            }
+          }
+        ],
+        "tags": [
+          "ContextEngine"
+        ]
+      }
+    },
+    "/cordum.v1.ContextEngine/UpdateMemory": {
+      "post": {
+        "operationId": "ContextEngine_UpdateMemory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateMemoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1UpdateMemoryRequest"
+            }
+          }
+        ],
+        "tags": [
+          "ContextEngine"
+        ]
+      }
+    },
+    "/cordum.v1.CordumApi/GetJobStatus": {
+      "post": {
+        "operationId": "CordumApi_GetJobStatus",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetJobStatusResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1GetJobStatusRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CordumApi"
+        ]
+      }
+    },
+    "/cordum.v1.CordumApi/SubmitJob": {
+      "post": {
+        "operationId": "CordumApi_SubmitJob",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SubmitJobResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1SubmitJobRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CordumApi"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1BuildWindowRequest": {
+      "type": "object",
+      "properties": {
+        "memoryId": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/definitions/v1ContextMode"
+        },
+        "model": {
+          "type": "string"
+        },
+        "logicalPayload": {
+          "type": "string",
+          "format": "byte"
+        },
+        "maxInputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "v1BuildWindowResponse": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ModelMessage"
+          }
+        },
+        "inputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "outputTokens": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "v1ContextMode": {
+      "type": "string",
+      "enum": [
+        "CONTEXT_MODE_UNSPECIFIED",
+        "CONTEXT_MODE_RAW",
+        "CONTEXT_MODE_CHAT",
+        "CONTEXT_MODE_RAG"
+      ],
+      "default": "CONTEXT_MODE_UNSPECIFIED"
+    },
+    "v1GetJobStatusRequest": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        }
+      }
+    },
+    "v1GetJobStatusResponse": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "resultPtr": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ModelMessage": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      }
+    },
+    "v1SubmitJobRequest": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string",
+          "title": "e.g. \"job.default\" or \"job.custom\""
+        },
+        "adapterId": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "title": "\"interactive\", \"batch\" (optional for now)"
+        },
+        "orgId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "principalId": {
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "actorId": {
+          "type": "string"
+        },
+        "actorType": {
+          "type": "string",
+          "title": "\"human\" | \"service\" (optional)"
+        },
+        "packId": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "string"
+        },
+        "riskTags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requires": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "memoryId": {
+          "type": "string"
+        }
+      }
+    },
+    "v1SubmitJobResponse": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "traceId": {
+          "type": "string"
+        }
+      }
+    },
+    "v1UpdateMemoryRequest": {
+      "type": "object",
+      "properties": {
+        "memoryId": {
+          "type": "string"
+        },
+        "logicalPayload": {
+          "type": "string",
+          "format": "byte"
+        },
+        "modelResponse": {
+          "type": "string",
+          "format": "byte"
+        },
+        "mode": {
+          "$ref": "#/definitions/v1ContextMode"
+        }
+      }
+    },
+    "v1UpdateMemoryResponse": {
+      "type": "object"
+    }
+  }
+}

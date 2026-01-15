@@ -42,7 +42,10 @@ func (r *Registry) Close() error {
 	if r == nil || r.client == nil {
 		return nil
 	}
-	return r.client.Close()
+	if err := r.client.Close(); err != nil {
+		return fmt.Errorf("close schema registry: %w", err)
+	}
+	return nil
 }
 
 // Register stores a schema by id.
@@ -63,7 +66,10 @@ func (r *Registry) Register(ctx context.Context, id string, schema []byte) error
 	pipe.ZAdd(ctx, schemaIndexKey(), redis.Z{Score: float64(now.Unix()), Member: id})
 	pipe.ZRemRangeByRank(ctx, schemaIndexKey(), 0, -schemaIndexMaxLen-1)
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("register schema %s: %w", id, err)
+	}
+	return nil
 }
 
 // Get returns the raw schema bytes.
@@ -75,7 +81,11 @@ func (r *Registry) Get(ctx context.Context, id string) ([]byte, error) {
 	if id == "" {
 		return nil, fmt.Errorf("schema id required")
 	}
-	return r.client.Get(ctx, schemaKey(id)).Bytes()
+	data, err := r.client.Get(ctx, schemaKey(id)).Bytes()
+	if err != nil {
+		return nil, fmt.Errorf("get schema %s: %w", id, err)
+	}
+	return data, nil
 }
 
 // Delete removes a schema from the registry.
@@ -91,7 +101,10 @@ func (r *Registry) Delete(ctx context.Context, id string) error {
 	pipe.Del(ctx, schemaKey(id))
 	pipe.ZRem(ctx, schemaIndexKey(), id)
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("delete schema %s: %w", id, err)
+	}
+	return nil
 }
 
 // List returns recent schema ids.
@@ -102,14 +115,18 @@ func (r *Registry) List(ctx context.Context, limit int64) ([]string, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	return r.client.ZRevRange(ctx, schemaIndexKey(), 0, limit-1).Result()
+	ids, err := r.client.ZRevRange(ctx, schemaIndexKey(), 0, limit-1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("list schemas: %w", err)
+	}
+	return ids, nil
 }
 
 // ValidateID validates payload against a stored schema.
 func (r *Registry) ValidateID(ctx context.Context, id string, value any) error {
 	schema, err := r.Get(ctx, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("load schema %s: %w", id, err)
 	}
 	return ValidateSchema(schemaID(id), schema, value)
 }

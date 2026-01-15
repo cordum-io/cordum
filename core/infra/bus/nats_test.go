@@ -2,12 +2,14 @@ package bus
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/nats-io/nats.go"
 )
 
 func TestDirectSubject(t *testing.T) {
@@ -41,10 +43,10 @@ func TestIsDurableSubject(t *testing.T) {
 		capsdk.SubjectSubmit:  true,
 		capsdk.SubjectResult:  true,
 		capsdk.SubjectDLQ:     true,
-		"job.sre.collect":    true,
-		"worker.abc.jobs":    true,
+		"job.sre.collect":     true,
+		"worker.abc.jobs":     true,
 		"worker.abc.commands": false,
-		"sys.ping":           false,
+		"sys.ping":            false,
 	}
 	for subject, expect := range cases {
 		if got := isDurableSubject(subject); got != expect {
@@ -142,5 +144,50 @@ func TestNatsBusStatusDefaults(t *testing.T) {
 	}
 	if url := nilBus.ConnectedURL(); url != "" {
 		t.Fatalf("expected empty url, got %s", url)
+	}
+}
+
+func TestParseBoolEnv(t *testing.T) {
+	key := "TEST_BOOL_ENV"
+	t.Setenv(key, "")
+	if parseBoolEnv(key) {
+		t.Fatalf("expected false for empty env")
+	}
+	for _, raw := range []string{"1", "true", "yes", "y", "on"} {
+		t.Setenv(key, raw)
+		if !parseBoolEnv(key) {
+			t.Fatalf("expected true for %s", raw)
+		}
+	}
+	t.Setenv(key, "no")
+	if parseBoolEnv(key) {
+		t.Fatalf("expected false for no")
+	}
+}
+
+func TestNatsTLSConfigFromEnv(t *testing.T) {
+	t.Setenv(envNATSTLSCA, "")
+	t.Setenv(envNATSTLSCert, "")
+	t.Setenv(envNATSTLSKey, "")
+	t.Setenv(envNATSTLSServerName, "")
+	t.Setenv(envNATSTLSInsecure, "")
+	cfg, err := natsTLSConfigFromEnv()
+	if err != nil || cfg != nil {
+		t.Fatalf("expected nil config, got cfg=%v err=%v", cfg, err)
+	}
+
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caPath, []byte("bad"), 0o600); err != nil {
+		t.Fatalf("write ca: %v", err)
+	}
+	t.Setenv(envNATSTLSCA, caPath)
+	if _, err := natsTLSConfigFromEnv(); err == nil {
+		t.Fatalf("expected error for invalid ca")
+	}
+	t.Setenv(envNATSTLSCA, "")
+	t.Setenv(envNATSTLSCert, filepath.Join(dir, "cert.pem"))
+	if _, err := natsTLSConfigFromEnv(); err == nil {
+		t.Fatalf("expected error for missing key")
 	}
 }

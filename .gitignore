@@ -21,6 +21,7 @@ generated/
 .gopath/
 .cache/
 bin/
+coverage*.out
 AGENTS.md
 docs/private/
 tools/private/

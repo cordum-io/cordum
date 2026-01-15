@@ -68,7 +68,10 @@ func (s *RedisStore) SaveWorkflow(ctx context.Context, wf *Workflow) error {
 	}
 	pipe.ZAdd(ctx, workflowAllIndexKey(), redis.Z{Score: float64(now.Unix()), Member: wf.ID})
 	_, err = pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("save workflow: %w", err)
+	}
+	return nil
 }
 
 // GetWorkflow returns a workflow definition by ID.
@@ -78,7 +81,7 @@ func (s *RedisStore) GetWorkflow(ctx context.Context, id string) (*Workflow, err
 	}
 	data, err := s.client.Get(ctx, workflowKey(id)).Bytes()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get workflow %s: %w", id, err)
 	}
 	var wf Workflow
 	if err := json.Unmarshal(data, &wf); err != nil {
@@ -94,7 +97,7 @@ func (s *RedisStore) DeleteWorkflow(ctx context.Context, id string) error {
 	}
 	wf, err := s.GetWorkflow(ctx, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("load workflow for delete: %w", err)
 	}
 	pipe := s.client.TxPipeline()
 	pipe.Del(ctx, workflowKey(id))
@@ -103,7 +106,10 @@ func (s *RedisStore) DeleteWorkflow(ctx context.Context, id string) error {
 		pipe.ZRem(ctx, workflowOrgIndexKey(wf.OrgID), id)
 	}
 	_, err = pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("delete workflow: %w", err)
+	}
+	return nil
 }
 
 // ListWorkflows returns recent workflows, optionally scoped by org.
@@ -117,7 +123,7 @@ func (s *RedisStore) ListWorkflows(ctx context.Context, orgID string, limit int6
 	}
 	ids, err := s.client.ZRevRange(ctx, index, 0, limit-1).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list workflows: %w", err)
 	}
 	if len(ids) == 0 {
 		return []*Workflow{}, nil
@@ -183,7 +189,7 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	}
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("create run: %w", err)
 	}
 	if run.IdempotencyKey != "" {
 		_, _ = s.TrySetRunIdempotencyKey(ctx, run.IdempotencyKey, run.ID)
@@ -228,7 +234,10 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 		}
 	}
 	_, err = pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("update run: %w", err)
+	}
+	return nil
 }
 
 // GetRun fetches a run by ID.
@@ -238,7 +247,7 @@ func (s *RedisStore) GetRun(ctx context.Context, runID string) (*WorkflowRun, er
 	}
 	data, err := s.client.Get(ctx, runKey(runID)).Bytes()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get run %s: %w", runID, err)
 	}
 	var run WorkflowRun
 	if err := json.Unmarshal(data, &run); err != nil {
@@ -254,7 +263,7 @@ func (s *RedisStore) DeleteRun(ctx context.Context, runID string) error {
 	}
 	run, err := s.GetRun(ctx, runID)
 	if err != nil {
-		return err
+		return fmt.Errorf("load run for delete: %w", err)
 	}
 	pipe := s.client.TxPipeline()
 	pipe.Del(ctx, runKey(runID))
@@ -270,7 +279,10 @@ func (s *RedisStore) DeleteRun(ctx context.Context, runID string) error {
 	}
 	pipe.Del(ctx, runTimelineKey(runID))
 	_, err = pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("delete run: %w", err)
+	}
+	return nil
 }
 
 // CountActiveRuns returns the number of active runs for an org.
@@ -280,7 +292,7 @@ func (s *RedisStore) CountActiveRuns(ctx context.Context, orgID string) (int, er
 	}
 	count, err := s.client.SCard(ctx, runOrgActiveKey(orgID)).Result()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count active runs: %w", err)
 	}
 	return int(count), nil
 }
@@ -295,7 +307,7 @@ func (s *RedisStore) ListRunsByWorkflow(ctx context.Context, workflowID string, 
 	}
 	ids, err := s.client.ZRevRange(ctx, runIndexKey(workflowID), 0, limit-1).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list runs for workflow %s: %w", workflowID, err)
 	}
 	if len(ids) == 0 {
 		return []*WorkflowRun{}, nil
@@ -342,7 +354,7 @@ func (s *RedisStore) ListRuns(ctx context.Context, cursorUnix int64, limit int64
 		Count:  limit,
 	}).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list runs: %w", err)
 	}
 	if len(ids) == 0 {
 		return []*WorkflowRun{}, nil
@@ -393,7 +405,10 @@ func (s *RedisStore) AppendTimelineEvent(ctx context.Context, runID string, even
 	pipe.RPush(ctx, runTimelineKey(runID), data)
 	pipe.LTrim(ctx, runTimelineKey(runID), -timelineMaxEntries, -1)
 	_, err = pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("append timeline event: %w", err)
+	}
+	return nil
 }
 
 // ListTimelineEvents returns timeline events for a run in chronological order.
@@ -406,7 +421,7 @@ func (s *RedisStore) ListTimelineEvents(ctx context.Context, runID string, limit
 	}
 	raw, err := s.client.LRange(ctx, runTimelineKey(runID), 0, limit-1).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list timeline events: %w", err)
 	}
 	out := make([]TimelineEvent, 0, len(raw))
 	for _, item := range raw {

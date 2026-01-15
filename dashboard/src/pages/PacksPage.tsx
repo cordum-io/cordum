@@ -30,7 +30,7 @@ function packInitials(label: string): string {
     return "PK";
   }
   const parts = trimmed.split(/\s+/);
-  if (parts.length == 1) {
+  if (parts.length === 1) {
     return parts[0].slice(0, 2).toUpperCase();
   }
   return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -319,13 +319,24 @@ export function PacksPage() {
                   const resourceCount =
                     (pack.resources?.schemas ? Object.keys(pack.resources.schemas).length : 0) +
                     (pack.resources?.workflows ? Object.keys(pack.resources.workflows).length : 0);
+                  const packTitle = pack.manifest?.metadata?.title || pack.id;
+                  const packDescription = pack.manifest?.metadata?.description || "No description";
+                  const packImage = pack.manifest?.metadata?.image;
+                  const packBadge = packInitials(packTitle);
                   return (
                     <div key={pack.id} className="rounded-2xl border border-border bg-white/70 p-5">
                       <div className="flex items-center justify-between">
-                        <div>
-                          <div className="text-sm font-semibold text-ink">{pack.manifest?.metadata?.title || pack.id}</div>
-                          <div className="text-xs text-muted">
-                            {pack.manifest?.metadata?.description || "No description"}
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-white/80">
+                            {packImage ? (
+                              <img src={packImage} alt={`${packTitle} logo`} className="h-7 w-7 object-contain" loading="lazy" />
+                            ) : (
+                              <span className="text-xs font-semibold text-muted">{packBadge}</span>
+                            )}
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold text-ink">{packTitle}</div>
+                            <div className="text-xs text-muted">{packDescription}</div>
                           </div>
                         </div>
                         <Badge variant={statusVariant(pack.status)}>{pack.status}</Badge>
@@ -425,12 +436,26 @@ export function PacksPage() {
                 const upgradeAvailable = Boolean(pack.installed_version && pack.installed_version !== pack.version);
                 const installDisabled = Boolean(pack.installed_version && !upgradeAvailable);
                 const sourceUrl = pack.source || pack.homepage || pack.url || "";
+                const packTitle = pack.title || pack.id;
+                const packSubtitle = pack.author || pack.catalog_title || "Cordum Community";
+                const packDescription = pack.description || "No description provided.";
+                const packImage = pack.image;
+                const packBadge = packInitials(packTitle);
                 return (
                   <div key={`${pack.catalog_id || "catalog"}:${pack.id}`} className="rounded-2xl border border-border bg-white/70 p-5">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-ink">{pack.title || pack.id}</div>
-                        <div className="text-xs text-muted">{pack.author || pack.catalog_title || "Cordum Community"}</div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-white/80">
+                          {packImage ? (
+                            <img src={packImage} alt={`${packTitle} logo`} className="h-7 w-7 object-contain" loading="lazy" />
+                          ) : (
+                            <span className="text-xs font-semibold text-muted">{packBadge}</span>
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold text-ink">{packTitle}</div>
+                          <div className="text-xs text-muted">{packSubtitle}</div>
+                        </div>
                       </div>
                       {pack.installed_status ? (
                         <Badge variant={statusVariant(pack.installed_status)}>Installed</Badge>
@@ -438,7 +463,7 @@ export function PacksPage() {
                         <Badge variant="info">{pack.version}</Badge>
                       )}
                     </div>
-                    <div className="mt-3 text-sm text-muted">{pack.description || "No description provided."}</div>
+                    <div className="mt-3 text-sm text-muted">{packDescription}</div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {(pack.capabilities || []).slice(0, 4).map((cap) => (
                         <Badge key={`${pack.id}-cap-${cap}`} variant="default">{cap}</Badge>

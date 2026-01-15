@@ -16,7 +16,7 @@ func snapshotHash(data map[string]any) (string, error) {
 	}
 	encoded, err := canonicalJSON(data)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("canonical json: %w", err)
 	}
 	sum := sha256Sum(encoded)
 	return sum, nil
@@ -25,7 +25,7 @@ func snapshotHash(data map[string]any) (string, error) {
 func canonicalJSON(value any) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := appendCanonical(&buf, value); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("append canonical: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -103,7 +103,7 @@ func appendCanonicalMap(buf *bytes.Buffer, m map[string]any) error {
 		buf.Write(keyBytes)
 		buf.WriteByte(':')
 		if err := appendCanonical(buf, m[k]); err != nil {
-			return err
+			return fmt.Errorf("append canonical map value: %w", err)
 		}
 	}
 	buf.WriteByte('}')
@@ -117,7 +117,7 @@ func appendCanonicalSlice(buf *bytes.Buffer, items []any) error {
 			buf.WriteByte(',')
 		}
 		if err := appendCanonical(buf, item); err != nil {
-			return err
+			return fmt.Errorf("append canonical slice item: %w", err)
 		}
 	}
 	buf.WriteByte(']')
