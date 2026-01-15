@@ -9,7 +9,6 @@ import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Textarea } from "../components/ui/Textarea";
 import { Drawer } from "../components/ui/Drawer";
-import { WorkflowBuilder } from "../components/workflow/WorkflowBuilder";
 import type { Workflow } from "../types/api";
 
 export function WorkflowsPage() {
@@ -40,10 +39,6 @@ export function WorkflowsPage() {
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
   const [payload, setPayload] = useState("{}" as string);
   const [payloadError, setPayloadError] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"json" | "visual">("json");
-  const [createPayload, setCreatePayload] = useState(`{\n  \"id\": \"incident-triage\",\n  \"org_id\": \"default\",\n  \"name\": \"Incident Triage\",\n  \"version\": \"1.0.0\",\n  \"timeout_sec\": 900,\n  \"created_by\": \"ops\",\n  \"steps\": {\n    \"ingest\": {\n      \"name\": \"Ingest\",\n      \"type\": \"worker\",\n      \"topic\": \"job.default\"\n    },\n    \"approve\": {\n      \"name\": \"Approval\",\n      \"type\": \"approval\",\n      \"depends_on\": [\"ingest\"]\n    }\n  }\n}`);
-  const [createError, setCreateError] = useState<string | null>(null);
 
   const startMutation = useMutation({
     mutationFn: ({ workflow, body }: { workflow: Workflow; body: Record<string, unknown> }) =>
@@ -55,33 +50,12 @@ export function WorkflowsPage() {
     onError: (error: Error) => setPayloadError(error.message),
   });
 
-  const createMutation = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.createWorkflow(body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["workflows"] });
-      setCreateOpen(false);
-    },
-    onError: (error: Error) => setCreateError(error.message),
-  });
-
-  const handleBuilderChange = (workflow: Partial<Workflow>) => {
-    setCreatePayload(JSON.stringify(workflow, null, 2));
-  };
-
-  const currentWorkflowData = useMemo(() => {
-    try {
-      return JSON.parse(createPayload);
-    } catch {
-      return {};
-    }
-  }, [createPayload]);
-
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Workflows</CardTitle>
-          <Button variant="subtle" size="sm" type="button" onClick={() => setCreateOpen(true)}>
+          <Button variant="subtle" size="sm" type="button" onClick={() => navigate("/workflows/new")}>
             Create workflow
           </Button>
         </CardHeader>
@@ -163,49 +137,6 @@ export function WorkflowsPage() {
         ) : null}
       </Drawer>
 
-      <Drawer open={createOpen} onClose={() => setCreateOpen(false)} size="lg">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-muted">Create Workflow</div>
-              <h3 className="text-xl font-semibold text-ink">Design workflow</h3>
-            </div>
-            <div className="flex gap-2">
-              <Button size="xs" variant={viewMode === "json" ? "primary" : "outline"} onClick={() => setViewMode("json")}>JSON</Button>
-              <Button size="xs" variant={viewMode === "visual" ? "primary" : "outline"} onClick={() => setViewMode("visual")}>Visual</Button>
-            </div>
-          </div>
-
-          {viewMode === "json" ? (
-            <Textarea rows={16} value={createPayload} onChange={(event) => setCreatePayload(event.target.value)} />
-          ) : (
-            <WorkflowBuilder initialWorkflow={currentWorkflowData} onChange={handleBuilderChange} />
-          )}
-
-          {createError ? <div className="text-xs text-danger">{createError}</div> : null}
-          <div className="flex gap-2">
-            <Button
-              variant="primary"
-              type="button"
-              onClick={() => {
-                setCreateError(null);
-                try {
-                  const body = JSON.parse(createPayload || "{}");
-                  createMutation.mutate(body);
-                } catch (error) {
-                  setCreateError(error instanceof Error ? error.message : "Invalid JSON");
-                }
-              }}
-              disabled={createMutation.isPending}
-            >
-              Save workflow
-            </Button>
-            <Button variant="outline" type="button" onClick={() => setCreateOpen(false)}>
-              Close
-            </Button>
-          </div>
-        </div>
-      </Drawer>
     </div>
   );
 }
