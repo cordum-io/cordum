@@ -30,13 +30,10 @@ export const NODE_CONFIGS: Record<BuilderNodeType, NodeConfig> = {
   condition: {
     type: "condition",
     label: "Condition",
-    description: "If/else branching",
+    description: "Evaluate a boolean expression",
     icon: "IF",
     color: "bg-info",
-    outputs: [
-      { id: "true", label: "True" },
-      { id: "false", label: "False" },
-    ],
+    outputs: [{ id: "output", label: "Output" }],
     defaultData: {
       nodeType: "condition",
       label: "Condition",
@@ -59,13 +56,10 @@ export const NODE_CONFIGS: Record<BuilderNodeType, NodeConfig> = {
   loop: {
     type: "loop",
     label: "Loop",
-    description: "Iterate over items",
+    description: "Iterate over items (fan-out)",
     icon: "LP",
     color: "bg-purple-500",
-    outputs: [
-      { id: "body", label: "Body" },
-      { id: "done", label: "Done" },
-    ],
+    outputs: [{ id: "output", label: "Output" }],
     defaultData: {
       nodeType: "loop",
       label: "Loop",
@@ -110,6 +104,15 @@ export const ALL_NODE_TYPES: BuilderNodeType[] = [
   "loop",
   "parallel",
   "subworkflow",
+];
+
+// Node types backed by the current workflow engine.
+export const SUPPORTED_NODE_TYPES: BuilderNodeType[] = [
+  "worker",
+  "approval",
+  "condition",
+  "delay",
+  "loop",
 ];
 
 // Generate unique step ID

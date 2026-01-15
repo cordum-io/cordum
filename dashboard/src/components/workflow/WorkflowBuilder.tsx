@@ -20,7 +20,7 @@ import { Button } from "../ui/Button";
 import { BuilderSidebar } from "./BuilderSidebar";
 import { NodeConfigPanel } from "./NodeConfigPanel";
 import { builderNodeTypes } from "./nodeTypes";
-import { NODE_CONFIGS, generateStepId } from "./nodes";
+import { NODE_CONFIGS, SUPPORTED_NODE_TYPES, generateStepId } from "./nodes";
 import type {
   BuilderNode,
   BuilderNodeData,
@@ -71,6 +71,26 @@ export function WorkflowBuilder({
       }
     },
     [setNodes, setEdges, selectedNodeId]
+  );
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!selectedNodeId) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName.toLowerCase();
+        if (tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable) {
+          return;
+        }
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        deleteNode(selectedNodeId);
+      }
+    },
+    [deleteNode, selectedNodeId]
   );
 
   // Select node handler
@@ -175,6 +195,11 @@ export function WorkflowBuilder({
     setEdges(initialEdges);
   }, []);
 
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
   // Handle connection
   const onConnect = useCallback(
     (params: Connection) => {
@@ -250,6 +275,19 @@ export function WorkflowBuilder({
 
     nodes.forEach((node) => {
       const data = node.data as BuilderNodeData;
+      const isWorker = data.nodeType === "worker";
+      const retry = (data as WorkerNodeData).retry;
+      const meta = isWorker
+        ? {
+            pack_id: (data as WorkerNodeData).packId,
+            capability: (data as WorkerNodeData).capability,
+            risk_tags: (data as WorkerNodeData).riskTags,
+            requires: (data as WorkerNodeData).requires,
+          }
+        : undefined;
+      const hasMeta = meta
+        ? Object.values(meta).some((value) => value !== undefined && value !== null)
+        : false;
       const deps = edges
         .filter((edge) => edge.target === node.id)
         .map((edge) => edge.source);
@@ -258,7 +296,7 @@ export function WorkflowBuilder({
         id: node.id,
         name: data.label,
         type: mapNodeTypeToStepType(data.nodeType),
-        topic: (data as WorkerNodeData).topic || "job.default",
+        topic: isWorker ? (data as WorkerNodeData).topic || "job.default" : undefined,
         depends_on: deps.length > 0 ? deps : undefined,
         condition: (data as { condition?: string }).condition,
         delay_sec: (data as { delaySec?: number }).delaySec,
@@ -266,12 +304,8 @@ export function WorkflowBuilder({
         for_each: (data as { forEach?: string }).forEach,
         max_parallel: (data as { maxParallel?: number }).maxParallel,
         timeout_sec: (data as { timeoutSec?: number }).timeoutSec,
-        meta: {
-          pack_id: (data as WorkerNodeData).packId,
-          capability: (data as WorkerNodeData).capability,
-          risk_tags: (data as WorkerNodeData).riskTags,
-          requires: (data as WorkerNodeData).requires,
-        },
+        retry: retry,
+        meta: hasMeta ? meta : undefined,
       };
     });
 
@@ -296,27 +330,11 @@ export function WorkflowBuilder({
     <div className="workflow-builder">
       {/* Toolbar */}
       <div className="workflow-builder__toolbar">
-        <Button size="sm" variant="outline" onClick={() => addNodeFromType("worker")}>
-          + Worker
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNodeFromType("approval")}>
-          + Approval
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNodeFromType("condition")}>
-          + Condition
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNodeFromType("delay")}>
-          + Delay
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNodeFromType("loop")}>
-          + Loop
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNodeFromType("parallel")}>
-          + Parallel
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNodeFromType("subworkflow")}>
-          + Subworkflow
-        </Button>
+        {SUPPORTED_NODE_TYPES.map((type) => (
+          <Button key={type} size="sm" variant="outline" onClick={() => addNodeFromType(type)}>
+            + {NODE_CONFIGS[type].label}
+          </Button>
+        ))}
       </div>
 
       {/* Main content */}

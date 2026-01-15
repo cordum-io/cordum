@@ -15,6 +15,7 @@ export type BuilderNodeDataBase = {
   label: string;
   stepId: string;
   description?: string;
+  condition?: string;
   onDelete: (id: string) => void;
   onSelect: (id: string) => void;
   selected?: boolean;
