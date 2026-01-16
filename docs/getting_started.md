@@ -84,6 +84,10 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
   -d '{"message":"hello from pack","author":"demo"}'
 ```
 
+Other runtime examples:
+- `examples/python-worker`
+- `examples/node-worker`
+
 ## Open the dashboard (optional)
 
 ```text

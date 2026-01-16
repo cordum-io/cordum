@@ -1,0 +1,12 @@
+{
+  "name": "cordum-node-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node worker.js"
+  },
+  "dependencies": {
+    "@cordum/sdk": "^0.1.0"
+  }
+}

@@ -13,6 +13,11 @@ Core ideas:
   - `packages/` = plug-in packs (workers, workflows, providers)
   - `cmd/` = thin binaries wiring config to core + packages
 
+## Issue workflow
+
+- Prefer to start work from GitHub issues and reference the issue ID in commits/PRs.
+- If a request is not tied to an issue, ask which issue to use or suggest creating one.
+
 ## Architecture rules
 
 - Do NOT change field numbers in existing .proto files.

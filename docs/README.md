@@ -9,6 +9,7 @@ This folder contains the public documentation for Cordum core.
 - `docs/DOCKER.md` - docker compose + env setup
 - `docs/helm.md` - Helm install guide
 - `docs/LOCAL_E2E.md` - local end-to-end walkthrough
+- `docs/cordumctl.md` - CLI reference
 - `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)
 - `cmd/cordumctl/cordumctl up` - one-command local stack launcher
 - `tools/scripts/install.sh` - installer script for local or hosted one-liner
@@ -35,6 +36,8 @@ This folder contains the public documentation for Cordum core.
 
 - `examples/hello-pack` - minimal pack bundle
 - `examples/hello-worker-go` - Go worker consuming `job.hello-pack.echo`
+- `examples/python-worker` - Python worker example for `job.hello-pack.echo`
+- `examples/node-worker` - Node worker example for `job.hello-pack.echo`
 - `cordum-packs/packs/mcp-bridge` - MCP stdio bridge + pack (packs monorepo)
 
 ## Operations

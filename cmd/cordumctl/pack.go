@@ -178,6 +178,8 @@ func runPackCmd(args []string) {
 		os.Exit(1)
 	}
 	switch args[0] {
+	case "create":
+		runPackCreate(args[1:])
 	case "install":
 		runPackInstall(args[1:])
 	case "uninstall":

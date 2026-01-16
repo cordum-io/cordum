@@ -105,6 +105,30 @@ type RunOptions struct {
 	IdempotencyKey string
 }
 
+// JobSubmitRequest mirrors the gateway submit job payload.
+type JobSubmitRequest struct {
+	Prompt         string            `json:"prompt"`
+	Topic          string            `json:"topic"`
+	Context        any               `json:"context,omitempty"`
+	OrgID          string            `json:"org_id,omitempty"`
+	TenantID       string            `json:"tenant_id,omitempty"`
+	PrincipalID    string            `json:"principal_id,omitempty"`
+	ActorID        string            `json:"actor_id,omitempty"`
+	ActorType      string            `json:"actor_type,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
+	PackID         string            `json:"pack_id,omitempty"`
+	Capability     string            `json:"capability,omitempty"`
+	RiskTags       []string          `json:"risk_tags,omitempty"`
+	Requires       []string          `json:"requires,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+}
+
+// JobSubmitResponse captures the job submit response.
+type JobSubmitResponse struct {
+	JobID   string `json:"job_id"`
+	TraceID string `json:"trace_id,omitempty"`
+}
+
 func (c *Client) endpoint(path string) string {
 	base := strings.TrimRight(c.BaseURL, "/")
 	return base + path
@@ -285,6 +309,39 @@ func (c *Client) RetryDLQ(ctx context.Context, jobID string) error {
 		return fmt.Errorf("job id required")
 	}
 	return c.doJSON(ctx, http.MethodPost, "/api/v1/dlq/"+jobID+"/retry", nil, nil)
+}
+
+// SubmitJob submits a new job and returns IDs.
+func (c *Client) SubmitJob(ctx context.Context, req *JobSubmitRequest) (*JobSubmitResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	var resp JobSubmitResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/jobs", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetJob fetches a job record by ID.
+func (c *Client) GetJob(ctx context.Context, jobID string) (map[string]any, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("job id required")
+	}
+	var out map[string]any
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/jobs/"+jobID, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetStatus fetches the gateway status snapshot.
+func (c *Client) GetStatus(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/status", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // PutArtifact uploads content to the artifact store.

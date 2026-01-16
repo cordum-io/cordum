@@ -1,0 +1,2 @@
+workflows:
+  hello-pack.echo: 120

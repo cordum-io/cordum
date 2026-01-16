@@ -1,0 +1,50 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: hello-pack
+  version: 0.1.0
+  title: Hello Pack
+  description: Echo workflow demo pack.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+topics:
+  - name: job.hello-pack.echo
+    capability: hello-pack.echo
+
+resources:
+  schemas:
+    - id: hello-pack/EchoInput
+      path: schemas/EchoInput.json
+  workflows:
+    - id: hello-pack.echo
+      path: workflows/echo.yaml
+
+overlays:
+  config:
+    - name: pools
+      scope: system
+      key: pools
+      strategy: json_merge_patch
+      path: overlays/pools.patch.yaml
+    - name: timeouts
+      scope: system
+      key: timeouts
+      strategy: json_merge_patch
+      path: overlays/timeouts.patch.yaml
+  policy:
+    - name: safety
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml
+
+tests:
+  policySimulations:
+    - name: allow_echo
+      request:
+        tenantId: default
+        topic: job.hello-pack.echo
+        capability: hello-pack.echo
+      expectDecision: ALLOW

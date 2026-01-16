@@ -23,8 +23,14 @@ func main() {
 	args := os.Args[2:]
 
 	switch cmd {
+	case "init":
+		runInitCmd(args)
+	case "dev":
+		runDevCmd(args)
 	case "up":
 		runUpCmd(args)
+	case "status":
+		runStatusCmd(args)
 	case "workflow":
 		runWorkflowCmd(args)
 	case "run":
@@ -35,6 +41,8 @@ func main() {
 		runDLQCmd(args)
 	case "pack":
 		runPackCmd(args)
+	case "job":
+		runJobCmd(args)
 	default:
 		usage()
 		os.Exit(1)
@@ -224,7 +232,10 @@ func usage() {
 	fmt.Print(`cordumctl - Cordum platform CLI
 
 Usage:
+  cordumctl init <dir> [--force]
+  cordumctl dev [--file docker-compose.yml] [--build] [--detach]
   cordumctl up [--file docker-compose.yml] [--build] [--detach]
+  cordumctl status
   cordumctl workflow create --file workflow.json
   cordumctl workflow delete <workflow_id>
   cordumctl run start <workflow_id> [--input input.json] [--dry-run]
@@ -233,11 +244,15 @@ Usage:
   cordumctl approval step <workflow_id> <run_id> <step_id> (--approve|--reject)
   cordumctl approval job <job_id> (--approve|--reject)
   cordumctl dlq retry <job_id>
+  cordumctl job submit --topic job.example --prompt \"hello\" [--input input.json]
+  cordumctl job status <job_id>
+  cordumctl job logs <job_id>
   cordumctl pack install <path|url> [--upgrade] [--inactive] [--dry-run]
   cordumctl pack uninstall <pack_id> [--purge]
   cordumctl pack list
   cordumctl pack show <pack_id>
   cordumctl pack verify <pack_id>
+  cordumctl pack create <pack_id> [--dir path] [--force]
 
 Global flags:
   --gateway   Gateway base URL (default from CORDUM_GATEWAY)

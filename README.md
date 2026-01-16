@@ -142,6 +142,8 @@ CLI smoke (cordumctl):
 
 - `examples/hello-pack` - minimal pack (workflow + schema + policy/config overlays)
 - `examples/hello-worker-go` - Go worker that consumes `job.hello-pack.echo`
+- `examples/python-worker` - Python worker example for `job.hello-pack.echo`
+- `examples/node-worker` - Node worker example for `job.hello-pack.echo`
 - `cordum-packs/packs/mcp-bridge` - MCP stdio bridge + pack (packs monorepo)
 
 ## Docs
