@@ -40,6 +40,15 @@ helm install cordum ./cordum-helm \
   --set external.redisUrl=redis://redis.example.com:6379
 ```
 
+Use an external safety kernel:
+
+```bash
+helm install cordum ./cordum-helm \
+  -n cordum --create-namespace \
+  --set safetyKernel.enabled=false \
+  --set external.safetyKernelAddr=safety-kernel.example.com:50051
+```
+
 ## Notes
 
 - Gateway HTTP is exposed on the `api-gateway` service (port 8081).
