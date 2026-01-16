@@ -5,10 +5,12 @@ This folder contains the public documentation for Cordum core.
 ## Getting started
 
 - `docs/getting_started.md` - quickstart walkthrough
+- `docs/quickstart.md` - hello world tutorial
 - `docs/DOCKER.md` - docker compose + env setup
 - `docs/LOCAL_E2E.md` - local end-to-end walkthrough
 - `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)
 - `cmd/cordumctl/cordumctl up` - one-command local stack launcher
+- `tools/scripts/install.sh` - installer script for local or hosted one-liner
 
 ## Architecture
 
@@ -19,7 +21,7 @@ This folder contains the public documentation for Cordum core.
 ## API and configuration
 
 - `docs/api.md` - REST/gRPC overview
-- `make openapi` - generate OpenAPI specs from protobufs in `docs/api/openapi`
+- `make openapi` - generate OpenAPI specs from protobufs in `docs/api/openapi` (UI at `docs/api/openapi/`)
 - `docs/configuration.md` - config files + env vars
 
 ## Packs

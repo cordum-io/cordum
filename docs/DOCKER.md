@@ -26,6 +26,24 @@ docker compose up -d
 docker compose ps
 ```
 
+## Use Docker Hub images (release builds)
+
+Export the release version and use the release compose file:
+
+```bash
+export CORDUM_VERSION=v0.1.1
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d
+```
+
+The release images are published as:
+- `cordum/control-plane:<version>-api-gateway`
+- `cordum/control-plane:<version>-scheduler`
+- `cordum/control-plane:<version>-safety-kernel`
+- `cordum/control-plane:<version>-workflow-engine`
+- `cordum/control-plane:<version>-context-engine`
+- `cordum/dashboard:<version>`
+
 ## Smoke test (no workers required)
 
 ```bash
