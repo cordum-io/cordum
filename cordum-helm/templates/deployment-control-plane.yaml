@@ -1,0 +1,466 @@
+{{- if .Values.nats.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cordum.fullname" . }}-nats
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.nats.persistence.size | quote }}
+  {{- if .Values.nats.persistence.storageClassName }}
+  storageClassName: {{ .Values.nats.persistence.storageClassName | quote }}
+  {{- end }}
+---
+{{- end }}
+{{- if .Values.redis.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cordum.fullname" . }}-redis
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size | quote }}
+  {{- if .Values.redis.persistence.storageClassName }}
+  storageClassName: {{ .Values.redis.persistence.storageClassName | quote }}
+  {{- end }}
+---
+{{- end }}
+{{- if .Values.nats.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cordum.fullname" . }}-nats
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nats
+    spec:
+      serviceAccountName: {{ include "cordum.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nats
+          image: {{ .Values.nats.image | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          args:
+            - -js
+            - -sd
+            - /data
+          ports:
+            - name: client
+              containerPort: {{ .Values.nats.service.port }}
+          volumeMounts:
+            - name: nats-data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.nats.resources | nindent 12 }}
+      volumes:
+        - name: nats-data
+          {{- if .Values.nats.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "cordum.fullname" . }}-nats
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+{{- end }}
+{{- if .Values.redis.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cordum.fullname" . }}-redis
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      serviceAccountName: {{ include "cordum.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.service.port }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+      volumes:
+        - name: redis-data
+          {{- if .Values.redis.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "cordum.fullname" . }}-redis
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+{{- end }}
+{{- if .Values.safetyKernel.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cordum.fullname" . }}-safety-kernel
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: safety-kernel
+spec:
+  replicas: {{ .Values.safetyKernel.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: safety-kernel
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: safety-kernel
+    spec:
+      serviceAccountName: {{ include "cordum.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: safety-kernel
+          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.safetyKernel.image.tagSuffix | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          env:
+            - name: SAFETY_KERNEL_ADDR
+              value: {{ printf ":%d" (int .Values.safetyKernel.service.port) | quote }}
+            - name: SAFETY_POLICY_PATH
+              value: /etc/cordum/safety.yaml
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.safetyKernel.service.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cordum/safety.yaml
+              subPath: safety.yaml
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.safetyKernel.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "cordum.fullname" . }}-config
+---
+{{- end }}
+{{- if .Values.scheduler.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cordum.fullname" . }}-scheduler
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: scheduler
+    spec:
+      serviceAccountName: {{ include "cordum.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: scheduler
+          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.scheduler.image.tagSuffix | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          env:
+            - name: NATS_URL
+              value: {{ include "cordum.natsUrl" . | quote }}
+            - name: NATS_USE_JETSTREAM
+              value: "1"
+            - name: REDIS_URL
+              value: {{ include "cordum.redisUrl" . | quote }}
+            - name: SAFETY_KERNEL_ADDR
+              value: {{ printf "%s-safety-kernel:%d" (include "cordum.fullname" .) (int .Values.safetyKernel.service.port) | quote }}
+            - name: POOL_CONFIG_PATH
+              value: /etc/cordum/pools.yaml
+            - name: TIMEOUT_CONFIG_PATH
+              value: /etc/cordum/timeouts.yaml
+            - name: JOB_META_TTL
+              value: {{ .Values.scheduler.env.jobMetaTTL | quote }}
+            - name: WORKER_SNAPSHOT_INTERVAL
+              value: {{ .Values.scheduler.env.workerSnapshotInterval | quote }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.scheduler.service.metricsPort }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cordum/pools.yaml
+              subPath: pools.yaml
+            - name: config
+              mountPath: /etc/cordum/timeouts.yaml
+              subPath: timeouts.yaml
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "cordum.fullname" . }}-config
+---
+{{- end }}
+{{- if .Values.gateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cordum.fullname" . }}-api-gateway
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  replicas: {{ .Values.gateway.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api-gateway
+    spec:
+      serviceAccountName: {{ include "cordum.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api-gateway
+          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.gateway.image.tagSuffix | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          env:
+            - name: NATS_URL
+              value: {{ include "cordum.natsUrl" . | quote }}
+            - name: NATS_USE_JETSTREAM
+              value: "1"
+            - name: REDIS_URL
+              value: {{ include "cordum.redisUrl" . | quote }}
+            - name: SAFETY_KERNEL_ADDR
+              value: {{ printf "%s-safety-kernel:%d" (include "cordum.fullname" .) (int .Values.safetyKernel.service.port) | quote }}
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cordum.fullname" . }}-secrets
+                  key: apiKey
+            - name: CORDUM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cordum.fullname" . }}-secrets
+                  key: apiKey
+            - name: CORDUM_SUPER_SECRET_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cordum.fullname" . }}-secrets
+                  key: apiKey
+            - name: TENANT_ID
+              value: {{ .Values.gateway.env.tenantId | quote }}
+            - name: API_RATE_LIMIT_RPS
+              value: {{ .Values.gateway.env.apiRateLimitRps | quote }}
+            - name: API_RATE_LIMIT_BURST
+              value: {{ .Values.gateway.env.apiRateLimitBurst | quote }}
+            - name: REDIS_DATA_TTL
+              value: {{ .Values.gateway.env.redisDataTTL | quote }}
+            - name: JOB_META_TTL
+              value: {{ .Values.gateway.env.jobMetaTTL | quote }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.gateway.service.grpcPort }}
+            - name: http
+              containerPort: {{ .Values.gateway.service.httpPort }}
+            - name: metrics
+              containerPort: {{ .Values.gateway.service.metricsPort }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/status
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/v1/status
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+---
+{{- end }}
+{{- if .Values.workflowEngine.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cordum.fullname" . }}-workflow-engine
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: workflow-engine
+spec:
+  replicas: {{ .Values.workflowEngine.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: workflow-engine
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: workflow-engine
+    spec:
+      serviceAccountName: {{ include "cordum.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: workflow-engine
+          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.workflowEngine.image.tagSuffix | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          env:
+            - name: NATS_URL
+              value: {{ include "cordum.natsUrl" . | quote }}
+            - name: NATS_USE_JETSTREAM
+              value: "1"
+            - name: REDIS_URL
+              value: {{ include "cordum.redisUrl" . | quote }}
+            - name: WORKFLOW_ENGINE_HTTP_ADDR
+              value: {{ printf ":%d" (int .Values.workflowEngine.service.port) | quote }}
+            - name: WORKFLOW_ENGINE_SCAN_INTERVAL
+              value: {{ .Values.workflowEngine.env.scanInterval | quote }}
+            - name: WORKFLOW_ENGINE_RUN_SCAN_LIMIT
+              value: {{ .Values.workflowEngine.env.runScanLimit | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.workflowEngine.service.port }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.workflowEngine.resources | nindent 12 }}
+---
+{{- end }}
+{{- if .Values.contextEngine.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cordum.fullname" . }}-context-engine
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: context-engine
+spec:
+  replicas: {{ .Values.contextEngine.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: context-engine
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: context-engine
+    spec:
+      serviceAccountName: {{ include "cordum.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: context-engine
+          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.contextEngine.image.tagSuffix | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          env:
+            - name: REDIS_URL
+              value: {{ include "cordum.redisUrl" . | quote }}
+            - name: CONTEXT_ENGINE_ADDR
+              value: {{ printf ":%d" (int .Values.contextEngine.service.port) | quote }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.contextEngine.service.port }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.contextEngine.resources | nindent 12 }}
+{{- end }}

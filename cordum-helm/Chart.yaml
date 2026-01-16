@@ -1,0 +1,17 @@
+apiVersion: v2
+name: cordum
+description: AI agent orchestration with built-in governance
+type: application
+version: 0.1.1
+appVersion: "0.1.1"
+keywords:
+  - ai
+  - orchestration
+  - workflow
+  - governance
+home: https://cordum.io
+sources:
+  - https://github.com/cordum-io/cordum
+maintainers:
+  - name: Yaron
+    email: yaron@cordum.io

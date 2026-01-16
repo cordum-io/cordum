@@ -1,0 +1,61 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cordum.fullname" . }}-dashboard
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+spec:
+  replicas: {{ .Values.dashboard.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dashboard
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dashboard
+    spec:
+      serviceAccountName: {{ include "cordum.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: dashboard
+          image: {{ printf "%s:%s" .Values.dashboard.image.repository .Values.dashboard.image.tag | quote }}
+          imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+          env:
+            - name: CORDUM_API_BASE_URL
+              value: {{ default (printf "http://%s-api-gateway:%d" (include "cordum.fullname" .) (int .Values.gateway.service.httpPort)) .Values.dashboard.env.apiBaseUrl | quote }}
+            - name: CORDUM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cordum.fullname" . }}-secrets
+                  key: apiKey
+            - name: CORDUM_TENANT_ID
+              value: {{ .Values.dashboard.env.tenantId | quote }}
+            - name: CORDUM_PRINCIPAL_ID
+              value: {{ .Values.dashboard.env.principalId | quote }}
+            - name: CORDUM_PRINCIPAL_ROLE
+              value: {{ .Values.dashboard.env.principalRole | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.dashboard.service.port }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.dashboard.resources | nindent 12 }}
+{{- end }}
