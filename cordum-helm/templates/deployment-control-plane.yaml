@@ -166,6 +166,8 @@ spec:
               value: {{ printf ":%d" (int .Values.safetyKernel.service.port) | quote }}
             - name: SAFETY_POLICY_PATH
               value: /etc/cordum/safety.yaml
+            - name: REDIS_URL
+              value: {{ include "cordum.redisUrl" . | quote }}
           ports:
             - name: grpc
               containerPort: {{ .Values.safetyKernel.service.port }}
@@ -228,7 +230,7 @@ spec:
             - name: REDIS_URL
               value: {{ include "cordum.redisUrl" . | quote }}
             - name: SAFETY_KERNEL_ADDR
-              value: {{ printf "%s-safety-kernel:%d" (include "cordum.fullname" .) (int .Values.safetyKernel.service.port) | quote }}
+              value: {{ include "cordum.safetyKernelAddr" . | quote }}
             - name: POOL_CONFIG_PATH
               value: /etc/cordum/pools.yaml
             - name: TIMEOUT_CONFIG_PATH
@@ -304,7 +306,7 @@ spec:
             - name: REDIS_URL
               value: {{ include "cordum.redisUrl" . | quote }}
             - name: SAFETY_KERNEL_ADDR
-              value: {{ printf "%s-safety-kernel:%d" (include "cordum.fullname" .) (int .Values.safetyKernel.service.port) | quote }}
+              value: {{ include "cordum.safetyKernelAddr" . | quote }}
             - name: API_KEY
               valueFrom:
                 secretKeyRef:

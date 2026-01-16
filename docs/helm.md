@@ -35,3 +35,12 @@ helm install cordum ./cordum-helm \
   --set external.natsUrl=nats://nats.example.com:4222 \
   --set external.redisUrl=redis://redis.example.com:6379
 ```
+
+Use an external safety kernel:
+
+```bash
+helm install cordum ./cordum-helm \
+  -n cordum --create-namespace \
+  --set safetyKernel.enabled=false \
+  --set external.safetyKernelAddr=safety-kernel.example.com:50051
+```

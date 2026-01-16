@@ -54,3 +54,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- required "external.redisUrl is required when redis.enabled=false" .Values.external.redisUrl -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "cordum.safetyKernelAddr" -}}
+{{- if .Values.safetyKernel.enabled -}}
+{{- printf "%s-safety-kernel:%d" (include "cordum.fullname" .) (int .Values.safetyKernel.service.port) -}}
+{{- else -}}
+{{- required "external.safetyKernelAddr is required when safetyKernel.enabled=false" .Values.external.safetyKernelAddr -}}
+{{- end -}}
+{{- end -}}

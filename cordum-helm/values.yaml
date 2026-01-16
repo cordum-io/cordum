@@ -49,6 +49,7 @@ config:
 external:
   natsUrl: ""
   redisUrl: ""
+  safetyKernelAddr: ""
 
 nats:
   enabled: true
