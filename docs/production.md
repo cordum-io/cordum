@@ -7,6 +7,9 @@ For a production-oriented baseline, use the kustomize overlay under
 `deploy/k8s/production/` (stateful NATS/Redis, TLS/mTLS, network policies,
 monitoring, backups, and HA defaults).
 
+For Helm-based deployments, start with `cordum-helm/` and apply the same
+hardening steps below.
+
 ## 1) Persistence + durability
 
 - Run NATS with JetStream persistence (PVCs). Prefer a 3-node NATS cluster for HA.

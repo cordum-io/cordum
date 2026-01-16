@@ -1,0 +1,69 @@
+{{- if and .Values.ingress.enabled .Values.gateway.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cordum.fullname" . }}-api
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.api.host | quote }}
+      http:
+        paths:
+          {{- range .Values.ingress.api.paths }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType | quote }}
+            backend:
+              service:
+                name: {{ include "cordum.fullname" $ }}-api-gateway
+                port:
+                  number: {{ $.Values.gateway.service.httpPort }}
+          {{- end }}
+---
+{{- end }}
+{{- if and .Values.ingress.enabled .Values.dashboard.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cordum.fullname" . }}-dashboard
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.dashboard.host | quote }}
+      http:
+        paths:
+          {{- range .Values.ingress.dashboard.paths }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType | quote }}
+            backend:
+              service:
+                name: {{ include "cordum.fullname" $ }}-dashboard
+                port:
+                  number: {{ $.Values.dashboard.service.port }}
+          {{- end }}
+{{- end }}

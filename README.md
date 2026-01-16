@@ -112,6 +112,20 @@ docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```
 
+## Kubernetes (Helm)
+
+```bash
+helm install cordum ./cordum-helm -n cordum --create-namespace
+```
+
+Published chart (when available):
+
+```bash
+helm repo add cordum https://charts.cordum.io
+helm repo update
+helm install cordum cordum/cordum -n cordum --create-namespace
+```
+
 Dashboard (optional): `http://localhost:8082` (uses `CORDUM_API_KEY`).
 
 Platform smoke (create workflow + run + approve + delete):

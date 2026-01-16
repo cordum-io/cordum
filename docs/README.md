@@ -7,6 +7,7 @@ This folder contains the public documentation for Cordum core.
 - `docs/getting_started.md` - quickstart walkthrough
 - `docs/quickstart.md` - hello world tutorial
 - `docs/DOCKER.md` - docker compose + env setup
+- `docs/helm.md` - Helm install guide
 - `docs/LOCAL_E2E.md` - local end-to-end walkthrough
 - `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)
 - `cmd/cordumctl/cordumctl up` - one-command local stack launcher

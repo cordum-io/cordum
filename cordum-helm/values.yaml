@@ -1,0 +1,224 @@
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
+
+# Base image settings for control plane components.
+global:
+  image:
+    repository: cordum/control-plane
+    tag: "v0.1.1"
+    pullPolicy: IfNotPresent
+
+secrets:
+  apiKey: super-secret-key
+
+config:
+  safety: |-
+    default_tenant: default
+    tenants:
+      default:
+        allow_topics:
+          - "job.*"
+        deny_topics:
+          - "sys.*"
+        allowed_repo_hosts: []
+        denied_repo_hosts: []
+        mcp:
+          allow_servers: []
+          deny_servers: []
+          allow_tools: []
+          deny_tools: []
+          allow_resources: []
+          deny_resources: []
+          allow_actions: []
+          deny_actions: []
+  pools: |-
+    topics:
+      job.default: default
+    pools:
+      default:
+        requires: []
+  timeouts: |-
+    workflows: {}
+    topics: {}
+    reconciler:
+      dispatch_timeout_seconds: 300
+      running_timeout_seconds: 9000
+      scan_interval_seconds: 30
+
+external:
+  natsUrl: ""
+  redisUrl: ""
+
+nats:
+  enabled: true
+  image: nats:2.10-alpine
+  service:
+    type: ClusterIP
+    port: 4222
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClassName: ""
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  service:
+    type: ClusterIP
+    port: 6379
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClassName: ""
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+serviceAccount:
+  create: true
+  name: ""
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tls: []
+  api:
+    host: api.cordum.local
+    paths:
+      - path: /
+        pathType: Prefix
+  dashboard:
+    host: cordum.local
+    paths:
+      - path: /
+        pathType: Prefix
+
+gateway:
+  enabled: true
+  replicaCount: 1
+  image:
+    tagSuffix: api-gateway
+  service:
+    type: ClusterIP
+    httpPort: 8081
+    grpcPort: 8080
+    metricsPort: 9092
+  env:
+    tenantId: default
+    apiRateLimitRps: 50
+    apiRateLimitBurst: 100
+    redisDataTTL: 24h
+    jobMetaTTL: 168h
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+scheduler:
+  enabled: true
+  replicaCount: 1
+  image:
+    tagSuffix: scheduler
+  service:
+    type: ClusterIP
+    metricsPort: 9090
+  env:
+    jobMetaTTL: 168h
+    workerSnapshotInterval: 5s
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+safetyKernel:
+  enabled: true
+  replicaCount: 1
+  image:
+    tagSuffix: safety-kernel
+  service:
+    type: ClusterIP
+    port: 50051
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+workflowEngine:
+  enabled: true
+  replicaCount: 1
+  image:
+    tagSuffix: workflow-engine
+  service:
+    type: ClusterIP
+    port: 9093
+  env:
+    scanInterval: 5s
+    runScanLimit: 200
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+contextEngine:
+  enabled: true
+  replicaCount: 1
+  image:
+    tagSuffix: context-engine
+  service:
+    type: ClusterIP
+    port: 50070
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+dashboard:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: cordum/dashboard
+    tag: "v0.1.1"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  env:
+    apiBaseUrl: ""
+    tenantId: default
+    principalId: ""
+    principalRole: ""
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
