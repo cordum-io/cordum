@@ -5,13 +5,14 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/cordum-io/cordum)](go.mod)
 [![Docker Compose](https://img.shields.io/badge/compose-ready-0f766e)](docker-compose.yml)
 [![Docs](https://img.shields.io/badge/docs-cordum--docs-0ea5e9)](docs/README.md)
+![Docker Pulls](https://img.shields.io/docker/pulls/cordum/control-plane)
 ![CI](https://github.com/cordum-io/cordum/workflows/CI/badge.svg)
 ![CodeQL](https://github.com/cordum-io/cordum/workflows/CodeQL/badge.svg)
 ![Coverage Target](https://img.shields.io/badge/coverage-target%2080%25-22c55e)
 [![Website](https://img.shields.io/badge/website-cordum.io-blue)](https://cordum.io)
 [![WebsiteDocs](https://img.shields.io/badge/docs-cordum.io%2Fdocs-0ea5e9)](https://cordum.io/docs)
 
-Cordum (cordum.io) is a platform-only control plane for autonomous workflows and external workers.
+Cordum (cordum.io) is a platform-only control plane for autonomous AI Agents and external workers.
 It uses NATS for the bus, Redis for state and payload pointers, and CAP v2 wire contracts for jobs,
 results, and heartbeats. Workers and product packs live outside this repo.
 
@@ -20,6 +21,16 @@ See the full product docs at [Cordum](https://cordum.io) (or the local `docs/REA
 ## Getting started (1 minute)
 
 ![Getting started](docs/assets/getting-started.gif)
+
+Install (one-liner):
+
+```bash
+curl -fsSL https://get.cordum.io | sh
+# or run locally from a clone:
+./tools/scripts/install.sh
+```
+
+`get.cordum.io` should serve `tools/scripts/install.sh` from this repo.
 
 1. `./cmd/cordumctl/cordumctl up`
 2. Open `http://localhost:8082` (dashboard).
@@ -93,6 +104,14 @@ docker compose build
 docker compose up -d
 ```
 
+For prebuilt images:
+
+```bash
+export CORDUM_VERSION=v0.1.1
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d
+```
+
 Dashboard (optional): `http://localhost:8082` (uses `CORDUM_API_KEY`).
 
 Platform smoke (create workflow + run + approve + delete):
@@ -120,6 +139,7 @@ Start here:
 
 Key guides:
 - `docs/DOCKER.md` (compose + environment)
+- `docs/quickstart.md` (hello world tutorial)
 - `docs/AGENT_PROTOCOL.md` (bus + pointer semantics)
 - `docs/pack.md` (pack format + install flow)
 - `docs/LOCAL_E2E.md` (local e2e walkthrough)

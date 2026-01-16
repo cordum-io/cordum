@@ -42,3 +42,5 @@ make openapi
 ```
 
 Output is written to `docs/api/openapi/` (merged as `cordum.swagger.json`).
+When docs are published, the Swagger UI lives at `docs/api/openapi/` and the
+raw spec at `docs/api/openapi/cordum.swagger.json`.
