@@ -1,0 +1,6 @@
+topics:
+  job.hello-pack.echo: hello-pack
+pools:
+  hello-pack:
+    requires:
+      - local

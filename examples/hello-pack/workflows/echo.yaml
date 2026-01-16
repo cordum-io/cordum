@@ -1,0 +1,16 @@
+id: hello-pack.echo
+name: Hello Pack Echo
+org_id: default
+steps:
+  echo:
+    id: echo
+    name: Echo input
+    type: worker
+    topic: job.hello-pack.echo
+    input_schema_id: hello-pack/EchoInput
+    input:
+      message: "${input.message}"
+      author: "${input.author}"
+    meta:
+      pack_id: hello-pack
+      capability: hello-pack.echo

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hello Pack Echo Input",
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    }
+  },
+  "required": ["message"],
+  "additionalProperties": false
+}

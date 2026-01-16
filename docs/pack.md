@@ -17,6 +17,14 @@ A pack is either:
 - a directory containing `pack.yaml`, or
 - a `.tgz` archive whose root contains `pack.yaml` (or a single top-level folder with it).
 
+## Scaffold a pack
+
+Generate a minimal pack skeleton:
+
+```bash
+cordumctl pack create my-pack
+```
+
 ## Marketplace catalogs
 
 Cordum can discover and install packs from catalog JSON files. Catalogs are configured

@@ -1,0 +1,7 @@
+rules:
+  - id: hello-pack-allow
+    match:
+      topics:
+        - job.hello-pack.echo
+    decision: allow
+    reason: "Allow the hello-pack echo demo."
