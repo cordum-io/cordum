@@ -1,0 +1,32 @@
+id: demo-guardrails.approval
+name: Guardrails Approval Demo
+org_id: default
+steps:
+  write:
+    id: write
+    name: Write attempt
+    type: worker
+    topic: job.demo-guardrails.write
+    input:
+      message: "${input.message}"
+      actor: "${input.actor}"
+    meta:
+      pack_id: demo-guardrails
+      capability: demo-guardrails.write
+      risk_tags:
+        - write
+        - prod
+  confirm:
+    id: confirm
+    name: Confirm safe write
+    type: worker
+    topic: job.demo-guardrails.safe
+    depends_on:
+      - write
+    input:
+      message: "${input.message}"
+      actor: "${input.actor}"
+      note: "approved"
+    meta:
+      pack_id: demo-guardrails
+      capability: demo-guardrails.safe

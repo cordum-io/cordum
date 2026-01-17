@@ -1,0 +1,48 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: demo-guardrails
+  version: 0.1.0
+  title: Guardrails Demo
+  description: Approval and remediation demo pack.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+topics:
+  - name: job.demo-guardrails.write
+    capability: demo-guardrails.write
+    riskTags:
+      - write
+      - prod
+  - name: job.demo-guardrails.dangerous
+    capability: demo-guardrails.dangerous
+    riskTags:
+      - write
+      - prod
+  - name: job.demo-guardrails.safe
+    capability: demo-guardrails.safe
+
+resources:
+  workflows:
+    - id: demo-guardrails.approval
+      path: workflows/approval.yaml
+
+overlays:
+  config:
+    - name: pools
+      scope: system
+      key: pools
+      strategy: json_merge_patch
+      path: overlays/pools.patch.yaml
+    - name: timeouts
+      scope: system
+      key: timeouts
+      strategy: json_merge_patch
+      path: overlays/timeouts.patch.yaml
+  policy:
+    - name: guardrails
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml

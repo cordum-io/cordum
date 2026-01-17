@@ -1,0 +1,8 @@
+topics:
+  job.demo-guardrails.write: demo-guardrails
+  job.demo-guardrails.safe: demo-guardrails
+  job.demo-guardrails.dangerous: demo-guardrails
+pools:
+  demo-guardrails:
+    requires:
+      - local
