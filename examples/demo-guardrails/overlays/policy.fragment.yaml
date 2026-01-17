@@ -1,0 +1,28 @@
+rules:
+  - id: demo-guardrails-approval
+    match:
+      topics:
+        - job.demo-guardrails.write
+      risk_tags:
+        - write
+    decision: require_approval
+    reason: "Write operations require approval."
+  - id: demo-guardrails-deny
+    match:
+      topics:
+        - job.demo-guardrails.dangerous
+    decision: deny
+    reason: "Dangerous operation blocked."
+    remediations:
+      - id: use-safe
+        title: "Route to safe handler"
+        summary: "Switch to the safe topic instead of the dangerous path."
+        replacement_topic: job.demo-guardrails.safe
+        replacement_capability: demo-guardrails.safe
+        add_labels:
+          remediation: safe
+  - id: demo-guardrails-allow-safe
+    match:
+      topics:
+        - job.demo-guardrails.safe
+    decision: allow

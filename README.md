@@ -18,6 +18,12 @@ results, and heartbeats. Workers and product packs live outside this repo.
 
 See the full product docs at [Cordum](https://cordum.io) (or the local `docs/README.md`).
 
+## 2-minute guardrails demo
+
+Run the approval + remediation demo (worker + policy gate + approval): `./tools/scripts/demo_guardrails.sh`
+
+Walkthrough + GIF recording steps: `docs/demo-guardrails.md`
+
 ## Getting started (1 minute)
 
 ![Getting started](docs/assets/getting-started.gif)
@@ -144,6 +150,7 @@ CLI smoke (cordumctl):
 - `examples/hello-worker-go` - Go worker that consumes `job.hello-pack.echo`
 - `examples/python-worker` - Python worker example for `job.hello-pack.echo`
 - `examples/node-worker` - Node worker example for `job.hello-pack.echo`
+- `examples/demo-guardrails` - approval + remediation demo pack
 - `cordum-packs/packs/mcp-bridge` - MCP stdio bridge + pack (packs monorepo)
 
 ## Docs
