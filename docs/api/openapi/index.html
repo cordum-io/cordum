@@ -29,13 +29,15 @@
     <script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin></script>
     <script>
       window.addEventListener("load", () => {
+        const specUrl = new URL("cordum.swagger.json", window.location.href).toString();
         window.ui = SwaggerUIBundle({
-          url: "./cordum.swagger.json",
+          url: specUrl,
           dom_id: "#swagger-ui",
           deepLinking: true,
           docExpansion: "none",
           presets: [SwaggerUIBundle.presets.apis],
           layout: "BaseLayout",
+          validatorUrl: null,
         });
       });
     </script>
