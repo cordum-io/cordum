@@ -12,7 +12,7 @@ This folder contains the public documentation for Cordum core.
 - `docs/cordumctl.md` - CLI reference
 - `docs/demo-guardrails.md` - guardrails demo walkthrough + GIF recording
 - `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)
-- `cmd/cordumctl/cordumctl up` - one-command local stack launcher
+- `cordumctl up` - one-command local stack launcher (`go run ./cmd/cordumctl up` or `./bin/cordumctl up` after `make build SERVICE=cordumctl`)
 - `tools/scripts/install.sh` - installer script for local or hosted one-liner
 
 ## Architecture

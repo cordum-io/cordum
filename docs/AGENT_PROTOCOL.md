@@ -20,14 +20,14 @@ This document describes how control-plane components and external workers commun
 - `sys.workflow.event` – workflow engine event emissions (SystemAlert).
 - `job.*` – worker pools (map lives in `config/pools.yaml`, e.g., `job.default`, `job.batch`).
 - `worker.<worker_id>.jobs` – direct, worker-targeted delivery (used by the scheduler for least-loaded dispatch).
-Default subject constants are defined in `core/protocol/capsdk` (mirrors CAP v2.0.9 spec for Go).
+Default subject constants are defined in `core/protocol/capsdk` (mirrors the CAP v2 module version in `go.mod`).
 
 ## Delivery Semantics (JetStream)
 
 By default this system is plain NATS pub/sub (at-most-once). When JetStream is enabled (`NATS_USE_JETSTREAM=1`), the bus switches the durable subjects to explicit ack/nak semantics (at-least-once):
 
 - **Durable (JetStream):** `sys.job.submit`, `sys.job.result`, `sys.job.dlq`, `job.*`, `worker.<id>.jobs`
-- **Best-effort (plain NATS):** `sys.heartbeat` (fan-out), `sys.job.cancel` (best-effort cancellation)
+- **Best-effort (plain NATS):** `sys.heartbeat` (fan-out), `sys.job.cancel`, `sys.job.progress`, `sys.workflow.event`
 
 Because at-least-once delivery can redeliver, handlers must be idempotent:
 - Scheduler uses a per-job Redis lock before mutating state/dispatching.

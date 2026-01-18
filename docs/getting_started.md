@@ -11,10 +11,17 @@ setup.
 
 ## Start the stack
 
-One command (recommended):
+One command (requires Go):
 
 ```bash
-./cmd/cordumctl/cordumctl up
+go run ./cmd/cordumctl up
+```
+
+Or build the CLI once and run it:
+
+```bash
+make build SERVICE=cordumctl
+./bin/cordumctl up
 ```
 
 `cordumctl up` sets `COMPOSE_HTTP_TIMEOUT` and `DOCKER_CLIENT_TIMEOUT` to `1800`
@@ -61,6 +68,8 @@ Expected output:
 ## Use the CLI
 
 ```bash
+make build SERVICE=cordumctl
+export PATH="$PWD/bin:$PATH"
 ./tools/scripts/cordumctl_smoke.sh
 ```
 
@@ -75,7 +84,7 @@ go run .
 
 # In another terminal, install the pack
 cd ../../
-./cmd/cordumctl/cordumctl pack install ./examples/hello-pack
+./bin/cordumctl pack install ./examples/hello-pack
 
 # Trigger a run
 curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \

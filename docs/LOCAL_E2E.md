@@ -18,6 +18,8 @@ This document captures end-to-end flows validated against the platform-only stac
 
 ### CLI smoke (cordumctl)
 
+Requires `cordumctl` on `PATH` (build with `make build SERVICE=cordumctl` and add `./bin` to `PATH`).
+
 ```bash
 ./tools/scripts/cordumctl_smoke.sh
 ```

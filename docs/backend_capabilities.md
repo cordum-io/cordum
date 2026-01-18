@@ -48,7 +48,7 @@ This document tracks the current backend features, their status, and where they 
 - DAG deps: `depends_on` allows parallel independent steps; a step runs only after all dependencies succeed.
 - Failure semantics: failed/cancelled/timed-out deps block downstream steps (no implicit continue-on-error).
 - Dataflow: step `input` supports `${...}` expressions; step outputs are recorded in run context under `steps.<step_id>` and optionally `output_path`.
-- Step types: approval, delay (timer), notify (SystemAlert), condition (inline boolean output), worker.
+- Step types: built-ins (approval, delay, notify, condition) plus job-dispatch steps (any non-built-in type dispatches as a job via `step.topic`).
 - Reliability: per-step retry/backoff (exponential), budget deadline hint from `timeout_sec`, approval steps pause/resume via API; job-result handling returns retryable errors (NAK) under transient store/lock failures so results aren’t dropped; reconciler replays terminal job states from JobStore and resumes delayed retries; tests cover fan-out/retry/approval/max_parallel.
 - Rerun: rerun-from-step and dry-run support.
 - Validation: workflow input schema validation; step input/output schema validation.
