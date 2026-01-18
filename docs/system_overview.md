@@ -129,7 +129,7 @@ Subjects:
 JetStream (optional):
 - Enable with `NATS_USE_JETSTREAM=1`.
 - Durable subjects: `sys.job.submit`, `sys.job.result`, `sys.job.dlq`, `job.*`, `worker.<id>.jobs`.
-- Best-effort: `sys.heartbeat`, `sys.job.cancel`.
+- Best-effort: `sys.heartbeat`, `sys.job.cancel`, `sys.job.progress`, `sys.workflow.event`.
 - Handlers are idempotent via Redis locks and retryable error NAKs.
 
 ## Redis key map (selected)

@@ -5,10 +5,16 @@ This demo shows:
 - A remediation suggestion
 - An approval gate for risky work
 
+If you want a local `cordumctl` binary:
+
+```bash
+make build SERVICE=cordumctl
+```
+
 ## 1) Start the stack
 
 ```bash
-./cmd/cordumctl/cordumctl up
+./bin/cordumctl up
 ```
 
 ## 2) Start the demo worker
@@ -21,7 +27,7 @@ go run .
 ## 3) Install the demo pack
 
 ```bash
-./cmd/cordumctl/cordumctl pack install ./examples/demo-guardrails --upgrade
+./bin/cordumctl pack install --upgrade ./examples/demo-guardrails
 ```
 
 ## 4) Run the demo script

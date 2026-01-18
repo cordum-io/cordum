@@ -297,13 +297,13 @@ Policy fragment keys are stable per pack+name so upgrades overwrite in place.
 ```bash
 cordumctl pack install ./my-pack
 cordumctl pack install https://example.com/my-pack.tgz
-cordumctl pack install ./my-pack --inactive
-cordumctl pack install ./my-pack --upgrade
+cordumctl pack install --inactive ./my-pack
+cordumctl pack install --upgrade ./my-pack
 cordumctl pack list
 cordumctl pack show sre-investigator
 cordumctl pack verify sre-investigator
 cordumctl pack uninstall sre-investigator
-cordumctl pack uninstall sre-investigator --purge
+cordumctl pack uninstall --purge sre-investigator
 ```
 
 Flags:

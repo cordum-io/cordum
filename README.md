@@ -11,6 +11,7 @@
 ![Coverage Target](https://img.shields.io/badge/coverage-target%2080%25-22c55e)
 [![Website](https://img.shields.io/badge/website-cordum.io-blue)](https://cordum.io)
 [![WebsiteDocs](https://img.shields.io/badge/docs-cordum.io%2Fdocs-0ea5e9)](https://cordum.io/docs)
+[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/26yw9VQV)
 
 Cordum (cordum.io) is a platform-only control plane for autonomous AI Agents and external workers.
 It uses NATS for the bus, Redis for state and payload pointers, and CAP v2 wire contracts for jobs,
@@ -38,7 +39,7 @@ curl -fsSL https://get.cordum.io | sh
 
 `get.cordum.io` should serve `tools/scripts/install.sh` from this repo.
 
-1. `./cmd/cordumctl/cordumctl up`
+1. `go run ./cmd/cordumctl up` (requires Go), or `docker compose build && docker compose up -d`.
 2. Open `http://localhost:8082` (dashboard).
 3. Run `./tools/scripts/platform_smoke.sh`.
 
@@ -97,10 +98,10 @@ Cordum is built for teams that need deterministic automation and policy control.
 
 ## Quickstart (Docker)
 
-Requirements: Docker/Compose, curl, jq.
+Requirements: Docker/Compose, curl, jq. Go is required if you want to use `cordumctl`.
 
 ```bash
-./cmd/cordumctl/cordumctl up
+go run ./cmd/cordumctl up
 ```
 
 Or manually:
@@ -139,7 +140,7 @@ Platform smoke (create workflow + run + approve + delete):
 ./tools/scripts/platform_smoke.sh
 ```
 
-CLI smoke (cordumctl):
+CLI smoke (cordumctl) (requires `cordumctl` on PATH; build with `make build SERVICE=cordumctl` and add `./bin` to `PATH`):
 ```bash
 ./tools/scripts/cordumctl_smoke.sh
 ```

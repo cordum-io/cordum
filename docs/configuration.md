@@ -10,7 +10,8 @@ Compose mounts these files from `config/`:
 - `config/pools.yaml` - topic -> pool routing
 - `config/timeouts.yaml` - per-topic and per-workflow timeouts
 - `config/safety.yaml` - safety kernel policy
-- `config/system.yaml` - system config template for the config service (budgets, rate limits, observability, alerting)
+
+`config/system.yaml` is a sample payload for the config service (budgets, rate limits, observability, alerting). It is not mounted by default; use `POST /api/v1/config` to store it.
 
 The control plane validates pool/timeout/safety files against embedded JSON
 schemas (see `core/infra/config/schema/`). Invalid configs return errors and,
@@ -34,7 +35,7 @@ Shared across services:
 - `GATEWAY_GRPC_ADDR`, `GATEWAY_HTTP_ADDR`, `GATEWAY_METRICS_ADDR`
 - `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST`
 - `TENANT_ID` (single-tenant default)
-- API keys: `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, or `API_KEY`
+- API keys: `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
 - CORS: `CORDUM_ALLOWED_ORIGINS`, `CORDUM_CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGINS`
 - TLS: `GRPC_TLS_CERT`, `GRPC_TLS_KEY`
 - Pack catalog defaults: `CORDUM_PACK_CATALOG_URL`, `CORDUM_PACK_CATALOG_ID`,
@@ -55,9 +56,11 @@ Shared across services:
 
 ## Safety kernel
 
-- `SAFETY_KERNEL_ADDR`, `SAFETY_POLICY_PATH`
+- `SAFETY_KERNEL_ADDR`, `SAFETY_POLICY_PATH` (or `SAFETY_POLICY_URL`)
 - TLS server: `SAFETY_KERNEL_TLS_CERT`, `SAFETY_KERNEL_TLS_KEY`
 - TLS client: `SAFETY_KERNEL_TLS_CA`, `SAFETY_KERNEL_INSECURE`
 - Decision cache: `SAFETY_DECISION_CACHE_TTL` (e.g. `5s`, `250ms`)
+- Policy signature verification: `SAFETY_POLICY_PUBLIC_KEY`, `SAFETY_POLICY_SIGNATURE`, `SAFETY_POLICY_SIGNATURE_PATH`
+- Policy reload/overlays: `SAFETY_POLICY_RELOAD_INTERVAL`, `SAFETY_POLICY_CONFIG_SCOPE`, `SAFETY_POLICY_CONFIG_ID`, `SAFETY_POLICY_CONFIG_KEY`, `SAFETY_POLICY_CONFIG_DISABLE`
 
 For full details, see `docs/DOCKER.md`.

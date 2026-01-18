@@ -8,11 +8,12 @@ without any external workers.
 - Docker + Docker Compose
 - curl
 - jq
+- Go (optional, only if using `cordumctl`)
 
 ## Step 1: Start the stack
 
 ```bash
-./cmd/cordumctl/cordumctl up
+go run ./cmd/cordumctl up
 ```
 
 Or:
