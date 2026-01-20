@@ -264,7 +264,10 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 		return nil, fmt.Errorf("nats tls insecure not allowed in production")
 	}
 
-	cfg := &tls.Config{MinVersion: env.TLSMinVersion()}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if env.TLSMinVersion() == tls.VersionTLS13 {
+		cfg.MinVersion = tls.VersionTLS13
+	}
 	if serverName != "" {
 		cfg.ServerName = serverName
 	}

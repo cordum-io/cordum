@@ -86,7 +86,10 @@ func Run(cfg *config.Config) error {
 		}
 		cfg := &tls.Config{
 			Certificates: []tls.Certificate{pair},
-			MinVersion:   env.TLSMinVersion(),
+			MinVersion:   tls.VersionTLS12,
+		}
+		if env.TLSMinVersion() == tls.VersionTLS13 {
+			cfg.MinVersion = tls.VersionTLS13
 		}
 		serverCreds = grpc.Creds(credentials.NewTLS(cfg))
 	}
