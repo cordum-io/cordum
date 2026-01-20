@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import type { DelayNodeData } from "../types";
+import { NodeStatus } from "./NodeStatus";
 
 function formatDelay(seconds?: number): string {
   if (!seconds) return "Not set";
@@ -11,10 +12,15 @@ function formatDelay(seconds?: number): string {
 }
 
 function DelayNodeComponent({ id, data, selected }: NodeProps<DelayNodeData>) {
+  const isReadOnly = Boolean(data.readOnly);
   return (
     <div
       className={`builder-node builder-node--delay ${selected ? "builder-node--selected" : ""}`}
-      onClick={() => data.onSelect(id)}
+      onClick={() => {
+        if (!isReadOnly) {
+          data.onSelect(id);
+        }
+      }}
     >
       <Handle type="target" position={Position.Left} className="builder-handle" />
 
@@ -24,15 +30,17 @@ function DelayNodeComponent({ id, data, selected }: NodeProps<DelayNodeData>) {
           <div className="builder-node__label">{data.label}</div>
           <div className="builder-node__type">Delay</div>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            data.onDelete(id);
-          }}
-          className="builder-node__delete"
-        >
-          &times;
-        </button>
+        {!isReadOnly ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete(id);
+            }}
+            className="builder-node__delete"
+          >
+            &times;
+          </button>
+        ) : null}
       </div>
 
       <div className="builder-node__body">
@@ -59,6 +67,7 @@ function DelayNodeComponent({ id, data, selected }: NodeProps<DelayNodeData>) {
         )}
       </div>
 
+      {isReadOnly ? <NodeStatus status={data.status} /> : null}
       <Handle type="source" position={Position.Right} id="output" className="builder-handle" />
     </div>
   );

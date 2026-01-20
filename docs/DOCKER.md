@@ -54,6 +54,7 @@ The release images are published as:
 
 The gateway enforces an API key when `CORDUM_API_KEY` or `API_KEY` is set.
 Compose defaults to `[REDACTED]` for local use.
+Production mode (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) fails to start without API keys configured.
 
 To override:
 
@@ -71,6 +72,15 @@ For multiple API keys, set `CORDUM_API_KEYS` (comma-separated or JSON). Example:
 CORDUM_API_KEYS=key-a,key-b
 ```
 
+API keys support JSON metadata for roles/tenants/expiry, for example:
+
+```
+CORDUM_API_KEYS='[{"key":"k1","role":"admin","tenant":"default","expires_at":"2030-01-01T00:00:00Z"}]'
+```
+
+To rotate keys without a restart, set `CORDUM_API_KEYS_PATH` to a file with the
+same content; the gateway reloads on change.
+
 Enterprise deployments (multi-tenant keys, RBAC, SSO, SIEM export) are configured in the enterprise repo.
 
 ## Config mounts
@@ -86,6 +96,7 @@ Compose mounts:
 - `SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051`
 - `POOL_CONFIG_PATH=/etc/cordum/pools.yaml`, `TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml`
 - `NATS_USE_JETSTREAM=1` for scheduler/gateway/workflow engine
+ - TLS: `GATEWAY_HTTP_TLS_CERT`, `GATEWAY_HTTP_TLS_KEY`, `GRPC_TLS_CERT`, `GRPC_TLS_KEY`
 
 ## Tear down
 

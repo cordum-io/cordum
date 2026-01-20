@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -71,16 +72,24 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 	keyPath := strings.TrimSpace(os.Getenv(envRedisTLSKey))
 	serverName := strings.TrimSpace(os.Getenv(envRedisTLSServerName))
 	insecure := parseBoolEnv(envRedisTLSInsecure)
+	production := env.IsProduction()
 
 	if caPath == "" && certPath == "" && keyPath == "" && serverName == "" && !insecure {
+		if production {
+			return nil, fmt.Errorf("redis tls required in production")
+		}
 		return existing, nil
 	}
 
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if production && insecure {
+		return nil, fmt.Errorf("redis tls insecure not allowed in production")
+	}
+
+	cfg := &tls.Config{MinVersion: env.TLSMinVersion()}
 	if existing != nil {
 		cfg = existing.Clone()
-		if cfg.MinVersion < tls.VersionTLS12 {
-			cfg.MinVersion = tls.VersionTLS12
+		if cfg.MinVersion < env.TLSMinVersion() {
+			cfg.MinVersion = env.TLSMinVersion()
 		}
 	}
 	if serverName != "" {
@@ -116,8 +125,8 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}
-	if cfg.MinVersion < tls.VersionTLS12 {
-		cfg.MinVersion = tls.VersionTLS12
+	if cfg.MinVersion < env.TLSMinVersion() {
+		cfg.MinVersion = env.TLSMinVersion()
 	}
 
 	return cfg, nil

@@ -11,6 +11,7 @@ This folder contains the public documentation for Cordum core.
 - `docs/LOCAL_E2E.md` - local end-to-end walkthrough
 - `docs/cordumctl.md` - CLI reference
 - `docs/demo-guardrails.md` - guardrails demo walkthrough + GIF recording
+- `docs/demo-mock-bank.md` - mock bank governance demo walkthrough
 - `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)
 - `cordumctl up` - one-command local stack launcher (`go run ./cmd/cordumctl up` or `./bin/cordumctl up` after `make build SERVICE=cordumctl`)
 - `tools/scripts/install.sh` - installer script for local or hosted one-liner

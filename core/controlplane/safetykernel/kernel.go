@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/env"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -72,15 +74,24 @@ func Run(cfg *config.Config) error {
 	}
 
 	serverCreds := grpc.Creds(insecure.NewCredentials())
-	if cert := os.Getenv("SAFETY_KERNEL_TLS_CERT"); cert != "" {
-		key := os.Getenv("SAFETY_KERNEL_TLS_KEY")
-		if key == "" {
-			log.Printf("safety-kernel: tls cert provided without key, continuing insecure")
-		} else if creds, err := credentials.NewServerTLSFromFile(cert, key); err != nil {
-			log.Printf("safety-kernel: failed to load tls credentials, continuing insecure: %v", err)
-		} else {
-			serverCreds = grpc.Creds(creds)
+	cert := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CERT"))
+	key := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_KEY"))
+	if cert != "" || key != "" {
+		if cert == "" || key == "" {
+			return fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
 		}
+		pair, err := tls.LoadX509KeyPair(cert, key)
+		if err != nil {
+			return fmt.Errorf("safety kernel tls keypair: %w", err)
+		}
+		cfg := &tls.Config{
+			Certificates: []tls.Certificate{pair},
+			MinVersion:   env.TLSMinVersion(),
+		}
+		serverCreds = grpc.Creds(credentials.NewTLS(cfg))
+	}
+	if env.IsProduction() && cert == "" {
+		return fmt.Errorf("safety kernel tls required in production")
 	}
 
 	srv := &server{

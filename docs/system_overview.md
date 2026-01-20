@@ -35,7 +35,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - gRPC service (`CordumApi`) for job submit/status.
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
   - Enforces API key and CORS allowlist if configured (HTTP `X-API-Key`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>`).
-  - OSS auth uses a flat API key allowlist (`CORDUM_API_KEYS` or `CORDUM_API_KEY`) and a single tenant (`TENANT_ID`, default `default`).
+  - OSS auth uses an API key allowlist (`CORDUM_API_KEYS`, `CORDUM_API_KEY`, or `CORDUM_API_KEYS_PATH`) with optional role/tenant metadata and a single-tenant default (`TENANT_ID`, default `default`).
   - Multi-tenant API keys and RBAC enforcement are provided by the enterprise auth provider (enterprise repo).
   - Enterprise add-ons are delivered from the enterprise repo; this repo stays platform-only.
 

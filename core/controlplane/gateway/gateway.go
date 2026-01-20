@@ -3,6 +3,8 @@ package gateway
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,6 +26,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/memory"
@@ -64,6 +67,8 @@ const (
 	envGatewayGrpcAddr    = "GATEWAY_GRPC_ADDR"
 	envGatewayHTTPAddr    = "GATEWAY_HTTP_ADDR"
 	envGatewayMetricsAddr = "GATEWAY_METRICS_ADDR"
+	envGatewayHTTPTLSCert = "GATEWAY_HTTP_TLS_CERT"
+	envGatewayHTTPTLSKey  = "GATEWAY_HTTP_TLS_KEY"
 )
 
 const (
@@ -459,7 +464,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if cfg.SafetyKernelAddr != "" {
 		conn, client, err := dialSafetyKernel(cfg.SafetyKernelAddr)
 		if err != nil {
-			if os.Getenv("SAFETY_KERNEL_TLS_REQUIRED") == "true" {
+			if env.IsProduction() || env.Bool("SAFETY_KERNEL_TLS_REQUIRED") {
 				return fmt.Errorf("safety kernel dial failed: %w", err)
 			}
 			logging.Error("api-gateway", "safety kernel dial failed", "error", err)
@@ -499,15 +504,26 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		return fmt.Errorf("listen grpc (%s): %w", grpcAddr, err)
 	}
 	grpcCreds := insecure.NewCredentials()
-	if certFile := os.Getenv("GRPC_TLS_CERT"); certFile != "" {
-		keyFile := os.Getenv("GRPC_TLS_KEY")
-		if keyFile == "" {
-			logging.Error("api-gateway", "grpc tls key missing", "cert", certFile)
-		} else if creds, err := credentials.NewServerTLSFromFile(certFile, keyFile); err != nil {
-			logging.Error("api-gateway", "grpc tls setup failed", "error", err)
-		} else {
-			grpcCreds = creds
+	grpcTLSConfigured := false
+	certFile := strings.TrimSpace(os.Getenv("GRPC_TLS_CERT"))
+	keyFile := strings.TrimSpace(os.Getenv("GRPC_TLS_KEY"))
+	if certFile != "" || keyFile != "" {
+		if certFile == "" || keyFile == "" {
+			return fmt.Errorf("grpc tls requires both GRPC_TLS_CERT and GRPC_TLS_KEY")
 		}
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return fmt.Errorf("grpc tls keypair: %w", err)
+		}
+		cfg := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   env.TLSMinVersion(),
+		}
+		grpcCreds = credentials.NewTLS(cfg)
+		grpcTLSConfigured = true
+	}
+	if env.IsProduction() && !grpcTLSConfigured {
+		return fmt.Errorf("grpc tls required in production")
 	}
 
 	grpcServer := grpc.NewServer(
@@ -812,6 +828,17 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	// CORS Middleware
 	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(s.auth, mux)))
 
+	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
+	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))
+	if httpTLSCert != "" || httpTLSKey != "" {
+		if httpTLSCert == "" || httpTLSKey == "" {
+			return fmt.Errorf("http tls requires both %s and %s", envGatewayHTTPTLSCert, envGatewayHTTPTLSKey)
+		}
+	}
+	if env.IsProduction() && httpTLSCert == "" {
+		return fmt.Errorf("http tls required in production")
+	}
+
 	logging.Info("api-gateway", "http listening", "addr", httpAddr)
 	srv := &http.Server{
 		Addr:              httpAddr,
@@ -821,7 +848,16 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
+	if httpTLSCert != "" {
+		srv.TLSConfig = &tls.Config{MinVersion: env.TLSMinVersion()}
+	}
+
+	if err := func() error {
+		if httpTLSCert != "" {
+			return srv.ListenAndServeTLS(httpTLSCert, httpTLSKey)
+		}
+		return srv.ListenAndServe()
+	}(); err != nil {
 		if errors.Is(err, http.ErrServerClosed) {
 			logging.Info("api-gateway", "http server closed")
 			return nil
@@ -2205,10 +2241,10 @@ func addrFromEnv(key, fallback string) string {
 }
 
 func dialSafetyKernel(addr string) (*grpc.ClientConn, pb.SafetyKernelClient, error) {
-	if os.Getenv("SAFETY_KERNEL_TLS_REQUIRED") == "true" && strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CA")) == "" {
-		return nil, nil, fmt.Errorf("SAFETY_KERNEL_TLS_CA required")
+	creds, err := safetyTransportCredentials()
+	if err != nil {
+		return nil, nil, err
 	}
-	creds := safetyTransportCredentials()
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, nil, err
@@ -2216,16 +2252,34 @@ func dialSafetyKernel(addr string) (*grpc.ClientConn, pb.SafetyKernelClient, err
 	return conn, pb.NewSafetyKernelClient(conn), nil
 }
 
-func safetyTransportCredentials() credentials.TransportCredentials {
-	if caPath := os.Getenv("SAFETY_KERNEL_TLS_CA"); caPath != "" {
-		if creds, err := credentials.NewClientTLSFromFile(caPath, ""); err == nil {
-			return creds
+func safetyTransportCredentials() (credentials.TransportCredentials, error) {
+	caPath := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CA"))
+	requireTLS := env.IsProduction() || env.Bool("SAFETY_KERNEL_TLS_REQUIRED")
+	insecureAllowed := env.Bool("SAFETY_KERNEL_INSECURE")
+
+	if caPath == "" {
+		if requireTLS {
+			return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CA required")
 		}
+		if insecureAllowed || !env.IsProduction() {
+			return insecure.NewCredentials(), nil
+		}
+		return nil, fmt.Errorf("safety kernel tls required")
 	}
-	if os.Getenv("SAFETY_KERNEL_INSECURE") == "true" {
-		return insecure.NewCredentials()
+
+	pem, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("safety kernel tls ca read: %w", err)
 	}
-	return insecure.NewCredentials()
+	pool := x509.NewCertPool()
+	if ok := pool.AppendCertsFromPEM(pem); !ok {
+		return nil, fmt.Errorf("safety kernel tls ca parse: %s", caPath)
+	}
+	cfg := &tls.Config{
+		RootCAs:    pool,
+		MinVersion: env.TLSMinVersion(),
+	}
+	return credentials.NewTLS(cfg), nil
 }
 
 func rateLimitMiddleware(next http.Handler) http.Handler {

@@ -133,6 +133,7 @@ export function WorkflowBuilder({
           ...extraData,
           stepId,
           label: extraData?.label || config.defaultData.label || config.label,
+          engineType: mapNodeTypeToStepType(type),
           onDelete: deleteNode,
           onSelect: selectNode,
         } as BuilderNodeData,
@@ -152,7 +153,7 @@ export function WorkflowBuilder({
     const initialNodes: BuilderNode[] = stepEntries.map(([id, step], index) => {
       const row = Math.floor(index / 3);
       const col = index % 3;
-      const nodeType = mapStepTypeToNodeType(step.type);
+      const nodeType = resolveNodeType(step);
 
       return {
         id,
@@ -162,6 +163,7 @@ export function WorkflowBuilder({
           nodeType,
           stepId: id,
           label: step.name || id,
+          engineType: step.type,
           topic: step.topic,
           packId: step.meta?.pack_id,
           capability: step.meta?.capability,
@@ -275,8 +277,9 @@ export function WorkflowBuilder({
 
     nodes.forEach((node) => {
       const data = node.data as BuilderNodeData;
-      const isWorker = data.nodeType === "worker";
-      const retry = (data as WorkerNodeData).retry;
+      const engineType = data.engineType || mapNodeTypeToStepType(data.nodeType);
+      const isWorker = engineType === "worker";
+      const retry = isWorker ? (data as WorkerNodeData).retry : undefined;
       const meta = isWorker
         ? {
             pack_id: (data as WorkerNodeData).packId,
@@ -295,7 +298,7 @@ export function WorkflowBuilder({
       steps[node.id] = {
         id: node.id,
         name: data.label,
-        type: mapNodeTypeToStepType(data.nodeType),
+        type: engineType,
         topic: isWorker ? (data as WorkerNodeData).topic || "job.default" : undefined,
         depends_on: deps.length > 0 ? deps : undefined,
         condition: (data as { condition?: string }).condition,
@@ -431,6 +434,24 @@ function mapStepTypeToNodeType(stepType?: string): BuilderNodeType {
     default:
       return "worker";
   }
+}
+
+const builderNodeTypeSet = new Set<string>([
+  "worker",
+  "approval",
+  "condition",
+  "delay",
+  "loop",
+  "parallel",
+  "subworkflow",
+]);
+
+function resolveNodeType(step?: Step): BuilderNodeType {
+  const override = step?.meta?.labels?.["ui_node_type"];
+  if (override && builderNodeTypeSet.has(override)) {
+    return override as BuilderNodeType;
+  }
+  return mapStepTypeToNodeType(step?.type);
 }
 
 // Map builder node type to step type
