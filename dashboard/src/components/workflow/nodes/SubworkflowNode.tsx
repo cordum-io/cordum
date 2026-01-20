@@ -1,12 +1,18 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import type { SubworkflowNodeData } from "../types";
+import { NodeStatus } from "./NodeStatus";
 
 function SubworkflowNodeComponent({ id, data, selected }: NodeProps<SubworkflowNodeData>) {
+  const isReadOnly = Boolean(data.readOnly);
   return (
     <div
       className={`builder-node builder-node--subworkflow ${selected ? "builder-node--selected" : ""}`}
-      onClick={() => data.onSelect(id)}
+      onClick={() => {
+        if (!isReadOnly) {
+          data.onSelect(id);
+        }
+      }}
     >
       <Handle type="target" position={Position.Left} className="builder-handle" />
 
@@ -16,15 +22,17 @@ function SubworkflowNodeComponent({ id, data, selected }: NodeProps<SubworkflowN
           <div className="builder-node__label">{data.label}</div>
           <div className="builder-node__type">Subworkflow</div>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            data.onDelete(id);
-          }}
-          className="builder-node__delete"
-        >
-          &times;
-        </button>
+        {!isReadOnly ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete(id);
+            }}
+            className="builder-node__delete"
+          >
+            &times;
+          </button>
+        ) : null}
       </div>
 
       <div className="builder-node__body">
@@ -50,6 +58,7 @@ function SubworkflowNodeComponent({ id, data, selected }: NodeProps<SubworkflowN
         )}
       </div>
 
+      {isReadOnly ? <NodeStatus status={data.status} /> : null}
       <Handle type="source" position={Position.Right} id="output" className="builder-handle" />
     </div>
   );

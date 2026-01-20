@@ -101,8 +101,9 @@ func (w *Worker) Run(ctx context.Context, handler JobHandler) error {
 		return fmt.Errorf("job handler required")
 	}
 
-	subscriptions := make([]*nats.Subscription, 0, len(w.cfg.Subjects)+1)
-	for _, subject := range w.cfg.Subjects {
+	subjects := w.subscriptionSubjects()
+	subscriptions := make([]*nats.Subscription, 0, len(subjects)+1)
+	for _, subject := range subjects {
 		sub, err := w.nc.QueueSubscribe(subject, w.cfg.Queue, func(msg *nats.Msg) {
 			w.handleJob(ctx, handler, msg)
 		})
@@ -129,6 +130,26 @@ func (w *Worker) Run(ctx context.Context, handler JobHandler) error {
 		_ = sub.Unsubscribe()
 	}
 	return w.Close()
+}
+
+func (w *Worker) subscriptionSubjects() []string {
+	subjects := make([]string, 0, len(w.cfg.Subjects)+1)
+	seen := make(map[string]struct{}, len(w.cfg.Subjects)+1)
+	add := func(subject string) {
+		if subject == "" {
+			return
+		}
+		if _, ok := seen[subject]; ok {
+			return
+		}
+		seen[subject] = struct{}{}
+		subjects = append(subjects, subject)
+	}
+	for _, subject := range w.cfg.Subjects {
+		add(subject)
+	}
+	add(directSubject(w.cfg.WorkerID))
+	return subjects
 }
 
 // Progress emits a job progress packet.
@@ -302,4 +323,11 @@ func (w *Worker) clearCancel(jobID string) {
 	w.cancelMu.Lock()
 	delete(w.cancels, jobID)
 	w.cancelMu.Unlock()
+}
+
+func directSubject(workerID string) string {
+	if workerID == "" {
+		return ""
+	}
+	return fmt.Sprintf("worker.%s.jobs", workerID)
 }
