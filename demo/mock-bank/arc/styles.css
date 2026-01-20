@@ -1,0 +1,256 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap");
+
+:root {
+  --bg: #f2f5f7;
+  --ink: #0f1724;
+  --muted: #5a6776;
+  --line: #d5dde5;
+  --card: #ffffff;
+  --accent: #1f7a6d;
+  --accent-amber: #d39a3a;
+  --accent-blue: #1b355a;
+  --accent-purple: #6b5ce7;
+  --accent-red: #b04545;
+  --shadow: 0 18px 40px rgba(15, 28, 40, 0.14);
+  --shadow-soft: 0 8px 18px rgba(15, 28, 40, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 12% 18%, rgba(31, 122, 109, 0.18), transparent 55%),
+    radial-gradient(circle at 88% 10%, rgba(211, 154, 58, 0.2), transparent 50%),
+    repeating-linear-gradient(0deg, rgba(15, 23, 32, 0.03) 0 1px, transparent 1px 30px),
+    repeating-linear-gradient(90deg, rgba(15, 23, 32, 0.03) 0 1px, transparent 1px 30px),
+    linear-gradient(135deg, #f8fafc, var(--bg));
+}
+
+.arc-shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 28px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.arc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-soft);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-blue);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  font-size: 0.85rem;
+}
+
+.brand-name {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.brand-tag {
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.arc-links {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.arc-links a {
+  text-decoration: none;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding-bottom: 4px;
+  border-bottom: 1px solid transparent;
+}
+
+.arc-links a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.arc-stage-wrap {
+  overflow-x: auto;
+  padding: 4px;
+}
+
+.arc-stage {
+  position: relative;
+  width: 1200px;
+  height: 560px;
+  margin: 0 auto;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.arc-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.link {
+  fill: none;
+  stroke: #9ab0c0;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 8 12;
+  animation: flow 10s linear infinite;
+}
+
+.link--primary {
+  stroke: url(#flow);
+}
+
+.link--secondary {
+  stroke: rgba(27, 53, 90, 0.55);
+  animation-duration: 12s;
+}
+
+.link--amber {
+  stroke: url(#flow-amber);
+  animation-duration: 14s;
+}
+
+@keyframes flow {
+  to {
+    stroke-dashoffset: -240;
+  }
+}
+
+.node {
+  position: absolute;
+  left: calc(var(--x) * 1px);
+  top: calc(var(--y) * 1px);
+  transform: translate(-50%, -50%);
+  width: 170px;
+  min-height: 86px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 6px;
+}
+
+.node-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  color: #fff;
+}
+
+.node-title {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.node-sub {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.node--client .node-icon {
+  background: #5b6cf2;
+}
+
+.node--api .node-icon {
+  background: var(--accent);
+}
+
+.node--scheduler .node-icon {
+  background: #2563eb;
+}
+
+.node--bus .node-icon {
+  background: var(--accent-amber);
+}
+
+.node--worker .node-icon {
+  background: #0f766e;
+}
+
+.node--bank .node-icon {
+  background: #10b981;
+}
+
+.node--safety .node-icon {
+  background: #b45309;
+}
+
+.node--approval .node-icon {
+  background: var(--accent-red);
+}
+
+.node--caps .node-icon {
+  background: var(--accent-purple);
+}
+
+.node--audit .node-icon {
+  background: #111827;
+}
+
+@media (max-width: 960px) {
+  .arc-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .arc-stage {
+    margin: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link {
+    animation: none;
+  }
+}

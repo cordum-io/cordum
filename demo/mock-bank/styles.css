@@ -1,0 +1,374 @@
+@import url("https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Manrope:wght@300;400;500;600&display=swap");
+
+:root {
+  --bg: #f6f1e9;
+  --bg-2: #eef2f6;
+  --ink: #0f1928;
+  --muted: #5e6b7b;
+  --navy: #0f223d;
+  --gold: #c7a05a;
+  --accent: #1b365a;
+  --card: #ffffff;
+  --card-2: #f7f2ec;
+  --border: #e2d6c6;
+  --shadow: 0 18px 45px rgba(15, 25, 40, 0.12);
+  --shadow-soft: 0 8px 20px rgba(15, 25, 40, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Manrope", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 12% 18%, rgba(31, 60, 102, 0.12), transparent 55%),
+    radial-gradient(circle at 88% 0%, rgba(199, 160, 90, 0.16), transparent 45%),
+    repeating-linear-gradient(0deg, rgba(15, 25, 40, 0.02) 0 1px, transparent 1px 28px),
+    repeating-linear-gradient(90deg, rgba(15, 25, 40, 0.02) 0 1px, transparent 1px 28px),
+    linear-gradient(140deg, var(--bg), var(--bg-2));
+}
+
+.bank-shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 28px 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.bank-top {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(247, 242, 236, 0.85));
+  box-shadow: var(--shadow-soft);
+}
+
+.brand {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.brand-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--navy);
+  color: var(--gold);
+  display: grid;
+  place-items: center;
+  font-family: "Libre Baskerville", serif;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.brand-name {
+  font-family: "Libre Baskerville", serif;
+  font-size: 1.25rem;
+}
+
+.brand-tag {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.bank-nav {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.bank-nav a {
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 500;
+  padding-bottom: 4px;
+  border-bottom: 1px solid transparent;
+}
+
+.bank-nav a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.client-badge {
+  text-align: right;
+  min-width: 150px;
+}
+
+.client-name {
+  font-weight: 600;
+}
+
+.client-tier {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.bank-main {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.account-card {
+  position: relative;
+  background: linear-gradient(160deg, #ffffff, #f4efe7);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 26px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.account-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  background: linear-gradient(90deg, var(--navy), var(--gold));
+}
+
+.account-card::after {
+  content: "MegaCorp Bank";
+  position: absolute;
+  right: 22px;
+  bottom: 14px;
+  font-size: 1.6rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(15, 34, 61, 0.06);
+  pointer-events: none;
+  font-family: "Libre Baskerville", serif;
+}
+
+.account-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.balance-value {
+  font-family: "Libre Baskerville", serif;
+  font-size: clamp(2.2rem, 3vw, 3rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.balance-sub {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.balance-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.bank-columns {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 18px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: var(--shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.card-header h2 {
+  font-family: "Libre Baskerville", serif;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.pill {
+  background: rgba(31, 60, 102, 0.12);
+  color: var(--accent);
+  font-size: 0.65rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.transactions table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.transactions th {
+  text-align: left;
+  padding-bottom: 8px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.transactions td {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.transactions tr:last-child td {
+  border-bottom: none;
+}
+
+.transactions tbody tr:hover {
+  background: rgba(15, 25, 40, 0.03);
+}
+
+.transactions td.num,
+.transactions th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 8px 0;
+}
+
+.chat-body {
+  background: var(--card-2);
+  border-radius: 14px;
+  padding: 14px;
+  min-height: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-bubble {
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  max-width: 85%;
+  }
+
+.chat-bubble.client {
+  align-self: flex-start;
+  background: rgba(199, 160, 90, 0.16);
+  color: #5a4321;
+}
+
+.chat-bubble.agent {
+  align-self: flex-end;
+  background: rgba(31, 60, 102, 0.14);
+  color: #162843;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-form input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-family: "Manrope", sans-serif;
+  background: #fff;
+}
+
+.chat-form input:focus {
+  outline: 2px solid rgba(31, 60, 102, 0.2);
+  border-color: rgba(31, 60, 102, 0.4);
+}
+
+.chat-form button {
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 16px rgba(15, 34, 61, 0.18);
+}
+
+.chat-form button:hover {
+  background: #0f1d33;
+}
+
+.bank-footer {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 900px) {
+  .bank-top {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+  .bank-nav {
+    justify-content: flex-start;
+  }
+  .client-badge {
+    text-align: left;
+  }
+  .bank-columns {
+    grid-template-columns: 1fr;
+  }
+  .bank-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 600px) {
+  .bank-shell {
+    padding: 20px 16px 32px;
+  }
+  .bank-nav {
+    gap: 12px;
+  }
+}

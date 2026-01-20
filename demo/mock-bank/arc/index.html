@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cordum Arc - System Map</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="arc-shell">
+      <header class="arc-header">
+        <div class="brand">
+          <div class="brand-mark">ARC</div>
+          <div>
+            <div class="brand-name">Cordum Arc</div>
+            <div class="brand-tag">Live System Topology</div>
+          </div>
+        </div>
+        <div class="arc-links">
+          <a href="../">Mock Bank</a>
+          <a href="http://localhost:8082" target="_blank" rel="noreferrer">Dashboard</a>
+        </div>
+      </header>
+
+      <section class="arc-stage-wrap">
+        <div class="arc-stage">
+          <svg class="arc-lines" viewBox="0 0 1200 560" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="flow" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="#1f7a6d" stop-opacity="0.2" />
+                <stop offset="50%" stop-color="#1f7a6d" stop-opacity="0.85" />
+                <stop offset="100%" stop-color="#1f7a6d" stop-opacity="0.2" />
+              </linearGradient>
+              <linearGradient id="flow-amber" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="#d39a3a" stop-opacity="0.2" />
+                <stop offset="50%" stop-color="#d39a3a" stop-opacity="0.8" />
+                <stop offset="100%" stop-color="#d39a3a" stop-opacity="0.2" />
+              </linearGradient>
+              <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                <path d="M0,0 L12,6 L0,12" fill="none" stroke="#9ab0c0" stroke-width="2" />
+              </marker>
+            </defs>
+
+            <path id="flow-client" class="link link--primary" d="M120 280 L320 280" marker-end="url(#arrow)" />
+            <path id="flow-api" class="link link--primary" d="M320 280 L520 280" marker-end="url(#arrow)" />
+            <path id="flow-scheduler" class="link link--primary" d="M520 280 L720 280" marker-end="url(#arrow)" />
+            <path id="flow-nats" class="link link--primary" d="M720 280 L910 280" marker-end="url(#arrow)" />
+            <path id="flow-worker" class="link link--primary" d="M910 280 L1090 280" marker-end="url(#arrow)" />
+
+            <path id="flow-audit" class="link link--secondary" d="M320 258 L320 140" marker-end="url(#arrow)" />
+            <path id="flow-policy" class="link link--secondary" d="M520 258 L520 140" marker-end="url(#arrow)" />
+            <path id="flow-approval" class="link link--secondary" d="M520 302 L520 418" marker-end="url(#arrow)" />
+            <path id="flow-approval-return" class="link link--secondary" d="M548 418 C620 418 620 320 548 320" marker-end="url(#arrow)" />
+            <path id="flow-caps" class="link link--amber" d="M560 300 C640 360 680 400 720 440" marker-end="url(#arrow)" />
+          </svg>
+
+          <div class="node node--client" style="--x: 120; --y: 280;">
+            <div class="node-icon">AI</div>
+            <div class="node-title">Bank LLM</div>
+            <div class="node-sub">MCP Client</div>
+          </div>
+
+          <div class="node node--api" style="--x: 320; --y: 280;">
+            <div class="node-icon">API</div>
+            <div class="node-title">Cordum API</div>
+            <div class="node-sub">Gateway</div>
+          </div>
+
+          <div class="node node--scheduler" style="--x: 520; --y: 280;">
+            <div class="node-icon">WF</div>
+            <div class="node-title">Scheduler</div>
+            <div class="node-sub">Workflow Engine</div>
+          </div>
+
+          <div class="node node--bus" style="--x: 720; --y: 280;">
+            <div class="node-icon">NATS</div>
+            <div class="node-title">NATS Bus</div>
+            <div class="node-sub">Event Spine</div>
+          </div>
+
+          <div class="node node--worker" style="--x: 910; --y: 280;">
+            <div class="node-icon">PK</div>
+            <div class="node-title">Worker Pack</div>
+            <div class="node-sub">Transfer Capability</div>
+          </div>
+
+          <div class="node node--bank" style="--x: 1090; --y: 280;">
+            <div class="node-icon">DB</div>
+            <div class="node-title">Mock Bank</div>
+            <div class="node-sub">Core System</div>
+          </div>
+
+          <div class="node node--audit" style="--x: 320; --y: 110;">
+            <div class="node-icon">LOG</div>
+            <div class="node-title">Audit Log</div>
+            <div class="node-sub">Evidence Trail</div>
+          </div>
+
+          <div class="node node--safety" style="--x: 520; --y: 110;">
+            <div class="node-icon">SAFE</div>
+            <div class="node-title">Safety Kernel</div>
+            <div class="node-sub">Policy Gate</div>
+          </div>
+
+          <div class="node node--approval" style="--x: 520; --y: 450;">
+            <div class="node-icon">APR</div>
+            <div class="node-title">Approval Desk</div>
+            <div class="node-sub">Human Review</div>
+          </div>
+
+          <div class="node node--caps" style="--x: 720; --y: 470;">
+            <div class="node-icon">CAP</div>
+            <div class="node-title">Capabilities</div>
+            <div class="node-sub">Pack Registry</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

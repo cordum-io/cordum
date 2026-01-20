@@ -2,12 +2,16 @@ package scheduler
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/env"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -45,7 +49,10 @@ const (
 
 // NewSafetyClient dials the safety kernel at addr.
 func NewSafetyClient(addr string) (*SafetyClient, error) {
-	creds := safetyTransportCredentials()
+	creds, err := safetyTransportCredentials()
+	if err != nil {
+		return nil, err
+	}
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, fmt.Errorf("dial safety kernel: %w", err)
@@ -194,15 +201,32 @@ func (c *SafetyClient) recordSuccess() {
 	}
 }
 
-func safetyTransportCredentials() credentials.TransportCredentials {
-	if caPath := os.Getenv("SAFETY_KERNEL_TLS_CA"); caPath != "" {
-		if creds, err := credentials.NewClientTLSFromFile(caPath, ""); err == nil {
-			return creds
+func safetyTransportCredentials() (credentials.TransportCredentials, error) {
+	caPath := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CA"))
+	requireTLS := env.IsProduction() || env.Bool("SAFETY_KERNEL_TLS_REQUIRED")
+	insecureAllowed := env.Bool("SAFETY_KERNEL_INSECURE")
+
+	if caPath == "" {
+		if requireTLS {
+			return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CA required")
 		}
+		if insecureAllowed || !env.IsProduction() {
+			return insecure.NewCredentials(), nil
+		}
+		return nil, fmt.Errorf("safety kernel tls required")
 	}
-	if os.Getenv("SAFETY_KERNEL_INSECURE") == "true" {
-		return insecure.NewCredentials()
+
+	pool := x509.NewCertPool()
+	pem, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("safety kernel tls ca read: %w", err)
 	}
-	// Default to insecure to preserve compatibility; admins can set SAFETY_KERNEL_TLS_CA to enable TLS.
-	return insecure.NewCredentials()
+	if ok := pool.AppendCertsFromPEM(pem); !ok {
+		return nil, fmt.Errorf("safety kernel tls ca parse: %s", caPath)
+	}
+	cfg := &tls.Config{
+		RootCAs:    pool,
+		MinVersion: env.TLSMinVersion(),
+	}
+	return credentials.NewTLS(cfg), nil
 }

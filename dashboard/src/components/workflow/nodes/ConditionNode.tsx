@@ -1,12 +1,18 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import type { ConditionNodeData } from "../types";
+import { NodeStatus } from "./NodeStatus";
 
 function ConditionNodeComponent({ id, data, selected }: NodeProps<ConditionNodeData>) {
+  const isReadOnly = Boolean(data.readOnly);
   return (
     <div
       className={`builder-node builder-node--condition ${selected ? "builder-node--selected" : ""}`}
-      onClick={() => data.onSelect(id)}
+      onClick={() => {
+        if (!isReadOnly) {
+          data.onSelect(id);
+        }
+      }}
     >
       <Handle type="target" position={Position.Left} className="builder-handle" />
 
@@ -16,15 +22,17 @@ function ConditionNodeComponent({ id, data, selected }: NodeProps<ConditionNodeD
           <div className="builder-node__label">{data.label}</div>
           <div className="builder-node__type">Condition</div>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            data.onDelete(id);
-          }}
-          className="builder-node__delete"
-        >
-          &times;
-        </button>
+        {!isReadOnly ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete(id);
+            }}
+            className="builder-node__delete"
+          >
+            &times;
+          </button>
+        ) : null}
       </div>
 
       <div className="builder-node__body">
@@ -33,6 +41,7 @@ function ConditionNodeComponent({ id, data, selected }: NodeProps<ConditionNodeD
         </div>
       </div>
 
+      {isReadOnly ? <NodeStatus status={data.status} /> : null}
       <Handle type="source" position={Position.Right} id="output" className="builder-handle" />
     </div>
   );

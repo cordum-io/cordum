@@ -1,0 +1,91 @@
+id: demo-mock-bank.transfer
+name: Mock Bank Transfer (Policy)
+org_id: default
+steps:
+  request:
+    id: request
+    name: Transfer Request
+    type: condition
+    condition: "true"
+    meta:
+      labels:
+        ui_node_type: worker
+  approval_gate:
+    id: approval_gate
+    name: Approval Gate
+    type: condition
+    depends_on:
+      - request
+    condition: "input.policy_bucket == 'review'"
+    meta:
+      labels:
+        ui_node_type: approval
+  auto:
+    id: auto
+    name: Transfer (auto)
+    type: worker
+    topic: job.demo-mock-bank.transfer.auto
+    depends_on:
+      - request
+    condition: "input.policy_bucket == 'auto'"
+    input:
+      amount: "${input.amount}"
+      currency: "${input.currency}"
+      customer: "${input.customer}"
+      reason: "${input.reason}"
+      note: "${input.note}"
+      requested_by: "${input.requested_by}"
+      policy_bucket: "${input.policy_bucket}"
+    meta:
+      pack_id: demo-mock-bank
+      capability: demo-mock-bank.transfer
+      risk_tags:
+        - finance
+        - transfer
+        - low
+  review:
+    id: review
+    name: Transfer (requires approval)
+    type: worker
+    topic: job.demo-mock-bank.transfer.review
+    depends_on:
+      - approval_gate
+    condition: "input.policy_bucket == 'review'"
+    input:
+      amount: "${input.amount}"
+      currency: "${input.currency}"
+      customer: "${input.customer}"
+      reason: "${input.reason}"
+      note: "${input.note}"
+      requested_by: "${input.requested_by}"
+      policy_bucket: "${input.policy_bucket}"
+    meta:
+      pack_id: demo-mock-bank
+      capability: demo-mock-bank.transfer
+      risk_tags:
+        - finance
+        - transfer
+        - review
+  blocked:
+    id: blocked
+    name: Transfer (blocked by policy)
+    type: worker
+    topic: job.demo-mock-bank.transfer.blocked
+    depends_on:
+      - request
+    condition: "input.policy_bucket == 'blocked'"
+    input:
+      amount: "${input.amount}"
+      currency: "${input.currency}"
+      customer: "${input.customer}"
+      reason: "${input.reason}"
+      note: "${input.note}"
+      requested_by: "${input.requested_by}"
+      policy_bucket: "${input.policy_bucket}"
+    meta:
+      pack_id: demo-mock-bank
+      capability: demo-mock-bank.transfer
+      risk_tags:
+        - finance
+        - transfer
+        - blocked

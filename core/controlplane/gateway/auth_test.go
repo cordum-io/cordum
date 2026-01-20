@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
 )
 
 type publicPathAuth struct {
@@ -40,6 +42,18 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 		"CORDUM_API_KEY",
 		"CORDUM_SUPER_SECRET_API_TOKEN",
 		"API_KEY",
+		"CORDUM_API_KEYS_PATH",
+		"CORDUM_ALLOW_HEADER_PRINCIPAL",
+		"CORDUM_ENV",
+		"CORDUM_PRODUCTION",
+		"CORDUM_JWT_HMAC_SECRET",
+		"CORDUM_JWT_PUBLIC_KEY",
+		"CORDUM_JWT_PUBLIC_KEY_PATH",
+		"CORDUM_JWT_REQUIRED",
+		"CORDUM_JWT_ISSUER",
+		"CORDUM_JWT_AUDIENCE",
+		"CORDUM_JWT_DEFAULT_ROLE",
+		"CORDUM_JWT_CLOCK_SKEW",
 	} {
 		t.Setenv(key, "")
 	}
@@ -104,6 +118,9 @@ func TestParseAPIKeysFormats(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Key != "key4" {
 		t.Fatalf("unexpected colon entries: %#v", entries)
+	}
+	if entries[0].Tenant != "t4" || entries[0].Role != "admin" || entries[0].PrincipalID != "alice" {
+		t.Fatalf("unexpected colon metadata: %#v", entries[0])
 	}
 }
 
@@ -181,6 +198,66 @@ func TestRequireRoleNoop(t *testing.T) {
 	}
 }
 
+func TestRequireRoleEnforces(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key1","role":"viewer"}]`,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-API-Key", "key1")
+	authCtx, err := provider.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	if err := provider.RequireRole(req, "admin"); err == nil {
+		t.Fatalf("expected role enforcement failure")
+	}
+	if err := provider.RequireRole(req, "viewer"); err != nil {
+		t.Fatalf("expected viewer role to pass: %v", err)
+	}
+}
+
+func TestAPIKeyExpiry(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key1","expires_at":"2000-01-01T00:00:00Z"}]`,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-API-Key", "key1")
+	if _, err := provider.AuthenticateHTTP(req); err == nil {
+		t.Fatalf("expected expired api key error")
+	}
+}
+
+func TestAPIKeyFileReload(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/keys.json"
+	if err := os.WriteFile(path, []byte(`[{"key":"key1"}]`), 0o600); err != nil {
+		t.Fatalf("write keys: %v", err)
+	}
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS_PATH": path,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-API-Key", "key1")
+	if _, err := provider.AuthenticateHTTP(req); err != nil {
+		t.Fatalf("authenticate key1: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte(`[{"key":"key2"}]`), 0o600); err != nil {
+		t.Fatalf("write keys: %v", err)
+	}
+	if err := os.Chtimes(path, time.Now(), time.Now().Add(2*time.Second)); err != nil {
+		t.Fatalf("touch keys: %v", err)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req2.Header.Set("X-API-Key", "key2")
+	if _, err := provider.AuthenticateHTTP(req2); err != nil {
+		t.Fatalf("authenticate key2: %v", err)
+	}
+}
+
 func TestAuthContextHelpers(t *testing.T) {
 	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{Tenant: "default"})
 	if got := authFromContext(ctx); got == nil || got.Tenant != "default" {
@@ -204,5 +281,16 @@ func TestAPIKeyMiddlewareSkipsPublicPaths(t *testing.T) {
 	}
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestBasicAuthRequiresKeyInProduction(t *testing.T) {
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv("CORDUM_API_KEYS", "")
+	t.Setenv("CORDUM_API_KEY", "")
+	t.Setenv("CORDUM_SUPER_SECRET_API_TOKEN", "")
+	t.Setenv("API_KEY", "")
+	if _, err := newBasicAuthProvider("default"); err == nil {
+		t.Fatalf("expected api key requirement in production")
 	}
 }

@@ -201,7 +201,7 @@ func filterPlacementLabels(labels map[string]string) map[string]string {
 		if k == "preferred_worker_id" || k == "preferred_pool" {
 			continue
 		}
-		if k == "approval_granted" || k == "secrets_present" {
+		if k == "approval_granted" || k == "approval_reason" || k == "approval_note" || k == "secrets_present" {
 			continue
 		}
 		if strings.HasPrefix(k, "cordum.") {

@@ -148,6 +148,8 @@ func TestFilterPlacementLabels(t *testing.T) {
 		"preferred_worker_id": "w1",
 		"preferred_pool":      "pool",
 		"approval_granted":    "true",
+		"approval_reason":     "ok",
+		"approval_note":       "note",
 		"secrets_present":     "true",
 		"cordum.trace":        "trace",
 		"workflow_id":         "wf",

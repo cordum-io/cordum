@@ -105,7 +105,7 @@ func TestLoadAPIKeys(t *testing.T) {
 	t.Setenv("CORDUM_API_KEY", "cordum")
 	t.Setenv("API_KEY", "api")
 
-	keys, required, err := loadBasicAPIKeys()
+	keys, required, _, _, _, err := loadBasicAPIKeys()
 	if err != nil {
 		t.Fatalf("load api keys: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestLoadAPIKeys(t *testing.T) {
 	}
 
 	t.Setenv("CORDUM_SUPER_SECRET_API_TOKEN", "")
-	keys, _, err = loadBasicAPIKeys()
+	keys, _, _, _, _, err = loadBasicAPIKeys()
 	if err != nil {
 		t.Fatalf("load api keys: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestLoadAPIKeys(t *testing.T) {
 	}
 
 	t.Setenv("CORDUM_API_KEY", "")
-	keys, _, err = loadBasicAPIKeys()
+	keys, _, _, _, _, err = loadBasicAPIKeys()
 	if err != nil {
 		t.Fatalf("load api keys: %v", err)
 	}
@@ -331,9 +331,9 @@ func TestSplitWorkflowJobID(t *testing.T) {
 func TestGatewaySafetyTransportCredentials(t *testing.T) {
 	t.Setenv("SAFETY_KERNEL_TLS_CA", "")
 	t.Setenv("SAFETY_KERNEL_INSECURE", "true")
-	creds := safetyTransportCredentials()
-	if creds == nil {
-		t.Fatalf("expected credentials")
+	creds, err := safetyTransportCredentials()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if creds.Info().SecurityProtocol != "insecure" {
 		t.Fatalf("expected insecure credentials")

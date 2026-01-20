@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MegaCorp Bank - Client Portal</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bank-shell">
+      <header class="bank-top">
+        <div class="brand">
+          <div class="brand-mark">M</div>
+          <div>
+            <div class="brand-name">MegaCorp Bank</div>
+            <div class="brand-tag">Private Client Portal</div>
+          </div>
+        </div>
+        <nav class="bank-nav">
+          <a href="#">Accounts</a>
+          <a href="#">Payments</a>
+          <a href="#">Cards</a>
+          <a href="#">Support</a>
+          <a href="arc/">Arc</a>
+        </nav>
+        <div class="client-badge">
+          <div class="client-name">Alex Morgan</div>
+          <div class="client-tier">Premier Client</div>
+        </div>
+      </header>
+
+      <main class="bank-main">
+        <section class="account-card">
+          <div class="account-label">Premier Checking - 8421</div>
+          <div class="balance-value" id="balance">$1,000,000.00</div>
+          <div class="balance-sub">Available Balance</div>
+          <div class="balance-meta" id="lastUpdated">Updated just now</div>
+        </section>
+
+        <section class="bank-columns">
+          <div class="card transactions">
+            <div class="card-header">
+              <h2>Recent Transactions</h2>
+              <span class="pill">Posted activity</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th class="num">Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="transactionsBody"></tbody>
+            </table>
+            <div class="empty" id="transactionsEmpty">No posted transactions yet.</div>
+          </div>
+
+          <div class="card chat">
+            <div class="card-header">
+              <h2>Client Chat</h2>
+              <span class="pill">Digital Concierge</span>
+            </div>
+            <div class="chat-body" id="chatBody"></div>
+            <form id="chatForm" class="chat-form">
+              <input
+                id="chatInput"
+                type="text"
+                placeholder="Try: Hi, I want to transfer $40"
+                autocomplete="off"
+              />
+              <button type="submit">Send</button>
+            </form>
+          </div>
+        </section>
+      </main>
+
+      <footer class="bank-footer">
+        <span>Secure session</span>
+        <span>FDIC insured</span>
+        <span>Client services 24/7</span>
+      </footer>
+    </div>
+
+    <script defer src="app.js"></script>
+  </body>
+</html>

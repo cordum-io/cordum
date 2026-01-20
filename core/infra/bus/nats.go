@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/env"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
@@ -250,12 +251,20 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 	keyPath := strings.TrimSpace(os.Getenv(envNATSTLSKey))
 	serverName := strings.TrimSpace(os.Getenv(envNATSTLSServerName))
 	insecure := parseBoolEnv(envNATSTLSInsecure)
+	production := env.IsProduction()
 
 	if caPath == "" && certPath == "" && keyPath == "" && serverName == "" && !insecure {
+		if production {
+			return nil, fmt.Errorf("nats tls required in production")
+		}
 		return nil, nil
 	}
 
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if production && insecure {
+		return nil, fmt.Errorf("nats tls insecure not allowed in production")
+	}
+
+	cfg := &tls.Config{MinVersion: env.TLSMinVersion()}
 	if serverName != "" {
 		cfg.ServerName = serverName
 	}
