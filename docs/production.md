@@ -27,6 +27,8 @@ hardening steps below.
 
 - TLS for all ingress traffic.
 - TLS/mTLS for NATS and Redis (or use managed services with encryption).
+- Set `CORDUM_ENV=production` (or `CORDUM_PRODUCTION=true`) to enforce TLS on HTTP/gRPC and safety kernel clients.
+- Configure API keys (`CORDUM_API_KEYS` or `CORDUM_API_KEY`); production mode fails without keys.
 - NetworkPolicies to restrict lateral traffic (gateway <-> redis/nats/safety).
 - Secrets stored in a proper secret manager (KMS, Vault, etc.).
 - Rotate API keys and enterprise license material regularly.

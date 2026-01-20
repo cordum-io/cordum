@@ -21,6 +21,9 @@ for timeouts, fall back to defaults.
 
 Shared across services:
 
+- `CORDUM_ENV` (`production` enables strict security defaults)
+- `CORDUM_PRODUCTION` (`true` enables strict security defaults)
+- `CORDUM_TLS_MIN_VERSION` (`1.2` or `1.3`, default `1.3` in production)
 - `NATS_URL` (default `nats://nats:4222`)
 - `REDIS_URL` (default `redis://redis:6379`)
 - `NATS_USE_JETSTREAM` (`0|1`)
@@ -36,8 +39,14 @@ Shared across services:
 - `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST`
 - `TENANT_ID` (single-tenant default)
 - API keys: `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
+- API key file: `CORDUM_API_KEYS_PATH` (same format as `CORDUM_API_KEYS`, reloads on change)
+- Header principal: `CORDUM_ALLOW_HEADER_PRINCIPAL=true` (disabled by default in production)
 - CORS: `CORDUM_ALLOWED_ORIGINS`, `CORDUM_CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGINS`
-- TLS: `GRPC_TLS_CERT`, `GRPC_TLS_KEY`
+- HTTP TLS: `GATEWAY_HTTP_TLS_CERT`, `GATEWAY_HTTP_TLS_KEY`
+- gRPC TLS: `GRPC_TLS_CERT`, `GRPC_TLS_KEY`
+- JWT auth: `CORDUM_JWT_HMAC_SECRET`, `CORDUM_JWT_PUBLIC_KEY`, `CORDUM_JWT_PUBLIC_KEY_PATH`,
+  `CORDUM_JWT_ISSUER`, `CORDUM_JWT_AUDIENCE`, `CORDUM_JWT_DEFAULT_ROLE`,
+  `CORDUM_JWT_CLOCK_SKEW`, `CORDUM_JWT_REQUIRED`
 - Pack catalog defaults: `CORDUM_PACK_CATALOG_URL`, `CORDUM_PACK_CATALOG_ID`,
   `CORDUM_PACK_CATALOG_TITLE`, `CORDUM_PACK_CATALOG_DEFAULT_DISABLED=1`
 
@@ -58,7 +67,7 @@ Shared across services:
 
 - `SAFETY_KERNEL_ADDR`, `SAFETY_POLICY_PATH` (or `SAFETY_POLICY_URL`)
 - TLS server: `SAFETY_KERNEL_TLS_CERT`, `SAFETY_KERNEL_TLS_KEY`
-- TLS client: `SAFETY_KERNEL_TLS_CA`, `SAFETY_KERNEL_INSECURE`
+- TLS client: `SAFETY_KERNEL_TLS_CA`, `SAFETY_KERNEL_TLS_REQUIRED`, `SAFETY_KERNEL_INSECURE`
 - Decision cache: `SAFETY_DECISION_CACHE_TTL` (e.g. `5s`, `250ms`)
 - Policy signature verification: `SAFETY_POLICY_PUBLIC_KEY`, `SAFETY_POLICY_SIGNATURE`, `SAFETY_POLICY_SIGNATURE_PATH`
 - Policy reload/overlays: `SAFETY_POLICY_RELOAD_INTERVAL`, `SAFETY_POLICY_CONFIG_SCOPE`, `SAFETY_POLICY_CONFIG_ID`, `SAFETY_POLICY_CONFIG_KEY`, `SAFETY_POLICY_CONFIG_DISABLE`
