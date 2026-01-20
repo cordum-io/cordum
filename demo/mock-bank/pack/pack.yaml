@@ -1,0 +1,49 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: demo-mock-bank
+  version: 0.2.1
+  title: Mock Bank Demo
+  description: Mock bank demo with policy-gated transfers.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+topics:
+  - name: job.demo-mock-bank.transfer.auto
+    capability: demo-mock-bank.transfer
+    riskTags:
+      - finance
+      - transfer
+      - low
+  - name: job.demo-mock-bank.transfer.review
+    capability: demo-mock-bank.transfer
+    riskTags:
+      - finance
+      - transfer
+      - review
+  - name: job.demo-mock-bank.transfer.blocked
+    capability: demo-mock-bank.transfer
+    riskTags:
+      - finance
+      - transfer
+      - blocked
+
+resources:
+  workflows:
+    - id: demo-mock-bank.transfer
+      path: workflows/transfer.yaml
+
+overlays:
+  config:
+    - name: pools
+      scope: system
+      key: pools
+      strategy: json_merge_patch
+      path: overlays/pools.patch.yaml
+  policy:
+    - name: mock-bank
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml

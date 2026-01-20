@@ -11,10 +11,11 @@ import (
 	"time"
 
 	"errors"
-	"github.com/redis/go-redis/v9"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/redis/go-redis/v9"
+	"gopkg.in/yaml.v3"
 	"os"
 )
 
@@ -194,7 +195,8 @@ func reconcilerTimeouts(cfg *config.TimeoutsConfig) (time.Duration, time.Duratio
 }
 
 func parsePools(raw any) (*config.PoolsConfig, string, error) {
-	payload, err := json.Marshal(raw)
+	normalized := normalizePoolsOverlay(raw)
+	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return nil, "", err
 	}
@@ -202,7 +204,7 @@ func parsePools(raw any) (*config.PoolsConfig, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	hash, err := hashAny(raw)
+	hash, err := hashAny(normalized)
 	if err != nil {
 		return nil, "", err
 	}
@@ -210,7 +212,8 @@ func parsePools(raw any) (*config.PoolsConfig, string, error) {
 }
 
 func parseTimeouts(raw any) (*config.TimeoutsConfig, string, error) {
-	payload, err := json.Marshal(raw)
+	normalized := normalizeTimeoutsOverlay(raw)
+	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return nil, "", err
 	}
@@ -218,7 +221,7 @@ func parseTimeouts(raw any) (*config.TimeoutsConfig, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	hash, err := hashAny(raw)
+	hash, err := hashAny(normalized)
 	if err != nil {
 		return nil, "", err
 	}
@@ -226,15 +229,151 @@ func parseTimeouts(raw any) (*config.TimeoutsConfig, string, error) {
 }
 
 func toMap(value any) (map[string]any, error) {
-	data, err := json.Marshal(value)
+	data, err := yaml.Marshal(value)
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]any{}
-	if err := json.Unmarshal(data, &out); err != nil {
+	if err := yaml.Unmarshal(data, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func normalizePoolsOverlay(raw any) any {
+	rawMap, ok := raw.(map[string]any)
+	if !ok || rawMap == nil {
+		return raw
+	}
+	out := map[string]any{}
+	if val, ok := rawMap["topics"]; ok {
+		out["topics"] = val
+	} else if val, ok := rawMap["Topics"]; ok {
+		out["topics"] = val
+	}
+	if val, ok := rawMap["pools"]; ok {
+		out["pools"] = val
+	} else if val, ok := rawMap["Pools"]; ok {
+		out["pools"] = val
+	}
+	return out
+}
+
+func normalizeTimeoutsOverlay(raw any) any {
+	rawMap, ok := raw.(map[string]any)
+	if !ok || rawMap == nil {
+		return raw
+	}
+	out := map[string]any{}
+	if val, ok := rawMap["topics"]; ok {
+		out["topics"] = val
+	} else if val, ok := rawMap["Topics"]; ok {
+		out["topics"] = normalizeTopicTimeouts(val)
+	}
+	if val, ok := rawMap["workflows"]; ok {
+		out["workflows"] = val
+	} else if val, ok := rawMap["Workflows"]; ok {
+		out["workflows"] = normalizeWorkflowTimeouts(val)
+	}
+	if val, ok := rawMap["reconciler"]; ok {
+		out["reconciler"] = val
+	} else if val, ok := rawMap["Reconciler"]; ok {
+		out["reconciler"] = normalizeReconcilerTimeouts(val)
+	}
+	return out
+}
+
+func normalizeTopicTimeouts(raw any) any {
+	rawMap, ok := raw.(map[string]any)
+	if !ok || rawMap == nil {
+		return raw
+	}
+	out := map[string]any{}
+	for name, value := range rawMap {
+		item, ok := value.(map[string]any)
+		if !ok || item == nil {
+			out[name] = value
+			continue
+		}
+		normalized := map[string]any{}
+		if v, ok := item["timeout_seconds"]; ok {
+			normalized["timeout_seconds"] = v
+		} else if v, ok := item["TimeoutSeconds"]; ok {
+			normalized["timeout_seconds"] = v
+		}
+		if v, ok := item["max_retries"]; ok {
+			normalized["max_retries"] = v
+		} else if v, ok := item["MaxRetries"]; ok {
+			normalized["max_retries"] = v
+		}
+		if len(normalized) == 0 {
+			out[name] = value
+		} else {
+			out[name] = normalized
+		}
+	}
+	return out
+}
+
+func normalizeWorkflowTimeouts(raw any) any {
+	rawMap, ok := raw.(map[string]any)
+	if !ok || rawMap == nil {
+		return raw
+	}
+	out := map[string]any{}
+	for name, value := range rawMap {
+		item, ok := value.(map[string]any)
+		if !ok || item == nil {
+			out[name] = value
+			continue
+		}
+		normalized := map[string]any{}
+		if v, ok := item["child_timeout_seconds"]; ok {
+			normalized["child_timeout_seconds"] = v
+		} else if v, ok := item["ChildTimeoutSeconds"]; ok {
+			normalized["child_timeout_seconds"] = v
+		}
+		if v, ok := item["total_timeout_seconds"]; ok {
+			normalized["total_timeout_seconds"] = v
+		} else if v, ok := item["TotalTimeoutSeconds"]; ok {
+			normalized["total_timeout_seconds"] = v
+		}
+		if v, ok := item["max_retries"]; ok {
+			normalized["max_retries"] = v
+		} else if v, ok := item["MaxRetries"]; ok {
+			normalized["max_retries"] = v
+		}
+		if len(normalized) == 0 {
+			out[name] = value
+		} else {
+			out[name] = normalized
+		}
+	}
+	return out
+}
+
+func normalizeReconcilerTimeouts(raw any) any {
+	rawMap, ok := raw.(map[string]any)
+	if !ok || rawMap == nil {
+		return raw
+	}
+	out := map[string]any{}
+	if v, ok := rawMap["dispatch_timeout_seconds"]; ok {
+		out["dispatch_timeout_seconds"] = v
+	} else if v, ok := rawMap["DispatchTimeoutSeconds"]; ok {
+		out["dispatch_timeout_seconds"] = v
+	}
+	if v, ok := rawMap["running_timeout_seconds"]; ok {
+		out["running_timeout_seconds"] = v
+	} else if v, ok := rawMap["RunningTimeoutSeconds"]; ok {
+		out["running_timeout_seconds"] = v
+	}
+	if v, ok := rawMap["scan_interval_seconds"]; ok {
+		out["scan_interval_seconds"] = v
+	} else if v, ok := rawMap["ScanIntervalSeconds"]; ok {
+		out["scan_interval_seconds"] = v
+	}
+	return out
 }
 
 func hashAny(value any) (string, error) {

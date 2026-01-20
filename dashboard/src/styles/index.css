@@ -1047,6 +1047,45 @@ body::before {
   font-family: "IBM Plex Mono", monospace;
 }
 
+.builder-node__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 14px 12px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.builder-node__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #b0bcc2;
+}
+
+.builder-node__status[data-status="succeeded"] .builder-node__status-dot {
+  background: var(--success);
+}
+
+.builder-node__status[data-status="running"] .builder-node__status-dot,
+.builder-node__status[data-status="in_progress"] .builder-node__status-dot {
+  background: var(--accent);
+}
+
+.builder-node__status[data-status="failed"] .builder-node__status-dot,
+.builder-node__status[data-status="timed_out"] .builder-node__status-dot,
+.builder-node__status[data-status="cancelled"] .builder-node__status-dot {
+  background: var(--danger);
+}
+
+.builder-node__status[data-status="queued"] .builder-node__status-dot,
+.builder-node__status[data-status="pending"] .builder-node__status-dot,
+.builder-node__status[data-status="blocked"] .builder-node__status-dot {
+  background: var(--warning);
+}
+
 .builder-node__outputs {
   position: relative;
   padding: 8px 14px;

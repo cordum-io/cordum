@@ -16,6 +16,9 @@ export type BuilderNodeDataBase = {
   stepId: string;
   description?: string;
   condition?: string;
+  readOnly?: boolean;
+  status?: string;
+  engineType?: string;
   onDelete: (id: string) => void;
   onSelect: (id: string) => void;
   selected?: boolean;
