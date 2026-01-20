@@ -85,16 +85,11 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 		return nil, fmt.Errorf("redis tls insecure not allowed in production")
 	}
 
-	minVersion := tls.VersionTLS12
-	if env.TLSMinVersion() == tls.VersionTLS13 {
-		minVersion = tls.VersionTLS13
-	}
-
-	cfg := &tls.Config{MinVersion: minVersion}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if existing != nil {
 		cfg = existing.Clone()
-		if cfg.MinVersion < minVersion {
-			cfg.MinVersion = minVersion
+		if cfg.MinVersion < tls.VersionTLS12 {
+			cfg.MinVersion = tls.VersionTLS12
 		}
 	}
 	if serverName != "" {
@@ -102,6 +97,9 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 	}
 	if insecure {
 		cfg.InsecureSkipVerify = true
+	}
+	if env.TLSMinVersion() == tls.VersionTLS13 {
+		cfg.MinVersion = tls.VersionTLS13
 	}
 
 	if caPath != "" {
@@ -130,8 +128,8 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}
-	if cfg.MinVersion < minVersion {
-		cfg.MinVersion = minVersion
+	if cfg.MinVersion < tls.VersionTLS12 {
+		cfg.MinVersion = tls.VersionTLS12
 	}
 
 	return cfg, nil
