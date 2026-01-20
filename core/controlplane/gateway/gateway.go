@@ -517,7 +517,10 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		}
 		cfg := &tls.Config{
 			Certificates: []tls.Certificate{cert},
-			MinVersion:   env.TLSMinVersion(),
+			MinVersion:   tls.VersionTLS12,
+		}
+		if env.TLSMinVersion() == tls.VersionTLS13 {
+			cfg.MinVersion = tls.VersionTLS13
 		}
 		grpcCreds = credentials.NewTLS(cfg)
 		grpcTLSConfigured = true
@@ -849,11 +852,15 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 		IdleTimeout:       60 * time.Second,
 	}
 	if httpTLSCert != "" {
-		srv.TLSConfig = &tls.Config{MinVersion: env.TLSMinVersion()}
+		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		if env.TLSMinVersion() == tls.VersionTLS13 {
+			srv.TLSConfig.MinVersion = tls.VersionTLS13
+		}
 	}
 
 	if err := func() error {
 		if httpTLSCert != "" {
+			// #nosec G304 -- TLS cert path is configured by the operator.
 			return srv.ListenAndServeTLS(httpTLSCert, httpTLSKey)
 		}
 		return srv.ListenAndServe()
@@ -2267,6 +2274,7 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 		return nil, fmt.Errorf("safety kernel tls required")
 	}
 
+	// #nosec G304 -- CA path is configured by the operator.
 	pem, err := os.ReadFile(caPath)
 	if err != nil {
 		return nil, fmt.Errorf("safety kernel tls ca read: %w", err)
@@ -2277,7 +2285,10 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	}
 	cfg := &tls.Config{
 		RootCAs:    pool,
-		MinVersion: env.TLSMinVersion(),
+		MinVersion: tls.VersionTLS12,
+	}
+	if env.TLSMinVersion() == tls.VersionTLS13 {
+		cfg.MinVersion = tls.VersionTLS13
 	}
 	return credentials.NewTLS(cfg), nil
 }

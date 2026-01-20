@@ -323,6 +323,7 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 			return nil, false, "", time.Time{}, allowHeaderPrincipal, fmt.Errorf("read api keys path: %w", err)
 		}
 		keysModTime = info.ModTime()
+		// #nosec G304 -- API keys path is configured by the operator.
 		rawFile, err := os.ReadFile(keysPath)
 		if err != nil {
 			return nil, false, "", time.Time{}, allowHeaderPrincipal, fmt.Errorf("read api keys: %w", err)
