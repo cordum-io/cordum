@@ -217,6 +217,7 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	}
 
 	pool := x509.NewCertPool()
+	// #nosec G304 -- CA path is configured by the operator.
 	pem, err := os.ReadFile(caPath)
 	if err != nil {
 		return nil, fmt.Errorf("safety kernel tls ca read: %w", err)
@@ -226,7 +227,10 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	}
 	cfg := &tls.Config{
 		RootCAs:    pool,
-		MinVersion: env.TLSMinVersion(),
+		MinVersion: tls.VersionTLS12,
+	}
+	if env.TLSMinVersion() == tls.VersionTLS13 {
+		cfg.MinVersion = tls.VersionTLS13
 	}
 	return credentials.NewTLS(cfg), nil
 }
