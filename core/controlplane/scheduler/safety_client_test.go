@@ -216,9 +216,9 @@ func TestDecisionFromProto(t *testing.T) {
 func TestSafetyTransportCredentialsInsecure(t *testing.T) {
 	t.Setenv("SAFETY_KERNEL_TLS_CA", "")
 	t.Setenv("SAFETY_KERNEL_INSECURE", "true")
-	creds := safetyTransportCredentials()
-	if creds == nil {
-		t.Fatalf("expected credentials")
+	creds, err := safetyTransportCredentials()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if creds.Info().SecurityProtocol != "insecure" {
 		t.Fatalf("expected insecure protocol, got %s", creds.Info().SecurityProtocol)
@@ -228,11 +228,7 @@ func TestSafetyTransportCredentialsInsecure(t *testing.T) {
 func TestSafetyTransportCredentialsFallback(t *testing.T) {
 	t.Setenv("SAFETY_KERNEL_TLS_CA", "/nonexistent")
 	t.Setenv("SAFETY_KERNEL_INSECURE", "")
-	creds := safetyTransportCredentials()
-	if creds == nil {
-		t.Fatalf("expected credentials")
-	}
-	if creds.Info().SecurityProtocol != "insecure" {
-		t.Fatalf("expected insecure fallback, got %s", creds.Info().SecurityProtocol)
+	if _, err := safetyTransportCredentials(); err == nil {
+		t.Fatalf("expected error for invalid CA")
 	}
 }
