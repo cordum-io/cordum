@@ -759,6 +759,8 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("GET /api/v1/workflow-runs", s.instrumented("/api/v1/workflow-runs", s.handleListAllRuns))
 	mux.HandleFunc("GET /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleGetRun))
 	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/timeline", s.instrumented("/api/v1/workflow-runs/{id}/timeline", s.handleGetRunTimeline))
+	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/chat", s.instrumented("/api/v1/workflow-runs/{id}/chat", s.handleGetRunChat))
+	mux.HandleFunc("POST /api/v1/workflow-runs/{id}/chat", s.instrumented("/api/v1/workflow-runs/{id}/chat", s.handlePostRunChat))
 	mux.HandleFunc("DELETE /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleDeleteRun))
 	mux.HandleFunc("POST /api/v1/workflow-runs/{id}/rerun", s.instrumented("/api/v1/workflow-runs/{id}/rerun", s.handleRerunRun))
 

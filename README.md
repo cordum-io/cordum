@@ -13,9 +13,11 @@
 [![WebsiteDocs](https://img.shields.io/badge/docs-cordum.io%2Fdocs-0ea5e9)](https://cordum.io/docs)
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/26yw9VQV)
 
-Cordum (cordum.io) is a platform-only control plane for autonomous AI Agents and external workers.
-It uses NATS for the bus, Redis for state and payload pointers, and CAP v2 wire contracts for jobs,
-results, and heartbeats. Workers and product packs live outside this repo.
+Cordum (cordum.io) is a governance-first control plane for autonomous workflows: the API gateway accepts
+jobs and workflow runs, the scheduler routes work and gates it through the Safety Kernel, and the workflow
+engine coordinates run state and timelines. NATS provides the durable bus, Redis stores state and context/result
+pointers, and CAP v2 wire contracts (from the CAP repo) define job envelopes, safety checks, and heartbeats so
+external workers stay decoupled; packs add workflows, schemas, and policy/config overlays.
 
 See the full product docs at [Cordum](https://cordum.io) (or the local `docs/README.md`).
 
@@ -78,7 +80,7 @@ NATS (JetStream bus)  --->  External workers (your code)
 ```
 
 Protocol:
-- Bus and safety types are CAP v2 (`github.com/cordum-io/cap/v2`) via aliases in `core/protocol/pb/v1`.
+- CAP v2 (repo: `github.com/cordum-io/cap`) defines the bus envelope, job/safety schemas, and compatibility rules; this repo aliases the types in `core/protocol/pb/v1`.
 - API/Context protos live in `core/protocol/proto/v1`; generated Go types live in `core/protocol/pb/v1` and `sdk/gen/go/cordum/v1`.
 
 SDK:

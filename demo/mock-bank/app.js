@@ -354,16 +354,54 @@ async function apiRequest(path, options = {}) {
 }
 
 function loadConfig() {
+  const stored = loadStoredConfig();
+  const query = loadQueryConfig();
+  const config = sanitizeConfig({ ...stored, ...query });
+  if (Object.keys(query).length) {
+    persistConfig(config);
+  }
+  return config;
+}
+
+function loadStoredConfig() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
-    return sanitizeConfig({});
+    return {};
   }
   try {
-    const parsed = JSON.parse(raw);
-    return sanitizeConfig(parsed);
+    return JSON.parse(raw);
   } catch (err) {
-    return sanitizeConfig({});
+    return {};
   }
+}
+
+function loadQueryConfig() {
+  if (typeof window === "undefined" || !window.location || !window.location.search) {
+    return {};
+  }
+  const params = new URLSearchParams(window.location.search);
+  const config = {};
+  const apiBaseUrl = params.get("apiBaseUrl");
+  if (apiBaseUrl) {
+    config.apiBaseUrl = apiBaseUrl;
+  }
+  const apiKey = params.get("apiKey");
+  if (apiKey) {
+    config.apiKey = apiKey;
+  }
+  const principalId = params.get("principalId");
+  if (principalId) {
+    config.principalId = principalId;
+  }
+  const principalRole = params.get("principalRole");
+  if (principalRole) {
+    config.principalRole = principalRole;
+  }
+  const orgId = params.get("orgId");
+  if (orgId) {
+    config.orgId = orgId;
+  }
+  return config;
 }
 
 function sanitizeConfig(input) {
@@ -377,11 +415,30 @@ function sanitizeConfig(input) {
   };
 }
 
+function persistConfig(config) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  } catch (err) {
+    // Ignore storage failures for demo environments.
+  }
+}
+
 function normalizeBaseUrl(url) {
   if (!url) {
     return "";
   }
-  return url.replace(/\/+$/, "");
+  let next = String(url).trim();
+  if (!next) {
+    return "";
+  }
+  if (next.startsWith(":")) {
+    next = `http://localhost${next}`;
+  } else if (next.startsWith("//")) {
+    next = `http:${next}`;
+  } else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(next)) {
+    next = `http://${next}`;
+  }
+  return next.replace(/\/+$/, "");
 }
 
 function buildErrorMessage(err) {
@@ -391,7 +448,7 @@ function buildErrorMessage(err) {
     return "I could not reach the bank API. Please ensure the Cordum API is running and the page is served over http://localhost.";
   }
   if (lower.includes("401") || lower.includes("unauthorized")) {
-    return "The request was rejected. Please check the API key configured for the demo.";
+    return "The request was rejected. Update the demo API key (try ?apiKey=[REDACTED] or ?apiKey=ent-key) and reload.";
   }
   if (message.trim()) {
     return `I could not submit the request. ${message}`;
