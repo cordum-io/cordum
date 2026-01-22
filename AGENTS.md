@@ -17,6 +17,7 @@ Core ideas:
 
 - Prefer to start work from GitHub issues and reference the issue ID in commits/PRs.
 - If a request is not tied to an issue, ask which issue to use or suggest creating one.
+- If the user explicitly says no issue is needed, proceed without opening or referencing an issue.
 
 ## Architecture rules
 

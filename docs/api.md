@@ -15,7 +15,7 @@ Common endpoints:
 - Jobs: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `GET /api/v1/jobs/{id}/decisions`, `POST /api/v1/jobs`, `POST /api/v1/jobs/{id}/cancel`, `POST /api/v1/jobs/{id}/remediate`
 - Traces: `GET /api/v1/traces/{id}`
 - Workflows: `GET/POST /api/v1/workflows`, `GET/DELETE /api/v1/workflows/{id}`
-- Runs: `POST /api/v1/workflows/{id}/runs`, `GET /api/v1/workflows/{id}/runs`, `GET /api/v1/workflow-runs`, `GET /api/v1/workflow-runs/{id}`, `GET /api/v1/workflow-runs/{id}/timeline`, `POST /api/v1/workflow-runs/{id}/rerun`, `DELETE /api/v1/workflow-runs/{id}`
+- Runs: `POST /api/v1/workflows/{id}/runs`, `GET /api/v1/workflows/{id}/runs`, `GET /api/v1/workflow-runs`, `GET /api/v1/workflow-runs/{id}`, `GET /api/v1/workflow-runs/{id}/timeline`, `GET /api/v1/workflow-runs/{id}/chat`, `POST /api/v1/workflow-runs/{id}/chat`, `POST /api/v1/workflow-runs/{id}/rerun`, `DELETE /api/v1/workflow-runs/{id}`
 - Approvals: `POST /api/v1/workflows/{id}/runs/{run_id}/steps/{step_id}/approve`, `POST /api/v1/approvals/{job_id}/approve`, `POST /api/v1/approvals/{job_id}/reject`
 - Policy: `POST /api/v1/policy/evaluate`, `POST /api/v1/policy/simulate`, `POST /api/v1/policy/explain`, `GET /api/v1/policy/snapshots`, `GET/PUT /api/v1/policy/bundles/{id}`, `POST /api/v1/policy/bundles/{id}/simulate`, `POST /api/v1/policy/publish`, `POST /api/v1/policy/rollback`, `GET /api/v1/policy/audit`
 - Config: `GET /api/v1/config?scope=...&scope_id=...`, `POST /api/v1/config`, `GET /api/v1/config/effective`
