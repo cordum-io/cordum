@@ -42,7 +42,7 @@ View the walkthrough: [docs/demo-guardrails.md](docs/demo-guardrails.md)
 
 ```bash
 # Install via one-liner
-curl -fsSL https://get.cordum.io | sh
+curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh | sh
 
 # Or run locally from a clone:
 ./tools/scripts/install.sh
