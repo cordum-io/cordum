@@ -26,10 +26,32 @@ It fills the "Trust Gap" between LLMs and production infrastructure. Instead of 
 
 See the **Safety Kernel** in action (Worker + Policy Gate + Approval).
 
-Run the demo script:
+Prereqs: the stack is running and the demo worker is online.
+
+Terminal A (stack):
 ```bash
+go run ./cmd/cordumctl up
+# or: docker compose up -d
+```
+
+Terminal B (worker):
+```bash
+cd examples/demo-guardrails/worker
+go run .
+```
+
+Terminal C (demo):
+```bash
+CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} \
+CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
 ./tools/scripts/demo_guardrails.sh
 
+```
+
+Or use the one-command runner:
+
+```bash
+./tools/scripts/demo_guardrails_run.sh
 ```
 
 View the walkthrough: [docs/demo-guardrails.md](docs/demo-guardrails.md)
@@ -37,6 +59,14 @@ View the walkthrough: [docs/demo-guardrails.md](docs/demo-guardrails.md)
 ---
 
 ## 🚀 Getting started (1 minute)
+
+Prereqs: Docker + Docker Compose. Go is optional unless you want `cordumctl`.
+
+**Fastest path (recommended)**
+
+```bash
+./tools/scripts/quickstart.sh
+```
 
 **1. Install**
 
@@ -63,7 +93,7 @@ docker compose build && docker compose up -d
 **3. Verify**
 
 * **Dashboard:** Open `http://localhost:8082`
-* **Smoke Test:** Run `./tools/scripts/platform_smoke.sh`
+* **Smoke Test:** Run `CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} ./tools/scripts/platform_smoke.sh`
 
 ---
 
@@ -104,6 +134,8 @@ rules:
 ## 🏗 Architecture
 
 Cordum is built as a distributed system using industry-standard infrastructure components. It is designed for **DevOps/Platform teams**, not just Python prototypers.
+
+![Cordum Architecture](Screenshot%202026-01-23%20162612.png)
 
 ```mermaid
 graph TD;

@@ -24,6 +24,12 @@ make build SERVICE=cordumctl
 ./bin/cordumctl up
 ```
 
+Or the fastest one-liner:
+
+```bash
+./tools/scripts/quickstart.sh
+```
+
 `cordumctl up` sets `COMPOSE_HTTP_TIMEOUT` and `DOCKER_CLIENT_TIMEOUT` to `1800`
 seconds if they are not already set. Override them in your shell if needed.
 
@@ -55,7 +61,7 @@ cp .env.example .env
 ## Run a workflow smoke test
 
 ```bash
-./tools/scripts/platform_smoke.sh
+CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} ./tools/scripts/platform_smoke.sh
 ```
 
 Expected output:

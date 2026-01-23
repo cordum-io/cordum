@@ -2,6 +2,27 @@
 
 This folder contains the public documentation for Cordum core.
 
+## Start here (newcomers)
+
+Fastest path to a working local stack:
+
+```bash
+# from the repo root
+./tools/scripts/quickstart.sh
+```
+
+Want the guardrails demo?
+
+```bash
+./tools/scripts/demo_guardrails_run.sh
+```
+
+Want the mock bank demo?
+
+```bash
+./tools/scripts/demo_mock_bank.sh
+```
+
 ## Getting started
 
 - `docs/getting_started.md` - quickstart walkthrough
@@ -12,6 +33,9 @@ This folder contains the public documentation for Cordum core.
 - `docs/cordumctl.md` - CLI reference
 - `docs/demo-guardrails.md` - guardrails demo walkthrough + GIF recording
 - `docs/demo-mock-bank.md` - mock bank governance demo walkthrough
+- `tools/scripts/quickstart.sh` - one-command local stack + smoke test
+- `tools/scripts/demo_guardrails_run.sh` - guardrails demo runner
+- `tools/scripts/demo_mock_bank.sh` - mock bank demo runner
 - `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)
 - `cordumctl up` - one-command local stack launcher (`go run ./cmd/cordumctl up` or `./bin/cordumctl up` after `make build SERVICE=cordumctl`)
 - `tools/scripts/install.sh` - installer script for local or hosted one-liner

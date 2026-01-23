@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 const defaultComposeTimeoutSeconds = "1800"
@@ -25,6 +27,12 @@ func runUpCmd(args []string) {
 	fmt.Println("Cordum stack started.")
 	fmt.Println("Gateway: http://localhost:8081")
 	fmt.Println("Dashboard: http://localhost:8082")
+	apiKey := resolveAPIKey()
+	if apiKey != "" {
+		fmt.Printf("API Key: %s\n", apiKey)
+		fmt.Printf("Status: curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: %s\"\n", apiKey)
+		fmt.Printf("Smoke (from repo root): CORDUM_API_KEY=%s ./tools/scripts/platform_smoke.sh\n", apiKey)
+	}
 }
 
 func runCompose(composeFile string, build, detach bool) error {
@@ -85,4 +93,65 @@ func composeEnv() []string {
 		env = append(env, "DOCKER_CLIENT_TIMEOUT="+defaultComposeTimeoutSeconds)
 	}
 	return env
+}
+
+func resolveAPIKey() string {
+	if val := firstNonEmptyEnv("CORDUM_API_KEY", "CORDUM_SUPER_SECRET_API_TOKEN", "API_KEY"); val != "" {
+		return val
+	}
+	if val := readEnvFile(".env", "CORDUM_API_KEY", "CORDUM_SUPER_SECRET_API_TOKEN", "API_KEY"); val != "" {
+		return val
+	}
+	return "[REDACTED]"
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if val := strings.TrimSpace(os.Getenv(key)); val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+func readEnvFile(path string, keys ...string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+	allowed := map[string]struct{}{}
+	for _, key := range keys {
+		allowed[key] = struct{}{}
+	}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		if _, ok := allowed[key]; !ok {
+			continue
+		}
+		return trimQuotes(val)
+	}
+	return ""
+}
+
+func trimQuotes(val string) string {
+	if len(val) < 2 {
+		return val
+	}
+	if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+		return val[1 : len(val)-1]
+	}
+	return val
 }

@@ -3,6 +3,12 @@
 This walkthrough starts a local stack and runs a minimal approval-only workflow
 without any external workers.
 
+Want the fastest path? Run:
+
+```bash
+./tools/scripts/quickstart.sh
+```
+
 ## Prerequisites
 
 - Docker + Docker Compose
@@ -26,19 +32,22 @@ docker compose up -d
 ## Step 2: Confirm the gateway is healthy
 
 ```bash
-curl -sS http://localhost:8081/api/v1/status | jq
+API_KEY=${CORDUM_API_KEY:-[REDACTED]}
+curl -sS http://localhost:8081/api/v1/status \
+  -H "X-API-Key: ${API_KEY}" | jq
 ```
 
 ## Step 3: Create a workflow
 
 ```bash
 API_KEY=${CORDUM_API_KEY:-[REDACTED]}
+ORG_ID=${CORDUM_ORG_ID:-default}
 workflow_id=$(curl -sS -X POST http://localhost:8081/api/v1/workflows \
   -H "X-API-Key: ${API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "hello-world",
-    "org_id": "default",
+    "org_id": "'"${ORG_ID}"'",
     "steps": {
       "approve": {
         "type": "approval",
@@ -73,7 +82,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/${workflow_id}/runs/${ru
 ## Step 6: Check status
 
 ```bash
-curl -sS http://localhost:8081/api/v1/workflow-runs/${run_id} \
+curl -sS http://localhost:8081/api/v1/workflow-runs/${run_id}?org_id=${ORG_ID} \
   -H "X-API-Key: ${API_KEY}" | jq -r '.status'
 ```
 
@@ -82,9 +91,9 @@ Expected output: `succeeded`.
 ## Step 7: Clean up
 
 ```bash
-curl -sS -X DELETE http://localhost:8081/api/v1/workflow-runs/${run_id} \
+curl -sS -X DELETE http://localhost:8081/api/v1/workflow-runs/${run_id}?org_id=${ORG_ID} \
   -H "X-API-Key: ${API_KEY}" >/dev/null
-curl -sS -X DELETE http://localhost:8081/api/v1/workflows/${workflow_id} \
+curl -sS -X DELETE http://localhost:8081/api/v1/workflows/${workflow_id}?org_id=${ORG_ID} \
   -H "X-API-Key: ${API_KEY}" >/dev/null
 ```
 
