@@ -1,10 +1,10 @@
 # Cordum - Deterministic Control Plane for Autonomous Workflows
 
-[![License: BUSL-1.1](https://img.shields.io/badge/license-BUSL--1.1-blue)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/license-BUSL--1.1-blue)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver)](https://github.com/cordum-io/cordum/releases)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/cordum-io/cordum)](go.mod)
-[![Docker Compose](https://img.shields.io/badge/compose-ready-0f766e)](docker-compose.yml)
-[![Docs](https://img.shields.io/badge/docs-cordum--docs-0ea5e9)](docs/README.md)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/cordum-io/cordum)](./go.mod)
+[![Docker Compose](https://img.shields.io/badge/compose-ready-0f766e)](./docker-compose.yml)
+[![Docs](https://img.shields.io/badge/docs-cordum--docs-0ea5e9)](./docs/README.md)
 ![Docker Pulls](https://img.shields.io/docker/pulls/cordum/control-plane)
 ![CI](https://github.com/cordum-io/cordum/workflows/CI/badge.svg)
 ![CodeQL](https://github.com/cordum-io/cordum/workflows/CodeQL/badge.svg)
@@ -54,7 +54,7 @@ Or use the one-command runner:
 ./tools/scripts/demo_guardrails_run.sh
 ```
 
-View the walkthrough: [docs/demo-guardrails.md](docs/demo-guardrails.md)
+View the walkthrough: [docs/demo-guardrails.md](./docs/demo-guardrails.md)
 
 ---
 
@@ -73,6 +73,11 @@ Prereqs: Docker + Docker Compose. Go is optional unless you want `cordumctl`.
 ```bash
 # Install via one-liner
 curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh | sh
+
+# Safer: download, inspect, then run
+curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh -o install.sh
+less install.sh
+sh install.sh
 
 # Or run locally from a clone:
 ./tools/scripts/install.sh
@@ -222,8 +227,8 @@ Enterprise features are delivered via the `cordum-enterprise` repo and require a
 
 **Resources:**
 
-* [Documentation](docs/README.md)
-* [Contributing Guide](CONTRIBUTING.md)
-* [Security Policy](SECURITY.md)
+* [Documentation](./docs/README.md)
+* [Contributing Guide](./CONTRIBUTING.md)
+* [Security Policy](./SECURITY.md)
 
 ```
