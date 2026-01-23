@@ -32,7 +32,7 @@ Run the demo script:
 
 ```
 
-View the walkthrough: [docs/demo-guardrails.md](https://www.google.com/search?q=docs/demo-guardrails.md)
+View the walkthrough: [docs/demo-guardrails.md](docs/demo-guardrails.md)
 
 ---
 
@@ -42,7 +42,7 @@ View the walkthrough: [docs/demo-guardrails.md](https://www.google.com/search?q=
 
 ```bash
 # Install via one-liner
-curl -fsSL [https://get.cordum.io](https://get.cordum.io) | sh
+curl -fsSL https://get.cordum.io | sh
 
 # Or run locally from a clone:
 ./tools/scripts/install.sh
@@ -183,15 +183,15 @@ Enterprise features are delivered via the `cordum-enterprise` repo and require a
 
 ## 🤝 Contributing & License
 
-**License:** [Business Source License 1.1 (BUSL-1.1)](https://www.google.com/search?q=LICENSE).
+**License:** [Business Source License 1.1 (BUSL-1.1)](LICENSE).
 
 * Free for self-hosted and internal use.
 * Proprietary for competing hosted/managed offerings.
 
 **Resources:**
 
-* [Documentation](https://www.google.com/search?q=docs/README.md)
-* [Contributing Guide](https://www.google.com/search?q=CONTRIBUTING.md)
+* [Documentation](docs/README.md)
+* [Contributing Guide](CONTRIBUTING.md)
 * [Security Policy](SECURITY.md)
 
 ```
