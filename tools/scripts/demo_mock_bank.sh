@@ -52,9 +52,9 @@ curl -sS "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_KEY}" >/dev/null
 
 echo "[mock-bank] installing pack"
 if [[ -n "${CTL_BIN}" && -x "${CTL_BIN}" ]]; then
-  "${CTL_BIN}" pack install --upgrade ./demo/mock-bank/pack
+  CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" "${CTL_BIN}" pack install --upgrade ./demo/mock-bank/pack
 else
-  go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack
+  CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack
 fi
 
 echo "[mock-bank] starting worker"

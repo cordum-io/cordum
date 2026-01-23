@@ -73,5 +73,4 @@ One-command runner (installs pack + starts worker + serves UI):
 - The dashboard defaults to `http://localhost:8082`.
 - The demo UI uses the Cordum API at `http://localhost:8081` with `[REDACTED]` by default.
 - If you changed the API key, open `http://localhost:8099/?apiKey=YOUR_KEY` (add `apiBaseUrl=http://localhost:8081` if needed).
-- For Enterprise, open `http://localhost:8099/?apiKey=ent-key` (add `apiBaseUrl=http://localhost:8081` if needed) or set localStorage key `cordum-mock-bank-config` with `apiKey`.
 - Query parameters (`apiKey`, `apiBaseUrl`, `principalId`, `principalRole`, `orgId`) persist to localStorage after the first load.
