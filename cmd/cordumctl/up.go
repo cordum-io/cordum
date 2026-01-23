@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-const defaultComposeTimeoutSeconds = "1800"
+const (
+	defaultComposeTimeoutSeconds = "1800"
+	defaultAPIKey               = "[REDACTED]"
+)
 
 func runUpCmd(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
@@ -27,11 +30,15 @@ func runUpCmd(args []string) {
 	fmt.Println("Cordum stack started.")
 	fmt.Println("Gateway: http://localhost:8081")
 	fmt.Println("Dashboard: http://localhost:8082")
-	apiKey := resolveAPIKey()
-	if apiKey != "" {
-		fmt.Printf("API Key: %s\n", apiKey)
-		fmt.Printf("Status: curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: %s\"\n", apiKey)
-		fmt.Printf("Smoke (from repo root): CORDUM_API_KEY=%s ./tools/scripts/platform_smoke.sh\n", apiKey)
+	source := apiKeySource()
+	if source != "" {
+		if source == "default" {
+			fmt.Printf("API Key: %s (default)\n", defaultAPIKey)
+		} else {
+			fmt.Println("API Key: configured (value hidden)")
+		}
+		fmt.Println("Status: curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: <your-key>\"")
+		fmt.Println("Smoke (from repo root): CORDUM_API_KEY=<your-key> ./tools/scripts/platform_smoke.sh")
 	}
 }
 
@@ -95,14 +102,14 @@ func composeEnv() []string {
 	return env
 }
 
-func resolveAPIKey() string {
+func apiKeySource() string {
 	if val := firstNonEmptyEnv("CORDUM_API_KEY", "CORDUM_SUPER_SECRET_API_TOKEN", "API_KEY"); val != "" {
-		return val
+		return "env"
 	}
 	if val := readEnvFile(".env", "CORDUM_API_KEY", "CORDUM_SUPER_SECRET_API_TOKEN", "API_KEY"); val != "" {
-		return val
+		return "file"
 	}
-	return "[REDACTED]"
+	return "default"
 }
 
 func firstNonEmptyEnv(keys ...string) string {
@@ -115,6 +122,7 @@ func firstNonEmptyEnv(keys ...string) string {
 }
 
 func readEnvFile(path string, keys ...string) string {
+	// #nosec G304 -- reads local .env file for CLI convenience.
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
