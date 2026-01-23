@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { wsProtocols, wsUrl } from "../lib/api";
 import { useConfigStore } from "../state/config";
 import { useEventStore, type LiveEvent } from "../state/events";
@@ -121,11 +122,69 @@ function eventFromPacket(packet: BusPacket) {
 }
 
 export function useLiveBus() {
+  const queryClient = useQueryClient();
   const apiKey = useConfigStore((state) => state.apiKey);
   const loaded = useConfigStore((state) => state.loaded);
   const addEvent = useEventStore((state) => state.addEvent);
   const setStatus = useEventStore((state) => state.setStatus);
   const retryRef = useRef(0);
+  const invalidateRef = useRef<Map<string, number>>(new Map());
+
+  const invalidate = (key: unknown[], minInterval = 3000) => {
+    const now = Date.now();
+    const sig = JSON.stringify(key);
+    const last = invalidateRef.current.get(sig) || 0;
+    if (now-last < minInterval) {
+      return;
+    }
+    invalidateRef.current.set(sig, now);
+    queryClient.invalidateQueries({ queryKey: key });
+  };
+
+  const invalidateForEvent = (event: LiveEvent) => {
+    switch (event.eventType) {
+      case "job_request":
+        invalidate(["jobs"]);
+        invalidate(["runs"]);
+        break;
+      case "job_progress":
+        invalidate(["jobs"]);
+        if (event.jobId) {
+          invalidate(["job", event.jobId], 1500);
+        }
+        break;
+      case "job_result":
+        invalidate(["jobs"]);
+        invalidate(["runs"]);
+        invalidate(["approvals"]);
+        invalidate(["dlq"]);
+        if (event.jobId) {
+          invalidate(["job", event.jobId], 1500);
+        }
+        break;
+      case "job_cancel":
+        invalidate(["jobs"]);
+        invalidate(["runs"]);
+        if (event.jobId) {
+          invalidate(["job", event.jobId], 1500);
+        }
+        break;
+      case "heartbeat":
+        invalidate(["workers"]);
+        invalidate(["status"]);
+        break;
+      case "alert":
+        invalidate(["status"]);
+        break;
+      case "chat_message":
+        if (event.runId) {
+          invalidate(["chat", event.runId], 1000);
+        }
+        break;
+      default:
+        break;
+    }
+  };
 
   useEffect(() => {
     if (!loaded) {
@@ -153,6 +212,7 @@ export function useLiveBus() {
           const liveEvent = eventFromPacket(packet);
           if (liveEvent) {
             addEvent(liveEvent);
+            invalidateForEvent(liveEvent);
           }
         } catch {
           // Ignore malformed messages.
