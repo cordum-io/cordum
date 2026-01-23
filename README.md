@@ -19,6 +19,12 @@ engine coordinates run state and timelines. NATS provides the durable bus, Redis
 pointers, and CAP v2 wire contracts (from the CAP repo) define job envelopes, safety checks, and heartbeats so
 external workers stay decoupled; packs add workflows, schemas, and policy/config overlays.
 
+Think of it **not** as another AI framework (like LangChain or CrewAI) but as the infrastructure or "firewall"
+that sits between your LLM's intent and your production systems. Its primary goal is to solve the "Trust Gap"—
+the hesitation enterprises have in letting non-deterministic AI agents execute actions (writes) in production
+environments.
+
+
 See the full product docs at [Cordum](https://cordum.io) (or the local `docs/README.md`).
 
 ## 2-minute guardrails demo
