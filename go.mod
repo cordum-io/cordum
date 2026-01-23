@@ -6,7 +6,7 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
-	github.com/cordum-io/cap/v2 v2.0.12
+	github.com/cordum-io/cap/v2 v2.0.13
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
