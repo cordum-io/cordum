@@ -19,11 +19,6 @@ engine coordinates run state and timelines. NATS provides the durable bus, Redis
 pointers, and CAP v2 wire contracts (from the CAP repo) define job envelopes, safety checks, and heartbeats so
 external workers stay decoupled; packs add workflows, schemas, and policy/config overlays.
 
-Think of it **not** as another AI framework (like LangChain or CrewAI) but as the infrastructure or "firewall"
-that sits between your LLM's intent and your production systems. Its primary goal is to solve the "Trust Gap"—
-the hesitation enterprises have in letting non-deterministic AI agents execute actions (writes) in production
-environments.
-
 
 See the full product docs at [Cordum](https://cordum.io) (or the local `docs/README.md`).
 
@@ -95,14 +90,119 @@ SDK:
 
 ## Why Cordum?
 
-Cordum is built for teams that need deterministic automation and policy control.
+Cordum is an open-source **control plane and safety layer** designed specifically for autonomous AI agents.
 
-| Capability | Cordum | Typical workflow engines |
+Think of it not as another AI framework (like LangChain or CrewAI) but as the **infrastructure** or
+"firewall" that sits between your LLM's intent and your production systems. Its primary goal is to solve
+the "Trust Gap" -- the hesitation enterprises have in letting non-deterministic AI agents execute actions
+(writes) in production environments.
+
+Here is a deep analysis of its architecture, capabilities, and strategic value.
+
+### 1. The core philosophy: "Policy-Before-Dispatch"
+
+Most agentic frameworks function by having the LLM directly call tools. Cordum inverts this.
+
+* Traditional: LLM -> Tool Execution -> Result.
+* Cordum: LLM -> Intent (Job) -> Safety Kernel (Policy Check) -> Dispatch to Worker -> Result.
+
+This ensures that no matter how "jailbroken" or confused an LLM becomes, it cannot execute a dangerous
+command (e.g., `DROP DATABASE`) if the hard-coded policy forbids it. The constraints are enforced at the
+infrastructure level, not the prompt level.
+
+### 2. Technical architecture
+
+Cordum is built as a distributed system using industry-standard infrastructure components, making it
+"production-ready" by design rather than a prototype toy.
+
+#### A. The control plane (Go)
+
+The core logic resides in a set of Go services:
+
+* API Gateway: handles HTTP/gRPC requests for job submissions, workflow triggers, and config management.
+* Safety Kernel: the brain of the operation. It intercepts every job dispatch attempt and evaluates it
+  against defined policies (Allow, Deny, Require Approval, Constrain).
+* Scheduler: a capability-aware dispatcher. It routes jobs to workers based on required capabilities
+  (e.g., `requires: [gpu, production-access]`) and worker load, rather than simple round-robin.
+* Workflow Engine: manages multi-step processes (DAGs), handling retries, backoffs, and state persistence.
+
+#### B. The data plane (NATS + Redis)
+
+* NATS JetStream: used as the nervous system. All communication between the control plane and workers
+  happens over a durable message bus. This decouples the agent (the "brain") from the tools (the "hands"),
+  allowing for asynchronous execution and better scalability.
+* Redis: acts as the "heap" and state store. It holds the current state of workflows, payload pointers
+  (references to data rather than large blobs on the wire), and locks.
+
+#### C. The protocol: CAP v2
+
+Cordum uses the **Cordum Agent Protocol (CAP)**.
+
+* Purpose: it standardizes how agents talk to the world. Unlike MCP (Model Context Protocol), which
+  focuses on providing context *to* an LLM, CAP focuses on execution.
+* Wire format: defined in Protobuf, ensuring strict contracts for Jobs, Results, and Heartbeats.
+* Language agnostic: because workers communicate via NATS + CAP, they can be written in any language
+  (Python, Node.js, Go) and still be orchestrated by the central Cordum brain.
+
+### 3. Key features
+
+#### The Safety Kernel
+
+This is the differentiator. You can define policies like:
+
+* Human-in-the-loop: "Any job tagged `write` that targets `production` requires human approval."
+* Rate limiting: "Max 50 API calls per minute for the `junior-dev-agent`."
+* Input constraints: "The `recipient_email` field must match `@company.com`."
+
+#### The Pack system
+
+Cordum introduces "Packs" -- distributable bundles of functionality.
+
+* A Pack can contain Workers (Docker containers), Workflows (definitions), and Policies.
+* This allows teams to "install" capabilities (e.g., a "GitHub Triage Pack") that come pre-configured
+  with the necessary safety guardrails, rather than writing them from scratch.
+
+#### MCP native
+
+Cordum supports the Model Context Protocol (MCP). It acts as a bridge, allowing standard MCP clients
+(like Claude Desktop or IDEs) to trigger Cordum workflows. This means you can use your existing tools
+while gaining the safety and audit benefits of Cordum's control plane.
+
+### 4. Developer experience
+
+* `cordumctl`: a CLI tool for managing the platform, inspecting runs, and handling packs.
+* Dashboard: a web UI for visualizing workflow graphs, viewing run timelines (flight recorder), and
+  managing approvals.
+* SDKs: currently focused on Go, with patterns available for Python and Node workers.
+
+### 5. Strategic analysis
+
+| Feature | Cordum | Traditional agent frameworks |
 | --- | --- | --- |
-| Policy-before-dispatch | Built-in | External/custom |
-| Approval gates | Built-in | Manual |
-| Scheduling | Least-loaded + pool routing | Queue-based |
-| Pack overlays | Built-in | Plugins/scripts |
+| Execution model | Deterministic, policy-gated | Probabilistic, direct execution |
+| State management | Durable (Redis/NATS), resumable | Often in-memory / ephemeral |
+| Security | Infrastructure-level (the "firewall") | Prompt-level (system prompts) |
+| Target audience | Platform/DevOps engineers, enterprise | AI application developers |
+
+**Pros:**
+
+* Security-first: solves the biggest blocker to enterprise adoption.
+* Auditability: every action, decision, and result is recorded.
+* Reliability: uses NATS for at-least-once delivery, preventing "lost" agent actions.
+
+**Cons / risks:**
+
+* Complexity: requires running NATS and Redis, which is heavier than a simple Python library.
+* Early stage: the project is in active development (v0.1.x), meaning APIs might evolve.
+* Adoption friction: requires teams to rethink how they deploy agents (separating the "brain" from
+  the "runner").
+
+**Final verdict:**
+
+Cordum is infrastructure for the post-prototype era of AI. If you are building a simple chatbot, it is
+overkill. If you are building autonomous agents that are expected to perform real work (modifying databases,
+merging code, processing payments) without constant supervision, Cordum provides the governance layer
+to do so safely.
 
 ## Quickstart (Docker)
 
