@@ -1,2 +1,3 @@
 workflows:
-  demo-guardrails.approval: 180
+  demo-guardrails.approval:
+    total_timeout_seconds: 180

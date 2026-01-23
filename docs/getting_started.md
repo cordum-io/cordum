@@ -24,6 +24,12 @@ make build SERVICE=cordumctl
 ./bin/cordumctl up
 ```
 
+Or the fastest one-liner:
+
+```bash
+./tools/scripts/quickstart.sh
+```
+
 `cordumctl up` sets `COMPOSE_HTTP_TIMEOUT` and `DOCKER_CLIENT_TIMEOUT` to `1800`
 seconds if they are not already set. Override them in your shell if needed.
 
@@ -34,14 +40,10 @@ docker compose up -d
 
 The API gateway listens on `http://localhost:8081` by default.
 
-## Enterprise gateway (login sessions)
+## Enterprise gateway
 
-If you are running the enterprise gateway on `http://localhost:8085`, use the
-override file so the dashboard points at it and shows the login page:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.enterprise.override.yml up -d --build
-```
+Enterprise setup and licensing live in the enterprise repo. See `docs/enterprise.md`
+for details.
 
 ## Set an API key
 
@@ -55,7 +57,7 @@ cp .env.example .env
 ## Run a workflow smoke test
 
 ```bash
-./tools/scripts/platform_smoke.sh
+CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} ./tools/scripts/platform_smoke.sh
 ```
 
 Expected output:

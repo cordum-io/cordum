@@ -3,6 +3,10 @@ set -euo pipefail
 
 if command -v cordumctl >/dev/null 2>&1; then
   CTL_BIN="cordumctl"
+elif [[ -x "./bin/cordumctl" ]]; then
+  CTL_BIN="./bin/cordumctl"
+elif [[ -x "./cordumctl" ]]; then
+  CTL_BIN="./cordumctl"
 else
   CTL_BIN="./cmd/cordumctl/cordumctl"
 fi
@@ -17,6 +21,7 @@ fi
 
 API_BASE=${CORDUM_API_BASE:-http://localhost:8081}
 API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-[REDACTED]}}
+ORG_ID=${CORDUM_ORG_ID:-default}
 auth_header=("-H" "X-API-Key: ${API_KEY}")
 
 if [[ ! -x "${CTL_BIN}" ]]; then
@@ -24,10 +29,10 @@ if [[ ! -x "${CTL_BIN}" ]]; then
   exit 1
 fi
 
-"${CTL_BIN}" pack install ./examples/demo-guardrails --upgrade
+"${CTL_BIN}" pack install --upgrade ./examples/demo-guardrails
 
 echo "[demo] starting approval workflow run"
-approval_run=$(curl -sS -X POST "${API_BASE}/api/v1/workflows/demo-guardrails.approval/runs" \
+approval_run=$(curl -sS -X POST "${API_BASE}/api/v1/workflows/demo-guardrails.approval/runs?org_id=${ORG_ID}" \
   "${auth_header[@]}" \
   -H "Content-Type: application/json" \
   -d '{"message":"Ship with guardrails","actor":"demo"}' | jq -r '.run_id')
@@ -38,7 +43,7 @@ fi
 
 approval_job=""
 for _ in {1..20}; do
-  approval_job=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/approvals?limit=1" | jq -r '.items[0].job_id // empty')
+  approval_job=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${approval_run}?org_id=${ORG_ID}" | jq -r '.steps.write.job_id // empty')
   if [[ -n "${approval_job}" ]]; then
     break
   fi
@@ -53,7 +58,7 @@ fi
 
 status=""
 for _ in {1..25}; do
-  status=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${approval_run}" | jq -r '.status')
+  status=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${approval_run}?org_id=${ORG_ID}" | jq -r '.status')
   if [[ "${status}" == "succeeded" ]]; then
     break
   fi
@@ -73,7 +78,7 @@ sleep 0.5
 
 dlq_job=""
 for _ in {1..20}; do
-  dlq_job=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/dlq/page?limit=1" | jq -r '.items[0].job_id // empty')
+  dlq_job=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/dlq/page?org_id=${ORG_ID}&limit=1" | jq -r '.items[0].job_id // empty')
   if [[ -n "${dlq_job}" ]]; then
     break
   fi

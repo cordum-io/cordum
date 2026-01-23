@@ -42,4 +42,9 @@ cat <<'EOF'
 Cordum is up.
 - Dashboard: http://localhost:8082
 - API: http://localhost:8081
+Next steps (OSS, from repo root):
+- Quickstart: ./tools/scripts/quickstart.sh
+- Smoke test: CORDUM_API_KEY=[REDACTED] ./tools/scripts/platform_smoke.sh
+- Guardrails demo: ./tools/scripts/demo_guardrails_run.sh
+- Mock bank demo: ./tools/scripts/demo_mock_bank.sh
 EOF

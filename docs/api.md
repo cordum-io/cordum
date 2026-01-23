@@ -9,6 +9,7 @@ Base URL (local compose): `http://localhost:8081`
 Authentication:
 - HTTP header: `X-API-Key: <key>`
 - WebSocket stream: `Sec-WebSocket-Protocol: cordum-api-key, <base64url>`
+When API keys are configured (compose defaults to `[REDACTED]`), all endpoints require the header, including `/api/v1/status`.
 
 Common endpoints:
 - Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream`

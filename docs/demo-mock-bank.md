@@ -5,16 +5,32 @@ This demo shows:
 - Policy enforcement for low, medium, and high transfer amounts
 - Human approval gating before funds move
 
+## Prereqs
+
+- Docker + Docker Compose
+- Go (for the demo worker)
+- Python 3 (or another static file server)
+
 ## 1) Start the stack
 
 ```bash
+go run ./cmd/cordumctl up
+# or:
 ./bin/cordumctl up
+# or:
+docker compose up -d
 ```
 
 ## 2) Install the demo pack
 
 ```bash
 ./bin/cordumctl pack install --upgrade ./demo/mock-bank/pack
+```
+
+If you didn't build the binary, use:
+
+```bash
+go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack
 ```
 
 ## 3) Start the mock bank worker
@@ -39,6 +55,12 @@ py -m http.server 8099
 
 Open `http://localhost:8099` in your browser.
 
+One-command runner (installs pack + starts worker + serves UI):
+
+```bash
+./tools/scripts/demo_mock_bank.sh
+```
+
 ## 5) Run the flow
 
 1. Send a $40 transfer request in the chat. It auto-executes.
@@ -50,5 +72,5 @@ Open `http://localhost:8099` in your browser.
 
 - The dashboard defaults to `http://localhost:8082`.
 - The demo UI uses the Cordum API at `http://localhost:8081` with `[REDACTED]` by default.
-- For Enterprise, open `http://localhost:8099/?apiKey=ent-key` (add `apiBaseUrl=http://localhost:8081` if needed) or set localStorage key `cordum-mock-bank-config` with `apiKey`.
+- If you changed the API key, open `http://localhost:8099/?apiKey=YOUR_KEY` (add `apiBaseUrl=http://localhost:8081` if needed).
 - Query parameters (`apiKey`, `apiBaseUrl`, `principalId`, `principalRole`, `orgId`) persist to localStorage after the first load.
