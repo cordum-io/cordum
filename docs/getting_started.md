@@ -40,14 +40,10 @@ docker compose up -d
 
 The API gateway listens on `http://localhost:8081` by default.
 
-## Enterprise gateway (login sessions)
+## Enterprise gateway
 
-If you are running the enterprise gateway on `http://localhost:8085`, use the
-override file so the dashboard points at it and shows the login page:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.enterprise.override.yml up -d --build
-```
+Enterprise setup and licensing live in the enterprise repo. See `docs/enterprise.md`
+for details.
 
 ## Set an API key
 
