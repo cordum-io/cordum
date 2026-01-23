@@ -230,5 +230,7 @@ Enterprise features are delivered via the `cordum-enterprise` repo and require a
 * [Documentation](./docs/README.md)
 * [Contributing Guide](./CONTRIBUTING.md)
 * [Security Policy](./SECURITY.md)
+* [Support](./SUPPORT.md)
+* [Governance](./GOVERNANCE.md)
 
 ```
