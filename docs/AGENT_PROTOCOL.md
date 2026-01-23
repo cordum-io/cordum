@@ -56,7 +56,7 @@ Priority semantics:
 - **JobCancel**
   - `job_id`, `reason`, `requested_by`.
 - **Heartbeat**
-  - `worker_id`, `region`, `type`, `cpu_load`, `gpu_utilization`, `active_jobs`, `capabilities`, `pool`, `max_parallel_jobs`.
+  - `worker_id`, `region`, `type`, `cpu_load`, `memory_load`, `gpu_utilization`, `active_jobs`, `capabilities`, `pool`, `max_parallel_jobs`.
 - **PolicyCheckResponse**
   - `decision`, `reason`, `policy_snapshot`, `constraints`, `approval_required`, `approval_ref`.
   - `remediations` (optional suggestions with `replacement_topic`, `replacement_capability`, label add/remove).

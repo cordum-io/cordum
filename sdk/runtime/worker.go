@@ -37,10 +37,12 @@ type JobHandler func(ctx context.Context, req *v1.JobRequest) (*v1.JobResult, er
 
 // Worker provides a minimal runtime for CAP workers.
 type Worker struct {
-	cfg        Config
-	nc         *nats.Conn
-	sem        chan struct{}
-	activeJobs atomic.Int32
+	cfg          Config
+	nc           *nats.Conn
+	sem          chan struct{}
+	activeJobs   atomic.Int32
+	cpuLastTotal uint64
+	cpuLastIdle  uint64
 
 	cancelMu sync.Mutex
 	cancels  map[string]context.CancelFunc
@@ -258,10 +260,14 @@ func (w *Worker) heartbeatLoop(ctx context.Context) {
 }
 
 func (w *Worker) sendHeartbeat() error {
+	cpuLoad := w.sampleCPULoad()
+	memoryLoad := w.sampleMemoryLoad()
 	hb := &v1.Heartbeat{
 		WorkerId:        w.cfg.WorkerID,
 		Region:          w.cfg.Region,
 		Type:            w.cfg.Type,
+		CpuLoad:         cpuLoad,
+		MemoryLoad:      memoryLoad,
 		ActiveJobs:      w.activeJobs.Load(),
 		MaxParallelJobs: w.cfg.MaxParallelJobs,
 		Capabilities:    w.cfg.Capabilities,
