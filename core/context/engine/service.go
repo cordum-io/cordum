@@ -121,6 +121,8 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 	var inputTokens32 int32
 	if inputTokens > math.MaxInt32 {
 		inputTokens32 = math.MaxInt32
+	} else if inputTokens < math.MinInt32 {
+		inputTokens32 = math.MinInt32
 	} else {
 		inputTokens32 = int32(inputTokens)
 	}
