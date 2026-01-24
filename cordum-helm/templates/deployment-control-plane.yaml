@@ -341,13 +341,13 @@ spec:
               containerPort: {{ .Values.gateway.service.metricsPort }}
           livenessProbe:
             httpGet:
-              path: /api/v1/status
+              path: /health
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
           readinessProbe:
             httpGet:
-              path: /api/v1/status
+              path: /health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
