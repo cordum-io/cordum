@@ -36,6 +36,24 @@ function packInitials(label: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
+function resolveMarketplaceUrl(rawUrl?: string, catalogUrl?: string): string {
+  const trimmed = (rawUrl || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  if (catalogUrl) {
+    try {
+      return new URL(trimmed, catalogUrl).toString();
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed;
+}
+
 function subjectMatches(pattern: string, subject: string): boolean {
   if (!pattern || !subject) {
     return false;
@@ -84,6 +102,17 @@ export function PacksPage() {
     [marketplaceQuery.data],
   );
   const marketplaceCatalogs = useMemo(() => marketplaceQuery.data?.catalogs || [], [marketplaceQuery.data]);
+  const marketplaceCatalogUrlById = useMemo(() => {
+    const map = new Map<string, string>();
+    marketplaceCatalogs.forEach((catalog) => {
+      if (catalog.id && catalog.url) {
+        map.set(catalog.id, catalog.url);
+      }
+    });
+    return map;
+  }, [marketplaceCatalogs]);
+  const fallbackMarketplaceCatalogUrl =
+    marketplaceCatalogs.length === 1 && marketplaceCatalogs[0].url ? marketplaceCatalogs[0].url : undefined;
   const packWorkers = useMemo(() => {
     const map = new Map<string, Heartbeat[]>();
     packs.forEach((pack) => {
@@ -435,7 +464,13 @@ export function PacksPage() {
               {marketplacePacks.map((pack) => {
                 const upgradeAvailable = Boolean(pack.installed_version && pack.installed_version !== pack.version);
                 const installDisabled = Boolean(pack.installed_version && !upgradeAvailable);
-                const sourceUrl = pack.source || pack.homepage || pack.url || "";
+                const packCatalogUrl =
+                  (pack.catalog_id && marketplaceCatalogUrlById.get(pack.catalog_id)) || fallbackMarketplaceCatalogUrl;
+                const sourceUrl =
+                  resolveMarketplaceUrl(pack.source, packCatalogUrl) ||
+                  resolveMarketplaceUrl(pack.homepage, packCatalogUrl) ||
+                  resolveMarketplaceUrl(pack.url, packCatalogUrl) ||
+                  "";
                 const packTitle = pack.title || pack.id;
                 const packSubtitle = pack.author || pack.catalog_title || "Cordum Community";
                 const packDescription = pack.description || "No description provided.";
