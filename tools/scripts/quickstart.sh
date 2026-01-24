@@ -12,10 +12,64 @@ require docker
 require curl
 require jq
 
-if ! docker compose version >/dev/null 2>&1; then
+compose_cmd=()
+if docker compose version >/dev/null 2>&1; then
+  compose_cmd=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  compose_cmd=(docker-compose)
+  echo "[quickstart] warning: docker-compose v1 detected; prefer Docker Compose v2." >&2
+else
   echo "docker compose plugin required" >&2
   exit 1
 fi
+
+if ! docker info >/dev/null 2>&1; then
+  echo "cannot connect to the Docker daemon." >&2
+  echo "ensure Docker is running and your user can access /var/run/docker.sock." >&2
+  echo "on Linux, add your user to the docker group or re-run with sudo." >&2
+  exit 1
+fi
+
+port_in_use() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1
+    return $?
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1
+    return $?
+  fi
+  return 2
+}
+
+warn_port() {
+  local port="$1"
+  local name="$2"
+  if port_in_use "${port}"; then
+    echo "[quickstart] warning: port ${port} (${name}) is already in use; compose may fail to bind." >&2
+  fi
+}
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/../.." && pwd)"
+if [[ ! -f "docker-compose.yml" && -f "${repo_root}/docker-compose.yml" ]]; then
+  cd "${repo_root}"
+fi
+
+warn_port 8081 "api-gateway http"
+warn_port 8082 "dashboard"
+warn_port 8080 "api-gateway grpc"
+warn_port 9092 "gateway metrics"
+warn_port 9093 "workflow-engine http"
+warn_port 50051 "safety-kernel grpc"
+warn_port 50070 "context-engine grpc"
+warn_port 4222 "nats client"
+warn_port 6379 "redis"
 
 API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-[REDACTED]}}}
 ORG_ID=${CORDUM_ORG_ID:-default}
@@ -40,7 +94,7 @@ if [[ "${SKIP_BUILD}" != "1" ]]; then
 fi
 
 echo "[quickstart] starting stack"
-docker compose "${compose_args[@]}"
+"${compose_cmd[@]}" "${compose_args[@]}"
 
 echo "[quickstart] stack ready"
 echo "Gateway: http://localhost:8081"

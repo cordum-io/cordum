@@ -2,6 +2,8 @@
 
 This repo ships the control-plane stack plus an optional dashboard UI. Compose builds the platform binaries and runs:
 
+Prereqs: Docker + Docker Compose. The smoke test script requires `curl` and `jq`.
+
 - Infra: `nats`, `redis`
 - Control plane: `cordum-api-gateway`, `cordum-scheduler`, `cordum-safety-kernel`, `cordum-workflow-engine`
 - Optional: `cordum-context-engine` (generic memory helper)

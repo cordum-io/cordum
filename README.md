@@ -60,7 +60,7 @@ View the walkthrough: [docs/demo-guardrails.md](./docs/demo-guardrails.md)
 
 ## 🚀 Getting started (1 minute)
 
-Prereqs: Docker + Docker Compose. Go is optional unless you want `cordumctl`.
+Prereqs: Docker + Docker Compose. Go is optional unless you want `cordumctl`. The quickstart/smoke test also require `curl` and `jq`.
 
 **Fastest path (recommended)**
 
@@ -72,12 +72,12 @@ Prereqs: Docker + Docker Compose. Go is optional unless you want `cordumctl`.
 
 ```bash
 # Install via one-liner
-curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh | bash
 
 # Safer: download, inspect, then run
 curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh -o install.sh
 less install.sh
-sh install.sh
+bash install.sh
 
 # Or run locally from a clone:
 ./tools/scripts/install.sh
@@ -99,6 +99,30 @@ docker compose build && docker compose up -d
 
 * **Dashboard:** Open `http://localhost:8082`
 * **Smoke Test:** Run `CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} ./tools/scripts/platform_smoke.sh`
+
+**Kubernetes (Helm)**
+
+Prereqs: Kubernetes cluster + Helm 3 + kubectl.
+
+```bash
+# Local chart (from this repo)
+helm install cordum ./cordum-helm -n cordum --create-namespace
+
+# Or published chart
+helm repo add cordum https://charts.cordum.io
+helm repo update
+helm install cordum cordum/cordum -n cordum --create-namespace
+```
+
+Access the services (ClusterIP by default):
+
+```bash
+kubectl -n cordum port-forward svc/cordum-api-gateway 8081:8081
+kubectl -n cordum port-forward svc/cordum-dashboard 8082:8080
+```
+
+Dashboard: `http://localhost:8082` (API key defaults to `[REDACTED]`).
+See `docs/helm.md` for overrides (API key, images, external Redis/NATS, ingress).
 
 ---
 
