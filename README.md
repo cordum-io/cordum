@@ -5,7 +5,6 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/cordum-io/cordum)](./go.mod)
 [![Docker Compose](https://img.shields.io/badge/compose-ready-0f766e)](./docker-compose.yml)
 [![Docs](https://img.shields.io/badge/docs-cordum--docs-0ea5e9)](./docs/README.md)
-![Docker Pulls](https://img.shields.io/docker/pulls/cordum/control-plane)
 ![CI](https://github.com/cordum-io/cordum/workflows/CI/badge.svg)
 ![CodeQL](https://github.com/cordum-io/cordum/workflows/CodeQL/badge.svg)
 ![Coverage Target](https://img.shields.io/badge/coverage-target%2080%25-22c55e)

@@ -25,7 +25,7 @@ services:
       - "6379:6379"
 
   cordum-context-engine:
-    image: cordum/control-plane:${CORDUM_VERSION:-latest}-context-engine
+    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-context-engine
     depends_on:
       - redis
     environment:
@@ -35,7 +35,7 @@ services:
       - "50070:50070"
 
   cordum-safety-kernel:
-    image: cordum/control-plane:${CORDUM_VERSION:-latest}-safety-kernel
+    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-safety-kernel
     restart: unless-stopped
     depends_on:
       - nats
@@ -49,7 +49,7 @@ services:
       - "50051:50051"
 
   cordum-scheduler:
-    image: cordum/control-plane:${CORDUM_VERSION:-latest}-scheduler
+    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-scheduler
     restart: unless-stopped
     depends_on:
       - nats
@@ -69,7 +69,7 @@ services:
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
 
   cordum-api-gateway:
-    image: cordum/control-plane:${CORDUM_VERSION:-latest}-api-gateway
+    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-api-gateway
     depends_on:
       - nats
       - redis
@@ -93,7 +93,7 @@ services:
       - "9092:9092"
 
   cordum-workflow-engine:
-    image: cordum/control-plane:${CORDUM_VERSION:-latest}-workflow-engine
+    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-workflow-engine
     depends_on:
       - nats
       - redis
@@ -109,7 +109,7 @@ services:
       - "9093:9093"
 
   cordum-dashboard:
-    image: cordum/dashboard:${CORDUM_VERSION:-latest}
+    image: ghcr.io/cordum-io/cordum/dashboard:${CORDUM_VERSION:-latest}
     depends_on:
       - cordum-api-gateway
     environment:

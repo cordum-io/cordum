@@ -5,7 +5,7 @@ imagePullSecrets: []
 # Base image settings for control plane components.
 global:
   image:
-    repository: cordum/control-plane
+    repository: ghcr.io/cordum-io/cordum/control-plane
     tag: "v0.1.1"
     pullPolicy: IfNotPresent
 
@@ -205,7 +205,7 @@ dashboard:
   enabled: true
   replicaCount: 1
   image:
-    repository: cordum/dashboard
+    repository: ghcr.io/cordum-io/cordum/dashboard
     tag: "v0.1.1"
     pullPolicy: IfNotPresent
   service:

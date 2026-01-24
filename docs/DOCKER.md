@@ -28,7 +28,7 @@ docker compose up -d
 docker compose ps
 ```
 
-## Use Docker Hub images (release builds)
+## Use GHCR images (release builds)
 
 Export the release version and use the release compose file:
 
@@ -39,12 +39,12 @@ docker compose -f docker-compose.release.yml up -d
 ```
 
 The release images are published as:
-- `cordum/control-plane:<version>-api-gateway`
-- `cordum/control-plane:<version>-scheduler`
-- `cordum/control-plane:<version>-safety-kernel`
-- `cordum/control-plane:<version>-workflow-engine`
-- `cordum/control-plane:<version>-context-engine`
-- `cordum/dashboard:<version>`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-api-gateway`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-scheduler`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-safety-kernel`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-workflow-engine`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-context-engine`
+- `ghcr.io/cordum-io/cordum/dashboard:<version>`
 
 ## Smoke test (no workers required)
 
