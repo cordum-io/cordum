@@ -17,9 +17,9 @@ helm repo update
 helm install cordum cordum/cordum -n cordum --create-namespace
 ```
 
-Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.1`).
-Override `global.image.tag` and `dashboard.image.tag` if your registry uses
-different tags.
+Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.1`)
+and pulls from GHCR. Override `global.image.tag` and `dashboard.image.tag` if
+your registry uses different tags.
 
 ## Configuration
 
@@ -62,22 +62,20 @@ build and load images into kind, then override tags:
 docker compose build
 
 for svc in api-gateway scheduler safety-kernel workflow-engine context-engine; do
-  docker tag "cordum-cordum-${svc}:latest" "cordum/control-plane:dev-${svc}"
+  docker tag "cordum-cordum-${svc}:latest" "ghcr.io/cordum-io/cordum/control-plane:dev-${svc}"
 done
-docker tag cordum-cordum-dashboard:latest cordum/dashboard:dev
+docker tag cordum-cordum-dashboard:latest ghcr.io/cordum-io/cordum/dashboard:dev
 
 kind load docker-image --name cordum \
-  cordum/control-plane:dev-api-gateway \
-  cordum/control-plane:dev-scheduler \
-  cordum/control-plane:dev-safety-kernel \
-  cordum/control-plane:dev-workflow-engine \
-  cordum/control-plane:dev-context-engine \
-  cordum/dashboard:dev
+  ghcr.io/cordum-io/cordum/control-plane:dev-api-gateway \
+  ghcr.io/cordum-io/cordum/control-plane:dev-scheduler \
+  ghcr.io/cordum-io/cordum/control-plane:dev-safety-kernel \
+  ghcr.io/cordum-io/cordum/control-plane:dev-workflow-engine \
+  ghcr.io/cordum-io/cordum/control-plane:dev-context-engine \
+  ghcr.io/cordum-io/cordum/dashboard:dev
 
 helm upgrade --install cordum ./cordum-helm -n cordum --create-namespace \
-  --set global.image.repository=cordum/control-plane \
   --set global.image.tag=dev \
-  --set dashboard.image.repository=cordum/dashboard \
   --set dashboard.image.tag=dev
 ```
 

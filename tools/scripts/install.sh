@@ -79,7 +79,7 @@ fi
 cd "${DEST_DIR}"
 
 if [ "${USE_RELEASE_IMAGES}" = "1" ]; then
-  echo "starting from Docker Hub images (CORDUM_VERSION=${CORDUM_VERSION})"
+  echo "starting from GHCR images (CORDUM_VERSION=${CORDUM_VERSION})"
   export CORDUM_VERSION
   "${compose_cmd[@]}" -f docker-compose.release.yml pull
   "${compose_cmd[@]}" -f docker-compose.release.yml up -d
