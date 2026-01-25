@@ -25,6 +25,7 @@ func TestPolicyHandlers(t *testing.T) {
 	}
 	body, _ := json.Marshal(payload)
 	evalReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", bytes.NewReader(body))
+	evalReq.Header.Set("X-Tenant-ID", "default")
 	evalRR := httptest.NewRecorder()
 	s.handlePolicyEvaluate(evalRR, evalReq)
 	if evalRR.Code != http.StatusOK {
@@ -32,6 +33,7 @@ func TestPolicyHandlers(t *testing.T) {
 	}
 
 	simReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/simulate", bytes.NewReader(body))
+	simReq.Header.Set("X-Tenant-ID", "default")
 	simRR := httptest.NewRecorder()
 	s.handlePolicySimulate(simRR, simReq)
 	if simRR.Code != http.StatusOK {
@@ -39,6 +41,7 @@ func TestPolicyHandlers(t *testing.T) {
 	}
 
 	expReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/explain", bytes.NewReader(body))
+	expReq.Header.Set("X-Tenant-ID", "default")
 	expRR := httptest.NewRecorder()
 	s.handlePolicyExplain(expRR, expReq)
 	if expRR.Code != http.StatusOK {
@@ -46,6 +49,7 @@ func TestPolicyHandlers(t *testing.T) {
 	}
 
 	snapReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/snapshots", nil)
+	snapReq.Header.Set("X-Tenant-ID", "default")
 	snapRR := httptest.NewRecorder()
 	s.handlePolicySnapshots(snapRR, snapReq)
 	if snapRR.Code != http.StatusOK {

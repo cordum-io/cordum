@@ -26,11 +26,11 @@ func TestJWTValidatorHS256(t *testing.T) {
 	}
 
 	payload := map[string]any{
-		"sub": "alice",
+		"sub":  "alice",
 		"role": "admin",
-		"iss": "issuer-1",
-		"aud": "aud-1",
-		"exp": time.Now().Add(1 * time.Hour).Unix(),
+		"iss":  "issuer-1",
+		"aud":  "aud-1",
+		"exp":  time.Now().Add(1 * time.Hour).Unix(),
 	}
 	token := signHS256(t, "secret", payload)
 	ctx, err := validator.Validate(token)

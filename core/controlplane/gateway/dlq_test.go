@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	"github.com/cordum/cordum/core/infra/memory"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 )
 
 func TestHandleDLQListAndDelete(t *testing.T) {
@@ -20,6 +20,7 @@ func TestHandleDLQListAndDelete(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/dlq", nil)
+	listReq.Header.Set("X-Tenant-ID", "default")
 	listRec := httptest.NewRecorder()
 	s.handleListDLQ(listRec, listReq)
 	if listRec.Code != http.StatusOK {
@@ -34,6 +35,7 @@ func TestHandleDLQListAndDelete(t *testing.T) {
 	}
 
 	pageReq := httptest.NewRequest(http.MethodGet, "/api/v1/dlq/page", nil)
+	pageReq.Header.Set("X-Tenant-ID", "default")
 	pageRec := httptest.NewRecorder()
 	s.handleListDLQPage(pageRec, pageReq)
 	if pageRec.Code != http.StatusOK {
@@ -41,6 +43,7 @@ func TestHandleDLQListAndDelete(t *testing.T) {
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/dlq/job-dlq", nil)
+	deleteReq.Header.Set("X-Tenant-ID", "default")
 	deleteReq.SetPathValue("job_id", "job-dlq")
 	deleteRec := httptest.NewRecorder()
 	s.handleDeleteDLQ(deleteRec, deleteReq)
@@ -66,6 +69,7 @@ func TestHandleRetryDLQ(t *testing.T) {
 	}
 
 	retryReq := httptest.NewRequest(http.MethodPost, "/api/v1/dlq/"+jobID+"/retry", nil)
+	retryReq.Header.Set("X-Tenant-ID", "default")
 	retryReq.SetPathValue("job_id", jobID)
 	retryRec := httptest.NewRecorder()
 	s.handleRetryDLQ(retryRec, retryReq)

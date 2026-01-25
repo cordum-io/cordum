@@ -35,6 +35,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "cordum.fullname" . }}-secrets
                   key: apiKey
+            {{- if .Values.dashboard.env.embedApiKey }}
+            - name: CORDUM_DASHBOARD_EMBED_API_KEY
+              value: "1"
+            {{- end }}
             - name: CORDUM_TENANT_ID
               value: {{ .Values.dashboard.env.tenantId | quote }}
             - name: CORDUM_PRINCIPAL_ID

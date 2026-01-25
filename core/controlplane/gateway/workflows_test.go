@@ -29,6 +29,7 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	}
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	s.handleCreateWorkflow(rr, req)
 	if rr.Code != http.StatusCreated {
@@ -42,6 +43,7 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
+	listReq.Header.Set("X-Tenant-ID", "default")
 	listRR := httptest.NewRecorder()
 	s.handleListWorkflows(listRR, listReq)
 	if listRR.Code != http.StatusOK {
@@ -49,6 +51,7 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/"+wfID, nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
 	getReq.SetPathValue("id", wfID)
 	getRR := httptest.NewRecorder()
 	s.handleGetWorkflow(getRR, getReq)
@@ -57,6 +60,7 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	}
 
 	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+wfID+"/runs", bytes.NewReader([]byte(`{}`)))
+	runReq.Header.Set("X-Tenant-ID", "default")
 	runReq.SetPathValue("id", wfID)
 	runRR := httptest.NewRecorder()
 	s.handleStartRun(runRR, runReq)
@@ -71,6 +75,7 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	}
 
 	approveReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+wfID+"/runs/"+runID+"/steps/approve/approve", bytes.NewReader([]byte(`{"approved":true}`)))
+	approveReq.Header.Set("X-Tenant-ID", "default")
 	approveReq.SetPathValue("id", wfID)
 	approveReq.SetPathValue("run_id", runID)
 	approveReq.SetPathValue("step_id", "approve")
@@ -81,6 +86,7 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	}
 
 	runGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs/"+runID, nil)
+	runGetReq.Header.Set("X-Tenant-ID", "default")
 	runGetReq.SetPathValue("id", runID)
 	runGetRR := httptest.NewRecorder()
 	s.handleGetRun(runGetRR, runGetReq)
@@ -89,6 +95,7 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	}
 
 	deleteRunReq := httptest.NewRequest(http.MethodDelete, "/api/v1/workflow-runs/"+runID, nil)
+	deleteRunReq.Header.Set("X-Tenant-ID", "default")
 	deleteRunReq.SetPathValue("id", runID)
 	deleteRunRR := httptest.NewRecorder()
 	s.handleDeleteRun(deleteRunRR, deleteRunReq)
@@ -97,6 +104,7 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/workflows/"+wfID, nil)
+	deleteReq.Header.Set("X-Tenant-ID", "default")
 	deleteReq.SetPathValue("id", wfID)
 	deleteRR := httptest.NewRecorder()
 	s.handleDeleteWorkflow(deleteRR, deleteReq)

@@ -79,11 +79,13 @@ func TestParseBool(t *testing.T) {
 
 func TestIdempotencyKeyFromRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("Idempotency-Key", "abc")
 	if got := idempotencyKeyFromRequest(req); got != "abc" {
 		t.Fatalf("expected header key")
 	}
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/jobs?idempotency_key=xyz", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	if got := idempotencyKeyFromRequest(req); got != "xyz" {
 		t.Fatalf("expected query key")
 	}
@@ -239,6 +241,7 @@ func TestCorsMiddleware(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("Origin", "http://allowed.com")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -250,6 +253,7 @@ func TestCorsMiddleware(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("Origin", "http://blocked.com")
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -268,6 +272,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusTooManyRequests {
@@ -282,6 +287,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -302,6 +308,7 @@ func TestHandleListJobDecisions(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID+"/decisions", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.SetPathValue("id", jobID)
 	rr := httptest.NewRecorder()
 	s.handleListJobDecisions(rr, req)

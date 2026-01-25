@@ -18,6 +18,7 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 	s.workerMu.Unlock()
 
 	workersReq := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	workersReq.Header.Set("X-Tenant-ID", "default")
 	workersRec := httptest.NewRecorder()
 	s.handleGetWorkers(workersRec, workersReq)
 	if workersRec.Code != http.StatusOK {
@@ -34,6 +35,7 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 	s.auth = stubLicenseAuth{info: &LicenseInfo{Mode: "enterprise", Status: "active", Plan: "Enterprise"}}
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	statusReq.Header.Set("X-Tenant-ID", "default")
 	statusRec := httptest.NewRecorder()
 	s.handleStatus(statusRec, statusReq)
 	if statusRec.Code != http.StatusOK {

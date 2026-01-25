@@ -99,6 +99,7 @@ steps:
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/marketplace/packs", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	s.handleMarketplacePacks(rr, req)
 
@@ -240,6 +241,7 @@ tenants:
 	}
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/marketplace/install", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	s.handleMarketplaceInstall(rr, req)
 

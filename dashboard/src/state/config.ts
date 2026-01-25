@@ -21,7 +21,11 @@ function readStored(): Partial<RuntimeConfig> {
       return {};
     }
     const data = JSON.parse(raw) as Partial<RuntimeConfig>;
-    return data || {};
+    if (!data) {
+      return {};
+    }
+    const { apiKey: _apiKey, ...rest } = data;
+    return rest;
   } catch {
     return {};
   }
@@ -32,7 +36,8 @@ function writeStored(cfg: RuntimeConfig) {
     return;
   }
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+    const { apiKey: _apiKey, ...rest } = cfg;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
   } catch {
     // Ignore storage errors.
   }
@@ -41,7 +46,7 @@ function writeStored(cfg: RuntimeConfig) {
 function mergeOverrides(base: RuntimeConfig, overrides: Partial<RuntimeConfig>): RuntimeConfig {
   return {
     apiBaseUrl: base.apiBaseUrl?.trim() || overrides.apiBaseUrl?.trim() || "",
-    apiKey: overrides.apiKey?.trim() || base.apiKey,
+    apiKey: base.apiKey?.trim() || "",
     tenantId: overrides.tenantId?.trim() || base.tenantId,
     principalId: overrides.principalId?.trim() || base.principalId,
     principalRole: overrides.principalRole?.trim() || base.principalRole,

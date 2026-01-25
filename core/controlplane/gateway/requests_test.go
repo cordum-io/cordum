@@ -68,12 +68,12 @@ func TestBuildJobMetadata(t *testing.T) {
 
 func TestBuildPolicyCheckRequest(t *testing.T) {
 	req := &policyCheckRequest{
-		Topic:   "job.test",
-		OrgId:   "org",
-		TeamId:  "team",
-		Labels:  map[string]string{"env": "test"},
-		Meta:    &policyMetaRequest{ActorType: "service"},
-		Priority: "critical",
+		Topic:           "job.test",
+		OrgId:           "org",
+		TeamId:          "team",
+		Labels:          map[string]string{"env": "test"},
+		Meta:            &policyMetaRequest{ActorType: "service"},
+		Priority:        "critical",
 		EffectiveConfig: map[string]any{"a": 1},
 	}
 	out, err := buildPolicyCheckRequest(context.Background(), req, nil, "default")

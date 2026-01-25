@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 )
@@ -14,6 +15,15 @@ func (s *server) requireRole(r *http.Request, roles ...string) error {
 
 func (s *server) resolveTenant(r *http.Request, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
+	headerTenant := headerValue(r, "X-Tenant-ID")
+	if headerTenant == "" {
+		return "", errors.New("tenant id required")
+	}
+	if requested == "" {
+		requested = headerTenant
+	} else if requested != headerTenant {
+		return "", errors.New("tenant header mismatch")
+	}
 	if s == nil || s.auth == nil {
 		return requested, nil
 	}

@@ -6,7 +6,8 @@ workflow engine, optional context engine) plus Redis and NATS by default.
 ## Install (local chart)
 
 ```bash
-helm install cordum ./cordum-helm -n cordum --create-namespace
+helm install cordum ./cordum-helm -n cordum --create-namespace \
+  --set secrets.apiKey=<your-api-key>
 ```
 
 ## Install (published chart)
@@ -14,7 +15,8 @@ helm install cordum ./cordum-helm -n cordum --create-namespace
 ```bash
 helm repo add cordum https://charts.cordum.io
 helm repo update
-helm install cordum cordum/cordum -n cordum --create-namespace
+helm install cordum cordum/cordum -n cordum --create-namespace \
+  --set secrets.apiKey=<your-api-key>
 ```
 
 Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.3`)
@@ -29,7 +31,7 @@ Common overrides:
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
   --set global.image.tag=v0.1.3 \
-  --set secrets.apiKey=change-me \
+  --set secrets.apiKey=<your-api-key> \
   --set ingress.enabled=true
 ```
 
