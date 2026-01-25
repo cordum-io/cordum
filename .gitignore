@@ -15,7 +15,12 @@ out/
 .idea/
 .vscode/
 generated/
+.claude/
 .codex/
+.cursor/
+.aider/
+.continue/
+.windsurf/
 .gocache/
 .gomodcache/
 .gopath/
@@ -23,6 +28,7 @@ generated/
 bin/
 coverage*.out
 AGENTS.md
+CODEX.md
 docs/private/
 tools/private/
 enterprise/
