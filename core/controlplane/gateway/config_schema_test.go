@@ -20,6 +20,7 @@ func TestConfigAndSchemaHandlers(t *testing.T) {
 	}
 	body, _ := json.Marshal(configPayload)
 	setReq := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
+	setReq.Header.Set("X-Tenant-ID", "default")
 	setRR := httptest.NewRecorder()
 	s.handleSetConfig(setRR, setReq)
 	if setRR.Code != http.StatusNoContent {
@@ -27,6 +28,7 @@ func TestConfigAndSchemaHandlers(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
 	getRR := httptest.NewRecorder()
 	s.handleGetConfig(getRR, getReq)
 	if getRR.Code != http.StatusOK {
@@ -34,6 +36,7 @@ func TestConfigAndSchemaHandlers(t *testing.T) {
 	}
 
 	effReq := httptest.NewRequest(http.MethodGet, "/api/v1/config/effective?org_id=default", nil)
+	effReq.Header.Set("X-Tenant-ID", "default")
 	effRR := httptest.NewRecorder()
 	s.handleGetEffectiveConfig(effRR, effReq)
 	if effRR.Code != http.StatusOK {
@@ -51,6 +54,7 @@ func TestConfigAndSchemaHandlers(t *testing.T) {
 	}
 	schemaBody, _ := json.Marshal(schemaPayload)
 	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/schemas", bytes.NewReader(schemaBody))
+	regReq.Header.Set("X-Tenant-ID", "default")
 	regRR := httptest.NewRecorder()
 	s.handleRegisterSchema(regRR, regReq)
 	if regRR.Code != http.StatusNoContent {
@@ -58,6 +62,7 @@ func TestConfigAndSchemaHandlers(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/schemas", nil)
+	listReq.Header.Set("X-Tenant-ID", "default")
 	listRR := httptest.NewRecorder()
 	s.handleListSchemas(listRR, listReq)
 	if listRR.Code != http.StatusOK {
@@ -65,6 +70,7 @@ func TestConfigAndSchemaHandlers(t *testing.T) {
 	}
 
 	getSchemaReq := httptest.NewRequest(http.MethodGet, "/api/v1/schemas/test/schema", nil)
+	getSchemaReq.Header.Set("X-Tenant-ID", "default")
 	getSchemaReq.SetPathValue("id", "test/schema")
 	getSchemaRR := httptest.NewRecorder()
 	s.handleGetSchema(getSchemaRR, getSchemaReq)
@@ -73,6 +79,7 @@ func TestConfigAndSchemaHandlers(t *testing.T) {
 	}
 
 	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/schemas/test/schema", nil)
+	delReq.Header.Set("X-Tenant-ID", "default")
 	delReq.SetPathValue("id", "test/schema")
 	delRR := httptest.NewRecorder()
 	s.handleDeleteSchema(delRR, delReq)

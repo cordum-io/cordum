@@ -15,7 +15,7 @@ By default, the dashboard uses `/config.json` from `dashboard/public`. To point 
 ```json
 {
   "apiBaseUrl": "http://localhost:8081",
-  "apiKey": "[REDACTED]",
+  "apiKey": "",
   "tenantId": "default",
   "principalId": "dashboard",
   "principalRole": "admin"
@@ -27,7 +27,8 @@ By default, the dashboard uses `/config.json` from `dashboard/public`. To point 
 The production container writes `config.json` at startup from environment variables:
 
 - `CORDUM_API_BASE_URL` (empty = same origin)
-- `CORDUM_API_KEY`
+- `CORDUM_API_KEY` (only embedded when `CORDUM_DASHBOARD_EMBED_API_KEY=1`)
+- `CORDUM_DASHBOARD_EMBED_API_KEY` (opt-in to embedding API keys in `config.json`)
 - `CORDUM_TENANT_ID`
 - `CORDUM_PRINCIPAL_ID`
 - `CORDUM_PRINCIPAL_ROLE` (set to `admin` to edit/publish policy bundles when RBAC is enforced)
@@ -97,8 +98,14 @@ Run the container and point it at the API gateway:
 ```bash
 docker run --rm -p 8082:8080 \
   -e CORDUM_API_BASE_URL=http://localhost:8081 \
-  -e CORDUM_API_KEY=[REDACTED] \
   cordum-dashboard
+```
+
+To embed an API key (not recommended for shared environments), add:
+
+```bash
+-e CORDUM_API_KEY=<your-api-key> \
+-e CORDUM_DASHBOARD_EMBED_API_KEY=1
 ```
 
 ## Compose

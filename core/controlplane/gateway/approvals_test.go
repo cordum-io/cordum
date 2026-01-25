@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/memory"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/google/uuid"
 )
 
 func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
@@ -50,6 +50,7 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 
 	body := `{"reason":"ok","note":"looks fine"}`
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
+	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
 	httpReq.Header.Set("X-Principal-Id", "alice")
 	httpReq.Header.Set("X-Principal-Role", "admin")
@@ -124,6 +125,7 @@ func TestApproveJobRejectsOnSnapshotMismatch(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", nil)
+	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
 	rr := httptest.NewRecorder()
 	s.handleApproveJob(rr, httpReq)
@@ -166,6 +168,7 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 
 	body := `{"reason":"nope","note":"not safe"}`
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(body))
+	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
 	httpReq.Header.Set("X-Principal-Id", "bob")
 	httpReq.Header.Set("X-Principal-Role", "admin")
@@ -228,6 +231,7 @@ func TestListApprovalsIncludesJobHash(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodGet, "/api/v1/approvals", nil)
+	httpReq.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	s.handleListApprovals(rr, httpReq)
 
@@ -285,6 +289,7 @@ func TestGetJobIncludesApprovalMetadata(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("id", jobID)
 	rr := httptest.NewRecorder()
 	s.handleGetJob(rr, httpReq)

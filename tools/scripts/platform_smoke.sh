@@ -11,7 +11,11 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 API_BASE=${CORDUM_API_BASE:-http://localhost:8081}
-API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-[REDACTED]}}}
+API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-}}}
+if [[ -z "${API_KEY}" ]]; then
+  echo "CORDUM_API_KEY is required; export it before running the smoke test." >&2
+  exit 1
+fi
 
 auth_header=("-H" "X-API-Key: ${API_KEY}")
 json_header=("-H" "Content-Type: application/json")

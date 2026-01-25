@@ -7,9 +7,10 @@ Cordum exposes a REST API and a gRPC service.
 Base URL (local compose): `http://localhost:8081`
 
 Authentication:
-- HTTP header: `X-API-Key: <key>`
+- HTTP header: `X-API-Key: <key>` (or JWT via `Authorization: Bearer <token>`)
+- Tenant header: `X-Tenant-ID: <tenant>`
 - WebSocket stream: `Sec-WebSocket-Protocol: cordum-api-key, <base64url>`
-When API keys are configured (compose defaults to `[REDACTED]`), all endpoints require the header, including `/api/v1/status`.
+All endpoints require auth (including `/api/v1/status`).
 
 Common endpoints:
 - Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream`

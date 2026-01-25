@@ -103,6 +103,7 @@ tenants:
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/packs/install", &body)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	rr := httptest.NewRecorder()
 	s.handleInstallPack(rr, req)
@@ -146,6 +147,7 @@ func TestHandleListAndGetPacks(t *testing.T) {
 	installTestPack(t, s)
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/packs", nil)
+	listReq.Header.Set("X-Tenant-ID", "default")
 	listRR := httptest.NewRecorder()
 	s.handleListPacks(listRR, listReq)
 	if listRR.Code != http.StatusOK {
@@ -161,6 +163,7 @@ func TestHandleListAndGetPacks(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/packs/test-pack", nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
 	getReq.SetPathValue("id", "test-pack")
 	getRR := httptest.NewRecorder()
 	s.handleGetPack(getRR, getReq)
@@ -174,6 +177,7 @@ func TestHandleVerifyAndUninstallPack(t *testing.T) {
 	installTestPack(t, s)
 
 	verifyReq := httptest.NewRequest(http.MethodPost, "/api/v1/packs/test-pack/verify", nil)
+	verifyReq.Header.Set("X-Tenant-ID", "default")
 	verifyReq.SetPathValue("id", "test-pack")
 	verifyRR := httptest.NewRecorder()
 	s.handleVerifyPack(verifyRR, verifyReq)
@@ -182,6 +186,7 @@ func TestHandleVerifyAndUninstallPack(t *testing.T) {
 	}
 
 	uninstallReq := httptest.NewRequest(http.MethodPost, "/api/v1/packs/test-pack/uninstall", nil)
+	uninstallReq.Header.Set("X-Tenant-ID", "default")
 	uninstallReq.SetPathValue("id", "test-pack")
 	uninstallRR := httptest.NewRecorder()
 	s.handleUninstallPack(uninstallRR, uninstallReq)

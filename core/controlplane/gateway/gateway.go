@@ -831,7 +831,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	}
 
 	// CORS Middleware
-	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(s.auth, mux)))
+	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(s.auth, tenantMiddleware(s.auth, mux))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))
@@ -2191,7 +2191,7 @@ func normalizeAPIKey(key string) string {
 	if key == "" {
 		return ""
 	}
-	// Common .env mistake: quoting values (e.g. "[REDACTED]").
+	// Common .env mistake: quoting values (e.g. "example-key").
 	key = strings.Trim(key, "\"'")
 	return strings.TrimSpace(key)
 }
@@ -2337,6 +2337,29 @@ func apiKeyMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), authContextKey{}, authCtx)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func tenantMiddleware(auth AuthProvider, next http.Handler) http.Handler {
+	if next == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		})
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" || !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if publicPaths, ok := auth.(PublicPathProvider); ok && publicPaths.IsPublicPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if headerValue(r, "X-Tenant-ID") == "" {
+			http.Error(w, "tenant id required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

@@ -49,7 +49,7 @@ kubectl apply -n cordum -f /path/to/cordum-enterprise/deploy/k8s/enterprise-gate
 
 ## Notes
 - Images assume `cordum-<service>` tags; adjust `image:` as needed (e.g., from your registry).
-- API key is stored in the `cordum-api-key` Secret (key: `API_KEY`). Default in this starter is `[REDACTED]` (change it for real deployments).
+- API key is stored in the `cordum-api-key` Secret (key: `API_KEY`). Set this to a strong value before applying.
 - The gateway reads the API key from `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, or `API_KEY`, wired from the same Secret.
 - The dashboard reads the API key from the same Secret.
 - Probes are basic HTTP/TCP; adjust for your environment.

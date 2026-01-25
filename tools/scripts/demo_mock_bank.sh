@@ -31,7 +31,11 @@ else
 fi
 
 API_BASE=${CORDUM_API_BASE:-http://localhost:8081}
-API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-[REDACTED]}}}
+API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-}}}
+if [[ -z "${API_KEY}" ]]; then
+  echo "CORDUM_API_KEY is required; export it before running the demo." >&2
+  exit 1
+fi
 ORG_ID=${CORDUM_ORG_ID:-default}
 NATS_URL=${NATS_URL:-nats://localhost:4222}
 REDIS_URL=${REDIS_URL:-redis://localhost:6379}

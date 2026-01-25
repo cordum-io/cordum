@@ -54,14 +54,17 @@ The release images are published as:
 
 ## API key setup
 
-The gateway enforces an API key when `CORDUM_API_KEY` or `API_KEY` is set.
-Compose defaults to `[REDACTED]` for local use.
-Production mode (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) fails to start without API keys configured.
+The gateway requires an API key (or JWT) by default.
+Compose now requires `CORDUM_API_KEY` to be set before startup.
+Production mode (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) always fails to start without API keys configured.
+For local-only testing, you can opt out by setting `CORDUM_ALLOW_INSECURE_NO_AUTH=1` (not allowed in production).
 
 To override:
 
 ```bash
 cp .env.example .env
+# generate a key (requires openssl)
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
 # edit CORDUM_API_KEY
 ```
 

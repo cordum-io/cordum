@@ -29,6 +29,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 		"author":  "tester",
 	})
 	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/test", bytes.NewReader(body))
+	putReq.Header.Set("X-Tenant-ID", "default")
 	putReq.SetPathValue("id", "secops/test")
 	putReq.Header.Set("X-Principal-Role", "admin")
 	putRec := httptest.NewRecorder()
@@ -38,6 +39,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles/secops/test", nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
 	getReq.SetPathValue("id", "secops/test")
 	getReq.Header.Set("X-Principal-Role", "admin")
 	getRec := httptest.NewRecorder()
@@ -54,6 +56,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles", nil)
+	listReq.Header.Set("X-Tenant-ID", "default")
 	listReq.Header.Set("X-Principal-Role", "admin")
 	listRec := httptest.NewRecorder()
 	s.handlePolicyBundles(listRec, listReq)
@@ -62,6 +65,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	}
 
 	rulesReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/rules", nil)
+	rulesReq.Header.Set("X-Tenant-ID", "default")
 	rulesReq.Header.Set("X-Principal-Role", "admin")
 	rulesRec := httptest.NewRecorder()
 	s.handlePolicyRules(rulesRec, rulesReq)
@@ -76,6 +80,7 @@ func TestPolicyBundleHandlers(t *testing.T) {
 		},
 	})
 	simReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/bundles/secops/test/simulate", bytes.NewReader(simBody))
+	simReq.Header.Set("X-Tenant-ID", "default")
 	simReq.SetPathValue("id", "secops/test")
 	simReq.Header.Set("X-Principal-Role", "admin")
 	simRec := httptest.NewRecorder()
@@ -100,6 +105,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 		"enabled": false,
 	})
 	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/test", bytes.NewReader(seed))
+	putReq.Header.Set("X-Tenant-ID", "default")
 	putReq.SetPathValue("id", "secops/test")
 	putReq.Header.Set("X-Principal-Role", "admin")
 	putReq.Header.Set("X-Principal-Id", "user1")
@@ -110,6 +116,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 	}
 
 	pubReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/publish", bytes.NewReader([]byte(`{}`)))
+	pubReq.Header.Set("X-Tenant-ID", "default")
 	pubReq.Header.Set("X-Principal-Role", "admin")
 	pubReq.Header.Set("X-Principal-Id", "user1")
 	pubRec := httptest.NewRecorder()
@@ -127,6 +134,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 	}
 
 	snapReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles/snapshots", nil)
+	snapReq.Header.Set("X-Tenant-ID", "default")
 	snapReq.Header.Set("X-Principal-Role", "admin")
 	snapRec := httptest.NewRecorder()
 	s.handleListPolicyBundleSnapshots(snapRec, snapReq)
@@ -136,6 +144,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 
 	rbBody, _ := json.Marshal(map[string]any{"snapshot_id": rollbackID})
 	rbReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/rollback", bytes.NewReader(rbBody))
+	rbReq.Header.Set("X-Tenant-ID", "default")
 	rbReq.Header.Set("X-Principal-Role", "admin")
 	rbReq.Header.Set("X-Principal-Id", "user1")
 	rbRec := httptest.NewRecorder()
@@ -145,6 +154,7 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 	}
 
 	auditReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit", nil)
+	auditReq.Header.Set("X-Tenant-ID", "default")
 	auditReq.Header.Set("X-Principal-Role", "admin")
 	auditRec := httptest.NewRecorder()
 	s.handleListPolicyAudit(auditRec, auditReq)

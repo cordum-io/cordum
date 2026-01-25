@@ -31,7 +31,7 @@ Install the hello pack and trigger a run:
 ```bash
 ./cmd/cordumctl/cordumctl pack install ./examples/hello-pack
 curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
-  -H "X-API-Key: ${CORDUM_API_KEY:-[REDACTED]}" \
+  -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"message":"hello from pack","author":"demo"}' | jq
 ```

@@ -47,17 +47,19 @@ for details.
 
 ## Set an API key
 
-Compose uses a default API key of `[REDACTED]`. To override:
+Set a strong API key before starting:
 
 ```bash
 cp .env.example .env
+# generate a key (requires openssl)
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
 # edit CORDUM_API_KEY
 ```
 
 ## Run a workflow smoke test
 
 ```bash
-CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} ./tools/scripts/platform_smoke.sh
+CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} ./tools/scripts/platform_smoke.sh
 ```
 
 Expected output:
@@ -90,7 +92,7 @@ cd ../../
 
 # Trigger a run
 curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
-  -H "X-API-Key: ${CORDUM_API_KEY:-[REDACTED]}" \
+  -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"message":"hello from pack","author":"demo"}'
 ```

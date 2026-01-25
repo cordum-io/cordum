@@ -1,7 +1,7 @@
 const STORAGE_KEY = "cordum-mock-bank-config";
 const DEFAULT_CONFIG = {
   apiBaseUrl: "http://localhost:8081",
-  apiKey: "[REDACTED]",
+  apiKey: "",
   principalId: "demo",
   principalRole: "admin",
   orgId: "default",
@@ -448,7 +448,7 @@ function buildErrorMessage(err) {
     return "I could not reach the bank API. Please ensure the Cordum API is running and the page is served over http://localhost.";
   }
   if (lower.includes("401") || lower.includes("unauthorized")) {
-    return "The request was rejected. Update the demo API key (try ?apiKey=[REDACTED] or ?apiKey=ent-key) and reload.";
+    return "The request was rejected. Update the demo API key (try ?apiKey=YOUR_KEY) and reload.";
   }
   if (message.trim()) {
     return `I could not submit the request. ${message}`;

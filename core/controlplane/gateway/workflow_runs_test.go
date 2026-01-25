@@ -50,6 +50,7 @@ func TestWorkflowRunHandlers(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/"+wfDef.ID+"/runs", nil)
+	listReq.Header.Set("X-Tenant-ID", "default")
 	listReq.SetPathValue("id", wfDef.ID)
 	listRec := httptest.NewRecorder()
 	s.handleListRuns(listRec, listReq)
@@ -58,6 +59,7 @@ func TestWorkflowRunHandlers(t *testing.T) {
 	}
 
 	allReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs", nil)
+	allReq.Header.Set("X-Tenant-ID", "default")
 	allRec := httptest.NewRecorder()
 	s.handleListAllRuns(allRec, allReq)
 	if allRec.Code != http.StatusOK {
@@ -65,6 +67,7 @@ func TestWorkflowRunHandlers(t *testing.T) {
 	}
 
 	timelineReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs/"+run.ID+"/timeline", nil)
+	timelineReq.Header.Set("X-Tenant-ID", "default")
 	timelineReq.SetPathValue("id", run.ID)
 	timelineRec := httptest.NewRecorder()
 	s.handleGetRunTimeline(timelineRec, timelineReq)
@@ -81,6 +84,7 @@ func TestWorkflowRunHandlers(t *testing.T) {
 
 	rerunBody, _ := json.Marshal(map[string]any{"dry_run": true})
 	rerunReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflow-runs/"+run.ID+"/rerun", bytes.NewReader(rerunBody))
+	rerunReq.Header.Set("X-Tenant-ID", "default")
 	rerunReq.SetPathValue("id", run.ID)
 	rerunRec := httptest.NewRecorder()
 	s.handleRerunRun(rerunRec, rerunReq)
@@ -94,6 +98,7 @@ func TestWorkflowRunHandlers(t *testing.T) {
 	}
 
 	cancelReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+wfDef.ID+"/runs/"+run.ID+"/cancel", nil)
+	cancelReq.Header.Set("X-Tenant-ID", "default")
 	cancelReq.SetPathValue("run_id", run.ID)
 	cancelRec := httptest.NewRecorder()
 	s.handleCancelRun(cancelRec, cancelReq)

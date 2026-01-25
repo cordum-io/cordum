@@ -47,13 +47,13 @@ func scaffoldPack(target, packID string, force bool) error {
 	}
 
 	files := map[string]string{
-		filepath.Join(target, "pack.yaml"):                           packManifestTemplate(packID),
-		filepath.Join(target, "README.md"):                           packReadmeTemplate(packID),
-		filepath.Join(target, "schemas", "EchoInput.json"):           packSchemaTemplate(packID),
-		filepath.Join(target, "workflows", "echo.yaml"):              packWorkflowTemplate(packID),
-		filepath.Join(target, "overlays", "pools.patch.yaml"):        packPoolsTemplate(packID),
-		filepath.Join(target, "overlays", "timeouts.patch.yaml"):     packTimeoutsTemplate(packID),
-		filepath.Join(target, "overlays", "policy.fragment.yaml"):    packPolicyTemplate(packID),
+		filepath.Join(target, "pack.yaml"):                        packManifestTemplate(packID),
+		filepath.Join(target, "README.md"):                        packReadmeTemplate(packID),
+		filepath.Join(target, "schemas", "EchoInput.json"):        packSchemaTemplate(packID),
+		filepath.Join(target, "workflows", "echo.yaml"):           packWorkflowTemplate(packID),
+		filepath.Join(target, "overlays", "pools.patch.yaml"):     packPoolsTemplate(packID),
+		filepath.Join(target, "overlays", "timeouts.patch.yaml"):  packTimeoutsTemplate(packID),
+		filepath.Join(target, "overlays", "policy.fragment.yaml"): packPolicyTemplate(packID),
 	}
 	for path, content := range files {
 		if err := writeFile(path, content, force); err != nil {
@@ -198,7 +198,7 @@ cordumctl pack install ./%s
 
 ~~~bash
 curl -sS -X POST http://localhost:8081/api/v1/workflows/%s.echo/runs \
-  -H "X-API-Key: ${CORDUM_API_KEY:-[REDACTED]}" \
+  -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"message":"hello from %s"}' | jq
 ~~~

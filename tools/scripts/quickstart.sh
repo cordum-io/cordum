@@ -71,7 +71,12 @@ warn_port 50070 "context-engine grpc"
 warn_port 4222 "nats client"
 warn_port 6379 "redis"
 
-API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-[REDACTED]}}}
+API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-}}}
+if [[ -z "${API_KEY}" ]]; then
+  echo "CORDUM_API_KEY is required; export it before running quickstart." >&2
+  exit 1
+fi
+export CORDUM_API_KEY="${API_KEY}"
 ORG_ID=${CORDUM_ORG_ID:-default}
 COMPOSE_FILES=${CORDUM_COMPOSE_FILES:-docker-compose.yml}
 ALLOW_ENTERPRISE=${CORDUM_ALLOW_ENTERPRISE:-0}
