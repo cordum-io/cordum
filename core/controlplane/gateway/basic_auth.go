@@ -465,12 +465,6 @@ func (b *BasicAuthProvider) lookupKey(key string) (apiKeyMeta, bool) {
 	return meta, ok
 }
 
-func (b *BasicAuthProvider) keysEmpty() bool {
-	b.keysMu.RLock()
-	defer b.keysMu.RUnlock()
-	return len(b.keys) == 0
-}
-
 func (b *BasicAuthProvider) maybeReloadKeys() {
 	if b == nil || b.keysPath == "" {
 		return
