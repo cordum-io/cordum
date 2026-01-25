@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { ArrowUpRight, Filter, Play, Sparkles } from "lucide-react";
 import { api } from "../lib/api";
 import { formatDuration, formatRelative } from "../lib/format";
 import { useWorkflows } from "../hooks/useWorkflows";
@@ -155,18 +156,191 @@ export function RunsPage() {
       .sort((a, b) => runUpdatedAt(b).localeCompare(runUpdatedAt(a)));
   }, [runs, statusFilter, workflowFilter, timeFilter, searchQuery, globalSearch, workflowMap]);
 
+  const activeCount = useMemo(
+    () => runs.filter((run) => ["running", "waiting", "pending"].includes(run.status)).length,
+    [runs]
+  );
+  const waitingCount = useMemo(() => runs.filter((run) => run.status === "waiting").length, [runs]);
+  const failedCount = useMemo(
+    () => runs.filter((run) => ["failed", "timed_out", "cancelled"].includes(run.status)).length,
+    [runs]
+  );
+  const hasFilters =
+    statusFilter !== "all" || workflowFilter !== "all" || timeFilter !== "24h" || searchQuery.length > 0;
+  const activeFilters = useMemo(() => {
+    const filters: string[] = [];
+    if (statusFilter !== "all") {
+      filters.push(`Status: ${statusFilter}`);
+    }
+    if (workflowFilter !== "all") {
+      const label = workflowMap.get(workflowFilter) || workflowFilter;
+      filters.push(`Workflow: ${label}`);
+    }
+    if (timeFilter !== "24h") {
+      filters.push(`Range: ${timeFilter}`);
+    }
+    if (searchQuery.trim()) {
+      filters.push(`Search: ${searchQuery.trim()}`);
+    }
+    return filters;
+  }, [statusFilter, workflowFilter, timeFilter, searchQuery, workflowMap]);
+
+  const resetFilters = () => {
+    setStatusFilter("all");
+    setWorkflowFilter("all");
+    setTimeFilter("24h");
+    setSearchQuery("");
+    setSelectedViewId("all");
+  };
+
   return (
     <div className="space-y-6">
+      <section className="relative overflow-hidden rounded-3xl border border-border bg-[color:var(--surface-glass)] p-6 lg:p-8">
+        <div className="pointer-events-none absolute -right-16 top-0 h-56 w-56 rounded-full bg-[color:rgba(15,127,122,0.2)] blur-3xl" />
+        <div className="pointer-events-none absolute -left-20 bottom-0 h-56 w-56 rounded-full bg-[color:rgba(212,131,58,0.18)] blur-3xl" />
+        <div className="relative grid gap-6 lg:grid-cols-[2fr,1fr]">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-white/80 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
+              <Sparkles className="h-3 w-3 text-accent" />
+              Runs
+            </div>
+            <h2 className="mt-4 font-display text-3xl font-semibold text-ink">Find the run you need in seconds.</h2>
+            <p className="mt-2 text-sm text-muted">Jump to active work, approvals, or failures with one click.</p>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <Button variant="primary" type="button" onClick={() => navigate("/workflows/new")}>
+                <Play className="h-4 w-4" />
+                Start a run
+              </Button>
+              <Button variant="outline" type="button" onClick={() => navigate("/policy")}>
+                Review approvals
+              </Button>
+              <Button variant="ghost" type="button" onClick={() => navigate("/workflows")}>
+                Browse workflows
+              </Button>
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3 text-xs text-muted">
+              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
+                <span className="font-semibold text-ink">{filteredRuns.length}</span> shown
+              </div>
+              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
+                <span className="font-semibold text-ink">{activeCount}</span> active
+              </div>
+              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
+                <span className="font-semibold text-ink">{waitingCount}</span> awaiting approval
+              </div>
+              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
+                <span className="font-semibold text-ink">{failedCount}</span> failed
+              </div>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-border bg-white/70 p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Quick actions</div>
+              <div className="mt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => navigate("/workflows/new")}
+                  className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
+                >
+                  <div>
+                    <div className="font-semibold text-ink">Start a run</div>
+                    <div className="text-xs text-muted">Launch a workflow</div>
+                  </div>
+                  <ArrowUpRight className="h-4 w-4 text-muted" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate("/policy")}
+                  className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
+                >
+                  <div>
+                    <div className="font-semibold text-ink">Review approvals</div>
+                    <div className="text-xs text-muted">{waitingCount} waiting</div>
+                  </div>
+                  <ArrowUpRight className="h-4 w-4 text-muted" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter("failed");
+                    setSelectedViewId("all");
+                  }}
+                  className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
+                >
+                  <div>
+                    <div className="font-semibold text-ink">Investigate failures</div>
+                    <div className="text-xs text-muted">{failedCount} runs</div>
+                  </div>
+                  <ArrowUpRight className="h-4 w-4 text-muted" />
+                </button>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-border bg-white/70 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Focus filters</div>
+                {hasFilters ? (
+                  <Button variant="ghost" size="sm" type="button" onClick={resetFilters}>
+                    Clear
+                  </Button>
+                ) : null}
+              </div>
+              <div className="mt-3 space-y-2">
+                {[
+                  { label: "All runs", value: "all", count: runs.length },
+                  { label: "Running", value: "running", count: runs.filter((run) => run.status === "running").length },
+                  { label: "Awaiting approval", value: "waiting", count: waitingCount },
+                  { label: "Failed / timed out", value: "failed", count: failedCount },
+                ].map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter(item.value);
+                      setSelectedViewId("all");
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
+                  >
+                    <div>
+                      <div className="font-semibold text-ink">{item.label}</div>
+                      <div className="text-xs text-muted">{item.count} runs</div>
+                    </div>
+                    <ArrowUpRight className="h-4 w-4 text-muted" />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-border bg-white/70 p-4">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+                Active filters
+                <Filter className="h-4 w-4 text-muted" />
+              </div>
+              {activeFilters.length ? (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  {activeFilters.map((filter) => (
+                    <span key={filter} className="rounded-full border border-border bg-white/80 px-3 py-1 text-ink">
+                      {filter}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-3 text-sm text-muted">No filters applied. Showing last 24h.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <Card>
         <CardHeader>
-          <CardTitle>Runs</CardTitle>
-          <Button variant="subtle" size="sm" type="button" onClick={() => navigate("/workflows")}
-          >
-            Start new run
-          </Button>
+          <CardTitle>Run filters</CardTitle>
+          {hasFilters ? (
+            <Button variant="outline" size="sm" type="button" onClick={resetFilters}>
+              Clear filters
+            </Button>
+          ) : null}
         </CardHeader>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-          <div className="flex flex-1 flex-col gap-2">
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_2fr] lg:items-end">
+          <div className="flex flex-col gap-2">
             <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Saved views</label>
             <div className="flex flex-col gap-2 lg:flex-row">
               <Select
@@ -175,9 +349,7 @@ export function RunsPage() {
                   const next = event.target.value;
                   setSelectedViewId(next);
                   if (next === "all") {
-                    setStatusFilter("all");
-                    setWorkflowFilter("all");
-                    setSearchQuery("");
+                    resetFilters();
                     return;
                   }
                   const view = views.find((item) => item.id === next);
@@ -217,6 +389,9 @@ export function RunsPage() {
               </Button>
             </div>
           </div>
+          <div className="rounded-2xl border border-border bg-white/70 p-3 text-xs text-muted">
+            Save the filters you use most so you can jump back with one click.
+          </div>
         </div>
         <div className="mt-6 grid gap-3 lg:grid-cols-4">
           <div>
@@ -229,10 +404,12 @@ export function RunsPage() {
               ))}
             </Select>
           </div>
-                      <div>
-                                      <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Workflow</label>
-                                      <Select value={workflowFilter} onChange={(event) => setWorkflowFilter(event.target.value)}>
-                                        <option value="all">All workflows</option>              {workflowsQuery.data?.map((workflow) => (                <option key={workflow.id} value={workflow.id}>
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Workflow</label>
+            <Select value={workflowFilter} onChange={(event) => setWorkflowFilter(event.target.value)}>
+              <option value="all">All workflows</option>
+              {workflowsQuery.data?.map((workflow) => (
+                <option key={workflow.id} value={workflow.id}>
                   {workflow.name || workflow.id}
                 </option>
               ))}
@@ -249,21 +426,37 @@ export function RunsPage() {
             </Select>
           </div>
           <div className="flex-1 lg:max-w-xs">
-            <Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Run id or workflow" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search run id or workflow"
+            />
           </div>
         </div>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Run List</CardTitle>
-          <div className="text-xs text-muted">Showing {filteredRuns.length} runs</div>
+          <CardTitle>Run list</CardTitle>
+          <div className="text-xs text-muted">
+            Showing {filteredRuns.length} of {runs.length}
+          </div>
         </CardHeader>
         <div className="space-y-3">
           {isLoading ? (
             <div className="text-sm text-muted">Loading runs...</div>
           ) : filteredRuns.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">No runs match these filters.</div>
+            <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
+              No runs match these filters.
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" type="button" onClick={resetFilters}>
+                  Clear filters
+                </Button>
+                <Button variant="primary" size="sm" type="button" onClick={() => navigate("/workflows/new")}>
+                  Start a run
+                </Button>
+              </div>
+            </div>
           ) : (
             filteredRuns.map((run, index) => {
               const progress = runProgress(run);
@@ -285,7 +478,9 @@ export function RunsPage() {
                           Run {run.id.slice(0, 8)} · {formatRelative(runUpdatedAt(run))}
                         </div>
                       </div>
-                      <div className="text-xs text-muted">{formatDuration(run.started_at || run.created_at, run.completed_at)}</div>
+                      <div className="text-xs text-muted">
+                        {formatDuration(run.started_at || run.created_at, run.completed_at)}
+                      </div>
                       <RunStatusBadge status={run.status} />
                     </div>
                     <div>
