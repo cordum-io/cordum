@@ -33,7 +33,7 @@ docker compose ps
 Export the release version and use the release compose file:
 
 ```bash
-export CORDUM_VERSION=v0.1.3
+export CORDUM_VERSION=v0.1.4
 docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```

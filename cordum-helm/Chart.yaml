@@ -2,8 +2,8 @@ apiVersion: v2
 name: cordum
 description: AI agent orchestration with built-in governance
 type: application
-version: 0.1.3
-appVersion: "0.1.3"
+version: 0.1.4
+appVersion: "0.1.4"
 keywords:
   - ai
   - orchestration
