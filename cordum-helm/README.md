@@ -19,7 +19,7 @@ helm install cordum cordum/cordum -n cordum --create-namespace \
   --set secrets.apiKey=<your-api-key>
 ```
 
-Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.3`)
+Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.4`)
 and pulls from GHCR. Override `global.image.tag` and `dashboard.image.tag` if
 your registry uses different tags.
 
@@ -30,7 +30,7 @@ Common overrides:
 ```bash
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
-  --set global.image.tag=v0.1.3 \
+  --set global.image.tag=v0.1.4 \
   --set secrets.apiKey=<your-api-key> \
   --set ingress.enabled=true
 ```

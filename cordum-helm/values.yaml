@@ -6,7 +6,7 @@ imagePullSecrets: []
 global:
   image:
     repository: ghcr.io/cordum-io/cordum/control-plane
-    tag: "v0.1.3"
+    tag: "v0.1.4"
     pullPolicy: IfNotPresent
 
 secrets:
@@ -206,7 +206,7 @@ dashboard:
   replicaCount: 1
   image:
     repository: ghcr.io/cordum-io/cordum/dashboard
-    tag: "v0.1.3"
+    tag: "v0.1.4"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP

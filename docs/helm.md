@@ -22,7 +22,7 @@ helm repo update
 helm install cordum cordum/cordum -n cordum --create-namespace
 ```
 
-Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.3`)
+Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.4`)
 and pulls from GHCR. If those tags are not published in your registry, override
 `global.image.tag` and `dashboard.image.tag` (or point to your own registry).
 
@@ -90,7 +90,7 @@ helm upgrade --install cordum ./cordum-helm \
 ```bash
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
-  --set global.image.tag=v0.1.3 \
+  --set global.image.tag=v0.1.4 \
   --set secrets.apiKey=<your-api-key>
 ```
 
