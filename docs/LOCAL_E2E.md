@@ -29,7 +29,7 @@ Requires `cordumctl` on `PATH` (build with `make build SERVICE=cordumctl` and ad
 1) Create a workflow with an approval step:
 
 ```bash
-export CORDUM_API_KEY=[REDACTED]
+export CORDUM_API_KEY=<your-api-key>
 curl -sS -X POST http://localhost:8081/api/v1/workflows \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $CORDUM_API_KEY" \

@@ -68,12 +68,21 @@ kubectl -n cordum port-forward svc/cordum-dashboard 8082:8080
 
 Dashboard: `http://localhost:8082`
 
-The API key defaults to `[REDACTED]`. Override it with:
+The API key is required. Set it with:
 
 ```bash
 helm upgrade --install cordum ./cordum-helm \
   -n cordum --create-namespace \
-  --set secrets.apiKey=change-me
+  --set secrets.apiKey=<your-api-key>
+```
+
+To embed the API key in the dashboard config (not recommended for shared environments):
+
+```bash
+helm upgrade --install cordum ./cordum-helm \
+  -n cordum --create-namespace \
+  --set secrets.apiKey=<your-api-key> \
+  --set dashboard.env.embedApiKey=true
 ```
 
 ## Common overrides
@@ -82,7 +91,7 @@ helm upgrade --install cordum ./cordum-helm \
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
   --set global.image.tag=v0.1.3 \
-  --set secrets.apiKey=change-me
+  --set secrets.apiKey=<your-api-key>
 ```
 
 Use external Redis/NATS:

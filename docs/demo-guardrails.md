@@ -53,7 +53,7 @@ The demo script also installs the pack if it's missing.
 ## 4) Run the demo script
 
 ```bash
-CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} \
+CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
 CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
 ./tools/scripts/demo_guardrails.sh
 ```

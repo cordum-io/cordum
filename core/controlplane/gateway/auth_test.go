@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,6 +45,7 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 		"API_KEY",
 		"CORDUM_API_KEYS_PATH",
 		"CORDUM_ALLOW_HEADER_PRINCIPAL",
+		"CORDUM_ALLOW_INSECURE_NO_AUTH",
 		"CORDUM_ENV",
 		"CORDUM_PRODUCTION",
 		"CORDUM_JWT_HMAC_SECRET",
@@ -57,6 +59,30 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 	} {
 		t.Setenv(key, "")
 	}
+	if env == nil {
+		env = map[string]string{}
+	}
+	authKeys := []string{
+		"CORDUM_API_KEYS",
+		"CORDUM_API_KEY",
+		"CORDUM_SUPER_SECRET_API_TOKEN",
+		"API_KEY",
+		"CORDUM_API_KEYS_PATH",
+		"CORDUM_JWT_HMAC_SECRET",
+		"CORDUM_JWT_PUBLIC_KEY",
+		"CORDUM_JWT_PUBLIC_KEY_PATH",
+		"CORDUM_ALLOW_INSECURE_NO_AUTH",
+	}
+	authConfigured := false
+	for _, key := range authKeys {
+		if strings.TrimSpace(env[key]) != "" {
+			authConfigured = true
+			break
+		}
+	}
+	if !authConfigured {
+		env["CORDUM_API_KEYS"] = "test-api-key"
+	}
 	for key, value := range env {
 		t.Setenv(key, value)
 	}
@@ -69,6 +95,7 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 
 func requestWithAuthContext(auth *AuthContext) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, auth))
 }
 
@@ -124,15 +151,29 @@ func TestParseAPIKeysFormats(t *testing.T) {
 	}
 }
 
-func TestAuthenticateAllowsMissingKeyWhenNotRequired(t *testing.T) {
-	provider := newBasicAuthForTest(t, nil)
+func TestAuthenticateRequiresKeyByDefault(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": "key1",
+	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	if _, err := provider.AuthenticateHTTP(req); err == nil {
+		t.Fatalf("expected api key required error")
+	}
+}
+
+func TestAuthenticateAllowsAnonymousWhenExplicitlyEnabled(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_ALLOW_INSECURE_NO_AUTH": "1",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	ctx, err := provider.AuthenticateHTTP(req)
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	if ctx.Tenant != "default" {
-		t.Fatalf("expected default tenant, got %q", ctx.Tenant)
+	if ctx.Role != "anonymous" {
+		t.Fatalf("expected anonymous role, got %q", ctx.Role)
 	}
 }
 
@@ -141,6 +182,7 @@ func TestAuthenticateRequiresKeyWhenConfigured(t *testing.T) {
 		"CORDUM_API_KEYS": "key1",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	if _, err := provider.AuthenticateHTTP(req); err == nil {
 		t.Fatalf("expected api key required error")
 	}
@@ -160,6 +202,7 @@ func TestAuthenticateRejectsInvalidKey(t *testing.T) {
 		"CORDUM_API_KEYS": "key1",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-API-Key", "bad")
 	if _, err := provider.AuthenticateHTTP(req); err == nil {
 		t.Fatalf("expected invalid api key error")
@@ -167,34 +210,52 @@ func TestAuthenticateRejectsInvalidKey(t *testing.T) {
 }
 
 func TestResolveTenantAndAccess(t *testing.T) {
-	provider := newBasicAuthForTest(t, nil)
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": "key1",
+	})
 	s := &server{tenant: "default", auth: provider}
-	if got, err := s.resolveTenant(httptest.NewRequest(http.MethodGet, "/", nil), ""); err != nil || got != "default" {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	if got, err := s.resolveTenant(req, ""); err != nil || got != "default" {
 		t.Fatalf("expected default tenant, got %q err=%v", got, err)
 	}
-	if _, err := s.resolveTenant(httptest.NewRequest(http.MethodGet, "/", nil), "team-b"); err == nil {
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.Header.Set("X-Tenant-ID", "default")
+	if err := s.requireTenantAccess(req2, ""); err == nil {
+		t.Fatalf("expected empty tenant to be rejected")
+	}
+	req3 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req3.Header.Set("X-Tenant-ID", "default")
+	if _, err := s.resolveTenant(req3, "team-b"); err == nil {
 		t.Fatalf("expected tenant access denied")
 	}
-	if err := s.requireTenantAccess(httptest.NewRequest(http.MethodGet, "/", nil), "team-b"); err == nil {
+	req4 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req4.Header.Set("X-Tenant-ID", "default")
+	if err := s.requireTenantAccess(req4, "team-b"); err == nil {
 		t.Fatalf("expected tenant access denied")
 	}
 }
 
 func TestResolvePrincipal(t *testing.T) {
-	provider := newBasicAuthForTest(t, nil)
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": "key1",
+	})
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-Principal-Id", "alice")
 	if got, err := provider.ResolvePrincipal(req, ""); err != nil || got != "alice" {
 		t.Fatalf("expected principal alice, got %q err=%v", got, err)
 	}
 }
 
-func TestRequireRoleNoop(t *testing.T) {
-	provider := newBasicAuthForTest(t, nil)
+func TestRequireRoleDeniesEmptyRole(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": "key1",
+	})
 	s := &server{auth: provider}
 	req := requestWithAuthContext(&AuthContext{})
-	if err := s.requireRole(req, "admin"); err != nil {
-		t.Fatalf("expected role check to be noop: %v", err)
+	if err := s.requireRole(req, "admin"); err == nil {
+		t.Fatalf("expected role required error")
 	}
 }
 
@@ -203,6 +264,7 @@ func TestRequireRoleEnforces(t *testing.T) {
 		"CORDUM_API_KEYS": `[{"key":"key1","role":"viewer"}]`,
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-API-Key", "key1")
 	authCtx, err := provider.AuthenticateHTTP(req)
 	if err != nil {
@@ -222,6 +284,7 @@ func TestAPIKeyExpiry(t *testing.T) {
 		"CORDUM_API_KEYS": `[{"key":"key1","expires_at":"2000-01-01T00:00:00Z"}]`,
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-API-Key", "key1")
 	if _, err := provider.AuthenticateHTTP(req); err == nil {
 		t.Fatalf("expected expired api key error")
@@ -239,6 +302,7 @@ func TestAPIKeyFileReload(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-API-Key", "key1")
 	if _, err := provider.AuthenticateHTTP(req); err != nil {
 		t.Fatalf("authenticate key1: %v", err)
@@ -252,6 +316,7 @@ func TestAPIKeyFileReload(t *testing.T) {
 	}
 
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	req2.Header.Set("X-Tenant-ID", "default")
 	req2.Header.Set("X-API-Key", "key2")
 	if _, err := provider.AuthenticateHTTP(req2); err != nil {
 		t.Fatalf("authenticate key2: %v", err)
@@ -274,6 +339,7 @@ func TestAPIKeyMiddlewareSkipsPublicPaths(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if auth.called {

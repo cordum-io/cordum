@@ -38,6 +38,7 @@ type BasicAuthProvider struct {
 	defaultTenant        string
 	keys                 map[string]apiKeyMeta
 	requireAPIKey        bool
+	allowAnonymous       bool
 	allowHeaderPrincipal bool
 	keysPath             string
 	keysModTime          time.Time
@@ -51,6 +52,7 @@ func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 	if err != nil {
 		return nil, err
 	}
+	allowAnonymous := env.Bool("CORDUM_ALLOW_INSECURE_NO_AUTH")
 	jwtValidator, jwtRequired, err := newJWTValidatorFromEnv()
 	if err != nil {
 		return nil, err
@@ -58,8 +60,14 @@ func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 	if env.IsProduction() && jwtValidator != nil && !jwtRequired {
 		jwtRequired = true
 	}
+	if env.IsProduction() && allowAnonymous {
+		return nil, errors.New("insecure auth disabled in production")
+	}
 	if env.IsProduction() && len(keys) == 0 {
 		return nil, errors.New("api key required in production")
+	}
+	if len(keys) == 0 && jwtValidator == nil && !allowAnonymous {
+		return nil, errors.New("auth not configured: set CORDUM_API_KEYS, CORDUM_API_KEY, or JWT")
 	}
 	if defaultTenant == "" {
 		defaultTenant = "default"
@@ -68,6 +76,7 @@ func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 		defaultTenant:        defaultTenant,
 		keys:                 keys,
 		requireAPIKey:        requireKey,
+		allowAnonymous:       allowAnonymous,
 		allowHeaderPrincipal: allowHeaderPrincipal,
 		keysPath:             keysPath,
 		keysModTime:          keysModTime,
@@ -154,21 +163,21 @@ func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext,
 		return &AuthContext{}, nil
 	}
 	if key == "" {
-		if b.requireAPIKey {
+		if !b.allowAnonymous {
 			return nil, errors.New("api key required")
 		}
 		if !b.allowHeaderPrincipal {
 			principalID = ""
 		}
-		return &AuthContext{Tenant: b.defaultTenant, PrincipalID: strings.TrimSpace(principalID)}, nil
+		return &AuthContext{
+			Tenant:      b.defaultTenant,
+			PrincipalID: strings.TrimSpace(principalID),
+			Role:        "anonymous",
+		}, nil
 	}
 	meta, ok := b.lookupKey(key)
 	if !ok {
-		if b.keysEmpty() && !b.requireAPIKey {
-			meta = apiKeyMeta{Role: "admin"}
-		} else {
-			return nil, errors.New("invalid api key")
-		}
+		return nil, errors.New("invalid api key")
 	}
 	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
 		return nil, errors.New("api key expired")
@@ -208,7 +217,7 @@ func (b *BasicAuthProvider) RequireRole(r *http.Request, roles ...string) error 
 	}
 	role := normalizeRole(auth.Role)
 	if role == "" {
-		role = "admin"
+		return errors.New("role required")
 	}
 	for _, candidate := range roles {
 		if normalizeRole(candidate) == role {
@@ -249,8 +258,11 @@ func (b *BasicAuthProvider) ResolveTenant(r *http.Request, requested, fallback s
 func (b *BasicAuthProvider) RequireTenantAccess(r *http.Request, tenant string) error {
 	auth := authFromRequest(r)
 	tenant = strings.TrimSpace(tenant)
-	if tenant == "" || b == nil {
+	if b == nil {
 		return nil
+	}
+	if tenant == "" {
+		return errors.New("tenant required")
 	}
 	if auth != nil {
 		if auth.AllowCrossTenant {
@@ -451,12 +463,6 @@ func (b *BasicAuthProvider) lookupKey(key string) (apiKeyMeta, bool) {
 	defer b.keysMu.RUnlock()
 	meta, ok := b.keys[key]
 	return meta, ok
-}
-
-func (b *BasicAuthProvider) keysEmpty() bool {
-	b.keysMu.RLock()
-	defer b.keysMu.RUnlock()
-	return len(b.keys) == 0
 }
 
 func (b *BasicAuthProvider) maybeReloadKeys() {

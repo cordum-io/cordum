@@ -18,6 +18,12 @@ Want the fastest path? Run:
 
 ## Step 1: Start the stack
 
+Set an API key first:
+
+```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+```
+
 ```bash
 go run ./cmd/cordumctl up
 ```
@@ -32,7 +38,7 @@ docker compose up -d
 ## Step 2: Confirm the gateway is healthy
 
 ```bash
-API_KEY=${CORDUM_API_KEY:-[REDACTED]}
+API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY}
 curl -sS http://localhost:8081/api/v1/status \
   -H "X-API-Key: ${API_KEY}" | jq
 ```
@@ -40,7 +46,7 @@ curl -sS http://localhost:8081/api/v1/status \
 ## Step 3: Create a workflow
 
 ```bash
-API_KEY=${CORDUM_API_KEY:-[REDACTED]}
+API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY}
 ORG_ID=${CORDUM_ORG_ID:-default}
 workflow_id=$(curl -sS -X POST http://localhost:8081/api/v1/workflows \
   -H "X-API-Key: ${API_KEY}" \

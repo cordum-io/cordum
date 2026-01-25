@@ -62,7 +62,8 @@ metadata:
   namespace: cordum
 type: Opaque
 stringData:
-  API_KEY: [REDACTED]
+  # REQUIRED: set to a strong API key before applying.
+  API_KEY: ""
 ---
 apiVersion: apps/v1
 kind: Deployment

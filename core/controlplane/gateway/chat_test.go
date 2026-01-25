@@ -41,6 +41,7 @@ func TestRunChatHandlers(t *testing.T) {
 
 	postBody, _ := json.Marshal(map[string]any{"content": "hello chat"})
 	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflow-runs/"+run.ID+"/chat", bytes.NewReader(postBody))
+	postReq.Header.Set("X-Tenant-ID", "default")
 	postReq.SetPathValue("id", run.ID)
 	postRec := httptest.NewRecorder()
 	s.handlePostRunChat(postRec, postReq)
@@ -61,6 +62,7 @@ func TestRunChatHandlers(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs/"+run.ID+"/chat", nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
 	getReq.SetPathValue("id", run.ID)
 	getRec := httptest.NewRecorder()
 	s.handleGetRunChat(getRec, getReq)

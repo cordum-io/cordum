@@ -39,6 +39,7 @@ func TestHandleGetMemoryRedisTypes(t *testing.T) {
 
 	assertMemory := func(key string, expectedType string) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/memory?key="+key, nil)
+		req.Header.Set("X-Tenant-ID", "default")
 		rec := httptest.NewRecorder()
 		s.handleGetMemory(rec, req)
 		if rec.Code != http.StatusOK {
@@ -79,6 +80,7 @@ func TestHandleGetTrace(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/"+traceID, nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.SetPathValue("id", traceID)
 	rec := httptest.NewRecorder()
 	s.handleGetTrace(rec, req)

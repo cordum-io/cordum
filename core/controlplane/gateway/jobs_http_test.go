@@ -24,6 +24,7 @@ func TestHandleSubmitJobHTTP(t *testing.T) {
 	}
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -85,6 +86,7 @@ func TestHandleListJobsAndGetJob(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?state=PENDING&topic=job.test", nil)
+	listReq.Header.Set("X-Tenant-ID", "tenant")
 	listRec := httptest.NewRecorder()
 	s.handleListJobs(listRec, listReq)
 	if listRec.Code != http.StatusOK {
@@ -100,6 +102,7 @@ func TestHandleListJobsAndGetJob(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	getReq.Header.Set("X-Tenant-ID", "tenant")
 	getReq.SetPathValue("id", jobID)
 	getRec := httptest.NewRecorder()
 	s.handleGetJob(getRec, getReq)
@@ -133,6 +136,7 @@ func TestHandleCancelJob(t *testing.T) {
 	}
 
 	cancelReq := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/"+jobID+"/cancel", nil)
+	cancelReq.Header.Set("X-Tenant-ID", "default")
 	cancelReq.SetPathValue("id", jobID)
 	cancelRec := httptest.NewRecorder()
 	s.handleCancelJob(cancelRec, cancelReq)
@@ -187,6 +191,7 @@ func TestHandleRemediateJob(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"remediation_id":"archive"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/"+orig.GetJobId()+"/remediate", body)
+	req.Header.Set("X-Tenant-ID", "default")
 	req.SetPathValue("id", orig.GetJobId())
 	rec := httptest.NewRecorder()
 	s.handleRemediateJob(rec, req)

@@ -10,7 +10,7 @@ global:
     pullPolicy: IfNotPresent
 
 secrets:
-  apiKey: [REDACTED]
+  apiKey: ""
 
 config:
   safety: |-
@@ -213,6 +213,7 @@ dashboard:
     port: 8080
   env:
     apiBaseUrl: ""
+    embedApiKey: false
     tenantId: default
     principalId: ""
     principalRole: ""

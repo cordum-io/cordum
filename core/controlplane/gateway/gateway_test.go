@@ -60,13 +60,13 @@ func (s *stubMemStore) Close() error { return nil }
 
 func TestNormalizeAPIKeyTrimsQuotes(t *testing.T) {
 	cases := map[string]string{
-		"":                  "",
-		"[REDACTED]":  "[REDACTED]",
-		"  super-secret  ":  "super-secret",
-		"\"super-secret\"":  "super-secret",
-		"'super-secret'":    "super-secret",
-		" 'super-secret' ":  "super-secret",
-		" \"super-secret\"": "super-secret",
+		"":              "",
+		"test-api-key":  "test-api-key",
+		"  test-key  ":  "test-key",
+		"\"test-key\"":  "test-key",
+		"'test-key'":    "test-key",
+		" 'test-key' ":  "test-key",
+		" \"test-key\"": "test-key",
 	}
 	for in, want := range cases {
 		if got := normalizeAPIKey(in); got != want {
@@ -97,7 +97,7 @@ func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 }
 
 func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
-	t.Setenv("API_KEY", "'[REDACTED]'")
+	t.Setenv("API_KEY", "'test-api-key'")
 	provider, err := newBasicAuthProvider("default")
 	if err != nil {
 		t.Fatalf("auth init: %v", err)
@@ -115,7 +115,7 @@ func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
 	defer srv.Close()
 
 	okURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
-	token := base64.RawURLEncoding.EncodeToString([]byte("[REDACTED]"))
+	token := base64.RawURLEncoding.EncodeToString([]byte("test-api-key"))
 	dialer := websocket.Dialer{Subprotocols: []string{wsAPIKeyProtocol, token}}
 	conn, _, err := dialer.Dial(okURL, nil)
 	if err != nil {
@@ -143,6 +143,7 @@ func TestHandleGetMemoryFetchesContextByPointer(t *testing.T) {
 	}
 
 	req := httptest.NewRequest("GET", "/api/v1/memory?ptr="+url.QueryEscape("redis://ctx:job-1"), nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	s.handleGetMemory(rr, req)
 
@@ -171,6 +172,7 @@ func TestHandleGetMemoryFetchesContextByPointer(t *testing.T) {
 
 func TestApiKeyFromWebSocketProtocols(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream", nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	token := base64.RawURLEncoding.EncodeToString([]byte("secret"))
 	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+", "+token)
 	if got := apiKeyFromWebSocket(req); got != "secret" {
@@ -206,6 +208,7 @@ func TestHandleGetMemoryReturnsNotFoundForMissingKey(t *testing.T) {
 	s := &server{memStore: &stubMemStore{}}
 
 	req := httptest.NewRequest("GET", "/api/v1/memory?ptr="+url.QueryEscape("redis://res:missing"), nil)
+	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	s.handleGetMemory(rr, req)
 

@@ -18,6 +18,7 @@ func TestHandlePutAndGetArtifact(t *testing.T) {
 	}
 	body, _ := json.Marshal(payload)
 	putReq := httptest.NewRequest(http.MethodPost, "/api/v1/artifacts", bytes.NewReader(body))
+	putReq.Header.Set("X-Tenant-ID", "default")
 	putRec := httptest.NewRecorder()
 	s.handlePutArtifact(putRec, putReq)
 	if putRec.Code != http.StatusOK {
@@ -33,6 +34,7 @@ func TestHandlePutAndGetArtifact(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/"+ptr, nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
 	getReq.SetPathValue("ptr", ptr)
 	getRec := httptest.NewRecorder()
 	s.handleGetArtifact(getRec, getReq)

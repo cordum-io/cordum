@@ -19,6 +19,7 @@ func TestLockHandlers(t *testing.T) {
 	}
 	body, _ := json.Marshal(acquire)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
 	if rr.Code != http.StatusOK {
@@ -26,6 +27,7 @@ func TestLockHandlers(t *testing.T) {
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/locks?resource=lock:test", nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
 	getRR := httptest.NewRecorder()
 	s.handleGetLock(getRR, getReq)
 	if getRR.Code != http.StatusOK {
@@ -39,6 +41,7 @@ func TestLockHandlers(t *testing.T) {
 	}
 	renewBody, _ := json.Marshal(renew)
 	renewReq := httptest.NewRequest(http.MethodPost, "/api/v1/locks/renew", bytes.NewReader(renewBody))
+	renewReq.Header.Set("X-Tenant-ID", "default")
 	renewRR := httptest.NewRecorder()
 	s.handleRenewLock(renewRR, renewReq)
 	if renewRR.Code != http.StatusOK {
@@ -51,6 +54,7 @@ func TestLockHandlers(t *testing.T) {
 	}
 	releaseBody, _ := json.Marshal(release)
 	releaseReq := httptest.NewRequest(http.MethodPost, "/api/v1/locks/release", bytes.NewReader(releaseBody))
+	releaseReq.Header.Set("X-Tenant-ID", "default")
 	releaseRR := httptest.NewRecorder()
 	s.handleReleaseLock(releaseRR, releaseReq)
 	if releaseRR.Code != http.StatusOK {

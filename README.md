@@ -41,7 +41,7 @@ go run .
 
 Terminal C (demo):
 ```bash
-CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} \
+CORDUM_API_KEY=<your-api-key> \
 CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
 ./tools/scripts/demo_guardrails.sh
 
@@ -64,6 +64,7 @@ Prereqs: Docker + Docker Compose. Go is optional unless you want `cordumctl`. Th
 **Fastest path (recommended)**
 
 ```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
 ./tools/scripts/quickstart.sh
 ```
 
@@ -97,7 +98,7 @@ docker compose build && docker compose up -d
 **3. Verify**
 
 * **Dashboard:** Open `http://localhost:8082`
-* **Smoke Test:** Run `CORDUM_API_KEY=${CORDUM_API_KEY:-[REDACTED]} ./tools/scripts/platform_smoke.sh`
+* **Smoke Test:** Run `CORDUM_API_KEY=<your-api-key> ./tools/scripts/platform_smoke.sh`
 
 **Kubernetes (Helm)**
 
@@ -120,7 +121,7 @@ kubectl -n cordum port-forward svc/cordum-api-gateway 8081:8081
 kubectl -n cordum port-forward svc/cordum-dashboard 8082:8080
 ```
 
-Dashboard: `http://localhost:8082` (API key defaults to `[REDACTED]`).
+Dashboard: `http://localhost:8082` (API key required).
 See `docs/helm.md` for overrides (API key, images, external Redis/NATS, ingress).
 
 ---
@@ -257,3 +258,4 @@ Enterprise features are delivered via the `cordum-enterprise` repo and require a
 * [Governance](./GOVERNANCE.md)
 
 ```
+

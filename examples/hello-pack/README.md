@@ -13,7 +13,7 @@ This pack registers a minimal workflow that dispatches a single worker job on
 
 ```bash
 curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
-  -H "X-API-Key: ${CORDUM_API_KEY:-[REDACTED]}" \
+  -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"message":"hello from pack","author":"demo"}' | jq
 ```

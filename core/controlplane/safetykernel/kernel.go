@@ -845,7 +845,11 @@ func fetchPolicyURL(url string) ([]byte, error) {
 
 func verifyPolicySignature(data []byte, source string) error {
 	pubRaw := strings.TrimSpace(os.Getenv("SAFETY_POLICY_PUBLIC_KEY"))
+	requireSignature := env.IsProduction() || env.Bool("SAFETY_POLICY_SIGNATURE_REQUIRED")
 	if pubRaw == "" {
+		if requireSignature {
+			return errors.New("policy signature required but SAFETY_POLICY_PUBLIC_KEY not configured")
+		}
 		return nil
 	}
 	pubKey, err := decodeKey(pubRaw)
