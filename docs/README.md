@@ -1,6 +1,8 @@
 # Cordum Docs
 
 This folder contains the public documentation for Cordum core.
+All API calls require `X-API-Key` and `X-Tenant-ID` headers (set `CORDUM_API_KEY`
+and `CORDUM_TENANT_ID` in your shell before running the scripts).
 
 ## Start here (newcomers)
 
@@ -8,23 +10,30 @@ Fastest path to a working local stack:
 
 ```bash
 # from the repo root
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export CORDUM_TENANT_ID=default
 ./tools/scripts/quickstart.sh
 ```
 
 Want the guardrails demo?
 
 ```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export CORDUM_TENANT_ID=default
 ./tools/scripts/demo_guardrails_run.sh
 ```
 
 Want the mock bank demo?
 
 ```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export CORDUM_TENANT_ID=default
 ./tools/scripts/demo_mock_bank.sh
 ```
 
 ## Getting started
 
+- `docs/install.md` - install options and prerequisites
 - `docs/getting_started.md` - quickstart walkthrough
 - `docs/quickstart.md` - hello world tutorial
 - `docs/DOCKER.md` - docker compose + env setup

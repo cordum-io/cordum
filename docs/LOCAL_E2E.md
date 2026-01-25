@@ -30,9 +30,11 @@ Requires `cordumctl` on `PATH` (build with `make build SERVICE=cordumctl` and ad
 
 ```bash
 export CORDUM_API_KEY=<your-api-key>
+export CORDUM_TENANT_ID=default
 curl -sS -X POST http://localhost:8081/api/v1/workflows \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   -d '{"name":"local-e2e","org_id":"default","steps":{"approve":{"type":"approval"}}}'
 ```
 
@@ -42,6 +44,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows \
 curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   -d '{}'
 ```
 
@@ -51,6 +54,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs \
 curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs/<run_id>/steps/approve/approve \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   -d '{"approved": true}'
 ```
 
@@ -58,10 +62,12 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs/<run_
 
 ```bash
 curl -sS -X DELETE http://localhost:8081/api/v1/workflow-runs/<run_id> \
-  -H "X-API-Key: $CORDUM_API_KEY"
+  -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: $CORDUM_TENANT_ID"
 
 curl -sS -X DELETE http://localhost:8081/api/v1/workflows/<workflow_id> \
-  -H "X-API-Key: $CORDUM_API_KEY"
+  -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: $CORDUM_TENANT_ID"
 ```
 
 ## Notes

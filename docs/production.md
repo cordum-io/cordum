@@ -30,6 +30,7 @@ hardening steps below.
 - Set `CORDUM_ENV=production` (or `CORDUM_PRODUCTION=true`) to enforce TLS on HTTP/gRPC and safety kernel clients.
 - Configure API keys (`CORDUM_API_KEYS` or `CORDUM_API_KEY`); production mode fails without keys.
 - Configure policy signature verification (`SAFETY_POLICY_PUBLIC_KEY` + signature); production mode fails without a public key.
+- Keep gRPC reflection disabled (enable only for debugging with `CORDUM_GRPC_REFLECTION=1`).
 - NetworkPolicies to restrict lateral traffic (gateway <-> redis/nats/safety).
 - Secrets stored in a proper secret manager (KMS, Vault, etc.).
 - Rotate API keys and enterprise license material regularly.
@@ -45,6 +46,7 @@ hardening steps below.
 - Capture workflow engine health (`:9093/health`).
 - Centralize logs (structured log collection + retention).
 - Optional: add OpenTelemetry tracing.
+- In production, metrics endpoints should bind to loopback unless you explicitly set `GATEWAY_METRICS_PUBLIC=1` or `SCHEDULER_METRICS_PUBLIC=1`.
 
 ## 5) Operational limits
 

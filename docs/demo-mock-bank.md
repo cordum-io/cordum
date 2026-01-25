@@ -15,6 +15,7 @@ This demo shows:
 
 ```bash
 export CORDUM_API_KEY=<your-api-key>
+export CORDUM_TENANT_ID=default
 go run ./cmd/cordumctl up
 # or:
 ./bin/cordumctl up
@@ -73,5 +74,5 @@ One-command runner (installs pack + starts worker + serves UI):
 
 - The dashboard defaults to `http://localhost:8082`.
 - The demo UI uses the Cordum API at `http://localhost:8081` and requires an API key.
-- Open `http://localhost:8099/?apiKey=YOUR_KEY` (add `apiBaseUrl=http://localhost:8081` if needed).
-- Query parameters (`apiKey`, `apiBaseUrl`, `principalId`, `principalRole`, `orgId`) persist to localStorage after the first load.
+- Open `http://localhost:8099/?apiKey=YOUR_KEY&tenantId=default` (add `apiBaseUrl=http://localhost:8081` if needed).
+- Query parameters (`apiBaseUrl`, `tenantId`, `principalId`, `principalRole`, `orgId`) persist to localStorage after the first load (API keys stay in-memory).

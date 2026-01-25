@@ -69,6 +69,15 @@ warn_port 50070 "context-engine grpc"
 warn_port 4222 "nats client"
 warn_port 6379 "redis"
 
+API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-}}}
+if [[ -z "${API_KEY}" ]]; then
+  echo "CORDUM_API_KEY is required; export it before running install." >&2
+  exit 1
+fi
+export CORDUM_API_KEY="${API_KEY}"
+TENANT_ID=${CORDUM_TENANT_ID:-default}
+export CORDUM_TENANT_ID="${TENANT_ID}"
+
 if [ -d "${DEST_DIR}/.git" ]; then
   echo "using existing repo at ${DEST_DIR}"
 else
@@ -95,7 +104,7 @@ Cordum is up.
 - API: http://localhost:8081
 Next steps (OSS, from repo root):
 - Quickstart: ./tools/scripts/quickstart.sh
-- Smoke test: CORDUM_API_KEY=<your-api-key> ./tools/scripts/platform_smoke.sh
+- Smoke test: CORDUM_API_KEY=<your-api-key> CORDUM_TENANT_ID=default ./tools/scripts/platform_smoke.sh
 - Guardrails demo: ./tools/scripts/demo_guardrails_run.sh
 - Mock bank demo: ./tools/scripts/demo_mock_bank.sh
 EOF

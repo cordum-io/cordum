@@ -2,11 +2,14 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/cordum/cordum/core/infra/artifacts"
 )
 
 func TestHandlePutAndGetArtifact(t *testing.T) {
@@ -49,5 +52,44 @@ func TestHandlePutAndGetArtifact(t *testing.T) {
 	decoded, _ := base64.StdEncoding.DecodeString(encoded)
 	if string(decoded) != "hello" {
 		t.Fatalf("unexpected artifact content")
+	}
+}
+
+func TestHandleGetArtifactRejectsMissingTenantLabel(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	ptr, err := s.artifactStore.Put(context.Background(), []byte("secret"), artifacts.Metadata{
+		ContentType: "text/plain",
+	})
+	if err != nil {
+		t.Fatalf("put artifact: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/"+ptr, nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("ptr", ptr)
+	rec := httptest.NewRecorder()
+	s.handleGetArtifact(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d", rec.Code)
+	}
+}
+
+func TestHandlePutArtifactRejectsTenantMismatch(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	payload := map[string]any{
+		"content": "hello",
+		"labels": map[string]string{
+			"tenant_id": "other",
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/artifacts", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handlePutArtifact(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d", rec.Code)
 	}
 }

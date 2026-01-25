@@ -7,7 +7,9 @@ workflow engine, optional context engine) plus Redis and NATS by default.
 
 ```bash
 helm install cordum ./cordum-helm -n cordum --create-namespace \
-  --set secrets.apiKey=<your-api-key>
+  --set secrets.apiKey=<your-api-key> \
+  --set gateway.env.tenantId=default \
+  --set dashboard.env.tenantId=default
 ```
 
 ## Install (published chart)
@@ -16,7 +18,9 @@ helm install cordum ./cordum-helm -n cordum --create-namespace \
 helm repo add cordum https://charts.cordum.io
 helm repo update
 helm install cordum cordum/cordum -n cordum --create-namespace \
-  --set secrets.apiKey=<your-api-key>
+  --set secrets.apiKey=<your-api-key> \
+  --set gateway.env.tenantId=default \
+  --set dashboard.env.tenantId=default
 ```
 
 Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.4`)
@@ -32,6 +36,8 @@ helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
   --set global.image.tag=v0.1.4 \
   --set secrets.apiKey=<your-api-key> \
+  --set gateway.env.tenantId=default \
+  --set dashboard.env.tenantId=default \
   --set ingress.enabled=true
 ```
 
@@ -91,6 +97,7 @@ kubectl -n cordum port-forward svc/cordum-dashboard 8082:8080
 ```
 
 Dashboard: `http://localhost:8082`
+HTTP requests must include `X-API-Key` and `X-Tenant-ID` (use `gateway.env.tenantId` as the default tenant).
 
 ## Notes
 

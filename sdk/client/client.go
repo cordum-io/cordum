@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -16,14 +17,20 @@ import (
 type Client struct {
 	BaseURL    string
 	APIKey     string
+	TenantID   string
 	HTTPClient *http.Client
 }
 
 // New returns a client with a default HTTP timeout.
 func New(baseURL, apiKey string) *Client {
+	tenantID := strings.TrimSpace(os.Getenv("CORDUM_TENANT_ID"))
+	if tenantID == "" {
+		tenantID = "default"
+	}
 	return &Client{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
+		BaseURL:  baseURL,
+		APIKey:   apiKey,
+		TenantID: tenantID,
 		HTTPClient: &http.Client{
 			Timeout: 15 * time.Second,
 		},
@@ -157,6 +164,9 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, bod
 	}
 	if c.APIKey != "" {
 		req.Header.Set("X-API-Key", c.APIKey)
+	}
+	if tenant := strings.TrimSpace(c.TenantID); tenant != "" && req.Header.Get("X-Tenant-ID") == "" {
+		req.Header.Set("X-Tenant-ID", tenant)
 	}
 	for k, v := range headers {
 		if strings.TrimSpace(k) == "" {

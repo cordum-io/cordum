@@ -1,7 +1,10 @@
 package metrics
 
 import (
+	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -97,6 +100,46 @@ func (p *Prom) IncSafetyDenied(topic string) {
 // Handler returns an HTTP handler for /metrics.
 func Handler() http.Handler {
 	return promhttp.Handler()
+}
+
+// ValidateBindAddr rejects public binds unless explicitly allowed.
+func ValidateBindAddr(addr string, allowPublic bool) error {
+	trimmed := strings.TrimSpace(addr)
+	if trimmed == "" {
+		return fmt.Errorf("metrics addr required")
+	}
+	if allowPublic {
+		return nil
+	}
+	if isPublicBindAddr(trimmed) {
+		return fmt.Errorf("public metrics bind %q requires explicit allow", trimmed)
+	}
+	return nil
+}
+
+func isPublicBindAddr(addr string) bool {
+	host := addr
+	if strings.HasPrefix(host, ":") {
+		host = ""
+	} else if strings.Contains(host, ":") {
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+	}
+	host = strings.TrimSpace(host)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return true
+	}
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.Trim(host, "[]")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return !ip.IsLoopback()
+	}
+	return true
 }
 
 // --- Gateway metrics ---

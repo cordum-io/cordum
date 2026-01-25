@@ -52,23 +52,27 @@ import (
 )
 
 const (
-	defaultGrpcAddr       = ":8080"
-	defaultHttpAddr       = ":8081"
-	defaultMetricsAddr    = ":9092"
-	maxJobPayloadBytes    = 2 << 20 // 2 MiB limit for incoming job payloads
-	maxPromptChars        = 100000
-	defaultRateLimitRPS   = 50
-	defaultRateLimitBurst = 100
+	defaultGrpcAddr         = ":8080"
+	defaultHttpAddr         = ":8081"
+	defaultMetricsAddr      = ":9092"
+	maxJobPayloadBytes      = 2 << 20  // 2 MiB limit for incoming job payloads
+	defaultArtifactMaxBytes = 10 << 20 // 10 MiB default artifact size limit
+	maxPromptChars          = 100000
+	defaultRateLimitRPS     = 50
+	defaultRateLimitBurst   = 100
+	defaultMaxHeaderBytes   = 1 << 20
 	// #nosec G101 -- protocol label, not a credential.
 	wsAPIKeyProtocol = "cordum-api-key"
 )
 
 const (
-	envGatewayGrpcAddr    = "GATEWAY_GRPC_ADDR"
-	envGatewayHTTPAddr    = "GATEWAY_HTTP_ADDR"
-	envGatewayMetricsAddr = "GATEWAY_METRICS_ADDR"
-	envGatewayHTTPTLSCert = "GATEWAY_HTTP_TLS_CERT"
-	envGatewayHTTPTLSKey  = "GATEWAY_HTTP_TLS_KEY"
+	envGatewayGrpcAddr      = "GATEWAY_GRPC_ADDR"
+	envGatewayHTTPAddr      = "GATEWAY_HTTP_ADDR"
+	envGatewayMetricsAddr   = "GATEWAY_METRICS_ADDR"
+	envGatewayMetricsPublic = "GATEWAY_METRICS_PUBLIC"
+	envGatewayHTTPTLSCert   = "GATEWAY_HTTP_TLS_CERT"
+	envGatewayHTTPTLSKey    = "GATEWAY_HTTP_TLS_KEY"
+	envArtifactMaxBytes     = "ARTIFACT_MAX_BYTES"
 )
 
 const (
@@ -87,7 +91,7 @@ type server struct {
 	workers  map[string]*pb.Heartbeat
 	workerMu sync.RWMutex
 
-	clients   map[*websocket.Conn]chan *pb.BusPacket
+	clients   map[*websocket.Conn]*wsClient
 	clientsMu sync.RWMutex
 	eventsCh  chan *pb.BusPacket
 
@@ -108,6 +112,12 @@ type server struct {
 
 	marketplaceMu    sync.Mutex
 	marketplaceCache marketplaceCache
+}
+
+type wsClient struct {
+	ch               chan *pb.BusPacket
+	tenant           string
+	allowCrossTenant bool
 }
 
 var upgrader = websocket.Upgrader{
@@ -480,7 +490,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		jobStore:       jobStore,
 		bus:            natsBus,
 		workers:        make(map[string]*pb.Heartbeat),
-		clients:        make(map[*websocket.Conn]chan *pb.BusPacket),
+		clients:        make(map[*websocket.Conn]*wsClient),
 		eventsCh:       make(chan *pb.BusPacket, 512),
 		metrics:        gwMetrics,
 		tenant:         tenantID,
@@ -534,7 +544,9 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		grpc.UnaryInterceptor(apiKeyUnaryInterceptor(s.auth)),
 	)
 	pb.RegisterCordumApiServer(grpcServer, s)
-	reflection.Register(grpcServer)
+	if env.Bool(env.EnvGRPCReflection) {
+		reflection.Register(grpcServer)
+	}
 
 	go func() {
 		logging.Info("api-gateway", "grpc listening", "addr", grpcAddr)
@@ -640,11 +652,22 @@ func (s *server) startBusTaps() {
 	// Broadcast loop to WS clients
 	go func() {
 		for evt := range s.eventsCh {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			tenant, ok := s.tenantForBusPacket(ctx, evt)
+			cancel()
 			var slowClients []*websocket.Conn
 			s.clientsMu.RLock()
-			for conn, ch := range s.clients {
+			for conn, client := range s.clients {
+				if client == nil {
+					continue
+				}
+				if !client.allowCrossTenant {
+					if !ok || tenant == "" || tenant != client.tenant {
+						continue
+					}
+				}
 				select {
-				case ch <- evt:
+				case client.ch <- evt:
 				default:
 					slowClients = append(slowClients, conn)
 				}
@@ -702,13 +725,20 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux := http.NewServeMux()
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", infraMetrics.Handler())
+	if env.IsProduction() {
+		if err := infraMetrics.ValidateBindAddr(metricsAddr, env.Bool(envGatewayMetricsPublic)); err != nil {
+			return fmt.Errorf("metrics bind rejected: %w", err)
+		}
+	}
 	go func() {
 		srv := &http.Server{
-			Addr:         metricsAddr,
-			Handler:      metricsMux,
-			ReadTimeout:  5 * time.Second,
-			WriteTimeout: 5 * time.Second,
-			IdleTimeout:  60 * time.Second,
+			Addr:              metricsAddr,
+			Handler:           metricsMux,
+			ReadTimeout:       5 * time.Second,
+			ReadHeaderTimeout: 5 * time.Second,
+			WriteTimeout:      5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    defaultMaxHeaderBytes,
 		}
 		logging.Info("api-gateway", "metrics listening", "addr", metricsAddr+"/metrics")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -852,6 +882,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    defaultMaxHeaderBytes,
 	}
 	if httpTLSCert != "" {
 		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
@@ -1456,8 +1487,17 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "artifact store unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	maxBytes := artifactMaxBytesLimit(r)
+	if maxBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1)
+	}
 	var req artifactPutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "artifact too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
@@ -1476,17 +1516,6 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "content required", http.StatusBadRequest)
 		return
 	}
-	maxBytes := int64(0)
-	if raw := r.URL.Query().Get("max_bytes"); raw != "" {
-		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			maxBytes = v
-		}
-	}
-	if raw := r.Header.Get("X-Max-Artifact-Bytes"); raw != "" && maxBytes == 0 {
-		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			maxBytes = v
-		}
-	}
 	if maxBytes > 0 && int64(len(content)) > maxBytes {
 		http.Error(w, "artifact too large", http.StatusRequestEntityTooLarge)
 		return
@@ -1496,12 +1525,26 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 		Retention:   parseRetention(req.Retention),
 		Labels:      req.Labels,
 	}
-	if auth := authFromRequest(r); auth != nil && auth.Tenant != "" {
+	auth := authFromRequest(r)
+	tenant := strings.TrimSpace(headerValue(r, "X-Tenant-ID"))
+	allowCrossTenant := false
+	if auth != nil {
+		if auth.Tenant != "" {
+			tenant = strings.TrimSpace(auth.Tenant)
+		}
+		allowCrossTenant = auth.AllowCrossTenant
+	}
+	if tenant != "" {
 		if meta.Labels == nil {
 			meta.Labels = map[string]string{}
 		}
-		if _, exists := meta.Labels["tenant_id"]; !exists {
-			meta.Labels["tenant_id"] = auth.Tenant
+		if existing := strings.TrimSpace(meta.Labels["tenant_id"]); existing != "" {
+			if !allowCrossTenant && existing != tenant {
+				http.Error(w, "tenant access denied", http.StatusForbidden)
+				return
+			}
+		} else {
+			meta.Labels["tenant_id"] = tenant
 		}
 	}
 	ptr, err := s.artifactStore.Put(r.Context(), content, meta)
@@ -1535,12 +1578,31 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if auth := authFromRequest(r); auth != nil && auth.Tenant != "" {
-		if meta.Labels != nil {
-			if tenant := strings.TrimSpace(meta.Labels["tenant_id"]); tenant != "" && tenant != auth.Tenant {
-				http.Error(w, "tenant access denied", http.StatusForbidden)
-				return
-			}
+	maxBytes := artifactMaxBytesLimit(r)
+	if maxBytes > 0 {
+		if meta.SizeBytes > maxBytes {
+			http.Error(w, "artifact too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if int64(len(content)) > maxBytes {
+			http.Error(w, "artifact too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+	}
+	auth := authFromRequest(r)
+	tenant := strings.TrimSpace(headerValue(r, "X-Tenant-ID"))
+	allowCrossTenant := false
+	if auth != nil {
+		if auth.Tenant != "" {
+			tenant = strings.TrimSpace(auth.Tenant)
+		}
+		allowCrossTenant = auth.AllowCrossTenant
+	}
+	if tenant != "" && !allowCrossTenant {
+		labelTenant := strings.TrimSpace(meta.Labels["tenant_id"])
+		if labelTenant == "" || labelTenant != tenant {
+			http.Error(w, "tenant access denied", http.StatusForbidden)
+			return
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -2061,20 +2123,25 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer ws.Close()
 	logging.Info("gateway", "ws connected", "remote", r.RemoteAddr)
 
-	clientCh := make(chan *pb.BusPacket, 100)
+	authCtx := authFromRequest(r)
+	client := &wsClient{ch: make(chan *pb.BusPacket, 100)}
+	if authCtx != nil {
+		client.tenant = strings.TrimSpace(authCtx.Tenant)
+		client.allowCrossTenant = authCtx.AllowCrossTenant
+	}
 	s.clientsMu.Lock()
-	s.clients[ws] = clientCh
+	s.clients[ws] = client
 	s.clientsMu.Unlock()
 	defer func() {
 		s.clientsMu.Lock()
 		delete(s.clients, ws)
 		s.clientsMu.Unlock()
-		close(clientCh)
+		close(client.ch)
 	}()
 
 	for {
 		select {
-		case msg, ok := <-clientCh:
+		case msg, ok := <-client.ch:
 			if !ok {
 				return
 			}
@@ -2095,6 +2162,13 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if r.TLS != nil && env.IsProduction() {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin != "" {
 			if !isAllowedOrigin(r) {
@@ -2106,7 +2180,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Principal-Id, X-Principal-Role")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Tenant-ID, X-Principal-Id, X-Principal-Role, X-Request-Id, Idempotency-Key, X-Idempotency-Key")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -2355,9 +2429,16 @@ func tenantMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if headerValue(r, "X-Tenant-ID") == "" {
+		tenantID := tenantFromRequest(r)
+		if tenantID == "" {
 			http.Error(w, "tenant id required", http.StatusForbidden)
 			return
+		}
+		if authCtx := authFromRequest(r); authCtx != nil && authCtx.Tenant != "" && !authCtx.AllowCrossTenant {
+			if strings.TrimSpace(authCtx.Tenant) != tenantID {
+				http.Error(w, "tenant access denied", http.StatusForbidden)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -2401,6 +2482,106 @@ func idempotencyKeyFromRequest(r *http.Request) string {
 		}
 	}
 	return ""
+}
+
+func tenantFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if tenant := headerValue(r, "X-Tenant-ID"); tenant != "" {
+		return tenant
+	}
+	if websocket.IsWebSocketUpgrade(r) {
+		if tenant := strings.TrimSpace(r.URL.Query().Get("tenant_id")); tenant != "" {
+			return tenant
+		}
+		if tenant := strings.TrimSpace(r.URL.Query().Get("tenant")); tenant != "" {
+			return tenant
+		}
+	}
+	return ""
+}
+
+func artifactMaxBytes() int64 {
+	if raw := strings.TrimSpace(os.Getenv(envArtifactMaxBytes)); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultArtifactMaxBytes
+}
+
+func artifactRequestedMaxBytes(r *http.Request) int64 {
+	if r == nil {
+		return 0
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("max_bytes")); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+			return v
+		}
+	}
+	if raw := strings.TrimSpace(r.Header.Get("X-Max-Artifact-Bytes")); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+func artifactMaxBytesLimit(r *http.Request) int64 {
+	maxBytes := artifactMaxBytes()
+	if requested := artifactRequestedMaxBytes(r); requested > 0 && requested < maxBytes {
+		return requested
+	}
+	return maxBytes
+}
+
+func (s *server) tenantForBusPacket(ctx context.Context, evt *pb.BusPacket) (string, bool) {
+	if evt == nil {
+		return "", false
+	}
+	if req := evt.GetJobRequest(); req != nil {
+		if tenant := strings.TrimSpace(req.GetTenantId()); tenant != "" {
+			return tenant, true
+		}
+		if meta := req.GetMeta(); meta != nil {
+			if tenant := strings.TrimSpace(meta.GetTenantId()); tenant != "" {
+				return tenant, true
+			}
+		}
+	}
+	if res := evt.GetJobResult(); res != nil {
+		return s.tenantForJobID(ctx, res.GetJobId())
+	}
+	if prog := evt.GetJobProgress(); prog != nil {
+		return s.tenantForJobID(ctx, prog.GetJobId())
+	}
+	if cancel := evt.GetJobCancel(); cancel != nil {
+		return s.tenantForJobID(ctx, cancel.GetJobId())
+	}
+	return "", false
+}
+
+func (s *server) tenantForJobID(ctx context.Context, jobID string) (string, bool) {
+	if s == nil || s.jobStore == nil {
+		return "", false
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return "", false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	tenant, err := s.jobStore.GetTenant(ctx, jobID)
+	if err != nil {
+		return "", false
+	}
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		return "", false
+	}
+	return tenant, true
 }
 
 func (s *server) maxConcurrentRuns(ctx context.Context, orgID, teamID string) int {

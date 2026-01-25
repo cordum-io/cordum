@@ -230,7 +230,7 @@ func TestRunPolicySimulation(t *testing.T) {
 }
 
 func TestDownloadPackBundleErrors(t *testing.T) {
-	if _, _, _, err := downloadPackBundle(context.Background(), nil); err == nil {
+	if _, _, _, err := downloadPackBundle(context.Background(), nil, nil); err == nil {
 		t.Fatalf("expected error for nil url")
 	}
 }

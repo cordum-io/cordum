@@ -8,6 +8,7 @@ vi.mock('../state/config', () => ({
     getState: vi.fn(() => ({
       apiBaseUrl: '/api',
       apiKey: 'test-key',
+      tenantId: 'tenant-1',
       principalId: 'user-123',
       principalRole: 'admin',
       update: updateMock,
@@ -41,6 +42,7 @@ describe('API Client', () => {
     expect(url).toContain('/api/v1/workflows');
     expect(headers.get('Accept')).toBe('application/json');
     expect(headers.get('X-API-Key')).toBe('test-key');
+    expect(headers.get('X-Tenant-ID')).toBe('tenant-1');
     expect(headers.get('X-Principal-Id')).toBe('user-123');
     
     expect(result).toHaveLength(1);

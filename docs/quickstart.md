@@ -16,13 +16,16 @@ Want the fastest path? Run:
 - jq
 - Go (optional, only if using `cordumctl`)
 
-## Step 1: Start the stack
+## Step 1: Set API key + tenant
 
-Set an API key first:
+Set an API key and tenant before starting:
 
 ```bash
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export CORDUM_TENANT_ID=default
 ```
+
+## Step 2: Start the stack
 
 ```bash
 go run ./cmd/cordumctl up
@@ -35,21 +38,25 @@ docker compose build
 docker compose up -d
 ```
 
-## Step 2: Confirm the gateway is healthy
+## Step 3: Confirm the gateway is healthy
 
 ```bash
 API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY}
+TENANT_ID=${CORDUM_TENANT_ID:-default}
 curl -sS http://localhost:8081/api/v1/status \
-  -H "X-API-Key: ${API_KEY}" | jq
+  -H "X-API-Key: ${API_KEY}" \
+  -H "X-Tenant-ID: ${TENANT_ID}" | jq
 ```
 
-## Step 3: Create a workflow
+## Step 4: Create a workflow
 
 ```bash
 API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY}
 ORG_ID=${CORDUM_ORG_ID:-default}
+TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 workflow_id=$(curl -sS -X POST http://localhost:8081/api/v1/workflows \
   -H "X-API-Key: ${API_KEY}" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "hello-world",
@@ -65,42 +72,47 @@ workflow_id=$(curl -sS -X POST http://localhost:8081/api/v1/workflows \
 echo "workflow: ${workflow_id}"
 ```
 
-## Step 4: Start a run
+## Step 5: Start a run
 
 ```bash
 run_id=$(curl -sS -X POST http://localhost:8081/api/v1/workflows/${workflow_id}/runs \
   -H "X-API-Key: ${API_KEY}" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d '{}' | jq -r '.run_id')
 
 echo "run: ${run_id}"
 ```
 
-## Step 5: Approve the step
+## Step 6: Approve the step
 
 ```bash
 curl -sS -X POST http://localhost:8081/api/v1/workflows/${workflow_id}/runs/${run_id}/steps/approve/approve \
   -H "X-API-Key: ${API_KEY}" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d '{"approved": true}' >/dev/null
 ```
 
-## Step 6: Check status
+## Step 7: Check status
 
 ```bash
 curl -sS http://localhost:8081/api/v1/workflow-runs/${run_id}?org_id=${ORG_ID} \
-  -H "X-API-Key: ${API_KEY}" | jq -r '.status'
+  -H "X-API-Key: ${API_KEY}" \
+  -H "X-Tenant-ID: ${TENANT_ID}" | jq -r '.status'
 ```
 
 Expected output: `succeeded`.
 
-## Step 7: Clean up
+## Step 8: Clean up
 
 ```bash
 curl -sS -X DELETE http://localhost:8081/api/v1/workflow-runs/${run_id}?org_id=${ORG_ID} \
-  -H "X-API-Key: ${API_KEY}" >/dev/null
+  -H "X-API-Key: ${API_KEY}" \
+  -H "X-Tenant-ID: ${TENANT_ID}" >/dev/null
 curl -sS -X DELETE http://localhost:8081/api/v1/workflows/${workflow_id}?org_id=${ORG_ID} \
-  -H "X-API-Key: ${API_KEY}" >/dev/null
+  -H "X-API-Key: ${API_KEY}" \
+  -H "X-Tenant-ID: ${TENANT_ID}" >/dev/null
 ```
 
 ## Next steps

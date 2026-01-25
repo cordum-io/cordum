@@ -99,7 +99,7 @@ func runJobSubmit(args []string) {
 		Labels:         labelMap,
 	}
 
-	client := newClient(*fs.gateway, *fs.apiKey)
+	client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 	resp, err := client.SubmitJob(context.Background(), req)
 	check(err)
 	if *jsonOut {
@@ -116,7 +116,7 @@ func runJobStatus(args []string) {
 	if fs.NArg() < 1 {
 		fail("job id required")
 	}
-	client := newClient(*fs.gateway, *fs.apiKey)
+	client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 	job, err := client.GetJob(context.Background(), fs.Arg(0))
 	check(err)
 	if *jsonOut {
@@ -136,7 +136,7 @@ func runJobLogs(args []string) {
 	if fs.NArg() < 1 {
 		fail("job id required")
 	}
-	client := newClient(*fs.gateway, *fs.apiKey)
+	client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 	job, err := client.GetJob(context.Background(), fs.Arg(0))
 	check(err)
 	if result, ok := job["result"]; ok && result != nil {

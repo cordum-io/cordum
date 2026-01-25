@@ -22,6 +22,7 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/buildinfo"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -43,6 +44,8 @@ const (
 	envPackCatalogTitle          = "CORDUM_PACK_CATALOG_TITLE"
 	envPackCatalogURL            = "CORDUM_PACK_CATALOG_URL"
 	envPackCatalogDisableDefault = "CORDUM_PACK_CATALOG_DEFAULT_DISABLED"
+	envMarketplaceAllowHTTP      = "CORDUM_MARKETPLACE_ALLOW_HTTP"
+	envMarketplaceHTTPTimeout    = "CORDUM_MARKETPLACE_HTTP_TIMEOUT"
 
 	policyConfigScope = "system"
 	policyConfigID    = "policy"
@@ -54,7 +57,8 @@ const (
 	maxPackUncompressedBytes = 256 << 20
 	maxCatalogBytes          = 8 << 20
 
-	marketplaceCacheTTL = 30 * time.Second
+	marketplaceCacheTTL           = 30 * time.Second
+	defaultMarketplaceHTTPTimeout = 15 * time.Second
 )
 
 var errMarketplaceNotFound = errors.New("marketplace pack not found")
@@ -560,7 +564,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	packFile, digest, cleanup, err := downloadPackBundle(r.Context(), parsed)
+	packFile, digest, cleanup, err := downloadPackBundle(r.Context(), parsed, allowedHosts)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -1035,14 +1039,16 @@ func (s *server) loadPackCatalogs(ctx context.Context) ([]marketplaceCatalog, er
 }
 
 func fetchMarketplaceCatalog(ctx context.Context, catalogURL string) (*marketplaceCatalogFile, error) {
-	if _, err := validateMarketplaceURL(catalogURL, nil); err != nil {
+	parsed, err := validateMarketplaceURL(catalogURL, nil)
+	if err != nil {
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, catalogURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := marketplaceHTTPClient(nil, parsed.Hostname())
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1248,7 +1254,7 @@ func parseVersion(version string) ([]int, bool) {
 	return out, true
 }
 
-func downloadPackBundle(ctx context.Context, parsed *url.URL) (string, string, func(), error) {
+func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[string]struct{}) (string, string, func(), error) {
 	if parsed == nil {
 		return "", "", func() {}, errors.New("url required")
 	}
@@ -1256,7 +1262,8 @@ func downloadPackBundle(ctx context.Context, parsed *url.URL) (string, string, f
 	if err != nil {
 		return "", "", func() {}, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := marketplaceHTTPClient(allowedHosts, "")
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", func() {}, err
 	}
@@ -1298,7 +1305,14 @@ func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*u
 	if err != nil {
 		return nil, err
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	switch parsed.Scheme {
+	case "https":
+		// ok
+	case "http":
+		if env.IsProduction() && !env.Bool(envMarketplaceAllowHTTP) {
+			return nil, fmt.Errorf("http marketplace urls not allowed in production")
+		}
+	default:
 		return nil, fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
 	}
 	host := strings.ToLower(parsed.Hostname())
@@ -1314,6 +1328,36 @@ func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*u
 		}
 	}
 	return parsed, nil
+}
+
+func marketplaceHTTPTimeout() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(envMarketplaceHTTPTimeout)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultMarketplaceHTTPTimeout
+}
+
+func marketplaceHTTPClient(allowedHosts map[string]struct{}, initialHost string) *http.Client {
+	initialHost = strings.ToLower(strings.TrimSpace(initialHost))
+	return &http.Client{
+		Timeout: marketplaceHTTPTimeout(),
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if initialHost != "" {
+				if host := strings.ToLower(req.URL.Hostname()); host != "" && host != initialHost {
+					return fmt.Errorf("redirect host %q not allowed", host)
+				}
+			}
+			if _, err := validateMarketplaceURL(req.URL.String(), allowedHosts); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
 }
 
 func hostFromURL(rawURL string) string {

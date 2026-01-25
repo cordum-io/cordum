@@ -6,6 +6,7 @@ Command-line helper for local dev, workflows, and pack operations.
 
 - `--gateway` (or `CORDUM_GATEWAY`) default: `http://localhost:8081`
 - `--api-key` (or `CORDUM_API_KEY`) default: empty
+- `--tenant` (or `CORDUM_TENANT_ID`) default: `default`
 
 ## Install/build
 

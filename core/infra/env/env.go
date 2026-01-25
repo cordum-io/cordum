@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	EnvMode          = "CORDUM_ENV"
-	EnvProduction    = "CORDUM_PRODUCTION"
-	EnvTLSMinVersion = "CORDUM_TLS_MIN_VERSION"
+	EnvMode           = "CORDUM_ENV"
+	EnvProduction     = "CORDUM_PRODUCTION"
+	EnvTLSMinVersion  = "CORDUM_TLS_MIN_VERSION"
+	EnvGRPCReflection = "CORDUM_GRPC_REFLECTION"
 )
 
 // Bool returns true for common truthy env values.

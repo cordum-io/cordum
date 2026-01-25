@@ -108,7 +108,9 @@ func Run(cfg *config.Config) error {
 
 	grpcServer := grpc.NewServer(serverCreds)
 	pb.RegisterSafetyKernelServer(grpcServer, srv)
-	reflection.Register(grpcServer)
+	if env.Bool(env.EnvGRPCReflection) {
+		reflection.Register(grpcServer)
+	}
 
 	log.Printf("safety-kernel: listening on %s", cfg.SafetyKernelAddr)
 	if err := grpcServer.Serve(lis); err != nil {
