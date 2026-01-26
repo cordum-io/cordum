@@ -92,7 +92,7 @@ func main() {
 		cancel()
 	}
 	defer sagaRedis.Close()
-	sagaManager := scheduler.NewSagaManager(natsBus, sagaRedis)
+	sagaManager := scheduler.NewSagaManager(natsBus, sagaRedis).WithMetrics(metrics)
 
 	safetyClient, err := scheduler.NewSafetyClient(cfg.SafetyKernelAddr)
 	if err != nil {

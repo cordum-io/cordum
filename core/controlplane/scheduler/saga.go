@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -28,6 +30,7 @@ type SagaManager struct {
 	bus     Bus
 	redis   redis.UniversalClient
 	lockTTL time.Duration
+	metrics SagaMetrics
 }
 
 func NewSagaManager(bus Bus, rdb redis.UniversalClient) *SagaManager {
@@ -36,6 +39,15 @@ func NewSagaManager(bus Bus, rdb redis.UniversalClient) *SagaManager {
 		redis:   rdb,
 		lockTTL: 2 * time.Minute,
 	}
+}
+
+// WithMetrics attaches optional saga metrics.
+func (s *SagaManager) WithMetrics(metrics SagaMetrics) *SagaManager {
+	if s == nil {
+		return s
+	}
+	s.metrics = metrics
+	return s
 }
 
 func sagaStackKey(workflowID string) string {
@@ -104,7 +116,13 @@ func (s *SagaManager) RecordCompensation(ctx context.Context, req *pb.JobRequest
 	}
 	cctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
-	return s.redis.LPush(cctx, key, data).Err()
+	if err := s.redis.LPush(cctx, key, data).Err(); err != nil {
+		return err
+	}
+	if s.metrics != nil {
+		s.metrics.IncSagaRecorded()
+	}
+	return nil
 }
 
 // Rollback pops compensation requests and dispatches them in reverse order.
@@ -118,6 +136,16 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	started := time.Now()
+	if s.metrics != nil {
+		s.metrics.IncSagaRollbackTriggered()
+		s.metrics.IncSagaActive()
+		defer s.metrics.DecSagaActive()
+		defer func() {
+			s.metrics.ObserveSagaRollback(time.Since(started).Seconds())
+		}()
 	}
 
 	lockKey := sagaLockKey(workflowID)
@@ -203,7 +231,13 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 		},
 	}
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+		if s.metrics != nil {
+			s.metrics.IncSagaCompensationFailed()
+		}
 		return fmt.Errorf("publish compensation: %w", err)
+	}
+	if s.metrics != nil {
+		s.metrics.IncSagaCompensationDispatched()
 	}
 	return nil
 }
@@ -262,8 +296,44 @@ func buildCompensationRequest(base *pb.JobRequest) (*pb.JobRequest, error) {
 		req.Labels = mergeStringMap(req.Labels, comp.Labels)
 	}
 
+	explicitIdem := comp.Meta != nil && strings.TrimSpace(comp.Meta.IdempotencyKey) != ""
+	if !explicitIdem {
+		if req.Meta == nil {
+			req.Meta = &pb.JobMetadata{}
+		}
+		if key := compensationIdempotencyKey(base, comp); key != "" {
+			req.Meta.IdempotencyKey = key
+		}
+	}
+
 	req.Priority = pb.JobPriority_JOB_PRIORITY_CRITICAL
 	return req, nil
+}
+
+func compensationIdempotencyKey(base *pb.JobRequest, comp *pb.Compensation) string {
+	if base == nil || comp == nil {
+		return ""
+	}
+	workflowID := strings.TrimSpace(base.WorkflowId)
+	jobID := strings.TrimSpace(base.JobId)
+	topic := strings.TrimSpace(comp.Topic)
+	capability := ""
+	if comp.Meta != nil {
+		capability = strings.TrimSpace(comp.Meta.Capability)
+	}
+	if capability == "" && base.Meta != nil {
+		capability = strings.TrimSpace(base.Meta.Capability)
+	}
+	step := ""
+	if base.StepIndex != 0 {
+		step = fmt.Sprintf("%d", base.StepIndex)
+	}
+	seed := strings.Trim(strings.Join([]string{workflowID, jobID, topic, capability, step}, "|"), "|")
+	if seed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(seed))
+	return "saga:" + hex.EncodeToString(sum[:16])
 }
 
 func mergeStringMap(base, override map[string]string) map[string]string {

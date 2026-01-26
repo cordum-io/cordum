@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -139,5 +140,54 @@ func TestSagaRollbackDispatchesCompensations(t *testing.T) {
 	}
 	if req.Env[sagaCompLabel] != "true" {
 		t.Fatalf("expected saga env flag")
+	}
+}
+
+func TestSagaRecordCompensationGeneratesIdempotency(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(srv.Close)
+
+	rdb, err := redisutil.NewClient("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("redis client: %v", err)
+	}
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	saga := NewSagaManager(&fakeBus{}, rdb)
+	req := &pb.JobRequest{
+		JobId:      "job-2",
+		Topic:      "job.primary",
+		WorkflowId: "wf-9",
+		Meta: &pb.JobMetadata{
+			IdempotencyKey: "base-idem",
+			Capability:     "cap-base",
+		},
+		Compensation: &pb.Compensation{
+			Topic: "job.undo",
+		},
+	}
+
+	if err := saga.RecordCompensation(context.Background(), req); err != nil {
+		t.Fatalf("record compensation: %v", err)
+	}
+	data, err := rdb.LPop(context.Background(), sagaStackKey("wf-9")).Bytes()
+	if err != nil {
+		t.Fatalf("pop saga entry: %v", err)
+	}
+	var stored pb.JobRequest
+	if err := proto.Unmarshal(data, &stored); err != nil {
+		t.Fatalf("unmarshal stored request: %v", err)
+	}
+	if stored.Meta == nil || stored.Meta.IdempotencyKey == "" {
+		t.Fatalf("expected generated idempotency key")
+	}
+	if stored.Meta.IdempotencyKey == "base-idem" {
+		t.Fatalf("expected compensation idempotency to differ from base")
+	}
+	if !strings.HasPrefix(stored.Meta.IdempotencyKey, "saga:") {
+		t.Fatalf("expected saga idempotency prefix, got %q", stored.Meta.IdempotencyKey)
 	}
 }

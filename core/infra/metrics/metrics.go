@@ -17,6 +17,13 @@ type Metrics interface {
 	IncJobsDispatched(topic string)
 	IncJobsCompleted(topic, status string)
 	IncSafetyDenied(topic string)
+	IncSagaRecorded()
+	IncSagaRollbackTriggered()
+	IncSagaCompensationDispatched()
+	IncSagaCompensationFailed()
+	ObserveSagaRollback(durationSeconds float64)
+	IncSagaActive()
+	DecSagaActive()
 }
 
 // GatewayMetrics captures request metrics for the API gateway.
@@ -38,6 +45,13 @@ func (Noop) IncJobsReceived(string)          {}
 func (Noop) IncJobsDispatched(string)        {}
 func (Noop) IncJobsCompleted(string, string) {}
 func (Noop) IncSafetyDenied(string)          {}
+func (Noop) IncSagaRecorded()                {}
+func (Noop) IncSagaRollbackTriggered()       {}
+func (Noop) IncSagaCompensationDispatched()  {}
+func (Noop) IncSagaCompensationFailed()      {}
+func (Noop) ObserveSagaRollback(float64)     {}
+func (Noop) IncSagaActive()                  {}
+func (Noop) DecSagaActive()                  {}
 
 // Prom implements Metrics backed by Prometheus counters.
 type Prom struct {
@@ -45,6 +59,12 @@ type Prom struct {
 	jobsDispatched *prometheus.CounterVec
 	jobsCompleted  *prometheus.CounterVec
 	safetyDenied   *prometheus.CounterVec
+	sagaRecorded   prometheus.Counter
+	sagaRollbacks  prometheus.Counter
+	sagaDispatched prometheus.Counter
+	sagaFailed     prometheus.Counter
+	sagaActive     prometheus.Gauge
+	sagaDuration   prometheus.Histogram
 	once           sync.Once
 }
 
@@ -70,6 +90,37 @@ func NewProm(namespace string) *Prom {
 			Name:      "safety_denied_total",
 			Help:      "Jobs denied by safety kernel per topic",
 		}, []string{"topic"}),
+		sagaRecorded: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "saga_recorded_total",
+			Help:      "Compensation steps recorded for sagas",
+		}),
+		sagaRollbacks: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "saga_rollbacks_total",
+			Help:      "Saga rollbacks triggered",
+		}),
+		sagaDispatched: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "saga_compensation_dispatched_total",
+			Help:      "Compensation jobs dispatched",
+		}),
+		sagaFailed: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "saga_compensation_failed_total",
+			Help:      "Compensation dispatch failures",
+		}),
+		sagaActive: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "saga_active",
+			Help:      "Active saga rollbacks in progress",
+		}),
+		sagaDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "saga_rollback_duration_seconds",
+			Help:      "Saga rollback duration in seconds",
+			Buckets:   prometheus.DefBuckets,
+		}),
 	}
 	p.register()
 	return p
@@ -77,7 +128,18 @@ func NewProm(namespace string) *Prom {
 
 func (p *Prom) register() {
 	p.once.Do(func() {
-		prometheus.MustRegister(p.jobsReceived, p.jobsDispatched, p.jobsCompleted, p.safetyDenied)
+		prometheus.MustRegister(
+			p.jobsReceived,
+			p.jobsDispatched,
+			p.jobsCompleted,
+			p.safetyDenied,
+			p.sagaRecorded,
+			p.sagaRollbacks,
+			p.sagaDispatched,
+			p.sagaFailed,
+			p.sagaActive,
+			p.sagaDuration,
+		)
 	})
 }
 
@@ -95,6 +157,36 @@ func (p *Prom) IncJobsCompleted(topic, status string) {
 
 func (p *Prom) IncSafetyDenied(topic string) {
 	p.safetyDenied.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncSagaRecorded() {
+	p.sagaRecorded.Inc()
+}
+
+func (p *Prom) IncSagaRollbackTriggered() {
+	p.sagaRollbacks.Inc()
+}
+
+func (p *Prom) IncSagaCompensationDispatched() {
+	p.sagaDispatched.Inc()
+}
+
+func (p *Prom) IncSagaCompensationFailed() {
+	p.sagaFailed.Inc()
+}
+
+func (p *Prom) ObserveSagaRollback(durationSeconds float64) {
+	if durationSeconds >= 0 {
+		p.sagaDuration.Observe(durationSeconds)
+	}
+}
+
+func (p *Prom) IncSagaActive() {
+	p.sagaActive.Inc()
+}
+
+func (p *Prom) DecSagaActive() {
+	p.sagaActive.Dec()
 }
 
 // Handler returns an HTTP handler for /metrics.
