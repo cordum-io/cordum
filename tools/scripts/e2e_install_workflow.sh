@@ -32,7 +32,12 @@ port_in_use() {
 
 assert_ports_free() {
   local allow="${CORDUM_E2E_ALLOW_PORTS:-0}"
-  local ports=(8081 8082 8080 9092 9093 50051 50070 4222 6379)
+  local default_ports="8081 8082 8080 9092 9093 50051 50070 4222 6379"
+  local ports_str="${CORDUM_E2E_PORTS:-$default_ports}"
+  # Allow ports to be provided as a comma- or space-separated list.
+  ports_str=${ports_str//,/ }
+  local -a ports=()
+  read -ra ports <<<"$ports_str"
   if [[ "${allow}" == "1" ]]; then
     return 0
   fi
