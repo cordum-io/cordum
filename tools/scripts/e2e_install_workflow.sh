@@ -164,7 +164,7 @@ pushd "${DEST_DIR}" >/dev/null
 
 echo "[e2e] running approval workflow smoke test"
 CORDUM_API_KEY="${API_KEY}" CORDUM_TENANT_ID="${TENANT_ID}" CORDUM_ORG_ID="${ORG_ID}" \
-  ./tools/scripts/platform_smoke.sh
+  bash ./tools/scripts/platform_smoke.sh
 
 if [[ "${CORDUM_E2E_TEARDOWN:-0}" == "1" ]]; then
   echo "[e2e] tearing down compose stack"
