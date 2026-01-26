@@ -70,6 +70,8 @@ Additional behaviors:
 - Per-job Redis lock prevents duplicate dispatch.
 - Idempotency keys are deduped in JobStore.
 - Reconciler marks stale `DISPATCHED`/`RUNNING` jobs as `TIMEOUT`.
+- `JobResult` may return `FAILED_RETRYABLE` or `FAILED_FATAL`; both map to `FAILED` in JobStore.
+- `FAILED_RETRYABLE` suppresses DLQ emission; `FAILED_FATAL` triggers saga rollback.
 
 ## Reason codes
 

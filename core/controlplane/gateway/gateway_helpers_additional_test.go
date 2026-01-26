@@ -209,6 +209,21 @@ func TestNormalizeTimestampHelpers(t *testing.T) {
 	}
 }
 
+func TestClientIP(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.RemoteAddr = "192.0.2.10:1234"
+	if got := clientIP(req); got != "192.0.2.10" {
+		t.Fatalf("expected host without port, got %q", got)
+	}
+	req.RemoteAddr = "10.0.0.2"
+	if got := clientIP(req); got != "10.0.0.2" {
+		t.Fatalf("expected raw addr, got %q", got)
+	}
+	if clientIP(nil) != "" {
+		t.Fatalf("expected empty for nil request")
+	}
+}
+
 func TestStatusRecorderWriteHeaderAndFlush(t *testing.T) {
 	rr := httptest.NewRecorder()
 	rec := &statusRecorder{ResponseWriter: rr}

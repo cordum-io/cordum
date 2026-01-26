@@ -14,6 +14,8 @@ github.com/cordum-io/cap/v2 v2.0.12 h1:47lYs9YLrS+EHw1596rACmFI+sM24Wc9QttrxBLyN
 github.com/cordum-io/cap/v2 v2.0.12/go.mod h1:gzRqG/14fSic9ofImJ7r+6R4t5fFCS4gQRaX/lZyKH4=
 github.com/cordum-io/cap/v2 v2.0.13 h1:kciEqsAcPKmn/DMphmYVvp5kYphxOnrwdWXf2lQo6HI=
 github.com/cordum-io/cap/v2 v2.0.13/go.mod h1:gzRqG/14fSic9ofImJ7r+6R4t5fFCS4gQRaX/lZyKH4=
+github.com/cordum-io/cap/v2 v2.0.16 h1:xfs9wSrWG2L33d/eUxfBQZeh2Ds4SJ4E3tlIK7B3A6A=
+github.com/cordum-io/cap/v2 v2.0.16/go.mod h1:jmrTfbgfD2dqrP6fO+8AZjZ0y9mV5I+yhP9ai9LjlvU=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

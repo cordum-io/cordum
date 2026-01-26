@@ -1,0 +1,41 @@
+package redisutil
+
+import (
+	"testing"
+)
+
+func TestParseAddrListEnv(t *testing.T) {
+	t.Setenv(envRedisClusterAddrs, "redis1:6379, redis2:6379 redis3:6379")
+	addrs := parseAddrListEnv(envRedisClusterAddrs)
+	if len(addrs) != 3 {
+		t.Fatalf("expected 3 addrs, got %d", len(addrs))
+	}
+	if addrs[0] != "redis1:6379" || addrs[2] != "redis3:6379" {
+		t.Fatalf("unexpected addr list: %v", addrs)
+	}
+}
+
+func TestParseBoolEnv(t *testing.T) {
+	t.Setenv(envRedisTLSInsecure, "true")
+	if !parseBoolEnv(envRedisTLSInsecure) {
+		t.Fatalf("expected true")
+	}
+	t.Setenv(envRedisTLSInsecure, "no")
+	if parseBoolEnv(envRedisTLSInsecure) {
+		t.Fatalf("expected false")
+	}
+}
+
+func TestTLSConfigFromEnvErrors(t *testing.T) {
+	t.Setenv("CORDUM_ENV", "production")
+	if _, err := tlsConfigFromEnv(nil); err == nil {
+		t.Fatalf("expected tls required error")
+	}
+
+	t.Setenv("CORDUM_ENV", "")
+	t.Setenv(envRedisTLSCert, "/tmp/cert.pem")
+	t.Setenv(envRedisTLSKey, "")
+	if _, err := tlsConfigFromEnv(nil); err == nil {
+		t.Fatalf("expected cert/key mismatch error")
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/memory"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
 )
 
@@ -78,6 +79,21 @@ func main() {
 	}
 	defer natsBus.Close()
 
+	sagaRedis, err := redisutil.NewClient(cfg.RedisURL)
+	if err != nil {
+		log.Fatalf("failed to connect to Redis for saga: %v", err)
+	}
+	{
+		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := sagaRedis.Ping(pingCtx).Err(); err != nil {
+			cancel()
+			log.Fatalf("failed to ping Redis for saga: %v", err)
+		}
+		cancel()
+	}
+	defer sagaRedis.Close()
+	sagaManager := scheduler.NewSagaManager(natsBus, sagaRedis).WithMetrics(metrics)
+
 	safetyClient, err := scheduler.NewSafetyClient(cfg.SafetyKernelAddr)
 	if err != nil {
 		log.Fatalf("failed to connect to safety kernel: %v", err)
@@ -133,7 +149,7 @@ func main() {
 		strategy,
 		jobStore,
 		metrics,
-	).WithConfig(configSvc)
+	).WithConfig(configSvc).WithSaga(sagaManager)
 
 	if err := engine.Start(); err != nil {
 		log.Fatalf("failed to start scheduler engine: %v", err)

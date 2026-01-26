@@ -292,6 +292,16 @@ func TestRunIdempotencyKeyMapping(t *testing.T) {
 	if ok {
 		t.Fatalf("expected idempotency key to be taken")
 	}
+
+	if err := store.DeleteRunIdempotencyKey(ctx, "idem-key-1"); err != nil {
+		t.Fatalf("delete idempotency key: %v", err)
+	}
+	if got, err := store.GetRunByIdempotencyKey(ctx, "idem-key-1"); err == nil || got != "" {
+		t.Fatalf("expected idempotency key to be removed")
+	}
+	if err := store.DeleteRunIdempotencyKey(ctx, ""); err == nil {
+		t.Fatalf("expected error on empty idempotency key")
+	}
 }
 
 func TestRunTimelineAppendAndList(t *testing.T) {

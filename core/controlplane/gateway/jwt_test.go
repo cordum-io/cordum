@@ -2,9 +2,13 @@ package gateway
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"testing"
 	"time"
 )
@@ -73,6 +77,41 @@ func TestJWTValidatorIssuerMismatch(t *testing.T) {
 	token := signHS256(t, "secret", payload)
 	if _, err := validator.Validate(token); err == nil {
 		t.Fatalf("expected issuer mismatch error")
+	}
+}
+
+func TestParseRSAPublicKey(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+
+	pkixBytes, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal pkix: %v", err)
+	}
+	pemBlock := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pkixBytes})
+	if _, err := parseRSAPublicKey(pemBlock); err != nil {
+		t.Fatalf("parse pkix pem: %v", err)
+	}
+
+	pkcs1Bytes := x509.MarshalPKCS1PublicKey(&key.PublicKey)
+	if _, err := parseRSAPublicKey(pkcs1Bytes); err != nil {
+		t.Fatalf("parse pkcs1: %v", err)
+	}
+
+	if _, err := parseRSAPublicKey(nil); err == nil {
+		t.Fatalf("expected error on empty key")
+	}
+}
+
+func TestDecodeMaybeBase64(t *testing.T) {
+	raw := base64.StdEncoding.EncodeToString([]byte("secret"))
+	if got := decodeMaybeBase64(raw); string(got) != "secret" {
+		t.Fatalf("expected base64 decode")
+	}
+	if got := decodeMaybeBase64("plain"); string(got) != "plain" {
+		t.Fatalf("expected raw bytes")
 	}
 }
 

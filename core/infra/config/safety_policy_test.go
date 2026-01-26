@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestParseSafetyPolicyEmpty(t *testing.T) {
 	policy, err := ParseSafetyPolicy(nil)
@@ -144,5 +147,34 @@ func TestParseSafetyPolicyInvalidDecision(t *testing.T) {
 	_, err := ParseSafetyPolicy([]byte("rules:\n  - id: rule1\n    decision: maybe\n"))
 	if err == nil {
 		t.Fatalf("expected schema validation error")
+	}
+}
+
+func TestLoadSafetyPolicy(t *testing.T) {
+	if policy, err := LoadSafetyPolicy(""); err != nil || policy != nil {
+		t.Fatalf("expected empty policy for empty path")
+	}
+	if policy, err := LoadSafetyPolicy("nonexistent.yaml"); err != nil || policy != nil {
+		t.Fatalf("expected nil policy for missing file")
+	}
+
+	tmp, err := os.CreateTemp("", "policy-*.yaml")
+	if err != nil {
+		t.Fatalf("temp file: %v", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString("default_tenant: default\n"); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	if err := tmp.Close(); err != nil {
+		t.Fatalf("close policy: %v", err)
+	}
+
+	policy, err := LoadSafetyPolicy(tmp.Name())
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	if policy == nil || policy.DefaultTenant != "default" {
+		t.Fatalf("expected loaded policy")
 	}
 }

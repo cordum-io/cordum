@@ -1,4 +1,5 @@
 # Cordum Agent Protocol (NATS + Redis pointers)
+Tags: saga, compensation, job-status, scheduler
 
 This document describes how control-plane components and external workers communicate on the bus, what goes into `context_ptr` / `result_ptr`, and how job state is tracked.
 
@@ -50,7 +51,9 @@ Priority semantics:
 - The scheduler treats `priority` as metadata only (no preemption or queue ordering today).
 - Workers may choose to use it for local ordering, but core does not enforce it.
 - **JobResult**
-  - `job_id`, `status` (`PENDING|SCHEDULED|DISPATCHED|RUNNING|SUCCEEDED|FAILED|CANCELLED|DENIED|TIMEOUT`), `result_ptr`, `worker_id`, `execution_ms`, optional `error_code`/`error_message`.
+  - `job_id`, `status` (`PENDING|SCHEDULED|DISPATCHED|RUNNING|SUCCEEDED|FAILED|FAILED_RETRYABLE|FAILED_FATAL|CANCELLED|DENIED|TIMEOUT`), `result_ptr`, `worker_id`, `execution_ms`, optional `error_code`/`error_message`.
+  - `FAILED_RETRYABLE` is treated as a transient failure (no DLQ entry; workflow retry policy can re-dispatch).
+  - `FAILED_FATAL` is treated as a terminal failure and triggers saga rollback.
 - **JobProgress**
   - `job_id`, `percent`, `message`, optional `result_ptr`/`artifact_ptrs`, optional status hint.
 - **JobCancel**
@@ -79,6 +82,8 @@ Priority semantics:
    - Uses pool map + `LeastLoadedStrategy` to choose a subject (`worker.<id>.jobs` when possible; otherwise `job.*`); publishes job and moves state to `SCHEDULED → DISPATCHED → RUNNING`.
 4. Worker consumes `job.*` or `worker.<id>.jobs`, fetches `context_ptr`, performs work, writes result to `res:<job_id>`, and publishes `BusPacket{JobResult}` with `result_ptr`.
 5. Scheduler updates JobStore with terminal state from `JobResult` and stores `result_ptr`.
+   - `FAILED_RETRYABLE` does not emit a DLQ entry.
+   - `FAILED_FATAL` initiates saga compensation if a workflow is associated.
 6. Reconciler periodically marks old `DISPATCHED`/`RUNNING` jobs as `TIMEOUT` based on `config/timeouts.yaml`.
 7. Cancellation: gateway or scheduler publishes `BusPacket{JobCancel}` to `sys.job.cancel`; workers cancel the matching in-flight job context and publish a terminal `JobResult` (`CANCELLED` or `TIMEOUT`).
 

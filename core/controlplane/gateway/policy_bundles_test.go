@@ -170,3 +170,46 @@ func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {
 		t.Fatalf("expected audit entries")
 	}
 }
+
+func TestPolicyBundleSnapshotHandlers(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	captureReq := httptest.NewRequest(http.MethodPost, "/api/v1/policy/bundles/snapshots", bytes.NewReader([]byte(`{"note":"snapshot-test"}`)))
+	captureReq.Header.Set("X-Tenant-ID", "default")
+	captureReq.Header.Set("X-Principal-Role", "admin")
+	captureRec := httptest.NewRecorder()
+	s.handleCapturePolicyBundleSnapshot(captureRec, captureReq)
+	if captureRec.Code != http.StatusOK {
+		t.Fatalf("capture snapshot: %d %s", captureRec.Code, captureRec.Body.String())
+	}
+	var snap policyBundleSnapshot
+	if err := json.NewDecoder(captureRec.Body).Decode(&snap); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if snap.ID == "" {
+		t.Fatalf("expected snapshot id")
+	}
+	if snap.Note != "snapshot-test" {
+		t.Fatalf("expected snapshot note")
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles/snapshots/"+snap.ID, nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
+	getReq.Header.Set("X-Principal-Role", "admin")
+	getReq.SetPathValue("id", snap.ID)
+	getRec := httptest.NewRecorder()
+	s.handleGetPolicyBundleSnapshot(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get snapshot: %d %s", getRec.Code, getRec.Body.String())
+	}
+
+	missingReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles/snapshots/missing", nil)
+	missingReq.Header.Set("X-Tenant-ID", "default")
+	missingReq.Header.Set("X-Principal-Role", "admin")
+	missingReq.SetPathValue("id", "missing")
+	missingRec := httptest.NewRecorder()
+	s.handleGetPolicyBundleSnapshot(missingRec, missingReq)
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("expected not found for missing snapshot")
+	}
+}

@@ -191,3 +191,20 @@ func TestNatsTLSConfigFromEnv(t *testing.T) {
 		t.Fatalf("expected error for missing key")
 	}
 }
+
+func TestNatsTLSConfigProductionGuards(t *testing.T) {
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv(envNATSTLSCA, "")
+	t.Setenv(envNATSTLSCert, "")
+	t.Setenv(envNATSTLSKey, "")
+	t.Setenv(envNATSTLSServerName, "")
+	t.Setenv(envNATSTLSInsecure, "")
+	if _, err := natsTLSConfigFromEnv(); err == nil {
+		t.Fatalf("expected tls required error in production")
+	}
+
+	t.Setenv(envNATSTLSInsecure, "1")
+	if _, err := natsTLSConfigFromEnv(); err == nil {
+		t.Fatalf("expected insecure tls error in production")
+	}
+}
