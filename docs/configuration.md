@@ -40,7 +40,8 @@ Shared across services:
 - `GATEWAY_METRICS_PUBLIC` (set to `1` to allow non-loopback metrics bind in production)
 - `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST` (applied per tenant; falls back to client IP when tenant is missing)
 - `TENANT_ID` (single-tenant default)
-- API keys: `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
+- API keys: `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
+- Legacy alias (avoid for new setups): `CORDUM_SUPER_SECRET_API_TOKEN`
 - API key file: `CORDUM_API_KEYS_PATH` (same format as `CORDUM_API_KEYS`, reloads on change)
 - Allow anonymous auth (local/dev only): `CORDUM_ALLOW_INSECURE_NO_AUTH=1`
 - Header principal: `CORDUM_ALLOW_HEADER_PRINCIPAL=true` (disabled by default in production)

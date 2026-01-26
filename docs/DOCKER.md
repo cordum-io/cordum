@@ -30,6 +30,9 @@ docker compose up -d
 docker compose ps
 ```
 
+Docker Compose automatically loads `.env`. The helper scripts read environment
+variables from your shell, so keep the `export` lines when running scripts.
+
 ## Use GHCR images (release builds)
 
 Export the release version and use the release compose file:
@@ -53,7 +56,7 @@ The release images are published as:
 ```bash
 CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
 CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default} \
-./tools/scripts/platform_smoke.sh
+bash ./tools/scripts/platform_smoke.sh
 ```
 
 ## API key setup
@@ -71,12 +74,15 @@ cp .env.example .env
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
 # set a tenant for requests
 export CORDUM_TENANT_ID=default
-# edit CORDUM_API_KEY
 ```
 
 HTTP requests must include `X-API-Key` and `X-Tenant-ID`; gRPC uses metadata `x-api-key`.
 The default tenant is `TENANT_ID` (defaults to `default` in compose).
 WebSocket stream auth uses `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` plus `?tenant_id=<tenant>` (the dashboard handles this automatically).
+
+The default Compose stack embeds the API key into the dashboard config for local
+development (`CORDUM_DASHBOARD_EMBED_API_KEY=true`). Remove that variable in
+shared environments to require manual auth.
 
 Production mode (`CORDUM_ENV=production`) requires TLS for HTTP/gRPC and for Redis/NATS clients.
 Metrics endpoints bind to loopback in production unless you set `GATEWAY_METRICS_PUBLIC=1`.

@@ -21,8 +21,10 @@ cp .env.example .env
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
 # set a tenant for requests
 export CORDUM_TENANT_ID=default
-# edit CORDUM_API_KEY
 ```
+
+Docker Compose automatically loads `.env`. The helper scripts read environment
+variables from your shell, so keep the `export` lines when running scripts.
 
 ## Start the stack
 
@@ -63,7 +65,7 @@ for details.
 ## Run a workflow smoke test
 
 ```bash
-CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} ./tools/scripts/platform_smoke.sh
+CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} bash ./tools/scripts/platform_smoke.sh
 ```
 
 Expected output:

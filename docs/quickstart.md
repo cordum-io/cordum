@@ -6,8 +6,12 @@ without any external workers.
 Want the fastest path? Run:
 
 ```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export CORDUM_TENANT_ID=default
 ./tools/scripts/quickstart.sh
 ```
+
+`quickstart.sh` brings up the stack and runs the approval smoke test for you.
 
 ## Prerequisites
 
@@ -24,6 +28,9 @@ Set an API key and tenant before starting:
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
 export CORDUM_TENANT_ID=default
 ```
+
+Docker Compose reads `.env` automatically; the helper scripts read environment
+variables from your shell, so keep the `export` lines when running scripts.
 
 ## Step 2: Start the stack
 
@@ -117,6 +124,6 @@ curl -sS -X DELETE http://localhost:8081/api/v1/workflows/${workflow_id}?org_id=
 
 ## Next steps
 
-- Run the built-in smoke test: `./tools/scripts/platform_smoke.sh`
+- If you did not run `quickstart.sh`, run the built-in smoke test: `bash ./tools/scripts/platform_smoke.sh`
 - Install the hello pack: `examples/hello-pack` + `examples/hello-worker-go`
 - Explore the dashboard: `http://localhost:8082`

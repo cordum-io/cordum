@@ -70,6 +70,9 @@ export CORDUM_TENANT_ID=default
 ./tools/scripts/quickstart.sh
 ```
 
+Docker Compose loads `.env` automatically; the helper scripts read environment
+variables from your shell.
+
 Install + approval workflow E2E (fresh install):
 
 ```bash
@@ -110,7 +113,7 @@ docker compose build && docker compose up -d
 **3. Verify**
 
 * **Dashboard:** Open `http://localhost:8082`
-* **Smoke Test:** Run `CORDUM_API_KEY=<your-api-key> CORDUM_TENANT_ID=default ./tools/scripts/platform_smoke.sh`
+* **Smoke Test:** Run `CORDUM_API_KEY=<your-api-key> CORDUM_TENANT_ID=default bash ./tools/scripts/platform_smoke.sh`
 * **API sanity check:** `curl -sS http://localhost:8081/api/v1/status -H "X-API-Key: <your-key>" -H "X-Tenant-ID: default" | jq`
 
 **Kubernetes (Helm)**

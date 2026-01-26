@@ -192,4 +192,4 @@ See `config/pools.yaml` for the full map. Topics are config-driven; no core topi
 
 - Run `go test ./...` (use `GOCACHE=$(pwd)/.cache/go-build` if needed).
 - If modifying `.proto`, run `make proto`.
-- Platform smoke: `./tools/scripts/platform_smoke.sh`.
+- Platform smoke: `bash ./tools/scripts/platform_smoke.sh`.

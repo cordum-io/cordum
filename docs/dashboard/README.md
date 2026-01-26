@@ -113,6 +113,9 @@ To embed an API key (not recommended for shared environments), add:
 ## Compose
 
 `docker-compose.yml` includes `cordum-dashboard` on port `8082`.
+The default Compose stack embeds the API key into the dashboard config for local
+development (`CORDUM_DASHBOARD_EMBED_API_KEY=true`). Remove that variable in
+shared environments to require manual auth.
 
 ## Workflow Authoring
 

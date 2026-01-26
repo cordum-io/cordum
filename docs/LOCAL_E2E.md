@@ -13,7 +13,7 @@ This document captures end-to-end flows validated against the platform-only stac
 ### Platform smoke (curl + jq)
 
 ```bash
-./tools/scripts/platform_smoke.sh
+bash ./tools/scripts/platform_smoke.sh
 ```
 
 ### Install-to-approval E2E
