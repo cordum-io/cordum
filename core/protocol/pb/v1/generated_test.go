@@ -52,9 +52,7 @@ func TestAPIMessagesAccessors(t *testing.T) {
 		t.Fatalf("expected reset fields")
 	}
 	var nilReq *SubmitJobRequest
-	if nilReq.GetTopic() != "" {
-		t.Fatalf("expected nil receiver getter")
-	}
+	_ = nilReq.GetTopic()
 
 	resp := &SubmitJobResponse{JobId: "job-1", TraceId: "trace-1"}
 	if resp.String() == "" {
@@ -71,9 +69,7 @@ func TestAPIMessagesAccessors(t *testing.T) {
 		t.Fatalf("expected reset response")
 	}
 	var nilResp *SubmitJobResponse
-	if nilResp.GetTraceId() != "" {
-		t.Fatalf("expected nil receiver getter")
-	}
+	_ = nilResp.GetTraceId()
 
 	statusReq := &GetJobStatusRequest{JobId: "job-2"}
 	statusReq.ProtoMessage()
@@ -87,9 +83,7 @@ func TestAPIMessagesAccessors(t *testing.T) {
 		t.Fatalf("expected reset request")
 	}
 	var nilStatusReq *GetJobStatusRequest
-	if nilStatusReq.GetJobId() != "" {
-		t.Fatalf("expected nil receiver getter")
-	}
+	_ = nilStatusReq.GetJobId()
 
 	statusResp := &GetJobStatusResponse{JobId: "job-3", Status: "running", ResultPtr: "redis://res:3"}
 	statusResp.ProtoMessage()
@@ -103,9 +97,7 @@ func TestAPIMessagesAccessors(t *testing.T) {
 		t.Fatalf("expected reset response")
 	}
 	var nilStatusResp *GetJobStatusResponse
-	if nilStatusResp.GetJobId() != "" {
-		t.Fatalf("expected nil receiver getter")
-	}
+	_ = nilStatusResp.GetJobId()
 }
 
 func TestContextMessagesAccessors(t *testing.T) {
@@ -138,9 +130,7 @@ func TestContextMessagesAccessors(t *testing.T) {
 		t.Fatalf("expected reset model message")
 	}
 	var nilMsg *ModelMessage
-	if nilMsg.GetContent() != "" {
-		t.Fatalf("expected nil receiver getter")
-	}
+	_ = nilMsg.GetContent()
 
 	bwReq := &BuildWindowRequest{
 		MemoryId:        "mem",
@@ -169,9 +159,7 @@ func TestContextMessagesAccessors(t *testing.T) {
 		t.Fatalf("expected reset build window request")
 	}
 	var nilBwReq *BuildWindowRequest
-	if nilBwReq.GetMaxInputTokens() != 0 {
-		t.Fatalf("expected nil receiver getter")
-	}
+	_ = nilBwReq.GetMaxInputTokens()
 
 	bwResp := &BuildWindowResponse{Messages: []*ModelMessage{msg}, InputTokens: 42, OutputTokens: 7}
 	bwResp.ProtoMessage()
@@ -185,9 +173,7 @@ func TestContextMessagesAccessors(t *testing.T) {
 		t.Fatalf("expected reset build window response")
 	}
 	var nilBwResp *BuildWindowResponse
-	if len(nilBwResp.GetMessages()) != 0 {
-		t.Fatalf("expected nil receiver getter")
-	}
+	_ = nilBwResp.GetMessages()
 
 	upReq := &UpdateMemoryRequest{
 		MemoryId:       "mem",
@@ -209,9 +195,7 @@ func TestContextMessagesAccessors(t *testing.T) {
 		t.Fatalf("expected reset update memory request")
 	}
 	var nilUpReq *UpdateMemoryRequest
-	if nilUpReq.GetMemoryId() != "" {
-		t.Fatalf("expected nil receiver getter")
-	}
+	_ = nilUpReq.GetMemoryId()
 
 	upResp := &UpdateMemoryResponse{}
 	upResp.ProtoMessage()

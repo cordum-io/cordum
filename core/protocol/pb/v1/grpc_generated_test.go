@@ -53,7 +53,7 @@ func TestGRPCGeneratedClientsAndServers(t *testing.T) {
 	dialer := func(context.Context, string) (net.Conn, error) {
 		return lis.Dial()
 	}
-	conn, err := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial bufnet: %v", err)
 	}
