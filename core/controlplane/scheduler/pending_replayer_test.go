@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +39,65 @@ func TestPendingReplayerReplaysJobs(t *testing.T) {
 	}
 	if state != JobStateRunning {
 		t.Fatalf("expected job running, got %s", state)
+	}
+}
+
+type observedBus struct {
+	mu        sync.Mutex
+	published int
+}
+
+func (b *observedBus) Publish(subject string, packet *pb.BusPacket) error {
+	b.mu.Lock()
+	b.published++
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *observedBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
+	return nil
+}
+
+func (b *observedBus) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.published
+}
+
+func TestPendingReplayerStartTriggersTick(t *testing.T) {
+	store := &replayerStore{
+		fakeJobStore: newFakeJobStore(),
+		reqs:         map[string]*pb.JobRequest{},
+	}
+	bus := &observedBus{}
+	registry := NewMemoryRegistry()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{JobId: "job-start", Topic: "job.test", TenantId: "default"}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := store.SetState(context.Background(), req.JobId, JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	replayer := NewPendingReplayer(engine, store, time.Millisecond, time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go replayer.Start(ctx)
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if bus.count() > 0 {
+			cancel()
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+
+	if bus.count() == 0 {
+		t.Fatalf("expected pending replayer to publish job")
 	}
 }
 

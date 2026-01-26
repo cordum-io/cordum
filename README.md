@@ -1,285 +1,217 @@
-# Cordum - Deterministic Control Plane for Autonomous Workflows
+<p align="center">
+  <img src="https://cordum.io/logo.svg" alt="Cordum" width="200"/>
+</p>
 
-[![License: BUSL-1.1](https://img.shields.io/badge/license-BUSL--1.1-blue)](./LICENSE)
-[![Release](https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver)](https://github.com/cordum-io/cordum/releases)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/cordum-io/cordum)](./go.mod)
-[![Docker Compose](https://img.shields.io/badge/compose-ready-0f766e)](./docker-compose.yml)
-[![Docs](https://img.shields.io/badge/docs-cordum--docs-0ea5e9)](./docs/README.md)
-![CI](https://github.com/cordum-io/cordum/workflows/CI/badge.svg)
-![CodeQL](https://github.com/cordum-io/cordum/workflows/CodeQL/badge.svg)
-![Coverage Target](https://img.shields.io/badge/coverage-target%2080%25-22c55e)
-[![Website](https://img.shields.io/badge/website-cordum.io-blue)](https://cordum.io)
-[![WebsiteDocs](https://img.shields.io/badge/docs-cordum.io%2Fdocs-0ea5e9)](https://cordum.io/docs)
-[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/26yw9VQV)
+<h1 align="center">Cordum</h1>
 
-**Cordum** (cordum.io) is the governance-first control plane for autonomous AI agents.
+<p align="center">
+  <strong>AI Agent Governance Platform</strong><br/>
+  Deploy autonomous agents with built-in safety, observability, and control.
+</p>
 
-It fills the "Trust Gap" between LLMs and production infrastructure. Instead of letting agents call tools directly, Cordum intercepts every intent, evaluates it against a **Safety Kernel**, and only dispatches approved commands to workers via a durable bus.
-
-> **The Problem:** Enterprises can't let non-deterministic agents write to production.
-> **The Solution:** Cordum enforces Policy-as-Code, deterministic scheduling, and durable execution to make agents safe for real work.
+<p align="center">
+  <a href="https://github.com/cordum-io/cordum/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License"/></a>
+  <a href="https://github.com/cordum-io/cordum/releases"><img src="https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver" alt="Release"/></a>
+  <a href="https://discord.gg/cordum"><img src="https://img.shields.io/discord/YOUR_DISCORD_ID?label=discord&logo=discord" alt="Discord"/></a>
+  <a href="https://github.com/cordum-io/cap"><img src="https://img.shields.io/badge/protocol-CAP%20v2-green" alt="CAP Protocol"/></a>
+</p>
 
 ---
 
-## ⚡️ 2-minute guardrails demo
+## The Problem
 
-See the **Safety Kernel** in action (Worker + Policy Gate + Approval).
+AI agents are powerful. They're also unpredictable.
 
-Prereqs: the stack is running and the demo worker is online.
+Teams deploying agents in production face the **Trust Gap**: the distance between what an agent *can* do and what you're *confident* letting it do unsupervised.
 
-Terminal A (stack):
-```bash
-go run ./cmd/cordumctl up
-# or: docker compose up -d
-```
+Without governance, you're flying blind:
+- No visibility into what agents are doing
+- No safety rails before dangerous actions
+- No audit trail when things go wrong
+- No way to require human approval for sensitive operations
 
-Terminal B (worker):
-```bash
-cd examples/demo-guardrails/worker
-go run .
-```
+## The Solution
 
-Terminal C (demo):
-```bash
-CORDUM_API_KEY=<your-api-key> \
-CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default} \
-CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
-./tools/scripts/demo_guardrails.sh
+Cordum is a **control plane for AI agents** that closes the Trust Gap.
 
 ```
-
-Or use the one-command runner:
-
-```bash
-./tools/scripts/demo_guardrails_run.sh
+┌─────────────────────────────────────────────────────────────────┐
+│                         Cordum                                  │
+│                                                                 │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────────┐ │
+│  │   API    │──▶│ Scheduler│──▶│  Safety  │──▶│ Worker Pools │ │
+│  │ Gateway  │   │          │   │  Kernel  │   │              │ │
+│  └──────────┘   └──────────┘   └──────────┘   └──────────────┘ │
+│       │              │              │                │         │
+│       ▼              ▼              ▼                ▼         │
+│  [Dashboard]    [Workflows]    [Policies]      [Your Agents]   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-View the walkthrough: [docs/demo-guardrails.md](./docs/demo-guardrails.md)
+**What Cordum does:**
+
+- **Safety Kernel** — Policy checks (allow/deny/throttle/human-approve) before any job runs
+- **Workflow Engine** — Orchestrate multi-step agent workflows with retries, approvals, and timeouts
+- **Job Routing** — Distribute work across agent pools with capability-based routing
+- **Observability** — Full audit trail, traces, and real-time dashboard
+- **Human-in-the-Loop** — Require approval for sensitive operations
+
+## Quickstart
+
+**Prerequisites:** Docker, Docker Compose
+
+```bash
+# Clone the repo
+git clone https://github.com/cordum-io/cordum.git
+cd cordum
+
+# Start everything
+docker compose up -d
+
+# Open dashboard
+open http://localhost:8082
+```
+
+**Run the smoke test:**
+
+```bash
+./tools/scripts/platform_smoke.sh
+```
+
+That's it. You have a running Cordum instance with API, scheduler, safety kernel, and dashboard.
+
+## How It Works
+
+Cordum uses [CAP (Cordum Agent Protocol)](https://github.com/cordum-io/cap) for all agent communication:
+
+1. **Submit** — Client submits a job via API
+2. **Safety Check** — Scheduler asks Safety Kernel: allow, deny, throttle, or require approval?
+3. **Dispatch** — Approved jobs route to the right worker pool via NATS
+4. **Execute** — Your agent runs the job (using MCP, LangChain, whatever)
+5. **Result** — Agent returns result; Cordum updates state and notifies client
+
+```
+Client ──▶ API ──▶ Scheduler ──▶ Safety Kernel ──▶ NATS ──▶ Agent Pool
+                       │                              │
+                       ▼                              ▼
+                  [Redis State]                 [Your Agents]
+```
+
+**Key design choices:**
+- **Payloads stay off the bus** — `context_ptr` and `result_ptr` reference Redis/S3, keeping the message bus lean
+- **Protocol-first** — CAP is an independent spec; Cordum is the reference implementation
+- **Workers are external** — Cordum is the control plane; your agents run wherever you want
+
+## Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Safety Policies** | Define rules for what agents can/can't do. Enforce before execution. |
+| **Human Approval** | Flag sensitive jobs for manual review before they run. |
+| **Workflows** | Multi-step DAGs with fan-out, retries, delays, and conditions. |
+| **Pool Routing** | Route jobs by capability, region, or custom tags. |
+| **Heartbeats** | Know which agents are alive, their capacity, and load. |
+| **Audit Trail** | Every job, decision, and result logged and queryable. |
+| **Dashboard** | Real-time UI for workflows, jobs, approvals, and policies. |
+| **Multi-tenant** | API keys with RBAC for teams and environments. |
+
+## Architecture
+
+```
+cordum/
+├── cmd/                    # Service entrypoints
+│   ├── cordum-api/         # API gateway (HTTP/WS + gRPC)
+│   ├── cordum-scheduler/   # Job routing + safety + state
+│   └── cordum-context/     # Optional context/memory service
+├── core/                   # Shared libraries
+│   ├── safety/             # Safety kernel implementation
+│   ├── workflow/           # Workflow engine
+│   ├── scheduler/          # Scheduler logic
+│   └── protocol/           # CAP type aliases + API protos
+├── dashboard/              # React UI
+├── sdk/                    # Go SDK + worker runtime
+├── deploy/k8s/             # Kubernetes manifests
+└── docs/                   # Documentation
+```
+
+## Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [System Overview](docs/system_overview.md) | Architecture and data flow |
+| [Core Reference](docs/CORE.MD) | Deep technical details |
+| [Docker Guide](docs/DOCKER.md) | Running with Compose |
+| [Agent Protocol](docs/AGENT_PROTOCOL.md) | CAP bus + pointer semantics |
+| [Pack Format](docs/pack.md) | How to package agent capabilities |
+| [Local E2E](docs/LOCAL_E2E.md) | Full local walkthrough |
+
+## Protocol: CAP
+
+Cordum implements [CAP (Cordum Agent Protocol)](https://github.com/cordum-io/cap) — an open protocol for distributed AI agent orchestration.
+
+**CAP vs MCP:**
+- **MCP** = tool-calling protocol for a single model
+- **CAP** = job protocol for distributed agent clusters
+
+They're complementary. Use CAP for orchestration, MCP inside your agents for tools.
+
+Read more: [MCP vs CAP: Why Your AI Agents Need Both Protocols](https://dev.to/yaron_torgeman_104570d968/-mcp-vs-cap-why-your-ai-agents-need-both-protocols-3g4l)
+
+## SDK
+
+The Go SDK makes it easy to build CAP-compatible workers:
+
+```go
+import "github.com/cordum-io/cordum/sdk/runtime"
+
+func main() {
+    worker := runtime.NewWorker("my-agent", "job.my-pool")
+    
+    worker.Handle(func(ctx context.Context, job *runtime.Job) (*runtime.Result, error) {
+        // Your agent logic here
+        return &runtime.Result{Status: runtime.Succeeded}, nil
+    })
+    
+    worker.Run()
+}
+```
+
+SDKs: **Go** (stable) | Python (coming soon) | Node (coming soon)
+
+## Community
+
+- **Discord:** [Join the conversation](https://discord.gg/cordum)
+- **GitHub Discussions:** [Ask questions](https://github.com/cordum-io/cordum/discussions)
+- **Twitter/X:** [@coraboratedai](https://twitter.com/coraboratedai)
+- **Email:** [admin@cordum.io](mailto:admin@cordum.io)
+
+## Enterprise
+
+Cordum Enterprise adds:
+- SSO/SAML integration
+- Advanced RBAC
+- SIEM export
+- Priority support
+
+[Contact us](mailto:enterprise@cordum.io) for pricing.
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+Licensed under [Business Source License 1.1 (BUSL-1.1)](LICENSE). 
+
+Free for self-hosted and internal use. Not permitted for competing hosted/managed offerings. See LICENSE for details and Change Date.
 
 ---
 
-## 🚀 Getting started (1 minute)
-
-Prereqs: Docker + Docker Compose. Go is optional unless you want `cordumctl`. The quickstart/smoke test also require `curl` and `jq`.
-
-**Fastest path (recommended)**
-
-```bash
-export CORDUM_API_KEY="$(openssl rand -hex 32)"
-export CORDUM_TENANT_ID=default
-./tools/scripts/quickstart.sh
-```
-
-Docker Compose loads `.env` automatically; the helper scripts read environment
-variables from your shell.
-
-Install + approval workflow E2E (fresh install):
-
-```bash
-export CORDUM_API_KEY="$(openssl rand -hex 32)"
-export CORDUM_TENANT_ID=default
-./tools/scripts/e2e_install_workflow.sh
-```
-
-**1. Install**
-
-```bash
-# Install via one-liner
-CORDUM_API_KEY="$(openssl rand -hex 32)" \
-CORDUM_TENANT_ID=default \
-curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh | bash
-
-# Safer: download, inspect, then run
-curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh -o install.sh
-less install.sh
-CORDUM_API_KEY="$(openssl rand -hex 32)" CORDUM_TENANT_ID=default bash install.sh
-
-# Or run locally from a clone:
-CORDUM_API_KEY="$(openssl rand -hex 32)" CORDUM_TENANT_ID=default ./tools/scripts/install.sh
-
-```
-
-**2. Start the Platform**
-
-```bash
-# Requires Go
-go run ./cmd/cordumctl up
-
-# Or using Docker Compose
-docker compose build && docker compose up -d
-
-```
-
-**3. Verify**
-
-* **Dashboard:** Open `http://localhost:8082`
-* **Smoke Test:** Run `CORDUM_API_KEY=<your-api-key> CORDUM_TENANT_ID=default bash ./tools/scripts/platform_smoke.sh`
-* **API sanity check:** `curl -sS http://localhost:8081/api/v1/status -H "X-API-Key: <your-key>" -H "X-Tenant-ID: default" | jq`
-
-**Kubernetes (Helm)**
-
-Prereqs: Kubernetes cluster + Helm 3 + kubectl.
-
-```bash
-# Local chart (from this repo)
-helm install cordum ./cordum-helm -n cordum --create-namespace \
-  --set secrets.apiKey=<your-api-key> \
-  --set gateway.env.tenantId=default \
-  --set dashboard.env.tenantId=default
-
-# Or published chart
-helm repo add cordum https://charts.cordum.io
-helm repo update
-helm install cordum cordum/cordum -n cordum --create-namespace \
-  --set secrets.apiKey=<your-api-key> \
-  --set gateway.env.tenantId=default \
-  --set dashboard.env.tenantId=default
-```
-
-Access the services (ClusterIP by default):
-
-```bash
-kubectl -n cordum port-forward svc/cordum-api-gateway 8081:8081
-kubectl -n cordum port-forward svc/cordum-dashboard 8082:8080
-```
-
-Dashboard: `http://localhost:8082` (API key required).
-See `docs/helm.md` for overrides (API key, images, external Redis/NATS, ingress).
-
-**Production note:** set `CORDUM_ENV=production` and enable TLS everywhere
-(HTTP/gRPC, Redis, NATS). See `docs/production.md` and `docs/configuration.md`.
-
----
-
-## 🧠 Core Philosophy: "Policy-Before-Dispatch"
-
-Most frameworks (LangChain, CrewAI) function by having the LLM directly call tools. **Cordum inverts this.**
-
-* **Traditional:** `LLM` -> `Tool Execution` -> `Result`
-* **Cordum:** `LLM` -> `Intent (Job)` -> `Safety Kernel` -> `Dispatch` -> `Worker`
-
-This ensures that no matter how "jailbroken" or confused an LLM becomes, it cannot execute a dangerous command (e.g., `DROP DATABASE`) if the hard-coded policy forbids it.
-
-### Show, Don't Tell: Policy as Code
-
-You define strict boundaries for your agents using simple YAML policies.
-
-```yaml
-# policy/production-write.yaml
-rules:
-  - id: prevent-prod-destruction
-    description: "Prevent agents from destructive actions in prod"
-    trigger:
-      tags: ["database", "write"]
-      env: "production"
-    action: DENY
-    condition: "contains(payload.command, 'DROP') || contains(payload.command, 'DELETE')"
-
-  - id: require-human-approval
-    description: "Any payment over $50 requires human sign-off"
-    trigger:
-      tags: ["payment"]
-    action: REQUIRE_APPROVAL
-
-```
-
----
-
-## 🏗 Architecture
-
-Cordum is built as a distributed system using industry-standard infrastructure components. It is designed for **DevOps/Platform teams**, not just Python prototypers.
-
-![Cordum Architecture](Screenshot%202026-01-23%20162612.png)
-
-```mermaid
-graph TD;
-    Client[Clients / UI / MCP] -->|gRPC/HTTP| API[API Gateway];
-    API --> Redis[(Redis State)];
-    API --> Sched[Scheduler];
-    Sched -->|Evaluate| Kernel[Safety Kernel];
-    Kernel -->|Policy Decision| Sched;
-    Sched -->|Approved Job| NATS[NATS JetStream Bus];
-    NATS -->|Dispatch| Worker1[Worker: Python];
-    NATS -->|Dispatch| Worker2[Worker: Go];
-    NATS -->|Dispatch| Worker3[Worker: Node];
-
-```
-
-### The Stack
-
-* **Control Plane (Go):** High-performance API Gateway, Scheduler, and Safety Kernel.
-* **Data Plane (NATS JetStream):** Provides a durable nervous system. Ensures **at-least-once delivery**, so agent actions are never lost, even if a worker crashes.
-* **State Store (Redis):** Holds workflow DAGs, payload pointers, and distributed locks.
-* **Protocol (CAP v2):** The **Cordum Agent Protocol**. A language-agnostic wire contract (Protobuf) that standardizes how agents talk to the world.
-
-### Comparison
-
-| Feature | Standard Frameworks (LangChain/CrewAI) | Cordum Control Plane |
-| --- | --- | --- |
-| **Safety** | Prompt-based (System Prompts) | **Infrastructure-based (Policy Gate)** |
-| **Execution** | Probabilistic & Direct | **Deterministic & Orchestrated** |
-| **State** | Ephemeral / In-Memory | **Durable (Redis/NATS)** |
-| **Role** | Application Prototyping | **Production Governance** |
-
----
-
-## ✨ Feature Highlights
-
-* **Universal Orchestrator:** Manage multi-step processes (DAGs) with retries, backoffs, delays, and crash-safe state.
-* **Intelligent Scheduler:** Least-loaded scheduling with capability-aware pool routing (e.g., only route `requires: [gpu]` jobs to GPU nodes).
-* **Pack System:** Install capabilities like "apps." A Pack bundles Workers, Workflows, and Policies into a single distributable overlay.
-* **MCP Native:** Supports the **Model Context Protocol**. Use Cordum as the backend for Claude Desktop or IDE agents to add governance to your existing tools.
-* **Flight Recorder:** Every decision, policy check, and output is recorded. Replay failed workflows from any step.
-
----
-
-## 🛠 Developer Experience
-
-* **`cordumctl`:** CLI for managing packs, inspecting runs, and handling artifacts.
-* **Dashboard:** React-based UI for visualizing workflow graphs and managing approvals.
-* **SDKs:**
-* **Go:** First-class support (`sdk/`).
-* **Polyglot:** Workers can be written in Python, Node, or Rust by implementing the CAP v2 protocol over NATS.
-
-
-
-## 📦 Repositories
-
-* `cordum`: Core control plane (this repo).
-* `cordum-enterprise`: Enterprise binaries (Auth, RBAC, License check).
-* `cordum-packs`: Official pack bundles + worker projects.
-* `cap`: Protocol contracts and SDKs (`github.com/cordum-io/cap/v2`).
-
----
-
-## 🏢 Enterprise
-
-Enterprise features are delivered via the `cordum-enterprise` repo and require a license.
-
-**Enterprise Capabilities:**
-
-* **SSO/SAML Integration**
-* **Multi-tenant RBAC & API Keys**
-* **SIEM / Audit Log Export**
-* **Dedicated Support & SLA**
-
-[Contact Sales](https://cordum.io) for pricing and deployment assistance.
-
----
-
-## 🤝 Contributing & License
-
-**License:** [Business Source License 1.1 (BUSL-1.1)](LICENSE).
-
-* Free for self-hosted and internal use.
-* Proprietary for competing hosted/managed offerings.
-
-**Resources:**
-
-* [Documentation](./docs/README.md)
-* [Contributing Guide](./CONTRIBUTING.md)
-* [Security Policy](./SECURITY.md)
-* [Support](./SUPPORT.md)
-* [Governance](./GOVERNANCE.md)
-
-```
+<p align="center">
+  <strong>Ready to govern your AI agents?</strong><br/>
+  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://discord.gg/cordum">Discord</a>
+</p>
+
+<p align="center">
+  ⭐ Star this repo if Cordum helps you deploy agents safely
+</p>

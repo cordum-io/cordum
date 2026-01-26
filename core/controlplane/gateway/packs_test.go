@@ -142,6 +142,17 @@ func TestHandleInstallPack(t *testing.T) {
 	}
 }
 
+func TestPackInstallErrorMessage(t *testing.T) {
+	err := &packInstallError{Err: nil}
+	if err.Error() == "" {
+		t.Fatalf("expected default error message")
+	}
+	err = &packInstallError{Err: context.DeadlineExceeded}
+	if err.Error() != context.DeadlineExceeded.Error() {
+		t.Fatalf("expected wrapped error string")
+	}
+}
+
 func TestHandleListAndGetPacks(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	installTestPack(t, s)
