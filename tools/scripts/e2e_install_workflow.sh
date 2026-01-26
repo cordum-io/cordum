@@ -44,7 +44,9 @@ assert_ports_free() {
   done
 }
 
-API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-}}}
+# Prefer CORDUM_API_KEY (ideally provided via a secure secret manager).
+# CORDUM_SUPER_SECRET_API_TOKEN is kept only as a legacy fallback.
+API_KEY=${CORDUM_API_KEY:-${API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-}}}
 if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running this script." >&2
   exit 1
