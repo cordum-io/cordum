@@ -27,7 +27,6 @@ generated/
 .cache/
 bin/
 coverage*.out
-AGENTS.md
 CODEX.md
 docs/private/
 tools/private/
