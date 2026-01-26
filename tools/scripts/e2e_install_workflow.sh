@@ -13,6 +13,9 @@ require docker
 require curl
 require jq
 
+# Exit code used by port_in_use when no suitable port-checking tool is available.
+PORT_IN_USE_NO_TOOL_AVAILABLE=2
+
 port_in_use() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
@@ -27,7 +30,7 @@ port_in_use() {
     netstat -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1
     return $?
   fi
-  return 2
+  return "${PORT_IN_USE_NO_TOOL_AVAILABLE}"
 }
 
 assert_ports_free() {
