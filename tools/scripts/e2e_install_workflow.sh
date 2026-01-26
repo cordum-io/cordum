@@ -67,16 +67,22 @@ assert_safe_delete() {
 port_in_use() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
-    ss -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1
-    return $?
+    if ss -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
   fi
   if command -v lsof >/dev/null 2>&1; then
-    lsof -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
-    return $?
+    if lsof -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
   fi
   if command -v netstat >/dev/null 2>&1; then
-    netstat -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1
-    return $?
+    if netstat -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
   fi
   return "${PORT_IN_USE_NO_TOOL_AVAILABLE}"
 }
@@ -93,8 +99,8 @@ assert_ports_free() {
     return 0
   fi
   for port in "${ports[@]}"; do
-    port_in_use "${port}"
-    local status=$?
+    local status=0
+    port_in_use "${port}" || status=$?
     if [[ "${status}" -eq 0 ]]; then
       echo "port ${port} is already in use; set CORDUM_E2E_ALLOW_PORTS=1 to override." >&2
       exit 1
