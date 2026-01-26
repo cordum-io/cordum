@@ -340,7 +340,7 @@ func mergeStringMap(base, override map[string]string) map[string]string {
 	if base == nil && override == nil {
 		return nil
 	}
-	out := make(map[string]string, 0)
+	var out map[string]string
 	if base != nil {
 		out = make(map[string]string, len(base)+len(override))
 		for k, v := range base {
