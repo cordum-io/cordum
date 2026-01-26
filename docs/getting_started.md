@@ -108,6 +108,10 @@ Other runtime examples:
 
 ## Open the dashboard (optional)
 
+The dashboard is automatically configured with your local API key when using
+the default Compose stack. For shared environments, remove
+`CORDUM_DASHBOARD_EMBED_API_KEY` from compose to require manual auth.
+
 ```text
 http://localhost:8082
 ```
