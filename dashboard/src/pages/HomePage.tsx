@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Link, useNavigate } from "react-router-dom";
-import { Play, XCircle, Save, Trash2, RotateCcw } from "lucide-react";
+import { ArrowUpRight, BookOpen, Play, RotateCcw, Save, Sparkles, Trash2, XCircle } from "lucide-react";
 import { api } from "../lib/api";
 import { formatCount, formatRelative, formatShortDate, epochToMillis } from "../lib/format";
 import { getDLQGuidance, getGuidanceSeverityBg } from "../lib/dlq-guidance";
@@ -137,11 +137,12 @@ export function HomePage() {
   const pinned = usePinStore((state) => state.items);
   const removePinned = usePinStore((state) => state.removeItem);
   const workflowsQuery = useWorkflows();
+  const workflows = workflowsQuery.data ?? [];
   const workflowMap = useMemo(() => {
     const map = new Map<string, { id: string; name?: string; input_schema?: Record<string, unknown> }>();
-    workflowsQuery.data?.forEach((w) => map.set(w.id, w));
+    workflows.forEach((w) => map.set(w.id, w));
     return map;
-  }, [workflowsQuery.data]);
+  }, [workflows]);
 
   const cancelMutation = useMutation({
     mutationFn: ({ workflowId, runId }: { workflowId: string; runId: string }) =>
@@ -203,6 +204,23 @@ export function HomePage() {
     setRunPayload(preset.payload);
     setSelectedPresetId(preset.id);
   };
+
+  const docsUrl = "https://cordum.io/docs";
+  const openDocs = () => {
+    if (typeof window !== "undefined") {
+      window.open(docsUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+  const workflowCount = workflows.length;
+  const quickWorkflows = useMemo(
+    () =>
+      workflows
+        .slice()
+        .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
+        .slice(0, 3),
+    [workflows]
+  );
+  const showOnboarding = workflowCount === 0 || runs.length === 0;
   const policyCount = useMemo(() => {
     const data = policyQuery.data as { snapshots?: string[] } | undefined;
     return data?.snapshots?.length ?? 0;
@@ -269,6 +287,198 @@ export function HomePage() {
 
   return (
     <div className="space-y-8">
+      <section className="relative overflow-hidden rounded-3xl border border-border bg-[color:var(--surface-glass)] p-6 lg:p-8">
+        <div className="pointer-events-none absolute -right-16 top-0 h-56 w-56 rounded-full bg-[color:rgba(15,127,122,0.2)] blur-3xl" />
+        <div className="pointer-events-none absolute -left-20 bottom-0 h-56 w-56 rounded-full bg-[color:rgba(212,131,58,0.18)] blur-3xl" />
+        <div className="relative grid gap-6 lg:grid-cols-[2fr,1fr]">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-white/80 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
+              <Sparkles className="h-3 w-3 text-accent" />
+              Home
+            </div>
+            <h2 className="mt-4 font-display text-3xl font-semibold text-ink">Control plane at a glance.</h2>
+            <p className="mt-2 text-sm text-muted">
+              Track approvals, run progress, and policy posture. Launch governed workflows in seconds.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <Button variant="primary" type="button" onClick={() => navigate("/workflows/new")}>
+                Create workflow
+              </Button>
+              <Button variant="outline" type="button" onClick={() => navigate("/runs")}>
+                View runs
+              </Button>
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={openDocs}
+              >
+                <BookOpen className="h-4 w-4" />
+                Docs
+              </Button>
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3 text-xs text-muted">
+              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
+                <span className="font-semibold text-ink">{formatCount(workflowCount)}</span> workflows
+              </div>
+              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
+                <span className="font-semibold text-ink">{formatCount(runs.length)}</span> total runs
+              </div>
+              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
+                <span className="font-semibold text-ink">{formatCount(approvals.length)}</span> approvals
+              </div>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-border bg-white/70 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Quick Launch</div>
+                <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/workflows")}>
+                  Browse
+                </Button>
+              </div>
+              {quickWorkflows.length ? (
+                <div className="mt-3 space-y-2">
+                  {quickWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-border bg-white/80 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-ink">
+                          {workflow.name || workflow.id}
+                        </div>
+                        <div className="text-xs text-muted">
+                          {workflow.updated_at ? `Updated ${formatRelative(workflow.updated_at)}` : "No recent updates"}
+                        </div>
+                      </div>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        type="button"
+                        onClick={() => {
+                          setRunDrawerWorkflow(workflow as Workflow);
+                          setRunPayload("{}");
+                          setRunPayloadError(null);
+                          setSelectedPresetId("");
+                        }}
+                      >
+                        <Play className="h-3 w-3" />
+                        Run
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-3 text-sm text-muted">No workflows yet. Create one to launch runs instantly.</div>
+              )}
+              {quickWorkflows.length === 0 ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  className="mt-3 w-full"
+                  onClick={() => navigate("/workflows/new")}
+                >
+                  Create your first workflow
+                </Button>
+              ) : null}
+            </div>
+
+            <div className="rounded-2xl border border-border bg-white/70 p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+                {showOnboarding ? "Getting started" : "Ops shortcuts"}
+              </div>
+              {showOnboarding ? (
+                <>
+                  <div className="mt-3 space-y-3 text-sm text-muted">
+                    <div className="flex items-start gap-3">
+                      <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent">
+                        1
+                      </span>
+                      <div>
+                        <div className="font-semibold text-ink">Create a workflow</div>
+                        <div className="text-xs text-muted">Define steps, timeouts, and required approvals.</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent">
+                        2
+                      </span>
+                      <div>
+                        <div className="font-semibold text-ink">Install a pack</div>
+                        <div className="text-xs text-muted">Add workers and policies with one click.</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent">
+                        3
+                      </span>
+                      <div>
+                        <div className="font-semibold text-ink">Run + approve</div>
+                        <div className="text-xs text-muted">Launch a run and approve it from the inbox.</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button variant="primary" size="sm" type="button" onClick={() => navigate("/workflows/new")}>
+                      Create workflow
+                    </Button>
+                    <Button variant="outline" size="sm" type="button" onClick={() => navigate("/packs")}>
+                      Browse packs
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      type="button"
+                      onClick={openDocs}
+                    >
+                      <BookOpen className="h-4 w-4" />
+                      Quickstart
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-3 space-y-2 text-sm text-muted">
+                  <button
+                    type="button"
+                    onClick={() => navigate("/policy")}
+                    className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
+                  >
+                    <div>
+                      <div className="font-semibold text-ink">Approvals</div>
+                      <div className="text-xs text-muted">{formatCount(approvals.length)} waiting</div>
+                    </div>
+                    <ArrowUpRight className="h-4 w-4 text-muted" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/system")}
+                    className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
+                  >
+                    <div>
+                      <div className="font-semibold text-ink">DLQ backlog</div>
+                      <div className="text-xs text-muted">{formatCount(dlqEntries.length)} items</div>
+                    </div>
+                    <ArrowUpRight className="h-4 w-4 text-muted" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/system")}
+                    className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
+                  >
+                    <div>
+                      <div className="font-semibold text-ink">System overview</div>
+                      <div className="text-xs text-muted">Pools, workers, and health</div>
+                    </div>
+                    <ArrowUpRight className="h-4 w-4 text-muted" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-4 lg:grid-cols-4">
         <MetricCard
           title="Approvals"
