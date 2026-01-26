@@ -43,6 +43,7 @@ export CORDUM_TENANT_ID=default
 - `docs/demo-guardrails.md` - guardrails demo walkthrough + GIF recording
 - `docs/demo-mock-bank.md` - mock bank governance demo walkthrough
 - `tools/scripts/quickstart.sh` - one-command local stack + smoke test
+- `tools/scripts/e2e_install_workflow.sh` - install + approval workflow E2E test
 - `tools/scripts/demo_guardrails_run.sh` - guardrails demo runner
 - `tools/scripts/demo_mock_bank.sh` - mock bank demo runner
 - `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)

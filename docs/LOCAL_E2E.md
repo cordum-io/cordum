@@ -16,6 +16,19 @@ This document captures end-to-end flows validated against the platform-only stac
 ./tools/scripts/platform_smoke.sh
 ```
 
+### Install-to-approval E2E
+
+This script simulates a clean install, then runs the approval workflow smoke test.
+
+```bash
+export CORDUM_API_KEY=<your-api-key>
+export CORDUM_TENANT_ID=default
+./tools/scripts/e2e_install_workflow.sh
+```
+
+To reuse an existing install directory, set `CORDUM_E2E_REUSE=1`.
+To clean and reinstall, set `CORDUM_E2E_CLEAN=1`.
+
 ### CLI smoke (cordumctl)
 
 Requires `cordumctl` on `PATH` (build with `make build SERVICE=cordumctl` and add `./bin` to `PATH`).

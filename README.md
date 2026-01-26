@@ -70,6 +70,14 @@ export CORDUM_TENANT_ID=default
 ./tools/scripts/quickstart.sh
 ```
 
+Install + approval workflow E2E (fresh install):
+
+```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export CORDUM_TENANT_ID=default
+./tools/scripts/e2e_install_workflow.sh
+```
+
 **1. Install**
 
 ```bash
