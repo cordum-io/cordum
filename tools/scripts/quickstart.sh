@@ -77,7 +77,8 @@ if [[ -z "${API_KEY}" ]]; then
   exit 1
 fi
 export CORDUM_API_KEY="${API_KEY}"
-ORG_ID=${CORDUM_ORG_ID:-default}
+ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
+TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 COMPOSE_FILES=${CORDUM_COMPOSE_FILES:-docker-compose.yml}
 ALLOW_ENTERPRISE=${CORDUM_ALLOW_ENTERPRISE:-0}
 SKIP_BUILD=${CORDUM_SKIP_BUILD:-0}
@@ -107,7 +108,7 @@ echo "Dashboard: http://localhost:8082"
 echo "API key: ${API_KEY}"
 echo ""
 echo "[quickstart] running smoke test"
-CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" ./tools/scripts/platform_smoke.sh
+CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" ./tools/scripts/platform_smoke.sh
 echo ""
 echo "[quickstart] try:"
-echo "curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: ${API_KEY}\" | jq"
+echo "curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: ${API_KEY}\" -H \"X-Tenant-ID: ${TENANT_ID}\" | jq"

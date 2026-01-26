@@ -77,7 +77,7 @@ func TestNormalizeAPIKeyTrimsQuotes(t *testing.T) {
 
 func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 	s := &server{
-		clients:  make(map[*websocket.Conn]chan *pb.BusPacket),
+		clients:  make(map[*websocket.Conn]*wsClient),
 		eventsCh: make(chan *pb.BusPacket, 1),
 	}
 
@@ -104,7 +104,7 @@ func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
 	}
 
 	s := &server{
-		clients:  make(map[*websocket.Conn]chan *pb.BusPacket),
+		clients:  make(map[*websocket.Conn]*wsClient),
 		eventsCh: make(chan *pb.BusPacket, 1),
 		auth:     provider,
 	}

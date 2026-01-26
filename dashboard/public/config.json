@@ -1,8 +1,8 @@
 {
-  "apiBaseUrl": "http://localhost:8085",
-  "apiKey": "ent-key",
+  "apiBaseUrl": "",
+  "apiKey": "",
   "tenantId": "default",
-  "principalId": "dashboard",
-  "principalRole": "admin",
-  "traceUrlTemplate": "https://app.datadoghq.com/apm/trace/{{trace_id}}"
+  "principalId": "",
+  "principalRole": "",
+  "traceUrlTemplate": ""
 }

@@ -37,8 +37,8 @@ func runUpCmd(args []string) {
 	fmt.Println("Dashboard: http://localhost:8082")
 	if source != "" {
 		fmt.Println("API Key: configured (value hidden)")
-		fmt.Println("Status: curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: <your-key>\"")
-		fmt.Println("Smoke (from repo root): CORDUM_API_KEY=<your-key> ./tools/scripts/platform_smoke.sh")
+		fmt.Println("Status: curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: <your-key>\" -H \"X-Tenant-ID: <tenant>\"")
+		fmt.Println("Smoke (from repo root): CORDUM_API_KEY=<your-key> CORDUM_TENANT_ID=<tenant> ./tools/scripts/platform_smoke.sh")
 	}
 }
 

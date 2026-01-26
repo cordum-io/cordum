@@ -22,6 +22,7 @@ func TestEnvOr(t *testing.T) {
 func TestNewFlagSetDefaults(t *testing.T) {
 	t.Setenv("CORDUM_GATEWAY", "http://example.com")
 	t.Setenv("CORDUM_API_KEY", "token")
+	t.Setenv("CORDUM_TENANT_ID", "tenant-a")
 	fs := newFlagSet("test")
 	if *fs.gateway != "http://example.com" {
 		t.Fatalf("expected gateway from env, got %s", *fs.gateway)
@@ -29,15 +30,21 @@ func TestNewFlagSetDefaults(t *testing.T) {
 	if *fs.apiKey != "token" {
 		t.Fatalf("expected api key from env, got %s", *fs.apiKey)
 	}
+	if *fs.tenant != "tenant-a" {
+		t.Fatalf("expected tenant from env, got %s", *fs.tenant)
+	}
 }
 
 func TestNewClientTrimsGateway(t *testing.T) {
-	client := newClient("http://localhost:8081/", "key")
+	client := newClient("http://localhost:8081/", "key", "tenant")
 	if client.BaseURL != "http://localhost:8081" {
 		t.Fatalf("expected trimmed base url, got %s", client.BaseURL)
 	}
 	if client.APIKey != "key" {
 		t.Fatalf("expected api key on client")
+	}
+	if client.TenantID != "tenant" {
+		t.Fatalf("expected tenant id on client")
 	}
 }
 

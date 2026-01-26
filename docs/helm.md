@@ -67,13 +67,16 @@ kubectl -n cordum port-forward svc/cordum-dashboard 8082:8080
 ```
 
 Dashboard: `http://localhost:8082`
+HTTP requests must include `X-API-Key` and `X-Tenant-ID` (use `gateway.env.tenantId` as the default tenant).
 
 The API key is required. Set it with:
 
 ```bash
 helm upgrade --install cordum ./cordum-helm \
   -n cordum --create-namespace \
-  --set secrets.apiKey=<your-api-key>
+  --set secrets.apiKey=<your-api-key> \
+  --set gateway.env.tenantId=default \
+  --set dashboard.env.tenantId=default
 ```
 
 To embed the API key in the dashboard config (not recommended for shared environments):
@@ -82,7 +85,8 @@ To embed the API key in the dashboard config (not recommended for shared environ
 helm upgrade --install cordum ./cordum-helm \
   -n cordum --create-namespace \
   --set secrets.apiKey=<your-api-key> \
-  --set dashboard.env.embedApiKey=true
+  --set dashboard.env.embedApiKey=true \
+  --set dashboard.env.tenantId=default
 ```
 
 ## Common overrides
@@ -91,7 +95,9 @@ helm upgrade --install cordum ./cordum-helm \
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
   --set global.image.tag=v0.1.4 \
-  --set secrets.apiKey=<your-api-key>
+  --set secrets.apiKey=<your-api-key> \
+  --set gateway.env.tenantId=default \
+  --set dashboard.env.tenantId=default
 ```
 
 Use external Redis/NATS:

@@ -112,6 +112,35 @@ func TestHandler(t *testing.T) {
 	}
 }
 
+func TestValidateBindAddr(t *testing.T) {
+	cases := []struct {
+		name        string
+		addr        string
+		allowPublic bool
+		wantErr     bool
+	}{
+		{name: "empty", addr: "", allowPublic: false, wantErr: true},
+		{name: "loopback ipv4", addr: "127.0.0.1:9090", allowPublic: false, wantErr: false},
+		{name: "loopback ipv6", addr: "[::1]:9090", allowPublic: false, wantErr: false},
+		{name: "localhost", addr: "localhost:9090", allowPublic: false, wantErr: false},
+		{name: "wildcard", addr: ":9090", allowPublic: false, wantErr: true},
+		{name: "public ip", addr: "192.168.0.1:9090", allowPublic: false, wantErr: true},
+		{name: "allow public", addr: ":9090", allowPublic: true, wantErr: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateBindAddr(tc.addr, tc.allowPublic)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func hasMetric(families []*dto.MetricFamily, name string, labels map[string]string) bool {
 	for _, fam := range families {
 		if fam.GetName() != name {

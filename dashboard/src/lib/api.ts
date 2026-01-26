@@ -77,6 +77,9 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
   if (config.apiKey) {
     headers.set("X-API-Key", config.apiKey);
   }
+  if (config.tenantId) {
+    headers.set("X-Tenant-ID", config.tenantId);
+  }
   if (config.principalId) {
     headers.set("X-Principal-Id", config.principalId);
   }
@@ -322,10 +325,18 @@ function encodeBundleId(id: string): string {
   return encodeURIComponent(id.split("/").join("~"));
 }
 
-export function wsUrl(path: string): string {
+export function wsUrl(path: string, query?: Record<string, string | undefined>): string {
   const base = resolveBaseUrl();
   const protocol = base.startsWith("https://") ? "wss" : "ws";
   const url = new URL(path, base.replace(/^https?/, protocol));
+  if (query) {
+    Object.entries(query).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") {
+        return;
+      }
+      url.searchParams.set(key, String(value));
+    });
+  }
   return url.toString();
 }
 

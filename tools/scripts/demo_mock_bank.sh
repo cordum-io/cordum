@@ -36,7 +36,8 @@ if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the demo." >&2
   exit 1
 fi
-ORG_ID=${CORDUM_ORG_ID:-default}
+ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
+TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 NATS_URL=${NATS_URL:-nats://localhost:4222}
 REDIS_URL=${REDIS_URL:-redis://localhost:6379}
 PORT=${MOCK_BANK_PORT:-8099}
@@ -52,13 +53,13 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[mock-bank] checking gateway"
-curl -sS "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_KEY}" >/dev/null
+curl -sS "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" >/dev/null
 
 echo "[mock-bank] installing pack"
 if [[ -n "${CTL_BIN}" && -x "${CTL_BIN}" ]]; then
-  CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" "${CTL_BIN}" pack install --upgrade ./demo/mock-bank/pack
+  CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" "${CTL_BIN}" pack install --upgrade ./demo/mock-bank/pack
 else
-  CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack
+  CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack
 fi
 
 echo "[mock-bank] starting worker"
@@ -70,7 +71,7 @@ echo "[mock-bank] serving UI on :${PORT}"
 SERVER_PID=$!
 
 echo ""
-echo "Open: http://localhost:${PORT}/?apiKey=${API_KEY}&apiBaseUrl=${API_BASE}&orgId=${ORG_ID}"
+echo "Open: http://localhost:${PORT}/?apiKey=${API_KEY}&apiBaseUrl=${API_BASE}&orgId=${ORG_ID}&tenantId=${TENANT_ID}"
 echo "Press Ctrl+C to stop."
 
 wait

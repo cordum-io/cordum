@@ -34,14 +34,14 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Marketplace endpoints for pack discovery/installs (gateway seeds `cfg:system:pack_catalogs` with the official catalog; override via env or config).
   - gRPC service (`CordumApi`) for job submit/status.
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
-  - Enforces API key and CORS allowlist if configured (HTTP `X-API-Key`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>`).
-  - OSS auth uses an API key allowlist (`CORDUM_API_KEYS`, `CORDUM_API_KEY`, or `CORDUM_API_KEYS_PATH`) with optional role/tenant metadata and a single-tenant default (`TENANT_ID`, default `default`).
+  - Enforces API key + tenant headers and CORS allowlist if configured (HTTP `X-API-Key` + `X-Tenant-ID`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` + `?tenant_id=<tenant>`).
+  - OSS auth uses an API key allowlist (`CORDUM_API_KEYS`, `CORDUM_API_KEY`, or `CORDUM_API_KEYS_PATH`) with optional role/tenant metadata and a single-tenant default (`TENANT_ID`, default `default`). HTTP requests must supply `X-Tenant-ID`.
   - Multi-tenant API keys and RBAC enforcement are provided by the enterprise auth provider (enterprise repo).
   - Enterprise add-ons are delivered from the enterprise repo; this repo stays platform-only.
 
 - Dashboard (`dashboard/`)
   - React UI served via Nginx; connects to `/api/v1` and `/api/v1/stream`.
-  - Runtime config via `/config.json` (API base URL, API key, optional tenant/principal for enterprise auth).
+  - Runtime config via `/config.json` (API base URL, API key, tenant, optional principal for enterprise auth).
 
 - Scheduler (`core/controlplane/scheduler`, `cmd/cordum-scheduler`; binary `cordum-scheduler`)
   - Subscribes to `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.heartbeat`.

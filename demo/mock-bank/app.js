@@ -2,6 +2,7 @@ const STORAGE_KEY = "cordum-mock-bank-config";
 const DEFAULT_CONFIG = {
   apiBaseUrl: "http://localhost:8081",
   apiKey: "",
+  tenantId: "default",
   principalId: "demo",
   principalRole: "admin",
   orgId: "default",
@@ -316,6 +317,10 @@ async function apiRequest(path, options = {}) {
   if (state.config.apiKey) {
     headers.set("X-API-Key", state.config.apiKey);
   }
+  const tenantId = state.config.tenantId || state.config.orgId;
+  if (tenantId) {
+    headers.set("X-Tenant-ID", tenantId);
+  }
   if (state.config.principalId) {
     headers.set("X-Principal-Id", state.config.principalId);
   }
@@ -369,7 +374,12 @@ function loadStoredConfig() {
     return {};
   }
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    const { apiKey: _apiKey, ...rest } = parsed;
+    return rest;
   } catch (err) {
     return {};
   }
@@ -389,6 +399,10 @@ function loadQueryConfig() {
   if (apiKey) {
     config.apiKey = apiKey;
   }
+  const tenantId = params.get("tenantId") || params.get("tenant_id");
+  if (tenantId) {
+    config.tenantId = tenantId;
+  }
   const principalId = params.get("principalId");
   if (principalId) {
     config.principalId = principalId;
@@ -406,18 +420,22 @@ function loadQueryConfig() {
 
 function sanitizeConfig(input) {
   const next = input || {};
+  const tenantId = next.tenantId || next.orgId || DEFAULT_CONFIG.tenantId;
+  const orgId = next.orgId || tenantId || DEFAULT_CONFIG.orgId;
   return {
     apiBaseUrl: normalizeBaseUrl(next.apiBaseUrl || DEFAULT_CONFIG.apiBaseUrl),
     apiKey: next.apiKey || DEFAULT_CONFIG.apiKey,
+    tenantId,
     principalId: next.principalId || DEFAULT_CONFIG.principalId,
     principalRole: next.principalRole || DEFAULT_CONFIG.principalRole,
-    orgId: next.orgId || DEFAULT_CONFIG.orgId,
+    orgId,
   };
 }
 
 function persistConfig(config) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    const { apiKey: _apiKey, ...rest } = config;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
   } catch (err) {
     // Ignore storage failures for demo environments.
   }
@@ -449,6 +467,9 @@ function buildErrorMessage(err) {
   }
   if (lower.includes("401") || lower.includes("unauthorized")) {
     return "The request was rejected. Update the demo API key (try ?apiKey=YOUR_KEY) and reload.";
+  }
+  if (lower.includes("403") || lower.includes("tenant")) {
+    return "The request was rejected. Set a tenant (try ?tenantId=default) and reload.";
   }
   if (message.trim()) {
     return `I could not submit the request. ${message}`;

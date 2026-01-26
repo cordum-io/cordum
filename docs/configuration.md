@@ -24,6 +24,7 @@ Shared across services:
 - `CORDUM_ENV` (`production` enables strict security defaults)
 - `CORDUM_PRODUCTION` (`true` enables strict security defaults)
 - `CORDUM_TLS_MIN_VERSION` (`1.2` or `1.3`, default `1.3` in production)
+- `CORDUM_GRPC_REFLECTION` (set to `1` to enable gRPC reflection)
 - `NATS_URL` (default `nats://nats:4222`)
 - `REDIS_URL` (default `redis://redis:6379`)
 - `NATS_USE_JETSTREAM` (`0|1`)
@@ -36,6 +37,7 @@ Shared across services:
 ## Gateway
 
 - `GATEWAY_GRPC_ADDR`, `GATEWAY_HTTP_ADDR`, `GATEWAY_METRICS_ADDR`
+- `GATEWAY_METRICS_PUBLIC` (set to `1` to allow non-loopback metrics bind in production)
 - `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST`
 - `TENANT_ID` (single-tenant default)
 - API keys: `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
@@ -45,11 +47,19 @@ Shared across services:
 - CORS: `CORDUM_ALLOWED_ORIGINS`, `CORDUM_CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGINS`
 - HTTP TLS: `GATEWAY_HTTP_TLS_CERT`, `GATEWAY_HTTP_TLS_KEY`
 - gRPC TLS: `GRPC_TLS_CERT`, `GRPC_TLS_KEY`
+- Artifacts: `ARTIFACT_MAX_BYTES` (max upload/download size)
 - JWT auth: `CORDUM_JWT_HMAC_SECRET`, `CORDUM_JWT_PUBLIC_KEY`, `CORDUM_JWT_PUBLIC_KEY_PATH`,
   `CORDUM_JWT_ISSUER`, `CORDUM_JWT_AUDIENCE`, `CORDUM_JWT_DEFAULT_ROLE`,
   `CORDUM_JWT_CLOCK_SKEW`, `CORDUM_JWT_REQUIRED`
 - Pack catalog defaults: `CORDUM_PACK_CATALOG_URL`, `CORDUM_PACK_CATALOG_ID`,
   `CORDUM_PACK_CATALOG_TITLE`, `CORDUM_PACK_CATALOG_DEFAULT_DISABLED=1`
+- Marketplace fetch: `CORDUM_MARKETPLACE_ALLOW_HTTP=1`, `CORDUM_MARKETPLACE_HTTP_TIMEOUT` (e.g. `15s`)
+
+## Context engine
+
+- `CONTEXT_ENGINE_ADDR`
+- TLS server: `CONTEXT_ENGINE_TLS_CERT`, `CONTEXT_ENGINE_TLS_KEY`
+- TLS client: `CONTEXT_ENGINE_TLS_CA`, `CONTEXT_ENGINE_TLS_REQUIRED`, `CONTEXT_ENGINE_INSECURE`
 
 ## Scheduler
 
@@ -57,6 +67,8 @@ Shared across services:
 - `WORKER_SNAPSHOT_INTERVAL`
 - `NATS_JS_ACK_WAIT`, `NATS_JS_MAX_AGE`
 - `NATS_JS_REPLICAS` (JetStream stream replication factor)
+- `SCHEDULER_METRICS_ADDR` (default `:9090`)
+- `SCHEDULER_METRICS_PUBLIC` (set to `1` to allow non-loopback metrics bind in production)
 
 ## Workflow engine
 
