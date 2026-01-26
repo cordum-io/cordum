@@ -28,6 +28,8 @@ export CORDUM_TENANT_ID=default
 
 To reuse an existing install directory, set `CORDUM_E2E_REUSE=1`.
 To clean and reinstall, set `CORDUM_E2E_CLEAN=1`.
+If ports are already in use, set `CORDUM_E2E_ALLOW_PORTS=1` (or override the list via `CORDUM_E2E_PORTS`).
+If you need to delete a custom `DEST_DIR` outside `/tmp/cordum-e2e`, set `CORDUM_E2E_ALLOW_DELETE=1`.
 
 ### CLI smoke (cordumctl)
 

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -125,36 +126,36 @@ var upgrader = websocket.Upgrader{
 	Subprotocols: []string{wsAPIKeyProtocol},
 }
 
-type tokenBucket struct {
-	tokens chan struct{}
+const (
+	rateLimitKeyTTL         = 30 * time.Minute
+	rateLimitCleanupInterval = 5 * time.Minute
+)
+
+type rateBucket struct {
+	tokens float64
+	last   time.Time
 }
 
-func newTokenBucket(rps, burst int) *tokenBucket {
+type keyedRateLimiter struct {
+	mu          sync.Mutex
+	rps         float64
+	burst       float64
+	buckets     map[string]*rateBucket
+	nextCleanup time.Time
+}
+
+func newKeyedRateLimiter(rps, burst int) *keyedRateLimiter {
 	if rps <= 0 || burst <= 0 {
 		return nil
 	}
-	tb := &tokenBucket{tokens: make(chan struct{}, burst)}
-	for i := 0; i < burst; i++ {
-		tb.tokens <- struct{}{}
+	return &keyedRateLimiter{
+		rps:     float64(rps),
+		burst:   float64(burst),
+		buckets: make(map[string]*rateBucket),
 	}
-	interval := time.Second / time.Duration(rps)
-	if interval <= 0 {
-		interval = time.Second
-	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for range ticker.C {
-			select {
-			case tb.tokens <- struct{}{}:
-			default:
-			}
-		}
-	}()
-	return tb
 }
 
-func newTokenBucketFromEnv() *tokenBucket {
+func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
 	rps := defaultRateLimitRPS
 	burst := defaultRateLimitBurst
 	if val := os.Getenv("API_RATE_LIMIT_RPS"); val != "" {
@@ -167,22 +168,53 @@ func newTokenBucketFromEnv() *tokenBucket {
 			burst = parsed
 		}
 	}
-	return newTokenBucket(rps, burst)
+	return newKeyedRateLimiter(rps, burst)
 }
 
-func (tb *tokenBucket) Allow() bool {
-	if tb == nil {
+func (rl *keyedRateLimiter) Allow(key string) bool {
+	if rl == nil {
 		return true
 	}
-	select {
-	case <-tb.tokens:
-		return true
-	default:
+	if key == "" {
+		key = "global"
+	}
+	now := time.Now()
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	if rl.nextCleanup.IsZero() {
+		rl.nextCleanup = now.Add(rateLimitCleanupInterval)
+	}
+	if now.After(rl.nextCleanup) {
+		for k, bucket := range rl.buckets {
+			if now.Sub(bucket.last) > rateLimitKeyTTL {
+				delete(rl.buckets, k)
+			}
+		}
+		rl.nextCleanup = now.Add(rateLimitCleanupInterval)
+	}
+
+	bucket := rl.buckets[key]
+	if bucket == nil {
+		bucket = &rateBucket{tokens: rl.burst, last: now}
+		rl.buckets[key] = bucket
+	} else {
+		elapsed := now.Sub(bucket.last).Seconds()
+		if elapsed > 0 {
+			bucket.tokens = math.Min(rl.burst, bucket.tokens+(elapsed*rl.rps))
+		}
+	}
+
+	if bucket.tokens < 1 {
+		bucket.last = now
 		return false
 	}
+	bucket.tokens -= 1
+	bucket.last = now
+	return true
 }
 
-var apiLimiter = newTokenBucketFromEnv()
+var apiLimiter = newKeyedRateLimiterFromEnv()
 
 type submitJobRequest struct {
 	Prompt             string            `json:"prompt"`
@@ -1326,6 +1358,12 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 		ptr = memory.PointerForKey(key)
 	}
 
+	if auth := authFromRequest(r); auth != nil {
+		logging.Info("api-gateway", "memory read", "tenant", auth.Tenant, "principal", auth.PrincipalID, "key", key, "ptr", ptr)
+	} else {
+		logging.Info("api-gateway", "memory read", "tenant", "", "principal", "", "key", key, "ptr", ptr)
+	}
+
 	var (
 		data []byte
 		err  error
@@ -2165,6 +2203,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		if r.TLS != nil && env.IsProduction() {
 			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
@@ -2382,12 +2421,32 @@ func rateLimitMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !apiLimiter.Allow() {
+		if !apiLimiter.Allow(rateLimitKey(r)) {
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func rateLimitKey(r *http.Request) string {
+	if tenant := strings.TrimSpace(tenantFromRequest(r)); tenant != "" {
+		return "tenant:" + tenant
+	}
+	if ip := clientIP(r); ip != "" {
+		return "ip:" + ip
+	}
+	return "unknown"
+}
+
+func clientIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
 }
 
 // apiKeyMiddleware enforces API key auth and injects auth context.

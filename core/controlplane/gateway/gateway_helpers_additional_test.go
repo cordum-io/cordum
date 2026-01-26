@@ -266,7 +266,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	orig := apiLimiter
 	defer func() { apiLimiter = orig }()
 
-	apiLimiter = &tokenBucket{tokens: make(chan struct{}, 1)}
+	apiLimiter = newKeyedRateLimiter(1, 1)
 	handler := rateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -275,15 +275,14 @@ func TestRateLimitMiddleware(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
-	if rr.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected rate limit response, got %d", rr.Code)
-	}
-
-	apiLimiter.tokens <- struct{}{}
-	rr = httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected ok response, got %d", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected rate limit response, got %d", rr.Code)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/health", nil)

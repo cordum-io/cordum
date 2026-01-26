@@ -71,7 +71,8 @@ echo "[mock-bank] serving UI on :${PORT}"
 SERVER_PID=$!
 
 echo ""
-echo "Open: http://localhost:${PORT}/?apiKey=${API_KEY}&apiBaseUrl=${API_BASE}&orgId=${ORG_ID}&tenantId=${TENANT_ID}"
+echo "Open: http://localhost:${PORT}/?apiBaseUrl=${API_BASE}&orgId=${ORG_ID}&tenantId=${TENANT_ID}"
+echo "When prompted, paste your API key."
 echo "Press Ctrl+C to stop."
 
 wait

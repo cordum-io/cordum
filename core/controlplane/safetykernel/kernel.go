@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"sort"
@@ -832,9 +833,25 @@ func readPolicySource(source string) ([]byte, error) {
 	return os.ReadFile(source)
 }
 
-func fetchPolicyURL(url string) ([]byte, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+func fetchPolicyURL(raw string) ([]byte, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid policy url: %w", err)
+	}
+	if err := validatePolicyURL(parsed); err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("policy fetch redirect limit exceeded")
+			}
+			return validatePolicyURL(req.URL)
+		},
+	}
+	resp, err := client.Get(parsed.String())
 	if err != nil {
 		return nil, err
 	}
@@ -843,6 +860,99 @@ func fetchPolicyURL(url string) ([]byte, error) {
 		return nil, fmt.Errorf("policy fetch status %d", resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+func validatePolicyURL(u *url.URL) error {
+	if u == nil {
+		return errors.New("policy url is nil")
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return errors.New("policy url missing host")
+	}
+	allowlist := policyURLAllowlist()
+	if len(allowlist) > 0 && !hostAllowed(host, allowlist) {
+		return fmt.Errorf("policy url host not allowed: %s", host)
+	}
+	if !env.Bool("SAFETY_POLICY_URL_ALLOW_PRIVATE") {
+		if err := ensurePublicHost(host); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func policyURLAllowlist() []string {
+	raw := strings.TrimSpace(os.Getenv("SAFETY_POLICY_URL_ALLOWLIST"))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if val := strings.ToLower(strings.TrimSpace(part)); val != "" {
+			out = append(out, val)
+		}
+	}
+	return out
+}
+
+func hostAllowed(host string, allowlist []string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	for _, entry := range allowlist {
+		entry = strings.TrimPrefix(entry, ".")
+		if entry == "" {
+			continue
+		}
+		if host == entry || strings.HasSuffix(host, "."+entry) {
+			return true
+		}
+	}
+	return false
+}
+
+func ensurePublicHost(host string) error {
+	if host == "" {
+		return errors.New("policy url missing host")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return fmt.Errorf("policy url host not allowed: %s", host)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("policy url host not allowed: %s", host)
+		}
+		return nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("policy url resolve failed: %w", err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("policy url resolve failed: %s", host)
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("policy url host not allowed: %s", host)
+		}
+	}
+	return nil
+}
+
+func isPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	if !ip.IsGlobalUnicast() {
+		return true
+	}
+	return false
 }
 
 func verifyPolicySignature(data []byte, source string) error {

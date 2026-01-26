@@ -38,7 +38,7 @@ Shared across services:
 
 - `GATEWAY_GRPC_ADDR`, `GATEWAY_HTTP_ADDR`, `GATEWAY_METRICS_ADDR`
 - `GATEWAY_METRICS_PUBLIC` (set to `1` to allow non-loopback metrics bind in production)
-- `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST`
+- `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST` (applied per tenant; falls back to client IP when tenant is missing)
 - `TENANT_ID` (single-tenant default)
 - API keys: `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
 - API key file: `CORDUM_API_KEYS_PATH` (same format as `CORDUM_API_KEYS`, reloads on change)
@@ -79,6 +79,8 @@ Shared across services:
 ## Safety kernel
 
 - `SAFETY_KERNEL_ADDR`, `SAFETY_POLICY_PATH` (or `SAFETY_POLICY_URL`)
+- Policy URL allowlist: `SAFETY_POLICY_URL_ALLOWLIST` (comma-separated hostnames)
+- Allow private/loopback policy URLs (not recommended): `SAFETY_POLICY_URL_ALLOW_PRIVATE=1`
 - TLS server: `SAFETY_KERNEL_TLS_CERT`, `SAFETY_KERNEL_TLS_KEY`
 - TLS client: `SAFETY_KERNEL_TLS_CA`, `SAFETY_KERNEL_TLS_REQUIRED`, `SAFETY_KERNEL_INSECURE`
 - Decision cache: `SAFETY_DECISION_CACHE_TTL` (e.g. `5s`, `250ms`)
