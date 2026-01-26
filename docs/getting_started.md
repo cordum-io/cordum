@@ -8,6 +8,21 @@ setup.
 - Docker + Docker Compose
 - curl
 - jq
+- openssl (optional, for generating an API key)
+
+## Set an API key (required)
+
+Cordum requires an API key for all API requests. Compose and the quickstart
+scripts will fail fast if `CORDUM_API_KEY` is missing.
+
+```bash
+cp .env.example .env
+# generate a key (requires openssl)
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+# set a tenant for requests
+export CORDUM_TENANT_ID=default
+# edit CORDUM_API_KEY
+```
 
 ## Start the stack
 
@@ -44,17 +59,6 @@ The API gateway listens on `http://localhost:8081` by default.
 
 Enterprise setup and licensing live in the enterprise repo. See `docs/enterprise.md`
 for details.
-
-## Set an API key
-
-Set a strong API key before starting:
-
-```bash
-cp .env.example .env
-# generate a key (requires openssl)
-export CORDUM_API_KEY="$(openssl rand -hex 32)"
-# edit CORDUM_API_KEY
-```
 
 ## Run a workflow smoke test
 
@@ -93,6 +97,7 @@ cd ../../
 # Trigger a run
 curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
   -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
+  -H "X-Tenant-ID: ${CORDUM_TENANT_ID:-default}" \
   -H "Content-Type: application/json" \
   -d '{"message":"hello from pack","author":"demo"}'
 ```

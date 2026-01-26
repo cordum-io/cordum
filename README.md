@@ -42,6 +42,7 @@ go run .
 Terminal C (demo):
 ```bash
 CORDUM_API_KEY=<your-api-key> \
+CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default} \
 CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
 ./tools/scripts/demo_guardrails.sh
 
@@ -65,6 +66,7 @@ Prereqs: Docker + Docker Compose. Go is optional unless you want `cordumctl`. Th
 
 ```bash
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export CORDUM_TENANT_ID=default
 ./tools/scripts/quickstart.sh
 ```
 
@@ -72,15 +74,17 @@ export CORDUM_API_KEY="$(openssl rand -hex 32)"
 
 ```bash
 # Install via one-liner
+CORDUM_API_KEY="$(openssl rand -hex 32)" \
+CORDUM_TENANT_ID=default \
 curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh | bash
 
 # Safer: download, inspect, then run
 curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh -o install.sh
 less install.sh
-bash install.sh
+CORDUM_API_KEY="$(openssl rand -hex 32)" CORDUM_TENANT_ID=default bash install.sh
 
 # Or run locally from a clone:
-./tools/scripts/install.sh
+CORDUM_API_KEY="$(openssl rand -hex 32)" CORDUM_TENANT_ID=default ./tools/scripts/install.sh
 
 ```
 
@@ -98,7 +102,8 @@ docker compose build && docker compose up -d
 **3. Verify**
 
 * **Dashboard:** Open `http://localhost:8082`
-* **Smoke Test:** Run `CORDUM_API_KEY=<your-api-key> ./tools/scripts/platform_smoke.sh`
+* **Smoke Test:** Run `CORDUM_API_KEY=<your-api-key> CORDUM_TENANT_ID=default ./tools/scripts/platform_smoke.sh`
+* **API sanity check:** `curl -sS http://localhost:8081/api/v1/status -H "X-API-Key: <your-key>" -H "X-Tenant-ID: default" | jq`
 
 **Kubernetes (Helm)**
 
@@ -106,12 +111,18 @@ Prereqs: Kubernetes cluster + Helm 3 + kubectl.
 
 ```bash
 # Local chart (from this repo)
-helm install cordum ./cordum-helm -n cordum --create-namespace
+helm install cordum ./cordum-helm -n cordum --create-namespace \
+  --set secrets.apiKey=<your-api-key> \
+  --set gateway.env.tenantId=default \
+  --set dashboard.env.tenantId=default
 
 # Or published chart
 helm repo add cordum https://charts.cordum.io
 helm repo update
-helm install cordum cordum/cordum -n cordum --create-namespace
+helm install cordum cordum/cordum -n cordum --create-namespace \
+  --set secrets.apiKey=<your-api-key> \
+  --set gateway.env.tenantId=default \
+  --set dashboard.env.tenantId=default
 ```
 
 Access the services (ClusterIP by default):
@@ -123,6 +134,9 @@ kubectl -n cordum port-forward svc/cordum-dashboard 8082:8080
 
 Dashboard: `http://localhost:8082` (API key required).
 See `docs/helm.md` for overrides (API key, images, external Redis/NATS, ingress).
+
+**Production note:** set `CORDUM_ENV=production` and enable TLS everywhere
+(HTTP/gRPC, Redis, NATS). See `docs/production.md` and `docs/configuration.md`.
 
 ---
 
@@ -258,4 +272,3 @@ Enterprise features are delivered via the `cordum-enterprise` repo and require a
 * [Governance](./GOVERNANCE.md)
 
 ```
-

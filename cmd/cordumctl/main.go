@@ -59,7 +59,7 @@ func runWorkflowCmd(args []string) {
 		fs := newFlagSet("workflow create")
 		file := fs.String("file", "", "workflow json file")
 		fs.ParseArgs(args[1:])
-		client := newClient(*fs.gateway, *fs.apiKey)
+		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 		if *file == "" {
 			fail("workflow file required")
 		}
@@ -74,7 +74,7 @@ func runWorkflowCmd(args []string) {
 		if fs.NArg() < 1 {
 			fail("workflow id required")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey)
+		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 		check(client.DeleteWorkflow(context.Background(), fs.Arg(0)))
 	default:
 		usage()
@@ -101,7 +101,7 @@ func runRunCmd(args []string) {
 		if *input != "" {
 			loadJSON(*input, &payload)
 		}
-		client := newClient(*fs.gateway, *fs.apiKey)
+		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 		runID, err := client.StartRunWithOptions(context.Background(), fs.Arg(0), payload, sdk.RunOptions{
 			DryRun:         *dryRun,
 			IdempotencyKey: *idempotencyKey,
@@ -114,7 +114,7 @@ func runRunCmd(args []string) {
 		if fs.NArg() < 1 {
 			fail("run id required")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey)
+		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 		check(client.DeleteRun(context.Background(), fs.Arg(0)))
 	case "timeline":
 		fs := newFlagSet("run timeline")
@@ -122,7 +122,7 @@ func runRunCmd(args []string) {
 		if fs.NArg() < 1 {
 			fail("run id required")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey)
+		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 		events, err := client.GetRunTimeline(context.Background(), fs.Arg(0))
 		check(err)
 		printJSON(events)
@@ -149,7 +149,7 @@ func runApprovalCmd(args []string) {
 		if *approve == *reject {
 			fail("use --approve or --reject")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey)
+		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 		check(client.ApproveStep(context.Background(), fs.Arg(0), fs.Arg(1), fs.Arg(2), *approve))
 	case "job":
 		fs := newFlagSet("approval job")
@@ -162,7 +162,7 @@ func runApprovalCmd(args []string) {
 		if *approve == *reject {
 			fail("use --approve or --reject")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey)
+		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 		check(client.ApproveJob(context.Background(), fs.Arg(0), *approve))
 	default:
 		usage()
@@ -182,7 +182,7 @@ func runDLQCmd(args []string) {
 		if fs.NArg() < 1 {
 			fail("usage: dlq retry <job_id>")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey)
+		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 		check(client.RetryDLQ(context.Background(), fs.Arg(0)))
 	default:
 		usage()
@@ -194,13 +194,15 @@ type flagSet struct {
 	*flag.FlagSet
 	gateway *string
 	apiKey  *string
+	tenant  *string
 }
 
 func newFlagSet(name string) *flagSet {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base url")
 	apiKey := fs.String("api-key", envOr("CORDUM_API_KEY", ""), "api key")
-	return &flagSet{FlagSet: fs, gateway: gateway, apiKey: apiKey}
+	tenant := fs.String("tenant", envOr("CORDUM_TENANT_ID", "default"), "tenant id")
+	return &flagSet{FlagSet: fs, gateway: gateway, apiKey: apiKey, tenant: tenant}
 }
 
 func (fs *flagSet) ParseArgs(args []string) {
@@ -209,8 +211,12 @@ func (fs *flagSet) ParseArgs(args []string) {
 	}
 }
 
-func newClient(gateway, apiKey string) *sdk.Client {
-	return sdk.New(strings.TrimRight(gateway, "/"), apiKey)
+func newClient(gateway, apiKey, tenant string) *sdk.Client {
+	client := sdk.New(strings.TrimRight(gateway, "/"), apiKey)
+	if strings.TrimSpace(tenant) != "" {
+		client.TenantID = strings.TrimSpace(tenant)
+	}
+	return client
 }
 
 func loadJSON(path string, out any) {

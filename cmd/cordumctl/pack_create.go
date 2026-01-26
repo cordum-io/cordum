@@ -199,6 +199,7 @@ cordumctl pack install ./%s
 ~~~bash
 curl -sS -X POST http://localhost:8081/api/v1/workflows/%s.echo/runs \
   -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
+  -H "X-Tenant-ID: ${CORDUM_TENANT_ID:-default}" \
   -H "Content-Type: application/json" \
   -d '{"message":"hello from %s"}' | jq
 ~~~

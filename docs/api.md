@@ -9,8 +9,8 @@ Base URL (local compose): `http://localhost:8081`
 Authentication:
 - HTTP header: `X-API-Key: <key>` (or JWT via `Authorization: Bearer <token>`)
 - Tenant header: `X-Tenant-ID: <tenant>`
-- WebSocket stream: `Sec-WebSocket-Protocol: cordum-api-key, <base64url>`
-All endpoints require auth (including `/api/v1/status`).
+- WebSocket stream: `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` + `?tenant_id=<tenant>`
+All endpoints require auth and a tenant header (including `/api/v1/status`).
 
 Common endpoints:
 - Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream`

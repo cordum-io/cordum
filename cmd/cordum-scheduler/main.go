@@ -7,15 +7,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/memory"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
@@ -36,17 +39,28 @@ func main() {
 	}
 
 	metrics := infraMetrics.NewProm("cordum_scheduler")
+	metricsAddr := strings.TrimSpace(os.Getenv("SCHEDULER_METRICS_ADDR"))
+	if metricsAddr == "" {
+		metricsAddr = ":9090"
+	}
+	if env.IsProduction() {
+		if err := infraMetrics.ValidateBindAddr(metricsAddr, env.Bool("SCHEDULER_METRICS_PUBLIC")); err != nil {
+			log.Fatalf("metrics bind rejected: %v", err)
+		}
+	}
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
 		srv := &http.Server{
-			Addr:         ":9090",
-			Handler:      mux,
-			ReadTimeout:  5 * time.Second,
-			WriteTimeout: 5 * time.Second,
-			IdleTimeout:  60 * time.Second,
+			Addr:              metricsAddr,
+			Handler:           mux,
+			ReadTimeout:       5 * time.Second,
+			ReadHeaderTimeout: 5 * time.Second,
+			WriteTimeout:      5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    1 << 20,
 		}
-		log.Println("scheduler metrics on :9090/metrics")
+		log.Printf("scheduler metrics on %s/metrics", metricsAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("metrics server error: %v", err)
 		}

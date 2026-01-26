@@ -220,7 +220,7 @@ func runPackInstall(args []string) {
 		fail(err.Error())
 	}
 
-	client := newRestClient(*fs.gateway, *fs.apiKey)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 	ctx := context.Background()
 	if !*force {
 		if err := enforceCoreVersion(ctx, client, manifest); err != nil {
@@ -358,7 +358,7 @@ func runPackUninstall(args []string) {
 		fail("pack id required")
 	}
 	packID := fs.Arg(0)
-	client := newRestClient(*fs.gateway, *fs.apiKey)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 	ctx := context.Background()
 	owner := lockOwner()
 	release, err := acquirePackLocks(ctx, client, packID, owner)
@@ -395,7 +395,7 @@ func runPackUninstall(args []string) {
 func runPackList(args []string) {
 	fs := newFlagSet("pack list")
 	fs.ParseArgs(args)
-	client := newRestClient(*fs.gateway, *fs.apiKey)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 	ctx := context.Background()
 	records, err := listPackRecords(ctx, client)
 	check(err)
@@ -420,7 +420,7 @@ func runPackShow(args []string) {
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}
-	client := newRestClient(*fs.gateway, *fs.apiKey)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 	ctx := context.Background()
 	record, err := getPackRecord(ctx, client, fs.Arg(0))
 	check(err)
@@ -436,7 +436,7 @@ func runPackVerify(args []string) {
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}
-	client := newRestClient(*fs.gateway, *fs.apiKey)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
 	ctx := context.Background()
 	record, err := getPackRecord(ctx, client, fs.Arg(0))
 	check(err)
@@ -1558,13 +1558,15 @@ func appendCanonicalSlice(buf *strings.Builder, items []any) error {
 type restClient struct {
 	baseURL    string
 	apiKey     string
+	tenantID   string
 	httpClient *http.Client
 }
 
-func newRestClient(gateway, apiKey string) *restClient {
+func newRestClient(gateway, apiKey, tenantID string) *restClient {
 	return &restClient{
-		baseURL: strings.TrimRight(gateway, "/"),
-		apiKey:  apiKey,
+		baseURL:  strings.TrimRight(gateway, "/"),
+		apiKey:   apiKey,
+		tenantID: strings.TrimSpace(tenantID),
 		httpClient: &http.Client{
 			Timeout: 20 * time.Second,
 		},
@@ -1607,6 +1609,9 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 	}
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)
+	}
+	if c.tenantID != "" {
+		req.Header.Set("X-Tenant-ID", c.tenantID)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

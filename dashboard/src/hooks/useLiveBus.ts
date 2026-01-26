@@ -124,6 +124,7 @@ function eventFromPacket(packet: BusPacket) {
 export function useLiveBus() {
   const queryClient = useQueryClient();
   const apiKey = useConfigStore((state) => state.apiKey);
+  const tenantId = useConfigStore((state) => state.tenantId);
   const loaded = useConfigStore((state) => state.loaded);
   const addEvent = useEventStore((state) => state.addEvent);
   const setStatus = useEventStore((state) => state.setStatus);
@@ -199,7 +200,7 @@ export function useLiveBus() {
         return;
       }
       setStatus("connecting");
-      const url = wsUrl("/api/v1/stream");
+      const url = wsUrl("/api/v1/stream", { tenant_id: tenantId });
       const protocols = wsProtocols(apiKey);
       ws = protocols.length > 0 ? new WebSocket(url, protocols) : new WebSocket(url);
       ws.onopen = () => {
@@ -243,5 +244,5 @@ export function useLiveBus() {
         ws.close();
       }
     };
-  }, [apiKey, loaded, addEvent, setStatus]);
+  }, [apiKey, tenantId, loaded, addEvent, setStatus]);
 }

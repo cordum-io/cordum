@@ -25,8 +25,10 @@ if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the demo." >&2
   exit 1
 fi
-ORG_ID=${CORDUM_ORG_ID:-default}
-auth_header=("-H" "X-API-Key: ${API_KEY}")
+ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
+TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
+export CORDUM_TENANT_ID=${TENANT_ID}
+auth_header=("-H" "X-API-Key: ${API_KEY}" "-H" "X-Tenant-ID: ${TENANT_ID}")
 
 if [[ ! -x "${CTL_BIN}" ]]; then
   echo "cordumctl not found; build with make build" >&2

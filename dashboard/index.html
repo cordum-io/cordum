@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http: https: ws: wss:;"
+    />
+    <meta http-equiv="Referrer-Policy" content="no-referrer" />
     <link rel="icon" href="/assets/cordum-logo.png" type="image/png" />
     <link rel="apple-touch-icon" href="/assets/cordum-logo.png" />
     <title>Cordum Console</title>

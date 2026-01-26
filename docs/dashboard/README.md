@@ -34,15 +34,17 @@ The production container writes `config.json` at startup from environment variab
 - `CORDUM_PRINCIPAL_ROLE` (set to `admin` to edit/publish policy bundles when RBAC is enforced)
 
 If you host the dashboard on a different origin than the gateway, set `CORDUM_ALLOWED_ORIGINS` on the gateway to allow the dashboard origin.
+For security, the dashboard does not persist API keys in localStorage; keys live in memory unless you explicitly embed one in `config.json`.
 
 The live bus stream (`/api/v1/stream`) authenticates via WebSocket subprotocols:
 `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` (the dashboard sets this automatically when an API key is configured).
+The gateway also requires `tenant_id` as a query parameter for the WebSocket URL when running in multi-tenant mode (the dashboard includes it automatically).
 
 ## Caching Headers
 
-The dashboard nginx config sets `index.html` and `config.json` to no-cache to
-avoid stale asset references after deploys. The `/assets/` bundle is served with
-long-lived immutable cache headers.
+If you front the dashboard with a static file server or CDN, make sure
+`index.html` and `config.json` are not cached so new deploys can update runtime
+configuration. `/assets/` can be cached long-term with immutable headers.
 
 ## System Config: Observability + Alerting
 

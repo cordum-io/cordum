@@ -7,7 +7,7 @@ Prereqs: Docker + Docker Compose. The smoke test script requires `curl` and `jq`
 - Infra: `nats`, `redis`
 - Control plane: `cordum-api-gateway`, `cordum-scheduler`, `cordum-safety-kernel`, `cordum-workflow-engine`
 - Optional: `cordum-context-engine` (generic memory helper)
-- Optional UI: `cordum-dashboard` (React UI served via Nginx)
+- Optional UI: `cordum-dashboard` (React UI served by a lightweight static server)
 
 ## Services in `docker-compose.yml`
 
@@ -23,6 +23,8 @@ Prereqs: Docker + Docker Compose. The smoke test script requires `curl` and `jq`
 ## Bring up the stack
 
 ```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export CORDUM_TENANT_ID=default
 docker compose build
 docker compose up -d
 docker compose ps
@@ -49,6 +51,8 @@ The release images are published as:
 ## Smoke test (no workers required)
 
 ```bash
+CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
+CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default} \
 ./tools/scripts/platform_smoke.sh
 ```
 
@@ -65,11 +69,17 @@ To override:
 cp .env.example .env
 # generate a key (requires openssl)
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
+# set a tenant for requests
+export CORDUM_TENANT_ID=default
 # edit CORDUM_API_KEY
 ```
 
-HTTP requests must include `X-API-Key`; gRPC uses metadata `x-api-key`.
-WebSocket stream auth uses `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` (the dashboard handles this automatically).
+HTTP requests must include `X-API-Key` and `X-Tenant-ID`; gRPC uses metadata `x-api-key`.
+The default tenant is `TENANT_ID` (defaults to `default` in compose).
+WebSocket stream auth uses `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` plus `?tenant_id=<tenant>` (the dashboard handles this automatically).
+
+Production mode (`CORDUM_ENV=production`) requires TLS for HTTP/gRPC and for Redis/NATS clients.
+Metrics endpoints bind to loopback in production unless you set `GATEWAY_METRICS_PUBLIC=1`.
 
 For multiple API keys, set `CORDUM_API_KEYS` (comma-separated or JSON). Example:
 
