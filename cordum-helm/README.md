@@ -61,6 +61,14 @@ helm install cordum ./cordum-helm \
   --set external.safetyKernelAddr=safety-kernel.example.com:50051
 ```
 
+Tune JetStream durability (fsync cadence):
+
+```bash
+helm install cordum ./cordum-helm \
+  -n cordum --create-namespace \
+  --set nats.jetstream.syncInterval=1s
+```
+
 ## Local dev (kind + local images)
 
 If you are installing from a local clone and do not have published images,

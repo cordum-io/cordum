@@ -64,18 +64,24 @@ spec:
           image: {{ .Values.nats.image | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           args:
-            - -js
-            - -sd
-            - /data
+            - -c
+            - /etc/nats/nats.conf
           ports:
             - name: client
               containerPort: {{ .Values.nats.service.port }}
           volumeMounts:
+            - name: nats-config
+              mountPath: /etc/nats/nats.conf
+              subPath: nats.conf
+              readOnly: true
             - name: nats-data
               mountPath: /data
           resources:
             {{- toYaml .Values.nats.resources | nindent 12 }}
       volumes:
+        - name: nats-config
+          configMap:
+            name: {{ include "cordum.fullname" . }}-nats-config
         - name: nats-data
           {{- if .Values.nats.persistence.enabled }}
           persistentVolumeClaim:

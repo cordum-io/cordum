@@ -110,6 +110,10 @@ Compose mounts:
 - `config/pools.yaml`
 - `config/timeouts.yaml`
 - `config/safety.yaml`
+- `config/nats.conf` (NATS server config; tune `sync_interval` for JetStream durability)
+
+To adjust JetStream durability for local/dev, edit `config/nats.conf` and set
+`sync_interval` (lower values improve crash durability at the cost of throughput).
 
 ## Environment defaults (compose)
 

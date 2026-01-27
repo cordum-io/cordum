@@ -1,0 +1,17 @@
+{{- if .Values.nats.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cordum.fullname" . }}-nats-config
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+data:
+  nats.conf: |
+    port: {{ .Values.nats.service.port }}
+    jetstream {
+      store_dir: {{ .Values.nats.jetstream.storeDir | quote }}
+      sync_interval: {{ .Values.nats.jetstream.syncInterval | quote }}
+    }
+---
+{{- end }}

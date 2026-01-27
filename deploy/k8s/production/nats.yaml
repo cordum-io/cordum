@@ -9,6 +9,7 @@ data:
     http: 8222
     jetstream {
       store_dir: /data/jetstream
+      sync_interval: "1s"
     }
     tls {
       cert_file: /etc/nats/tls/tls.crt
