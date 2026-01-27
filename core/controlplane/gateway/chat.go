@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/memory"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -48,6 +50,29 @@ type chatMessage struct {
 type chatResponse struct {
 	Items      []chatMessage `json:"items"`
 	NextCursor *int64        `json:"next_cursor,omitempty"`
+}
+
+type chatBusMessage struct {
+	ID        string         `json:"id,omitempty"`
+	RunID     string         `json:"runId,omitempty"`
+	Role      string         `json:"role,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	StepID    string         `json:"stepId,omitempty"`
+	JobID     string         `json:"jobId,omitempty"`
+	AgentID   string         `json:"agentId,omitempty"`
+	AgentName string         `json:"agentName,omitempty"`
+	CreatedAt string         `json:"createdAt,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+type chatWSEnvelope struct {
+	TraceId         string `json:"traceId,omitempty"`
+	SenderId        string `json:"senderId,omitempty"`
+	CreatedAt       string `json:"createdAt,omitempty"`
+	ProtocolVersion int32  `json:"protocolVersion,omitempty"`
+	Payload         struct {
+		ChatMessage chatBusMessage `json:"chatMessage,omitempty"`
+	} `json:"payload,omitempty"`
 }
 
 type chatSendRequest struct {
@@ -98,8 +123,34 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit := parseChatLimit(r)
+	cursor, hasCursor := parseChatCursor(r)
 	key := chatHistoryKey(memoryID)
-	items, err := client.LRange(r.Context(), key, -limit, -1).Result()
+	total, err := client.LLen(r.Context(), key).Result()
+	if err != nil {
+		http.Error(w, "failed to load chat history", http.StatusInternalServerError)
+		return
+	}
+	if total == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatResponse{Items: []chatMessage{}})
+		return
+	}
+
+	end := total - 1
+	if hasCursor {
+		if cursor < 0 {
+			cursor = 0
+		}
+		if cursor < total {
+			end = cursor
+		}
+	}
+	start := end - limit + 1
+	if start < 0 {
+		start = 0
+	}
+
+	items, err := client.LRange(r.Context(), key, start, end).Result()
 	if err != nil {
 		http.Error(w, "failed to load chat history", http.StatusInternalServerError)
 		return
@@ -121,7 +172,12 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(chatResponse{Items: messages})
+	var nextCursor *int64
+	if start > 0 {
+		nc := start - 1
+		nextCursor = &nc
+	}
+	_ = json.NewEncoder(w).Encode(chatResponse{Items: messages, NextCursor: nextCursor})
 }
 
 func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
@@ -203,8 +259,42 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 		_ = client.LTrim(r.Context(), key, -chatMaxHistory, -1).Err()
 	}
 
+	msg := chatMessageFromEvent(runID, ev.ID, ev)
+	if s != nil {
+		s.emitChatEvent(run, msg)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(chatMessageFromEvent(runID, ev.ID, ev))
+	_ = json.NewEncoder(w).Encode(msg)
+}
+
+func (s *server) emitChatEvent(run *wf.WorkflowRun, msg chatMessage) {
+	if s == nil || run == nil || msg.ID == "" {
+		return
+	}
+	var env chatWSEnvelope
+	env.TraceId = msg.ID
+	env.SenderId = "api-gateway"
+	env.CreatedAt = msg.CreatedAt
+	env.ProtocolVersion = int32(capsdk.DefaultProtocolVersion)
+	env.Payload.ChatMessage = chatBusMessage{
+		ID:        msg.ID,
+		RunID:     msg.RunID,
+		Role:      msg.Role,
+		Content:   msg.Content,
+		StepID:    msg.StepID,
+		JobID:     msg.JobID,
+		AgentID:   msg.AgentID,
+		AgentName: msg.AgentName,
+		CreatedAt: msg.CreatedAt,
+		Metadata:  msg.Metadata,
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		logging.Error("api-gateway", "chat event marshal failed", "error", err)
+		return
+	}
+	s.enqueueWSEvent(data, run.OrgID)
 }
 
 func runMemoryID(run *wf.WorkflowRun) string {
@@ -214,7 +304,7 @@ func runMemoryID(run *wf.WorkflowRun) string {
 	if run.Input != nil {
 		if raw, ok := run.Input["memory_id"]; ok {
 			if s, ok := raw.(string); ok {
-				if trimmed := strings.TrimSpace(s); trimmed != "" {
+				if trimmed := memory.NormalizeMemoryID(s); trimmed != "" {
 					return trimmed
 				}
 			}
@@ -251,10 +341,21 @@ func parseChatLimit(r *http.Request) int64 {
 	return limit
 }
 
+func parseChatCursor(r *http.Request) (int64, bool) {
+	if q := r.URL.Query().Get("cursor"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
 func normalizeChatRole(role string) string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "user":
 		return "user"
+	case "assistant":
+		return "agent"
 	case "agent":
 		return "agent"
 	case "system":

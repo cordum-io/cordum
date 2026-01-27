@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -61,6 +62,16 @@ func TestRunChatHandlers(t *testing.T) {
 		t.Fatalf("unexpected post response: %+v", postResp)
 	}
 
+	postBody2, _ := json.Marshal(map[string]any{"content": "second chat"})
+	postReq2 := httptest.NewRequest(http.MethodPost, "/api/v1/workflow-runs/"+run.ID+"/chat", bytes.NewReader(postBody2))
+	postReq2.Header.Set("X-Tenant-ID", "default")
+	postReq2.SetPathValue("id", run.ID)
+	postRec2 := httptest.NewRecorder()
+	s.handlePostRunChat(postRec2, postReq2)
+	if postRec2.Code != http.StatusOK {
+		t.Fatalf("post chat 2: %d %s", postRec2.Code, postRec2.Body.String())
+	}
+
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs/"+run.ID+"/chat", nil)
 	getReq.Header.Set("X-Tenant-ID", "default")
 	getReq.SetPathValue("id", run.ID)
@@ -79,5 +90,49 @@ func TestRunChatHandlers(t *testing.T) {
 	}
 	if len(getResp.Items) == 0 || getResp.Items[len(getResp.Items)-1].Content != "hello chat" {
 		t.Fatalf("unexpected chat history: %+v", getResp.Items)
+	}
+
+	cursorReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs/"+run.ID+"/chat?limit=1", nil)
+	cursorReq.Header.Set("X-Tenant-ID", "default")
+	cursorReq.SetPathValue("id", run.ID)
+	cursorRec := httptest.NewRecorder()
+	s.handleGetRunChat(cursorRec, cursorReq)
+	if cursorRec.Code != http.StatusOK {
+		t.Fatalf("get chat cursor: %d %s", cursorRec.Code, cursorRec.Body.String())
+	}
+	var cursorResp struct {
+		Items []struct {
+			Content string `json:"content"`
+		} `json:"items"`
+		NextCursor *int64 `json:"next_cursor"`
+	}
+	if err := json.NewDecoder(cursorRec.Body).Decode(&cursorResp); err != nil {
+		t.Fatalf("decode cursor response: %v", err)
+	}
+	if len(cursorResp.Items) != 1 || cursorResp.Items[0].Content != "second chat" {
+		t.Fatalf("unexpected cursor page: %+v", cursorResp.Items)
+	}
+	if cursorResp.NextCursor == nil {
+		t.Fatalf("expected next cursor")
+	}
+
+	olderReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs/"+run.ID+"/chat?limit=1&cursor="+strconv.FormatInt(*cursorResp.NextCursor, 10), nil)
+	olderReq.Header.Set("X-Tenant-ID", "default")
+	olderReq.SetPathValue("id", run.ID)
+	olderRec := httptest.NewRecorder()
+	s.handleGetRunChat(olderRec, olderReq)
+	if olderRec.Code != http.StatusOK {
+		t.Fatalf("get older chat: %d %s", olderRec.Code, olderRec.Body.String())
+	}
+	var olderResp struct {
+		Items []struct {
+			Content string `json:"content"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(olderRec.Body).Decode(&olderResp); err != nil {
+		t.Fatalf("decode older response: %v", err)
+	}
+	if len(olderResp.Items) != 1 || olderResp.Items[0].Content != "hello chat" {
+		t.Fatalf("unexpected older page: %+v", olderResp.Items)
 	}
 }

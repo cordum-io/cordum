@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/memory"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -58,6 +59,40 @@ func TestHandleSubmitJobHTTP(t *testing.T) {
 	}
 	if bus.published[0].subject != capsdk.SubjectSubmit {
 		t.Fatalf("unexpected publish subject: %s", bus.published[0].subject)
+	}
+}
+
+func TestHandleSubmitJobHTTPRejectsDisallowedMemoryID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+
+	ctx := context.Background()
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"context": map[string]any{
+				"allowed_memory_ids": []string{"repo:*"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	payload := map[string]any{
+		"prompt":    "hello",
+		"topic":     "job.test",
+		"memory_id": "kb:secret",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

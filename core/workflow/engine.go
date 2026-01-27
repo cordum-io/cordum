@@ -1345,7 +1345,7 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 	if run.Input != nil {
 		if raw, ok := run.Input["memory_id"]; ok {
 			if s, ok := raw.(string); ok {
-				if trimmed := strings.TrimSpace(s); trimmed != "" {
+				if trimmed := memory.NormalizeMemoryID(s); trimmed != "" {
 					memoryID = trimmed
 				}
 			}

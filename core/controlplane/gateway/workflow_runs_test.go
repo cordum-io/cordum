@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
 	wf "github.com/cordum/cordum/core/workflow"
 )
 
@@ -104,5 +105,46 @@ func TestWorkflowRunHandlers(t *testing.T) {
 	s.handleCancelRun(cancelRec, cancelReq)
 	if cancelRec.Code != http.StatusNoContent {
 		t.Fatalf("cancel run: %d %s", cancelRec.Code, cancelRec.Body.String())
+	}
+}
+
+func TestHandleStartRunRejectsDisallowedMemoryID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	wfDef := &wf.Workflow{
+		ID:    "wf-memory",
+		OrgID: "default",
+		Steps: map[string]*wf.Step{
+			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.test"},
+		},
+	}
+	if err := s.workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"context": map[string]any{
+				"allowed_memory_ids": []string{"repo:*"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"memory_id": "kb:secret",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+wfDef.ID+"/runs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", wfDef.ID)
+	rec := httptest.NewRecorder()
+	s.handleStartRun(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

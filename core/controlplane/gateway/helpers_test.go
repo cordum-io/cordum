@@ -197,7 +197,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		bus:            bus,
 		workers:        make(map[string]*pb.Heartbeat),
 		clients:        make(map[*websocket.Conn]*wsClient),
-		eventsCh:       make(chan *pb.BusPacket, 8),
+		eventsCh:       make(chan wsEvent, 8),
 		workflowStore:  workflowStore,
 		configSvc:      configSvc,
 		dlqStore:       dlqStore,
