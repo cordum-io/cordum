@@ -283,18 +283,7 @@ func (s *server) emitChatEvent(run *wf.WorkflowRun, msg chatMessage) {
 	env.SenderId = "api-gateway"
 	env.CreatedAt = msg.CreatedAt
 	env.ProtocolVersion = int32(capsdk.DefaultProtocolVersion)
-	env.Payload.ChatMessage = chatBusMessage{
-		ID:        msg.ID,
-		RunID:     msg.RunID,
-		Role:      msg.Role,
-		Content:   msg.Content,
-		StepID:    msg.StepID,
-		JobID:     msg.JobID,
-		AgentID:   msg.AgentID,
-		AgentName: msg.AgentName,
-		CreatedAt: msg.CreatedAt,
-		Metadata:  msg.Metadata,
-	}
+	env.Payload.ChatMessage = chatBusMessage(msg)
 	data, err := json.Marshal(env)
 	if err != nil {
 		logging.Error("api-gateway", "chat event marshal failed", "error", err)
