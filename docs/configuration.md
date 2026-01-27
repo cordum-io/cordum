@@ -89,6 +89,7 @@ Shared across services:
 - Policy signature verification: `SAFETY_POLICY_PUBLIC_KEY`, `SAFETY_POLICY_SIGNATURE`, `SAFETY_POLICY_SIGNATURE_PATH`,
   `SAFETY_POLICY_SIGNATURE_REQUIRED`
 - Policy reload/overlays: `SAFETY_POLICY_RELOAD_INTERVAL`, `SAFETY_POLICY_CONFIG_SCOPE`, `SAFETY_POLICY_CONFIG_ID`, `SAFETY_POLICY_CONFIG_KEY`, `SAFETY_POLICY_CONFIG_DISABLE`
+- Safety kernel reads policy bundle fragments from the config service in Redis; ensure `REDIS_URL` is set when using pack policy overlays.
 
 ## NATS server durability (JetStream)
 
