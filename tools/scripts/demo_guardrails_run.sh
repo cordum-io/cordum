@@ -36,7 +36,21 @@ curl -sS "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID:
 echo "[guardrails] starting demo worker"
 (cd examples/demo-guardrails/worker && NATS_URL="${NATS_URL}" REDIS_URL="${REDIS_URL}" go run .) &
 WORKER_PID=$!
-sleep 1
+
+echo "[guardrails] waiting for worker heartbeat"
+worker_ready=0
+for _ in {1..120}; do
+  count=$(curl -sS "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" | jq -r '.workers.count // 0')
+  if [[ "${count}" =~ ^[0-9]+$ ]] && [[ "${count}" -gt 0 ]]; then
+    worker_ready=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${worker_ready}" != "1" ]]; then
+  echo "worker did not register in time" >&2
+  exit 1
+fi
 
 echo "[guardrails] running demo"
 CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" CORDUM_API_BASE="${API_BASE}" ./tools/scripts/demo_guardrails.sh

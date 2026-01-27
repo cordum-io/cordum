@@ -36,6 +36,7 @@ if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the demo." >&2
   exit 1
 fi
+export CORDUM_GATEWAY=${CORDUM_GATEWAY:-${API_BASE}}
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 NATS_URL=${NATS_URL:-nats://localhost:4222}

@@ -25,6 +25,7 @@ if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the demo." >&2
   exit 1
 fi
+export CORDUM_GATEWAY=${CORDUM_GATEWAY:-${API_BASE}}
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 export CORDUM_TENANT_ID=${TENANT_ID}
@@ -72,6 +73,10 @@ for _ in {1..25}; do
 done
 
 echo "[demo] approval run status: ${status}"
+if [[ "${status}" != "succeeded" ]]; then
+  echo "approval run did not succeed (status=${status})" >&2
+  exit 1
+fi
 
 echo "[demo] submitting dangerous job"
 danger_job=$(${CTL_BIN} job submit --topic job.demo-guardrails.dangerous --input '{"message":"rm -rf /","actor":"demo"}' --json | jq -r '.job_id')
