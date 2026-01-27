@@ -155,6 +155,11 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load chat history", http.StatusInternalServerError)
 		return
 	}
+	if len(items) > 1 {
+		for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+			items[i], items[j] = items[j], items[i]
+		}
+	}
 
 	messages := make([]chatMessage, 0, len(items))
 	for i, raw := range items {
@@ -167,7 +172,8 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 			ev.Role = "system"
 			ev.Content = trimmed
 		}
-		fallbackID := runID + "-" + strconv.Itoa(i)
+		idx := end - int64(i)
+		fallbackID := runID + "-" + strconv.FormatInt(idx, 10)
 		messages = append(messages, chatMessageFromEvent(runID, fallbackID, ev))
 	}
 
