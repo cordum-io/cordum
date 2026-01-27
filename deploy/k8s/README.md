@@ -52,6 +52,7 @@ kubectl apply -n cordum -f /path/to/cordum-enterprise/deploy/k8s/enterprise-gate
 - API key is stored in the `cordum-api-key` Secret (key: `API_KEY`). Set this to a strong value before applying.
 - The gateway reads the API key from `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, or `API_KEY`, wired from the same Secret.
 - The dashboard reads the API key from the same Secret.
+- NATS JetStream fsync interval is configured in the `cordum-nats-config` ConfigMap (`deploy/k8s/base.yaml` or `deploy/k8s/production/nats.yaml`).
 - Probes are basic HTTP/TCP; adjust for your environment.
 - Resource requests/limits are conservative defaults; tune for your load profile.
 - If you use an Ingress, `deploy/k8s/ingress.yaml` routes `/api/v1/*` and `/health` to `cordum-api-gateway`, and `/` to `cordum-dashboard`.

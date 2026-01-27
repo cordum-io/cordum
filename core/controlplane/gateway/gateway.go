@@ -94,7 +94,7 @@ type server struct {
 
 	clients   map[*websocket.Conn]*wsClient
 	clientsMu sync.RWMutex
-	eventsCh  chan *pb.BusPacket
+	eventsCh  chan wsEvent
 
 	metrics infraMetrics.GatewayMetrics
 	tenant  string
@@ -116,9 +116,14 @@ type server struct {
 }
 
 type wsClient struct {
-	ch               chan *pb.BusPacket
+	ch               chan wsEvent
 	tenant           string
 	allowCrossTenant bool
+}
+
+type wsEvent struct {
+	data   []byte
+	tenant string
 }
 
 var upgrader = websocket.Upgrader{
@@ -127,7 +132,7 @@ var upgrader = websocket.Upgrader{
 }
 
 const (
-	rateLimitKeyTTL         = 30 * time.Minute
+	rateLimitKeyTTL          = 30 * time.Minute
 	rateLimitCleanupInterval = 5 * time.Minute
 )
 
@@ -523,7 +528,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		bus:            natsBus,
 		workers:        make(map[string]*pb.Heartbeat),
 		clients:        make(map[*websocket.Conn]*wsClient),
-		eventsCh:       make(chan *pb.BusPacket, 512),
+		eventsCh:       make(chan wsEvent, 512),
 		metrics:        gwMetrics,
 		tenant:         tenantID,
 		auth:           provider,
@@ -599,10 +604,7 @@ func (s *server) startBusTaps() {
 			s.workers[hb.WorkerId] = hb
 			s.workerMu.Unlock()
 			// Also stream heartbeats to WS listeners (best effort).
-			select {
-			case s.eventsCh <- p:
-			default:
-			}
+			s.enqueueBusPacket(p)
 		}
 		return nil
 	}); err != nil {
@@ -671,10 +673,7 @@ func (s *server) startBusTaps() {
 			if subject == "sys.job.>" {
 				s.handleWorkflowJobResult(context.Background(), p.GetJobResult())
 			}
-			select {
-			case s.eventsCh <- p:
-			default:
-			}
+			s.enqueueBusPacket(p)
 			return nil
 		}); err != nil {
 			logging.Error("api-gateway", "bus subscribe failed", "subject", subject, "error", err)
@@ -684,9 +683,6 @@ func (s *server) startBusTaps() {
 	// Broadcast loop to WS clients
 	go func() {
 		for evt := range s.eventsCh {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			tenant, ok := s.tenantForBusPacket(ctx, evt)
-			cancel()
 			var slowClients []*websocket.Conn
 			s.clientsMu.RLock()
 			for conn, client := range s.clients {
@@ -694,7 +690,7 @@ func (s *server) startBusTaps() {
 					continue
 				}
 				if !client.allowCrossTenant {
-					if !ok || tenant == "" || tenant != client.tenant {
+					if evt.tenant == "" || evt.tenant != client.tenant {
 						continue
 					}
 				}
@@ -720,6 +716,31 @@ func (s *server) startBusTaps() {
 			}
 		}
 	}()
+}
+
+func (s *server) enqueueBusPacket(p *pb.BusPacket) {
+	if s == nil || p == nil {
+		return
+	}
+	data, err := protojson.Marshal(p)
+	if err != nil {
+		logging.Error("api-gateway", "protojson marshal failed", "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	tenant, _ := s.tenantForBusPacket(ctx, p)
+	cancel()
+	s.enqueueWSEvent(data, tenant)
+}
+
+func (s *server) enqueueWSEvent(data []byte, tenant string) {
+	if s == nil || len(data) == 0 {
+		return
+	}
+	select {
+	case s.eventsCh <- wsEvent{data: data, tenant: strings.TrimSpace(tenant)}:
+	default:
+	}
 }
 
 func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) {
@@ -1703,10 +1724,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
-	select {
-	case s.eventsCh <- cancelPacket:
-	default:
-	}
+	s.enqueueBusPacket(cancelPacket)
 	// Best-effort publish so scheduler/system listeners can observe the cancel.
 	_ = s.bus.Publish(capsdk.SubjectResult, cancelPacket)
 
@@ -1971,7 +1989,24 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Labels["secrets_present"] = "true"
 	}
 
-	memoryID := req.MemoryId
+	rawMemoryID := strings.TrimSpace(req.MemoryId)
+	explicitMemoryID := memory.NormalizeMemoryID(rawMemoryID)
+	if rawMemoryID != "" && explicitMemoryID == "" {
+		http.Error(w, "invalid memory id", http.StatusBadRequest)
+		return
+	}
+	if explicitMemoryID != "" {
+		if err := s.enforceMemoryID(r.Context(), orgID, teamID, "", "", explicitMemoryID); err != nil {
+			var perr memoryPolicyError
+			if errors.As(err, &perr) {
+				http.Error(w, perr.msg, perr.status)
+				return
+			}
+			http.Error(w, "memory policy check failed", http.StatusInternalServerError)
+			return
+		}
+	}
+	memoryID := explicitMemoryID
 	if memoryID == "" {
 		memoryID = deriveMemoryIDFromReq(req.Topic, "", jobID)
 	}
@@ -2162,7 +2197,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	logging.Info("gateway", "ws connected", "remote", r.RemoteAddr)
 
 	authCtx := authFromRequest(r)
-	client := &wsClient{ch: make(chan *pb.BusPacket, 100)}
+	client := &wsClient{ch: make(chan wsEvent, 100)}
 	if authCtx != nil {
 		client.tenant = strings.TrimSpace(authCtx.Tenant)
 		client.allowCrossTenant = authCtx.AllowCrossTenant
@@ -2183,13 +2218,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			// Use protojson to correctly handle oneof fields and proto semantics
-			data, err := protojson.Marshal(msg)
-			if err != nil {
-				logging.Error("gateway", "protojson marshal failed", "error", err)
-				continue
-			}
-			if err := ws.WriteMessage(websocket.TextMessage, data); err != nil {
+			if err := ws.WriteMessage(websocket.TextMessage, msg.data); err != nil {
 				return
 			}
 		case <-r.Context().Done():
@@ -2727,11 +2756,51 @@ func parseContextMode(topic, explicit string) string {
 	return "raw"
 }
 
+type memoryPolicyError struct {
+	status int
+	msg    string
+}
+
+func (e memoryPolicyError) Error() string {
+	return e.msg
+}
+
+func (s *server) enforceMemoryID(ctx context.Context, orgID, teamID, workflowID, stepID, memoryID string) error {
+	memoryID = memory.NormalizeMemoryID(memoryID)
+	if memoryID == "" {
+		return nil
+	}
+	if s == nil || s.configSvc == nil {
+		return memoryPolicyError{status: http.StatusServiceUnavailable, msg: "config service unavailable"}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	if _, err := s.configSvc.Get(cctx, configsvc.ScopeSystem, "default"); err != nil && !errors.Is(err, redis.Nil) {
+		return memoryPolicyError{status: http.StatusServiceUnavailable, msg: "config service unavailable"}
+	}
+	cfgMap, err := s.configSvc.Effective(cctx, orgID, teamID, workflowID, stepID)
+	if err != nil {
+		return memoryPolicyError{status: http.StatusServiceUnavailable, msg: "config service unavailable"}
+	}
+	cfg, ok := config.ParseEffectiveContextMap(cfgMap)
+	if !ok {
+		return nil
+	}
+	allowed, reason := config.MemoryIDAllowed(cfg, memoryID)
+	if !allowed {
+		return memoryPolicyError{status: http.StatusForbidden, msg: reason}
+	}
+	return nil
+}
+
 func deriveMemoryIDFromReq(topic, explicit, jobID string) string {
 	if explicit != "" {
-		return explicit
+		return memory.NormalizeMemoryID(explicit)
 	}
-	return "mem:" + jobID
+	return strings.TrimSpace(jobID)
 }
 
 func normalizeTimestampMicrosLower(ts int64) int64 {
@@ -3080,6 +3149,30 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		orgID = wfDef.OrgID
 	}
 	teamID := r.URL.Query().Get("team_id")
+	if raw, ok := payload["memory_id"]; ok {
+		memStr, ok := raw.(string)
+		if !ok {
+			http.Error(w, "memory_id must be a string", http.StatusBadRequest)
+			return
+		}
+		norm := memory.NormalizeMemoryID(memStr)
+		if strings.TrimSpace(memStr) != "" && norm == "" {
+			http.Error(w, "invalid memory id", http.StatusBadRequest)
+			return
+		}
+		if norm != "" {
+			if err := s.enforceMemoryID(r.Context(), orgID, teamID, wfID, "", norm); err != nil {
+				var perr memoryPolicyError
+				if errors.As(err, &perr) {
+					http.Error(w, perr.msg, perr.status)
+					return
+				}
+				http.Error(w, "memory policy check failed", http.StatusInternalServerError)
+				return
+			}
+			payload["memory_id"] = norm
+		}
+	}
 	dryRun := parseBool(r.URL.Query().Get("dry_run"))
 	idempotencyKey := idempotencyKeyFromRequest(r)
 	if idempotencyKey != "" {
@@ -4533,6 +4626,28 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		MemoryId:       req.GetMemoryId(),
 		// SubmitJobRequest does not carry budget limits yet; defaults are applied below.
 	}
+	rawMemoryID := strings.TrimSpace(req.GetMemoryId())
+	explicitMemoryID := memory.NormalizeMemoryID(rawMemoryID)
+	if rawMemoryID != "" && explicitMemoryID == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid memory id")
+	}
+	if explicitMemoryID != "" {
+		if err := s.enforceMemoryID(ctx, orgID, req.GetTeamId(), "", "", explicitMemoryID); err != nil {
+			var perr memoryPolicyError
+			if errors.As(err, &perr) {
+				switch perr.status {
+				case http.StatusForbidden:
+					return nil, status.Error(codes.PermissionDenied, perr.msg)
+				case http.StatusServiceUnavailable:
+					return nil, status.Error(codes.Unavailable, perr.msg)
+				default:
+					return nil, status.Error(codes.InvalidArgument, perr.msg)
+				}
+			}
+			return nil, status.Error(codes.Internal, "memory policy check failed")
+		}
+	}
+	payloadReq.MemoryId = explicitMemoryID
 	// For gRPC, validation of basic fields like prompt, topic happens earlier via protobuf definition
 	// For complex validation rules, we can still use a simplified applyDefaults and validate for payloadReq.
 	payloadReq.applyDefaults(s.tenant)

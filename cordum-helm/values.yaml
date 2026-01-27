@@ -61,6 +61,9 @@ nats:
     enabled: false
     size: 1Gi
     storageClassName: ""
+  jetstream:
+    storeDir: /data/jetstream
+    syncInterval: "1s"
   resources:
     limits:
       cpu: 500m

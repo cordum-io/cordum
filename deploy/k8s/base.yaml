@@ -32,6 +32,19 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: cordum-nats-config
+  namespace: cordum
+data:
+  nats.conf: |
+    port: 4222
+    jetstream {
+      store_dir: /data/jetstream
+      sync_interval: "1s"
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: cordum-safety
   namespace: cordum
 data:
@@ -81,10 +94,17 @@ spec:
       containers:
       - name: nats
         image: nats:2.10
-        args: ["-js"]
+        args: ["-c", "/etc/nats/nats.conf"]
         ports:
         - name: client
           containerPort: 4222
+        volumeMounts:
+        - name: nats-config
+          mountPath: /etc/nats/nats.conf
+          subPath: nats.conf
+          readOnly: true
+        - name: nats-data
+          mountPath: /data
         livenessProbe:
           tcpSocket: {port: 4222}
           initialDelaySeconds: 5
@@ -100,6 +120,12 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+      volumes:
+      - name: nats-config
+        configMap:
+          name: cordum-nats-config
+      - name: nats-data
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -237,6 +263,8 @@ spec:
         env:
         - name: NATS_URL
           value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
         - name: SAFETY_KERNEL_ADDR
           value: :50051
         - name: SAFETY_POLICY_PATH

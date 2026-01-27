@@ -1,7 +1,5 @@
-github.com/cordum-io/cap/v2 v2.0.12 h1:47lYs9YLrS+EHw1596rACmFI+sM24Wc9QttrxBLyNnQ=
-github.com/cordum-io/cap/v2 v2.0.12/go.mod h1:gzRqG/14fSic9ofImJ7r+6R4t5fFCS4gQRaX/lZyKH4=
-github.com/cordum-io/cap/v2 v2.0.13 h1:kciEqsAcPKmn/DMphmYVvp5kYphxOnrwdWXf2lQo6HI=
-github.com/cordum-io/cap/v2 v2.0.13/go.mod h1:gzRqG/14fSic9ofImJ7r+6R4t5fFCS4gQRaX/lZyKH4=
+github.com/cordum-io/cap/v2 v2.0.16 h1:xfs9wSrWG2L33d/eUxfBQZeh2Ds4SJ4E3tlIK7B3A6A=
+github.com/cordum-io/cap/v2 v2.0.16/go.mod h1:jmrTfbgfD2dqrP6fO+8AZjZ0y9mV5I+yhP9ai9LjlvU=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
 github.com/go-logr/logr v1.4.3/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=

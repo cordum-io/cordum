@@ -181,10 +181,10 @@ func TestParseContextModeAndMemoryID(t *testing.T) {
 	if parseContextMode("job.test", "unknown") != "raw" {
 		t.Fatalf("expected default raw mode")
 	}
-	if deriveMemoryIDFromReq("job.test", "mem:explicit", "job-1") != "mem:explicit" {
+	if deriveMemoryIDFromReq("job.test", "mem:explicit", "job-1") != "explicit" {
 		t.Fatalf("expected explicit memory id")
 	}
-	if deriveMemoryIDFromReq("job.test", "", "job-1") != "mem:job-1" {
+	if deriveMemoryIDFromReq("job.test", "", "job-1") != "job-1" {
 		t.Fatalf("expected derived memory id")
 	}
 }

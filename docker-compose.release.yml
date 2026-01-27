@@ -3,10 +3,11 @@ version: "3.9"
 services:
   nats:
     image: nats:2.10-alpine
-    command: ["-js", "-sd", "/data"]
+    command: ["-c", "/etc/nats/nats.conf"]
     ports:
       - "4222:4222"
     volumes:
+      - ./config/nats.conf:/etc/nats/nats.conf:ro
       - nats_data:/data
 
   redis:
@@ -31,6 +32,7 @@ services:
       - nats
     environment:
       - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
       - SAFETY_KERNEL_ADDR=:50051
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
     volumes:

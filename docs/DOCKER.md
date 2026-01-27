@@ -110,6 +110,10 @@ Compose mounts:
 - `config/pools.yaml`
 - `config/timeouts.yaml`
 - `config/safety.yaml`
+- `config/nats.conf` (NATS server config; tune `sync_interval` for JetStream durability)
+
+To adjust JetStream durability for local/dev, edit `config/nats.conf` and set
+`sync_interval` (lower values improve crash durability at the cost of throughput).
 
 ## Environment defaults (compose)
 
@@ -118,6 +122,10 @@ Compose mounts:
 - `POOL_CONFIG_PATH=/etc/cordum/pools.yaml`, `TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml`
 - `NATS_USE_JETSTREAM=1` for scheduler/gateway/workflow engine
  - TLS: `GATEWAY_HTTP_TLS_CERT`, `GATEWAY_HTTP_TLS_KEY`, `GRPC_TLS_CERT`, `GRPC_TLS_KEY`
+
+If you install policy bundles via packs, the safety kernel must have `REDIS_URL`
+set so it can load policy fragments from the config service (compose does this
+by default).
 
 ## Tear down
 

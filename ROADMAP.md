@@ -1,6 +1,6 @@
 # Cordum Roadmap
 
-> **Last Updated:** January 2026
+> **Last Updated:** January 27, 2026
 
 This roadmap outlines our vision for Cordum's evolution. Priorities may shift based on community feedback and production learnings.
 
@@ -11,6 +11,10 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 ### Stability & Reliability
 - [x] Zero memory leaks over 72h continuous operation
 - [x] 99.96%+ uptime in production deployments
+- [x] Scheduler reconciler for timeouts/deadlines
+- [x] Pending job replayer for stalled/missed dispatches
+- [x] Dead-letter queue (DLQ) capture + retry/inspection endpoints
+- [x] Saga-based compensation rollback for workflows
 - [ ] Complete API documentation with OpenAPI spec
 - [ ] Comprehensive error handling guide
 - [ ] Disaster recovery playbook
@@ -18,8 +22,8 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 ### Performance
 - [x] 15k ops/sec policy evaluation throughput
 - [x] <5ms p99 end-to-end latency
-- [ ] gRPC API option (20% latency reduction target)
-- [ ] Policy caching layer (2x throughput target)
+- [x] gRPC API option (20% latency reduction target)
+- [x] Policy caching layer (2x throughput target)
 - [ ] ARM64 optimization (15% efficiency target)
 
 ### Enterprise Features
@@ -41,15 +45,18 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 ### Features
 
 #### Safety Kernel Enhancements
-- [ ] **Policy hot-reload** - Update policies without restart
-- [ ] **Policy simulation mode** - Test changes before apply
-- [ ] **Policy versioning** - Track and rollback policy changes
+- [x] **Policy hot-reload** - Update policies without restart
+- [x] **Policy simulation mode** - Test changes before apply
+- [x] **Policy versioning** - Track and rollback policy changes
 - [ ] **Constraint templates** - Reusable constraint patterns
 
 #### Workflow Engine Improvements
-- [ ] **Parallel step execution** - Run independent steps concurrently (40% faster)
-- [ ] **Conditional branching** - If/else logic in workflows
-- [ ] **Loop constructs** - For-each over datasets
+- [x] **Parallel step execution** - Run independent steps concurrently (40% faster)
+- [x] **Conditional branching** - If/else logic in workflows
+- [x] **Loop constructs** - For-each over datasets
+- [x] **Approval steps** - Human-in-the-loop workflow gating
+- [x] **Delay/timer steps** - Scheduled waits and retries
+- [x] **Notify steps** - Emit system alerts from workflows
 - [ ] **Workflow templates** - Parameterized workflow definitions
 
 #### Observability
@@ -83,13 +90,14 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 
 #### Pack Ecosystem
 - [ ] **Public pack registry** - Discover and share packs
-- [ ] **Pack marketplace** - Curated pack collection
-- [ ] **Pack templates** - Scaffolding tool for new packs
+- [x] **Pack marketplace** - Curated pack collection
+- [x] **Pack templates** - Scaffolding tool for new packs
+- [x] **Pack install/uninstall with overlays** - Config/policy/schema/workflow merges
 - [ ] **Pack testing framework** - Automated pack validation
 
 #### Developer Experience
 - [ ] **VS Code extension** - Syntax highlighting, debugging
-- [ ] **Local dev mode** - Simplified single-node setup
+- [x] **Local dev mode** - Simplified single-node setup
 - [ ] **Interactive CLI** - Better command-line UX
 - [ ] **Workflow debugger** - Step-through execution
 

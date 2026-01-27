@@ -10,6 +10,7 @@ Compose mounts these files from `config/`:
 - `config/pools.yaml` - topic -> pool routing
 - `config/timeouts.yaml` - per-topic and per-workflow timeouts
 - `config/safety.yaml` - safety kernel policy
+- `config/nats.conf` - NATS server config (JetStream `sync_interval`)
 
 `config/system.yaml` is a sample payload for the config service (budgets, rate limits, observability, alerting). It is not mounted by default; use `POST /api/v1/config` to store it.
 
@@ -88,5 +89,16 @@ Shared across services:
 - Policy signature verification: `SAFETY_POLICY_PUBLIC_KEY`, `SAFETY_POLICY_SIGNATURE`, `SAFETY_POLICY_SIGNATURE_PATH`,
   `SAFETY_POLICY_SIGNATURE_REQUIRED`
 - Policy reload/overlays: `SAFETY_POLICY_RELOAD_INTERVAL`, `SAFETY_POLICY_CONFIG_SCOPE`, `SAFETY_POLICY_CONFIG_ID`, `SAFETY_POLICY_CONFIG_KEY`, `SAFETY_POLICY_CONFIG_DISABLE`
+- Safety kernel reads policy bundle fragments from the config service in Redis; ensure `REDIS_URL` is set when using pack policy overlays.
+
+## NATS server durability (JetStream)
+
+JetStream fsync cadence is controlled by `sync_interval` in the NATS server
+config. Lower values improve crash durability at the cost of throughput.
+
+- Compose: edit `config/nats.conf`.
+- K8s base: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/base.yaml`.
+- Production overlay: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/production/nats.yaml`.
+- Helm: set `nats.jetstream.syncInterval` in `cordum-helm/values.yaml` (or `--set nats.jetstream.syncInterval=1s`).
 
 For full details, see `docs/DOCKER.md`.

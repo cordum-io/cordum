@@ -59,11 +59,26 @@ CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
 ./tools/scripts/demo_guardrails.sh
 ```
 
+If your gateway is not on localhost (for example, running inside a Docker network),
+set the API base and gateway:
+
+```bash
+CORDUM_API_BASE=http://cordum-api-gateway:8081 \
+CORDUM_GATEWAY=http://cordum-api-gateway:8081 \
+CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
+CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default} \
+CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
+./tools/scripts/demo_guardrails.sh
+```
+
 One-command runner (starts the worker + demo):
 
 ```bash
 ./tools/scripts/demo_guardrails_run.sh
 ```
+
+Note: the first run may take a bit while Go downloads modules and the worker
+registers a heartbeat.
 
 ## Record a GIF
 
