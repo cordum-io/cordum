@@ -263,6 +263,8 @@ spec:
         env:
         - name: NATS_URL
           value: nats://nats:4222
+        - name: REDIS_URL
+          value: redis://redis:6379
         - name: SAFETY_KERNEL_ADDR
           value: :50051
         - name: SAFETY_POLICY_PATH

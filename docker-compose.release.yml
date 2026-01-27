@@ -32,6 +32,7 @@ services:
       - nats
     environment:
       - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
       - SAFETY_KERNEL_ADDR=:50051
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
     volumes:
