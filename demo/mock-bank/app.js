@@ -314,9 +314,10 @@ async function apiRequest(path, options = {}) {
 
   const headers = new Headers(options.headers || {});
   headers.set("Accept", "application/json");
-  if (state.config.apiKey) {
-    headers.set("X-API-Key", state.config.apiKey);
+  if (!ensureApiKey()) {
+    throw new Error("API key is required.");
   }
+  headers.set("X-API-Key", state.config.apiKey);
   const tenantId = state.config.tenantId || state.config.orgId;
   if (tenantId) {
     headers.set("X-Tenant-ID", tenantId);
@@ -395,10 +396,6 @@ function loadQueryConfig() {
   if (apiBaseUrl) {
     config.apiBaseUrl = apiBaseUrl;
   }
-  const apiKey = params.get("apiKey");
-  if (apiKey) {
-    config.apiKey = apiKey;
-  }
   const tenantId = params.get("tenantId") || params.get("tenant_id");
   if (tenantId) {
     config.tenantId = tenantId;
@@ -459,6 +456,18 @@ function normalizeBaseUrl(url) {
   return next.replace(/\/+$/, "");
 }
 
+function ensureApiKey() {
+  if (state.config.apiKey) {
+    return true;
+  }
+  const entered = window.prompt("Enter your Cordum API key to continue:");
+  if (entered && entered.trim()) {
+    state.config.apiKey = entered.trim();
+    return true;
+  }
+  return false;
+}
+
 function buildErrorMessage(err) {
   const message = String(err && err.message ? err.message : err || "");
   const lower = message.toLowerCase();
@@ -466,7 +475,7 @@ function buildErrorMessage(err) {
     return "I could not reach the bank API. Please ensure the Cordum API is running and the page is served over http://localhost.";
   }
   if (lower.includes("401") || lower.includes("unauthorized")) {
-    return "The request was rejected. Update the demo API key (try ?apiKey=YOUR_KEY) and reload.";
+    return "The request was rejected. Update the demo API key and retry (refresh to re-enter).";
   }
   if (lower.includes("403") || lower.includes("tenant")) {
     return "The request was rejected. Set a tenant (try ?tenantId=default) and reload.";

@@ -42,6 +42,7 @@ type Engine struct {
 	jobStore JobStore
 	metrics  Metrics
 	config   ConfigProvider
+	saga     *SagaManager
 	stopped  atomic.Bool
 }
 
@@ -102,6 +103,12 @@ func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy 
 // WithConfig wires an optional effective config provider for dispatch-time injection.
 func (e *Engine) WithConfig(cfg ConfigProvider) *Engine {
 	e.config = cfg
+	return e
+}
+
+// WithSaga wires a saga manager for compensation tracking.
+func (e *Engine) WithSaga(saga *SagaManager) *Engine {
+	e.saga = saga
 	return e
 }
 
@@ -577,6 +584,37 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 				return nil
 			}
 		}
+		var jobReq *pb.JobRequest
+		if e.saga != nil && e.jobStore != nil {
+			if store, ok := e.jobStore.(interface {
+				GetJobRequest(context.Context, string) (*pb.JobRequest, error)
+			}); ok {
+				ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
+				jobReq, _ = store.GetJobRequest(ctx, jobID)
+				cancel()
+			}
+		}
+		if status == pb.JobStatus_JOB_STATUS_SUCCEEDED && e.saga != nil && jobReq != nil {
+			if err := e.saga.RecordCompensation(context.Background(), jobReq); err != nil {
+				logging.Error("scheduler", "record compensation failed", "job_id", jobID, "error", err)
+			}
+		}
+		if status == pb.JobStatus_JOB_STATUS_FAILED_FATAL && e.saga != nil {
+			workflowID := ""
+			if jobReq != nil {
+				workflowID = strings.TrimSpace(jobReq.WorkflowId)
+				if workflowID == "" && jobReq.Labels != nil {
+					workflowID = strings.TrimSpace(jobReq.Labels["workflow_id"])
+				}
+			}
+			if workflowID != "" {
+				go func(wfID string) {
+					if err := e.saga.Rollback(context.Background(), wfID); err != nil {
+						logging.Error("scheduler", "saga rollback failed", "workflow_id", wfID, "error", err)
+					}
+				}(workflowID)
+			}
+		}
 		var state JobState
 		succeeded := false
 		switch status {
@@ -584,6 +622,10 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			state = JobStateSucceeded
 			succeeded = true
 		case pb.JobStatus_JOB_STATUS_FAILED:
+			state = JobStateFailed
+		case pb.JobStatus_JOB_STATUS_FAILED_RETRYABLE:
+			state = JobStateFailed
+		case pb.JobStatus_JOB_STATUS_FAILED_FATAL:
 			state = JobStateFailed
 		case pb.JobStatus_JOB_STATUS_TIMEOUT:
 			state = JobStateTimeout
@@ -607,7 +649,7 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			}
 		}
 		e.incJobsCompleted(topic, status.String())
-		if !succeeded {
+		if !succeeded && status != pb.JobStatus_JOB_STATUS_FAILED_RETRYABLE {
 			if err := e.emitDLQ(jobID, topic, status, res.ErrorMessage, res.ErrorCode); err != nil {
 				return RetryAfter(err, retryDelayPublish)
 			}

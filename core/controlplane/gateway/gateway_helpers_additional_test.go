@@ -181,10 +181,10 @@ func TestParseContextModeAndMemoryID(t *testing.T) {
 	if parseContextMode("job.test", "unknown") != "raw" {
 		t.Fatalf("expected default raw mode")
 	}
-	if deriveMemoryIDFromReq("job.test", "mem:explicit", "job-1") != "mem:explicit" {
+	if deriveMemoryIDFromReq("job.test", "mem:explicit", "job-1") != "explicit" {
 		t.Fatalf("expected explicit memory id")
 	}
-	if deriveMemoryIDFromReq("job.test", "", "job-1") != "mem:job-1" {
+	if deriveMemoryIDFromReq("job.test", "", "job-1") != "job-1" {
 		t.Fatalf("expected derived memory id")
 	}
 }
@@ -206,6 +206,21 @@ func TestNormalizeTimestampHelpers(t *testing.T) {
 	}
 	if got := normalizeTimestampSecondsUpper(millisThreshold + 1000); got != (millisThreshold+1000)/1_000_000 {
 		t.Fatalf("unexpected seconds upper for millis")
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.RemoteAddr = "192.0.2.10:1234"
+	if got := clientIP(req); got != "192.0.2.10" {
+		t.Fatalf("expected host without port, got %q", got)
+	}
+	req.RemoteAddr = "10.0.0.2"
+	if got := clientIP(req); got != "10.0.0.2" {
+		t.Fatalf("expected raw addr, got %q", got)
+	}
+	if clientIP(nil) != "" {
+		t.Fatalf("expected empty for nil request")
 	}
 }
 
@@ -266,7 +281,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	orig := apiLimiter
 	defer func() { apiLimiter = orig }()
 
-	apiLimiter = &tokenBucket{tokens: make(chan struct{}, 1)}
+	apiLimiter = newKeyedRateLimiter(1, 1)
 	handler := rateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -275,15 +290,14 @@ func TestRateLimitMiddleware(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
-	if rr.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected rate limit response, got %d", rr.Code)
-	}
-
-	apiLimiter.tokens <- struct{}{}
-	rr = httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected ok response, got %d", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected rate limit response, got %d", rr.Code)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/health", nil)

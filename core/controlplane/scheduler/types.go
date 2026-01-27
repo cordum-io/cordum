@@ -54,6 +54,17 @@ type Metrics interface {
 	IncSafetyDenied(topic string)
 }
 
+// SagaMetrics captures metrics for saga rollbacks and compensation handling.
+type SagaMetrics interface {
+	IncSagaRecorded()
+	IncSagaRollbackTriggered()
+	IncSagaCompensationDispatched()
+	IncSagaCompensationFailed()
+	ObserveSagaRollback(durationSeconds float64)
+	IncSagaActive()
+	DecSagaActive()
+}
+
 // JobState captures lifecycle for a job as seen by the scheduler.
 type JobState string
 

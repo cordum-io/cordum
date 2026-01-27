@@ -49,6 +49,7 @@ func TestLoadPolicyBundleFromFile(t *testing.T) {
 }
 
 func TestReadPolicySourceHTTP(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_URL_ALLOW_PRIVATE", "1")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(testPolicy))
@@ -61,6 +62,13 @@ func TestReadPolicySourceHTTP(t *testing.T) {
 	}
 	if string(data) != testPolicy {
 		t.Fatalf("unexpected policy data")
+	}
+}
+
+func TestReadPolicySourceHTTPBlocksPrivate(t *testing.T) {
+	_, err := readPolicySource("http://127.0.0.1:1/policy.yaml")
+	if err == nil {
+		t.Fatalf("expected private policy url to be blocked")
 	}
 }
 

@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -38,6 +40,22 @@ type fakeJobStore struct {
 	safety   map[string]SafetyDecisionRecord
 	attempts map[string]int
 	locks    map[string]time.Time
+}
+
+type sagaJobStore struct {
+	*fakeJobStore
+	reqs map[string]*pb.JobRequest
+}
+
+func newSagaJobStore() *sagaJobStore {
+	return &sagaJobStore{
+		fakeJobStore: newFakeJobStore(),
+		reqs:         make(map[string]*pb.JobRequest),
+	}
+}
+
+func (s *sagaJobStore) GetJobRequest(_ context.Context, jobID string) (*pb.JobRequest, error) {
+	return s.reqs[jobID], nil
 }
 
 func newFakeJobStore() *fakeJobStore {
@@ -396,5 +414,79 @@ func TestHandleJobResultUpdatesState(t *testing.T) {
 	}
 	if ptr := jobStore.ptrs["job-1"]; ptr != "redis://res:job-1" {
 		t.Fatalf("expected result ptr redis://res:job-1, got %s", ptr)
+	}
+}
+
+func TestHandleJobResultRetryableSkipsDLQ(t *testing.T) {
+	bus := &fakeBus{}
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), jobStore, nil)
+
+	res := &pb.JobResult{
+		JobId:  "job-retryable",
+		Status: pb.JobStatus_JOB_STATUS_FAILED_RETRYABLE,
+	}
+
+	if err := engine.handleJobResult(res); err != nil {
+		t.Fatalf("handle job result: %v", err)
+	}
+
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no DLQ publish for retryable failure, got %d", len(bus.published))
+	}
+}
+
+func TestHandleJobResultFatalTriggersRollback(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(srv.Close)
+
+	rdb, err := redisutil.NewClient("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("redis client: %v", err)
+	}
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	bus := &fakeBus{}
+	saga := NewSagaManager(bus, rdb)
+
+	seedReq := &pb.JobRequest{
+		JobId:      "job-success",
+		Topic:      "job.primary",
+		WorkflowId: "wf-fatal",
+		Compensation: &pb.Compensation{
+			Topic: "job.undo",
+		},
+	}
+	if err := saga.RecordCompensation(context.Background(), seedReq); err != nil {
+		t.Fatalf("record compensation: %v", err)
+	}
+
+	jobStore := newSagaJobStore()
+	jobStore.reqs["job-fatal"] = &pb.JobRequest{
+		JobId:      "job-fatal",
+		WorkflowId: "wf-fatal",
+	}
+
+	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), jobStore, nil).WithSaga(saga)
+	res := &pb.JobResult{
+		JobId:  "job-fatal",
+		Status: pb.JobStatus_JOB_STATUS_FAILED_FATAL,
+	}
+	if err := engine.handleJobResult(res); err != nil {
+		t.Fatalf("handle job result: %v", err)
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if len(bus.published) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(bus.published) == 0 {
+		t.Fatalf("expected compensation dispatch on fatal rollback")
 	}
 }

@@ -3,10 +3,11 @@ version: "3.9"
 services:
   nats:
     image: nats:2.10-alpine
-    command: ["-js", "-sd", "/data"]
+    command: ["-c", "/etc/nats/nats.conf"]
     ports:
       - "4222:4222"
     volumes:
+      - ./config/nats.conf:/etc/nats/nats.conf:ro
       - nats_data:/data
 
   redis:
@@ -31,6 +32,7 @@ services:
       - nats
     environment:
       - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://redis:6379
       - SAFETY_KERNEL_ADDR=:50051
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
     volumes:
@@ -105,6 +107,7 @@ services:
     environment:
       - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-http://localhost:8081}
       - CORDUM_API_KEY=${CORDUM_API_KEY:-}
+      - CORDUM_DASHBOARD_EMBED_API_KEY=true
       - CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default}
       - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-}
       - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-}

@@ -492,18 +492,18 @@ func TestRedisJobStoreListSafetyDecisions(t *testing.T) {
 
 	jobID := "job-decisions"
 	first := scheduler.SafetyDecisionRecord{
-		Decision:       scheduler.SafetyAllow,
-		Reason:         "ok",
+		Decision:         scheduler.SafetyAllow,
+		Reason:           "ok",
 		ApprovalRequired: true,
-		Constraints:    &pb.PolicyConstraints{RedactionLevel: "low"},
+		Constraints:      &pb.PolicyConstraints{RedactionLevel: "low"},
 	}
 	if err := store.SetSafetyDecision(context.Background(), jobID, first); err != nil {
 		t.Fatalf("set safety decision: %v", err)
 	}
 	second := scheduler.SafetyDecisionRecord{
-		Decision:       scheduler.SafetyDeny,
-		Reason:         "blocked",
-		Constraints:    &pb.PolicyConstraints{RedactionLevel: "high"},
+		Decision:    scheduler.SafetyDeny,
+		Reason:      "blocked",
+		Constraints: &pb.PolicyConstraints{RedactionLevel: "high"},
 	}
 	if err := store.SetSafetyDecision(context.Background(), jobID, second); err != nil {
 		t.Fatalf("set safety decision: %v", err)
@@ -715,12 +715,12 @@ func TestRedisJobStoreSafetyDecisionRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-safe"
 	record := scheduler.SafetyDecisionRecord{
-		Decision:       scheduler.SafetyDeny,
-		Reason:         "blocked",
-		RuleID:         "rule-1",
-		PolicySnapshot: "snap",
+		Decision:         scheduler.SafetyDeny,
+		Reason:           "blocked",
+		RuleID:           "rule-1",
+		PolicySnapshot:   "snap",
 		ApprovalRequired: true,
-		ApprovalRef:       "approval-1",
+		ApprovalRef:      "approval-1",
 		JobHash:          "hash",
 	}
 	if err := store.SetSafetyDecision(ctx, jobID, record); err != nil {
@@ -732,5 +732,75 @@ func TestRedisJobStoreSafetyDecisionRoundTrip(t *testing.T) {
 	}
 	if got.Decision != record.Decision || got.RuleID != record.RuleID || got.ApprovalRef != record.ApprovalRef {
 		t.Fatalf("unexpected safety decision: %#v", got)
+	}
+}
+
+func TestRedisJobStorePingAndTeam(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.Ping(ctx); err != nil {
+		t.Fatalf("expected ping success: %v", err)
+	}
+	jobID := "job-team"
+	if err := store.SetTeam(ctx, jobID, "team-a"); err != nil {
+		t.Fatalf("set team: %v", err)
+	}
+	if got, err := store.GetTeam(ctx, jobID); err != nil || got != "team-a" {
+		t.Fatalf("unexpected team: %v %v", got, err)
+	}
+}
+
+func TestRedisJobStoreIdempotencyKeyScoped(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	ok, existing, err := store.TrySetIdempotencyKeyScoped(ctx, "tenant-a", "key-1", "job-1")
+	if err != nil {
+		t.Fatalf("set idempotency: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected idempotency key to be set")
+	}
+	if existing != "job-1" {
+		t.Fatalf("expected stored job id, got %s", existing)
+	}
+	ok, existing, err = store.TrySetIdempotencyKeyScoped(ctx, "tenant-a", "key-1", "job-2")
+	if err != nil {
+		t.Fatalf("set idempotency 2: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected idempotency key collision")
+	}
+	if existing != "job-1" {
+		t.Fatalf("expected existing job id to remain, got %s", existing)
+	}
+}
+
+func TestActorTypeString(t *testing.T) {
+	if got := actorTypeString(pb.ActorType_ACTOR_TYPE_HUMAN); got != "human" {
+		t.Fatalf("unexpected actor type: %s", got)
+	}
+	if got := actorTypeString(pb.ActorType_ACTOR_TYPE_SERVICE); got != "service" {
+		t.Fatalf("unexpected actor type: %s", got)
+	}
+	if got := actorTypeString(pb.ActorType_ACTOR_TYPE_UNSPECIFIED); got != "" {
+		t.Fatalf("expected empty actor type for unspecified")
 	}
 }

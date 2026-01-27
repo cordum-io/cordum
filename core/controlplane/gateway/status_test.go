@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/infra/buildinfo"
+	"github.com/cordum/cordum/core/infra/bus"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -63,6 +64,26 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 	}
 	if mode, ok := licenseInfo["mode"].(string); !ok || mode != "enterprise" {
 		t.Fatalf("unexpected license mode: %#v", licenseInfo["mode"])
+	}
+}
+
+func TestHandleStatusWithNatsBus(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.bus = &bus.NatsBus{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if _, ok := status["nats"].(map[string]any); !ok {
+		t.Fatalf("expected nats status")
 	}
 }
 

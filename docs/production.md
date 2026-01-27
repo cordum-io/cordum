@@ -13,6 +13,7 @@ hardening steps below.
 ## 1) Persistence + durability
 
 - Run NATS with JetStream persistence (PVCs). Prefer a 3-node NATS cluster for HA.
+- Tune JetStream `sync_interval` (fsync cadence) for crash durability; the production overlay sets `1s` by default.
 - Run Redis with persistence + backups (managed Redis, Redis Sentinel, or Redis Cluster).
 - Verify pointer retention policies (result/context/lock TTLs) match your compliance needs.
 
@@ -101,7 +102,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 ## 10) Runbook checklist
 
-- Smoke test the platform (`tools/scripts/platform_smoke.sh`).
+- Smoke test the platform (`bash ./tools/scripts/platform_smoke.sh`).
 - Verify DLQ + retry flow.
 - Verify policy evaluate/simulate/explain endpoints.
 - Confirm audit trail (run timeline + approval metadata).

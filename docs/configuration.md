@@ -10,6 +10,7 @@ Compose mounts these files from `config/`:
 - `config/pools.yaml` - topic -> pool routing
 - `config/timeouts.yaml` - per-topic and per-workflow timeouts
 - `config/safety.yaml` - safety kernel policy
+- `config/nats.conf` - NATS server config (JetStream `sync_interval`)
 
 `config/system.yaml` is a sample payload for the config service (budgets, rate limits, observability, alerting). It is not mounted by default; use `POST /api/v1/config` to store it.
 
@@ -38,9 +39,10 @@ Shared across services:
 
 - `GATEWAY_GRPC_ADDR`, `GATEWAY_HTTP_ADDR`, `GATEWAY_METRICS_ADDR`
 - `GATEWAY_METRICS_PUBLIC` (set to `1` to allow non-loopback metrics bind in production)
-- `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST`
+- `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST` (applied per tenant; falls back to client IP when tenant is missing)
 - `TENANT_ID` (single-tenant default)
-- API keys: `CORDUM_SUPER_SECRET_API_TOKEN`, `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
+- API keys: `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
+- Legacy alias (avoid for new setups): `CORDUM_SUPER_SECRET_API_TOKEN`
 - API key file: `CORDUM_API_KEYS_PATH` (same format as `CORDUM_API_KEYS`, reloads on change)
 - Allow anonymous auth (local/dev only): `CORDUM_ALLOW_INSECURE_NO_AUTH=1`
 - Header principal: `CORDUM_ALLOW_HEADER_PRINCIPAL=true` (disabled by default in production)
@@ -79,11 +81,24 @@ Shared across services:
 ## Safety kernel
 
 - `SAFETY_KERNEL_ADDR`, `SAFETY_POLICY_PATH` (or `SAFETY_POLICY_URL`)
+- Policy URL allowlist: `SAFETY_POLICY_URL_ALLOWLIST` (comma-separated hostnames)
+- Allow private/loopback policy URLs (not recommended): `SAFETY_POLICY_URL_ALLOW_PRIVATE=1`
 - TLS server: `SAFETY_KERNEL_TLS_CERT`, `SAFETY_KERNEL_TLS_KEY`
 - TLS client: `SAFETY_KERNEL_TLS_CA`, `SAFETY_KERNEL_TLS_REQUIRED`, `SAFETY_KERNEL_INSECURE`
 - Decision cache: `SAFETY_DECISION_CACHE_TTL` (e.g. `5s`, `250ms`)
 - Policy signature verification: `SAFETY_POLICY_PUBLIC_KEY`, `SAFETY_POLICY_SIGNATURE`, `SAFETY_POLICY_SIGNATURE_PATH`,
   `SAFETY_POLICY_SIGNATURE_REQUIRED`
 - Policy reload/overlays: `SAFETY_POLICY_RELOAD_INTERVAL`, `SAFETY_POLICY_CONFIG_SCOPE`, `SAFETY_POLICY_CONFIG_ID`, `SAFETY_POLICY_CONFIG_KEY`, `SAFETY_POLICY_CONFIG_DISABLE`
+- Safety kernel reads policy bundle fragments from the config service in Redis; ensure `REDIS_URL` is set when using pack policy overlays.
+
+## NATS server durability (JetStream)
+
+JetStream fsync cadence is controlled by `sync_interval` in the NATS server
+config. Lower values improve crash durability at the cost of throughput.
+
+- Compose: edit `config/nats.conf`.
+- K8s base: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/base.yaml`.
+- Production overlay: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/production/nats.yaml`.
+- Helm: set `nats.jetstream.syncInterval` in `cordum-helm/values.yaml` (or `--set nats.jetstream.syncInterval=1s`).
 
 For full details, see `docs/DOCKER.md`.

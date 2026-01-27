@@ -20,6 +20,8 @@ export CORDUM_TENANT_ID=default
 ```
 
 Compose and the quickstart scripts fail fast if `CORDUM_API_KEY` is missing.
+Docker Compose loads `.env` automatically; the helper scripts read environment
+variables from your shell, so keep the `export` lines when running scripts.
 
 ## Option A: One-command quickstart (recommended)
 
@@ -78,7 +80,7 @@ Smoke test:
 ```bash
 CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
 CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default} \
-./tools/scripts/platform_smoke.sh
+bash ./tools/scripts/platform_smoke.sh
 ```
 
 Status endpoint:

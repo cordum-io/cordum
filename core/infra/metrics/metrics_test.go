@@ -29,6 +29,13 @@ func TestNoopMetrics(t *testing.T) {
 	m.IncJobsDispatched("topic")
 	m.IncJobsCompleted("topic", "ok")
 	m.IncSafetyDenied("topic")
+	m.IncSagaRecorded()
+	m.IncSagaRollbackTriggered()
+	m.IncSagaCompensationDispatched()
+	m.IncSagaCompensationFailed()
+	m.ObserveSagaRollback(0.1)
+	m.IncSagaActive()
+	m.DecSagaActive()
 }
 
 func TestPromMetrics(t *testing.T) {
@@ -38,6 +45,13 @@ func TestPromMetrics(t *testing.T) {
 	m.IncJobsDispatched("job.test")
 	m.IncJobsCompleted("job.test", "ok")
 	m.IncSafetyDenied("job.test")
+	m.IncSagaRecorded()
+	m.IncSagaRollbackTriggered()
+	m.IncSagaCompensationDispatched()
+	m.IncSagaCompensationFailed()
+	m.ObserveSagaRollback(0.05)
+	m.IncSagaActive()
+	m.DecSagaActive()
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -54,6 +68,24 @@ func TestPromMetrics(t *testing.T) {
 	}
 	if !hasMetric(families, "cordum_safety_denied_total", map[string]string{"topic": "job.test"}) {
 		t.Fatalf("expected safety_denied metric")
+	}
+	if !hasMetric(families, "cordum_saga_recorded_total", nil) {
+		t.Fatalf("expected saga_recorded metric")
+	}
+	if !hasMetric(families, "cordum_saga_rollbacks_total", nil) {
+		t.Fatalf("expected saga_rollbacks metric")
+	}
+	if !hasMetric(families, "cordum_saga_compensation_dispatched_total", nil) {
+		t.Fatalf("expected saga_dispatched metric")
+	}
+	if !hasMetric(families, "cordum_saga_compensation_failed_total", nil) {
+		t.Fatalf("expected saga_failed metric")
+	}
+	if !hasMetric(families, "cordum_saga_active", nil) {
+		t.Fatalf("expected saga_active metric")
+	}
+	if !hasMetric(families, "cordum_saga_rollback_duration_seconds", nil) {
+		t.Fatalf("expected saga_rollback_duration metric")
 	}
 }
 

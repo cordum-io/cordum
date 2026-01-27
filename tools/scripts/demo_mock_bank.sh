@@ -36,6 +36,7 @@ if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the demo." >&2
   exit 1
 fi
+export CORDUM_GATEWAY=${CORDUM_GATEWAY:-${API_BASE}}
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 NATS_URL=${NATS_URL:-nats://localhost:4222}
@@ -71,7 +72,8 @@ echo "[mock-bank] serving UI on :${PORT}"
 SERVER_PID=$!
 
 echo ""
-echo "Open: http://localhost:${PORT}/?apiKey=${API_KEY}&apiBaseUrl=${API_BASE}&orgId=${ORG_ID}&tenantId=${TENANT_ID}"
+echo "Open: http://localhost:${PORT}/?apiBaseUrl=${API_BASE}&orgId=${ORG_ID}&tenantId=${TENANT_ID}"
+echo "When prompted, paste your API key."
 echo "Press Ctrl+C to stop."
 
 wait

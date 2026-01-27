@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -78,7 +77,7 @@ func TestNormalizeAPIKeyTrimsQuotes(t *testing.T) {
 func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 	s := &server{
 		clients:  make(map[*websocket.Conn]*wsClient),
-		eventsCh: make(chan *pb.BusPacket, 1),
+		eventsCh: make(chan wsEvent, 1),
 	}
 
 	mux := http.NewServeMux()
@@ -105,7 +104,7 @@ func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
 
 	s := &server{
 		clients:  make(map[*websocket.Conn]*wsClient),
-		eventsCh: make(chan *pb.BusPacket, 1),
+		eventsCh: make(chan wsEvent, 1),
 		auth:     provider,
 	}
 

@@ -177,7 +177,7 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, bod
 
 	client := c.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

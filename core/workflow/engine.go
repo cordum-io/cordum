@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/memory"
 	schemas "github.com/cordum/cordum/core/infra/schema"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -1345,7 +1345,7 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 	if run.Input != nil {
 		if raw, ok := run.Input["memory_id"]; ok {
 			if s, ok := raw.(string); ok {
-				if trimmed := strings.TrimSpace(s); trimmed != "" {
+				if trimmed := memory.NormalizeMemoryID(s); trimmed != "" {
 					memoryID = trimmed
 				}
 			}
@@ -1532,7 +1532,7 @@ func applyResult(sr *StepRun, res *pb.JobResult, step *Step) (retry bool, delay 
 			sr.Output = res.ResultPtr
 		}
 		sr.Error = nil
-	case pb.JobStatus_JOB_STATUS_FAILED, pb.JobStatus_JOB_STATUS_DENIED, pb.JobStatus_JOB_STATUS_TIMEOUT:
+	case pb.JobStatus_JOB_STATUS_FAILED, pb.JobStatus_JOB_STATUS_DENIED, pb.JobStatus_JOB_STATUS_TIMEOUT, pb.JobStatus_JOB_STATUS_FAILED_RETRYABLE:
 		if shouldRetry(step, sr) {
 			delay = computeBackoff(step, sr)
 			next := now.Add(delay)
@@ -1546,6 +1546,10 @@ func applyResult(sr *StepRun, res *pb.JobResult, step *Step) (retry bool, delay 
 		} else {
 			sr.Status = StepStatusFailed
 		}
+		sr.CompletedAt = &now
+		sr.Error = map[string]any{"message": res.ErrorMessage}
+	case pb.JobStatus_JOB_STATUS_FAILED_FATAL:
+		sr.Status = StepStatusFailed
 		sr.CompletedAt = &now
 		sr.Error = map[string]any{"message": res.ErrorMessage}
 	case pb.JobStatus_JOB_STATUS_CANCELLED:

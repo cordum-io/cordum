@@ -94,7 +94,8 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
    - Publishes `BusPacket{JobResult}` to `sys.job.result`.
 5) Scheduler:
    - Updates terminal state and stores `result_ptr`.
-   - Emits DLQ entry if status != `SUCCEEDED`.
+   - Emits DLQ entry for terminal failures except `FAILED_RETRYABLE`.
+   - `FAILED_FATAL` triggers saga rollback (compensation stack).
 6) Reconciler marks stale jobs `TIMEOUT` based on `config/timeouts.yaml`.
 7) Cancellation: API or workflow engine publishes `BusPacket{JobCancel}` to `sys.job.cancel`; workers cancel in-flight jobs.
 
@@ -192,4 +193,4 @@ See `config/pools.yaml` for the full map. Topics are config-driven; no core topi
 
 - Run `go test ./...` (use `GOCACHE=$(pwd)/.cache/go-build` if needed).
 - If modifying `.proto`, run `make proto`.
-- Platform smoke: `./tools/scripts/platform_smoke.sh`.
+- Platform smoke: `bash ./tools/scripts/platform_smoke.sh`.

@@ -15,6 +15,9 @@ export CORDUM_TENANT_ID=default
 ./tools/scripts/quickstart.sh
 ```
 
+Docker Compose loads `.env` automatically; the helper scripts read environment
+variables from your shell.
+
 Want the guardrails demo?
 
 ```bash
@@ -46,7 +49,7 @@ export CORDUM_TENANT_ID=default
 - `tools/scripts/e2e_install_workflow.sh` - install + approval workflow E2E test
 - `tools/scripts/demo_guardrails_run.sh` - guardrails demo runner
 - `tools/scripts/demo_mock_bank.sh` - mock bank demo runner
-- `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow)
+- `tools/scripts/platform_smoke.sh` - smoke test (create/run/approve/delete workflow; run with `bash` on noexec filesystems)
 - `cordumctl up` - one-command local stack launcher (`go run ./cmd/cordumctl up` or `./bin/cordumctl up` after `make build SERVICE=cordumctl`)
 - `tools/scripts/install.sh` - installer script for local or hosted one-liner
 

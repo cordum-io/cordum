@@ -4,8 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestSubmitJobGRPCAndStatus(t *testing.T) {
@@ -47,6 +50,34 @@ func TestSubmitJobGRPCAndStatus(t *testing.T) {
 	}
 	if len(bus.published) != 1 {
 		t.Fatalf("expected no new publish on idempotent submit")
+	}
+}
+
+func TestSubmitJobGRPCRejectsDisallowedMemoryID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"context": map[string]any{
+				"allowed_memory_ids": []string{"repo:*"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	req := &pb.SubmitJobRequest{
+		Prompt:   "hello",
+		Topic:    "job.default",
+		OrgId:    "org-1",
+		MemoryId: "kb:secret",
+	}
+	_, err := s.SubmitJob(ctx, req)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected permission denied, got %v", err)
 	}
 }
 
