@@ -9,8 +9,6 @@ func NormalizeMemoryID(raw string) string {
 	if id == "" {
 		return ""
 	}
-	if strings.HasPrefix(id, "mem:") {
-		id = strings.TrimPrefix(id, "mem:")
-	}
+	id = strings.TrimPrefix(id, "mem:")
 	return strings.TrimSpace(id)
 }
