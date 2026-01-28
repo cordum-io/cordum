@@ -175,6 +175,22 @@ The policy rules list is sourced from:
 
 ## Policy Bundles + Snapshots
 
+Tags: #dashboard #policy-studio #firewall #governance #security
+
+### Firewall Editor (Visual Rules)
+
+Policy bundles can be edited in a visual “Firewall” mode or raw YAML:
+
+- **Firewall view** renders ordered rules, supports add/edit/duplicate/delete, and allows moving rules up/down.
+- **Raw YAML** remains the escape hatch for power users and legacy tenant policies.
+- **Simulation highlighting**: running bundle simulation highlights the matching rule in Firewall view.
+
+Note: switching from Raw YAML to Firewall mode rewrites formatting/comments because the bundle is reserialized.
+
+### Studio Focus
+
+Policy Studio includes a focus selector to show a single section at a time (Bundles, Simulate, Publish, Rules, Diff, Snapshots, Audit). Use **All** to show every section together.
+
 The policy diff view uses bundle snapshots stored in the config service:
 
 - `GET /api/v1/policy/bundles`

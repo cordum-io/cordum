@@ -252,7 +252,7 @@ export function PacksPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Packs</CardTitle>
+          <CardTitle>Capability Marketplace</CardTitle>
           <div className="flex gap-2">
             <Button variant={activeTab === "installed" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("installed")}>Installed</Button>
             <Button variant={activeTab === "registry" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("registry")}>Registry</Button>

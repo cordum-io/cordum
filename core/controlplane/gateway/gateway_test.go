@@ -96,11 +96,9 @@ func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 }
 
 func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
-	t.Setenv("API_KEY", "'test-api-key'")
-	provider, err := newBasicAuthProvider("default")
-	if err != nil {
-		t.Fatalf("auth init: %v", err)
-	}
+	provider := newBasicAuthForTest(t, map[string]string{
+		"API_KEY": "'test-api-key'",
+	})
 
 	s := &server{
 		clients:  make(map[*websocket.Conn]*wsClient),
@@ -166,6 +164,31 @@ func TestHandleGetMemoryFetchesContextByPointer(t *testing.T) {
 	}
 	if jsonVal["prompt"] != "hi" {
 		t.Fatalf("expected json.prompt=hi got=%v", jsonVal["prompt"])
+	}
+}
+
+func TestHandleAuthConfigDefaults(t *testing.T) {
+	s := &server{}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	rr := httptest.NewRecorder()
+	s.handleAuthConfig(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp AuthConfig
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if resp.PasswordEnabled || resp.SAMLEnabled {
+		t.Fatalf("expected password/saml disabled, got password=%v saml=%v", resp.PasswordEnabled, resp.SAMLEnabled)
+	}
+	if resp.DefaultTenant != "default" {
+		t.Fatalf("expected default_tenant=default got=%q", resp.DefaultTenant)
+	}
+	if resp.SessionTTL == "" {
+		t.Fatalf("expected session_ttl to be set")
 	}
 }
 

@@ -55,6 +55,11 @@ export function WorkflowBuilder({
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const mergeNodeData = useCallback(
+    (node: Node<BuilderNodeData>, data: Partial<BuilderNodeData>) =>
+      ({ ...node.data, ...data } as BuilderNodeData),
+    []
+  );
 
   // Get selected node
   const selectedNode = selectedNodeId
@@ -99,10 +104,10 @@ export function WorkflowBuilder({
     setNodes((nds) =>
       nds.map((node) => ({
         ...node,
-        data: { ...node.data, selected: node.id === id },
+        data: mergeNodeData(node, { selected: node.id === id }),
       }))
     );
-  }, [setNodes]);
+  }, [mergeNodeData, setNodes]);
 
   // Update node handler
   const updateNode = useCallback(
@@ -110,13 +115,13 @@ export function WorkflowBuilder({
       setNodes((nds) =>
         nds.map((node) => {
           if (node.id === id) {
-            return { ...node, data: { ...node.data, ...newData } };
+            return { ...node, data: mergeNodeData(node, newData) };
           }
           return node;
         })
       );
     },
-    [setNodes]
+    [mergeNodeData, setNodes]
   );
 
   // Create node from type

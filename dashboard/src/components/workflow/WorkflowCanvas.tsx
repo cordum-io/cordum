@@ -122,7 +122,6 @@ const formatSeconds = (value?: number) => (value !== undefined ? `${value}s` : u
 const buildNodeData = (stepId: string, step: Workflow["steps"][string], status?: string): BuilderNodeData => {
   const nodeType = resolveNodeType(step);
   const shared = {
-    nodeType,
     stepId,
     label: step?.name || stepId,
     onDelete: noop,
@@ -134,6 +133,7 @@ const buildNodeData = (stepId: string, step: Workflow["steps"][string], status?:
   if (nodeType === "condition") {
     return {
       ...shared,
+      nodeType: "condition",
       condition: step?.condition || "",
     };
   }
@@ -141,6 +141,7 @@ const buildNodeData = (stepId: string, step: Workflow["steps"][string], status?:
   if (nodeType === "approval") {
     return {
       ...shared,
+      nodeType: "approval",
       approverRole: step?.meta?.actor_id,
       approvalPolicy: step?.meta?.labels?.["approval_policy"],
     };
@@ -149,6 +150,7 @@ const buildNodeData = (stepId: string, step: Workflow["steps"][string], status?:
   if (nodeType === "delay") {
     return {
       ...shared,
+      nodeType: "delay",
       delaySec: step?.delay_sec,
       delayUntil: step?.delay_until,
     };
@@ -157,6 +159,7 @@ const buildNodeData = (stepId: string, step: Workflow["steps"][string], status?:
   if (nodeType === "loop") {
     return {
       ...shared,
+      nodeType: "loop",
       forEach: step?.for_each || "",
       maxParallel: step?.max_parallel,
     };
@@ -165,6 +168,7 @@ const buildNodeData = (stepId: string, step: Workflow["steps"][string], status?:
   if (nodeType === "subworkflow") {
     return {
       ...shared,
+      nodeType: "subworkflow",
       subworkflowId: step?.id,
     };
   }
@@ -172,6 +176,7 @@ const buildNodeData = (stepId: string, step: Workflow["steps"][string], status?:
   if (nodeType === "parallel") {
     return {
       ...shared,
+      nodeType: "parallel",
       branches: [],
       waitAll: true,
     };
@@ -179,6 +184,7 @@ const buildNodeData = (stepId: string, step: Workflow["steps"][string], status?:
 
   return {
     ...shared,
+    nodeType: "worker",
     topic: step?.topic,
     packId: step?.meta?.pack_id,
     capability: step?.meta?.capability,

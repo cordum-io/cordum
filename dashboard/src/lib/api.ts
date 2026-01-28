@@ -9,6 +9,7 @@ import type {
   EffectiveConfigSnapshot,
   Heartbeat,
   JobDetail,
+  JobRecord,
   JobsResponse,
   Lock,
   MarketplaceResponse,
@@ -292,7 +293,7 @@ export const api = {
     apiRequest<PolicyBundleSnapshot>("/api/v1/policy/bundles/snapshots", { method: "POST", body: payload }),
   getPolicyBundleSnapshot: (id: string) =>
     apiRequest<PolicyBundleSnapshot>(`/api/v1/policy/bundles/snapshots/${id}`),
-  getTrace: (id: string) => apiRequest<Record<string, unknown>[]>(`/api/v1/traces/${id}`),
+  getTrace: (id: string) => apiRequest<JobRecord[]>(`/api/v1/traces/${id}`),
   
   // Power User Tools
   getLock: (resource: string) => apiRequest<Lock>("/api/v1/locks", { query: { resource } }),

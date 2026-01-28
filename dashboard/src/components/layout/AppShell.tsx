@@ -2,6 +2,8 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
   Boxes,
+  Database,
+  FileText,
   Gauge,
   GitGraph,
   LayoutGrid,
@@ -10,6 +12,7 @@ import {
   LogOut,
   Moon,
   Network,
+  AlertTriangle,
   Shield,
   Sun,
   UserCircle,
@@ -29,16 +32,19 @@ import { useConfigStore } from "../../state/config";
 import { useAuthConfig } from "../../hooks/useAuthConfig";
 
 const navItems = [
-  { path: "/", label: "Home", icon: LayoutGrid },
+  { path: "/", label: "Governance", icon: LayoutGrid },
   { path: "/runs", label: "Runs", icon: Activity },
-  { path: "/jobs", label: "Jobs", icon: ListChecks },
   { path: "/workflows", label: "Workflows", icon: Workflow },
-  { path: "/packs", label: "Packs", icon: Boxes },
-  { path: "/pools", label: "Pools", icon: Layers },
-  { path: "/policy", label: "Policy", icon: Shield },
-  { path: "/system", label: "System", icon: Gauge },
+  { path: "/policy", label: "Policy Studio", icon: Shield },
+  { path: "/context", label: "Context Inspector", icon: Database },
+  { path: "/pools", label: "Worker Pools", icon: Layers },
+  { path: "/packs", label: "Marketplace", icon: Boxes },
+  { path: "/system", label: "Observability", icon: Gauge },
+  { path: "/trace", label: "Traces", icon: GitGraph },
+  { path: "/dlq", label: "DLQ", icon: AlertTriangle },
+  { path: "/audit", label: "Audit Log", icon: FileText },
+  { path: "/jobs", label: "Jobs", icon: ListChecks },
   { path: "/tools", label: "Tools", icon: Wrench },
-  { path: "/trace", label: "Trace", icon: GitGraph },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -79,7 +85,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const dlqCount = dlqQuery.data?.items.length ?? 0;
   const navBadges: Record<string, { count: number; variant: "warning" | "danger" }> = {
     "/policy": { count: approvalsCount, variant: "warning" },
-    "/system": { count: dlqCount, variant: "danger" },
+    "/dlq": { count: dlqCount, variant: "danger" },
   };
 
   useEffect(() => {

@@ -20,6 +20,9 @@ export function AuthCallbackPage() {
     const principalId = params.get("principal_id");
     const role = params.get("role");
     if (!token) {
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
       setError("Missing session token.");
       return;
     }
@@ -43,7 +46,10 @@ export function AuthCallbackPage() {
         // Ignore session fetch errors; token is already stored.
       })
       .finally(() => {
-        navigate("/");
+        if (typeof window !== "undefined") {
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+        navigate("/", { replace: true });
       });
   }, [navigate, updateConfig]);
 

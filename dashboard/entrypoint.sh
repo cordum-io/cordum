@@ -13,6 +13,7 @@ fi
 TENANT_ID=$(json_escape "${CORDUM_TENANT_ID:-default}")
 PRINCIPAL_ID=$(json_escape "${CORDUM_PRINCIPAL_ID:-}")
 PRINCIPAL_ROLE=$(json_escape "${CORDUM_PRINCIPAL_ROLE:-}")
+TRACE_URL_TEMPLATE=$(json_escape "${CORDUM_TRACE_URL_TEMPLATE:-}")
 
 cat > /usr/share/nginx/html/config.json <<CONFIGEOF
 {
@@ -20,7 +21,8 @@ cat > /usr/share/nginx/html/config.json <<CONFIGEOF
   "apiKey": "${API_KEY}",
   "tenantId": "${TENANT_ID}",
   "principalId": "${PRINCIPAL_ID}",
-  "principalRole": "${PRINCIPAL_ROLE}"
+  "principalRole": "${PRINCIPAL_ROLE}",
+  "traceUrlTemplate": "${TRACE_URL_TEMPLATE}"
 }
 CONFIGEOF
 

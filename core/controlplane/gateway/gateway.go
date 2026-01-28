@@ -805,6 +805,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	// 1.5 Auth config (public)
+	mux.HandleFunc("GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
+
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
 
