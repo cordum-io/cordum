@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { Activity, AlertTriangle, CheckCircle2, Server, Layers } from "lucide-react";
 import { api } from "../lib/api";
 import { formatPercent, formatRelative } from "../lib/format";
@@ -23,6 +23,7 @@ type PoolSummary = {
 };
 
 export function PoolsPage() {
+  const [searchParams] = useSearchParams();
   const [selectedPool, setSelectedPool] = useState<string | null>(null);
 
   const workersQuery = useQuery({
@@ -95,6 +96,13 @@ export function PoolsPage() {
 
   const selectedPoolData = selectedPool ? pools.find((p) => p.name === selectedPool) : null;
 
+  useEffect(() => {
+    const fromParam = searchParams.get("pool");
+    if (fromParam && pools.some((p) => p.name === fromParam)) {
+      setSelectedPool(fromParam);
+    }
+  }, [searchParams, pools]);
+
   const totalWorkers = workers.length;
   const healthyWorkers = totalWorkers - staleWorkers.length;
   const totalTopics = pools.reduce((sum, p) => sum + p.topics.length, 0);
@@ -103,8 +111,8 @@ export function PoolsPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Pools & Workers</CardTitle>
-          <div className="text-xs text-muted">Worker pools, topic routing, and health monitoring</div>
+          <CardTitle>Worker Pool Topology</CardTitle>
+          <div className="text-xs text-muted">Worker pools, routing, and heartbeat health</div>
         </CardHeader>
         <div className="grid gap-4 lg:grid-cols-4">
           <div className="rounded-2xl border border-border bg-white/70 p-4">

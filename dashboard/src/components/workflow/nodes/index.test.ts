@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { NODE_CONFIGS, ALL_NODE_TYPES, SUPPORTED_NODE_TYPES, generateStepId } from "./index";
-import type { BuilderNodeType } from "../types";
+import type {
+  BuilderNodeType,
+  WorkerNodeData,
+  ConditionNodeData,
+  DelayNodeData,
+  LoopNodeData,
+  ParallelNodeData,
+} from "../types";
 
 describe("NODE_CONFIGS", () => {
   it("should have configuration for all node types", () => {
@@ -28,12 +35,13 @@ describe("NODE_CONFIGS", () => {
   describe("worker node", () => {
     it("should have correct configuration", () => {
       const config = NODE_CONFIGS.worker;
+      const defaultData = config.defaultData as Partial<WorkerNodeData>;
       expect(config.label).toBe("Worker");
       expect(config.icon).toBe("WO");
       expect(config.outputs).toHaveLength(1);
       expect(config.outputs[0].id).toBe("output");
-      expect(config.defaultData.nodeType).toBe("worker");
-      expect(config.defaultData.topic).toBe("job.default");
+      expect(defaultData.nodeType).toBe("worker");
+      expect(defaultData.topic).toBe("job.default");
     });
   });
 
@@ -51,48 +59,52 @@ describe("NODE_CONFIGS", () => {
   describe("condition node", () => {
     it("should have a single output", () => {
       const config = NODE_CONFIGS.condition;
+      const defaultData = config.defaultData as Partial<ConditionNodeData>;
       expect(config.label).toBe("Condition");
       expect(config.icon).toBe("IF");
       expect(config.outputs).toHaveLength(1);
       expect(config.outputs[0].id).toBe("output");
-      expect(config.defaultData.nodeType).toBe("condition");
-      expect(config.defaultData.condition).toBeDefined();
+      expect(defaultData.nodeType).toBe("condition");
+      expect(defaultData.condition).toBeDefined();
     });
   });
 
   describe("delay node", () => {
     it("should have correct configuration", () => {
       const config = NODE_CONFIGS.delay;
+      const defaultData = config.defaultData as Partial<DelayNodeData>;
       expect(config.label).toBe("Delay");
       expect(config.icon).toBe("DL");
       expect(config.outputs).toHaveLength(1);
-      expect(config.defaultData.nodeType).toBe("delay");
-      expect(config.defaultData.delaySec).toBe(60);
+      expect(defaultData.nodeType).toBe("delay");
+      expect(defaultData.delaySec).toBe(60);
     });
   });
 
   describe("loop node", () => {
     it("should have a single output", () => {
       const config = NODE_CONFIGS.loop;
+      const defaultData = config.defaultData as Partial<LoopNodeData>;
       expect(config.label).toBe("Loop");
       expect(config.icon).toBe("LP");
       expect(config.outputs).toHaveLength(1);
       expect(config.outputs[0].id).toBe("output");
-      expect(config.defaultData.nodeType).toBe("loop");
-      expect(config.defaultData.forEach).toBeDefined();
-      expect(config.defaultData.maxParallel).toBe(1);
+      expect(defaultData.nodeType).toBe("loop");
+      expect(defaultData.forEach).toBeDefined();
+      expect(defaultData.maxParallel).toBe(1);
     });
   });
 
   describe("parallel node", () => {
     it("should have correct configuration", () => {
       const config = NODE_CONFIGS.parallel;
+      const defaultData = config.defaultData as Partial<ParallelNodeData>;
       expect(config.label).toBe("Parallel");
       expect(config.icon).toBe("PA");
       expect(config.outputs).toHaveLength(1);
-      expect(config.defaultData.nodeType).toBe("parallel");
-      expect(config.defaultData.branches).toEqual([]);
-      expect(config.defaultData.waitAll).toBe(true);
+      expect(defaultData.nodeType).toBe("parallel");
+      expect(defaultData.branches).toEqual([]);
+      expect(defaultData.waitAll).toBe(true);
     });
   });
 

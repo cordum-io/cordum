@@ -350,6 +350,21 @@ func TestAPIKeyMiddlewareSkipsPublicPaths(t *testing.T) {
 	}
 }
 
+func TestBasicAuthPublicPathAllowsAuthConfig(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"API_KEY": "test-key",
+	})
+	handler := apiKeyMiddleware(provider, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
 func TestBasicAuthRequiresKeyInProduction(t *testing.T) {
 	t.Setenv("CORDUM_ENV", "production")
 	t.Setenv("CORDUM_API_KEYS", "")

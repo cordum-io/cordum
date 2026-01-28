@@ -404,7 +404,7 @@ export function SystemPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>System Management</CardTitle>
+          <CardTitle>Observability Center</CardTitle>
           <div className="flex flex-wrap gap-2">
             <Button variant={activeTab === "health" ? "primary" : "outline"} size="sm" onClick={() => setTab("health")}>Health</Button>
             <Button variant={activeTab === "workers" ? "primary" : "outline"} size="sm" onClick={() => setTab("workers")}>Workers</Button>
