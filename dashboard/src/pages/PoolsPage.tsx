@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { Activity, AlertTriangle, CheckCircle2, Server, Layers } from "lucide-react";
 import { api } from "../lib/api";
 import { formatPercent, formatRelative } from "../lib/format";
