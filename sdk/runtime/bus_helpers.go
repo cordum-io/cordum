@@ -41,37 +41,6 @@ func DirectSubject(workerID string) string {
 	return "worker." + workerID + ".jobs"
 }
 
-// PublishProgress emits a JobProgress envelope to the progress subject.
-func PublishProgress(pub Publisher, progress *agentv1.JobProgress, traceID, senderID string, key *ecdsa.PrivateKey) error {
-	if pub == nil {
-		return errors.New("publisher required")
-	}
-	if progress == nil {
-		return errors.New("progress required")
-	}
-	progress.JobId = strings.TrimSpace(progress.JobId)
-	if progress.JobId == "" {
-		return errors.New("job id required")
-	}
-	senderID = strings.TrimSpace(senderID)
-	if senderID == "" {
-		return errors.New("sender id required")
-	}
-	if strings.TrimSpace(traceID) == "" {
-		traceID = progress.JobId
-	}
-	packet := &agentv1.BusPacket{
-		TraceId:         traceID,
-		SenderId:        senderID,
-		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: capsdk.DefaultProtocolVersion,
-		Payload: &agentv1.BusPacket_JobProgress{
-			JobProgress: progress,
-		},
-	}
-	return publishEnvelope(pub, SubjectProgress, packet, key)
-}
-
 // PublishCancel emits a JobCancel envelope to the cancel subject.
 func PublishCancel(pub Publisher, cancel *agentv1.JobCancel, traceID, senderID string, key *ecdsa.PrivateKey) error {
 	if pub == nil {
