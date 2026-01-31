@@ -140,7 +140,6 @@ export const api = {
   getWorkflow: (id: string) => apiRequest<Workflow>(`/api/v1/workflows/${id}`),
   createWorkflow: (payload: Record<string, unknown>) =>
     apiRequest<{ id: string }>("/api/v1/workflows", { method: "POST", body: payload }),
-  deleteWorkflow: (id: string) => apiRequest<void>(`/api/v1/workflows/${id}`, { method: "DELETE" }),
   listRunsByWorkflow: (id: string) => apiRequest<WorkflowRun[]>(`/api/v1/workflows/${id}/runs`),
   listWorkflowRuns: (params?: {
     limit?: number;
@@ -178,11 +177,6 @@ export const api = {
     apiRequest<{ run_id: string }>(`/api/v1/workflow-runs/${runId}/rerun`, {
       method: "POST",
       body: options ? { from_step: options.fromStep, dry_run: options.dryRun } : undefined,
-    }),
-  approveStep: (workflowId: string, runId: string, stepId: string, approved: boolean) =>
-    apiRequest<void>(`/api/v1/workflows/${workflowId}/runs/${runId}/steps/${stepId}/approve`, {
-      method: "POST",
-      body: { approved },
     }),
   listApprovals: (limit = 100, cursor?: number) =>
     apiRequest<ApprovalsResponse>("/api/v1/approvals", {
@@ -306,11 +300,6 @@ export const api = {
     apiRequest<{ lock: Lock; released: boolean }>("/api/v1/locks/release", {
       method: "POST",
       body: { resource, owner },
-    }),
-  renewLock: (resource: string, owner: string, ttlMs: number) =>
-    apiRequest<Lock>("/api/v1/locks/renew", {
-      method: "POST",
-      body: { resource, owner, ttl_ms: ttlMs },
     }),
   getMemory: (ptr?: string, key?: string) =>
     apiRequest<MemoryResult>("/api/v1/memory", { query: { ptr, key } }),
