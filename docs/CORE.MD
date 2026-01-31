@@ -182,14 +182,16 @@ Must support:
 
 ## 6) Worker Runtime SDK (even if you ship zero workers)
 
-**Status:** Implemented in `sdk/runtime` (CAP worker runtime).
+**Status:** Implemented in `sdk/runtime` (wraps CAP runtime).
 
 Core should ship a tiny Go library that defines:
-- how a worker connects/subscribes
-- how it acks/extends lease
-- how it emits progress + heartbeats
-- how it writes results as pointers
-- how it handles cancel signals
+- how a worker connects/subscribes to job topics
+- how it loads context and writes results via pointers
+- how it retries handlers with bounded attempts
+- how it verifies/signs CAP envelopes (optional)
+- how it exposes hooks for logging/observability
+
+Use CAP worker helpers when you need heartbeats/progress/cancel handling.
 
 **Why packages need it:** consistent worker behavior + fewer “mystery outages”.
 
