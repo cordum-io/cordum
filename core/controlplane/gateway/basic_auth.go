@@ -205,7 +205,24 @@ func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext,
 }
 
 func (b *BasicAuthProvider) IsPublicPath(path string) bool {
-	return strings.TrimSpace(path) == "/api/v1/auth/config"
+	path = strings.TrimSpace(path)
+	return path == "/api/v1/auth/config" || path == "/api/v1/auth/login"
+}
+
+// AuthConfig returns the auth configuration for the dashboard.
+// Implements AuthConfigProvider interface.
+func (b *BasicAuthProvider) AuthConfig() AuthConfig {
+	b.keysMu.RLock()
+	hasKeys := len(b.keys) > 0
+	b.keysMu.RUnlock()
+	return AuthConfig{
+		PasswordEnabled:  hasKeys,
+		SAMLEnabled:      false,
+		SessionTTL:       "24h",
+		RequireRBAC:      false,
+		RequirePrincipal: false,
+		DefaultTenant:    b.defaultTenant,
+	}
 }
 
 func (b *BasicAuthProvider) RequireRole(r *http.Request, roles ...string) error {

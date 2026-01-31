@@ -1,0 +1,562 @@
+# Testing Guide - Claude CLI Configuration
+
+Comprehensive testing strategies for Cordum components.
+
+## Testing Philosophy
+
+1. **Safety is paramount** - Safety Kernel requires 100% test coverage
+2. **Table-driven tests** - Preferred for Go code
+3. **Integration tests** - Verify component interactions
+4. **Contract tests** - Ensure CAP protocol compliance
+5. **Benchmarks** - Performance regressions caught early
+
+## Test Categories
+
+### Unit Tests
+
+Fast, isolated tests for individual functions.
+
+```go
+// core/safety/matcher_test.go
+func TestMatcher_MatchCapabilities(t *testing.T) {
+    tests := []struct {
+        name         string
+        ruleCapabs   []string
+        jobCapabs    []string
+        wantMatch    bool
+    }{
+        {
+            name:       "exact match",
+            ruleCapabs: []string{"read", "write"},
+            jobCapabs:  []string{"read", "write"},
+            wantMatch:  true,
+        },
+        {
+            name:       "subset matches",
+            ruleCapabs: []string{"read"},
+            jobCapabs:  []string{"read", "write"},
+            wantMatch:  true,
+        },
+        {
+            name:       "no match",
+            ruleCapabs: []string{"admin"},
+            jobCapabs:  []string{"read"},
+            wantMatch:  false,
+        },
+        {
+            name:       "wildcard matches all",
+            ruleCapabs: []string{"*"},
+            jobCapabs:  []string{"anything"},
+            wantMatch:  true,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            m := NewMatcher()
+            got := m.MatchCapabilities(tt.ruleCapabs, tt.jobCapabs)
+            assert.Equal(t, tt.wantMatch, got)
+        })
+    }
+}
+```
+
+### Integration Tests
+
+Test component interactions with real dependencies.
+
+```go
+// core/scheduler/scheduler_integration_test.go
+//go:build integration
+
+func TestScheduler_FullFlow(t *testing.T) {
+    // Setup infrastructure
+    ctx := context.Background()
+    infra := testutil.NewInfra(t)
+    defer infra.Cleanup()
+    
+    // Create scheduler with real dependencies
+    sched := NewScheduler(Config{
+        Bus:          infra.NatsBus,
+        Store:        infra.RedisStore,
+        SafetyKernel: safety.New(testPolicy),
+    })
+    
+    go sched.Run(ctx)
+    defer sched.Shutdown()
+    
+    // Submit job
+    job := &Job{
+        ID:           "test-job-1",
+        Type:         "echo",
+        Capabilities: []string{"read"},
+        RiskTags:     []string{"low"},
+    }
+    
+    err := sched.Submit(ctx, job)
+    require.NoError(t, err)
+    
+    // Wait for dispatch
+    time.Sleep(100 * time.Millisecond)
+    
+    // Verify state
+    stored, err := infra.RedisStore.GetJob(ctx, job.ID)
+    require.NoError(t, err)
+    assert.Equal(t, JobStatusDispatched, stored.Status)
+}
+```
+
+### Contract Tests
+
+Verify CAP protocol compliance.
+
+```go
+// core/protocol/contract_test.go
+func TestBusPacket_CAP_Compliance(t *testing.T) {
+    tests := []struct {
+        name    string
+        packet  *BusPacket
+        wantErr bool
+    }{
+        {
+            name: "valid job request",
+            packet: &BusPacket{
+                TraceId:   "trace-123",
+                Timestamp: time.Now().UnixMilli(),
+                Payload: &BusPacket_JobRequest{
+                    JobRequest: &JobRequest{
+                        JobId:      "job-123",
+                        JobType:    "echo",
+                        ContextPtr: "ctx:job:job-123",
+                    },
+                },
+            },
+            wantErr: false,
+        },
+        {
+            name: "missing job_id is invalid",
+            packet: &BusPacket{
+                Payload: &BusPacket_JobRequest{
+                    JobRequest: &JobRequest{
+                        JobType: "echo",
+                    },
+                },
+            },
+            wantErr: true,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            err := ValidateCAP(tt.packet)
+            if tt.wantErr {
+                assert.Error(t, err)
+            } else {
+                assert.NoError(t, err)
+            }
+        })
+    }
+}
+```
+
+### Benchmark Tests
+
+Ensure performance requirements are met.
+
+```go
+// core/safety/kernel_bench_test.go
+func BenchmarkKernel_Evaluate(b *testing.B) {
+    kernel := NewKernel(loadBenchmarkPolicy())
+    req := &EvaluateRequest{
+        JobID:        "bench-job",
+        Capabilities: []string{"read", "write"},
+        RiskTags:     []string{"prod"},
+        Metadata:     map[string]string{"source": "benchmark"},
+    }
+    ctx := context.Background()
+    
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        _, err := kernel.Evaluate(ctx, req)
+        if err != nil {
+            b.Fatal(err)
+        }
+    }
+}
+
+// BenchmarkKernel_Evaluate-8   500000   2847 ns/op   512 B/op   8 allocs/op
+// Target: < 5ms p99
+```
+
+### Fuzz Tests
+
+Find edge cases in parsing logic.
+
+```go
+// core/safety/policy_fuzz_test.go
+func FuzzPolicyParse(f *testing.F) {
+    // Seed corpus
+    f.Add([]byte(`{"version":"1","rules":[]}`))
+    f.Add([]byte(`version: "1"
+rules:
+  - id: test
+    match:
+      capabilities: [read]
+    decision: allow`))
+    
+    f.Fuzz(func(t *testing.T, data []byte) {
+        // Should not panic
+        _, _ = ParsePolicy(data)
+    })
+}
+```
+
+## Test Infrastructure
+
+### Test Utilities
+
+```go
+// testutil/infra.go
+type Infra struct {
+    NatsBus    bus.Bus
+    RedisStore store.Store
+    NatsURL    string
+    RedisURL   string
+    t          *testing.T
+}
+
+func NewInfra(t *testing.T) *Infra {
+    t.Helper()
+    
+    // Start containers if not running
+    natsURL := getEnvOrDefault("TEST_NATS_URL", "nats://localhost:4222")
+    redisURL := getEnvOrDefault("TEST_REDIS_URL", "redis://localhost:6379")
+    
+    // Create connections
+    natsBus, err := bus.NewNats(natsURL)
+    require.NoError(t, err)
+    
+    redisStore, err := store.NewRedis(redisURL)
+    require.NoError(t, err)
+    
+    // Clean state
+    redisStore.FlushAll(context.Background())
+    
+    return &Infra{
+        NatsBus:    natsBus,
+        RedisStore: redisStore,
+        NatsURL:    natsURL,
+        RedisURL:   redisURL,
+        t:          t,
+    }
+}
+
+func (i *Infra) Cleanup() {
+    i.NatsBus.Close()
+    i.RedisStore.Close()
+}
+```
+
+### Mock Generation
+
+```go
+// Using mockgen
+//go:generate mockgen -source=kernel.go -destination=mocks/kernel_mock.go -package=mocks
+
+// Usage in tests
+func TestScheduler_WithMockedKernel(t *testing.T) {
+    ctrl := gomock.NewController(t)
+    defer ctrl.Finish()
+    
+    mockKernel := mocks.NewMockKernel(ctrl)
+    mockKernel.EXPECT().
+        Evaluate(gomock.Any(), gomock.Any()).
+        Return(&Decision{Type: DecisionAllow}, nil)
+    
+    sched := NewScheduler(Config{
+        SafetyKernel: mockKernel,
+    })
+    
+    // Test with mock...
+}
+```
+
+### Test Fixtures
+
+```go
+// testutil/fixtures.go
+func LoadTestPolicy(t *testing.T, name string) *Policy {
+    t.Helper()
+    
+    path := filepath.Join("testdata", "policies", name+".yaml")
+    data, err := os.ReadFile(path)
+    require.NoError(t, err)
+    
+    policy, err := ParsePolicy(data)
+    require.NoError(t, err)
+    
+    return policy
+}
+
+func LoadTestJob(t *testing.T, name string) *Job {
+    t.Helper()
+    
+    path := filepath.Join("testdata", "jobs", name+".json")
+    data, err := os.ReadFile(path)
+    require.NoError(t, err)
+    
+    var job Job
+    require.NoError(t, json.Unmarshal(data, &job))
+    
+    return &job
+}
+```
+
+## Test Data
+
+### Policy Test Data
+
+```yaml
+# testdata/policies/strict.yaml
+version: "1"
+rules:
+  - id: deny-all-prod
+    match:
+      risk_tags: [prod]
+    decision: deny
+    reason: "Production access denied in test"
+    
+  - id: allow-read
+    match:
+      capabilities: [read]
+    decision: allow
+```
+
+### Job Test Data
+
+```json
+// testdata/jobs/read_job.json
+{
+  "id": "test-read-job",
+  "type": "data.read",
+  "capabilities": ["read"],
+  "risk_tags": ["low"],
+  "metadata": {
+    "source": "test"
+  }
+}
+```
+
+## Running Tests
+
+### Quick Commands
+
+```bash
+# All unit tests
+go test ./...
+
+# Specific package
+go test ./core/safety/...
+
+# With coverage
+go test -cover ./...
+
+# Verbose
+go test -v ./...
+
+# Run specific test
+go test -v -run TestKernel_Evaluate ./core/safety/...
+
+# Integration tests
+go test -tags=integration ./...
+
+# Benchmarks
+go test -bench=. ./core/safety/...
+
+# Fuzz tests
+go test -fuzz=FuzzPolicyParse ./core/safety/...
+```
+
+### CI Pipeline Tests
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+on: [push, pull_request]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: go test -race -coverprofile=coverage.out ./...
+      - uses: codecov/codecov-action@v3
+        with:
+          files: coverage.out
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      nats:
+        image: nats:latest
+        ports:
+          - 4222:4222
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: go test -tags=integration ./...
+        env:
+          TEST_NATS_URL: nats://localhost:4222
+          TEST_REDIS_URL: redis://localhost:6379
+
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: go test -bench=. -benchmem ./... | tee bench.txt
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'go'
+          output-file-path: bench.txt
+          fail-on-alert: true
+          alert-threshold: '150%'
+```
+
+## Testing Best Practices
+
+### Safety Kernel Tests
+
+```go
+// Every policy decision path MUST be tested
+func TestKernel_AllDecisionPaths(t *testing.T) {
+    tests := []struct {
+        name     string
+        policy   *Policy
+        request  *EvaluateRequest
+        wantType DecisionType
+    }{
+        // ALLOW path
+        {"allow read-only", readPolicy, readRequest, DecisionAllow},
+        
+        // DENY path
+        {"deny destructive", denyPolicy, deleteRequest, DecisionDeny},
+        
+        // REQUIRE_APPROVAL path
+        {"approval for prod", approvalPolicy, prodRequest, DecisionRequireApproval},
+        
+        // THROTTLE path
+        {"throttle high-volume", throttlePolicy, bulkRequest, DecisionThrottle},
+        
+        // Default deny when no match
+        {"default deny", emptyPolicy, anyRequest, DecisionDeny},
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            kernel := NewKernel(WithPolicy(tt.policy))
+            decision, err := kernel.Evaluate(context.Background(), tt.request)
+            require.NoError(t, err)
+            assert.Equal(t, tt.wantType, decision.Type)
+        })
+    }
+}
+```
+
+### Error Path Tests
+
+```go
+// Always test error conditions
+func TestKernel_Evaluate_Errors(t *testing.T) {
+    tests := []struct {
+        name    string
+        setup   func(*Kernel)
+        request *EvaluateRequest
+        wantErr error
+    }{
+        {
+            name:    "nil request",
+            request: nil,
+            wantErr: ErrNilRequest,
+        },
+        {
+            name: "missing job_id",
+            request: &EvaluateRequest{
+                Capabilities: []string{"read"},
+            },
+            wantErr: ErrMissingJobID,
+        },
+        {
+            name: "policy store error",
+            setup: func(k *Kernel) {
+                k.policyStore = &failingStore{err: errors.New("db error")}
+            },
+            request: validRequest,
+            wantErr: ErrPolicyStoreFailure,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            kernel := NewKernel()
+            if tt.setup != nil {
+                tt.setup(kernel)
+            }
+            
+            _, err := kernel.Evaluate(context.Background(), tt.request)
+            assert.ErrorIs(t, err, tt.wantErr)
+        })
+    }
+}
+```
+
+### Race Condition Tests
+
+```go
+// Test concurrent access
+func TestKernel_ConcurrentEvaluate(t *testing.T) {
+    kernel := NewKernel(WithPolicy(testPolicy))
+    ctx := context.Background()
+    
+    var wg sync.WaitGroup
+    errCh := make(chan error, 100)
+    
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func(i int) {
+            defer wg.Done()
+            
+            req := &EvaluateRequest{
+                JobID:        fmt.Sprintf("job-%d", i),
+                Capabilities: []string{"read"},
+            }
+            
+            _, err := kernel.Evaluate(ctx, req)
+            if err != nil {
+                errCh <- err
+            }
+        }(i)
+    }
+    
+    wg.Wait()
+    close(errCh)
+    
+    for err := range errCh {
+        t.Errorf("concurrent evaluation error: %v", err)
+    }
+}
+
+// Run with race detector:
+// go test -race -run TestKernel_ConcurrentEvaluate
+```

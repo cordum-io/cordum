@@ -1,131 +1,412 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# Cordum - Claude CLI Configuration
 
 ## Project Overview
 
-Cordum is an AI Agent Governance Platform—a distributed control plane for orchestrating autonomous agents with safety enforcement, observability, and human-in-the-loop approval. Written in Go 1.24 with a React dashboard.
+Cordum is an **AI Agent Governance Platform** - a control plane for autonomous AI agent orchestration with built-in safety, observability, and policy enforcement.
 
-## Code Standards (CRITICAL)
-
-**This is a mission-critical system. All code must be production-grade with zero tolerance for shortcuts.**
-
-- **No happy path coding**: Handle every error case. Assume all external calls will fail. Validate all inputs at boundaries.
-- **Defensive programming**: Check preconditions, validate state transitions, fail fast on invariant violations.
-- **Timeouts everywhere**: Every network call, Redis operation, NATS publish, and gRPC call must have explicit timeouts.
-- **Resource cleanup**: Always use `defer` for cleanup. Handle context cancellation. Prevent goroutine leaks.
-- **Error handling**: Return errors with context (`fmt.Errorf("operation failed: %w", err)`). Never swallow errors silently.
-- **Concurrency safety**: Protect shared state with mutexes. Use channels correctly. Avoid data races.
-- **Graceful degradation**: Services must handle partial failures, upstream timeouts, and resource exhaustion.
-- **Idempotency**: Operations that can be retried must be safe to retry. Use locking where needed.
-- **Bounds checking**: Validate array indices, slice lengths, map keys. Never trust external data sizes.
-- **Logging discipline**: Log errors with sufficient context for debugging. Never log secrets or PII.
-
-## Build and Test Commands
-
-```bash
-# Build
-make build                    # Build all services (runs proto generation first)
-make build SERVICE=cordum-scheduler  # Build single service
-make proto                    # Generate protobuf code only
-
-# Test
-go test ./...                 # Run unit tests
-go test ./core/workflow/...   # Run tests for a specific package
-go test -tags=integration ./... # Run integration tests
-make coverage                 # Generate coverage report
-make coverage-core            # Enforce 80% coverage on core/
-
-# Local Development
-make dev-up                   # Start docker-compose (all services)
-make dev-down                 # Stop docker-compose
-make dev-logs                 # Tail docker-compose logs
-make smoke                    # Run platform smoke test
-
-# Docker
-make docker SERVICE=cordum-scheduler  # Build Docker image for a service
-```
+**Core Value Proposition:** "Policy-before-dispatch" - every agent action passes through a Safety Kernel before execution, providing deterministic safety guarantees rather than relying on probabilistic LLM behavior.
 
 ## Architecture
 
 ```
 Client → API Gateway → Scheduler → Safety Kernel → NATS → Worker Pools
-              ↓            ↓            ↓
-          [Redis]      [Redis]     [Policies]
+                          ↓              ↓
+                    [Redis State]   [Policy Engine]
 ```
 
-**Services (cmd/):**
-- `cordum-api-gateway`: HTTP/gRPC/WebSocket entry point; auth, tenant isolation, rate limiting
-- `cordum-scheduler`: Job routing, safety checks, worker dispatch, state management
-- `cordum-safety-kernel`: Policy evaluation (allow/deny/throttle/require_approval)
-- `cordum-workflow-engine`: Multi-step DAG orchestration with retries and approvals
-- `cordum-context-engine`: Context window and chat/RAG memory service
-- `cordumctl`: CLI tool
+### Core Services (3 binaries)
+- `cordum-api` - HTTP/WebSocket + gRPC gateway (port 8080, metrics 9092)
+- `cordum-scheduler` - Job routing, safety checks, state machine (metrics 9090)
+- `cordum-context` - Optional context/memory service (metrics 9093)
 
-**Core packages (core/):**
-- `controlplane/gateway`: REST routes, WebSocket streaming, auth middleware
-- `controlplane/scheduler`: Job state machine, routing, reconcilers
-- `controlplane/safetykernel`: Policy evaluation, bundle hot-reload
-- `controlplane/workflowengine`: Run execution, step dispatch
-- `workflow`: Workflow model and execution engine (core/workflow/engine.go)
-- `context/engine`: Context windows, memory persistence
-- `infra/bus`: NATS client abstraction
-- `infra/memory`: Redis job store, artifact store
-- `infra/config`: Typed config loaders with validation
+### Key Components
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Safety Kernel | `core/safety/` | Policy enforcement engine |
+| Workflow Engine | `core/workflow/` | DAG orchestration, retries, fan-out |
+| Scheduler | `core/scheduler/` | Job routing, state management |
+| Protocol | `core/protocol/` | CAP v2 types and API protos |
+| SDK | `sdk/` | Go SDK + worker runtime |
+| Dashboard | `dashboard/` | React UI |
 
-**Data stores (Redis key patterns):**
-- `ctx:<job_id>`, `res:<job_id>`: Job context and results
-- `job:state:<id>`, `job:meta:<id>`: Job state machine
-- `dlq:entry:<id>`: Dead letter queue
-- Pointer format: `redis://<key>` for payload references
+## Technology Stack
 
-**Message bus (NATS subjects):**
-- `sys.job.submit`, `sys.job.result`, `sys.job.progress`, `sys.job.cancel`
-- `sys.heartbeat`, `sys.workflow.event`
-- JetStream optional for durable delivery
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| Go | 1.24+ | Core services |
+| NATS JetStream | Latest | Message bus (at-least-once delivery) |
+| Redis | 7+ | State store, payload pointers |
+| Protocol Buffers | v3 | CAP wire format |
+| React | 18+ | Dashboard UI |
+| TypeScript | 5+ | Dashboard |
+| Docker Compose | v2 | Local development |
 
-## Key Design Patterns
+## Directory Structure
 
-1. **Pointer-based payloads**: Jobs carry Redis pointers (`redis://ctx:id`) instead of large payloads—keeps the bus lean
-2. **Safety-first**: All jobs evaluated by Safety Kernel before dispatch
-3. **Multi-tenant isolation**: `tenant_id` enforced everywhere; cross-tenant access blocked
-4. **Deterministic state**: Job state transitions follow strict rules with locking for idempotency
-5. **Saga compensation**: Workflow failures trigger rollback compensation stacks
+```
+cordum/
+├── cmd/                      # Service entrypoints
+│   ├── cordum-api/           # API gateway main.go
+│   ├── cordum-scheduler/     # Scheduler main.go
+│   └── cordum-context/       # Context service main.go
+├── core/                     # Shared libraries
+│   ├── safety/               # Safety Kernel
+│   │   ├── kernel.go         # Core policy engine
+│   │   ├── policy.go         # Policy parsing/loading
+│   │   ├── evaluate.go       # Policy evaluation
+│   │   └── decision.go       # Decision types (allow/deny/approve/throttle)
+│   ├── workflow/             # Workflow engine
+│   │   ├── engine.go         # DAG execution
+│   │   ├── run.go            # Workflow runs
+│   │   ├── step.go           # Step types
+│   │   └── state.go          # Redis state management
+│   ├── scheduler/            # Job scheduler
+│   │   ├── scheduler.go      # Core scheduler
+│   │   ├── router.go         # Pool-based routing
+│   │   ├── reconciler.go     # Timeout/retry handling
+│   │   └── state.go          # Job state machine
+│   ├── protocol/             # Protocol definitions
+│   │   ├── pb/v1/            # Generated Go types
+│   │   └── proto/v1/         # Proto source files
+│   ├── bus/                  # NATS abstraction
+│   ├── store/                # Redis abstraction
+│   └── config/               # Configuration loading
+├── dashboard/                # React frontend
+│   ├── src/
+│   │   ├── components/       # UI components
+│   │   ├── pages/            # Route pages
+│   │   ├── hooks/            # React hooks
+│   │   └── api/              # API client
+│   └── package.json
+├── sdk/                      # Public SDK
+│   ├── runtime/              # Worker runtime
+│   ├── client/               # Gateway client
+│   └── gen/go/cordum/v1/     # Generated SDK types
+├── config/                   # Default configurations
+├── deploy/k8s/               # Kubernetes manifests
+├── docs/                     # Documentation
+└── tools/scripts/            # Operational scripts
+```
 
-## Security Requirements (NON-NEGOTIABLE)
+## Coding Standards
 
-**Security is not optional. Every change must maintain or strengthen security posture.**
+### Go Code Style
 
-- **TLS required**: All service endpoints (Gateway, Safety Kernel, Context Engine) use TLS in production
-- **Auth enforcement**: API keys or JWT required on Gateway; never bypass auth checks
-- **Tenant isolation**: `X-Tenant-ID` required; cross-tenant access blocked; validate tenant on every operation
-- **Input validation**: Validate all inputs at system boundaries; reject malformed data early
-- **Output encoding**: Prevent injection attacks; sanitize data before rendering or storing
-- **Rate limiting**: Enforce limits to prevent abuse and resource exhaustion
-- **Policy signatures**: Verify policy signatures in production when public key configured
-- **Secret handling**: Detect `secret://` references; never log secrets, tokens, or credentials
-- **SSRF protection**: Policy URL fetches reject private/loopback hosts unless explicitly allowed
-- **Size limits**: Enforce max payload (2 MiB), max artifact (10 MiB); reject oversized requests
+```go
+// Package comments required
+// Package safety implements the Safety Kernel for policy enforcement.
+package safety
 
-## Default Ports
+// Use descriptive error wrapping
+if err != nil {
+    return fmt.Errorf("evaluate policy %s: %w", policy.ID, err)
+}
 
-- Gateway gRPC: `:8080`, HTTP: `:8081`, metrics: `:9092`
-- Scheduler metrics: `:9090`
-- Workflow engine health: `:9093/health`
-- Safety Kernel: `:50051`
-- Context Engine: `:50070`
+// Context propagation required for all operations
+func (k *Kernel) Evaluate(ctx context.Context, req *EvaluateRequest) (*Decision, error)
 
-## Testing Requirements
+// Interface-first design for testability
+type PolicyStore interface {
+    Get(ctx context.Context, id string) (*Policy, error)
+    List(ctx context.Context) ([]*Policy, error)
+}
 
-- **Tests are mandatory**: All logic changes in control-plane packages require tests
-- **Coverage floor**: 80% minimum coverage enforced on `core/` (`make coverage-core`)
-- **Test failure modes**: Test error paths, timeouts, invalid inputs, concurrent access
-- **Integration tests**: Use `-tags=integration` for tests requiring Redis/NATS
-- **Run before commit**: `go test ./path/to/changed/package/...` on every touched package
+// Use structured logging
+slog.Info("job dispatched",
+    "job_id", job.ID,
+    "pool", pool.Name,
+    "worker", worker.ID,
+)
+```
 
-## Process Requirements
+### Error Handling Patterns
 
-- Create GitHub issues for new features/significant changes and link in PRs
-- Update `docs/` and `wiki/` for major changes
-- Commit messages must be clear and professional
-- Prefer focused `go test` runs on touched packages over repo-wide runs
+```go
+// Domain errors in core packages
+var (
+    ErrPolicyNotFound    = errors.New("policy not found")
+    ErrJobAlreadyExists  = errors.New("job already exists")
+    ErrApprovalRequired  = errors.New("approval required")
+)
+
+// Wrap with context
+return fmt.Errorf("scheduler.dispatch: %w", err)
+```
+
+### Testing Patterns
+
+```go
+// Table-driven tests preferred
+func TestKernel_Evaluate(t *testing.T) {
+    tests := []struct {
+        name     string
+        policy   *Policy
+        request  *EvaluateRequest
+        want     DecisionType
+        wantErr  bool
+    }{
+        {
+            name:    "allow read-only",
+            policy:  readOnlyPolicy,
+            request: readRequest,
+            want:    DecisionAllow,
+        },
+        // ...
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // ...
+        })
+    }
+}
+
+// Use testify for assertions
+assert.Equal(t, expected, actual)
+require.NoError(t, err)
+```
+
+### Protocol Buffer Conventions
+
+```protobuf
+// All messages in core/protocol/proto/v1/
+syntax = "proto3";
+package cordum.v1;
+
+// Use clear field names
+message JobRequest {
+  string job_id = 1;
+  string context_ptr = 2;      // Pointer to Redis/S3, not payload
+  repeated string capabilities = 3;
+  repeated string risk_tags = 4;
+  map<string, string> metadata = 5;
+}
+```
+
+## Key Patterns
+
+### 1. Safety Kernel Integration
+
+Every job MUST pass through the Safety Kernel:
+
+```go
+// In scheduler
+decision, err := s.safetyKernel.Evaluate(ctx, &safety.EvaluateRequest{
+    JobID:        job.ID,
+    Capabilities: job.Capabilities,
+    RiskTags:     job.RiskTags,
+    Metadata:     job.Metadata,
+})
+
+switch decision.Type {
+case safety.DecisionAllow:
+    return s.dispatch(ctx, job)
+case safety.DecisionDeny:
+    return s.reject(ctx, job, decision.Reason)
+case safety.DecisionRequireApproval:
+    return s.queueForApproval(ctx, job, decision.Reason)
+case safety.DecisionThrottle:
+    return s.throttle(ctx, job, decision.Duration)
+}
+```
+
+### 2. Pointer Architecture
+
+Never put large payloads on the bus:
+
+```go
+// Store payload, get pointer
+contextPtr, err := s.store.SetContext(ctx, job.ID, payload)
+
+// Send only pointer on bus
+req := &pb.JobRequest{
+    JobId:      job.ID,
+    ContextPtr: contextPtr,  // "ctx:job:abc123" -> Redis key
+}
+```
+
+### 3. State Machine
+
+Job states are explicit and transition-controlled:
+
+```go
+type JobStatus int
+
+const (
+    JobStatusPending JobStatus = iota
+    JobStatusDispatched
+    JobStatusRunning
+    JobStatusSucceeded
+    JobStatusFailed
+    JobStatusCancelled
+)
+
+// Valid transitions
+var validTransitions = map[JobStatus][]JobStatus{
+    JobStatusPending:    {JobStatusDispatched, JobStatusCancelled},
+    JobStatusDispatched: {JobStatusRunning, JobStatusFailed},
+    JobStatusRunning:    {JobStatusSucceeded, JobStatusFailed},
+}
+```
+
+### 4. Workflow DAG Execution
+
+```go
+// Workflow with fan-out
+workflow := &Workflow{
+    ID: "process-data",
+    Steps: []Step{
+        {ID: "fetch", Type: StepTypeJob, JobType: "fetch.data"},
+        {ID: "process", Type: StepTypeFanOut, 
+         FanOut: &FanOutConfig{
+             Source: "fetch.items",
+             JobType: "process.item",
+         }},
+        {ID: "aggregate", Type: StepTypeJob, JobType: "aggregate.results",
+         DependsOn: []string{"process"}},
+    },
+}
+```
+
+## Common Tasks
+
+### Adding a New API Endpoint
+
+1. Define proto in `core/protocol/proto/v1/api.proto`
+2. Run `make proto` to regenerate
+3. Implement handler in `cmd/cordum-api/handlers/`
+4. Add route in `cmd/cordum-api/routes.go`
+5. Add tests in `cmd/cordum-api/handlers/*_test.go`
+
+### Adding a New Policy Rule Type
+
+1. Define rule struct in `core/safety/rules.go`
+2. Add matcher in `core/safety/matcher.go`
+3. Update policy parser in `core/safety/policy.go`
+4. Add tests in `core/safety/*_test.go`
+5. Document in `docs/policies.md`
+
+### Creating a New Worker Pack
+
+1. Create pack directory in external repo
+2. Implement CAP worker interface
+3. Define capabilities and risk tags
+4. Add pack manifest (`pack.yaml`)
+5. Test with `cordumctl pack install <pack>`
+
+## Build & Test Commands
+
+```bash
+# Build all services
+make build
+
+# Build specific service
+make build SERVICE=cordum-scheduler
+
+# Run all tests
+GOCACHE=$(pwd)/.cache/go-build go test ./...
+
+# Run integration tests (requires Docker)
+make test-integration
+
+# Regenerate protos
+make proto
+
+# Local development
+docker compose up -d
+
+# Smoke tests
+make smoke
+./tools/scripts/platform_smoke.sh
+./tools/scripts/cordumctl_smoke.sh
+
+# Build Docker image
+make docker SERVICE=cordum-scheduler
+```
+
+## Environment Variables
+
+```bash
+# Core
+CORDUM_API_KEY=your-api-key
+CORDUM_LOG_LEVEL=info|debug|warn|error
+
+# NATS
+NATS_URL=nats://localhost:4222
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# API Gateway
+API_PORT=8080
+API_METRICS_PORT=9092
+
+# Scheduler
+SCHEDULER_METRICS_PORT=9090
+SCHEDULER_RECONCILE_INTERVAL=30s
+
+# Safety Kernel
+SAFETY_POLICY_PATH=/etc/cordum/policies/
+SAFETY_DEFAULT_DECISION=deny
+```
+
+## Performance Targets
+
+| Metric | Target |
+|--------|--------|
+| Policy evaluation | < 5ms p99 |
+| Job dispatch | < 10ms p99 |
+| Event throughput | 10k+/sec/node |
+| API response | < 50ms p99 |
+
+## Debugging
+
+### Common Issues
+
+1. **Job stuck in PENDING**
+   - Check Safety Kernel logs for policy evaluation
+   - Verify worker pool has capacity (heartbeats)
+   - Check NATS connectivity
+
+2. **Policy not matching**
+   - Use `cordumctl policy simulate` to test
+   - Check policy file syntax
+   - Verify risk_tags/capabilities in job request
+
+3. **Worker not receiving jobs**
+   - Verify NATS subscription on correct subject
+   - Check queue group membership
+   - Verify capabilities match job requirements
+
+### Useful Commands
+
+```bash
+# Check Redis state
+docker compose exec redis redis-cli KEYS "job:*"
+
+# Watch NATS subjects
+nats sub "job.>" --server=nats://localhost:4222
+
+# View scheduler metrics
+curl http://localhost:9090/metrics
+
+# Flush all state (dev only!)
+docker compose exec redis redis-cli FLUSHALL
+```
+
+## Documentation References
+
+- `docs/README.md` - Documentation index
+- `docs/system_overview.md` - Architecture deep dive
+- `docs/CORE.MD` - Technical reference
+- `docs/AGENT_PROTOCOL.md` - CAP protocol spec
+- `docs/pack.md` - Pack development guide
+- `docs/LOCAL_E2E.md` - Local testing walkthrough
+
+## Important Constraints
+
+1. **Never bypass Safety Kernel** - All jobs must be evaluated
+2. **Pointer architecture** - No large payloads on NATS
+3. **Idempotent operations** - Jobs may be retried
+4. **Context propagation** - Always pass context.Context
+5. **Structured logging** - Use slog with key-value pairs
+6. **CAP v2 compliance** - Wire format must match spec

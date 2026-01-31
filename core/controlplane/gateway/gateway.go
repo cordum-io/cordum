@@ -808,6 +808,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	// 1.5 Auth config (public)
 	mux.HandleFunc("GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
 
+	// 1.6 Auth endpoints
+	mux.HandleFunc("POST /api/v1/auth/login", s.instrumented("/api/v1/auth/login", s.handleLogin))
+	mux.HandleFunc("GET /api/v1/auth/session", s.instrumented("/api/v1/auth/session", s.handleSession))
+	mux.HandleFunc("POST /api/v1/auth/logout", s.instrumented("/api/v1/auth/logout", s.handleLogout))
+
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
 
