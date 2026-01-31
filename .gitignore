@@ -16,6 +16,8 @@ out/
 .vscode/
 generated/
 .claude/
+.claudeignore
+.mcp.json
 .codex/
 .cursor/
 .aider/
