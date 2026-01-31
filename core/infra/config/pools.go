@@ -74,15 +74,6 @@ func LoadPoolConfig(path string) (*PoolsConfig, error) {
 	return cfg, nil
 }
 
-// LoadPoolTopics returns a single-pool mapping for legacy callers.
-func LoadPoolTopics(path string) (map[string]string, error) {
-	cfg, err := LoadPoolConfig(path)
-	if err != nil {
-		return nil, fmt.Errorf("load pool topics: %w", err)
-	}
-	return cfg.TopicToPool(), nil
-}
-
 // TopicToPool picks the first pool for each topic mapping.
 func (c *PoolsConfig) TopicToPool() map[string]string {
 	out := make(map[string]string, len(c.Topics))

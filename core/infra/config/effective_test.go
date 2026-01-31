@@ -20,20 +20,6 @@ func TestParseEffectiveSafety(t *testing.T) {
 	}
 }
 
-func TestEffectiveSafetyFromEnv(t *testing.T) {
-	env := map[string]string{
-		EffectiveConfigEnvVar: `{"safety":{"denied_topics":["job.block"]}}`,
-	}
-	cfg, ok := EffectiveSafetyFromEnv(env)
-	if !ok {
-		t.Fatalf("expected safety config")
-	}
-	if len(cfg.DeniedTopics) != 1 || cfg.DeniedTopics[0] != "job.block" {
-		t.Fatalf("unexpected denied topics: %#v", cfg.DeniedTopics)
-	}
-
-}
-
 func TestParseEffectiveContext(t *testing.T) {
 	cfg, ok := ParseEffectiveContext([]byte(`{"context":{"allowed_memory_ids":["repo:*"],"denied_memory_ids":["kb:secret"]}}`))
 	if !ok {

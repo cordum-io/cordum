@@ -38,14 +38,3 @@ func ParseEffectiveSafety(payload []byte) (SafetyConfig, bool) {
 	return SafetyConfig{}, false
 }
 
-// EffectiveSafetyFromEnv extracts safety config from job env if present.
-func EffectiveSafetyFromEnv(env map[string]string) (SafetyConfig, bool) {
-	if len(env) == 0 {
-		return SafetyConfig{}, false
-	}
-	payload := env[EffectiveConfigEnvVar]
-	if payload == "" {
-		return SafetyConfig{}, false
-	}
-	return ParseEffectiveSafety([]byte(payload))
-}
