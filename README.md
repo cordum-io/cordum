@@ -162,17 +162,32 @@ Read more: [MCP vs CAP: Why Your AI Agents Need Both Protocols](https://dev.to/y
 The Go SDK makes it easy to build CAP-compatible workers:
 
 ```go
-import "github.com/cordum-io/cordum/sdk/runtime"
+import (
+    "log"
+
+    "github.com/cordum/cordum/sdk/runtime"
+)
+
+type Input struct {
+    Prompt string `json:"prompt"`
+}
+
+type Output struct {
+    Summary string `json:"summary"`
+}
 
 func main() {
-    worker := runtime.NewWorker("my-agent", "job.my-pool")
-    
-    worker.Handle(func(ctx context.Context, job *runtime.Job) (*runtime.Result, error) {
+    agent := &runtime.Agent{Retries: 2}
+
+    runtime.Register(agent, "job.summarize", func(ctx runtime.Context, input Input) (Output, error) {
         // Your agent logic here
-        return &runtime.Result{Status: runtime.Succeeded}, nil
+        return Output{Summary: input.Prompt}, nil
     })
-    
-    worker.Run()
+
+    if err := agent.Start(); err != nil {
+        log.Fatal(err)
+    }
+    select {}
 }
 ```
 

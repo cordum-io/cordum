@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -13,14 +12,12 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/sdk/runtime"
-	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
-	"github.com/redis/go-redis/v9"
+	"github.com/nats-io/nats.go"
 )
 
 const (
-	defaultNatsURL  = "nats://localhost:4222"
-	defaultRedisURL = "redis://localhost:6379"
-	resultTTL       = 24 * time.Hour
+	defaultNatsURL  = "nats://127.0.0.1:4222"
+	defaultRedisURL = "redis://127.0.0.1:6379/0"
 )
 
 type transferPayload struct {
@@ -50,123 +47,83 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	redisClient, err := newRedisClient(envOr("REDIS_URL", defaultRedisURL))
-	if err != nil {
-		log.Fatalf("redis init: %v", err)
-	}
-	if redisClient != nil {
-		defer func() {
-			_ = redisClient.Close()
-		}()
-	}
-
 	workerID := envOr("WORKER_ID", "demo-mock-bank-worker")
 	directSubject := "worker." + workerID + ".jobs"
+	natsURL := envOr("NATS_URL", defaultNatsURL)
 
-	worker, err := runtime.NewWorker(runtime.Config{
-		WorkerID: workerID,
-		Pool:     "demo-mock-bank",
-		Subjects: []string{
-			directSubject,
-			"job.demo-mock-bank.transfer.auto",
-			"job.demo-mock-bank.transfer.review",
-			"job.demo-mock-bank.transfer.blocked",
-		},
-		NatsURL:         envOr("NATS_URL", defaultNatsURL),
-		MaxParallelJobs: 4,
-		Capabilities:    []string{"demo-mock-bank.transfer"},
-		Labels:          map[string]string{"demo": "mock-bank"},
-	})
-	if err != nil {
-		log.Fatalf("worker init: %v", err)
+	agent := &runtime.Agent{
+		NATSURL:  natsURL,
+		RedisURL: envOr("REDIS_URL", defaultRedisURL),
+		SenderID: workerID,
 	}
-	defer func() {
-		_ = worker.Close()
-	}()
 
-	log.Printf("mock-bank worker ready (pool=%s)", "demo-mock-bank")
-
-	handler := func(ctx context.Context, req *agentv1.JobRequest) (*agentv1.JobResult, error) {
-		payload := transferPayload{
-			Currency:    "USD",
-			Customer:    "Unknown",
-			Reason:      "",
-			Note:        "",
-			RequestedBy: "agent-demo",
+	handler := func(ctx runtime.Context, payload transferPayload) (transferResult, error) {
+		if strings.TrimSpace(payload.Currency) == "" {
+			payload.Currency = "USD"
 		}
-
-		if redisClient != nil && req.GetContextPtr() != "" {
-			ctxData, err := fetchContext(ctx, redisClient, req.GetContextPtr())
-			if err != nil {
-				log.Printf("context fetch failed: %v", err)
-			} else {
-				if val, ok := ctxData["amount"]; ok {
-					payload.Amount = val
-				}
-				payload.Currency = readString(ctxData, "currency", payload.Currency)
-				payload.Customer = readString(ctxData, "customer", payload.Customer)
-				payload.Reason = readString(ctxData, "reason", payload.Reason)
-				payload.Note = readString(ctxData, "note", payload.Note)
-				payload.RequestedBy = readString(ctxData, "requested_by", payload.RequestedBy)
-			}
+		if strings.TrimSpace(payload.Customer) == "" {
+			payload.Customer = "Unknown"
+		}
+		if strings.TrimSpace(payload.RequestedBy) == "" {
+			payload.RequestedBy = "agent-demo"
 		}
 
 		amount := parseAmount(payload.Amount)
-		result := transferResult{
-			JobID:       req.GetJobId(),
+		jobID := ctx.Job.GetJobId()
+		return transferResult{
+			JobID:       jobID,
 			Amount:      amount,
 			Currency:    payload.Currency,
 			Customer:    payload.Customer,
 			Reason:      payload.Reason,
 			Note:        payload.Note,
 			RequestedBy: payload.RequestedBy,
-			Topic:       req.GetTopic(),
+			Topic:       ctx.Job.GetTopic(),
 			Status:      "executed",
 			ProcessedAt: time.Now().UTC().Format(time.RFC3339),
-			ReferenceID: "transfer-" + req.GetJobId(),
-		}
-
-		resultPtr := ""
-		if redisClient != nil {
-			ptr, err := storeResult(ctx, redisClient, req.GetJobId(), result)
-			if err != nil {
-				log.Printf("result store failed: %v", err)
-			} else {
-				resultPtr = ptr
-			}
-		}
-
-		return &agentv1.JobResult{
-			JobId:     req.GetJobId(),
-			Status:    agentv1.JobStatus_JOB_STATUS_SUCCEEDED,
-			ResultPtr: resultPtr,
+			ReferenceID: "transfer-" + jobID,
 		}, nil
 	}
 
-	if err := worker.Run(ctx, handler); err != nil {
-		log.Fatalf("worker run: %v", err)
+	for _, topic := range []string{
+		directSubject,
+		"job.demo-mock-bank.transfer.auto",
+		"job.demo-mock-bank.transfer.review",
+		"job.demo-mock-bank.transfer.blocked",
+	} {
+		runtime.Register(agent, topic, handler)
 	}
-}
 
-func readString(payload map[string]any, key, fallback string) string {
-	if payload == nil {
-		return fallback
+	if err := agent.Start(); err != nil {
+		log.Fatalf("runtime start: %v", err)
 	}
-	if val, ok := payload[key]; ok {
-		switch v := val.(type) {
-		case string:
-			if strings.TrimSpace(v) != "" {
-				return strings.TrimSpace(v)
-			}
-		case float64:
-			return strconv.FormatFloat(v, 'f', -1, 64)
-		case int:
-			return strconv.Itoa(v)
-		case int64:
-			return strconv.FormatInt(v, 10)
+	defer func() {
+		if err := agent.Close(); err != nil {
+			log.Printf("runtime close: %v", err)
 		}
+	}()
+
+	nc, err := nats.Connect(natsURL, nats.Name(workerID), nats.Timeout(5*time.Second))
+	if err != nil {
+		log.Fatalf("nats connect: %v", err)
 	}
-	return fallback
+	defer func() {
+		if err := nc.Drain(); err != nil {
+			log.Printf("nats drain: %v", err)
+		}
+	}()
+
+	heartbeatFn := func() ([]byte, error) {
+		return runtime.HeartbeatPayload(workerID, "demo-mock-bank", 0, 4, 0)
+	}
+	if payload, err := heartbeatFn(); err == nil {
+		_ = runtime.EmitHeartbeat(nc, payload)
+	}
+	go runtime.HeartbeatLoop(ctx, nc, heartbeatFn)
+
+	log.Printf("mock-bank worker ready (topics=%s, worker_id=%s)", "job.demo-mock-bank.transfer.auto, job.demo-mock-bank.transfer.review, job.demo-mock-bank.transfer.blocked", workerID)
+
+	<-ctx.Done()
 }
 
 func parseAmount(val any) float64 {
@@ -191,73 +148,9 @@ func parseAmount(val any) float64 {
 	return 0
 }
 
-func fetchContext(ctx context.Context, client *redis.Client, ptr string) (map[string]any, error) {
-	key, err := keyFromPointer(ptr)
-	if err != nil {
-		return nil, err
-	}
-	data, err := client.Get(ctx, key).Bytes()
-	if err != nil {
-		return nil, err
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
-	}
-	return payload, nil
-}
-
-func storeResult(ctx context.Context, client *redis.Client, jobID string, payload any) (string, error) {
-	if jobID == "" {
-		return "", errors.New("job id required")
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	key := "res:" + jobID
-	if err := client.Set(ctx, key, data, resultTTL).Err(); err != nil {
-		return "", err
-	}
-	return "redis://" + key, nil
-}
-
-func keyFromPointer(ptr string) (string, error) {
-	ptr = strings.TrimSpace(ptr)
-	if ptr == "" {
-		return "", errors.New("empty pointer")
-	}
-	if !strings.HasPrefix(ptr, "redis://") {
-		return "", errors.New("unsupported pointer prefix")
-	}
-	key := strings.TrimPrefix(ptr, "redis://")
-	if key == "" {
-		return "", errors.New("missing key")
-	}
-	return key, nil
-}
-
 func envOr(key, fallback string) string {
 	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
 		return val
 	}
 	return fallback
-}
-
-func newRedisClient(url string) (*redis.Client, error) {
-	url = strings.TrimSpace(url)
-	if url == "" {
-		return nil, nil
-	}
-	opts, err := redis.ParseURL(url)
-	if err != nil {
-		return nil, err
-	}
-	client := redis.NewClient(opts)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, err
-	}
-	return client, nil
 }

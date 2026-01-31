@@ -18,7 +18,7 @@ This table tracks key backend features, their implementation status, and test co
 | Gateway HTTP/WS endpoints | Yes | Unit (`core/controlplane/gateway/gateway_test.go`) | Jobs, workflows, approvals, policy (bundles/publish/rollback/audit), schemas, locks, artifacts, DLQ. |
 | Auth (OSS) | Yes | Unit (gateway tests) | API key allowlist (`CORDUM_API_KEYS`/`CORDUM_API_KEY`) with single-tenant default; `X-Tenant-ID` required on HTTP. |
 | Auth (enterprise) | Yes | Unit (enterprise repo) | Multi-tenant API keys and RBAC enforced by the enterprise auth provider. |
-| Worker runtime SDK | Yes | None | `sdk/runtime` CAP worker runtime. |
+| Worker runtime SDK | Yes | None | `sdk/runtime` wraps CAP runtime (typed handlers + pointer hydration). |
 | CLI (cordumctl) | Yes | None | `cmd/cordumctl` + smoke script; ships as `cordumctl`. |
 
 Keep this table updated when wiring new components.

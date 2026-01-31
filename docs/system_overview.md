@@ -76,7 +76,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 - External workers (not in this repo)
   - Subscribe to job topics or direct subjects; honor `sys.job.cancel`.
   - Write results to Redis and publish `sys.job.result`.
-  - Use the CAP runtime in `sdk/runtime` for consistent heartbeats/progress/cancel.
+  - Use the CAP runtime in `sdk/runtime` for typed handlers + pointer hydration; use CAP worker helpers for heartbeats/progress/cancel when needed.
   - MCP integration lives in `cordum-packs/packs/mcp-bridge`, which exposes MCP tools/resources over stdio and submits MCP tool calls as Cordum jobs.
 
 ## Job lifecycle (single job)

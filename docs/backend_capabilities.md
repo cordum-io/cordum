@@ -66,7 +66,7 @@ This document tracks the current backend features, their status, and where they 
 
 ### Workers
 - External workers (not in this repo) subscribe to `sys.job.cancel` and honor cancel requests.
-- CAP worker runtime SDK is implemented at `sdk/runtime` (heartbeats, progress, cancel handling).
+- CAP runtime SDK is exposed at `sdk/runtime` for typed handlers + pointer hydration; use CAP worker helpers for heartbeats/progress/cancel.
 
 ## Pending/Next (to align with plan)
 - DLQ ops: add pagination and richer telemetry.
