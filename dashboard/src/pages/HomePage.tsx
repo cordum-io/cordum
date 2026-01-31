@@ -17,7 +17,7 @@ import { Button } from "../components/ui/Button";
 import { Drawer } from "../components/ui/Drawer";
 import { Textarea } from "../components/ui/Textarea";
 import { Input } from "../components/ui/Input";
-import type { JobRecord, StepRun, WorkflowRun, Workflow } from "../types/api";
+import type { Heartbeat, JobRecord, StepRun, WorkflowRun, Workflow } from "../types/api";
 
 type RunPreset = {
   id: string;
@@ -25,6 +25,8 @@ type RunPreset = {
   workflowId: string;
   payload: string;
 };
+
+const STALE_WORKER_MINUTES = 2;
 
 function loadPresets(): RunPreset[] {
   try {
@@ -132,10 +134,19 @@ export function HomePage() {
     queryKey: ["policy", "snapshots"],
     queryFn: () => api.listPolicySnapshots(),
   });
+  const workersQuery = useQuery({
+    queryKey: ["workers", "summary"],
+    queryFn: () => api.listWorkers(),
+    refetchInterval: 20_000,
+  });
+  const systemConfigQuery = useQuery({
+    queryKey: ["config", "system", "default"],
+    queryFn: () => api.getConfig("system", "default"),
+  });
   const { runs, isLoading } = useAllRuns({ limit: 120 });
   const events = useEventStore((state) => state.events.slice(0, 6));
   const pinned = usePinStore((state) => state.items);
-  const removePinned = usePinStore((state) => state.removeItem);
+  const removePinned = usePinStore((state) => state.removePin);
   const workflowsQuery = useWorkflows();
   const workflows = workflowsQuery.data ?? [];
   const workflowMap = useMemo(() => {
@@ -143,6 +154,44 @@ export function HomePage() {
     workflows.forEach((w) => map.set(w.id, w));
     return map;
   }, [workflows]);
+
+  const workers = useMemo(() => (workersQuery.data || []) as Heartbeat[], [workersQuery.data]);
+  const poolHealth = useMemo(() => {
+    const poolsConfig = (systemConfigQuery.data?.data?.pools || {}) as Record<string, unknown>;
+    const poolDefs = (poolsConfig as { pools?: Record<string, { requires?: string[] }> }).pools || {};
+    const poolNames = new Set<string>([
+      ...Object.keys(poolDefs),
+      ...workers.map((worker) => worker.pool || "default"),
+    ]);
+
+    const cutoff = Date.now() - STALE_WORKER_MINUTES * 60 * 1000;
+    const stats = Array.from(poolNames).map((name) => {
+      const poolWorkers = workers.filter((worker) => (worker.pool || "default") === name);
+      const staleCount = poolWorkers.filter((worker) => {
+        if (!worker.updated_at) return false;
+        const ts = new Date(worker.updated_at).getTime();
+        return Number.isFinite(ts) && ts < cutoff;
+      }).length;
+      return {
+        name,
+        total: poolWorkers.length,
+        stale: staleCount,
+        requires: poolDefs[name]?.requires || [],
+      };
+    });
+
+    return stats.sort((a, b) => b.total - a.total);
+  }, [systemConfigQuery.data, workers]);
+
+  const totalWorkers = workers.length;
+  const staleWorkers = useMemo(() => {
+    const cutoff = Date.now() - STALE_WORKER_MINUTES * 60 * 1000;
+    return workers.filter((worker) => {
+      if (!worker.updated_at) return false;
+      const ts = new Date(worker.updated_at).getTime();
+      return Number.isFinite(ts) && ts < cutoff;
+    });
+  }, [workers]);
 
   const cancelMutation = useMutation({
     mutationFn: ({ workflowId, runId }: { workflowId: string; runId: string }) =>
@@ -294,11 +343,11 @@ export function HomePage() {
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-border bg-white/80 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
               <Sparkles className="h-3 w-3 text-accent" />
-              Home
+              Governance Dashboard
             </div>
-            <h2 className="mt-4 font-display text-3xl font-semibold text-ink">Control plane at a glance.</h2>
+            <h2 className="mt-4 font-display text-3xl font-semibold text-ink">AI control plane overview.</h2>
             <p className="mt-2 text-sm text-muted">
-              Track approvals, run progress, and policy posture. Launch governed workflows in seconds.
+              Track safety posture, approvals, and system health. Launch governed workflows in seconds.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
               <Button variant="primary" type="button" onClick={() => navigate("/workflows/new")}>
@@ -452,7 +501,7 @@ export function HomePage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => navigate("/system")}
+                    onClick={() => navigate("/dlq")}
                     className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
                   >
                     <div>
@@ -582,7 +631,7 @@ export function HomePage() {
               <div className="text-xs uppercase tracking-[0.2em] text-muted">DLQ backlog</div>
               <div className="text-lg font-semibold text-ink">{formatCount(dlqEntries.length)}</div>
             </div>
-            <Button variant="outline" size="sm" type="button" onClick={() => navigate("/system")}>
+            <Button variant="outline" size="sm" type="button" onClick={() => navigate("/dlq")}>
               Open DLQ
             </Button>
           </div>
@@ -629,7 +678,7 @@ export function HomePage() {
       <section className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Live Runs</CardTitle>
+            <CardTitle>Active Runs</CardTitle>
             <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/runs")}>
               View all
             </Button>
@@ -718,15 +767,21 @@ export function HomePage() {
             <div className="space-y-3">
               {pinned.map((item) => {
                 const isWorkflow = item.type === "workflow";
+                const isRun = item.type === "run";
+                const isPool = item.type === "pool";
                 const workflow = isWorkflow ? workflowMap.get(item.id) : null;
+                const targetHref = isWorkflow
+                  ? `/workflows/${item.id}`
+                  : isRun
+                  ? `/runs/${item.id}`
+                  : isPool
+                  ? `/pools?pool=${encodeURIComponent(item.id)}`
+                  : "/system";
                 return (
                   <div key={item.id} className="rounded-2xl border border-border bg-white/70 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <Link
-                          to={isWorkflow ? `/workflows/${item.id}` : `/system?tab=workers`}
-                          className="text-sm font-semibold text-ink hover:underline"
-                        >
+                        <Link to={targetHref} className="text-sm font-semibold text-ink hover:underline">
                           {item.label}
                         </Link>
                         <div className="text-xs text-muted">{item.detail || item.type}</div>
@@ -768,11 +823,11 @@ export function HomePage() {
         </Card>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+      <section className="grid gap-6 lg:grid-cols-2">
+        <Card>
           <CardHeader>
-            <CardTitle>Activity Timeline</CardTitle>
-            <div className="text-xs text-muted">Last 24h</div>
+            <CardTitle>Policy Activity (24h)</CardTitle>
+            <div className="text-xs text-muted">Jobs evaluated and outcomes</div>
           </CardHeader>
           {activityData.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
@@ -812,6 +867,71 @@ export function HomePage() {
           )}
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle>Pool Health</CardTitle>
+            <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/pools")}>
+              View pools
+            </Button>
+          </CardHeader>
+          <div className="space-y-4">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded-2xl border border-border bg-white/70 p-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Pools</div>
+                <div className="text-sm font-semibold text-ink">{poolHealth.length}</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-white/70 p-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Workers</div>
+                <div className="text-sm font-semibold text-ink">{totalWorkers}</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-white/70 p-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Healthy</div>
+                <div className="text-sm font-semibold text-ink">{Math.max(0, totalWorkers - staleWorkers.length)}</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-white/70 p-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted">Stale</div>
+                <div className={`text-sm font-semibold ${staleWorkers.length ? "text-warning" : "text-success"}`}>
+                  {staleWorkers.length}
+                </div>
+              </div>
+            </div>
+            {poolHealth.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted">
+                No workers reporting yet.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {poolHealth.slice(0, 3).map((pool) => (
+                  <div key={pool.name} className="rounded-2xl border border-border bg-white/70 p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-ink">{pool.name}</div>
+                        <div className="text-xs text-muted">{pool.total} workers</div>
+                      </div>
+                      {pool.stale > 0 ? (
+                        <span className="rounded-full bg-warning/10 px-2 py-1 text-[10px] font-semibold text-warning">
+                          {pool.stale} stale
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-success/10 px-2 py-1 text-[10px] font-semibold text-success">
+                          Healthy
+                        </span>
+                      )}
+                    </div>
+                    {pool.requires.length > 0 ? (
+                      <div className="mt-2 text-[10px] text-muted">
+                        Requires: {pool.requires.join(", ")}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
+      </section>
+
+      <section>
         <Card>
           <CardHeader>
             <CardTitle>Recent Events</CardTitle>

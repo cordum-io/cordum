@@ -6,7 +6,7 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
-	github.com/cordum-io/cap/v2 v2.0.16
+	github.com/cordum-io/cap/v2 v2.0.19
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
@@ -18,6 +18,8 @@ require (
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/cordum/cordum/sdk => ./sdk
 
 // Use published CAP module
 require (
@@ -41,5 +43,3 @@ require (
 	golang.org/x/text v0.33.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
 )
-
-replace github.com/cordum/cordum/sdk => ./sdk

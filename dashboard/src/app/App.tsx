@@ -19,6 +19,11 @@ const PacksPage = lazy(() => import("../pages/PacksPage").then((m) => ({ default
 const PoolsPage = lazy(() => import("../pages/PoolsPage").then((m) => ({ default: m.PoolsPage })));
 const PolicyPage = lazy(() => import("../pages/PolicyPage").then((m) => ({ default: m.PolicyPage })));
 const SystemPage = lazy(() => import("../pages/SystemPage").then((m) => ({ default: m.SystemPage })));
+const ContextInspectorPage = lazy(() =>
+  import("../pages/ContextInspectorPage").then((m) => ({ default: m.ContextInspectorPage }))
+);
+const DLQPage = lazy(() => import("../pages/DLQPage").then((m) => ({ default: m.DLQPage })));
+const AuditLogPage = lazy(() => import("../pages/AuditLogPage").then((m) => ({ default: m.AuditLogPage })));
 const ToolsPage = lazy(() => import("../pages/ToolsPage").then((m) => ({ default: m.ToolsPage })));
 const TracePage = lazy(() => import("../pages/TracePage").then((m) => ({ default: m.TracePage })));
 const SearchPage = lazy(() => import("../pages/SearchPage").then((m) => ({ default: m.SearchPage })));
@@ -64,10 +69,13 @@ function MainApp() {
       { id: "runs", title: "Go to Runs", group: "Navigation", onSelect: () => navigate("/runs") },
       { id: "jobs", title: "Go to Jobs", group: "Navigation", onSelect: () => navigate("/jobs") },
       { id: "workflows", title: "Go to Workflows", group: "Navigation", onSelect: () => navigate("/workflows") },
-      { id: "packs", title: "Go to Packs", group: "Navigation", onSelect: () => navigate("/packs") },
-      { id: "pools", title: "Go to Pools & Workers", group: "Navigation", onSelect: () => navigate("/pools") },
-      { id: "policy", title: "Go to Policy", group: "Navigation", onSelect: () => navigate("/policy") },
-      { id: "system", title: "Go to System", group: "Navigation", onSelect: () => navigate("/system") },
+      { id: "packs", title: "Go to Marketplace", group: "Navigation", onSelect: () => navigate("/packs") },
+      { id: "pools", title: "Go to Worker Pools", group: "Navigation", onSelect: () => navigate("/pools") },
+      { id: "policy", title: "Go to Policy Studio", group: "Navigation", onSelect: () => navigate("/policy") },
+      { id: "context", title: "Go to Context Inspector", group: "Navigation", onSelect: () => navigate("/context") },
+      { id: "dlq", title: "Go to DLQ", group: "Navigation", onSelect: () => navigate("/dlq") },
+      { id: "audit", title: "Go to Audit Log", group: "Navigation", onSelect: () => navigate("/audit") },
+      { id: "system", title: "Go to Observability Center", group: "Navigation", onSelect: () => navigate("/system") },
       { id: "tools", title: "Go to Tools", group: "Navigation", onSelect: () => navigate("/tools") },
       { id: "trace", title: "Trace Explorer", group: "Navigation", onSelect: () => navigate("/trace") },
       { id: "search", title: "Open Search", group: "Navigation", onSelect: () => navigate("/search") },
@@ -86,11 +94,18 @@ function MainApp() {
         onSelect: () => navigate("/policy"),
       },
       {
-        id: "dlq",
+        id: "dlq-review",
         title: "Review DLQ entries",
         description: "Investigate failed jobs",
         group: "Actions",
-        onSelect: () => navigate("/system"),
+        onSelect: () => navigate("/dlq"),
+      },
+      {
+        id: "audit-log",
+        title: "Open audit log",
+        description: "Track policy publishing activity",
+        group: "Actions",
+        onSelect: () => navigate("/audit"),
       },
     ],
     [navigate]
@@ -112,10 +127,14 @@ function MainApp() {
           <Route path="/packs" element={<PacksPage />} />
           <Route path="/pools" element={<PoolsPage />} />
           <Route path="/policy" element={<PolicyPage />} />
+          <Route path="/context" element={<ContextInspectorPage />} />
+          <Route path="/dlq" element={<DLQPage />} />
+          <Route path="/audit" element={<AuditLogPage />} />
           <Route path="/system" element={<SystemPage />} />
           <Route path="/tools" element={<ToolsPage />} />
           <Route path="/trace" element={<TracePage />} />
           <Route path="/trace/:id" element={<TracePage />} />
+          <Route path="/traces" element={<TracePage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </AppShell>

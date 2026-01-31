@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, ChevronDown, ChevronRight, Package, Layers } from "lucide-react";
 import { api } from "../../lib/api";
@@ -74,6 +74,17 @@ export function BuilderSidebar({ onDragStart, onDragEnd }: Props) {
       t.topicName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       t.packTitle?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+  const groupedTopics = useMemo(() => {
+    const groups: Record<string, PackTopic[]> = {};
+    filteredTopics.forEach((topic) => {
+      const key = topic.packTitle || topic.packId;
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(topic);
+    });
+    return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filteredTopics]);
 
   return (
     <div className="builder-sidebar">
@@ -82,7 +93,7 @@ export function BuilderSidebar({ onDragStart, onDragEnd }: Props) {
         <Search className="h-4 w-4 text-muted" />
         <input
           type="text"
-          placeholder="Search nodes..."
+          placeholder="Search nodes or capabilities..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="builder-sidebar__search-input"
@@ -101,7 +112,7 @@ export function BuilderSidebar({ onDragStart, onDragEnd }: Props) {
             <ChevronRight className="h-4 w-4" />
           )}
           <Layers className="h-4 w-4" />
-          <span>Node Types</span>
+          <span>Core Nodes</span>
           <span className="builder-sidebar__section-count">{filteredNodes.length}</span>
         </button>
 
@@ -143,7 +154,7 @@ export function BuilderSidebar({ onDragStart, onDragEnd }: Props) {
             <ChevronRight className="h-4 w-4" />
           )}
           <Package className="h-4 w-4" />
-          <span>Pack Topics</span>
+          <span>Capabilities</span>
           <span className="builder-sidebar__section-count">{filteredTopics.length}</span>
         </button>
 
@@ -154,30 +165,43 @@ export function BuilderSidebar({ onDragStart, onDragEnd }: Props) {
             ) : filteredTopics.length === 0 ? (
               <div className="builder-sidebar__empty">No pack topics available</div>
             ) : (
-              filteredTopics.map((topic, idx) => (
-                <div
-                  key={`${topic.packId}-${topic.topicName}-${idx}`}
-                  draggable
-                  onDragStart={(e) => handlePackDragStart(e, topic)}
-                  onDragEnd={handleDragEnd}
-                  className="builder-sidebar__item builder-sidebar__item--pack"
-                >
-                  <div className="builder-sidebar__item-icon bg-accent">WO</div>
-                  <div className="builder-sidebar__item-info">
-                    <div className="builder-sidebar__item-label">{topic.topicName}</div>
-                    <div className="builder-sidebar__item-desc">
-                      {topic.packTitle}
-                      {topic.capability && ` - ${topic.capability}`}
-                    </div>
-                    {topic.riskTags && topic.riskTags.length > 0 && (
-                      <div className="builder-sidebar__item-tags">
-                        {topic.riskTags.map((tag) => (
-                          <span key={tag} className="builder-sidebar__tag">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+              groupedTopics.map(([packTitle, topics]) => (
+                <div key={packTitle} className="mb-2">
+                  <div className="px-3 pb-1 text-[10px] uppercase tracking-[0.2em] text-muted">
+                    {packTitle}
+                  </div>
+                  <div className="space-y-1">
+                    {topics.map((topic, idx) => {
+                      const labelSource = topic.capability || topic.topicName;
+                      const iconLabel = labelSource.slice(0, 2).toUpperCase();
+                      return (
+                        <div
+                          key={`${topic.packId}-${topic.topicName}-${idx}`}
+                          draggable
+                          onDragStart={(e) => handlePackDragStart(e, topic)}
+                          onDragEnd={handleDragEnd}
+                          className="builder-sidebar__item builder-sidebar__item--pack"
+                        >
+                          <div className="builder-sidebar__item-icon bg-accent">{iconLabel}</div>
+                          <div className="builder-sidebar__item-info">
+                            <div className="builder-sidebar__item-label">{topic.topicName}</div>
+                            <div className="builder-sidebar__item-desc">
+                              {topic.capability || "General"}
+                              {topic.packTitle ? ` · ${topic.packTitle}` : ""}
+                            </div>
+                            {topic.riskTags && topic.riskTags.length > 0 && (
+                              <div className="builder-sidebar__item-tags">
+                                {topic.riskTags.map((tag) => (
+                                  <span key={tag} className="builder-sidebar__tag">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))

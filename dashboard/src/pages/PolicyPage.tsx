@@ -17,6 +17,7 @@ import { Textarea } from "../components/ui/Textarea";
 import { Drawer } from "../components/ui/Drawer";
 import { ApprovalStatusBadge, JobStatusBadge } from "../components/StatusBadge";
 import { useConfigStore } from "../state/config";
+import { PolicyFirewallView } from "../components/policy/PolicyFirewallView";
 import type { ApprovalItem, PolicyAuditEntry, PolicyBundleSummary, PolicyRule } from "../types/api";
 
 const schema = z.object({
@@ -232,6 +233,9 @@ export function PolicyPage() {
   const [snapshotNote, setSnapshotNote] = useState("");
   const [showSafeOnly, setShowSafeOnly] = useState(false);
   const [activeTab, setActiveTab] = useState<"inbox" | "studio" | "explorer">("inbox");
+  const [studioTab, setStudioTab] = useState<
+    "bundles" | "publish" | "simulate" | "rules" | "diff" | "snapshots" | "audit" | "all"
+  >("bundles");
   const [confirmBulkApprove, setConfirmBulkApprove] = useState<{ ids: string[]; type: "selected" | "safe" } | null>(null);
   const [bundleFilter, setBundleFilter] = useState<"all" | "secops" | "pack" | "core">("all");
   const [selectedBundleId, setSelectedBundleId] = useState("");
@@ -242,6 +246,7 @@ export function PolicyPage() {
     author: "",
     message: "",
   });
+  const [bundleEditorMode, setBundleEditorMode] = useState<"firewall" | "raw">("firewall");
   const [newBundleName, setNewBundleName] = useState("");
   const [publishAuthor, setPublishAuthor] = useState("");
   const [publishMessage, setPublishMessage] = useState("");
@@ -397,6 +402,10 @@ export function PolicyPage() {
   const policyRules = useMemo(() => policyRulesQuery.data?.items ?? [], [policyRulesQuery.data]);
   const policyRuleErrors = useMemo(() => policyRulesQuery.data?.errors ?? [], [policyRulesQuery.data]);
   const auditEntries = useMemo<PolicyAuditEntry[]>(() => policyAuditQuery.data?.items ?? [], [policyAuditQuery.data]);
+  const bundleMatchedRuleId = useMemo(() => {
+    const raw = bundleSimResponse as { rule_id?: string; ruleId?: string; ruleID?: string } | null;
+    return raw?.rule_id || raw?.ruleId || raw?.ruleID || "";
+  }, [bundleSimResponse]);
 
   const currentBundlesText = useMemo(() => {
     const bundles = (policyBundlesQuery.data?.bundles || {}) as Record<string, unknown>;
@@ -568,6 +577,8 @@ export function PolicyPage() {
   const publishLabel = publishSelection.size ? "Publish selected" : "Publish all admin bundles";
   const canPublish = canEditPolicy && secopsBundles.length > 0;
 
+  const showStudioSection = (section: typeof studioTab) => studioTab === "all" || studioTab === section;
+
   const togglePublishSelection = (bundleId: string) => {
     setPublishSelection((prev) => {
       const next = new Set(prev);
@@ -592,8 +603,8 @@ export function PolicyPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Policy Center</CardTitle>
-          <div className="text-xs text-muted">Approvals, studio tooling, and decision exploration.</div>
+          <CardTitle>Policy Studio</CardTitle>
+          <div className="text-xs text-muted">Author policies, review approvals, and explain decisions.</div>
         </CardHeader>
         <div className="flex flex-wrap gap-2">
           <Button variant={activeTab === "inbox" ? "primary" : "outline"} size="sm" onClick={() => setActiveTab("inbox")}>Inbox</Button>
@@ -844,6 +855,40 @@ export function PolicyPage() {
       {activeTab === "studio" ? (
         <>
           <Card>
+            <CardHeader>
+              <CardTitle>Studio Focus</CardTitle>
+              <div className="text-xs text-muted">Pick a section to keep the workspace uncluttered.</div>
+            </CardHeader>
+            <div className="flex flex-wrap gap-2">
+              <Button variant={studioTab === "bundles" ? "primary" : "outline"} size="sm" onClick={() => setStudioTab("bundles")}>
+                Bundles
+              </Button>
+              <Button variant={studioTab === "simulate" ? "primary" : "outline"} size="sm" onClick={() => setStudioTab("simulate")}>
+                Simulate
+              </Button>
+              <Button variant={studioTab === "publish" ? "primary" : "outline"} size="sm" onClick={() => setStudioTab("publish")}>
+                Publish
+              </Button>
+              <Button variant={studioTab === "rules" ? "primary" : "outline"} size="sm" onClick={() => setStudioTab("rules")}>
+                Rules
+              </Button>
+              <Button variant={studioTab === "diff" ? "primary" : "outline"} size="sm" onClick={() => setStudioTab("diff")}>
+                Diff
+              </Button>
+              <Button variant={studioTab === "snapshots" ? "primary" : "outline"} size="sm" onClick={() => setStudioTab("snapshots")}>
+                Snapshots
+              </Button>
+              <Button variant={studioTab === "audit" ? "primary" : "outline"} size="sm" onClick={() => setStudioTab("audit")}>
+                Audit
+              </Button>
+              <Button variant={studioTab === "all" ? "primary" : "outline"} size="sm" onClick={() => setStudioTab("all")}>
+                All
+              </Button>
+            </div>
+          </Card>
+
+          {showStudioSection("bundles") ? (
+          <Card>
           <CardHeader>
             <CardTitle>Policy Bundles</CardTitle>
             <div className="text-xs text-muted">Edit admin bundles (secops/*), inspect pack fragments, and preview content.</div>
@@ -985,15 +1030,52 @@ export function PolicyPage() {
                         </div>
                       </div>
                     </div>
-                    <div>
-                      <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Bundle content</label>
-                      <Textarea
-                        rows={14}
-                        value={bundleDraft.content}
-                        onChange={(event) => setBundleDraft((prev) => ({ ...prev, content: event.target.value }))}
-                        placeholder="YAML policy bundle"
-                        readOnly={!isEditableBundle}
-                      />
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Bundle content</label>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant={bundleEditorMode === "firewall" ? "primary" : "outline"}
+                            size="sm"
+                            type="button"
+                            onClick={() => setBundleEditorMode("firewall")}
+                          >
+                            Firewall view
+                          </Button>
+                          <Button
+                            variant={bundleEditorMode === "raw" ? "primary" : "outline"}
+                            size="sm"
+                            type="button"
+                            onClick={() => setBundleEditorMode("raw")}
+                          >
+                            Raw YAML
+                          </Button>
+                        </div>
+                      </div>
+                      {bundleEditorMode === "firewall" ? (
+                        <PolicyFirewallView
+                          bundleId={selectedBundleId}
+                          content={bundleDraft.content}
+                          editable={isEditableBundle}
+                          sourceLabel={bundleSourceLabel(selectedBundle?.source)}
+                          highlightRuleId={bundleMatchedRuleId || undefined}
+                          onChangeContent={(next) => setBundleDraft((prev) => ({ ...prev, content: next }))}
+                          onRequestRaw={() => setBundleEditorMode("raw")}
+                        />
+                      ) : (
+                        <>
+                          <div className="rounded-2xl border border-border bg-white/70 p-3 text-xs text-muted">
+                            Raw mode preserves formatting and comments. Switching back to Firewall mode will reformat the bundle.
+                          </div>
+                          <Textarea
+                            rows={14}
+                            value={bundleDraft.content}
+                            onChange={(event) => setBundleDraft((prev) => ({ ...prev, content: event.target.value }))}
+                            placeholder="YAML policy bundle"
+                            readOnly={!isEditableBundle}
+                          />
+                        </>
+                      )}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -1021,7 +1103,9 @@ export function PolicyPage() {
               </div>
             </div>
           </Card>
+          ) : null}
 
+          {showStudioSection("publish") ? (
           <Card>
             <CardHeader>
               <CardTitle>Publish & Rollback</CardTitle>
@@ -1159,7 +1243,9 @@ export function PolicyPage() {
               </div>
             </div>
           </Card>
+          ) : null}
 
+          {showStudioSection("simulate") ? (
           <Card>
           <CardHeader>
             <CardTitle>Bundle Simulation</CardTitle>
@@ -1237,7 +1323,9 @@ export function PolicyPage() {
               </div>
             )}
           </Card>
+          ) : null}
 
+          {showStudioSection("rules") ? (
           <Card>
             <CardHeader>
               <CardTitle>Policy Rules</CardTitle>
@@ -1294,7 +1382,9 @@ export function PolicyPage() {
               </div>
             ) : null}
           </Card>
+          ) : null}
 
+          {showStudioSection("diff") ? (
           <Card>
             <CardHeader>
               <CardTitle>Policy Diff</CardTitle>
@@ -1399,7 +1489,9 @@ export function PolicyPage() {
               </div>
             )}
           </Card>
+          ) : null}
 
+          {showStudioSection("snapshots") ? (
           <Card>
             <CardHeader>
               <CardTitle>Policy Snapshots</CardTitle>
@@ -1418,7 +1510,9 @@ export function PolicyPage() {
               <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">No snapshots recorded.</div>
             )}
           </Card>
+          ) : null}
 
+          {showStudioSection("audit") ? (
           <Card>
             <CardHeader>
               <CardTitle>Policy Audit</CardTitle>
@@ -1459,6 +1553,7 @@ export function PolicyPage() {
               </div>
             )}
           </Card>
+          ) : null}
         </>
       ) : null}
 

@@ -11,6 +11,11 @@ type RouteRegistrar interface {
 	RegisterRoutes(mux *http.ServeMux, wrap func(route string, fn http.HandlerFunc) http.HandlerFunc)
 }
 
+// AuthConfigProvider allows auth providers to supply UI auth configuration.
+type AuthConfigProvider interface {
+	AuthConfig() AuthConfig
+}
+
 // PublicPathProvider allows auth providers to skip auth for specific paths.
 type PublicPathProvider interface {
 	IsPublicPath(path string) bool

@@ -107,7 +107,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 		return nil, errors.New("jwt required")
 	}
 	key := normalizeAPIKey(r.Header.Get("X-API-Key"))
-	if key == "" && websocket.IsWebSocketUpgrade(r) {
+	if key == "" && (websocket.IsWebSocketUpgrade(r) || strings.TrimSpace(r.Header.Get("Sec-WebSocket-Protocol")) != "") {
 		key = normalizeAPIKey(apiKeyFromWebSocket(r))
 	}
 	return b.authenticate(key, headerValue(r, "X-Principal-Id"))
@@ -202,6 +202,10 @@ func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext,
 		Role:             role,
 		AllowCrossTenant: meta.AllowCrossTenant,
 	}, nil
+}
+
+func (b *BasicAuthProvider) IsPublicPath(path string) bool {
+	return strings.TrimSpace(path) == "/api/v1/auth/config"
 }
 
 func (b *BasicAuthProvider) RequireRole(r *http.Request, roles ...string) error {

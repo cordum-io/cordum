@@ -132,6 +132,7 @@ export type JobStatus =
 export type JobRecord = {
   id: string;
   trace_id?: string;
+  run_id?: string;
   updated_at: number;
   state: string;
   topic?: string;
@@ -291,23 +292,6 @@ export type MemoryResult = {
   base64: string;
   text?: string;
   json?: unknown;
-};
-
-export type TraceSpan = {
-  trace_id: string;
-  job_id: string;
-  parent_job_id?: string;
-  topic: string;
-  status: string;
-  start_time: string;
-  end_time?: string;
-  duration_ms?: number;
-  error?: string;
-};
-
-export type TraceResponse = {
-  trace_id: string;
-  spans: TraceSpan[];
 };
 
 export type ConfigDocument = {

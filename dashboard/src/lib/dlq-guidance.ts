@@ -31,14 +31,14 @@ const REASON_CODE_MAP: Record<string, ReasonCodeMapping> = {
     title: "No workers available",
     description:
       "The target pool has no active workers. Check worker health or scale up the pool.",
-    action: { label: "View Workers", href: "/system?tab=workers" },
+    action: { label: "View Workers", href: "/pools" },
     severity: "error",
   },
   pool_overloaded: {
     title: "Pool capacity exceeded",
     description:
       "All workers in the pool are busy. Consider scaling the pool or adjusting concurrency limits.",
-    action: { label: "View Pool Health", href: "/system?tab=workers" },
+    action: { label: "View Pool Health", href: "/pools" },
     severity: "warning",
   },
   pool_not_found: {
@@ -90,14 +90,14 @@ const REASON_CODE_MAP: Record<string, ReasonCodeMapping> = {
     title: "Worker crashed",
     description:
       "The worker process crashed during execution. Check worker logs for stack traces or memory issues.",
-    action: { label: "View Workers", href: "/system?tab=workers" },
+    action: { label: "View Workers", href: "/pools" },
     severity: "error",
   },
   worker_timeout: {
     title: "Worker heartbeat lost",
     description:
       "The worker stopped responding during job execution. This may indicate a hung process or network partition.",
-    action: { label: "View Workers", href: "/system?tab=workers" },
+    action: { label: "View Workers", href: "/pools" },
     severity: "error",
   },
 

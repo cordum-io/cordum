@@ -2,338 +2,375 @@ package runtime
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"log"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/cordum-io/cap/v2/cordum/agent/v1"
-	"github.com/google/uuid"
+	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// Config configures a CAP worker runtime.
+const (
+	defaultNATSURL        = "nats://127.0.0.1:4222"
+	defaultConnectTimeout = 5 * time.Second
+	defaultMaxParallel    = int32(1)
+)
+
+// Config controls worker behavior for legacy runtimes.
 type Config struct {
-	WorkerID          string
-	Pool              string
-	Subjects          []string
-	Queue             string
-	MaxParallelJobs   int32
-	Capabilities      []string
-	Labels            map[string]string
-	Region            string
-	Type              string
-	NatsURL           string
-	NatsOptions       []nats.Option
-	HeartbeatInterval time.Duration
-	OnCancel          func(jobID, reason string)
+	Pool            string
+	Subjects        []string
+	Queue           string
+	NatsURL         string
+	MaxParallelJobs int32
+	Capabilities    []string
+	Labels          map[string]string
+	Type            string
+	WorkerID        string
+	HeartbeatEvery  time.Duration
+	PublicKeys      map[string]*ecdsa.PublicKey
+	PrivateKey      *ecdsa.PrivateKey
 }
 
-// JobHandler processes a job request and returns a job result.
-type JobHandler func(ctx context.Context, req *v1.JobRequest) (*v1.JobResult, error)
-
-// Worker provides a minimal runtime for CAP workers.
+// Worker subscribes to subjects and publishes job results.
 type Worker struct {
-	cfg          Config
-	nc           *nats.Conn
-	sem          chan struct{}
-	activeJobs   atomic.Int32
-	cpuLastTotal uint64
-	cpuLastIdle  uint64
+	cfg      Config
+	conn     *nats.Conn
+	subjects []string
+	queue    string
+	workerID string
+	pool     string
+
+	sem    chan struct{}
+	active int32
+
+	subs []*nats.Subscription
 
 	cancelMu sync.Mutex
-	cancels  map[string]context.CancelFunc
+	cancel   context.CancelFunc
+	logger   *log.Logger
 }
 
-// NewWorker connects to NATS and prepares a worker runtime.
+// NewWorker builds a worker with a NATS connection.
 func NewWorker(cfg Config) (*Worker, error) {
-	if cfg.WorkerID == "" {
-		cfg.WorkerID = uuid.NewString()
-	}
-	if cfg.NatsURL == "" {
-		cfg.NatsURL = nats.DefaultURL
-	}
-	if cfg.HeartbeatInterval <= 0 {
-		cfg.HeartbeatInterval = 10 * time.Second
-	}
-	if cfg.Queue == "" {
-		cfg.Queue = cfg.Pool
-	}
-	if len(cfg.Subjects) == 0 {
-		if cfg.Pool == "" {
-			return nil, fmt.Errorf("pool or subjects required")
+	subjects := trimSubjects(cfg.Subjects)
+	if len(subjects) == 0 {
+		if strings.TrimSpace(cfg.Type) == "" {
+			return nil, errors.New("subjects required")
 		}
-		cfg.Subjects = []string{cfg.Pool}
+		subjects = []string{fmt.Sprintf("job.%s.*", strings.TrimSpace(cfg.Type))}
 	}
-	nc, err := nats.Connect(cfg.NatsURL, cfg.NatsOptions...)
+
+	workerID := resolveWorkerID(cfg.WorkerID, cfg.Type)
+	pool := strings.TrimSpace(cfg.Pool)
+	if pool == "" {
+		pool = strings.TrimSpace(cfg.Type)
+	}
+
+	natsURL := strings.TrimSpace(cfg.NatsURL)
+	if natsURL == "" {
+		natsURL = strings.TrimSpace(os.Getenv("NATS_URL"))
+	}
+	if natsURL == "" {
+		natsURL = defaultNATSURL
+	}
+
+	connectTimeout := defaultConnectTimeout
+	conn, err := nats.Connect(natsURL, nats.Name(workerID), nats.Timeout(connectTimeout))
 	if err != nil {
-		return nil, fmt.Errorf("connect nats: %w", err)
+		return nil, err
 	}
 
-	var sem chan struct{}
-	if cfg.MaxParallelJobs > 0 {
-		sem = make(chan struct{}, cfg.MaxParallelJobs)
+	maxParallel := cfg.MaxParallelJobs
+	if maxParallel <= 0 {
+		maxParallel = defaultMaxParallel
 	}
 
-	return &Worker{
-		cfg:     cfg,
-		nc:      nc,
-		sem:     sem,
-		cancels: make(map[string]context.CancelFunc),
-	}, nil
+	w := &Worker{
+		cfg:      cfg,
+		conn:     conn,
+		subjects: subjects,
+		queue:    strings.TrimSpace(cfg.Queue),
+		workerID: workerID,
+		pool:     pool,
+		logger:   log.New(os.Stdout, "cordum-runtime ", log.LstdFlags),
+	}
+	if maxParallel > 0 {
+		w.sem = make(chan struct{}, maxParallel)
+	}
+	// keep the resolved max parallel for heartbeat publishing
+	w.cfg.MaxParallelJobs = maxParallel
+
+	return w, nil
 }
 
-// Close drains and closes the NATS connection.
-func (w *Worker) Close() error {
-	if w == nil || w.nc == nil {
-		return nil
-	}
-	return w.nc.Drain()
-}
-
-// Run subscribes to job subjects and blocks until context cancellation.
-func (w *Worker) Run(ctx context.Context, handler JobHandler) error {
-	if w == nil || w.nc == nil {
-		return fmt.Errorf("worker not initialized")
-	}
+// Run subscribes to configured subjects and processes jobs until ctx is canceled.
+func (w *Worker) Run(ctx context.Context, handler func(context.Context, *agentv1.JobRequest) (*agentv1.JobResult, error)) error {
 	if handler == nil {
-		return fmt.Errorf("job handler required")
+		return errors.New("handler required")
+	}
+	if w.conn == nil {
+		return errors.New("nats connection unavailable")
 	}
 
-	subjects := w.subscriptionSubjects()
-	subscriptions := make([]*nats.Subscription, 0, len(subjects)+1)
+	subjects := w.subjectsWithDirect()
 	for _, subject := range subjects {
-		sub, err := w.nc.QueueSubscribe(subject, w.cfg.Queue, func(msg *nats.Msg) {
-			w.handleJob(ctx, handler, msg)
+		queue := w.queue
+		if queue == "" {
+			queue = subject
+		}
+		sub, err := w.conn.QueueSubscribe(subject, queue, func(msg *nats.Msg) {
+			w.dispatch(ctx, msg, handler)
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe %s: %w", subject, err)
 		}
-		subscriptions = append(subscriptions, sub)
+		w.subsAppend(sub)
 	}
 
-	cancelSub, err := w.nc.Subscribe(SubjectCancel, func(msg *nats.Msg) {
-		w.handleCancel(msg)
-	})
-	if err != nil {
-		return fmt.Errorf("subscribe cancel: %w", err)
-	}
-	subscriptions = append(subscriptions, cancelSub)
-
-	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
-	go w.heartbeatLoop(heartbeatCtx)
+	w.startHeartbeat(ctx)
 
 	<-ctx.Done()
-	stopHeartbeat()
-	for _, sub := range subscriptions {
-		_ = sub.Unsubscribe()
-	}
-	return w.Close()
+	return ctx.Err()
 }
 
-func (w *Worker) subscriptionSubjects() []string {
-	subjects := make([]string, 0, len(w.cfg.Subjects)+1)
-	seen := make(map[string]struct{}, len(w.cfg.Subjects)+1)
-	add := func(subject string) {
-		if subject == "" {
-			return
-		}
-		if _, ok := seen[subject]; ok {
-			return
-		}
-		seen[subject] = struct{}{}
-		subjects = append(subjects, subject)
+// Close drains the NATS connection.
+func (w *Worker) Close() error {
+	w.cancelMu.Lock()
+	if w.cancel != nil {
+		w.cancel()
+		w.cancel = nil
 	}
-	for _, subject := range w.cfg.Subjects {
-		add(subject)
+	w.cancelMu.Unlock()
+
+	if w.conn != nil {
+		return w.conn.Drain()
 	}
-	add(directSubject(w.cfg.WorkerID))
-	return subjects
+	return nil
 }
 
-// Progress emits a job progress packet.
-func (w *Worker) Progress(jobID string, percent int32, message string, resultPtr string, artifactPtrs []string) error {
-	if w == nil || w.nc == nil || jobID == "" {
-		return fmt.Errorf("job id required")
-	}
-	progress := &v1.JobProgress{
-		JobId:        jobID,
-		Percent:      percent,
-		Message:      message,
-		ResultPtr:    resultPtr,
-		ArtifactPtrs: artifactPtrs,
-	}
-	packet := w.packet(jobID, &v1.BusPacket_JobProgress{JobProgress: progress})
-	return w.publish(SubjectProgress, packet)
-}
-
-func (w *Worker) handleJob(ctx context.Context, handler JobHandler, msg *nats.Msg) {
-	if msg == nil || len(msg.Data) == 0 {
+func (w *Worker) dispatch(ctx context.Context, msg *nats.Msg, handler func(context.Context, *agentv1.JobRequest) (*agentv1.JobResult, error)) {
+	if ctx.Err() != nil {
 		return
 	}
-	var packet v1.BusPacket
-	if err := proto.Unmarshal(msg.Data, &packet); err != nil {
-		return
-	}
-	req := packet.GetJobRequest()
-	if req == nil {
-		return
-	}
-
 	if w.sem != nil {
 		w.sem <- struct{}{}
-		defer func() { <-w.sem }()
+		atomic.AddInt32(&w.active, 1)
 	}
 
-	jobCtx, cancel := context.WithCancel(ctx)
-	w.trackCancel(req.JobId, cancel)
-	defer w.clearCancel(req.JobId)
-
-	w.activeJobs.Add(1)
-	defer w.activeJobs.Add(-1)
-
-	result, err := handler(jobCtx, req)
-	if result == nil {
-		result = &v1.JobResult{JobId: req.JobId}
-	}
-	if result.JobId == "" {
-		result.JobId = req.JobId
-	}
-	if result.WorkerId == "" {
-		result.WorkerId = w.cfg.WorkerID
-	}
-	if result.Status == v1.JobStatus_JOB_STATUS_UNSPECIFIED {
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				result.Status = v1.JobStatus_JOB_STATUS_CANCELLED
-			} else {
-				result.Status = v1.JobStatus_JOB_STATUS_FAILED
+	go func() {
+		defer func() {
+			if w.sem != nil {
+				<-w.sem
+				atomic.AddInt32(&w.active, -1)
 			}
-		} else {
-			result.Status = v1.JobStatus_JOB_STATUS_SUCCEEDED
-		}
-	}
-	if err != nil && result.ErrorMessage == "" {
-		result.ErrorMessage = err.Error()
-	}
-	packetOut := w.packet(req.JobId, &v1.BusPacket_JobResult{JobResult: result})
-	_ = w.publish(SubjectResult, packetOut)
-}
+		}()
 
-func (w *Worker) handleCancel(msg *nats.Msg) {
-	if msg == nil || len(msg.Data) == 0 {
-		return
-	}
-	var packet v1.BusPacket
-	if err := proto.Unmarshal(msg.Data, &packet); err != nil {
-		return
-	}
-	cancel := packet.GetJobCancel()
-	if cancel == nil || cancel.JobId == "" {
-		return
-	}
-	w.cancelMu.Lock()
-	fn := w.cancels[cancel.JobId]
-	w.cancelMu.Unlock()
-	if fn != nil {
-		fn()
-	}
-	if w.cfg.OnCancel != nil {
-		w.cfg.OnCancel(cancel.JobId, cancel.Reason)
-	}
-}
-
-func (w *Worker) heartbeatLoop(ctx context.Context) {
-	ticker := time.NewTicker(w.cfg.HeartbeatInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
+		var packet agentv1.BusPacket
+		if err := proto.Unmarshal(msg.Data, &packet); err != nil {
+			w.logger.Printf("worker: decode packet failed: %v", err)
 			return
-		case <-ticker.C:
-			_ = w.sendHeartbeat()
+		}
+		if w.cfg.PublicKeys != nil {
+			pub, ok := w.cfg.PublicKeys[packet.GetSenderId()]
+			if !ok {
+				w.logger.Printf("worker: no public key for sender %s", packet.GetSenderId())
+				return
+			}
+			if len(packet.GetSignature()) == 0 {
+				w.logger.Printf("worker: missing signature for sender %s", packet.GetSenderId())
+				return
+			}
+			if err := capsdk.VerifyPacketSignature(&packet, pub); err != nil {
+				w.logger.Printf("worker: invalid signature from sender %s: %v", packet.GetSenderId(), err)
+				return
+			}
+		}
+
+		req := packet.GetJobRequest()
+		if req == nil || req.GetJobId() == "" {
+			return
+		}
+
+		start := time.Now()
+		res, err := handler(ctx, req)
+		execMs := time.Since(start).Milliseconds()
+
+		if res == nil {
+			res = &agentv1.JobResult{
+				JobId:        req.GetJobId(),
+				Status:       agentv1.JobStatus_JOB_STATUS_FAILED,
+				ErrorMessage: "handler returned nil",
+			}
+		}
+		if err != nil {
+			if res.Status == agentv1.JobStatus_JOB_STATUS_UNSPECIFIED {
+				res.Status = agentv1.JobStatus_JOB_STATUS_FAILED
+			}
+			if strings.TrimSpace(res.ErrorMessage) == "" {
+				res.ErrorMessage = err.Error()
+			}
+		}
+		if res.JobId == "" {
+			res.JobId = req.GetJobId()
+		}
+		if res.WorkerId == "" {
+			res.WorkerId = w.workerID
+		}
+		if res.ExecutionMs == 0 {
+			res.ExecutionMs = execMs
+		}
+
+		out := &agentv1.BusPacket{
+			TraceId:         packet.GetTraceId(),
+			SenderId:        w.workerID,
+			ProtocolVersion: capsdk.DefaultProtocolVersion,
+			CreatedAt:       timestamppb.Now(),
+			Payload: &agentv1.BusPacket_JobResult{
+				JobResult: res,
+			},
+		}
+		if w.cfg.PrivateKey != nil {
+			if err := capsdk.SignPacket(out, w.cfg.PrivateKey); err != nil {
+				w.logger.Printf("worker: sign result failed: %v", err)
+				return
+			}
+		}
+		data, mErr := capsdk.MarshalDeterministic(out)
+		if mErr != nil {
+			w.logger.Printf("worker: marshal result failed: %v", mErr)
+			return
+		}
+		if err := w.conn.Publish(capsdk.SubjectResult, data); err != nil {
+			w.logger.Printf("worker: publish result failed: %v", err)
+		}
+	}()
+}
+
+func (w *Worker) startHeartbeat(ctx context.Context) {
+	interval := w.cfg.HeartbeatEvery
+	if interval <= 0 {
+		interval = capsdk.DefaultHeartbeatInterval
+	}
+	hbCtx, cancel := context.WithCancel(ctx)
+	w.cancelMu.Lock()
+	w.cancel = cancel
+	w.cancelMu.Unlock()
+
+	payloadFn := func() ([]byte, error) {
+		active := atomic.LoadInt32(&w.active)
+		packet := &agentv1.BusPacket{
+			SenderId:        w.workerID,
+			ProtocolVersion: capsdk.DefaultProtocolVersion,
+			CreatedAt:       timestamppb.Now(),
+			Payload: &agentv1.BusPacket_Heartbeat{
+				Heartbeat: &agentv1.Heartbeat{
+					WorkerId:        w.workerID,
+					Pool:            w.pool,
+					Type:            w.cfg.Type,
+					ActiveJobs:      active,
+					MaxParallelJobs: w.cfg.MaxParallelJobs,
+					Capabilities:    w.cfg.Capabilities,
+					Labels:          w.cfg.Labels,
+				},
+			},
+		}
+		if w.cfg.PrivateKey != nil {
+			if err := capsdk.SignPacket(packet, w.cfg.PrivateKey); err != nil {
+				return nil, err
+			}
+		}
+		return capsdk.MarshalDeterministic(packet)
+	}
+
+	if payload, err := payloadFn(); err == nil {
+		_ = w.conn.Publish(capsdk.SubjectHeartbeat, payload)
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				payload, err := payloadFn()
+				if err == nil {
+					_ = w.conn.Publish(capsdk.SubjectHeartbeat, payload)
+				}
+			}
+		}
+	}()
+}
+
+func (w *Worker) subjectsWithDirect() []string {
+	subjects := append([]string{}, w.subjects...)
+	direct := DirectSubject(w.workerID)
+	if direct == "" {
+		return subjects
+	}
+	for _, subject := range subjects {
+		if subject == direct {
+			return subjects
 		}
 	}
+	return append(subjects, direct)
 }
 
-func (w *Worker) sendHeartbeat() error {
-	cpuLoad := w.sampleCPULoad()
-	memoryLoad := w.sampleMemoryLoad()
-	hb := &v1.Heartbeat{
-		WorkerId:        w.cfg.WorkerID,
-		Region:          w.cfg.Region,
-		Type:            w.cfg.Type,
-		CpuLoad:         cpuLoad,
-		MemoryLoad:      memoryLoad,
-		ActiveJobs:      w.activeJobs.Load(),
-		MaxParallelJobs: w.cfg.MaxParallelJobs,
-		Capabilities:    w.cfg.Capabilities,
-		Pool:            w.cfg.Pool,
-		Labels:          w.cfg.Labels,
-	}
-	packet := w.packet(w.cfg.WorkerID, &v1.BusPacket_Heartbeat{Heartbeat: hb})
-	return w.publish(SubjectHeartbeat, packet)
-}
-
-func (w *Worker) packet(traceID string, payload any) *v1.BusPacket {
-	packet := &v1.BusPacket{
-		TraceId:         traceID,
-		SenderId:        w.cfg.WorkerID,
-		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: DefaultProtocolVersion,
-	}
-	switch p := payload.(type) {
-	case *v1.BusPacket_JobProgress:
-		packet.Payload = p
-	case *v1.BusPacket_JobResult:
-		packet.Payload = p
-	case *v1.BusPacket_Heartbeat:
-		packet.Payload = p
-	case *v1.BusPacket_Alert:
-		packet.Payload = p
-	case *v1.BusPacket_JobCancel:
-		packet.Payload = p
-	case *v1.BusPacket_JobRequest:
-		packet.Payload = p
-	}
-	return packet
-}
-
-func (w *Worker) publish(subject string, packet *v1.BusPacket) error {
-	if packet == nil {
-		return fmt.Errorf("packet required")
-	}
-	data, err := proto.Marshal(packet)
-	if err != nil {
-		return err
-	}
-	return w.nc.Publish(subject, data)
-}
-
-func (w *Worker) trackCancel(jobID string, cancel context.CancelFunc) {
-	if jobID == "" {
+func (w *Worker) subsAppend(sub *nats.Subscription) {
+	if sub == nil {
 		return
 	}
-	w.cancelMu.Lock()
-	w.cancels[jobID] = cancel
-	w.cancelMu.Unlock()
+	w.subs = append(w.subs, sub)
 }
 
-func (w *Worker) clearCancel(jobID string) {
-	if jobID == "" {
-		return
+func trimSubjects(subjects []string) []string {
+	if len(subjects) == 0 {
+		return nil
 	}
-	w.cancelMu.Lock()
-	delete(w.cancels, jobID)
-	w.cancelMu.Unlock()
+	out := make([]string, 0, len(subjects))
+	seen := map[string]struct{}{}
+	for _, subject := range subjects {
+		if s := strings.TrimSpace(subject); s != "" {
+			if _, ok := seen[s]; ok {
+				continue
+			}
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
-func directSubject(workerID string) string {
+func resolveWorkerID(explicit, workerType string) string {
+	workerID := strings.TrimSpace(explicit)
 	if workerID == "" {
-		return ""
+		workerID = strings.TrimSpace(os.Getenv("WORKER_ID"))
 	}
-	return fmt.Sprintf("worker.%s.jobs", workerID)
+	if workerID != "" {
+		return workerID
+	}
+
+	workerType = strings.TrimSpace(workerType)
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		if workerType != "" {
+			return workerType
+		}
+		return "cordum-worker"
+	}
+	if workerType == "" {
+		return host
+	}
+	return workerType + "-" + host
 }
