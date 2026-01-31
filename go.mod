@@ -42,4 +42,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
 )
 
-replace github.com/cordum/cordum/sdk => ./sdk

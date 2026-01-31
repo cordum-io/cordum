@@ -119,19 +119,24 @@ Client ──▶ API ──▶ Scheduler ──▶ Safety Kernel ──▶ NATS 
 
 ```
 cordum/
-├── cmd/                    # Service entrypoints
-│   ├── cordum-api/         # API gateway (HTTP/WS + gRPC)
-│   ├── cordum-scheduler/   # Job routing + safety + state
-│   └── cordum-context/     # Optional context/memory service
-├── core/                   # Shared libraries
-│   ├── safety/             # Safety kernel implementation
-│   ├── workflow/           # Workflow engine
-│   ├── scheduler/          # Scheduler logic
-│   └── protocol/           # CAP type aliases + API protos
-├── dashboard/              # React UI
-├── sdk/                    # Go SDK + worker runtime
-├── deploy/k8s/             # Kubernetes manifests
-└── docs/                   # Documentation
+├── cmd/                          # Service entrypoints + CLI
+│   ├── cordum-api-gateway/       # API gateway (HTTP/WS + gRPC)
+│   ├── cordum-scheduler/         # Scheduler + safety gating
+│   ├── cordum-safety-kernel/     # Policy evaluation
+│   ├── cordum-workflow-engine/   # Workflow orchestration
+│   ├── cordum-context-engine/    # Optional context/memory service
+│   └── cordumctl/                # CLI
+├── core/                         # Core libraries
+│   ├── controlplane/             # Gateway, scheduler, safety kernel
+│   ├── context/                  # Context engine implementation
+│   ├── infra/                    # Config, storage, bus, metrics
+│   ├── protocol/                 # API protos + CAP aliases
+│   └── workflow/                 # Workflow engine
+├── dashboard/                    # React UI
+├── sdk/                          # SDK + worker runtime
+├── cordum-helm/                  # Helm chart
+├── deploy/k8s/                   # Kubernetes manifests
+└── docs/                         # Documentation
 ```
 
 ## Documentation
