@@ -71,6 +71,7 @@ func (r *PendingReplayer) tick(ctx context.Context) {
 	}
 	cutoff := time.Now().Add(-r.pendingAge)
 	r.replayPending(ctx, cutoff)
+	r.replayApproved(ctx, cutoff)
 }
 
 func (r *PendingReplayer) replayPending(ctx context.Context, cutoff time.Time) {
@@ -102,5 +103,47 @@ func (r *PendingReplayer) replayPending(ctx context.Context, cutoff time.Time) {
 		if err := r.engine.handleJobRequest(req, rec.TraceID); err != nil {
 			logging.Error("pending-replayer", "replay job failed", "job_id", rec.ID, "error", err)
 		}
+	}
+}
+
+// replayApproved replays jobs stuck in APPROVAL_REQUIRED state that have the
+// approval_granted label set. This handles the case where a job was approved
+// before a worker was available to process it.
+func (r *PendingReplayer) replayApproved(ctx context.Context, cutoff time.Time) {
+	store, ok := r.store.(interface {
+		GetJobRequest(context.Context, string) (*pb.JobRequest, error)
+	})
+	if !ok {
+		return
+	}
+
+	cutoffMicros := cutoff.UnixNano() / int64(time.Microsecond)
+	records, err := r.store.ListJobsByState(ctx, JobStateApproval, cutoffMicros, 200)
+	if err != nil {
+		logging.Error("pending-replayer", "list approval jobs failed", "error", err)
+		return
+	}
+	if len(records) == 0 {
+		return
+	}
+
+	replayed := 0
+	for _, rec := range records {
+		req, err := store.GetJobRequest(ctx, rec.ID)
+		if err != nil || req == nil {
+			continue
+		}
+		// Only replay jobs that have been approved
+		if req.Labels == nil || req.Labels["approval_granted"] != "true" {
+			continue
+		}
+		if err := r.engine.handleJobRequest(req, rec.TraceID); err != nil {
+			logging.Error("pending-replayer", "replay approved job failed", "job_id", rec.ID, "error", err)
+		} else {
+			replayed++
+		}
+	}
+	if replayed > 0 {
+		logging.Info("pending-replayer", "replayed approved jobs", "count", replayed)
 	}
 }

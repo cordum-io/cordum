@@ -37,7 +37,7 @@ License on the Change Date (see `LICENSE`).
 ## Code guidelines
 
 - Use standard library `log` for logging.
-- Use `logging.Info/Warn/Error` for consistent levels where applicable.
+- Use `slog.Info/Warn/Error` for structured logging (preferred for new code).
 - Avoid panics in library code; return errors.
 - Wrap external errors with context using `fmt.Errorf("context: %w", err)`.
 - Keep functions small and focused.

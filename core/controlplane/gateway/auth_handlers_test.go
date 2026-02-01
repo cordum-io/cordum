@@ -30,8 +30,13 @@ func TestHandleLogin_ValidAPIKey(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if resp.Token != "test-key" {
-		t.Fatalf("expected token test-key, got %q", resp.Token)
+	// Token should be masked for security - verify it's not the full key
+	if resp.Token == "test-key" {
+		t.Fatalf("expected token to be masked, but got full key")
+	}
+	// Verify it contains mask characters
+	if resp.Token != "test********" {
+		t.Fatalf("expected masked token test********, got %q", resp.Token)
 	}
 	if resp.User.Tenant != "default" {
 		t.Fatalf("expected tenant default, got %q", resp.User.Tenant)
