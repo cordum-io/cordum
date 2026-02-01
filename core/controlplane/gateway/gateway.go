@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,9 +63,16 @@ const (
 	defaultRateLimitRPS     = 50
 	defaultRateLimitBurst   = 100
 	defaultMaxHeaderBytes   = 1 << 20
+	maxLabelKeyLen          = 256  // Max length for label keys
+	maxLabelValueLen        = 4096 // Max length for label values (4KB)
 	// #nosec G101 -- protocol label, not a credential.
 	wsAPIKeyProtocol = "cordum-api-key"
 )
+
+// validTopicRegex validates topic names to prevent injection attacks.
+// Allows: job.alphanumeric-underscore-dot.name.with.segments
+// Blocks: empty segments (job..), special chars, control chars
+var validTopicRegex = regexp.MustCompile(`^job\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?)*$`)
 
 const (
 	envGatewayGrpcAddr      = "GATEWAY_GRPC_ADDR"
@@ -315,8 +323,12 @@ func (r *submitJobRequest) validate(defaultTenant string) error {
 	if r.Topic == "" {
 		return errors.New("topic is required")
 	}
-	if !strings.HasPrefix(r.Topic, "job.") {
-		return errors.New("topic must start with job.")
+	// SECURITY: Strict topic validation to prevent injection attacks
+	if !validTopicRegex.MatchString(r.Topic) {
+		return errors.New("invalid topic format: must match job.name.segments (alphanumeric, dots, hyphens, underscores only)")
+	}
+	if len(r.Topic) > 256 {
+		return errors.New("topic too long (max 256 chars)")
 	}
 	if r.MaxInputTokens < 0 || r.MaxOutputTokens < 0 || r.MaxTotalTokens < 0 {
 		return errors.New("token limits must be non-negative")
@@ -332,6 +344,15 @@ func (r *submitJobRequest) validate(defaultTenant string) error {
 	}
 	if len(r.Labels) > 50 {
 		return errors.New("too many labels (max 50)")
+	}
+	// SECURITY: Validate label key and value lengths to prevent DoS
+	for k, v := range r.Labels {
+		if len(k) > maxLabelKeyLen {
+			return fmt.Errorf("label key too long (max %d chars)", maxLabelKeyLen)
+		}
+		if len(v) > maxLabelValueLen {
+			return fmt.Errorf("label value too long (max %d chars)", maxLabelValueLen)
+		}
 	}
 	if r.OrgId == "" {
 		if r.TenantId != "" {

@@ -100,6 +100,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildLoginResponse creates the AuthLoginResponse from auth context.
+// SECURITY: Token is masked to prevent API key leakage in responses.
 func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
 	now := time.Now()
 	expiresAt := now.Add(defaultSessionTTL)
@@ -121,8 +122,12 @@ func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
 		roles = append(roles, authCtx.Role)
 	}
 
+	// Mask the token to prevent API key leakage
+	// Only show first 8 chars and last 4 chars with asterisks in between
+	maskedToken := maskToken(token)
+
 	return AuthLoginResponse{
-		Token:     token,
+		Token:     maskedToken,
 		ExpiresAt: expiresAt.Format(time.RFC3339),
 		User: AuthUser{
 			ID:          userID,
@@ -133,6 +138,21 @@ func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
 			LastLoginAt: now.Format(time.RFC3339),
 		},
 	}
+}
+
+// maskToken returns a masked version of the token.
+// Shows first 8 and last 4 characters, with asterisks in between.
+// For tokens shorter than 16 chars, shows first 4 chars with asterisks.
+func maskToken(token string) string {
+	if token == "" {
+		return ""
+	}
+	if len(token) <= 12 {
+		// Short tokens: show first 4 chars + asterisks
+		return safePrefix(token, 4) + "********"
+	}
+	// Longer tokens: show first 8 + asterisks + last 4
+	return token[:8] + "********" + token[len(token)-4:]
 }
 
 // safePrefix returns first n chars of s, or s if shorter.

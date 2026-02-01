@@ -120,3 +120,83 @@ func TestParseActorTypeAndTags(t *testing.T) {
 		t.Fatalf("expected tag append")
 	}
 }
+
+func TestTopicValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		topic        string
+		applyDefault bool
+		wantErr      bool
+	}{
+		// Valid topics
+		{"simple", "job.default", false, false},
+		{"with-dots", "job.pack.action", false, false},
+		{"with-hyphens", "job.my-pack.my-action", false, false},
+		{"with-underscores", "job.my_pack.my_action", false, false},
+		{"complex", "job.demo-guardrails.write", false, false},
+		{"numbers", "job.pack123.action456", false, false},
+		{"mixed", "job.my-pack_v2.action-1_test", false, false},
+		{"empty-gets-default", "", true, false}, // applyDefaults sets job.default
+
+		// Invalid topics (no default applied)
+		{"no-prefix", "pack.action", false, true},
+		{"sys-prefix", "sys.dangerous", false, true},
+		{"double-dots", "job..action", false, true},
+		{"starts-with-dot", "job.", false, true},
+		{"ends-with-dot", "job.pack.", false, true},
+		{"starts-with-hyphen", "job.-pack.action", false, true},
+		{"special-chars", "job.pack;inject.action", false, true},
+		{"space", "job.pack name.action", false, true},
+		{"path-traversal", "job.../../../etc/passwd", false, true},
+		{"newline", "job.pack\naction", false, true},
+		{"unicode", "job.pack.действие", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := submitJobRequest{
+				Prompt: "test",
+				Topic:  tt.topic,
+			}
+			if tt.applyDefault {
+				req.applyDefaults("tenant")
+			}
+			err := req.validate("tenant")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLabelValidation(t *testing.T) {
+	// Test label key too long
+	longKey := make([]byte, 300)
+	for i := range longKey {
+		longKey[i] = 'a'
+	}
+	req := submitJobRequest{
+		Prompt: "test",
+		Topic:  "job.default",
+		Labels: map[string]string{string(longKey): "value"},
+	}
+	req.applyDefaults("tenant")
+	if err := req.validate("tenant"); err == nil {
+		t.Error("expected error for label key too long")
+	}
+
+	// Test label value too long
+	longValue := make([]byte, 5000)
+	for i := range longValue {
+		longValue[i] = 'a'
+	}
+	req = submitJobRequest{
+		Prompt: "test",
+		Topic:  "job.default",
+		Labels: map[string]string{"key": string(longValue)},
+	}
+	req.applyDefaults("tenant")
+	if err := req.validate("tenant"); err == nil {
+		t.Error("expected error for label value too long")
+	}
+}

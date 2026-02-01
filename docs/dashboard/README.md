@@ -211,6 +211,16 @@ The Policy Studio editor is read-only unless `principalRole` (or `X-Principal-Ro
 
 Backend enforcement of admin-only actions is provided by the enterprise auth provider.
 
+## Workflow Management
+
+- `DELETE /api/v1/workflows/{id}` - Delete a workflow (WorkflowDetailPage > Delete button)
+- `POST /api/v1/workflows/{workflowId}/runs/{runId}/steps/{stepId}/approve` - Approve workflow step
+
+## Lock Management
+
+- `POST /api/v1/locks/renew` - Renew an existing lock's TTL (ToolsPage > Locks > Renew button)
+  - Body: `{ "resource": "...", "owner": "...", "ttl_ms": 60000 }`
+
 ## DLQ Pagination
 
 The DLQ list can be paginated via:
