@@ -160,6 +160,11 @@ function LocksTool() {
     onSuccess: () => setLookupResource(resource),
   });
 
+  const renewMutation = useMutation({
+    mutationFn: () => api.renewLock(resource, owner, ttlMs),
+    onSuccess: () => setLookupResource(resource),
+  });
+
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>
@@ -179,23 +184,30 @@ function LocksTool() {
             <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">TTL (ms)</label>
             <Input type="number" value={ttl} onChange={(e) => setTtl(e.target.value)} />
           </div>
-          <div className="flex gap-2 pt-2">
-            <Button 
-              variant="outline" 
+          <div className="flex flex-wrap gap-2 pt-2">
+            <Button
+              variant="outline"
               onClick={() => setLookupResource(resource)}
               disabled={!resource}
             >
               Check Status
             </Button>
-            <Button 
-              variant="primary" 
+            <Button
+              variant="primary"
               onClick={() => acquireMutation.mutate()}
               disabled={!resource || ttlInvalid || acquireMutation.isPending}
             >
               Acquire
             </Button>
-            <Button 
-              variant="danger" 
+            <Button
+              variant="outline"
+              onClick={() => renewMutation.mutate()}
+              disabled={!resource || ttlInvalid || renewMutation.isPending}
+            >
+              Renew
+            </Button>
+            <Button
+              variant="danger"
               onClick={() => releaseMutation.mutate()}
               disabled={!resource || releaseMutation.isPending}
             >
