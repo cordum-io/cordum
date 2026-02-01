@@ -11,6 +11,8 @@ global:
 
 secrets:
   apiKey: ""
+  # Admin password for user authentication (leave empty to disable admin user creation)
+  adminPassword: ""
 
 config:
   safety: |-
@@ -126,6 +128,10 @@ gateway:
     apiRateLimitBurst: 100
     redisDataTTL: 24h
     jobMetaTTL: 168h
+    # User authentication settings
+    userAuthEnabled: false
+    adminUsername: admin
+    adminEmail: ""
   resources:
     limits:
       cpu: 1000m

@@ -28,6 +28,7 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 
 ### Enterprise Features
 - [x] SSO/SAML integration
+- [x] User/password authentication (separate from API keys)
 - [x] Advanced RBAC
 - [x] Audit export (JSON, CSV, SIEM)
 - [ ] Air-gapped deployment guide

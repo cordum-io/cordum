@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Auth: User/password authentication system separate from API keys
+  - `CORDUM_USER_AUTH_ENABLED` to enable user store (Redis-backed with bcrypt)
+  - `CORDUM_ADMIN_USERNAME`, `CORDUM_ADMIN_PASSWORD`, `CORDUM_ADMIN_EMAIL` for bootstrap
+  - `POST /api/v1/users` endpoint for user creation (admin only)
+  - `POST /api/v1/auth/password` endpoint for password changes
+- Dashboard: Unified login page with single card layout
+- Dashboard: Enterprise badge for SSO features
+- Config: Added user auth settings to docker-compose.yml and Helm chart
+
+### Changed
+- Auth: Login endpoint now supports both user credentials and API keys
+- Auth: AuthConfig includes `user_auth_enabled` and `saml_enterprise` fields
+
 ## [v0.3.0] - 2026-01-31
 - Protocol/SDK: bump CAP to v2.0.19 across core + SDK modules.
 - SDK: `sdk/runtime` now wraps CAP runtime (typed handlers + pointer hydration).
