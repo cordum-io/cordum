@@ -20,11 +20,20 @@ export function WorkflowDetailPage() {
 
   const [payload, setPayload] = useState("{}");
   const [payloadError, setPayloadError] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const startMutation = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.startRun(workflowId as string, body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs", workflowId] }),
     onError: (error: Error) => setPayloadError(error.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteWorkflow(workflowId as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+      navigate("/workflows");
+    },
   });
 
   if (workflowsQuery.isLoading) {
@@ -39,8 +48,42 @@ export function WorkflowDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>{workflow.name || workflow.id}</CardTitle>
-          <Button variant="outline" size="sm" type="button" onClick={() => navigate("/workflows")}>Back</Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" type="button" onClick={() => navigate("/workflows")}>Back</Button>
+            <Button variant="danger" size="sm" type="button" onClick={() => setShowDeleteConfirm(true)}>Delete</Button>
+          </div>
         </CardHeader>
+        {showDeleteConfirm && (
+          <div className="mb-4 rounded-2xl border border-danger bg-danger/5 p-4">
+            <div className="text-sm font-semibold text-danger">Delete this workflow?</div>
+            <div className="mt-1 text-xs text-muted">This action cannot be undone. All associated runs will be orphaned.</div>
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant="danger"
+                size="sm"
+                type="button"
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? "Deleting..." : "Confirm Delete"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleteMutation.isPending}
+              >
+                Cancel
+              </Button>
+            </div>
+            {deleteMutation.isError && (
+              <div className="mt-2 text-xs text-danger">
+                {deleteMutation.error instanceof Error ? deleteMutation.error.message : "Failed to delete workflow"}
+              </div>
+            )}
+          </div>
+        )}
         <div className="grid gap-4 lg:grid-cols-3">
           <div>
             <div className="text-xs uppercase tracking-[0.2em] text-muted">Version</div>
