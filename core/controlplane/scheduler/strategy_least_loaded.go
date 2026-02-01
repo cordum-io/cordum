@@ -196,27 +196,22 @@ func filterPlacementLabels(labels map[string]string) map[string]string {
 	if len(labels) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(labels))
+	out := make(map[string]string)
 	for k, v := range labels {
-		if k == "preferred_worker_id" || k == "preferred_pool" {
-			continue
+		// Only labels with specific prefixes are used for placement constraints.
+		// All other labels are business/observability data and should not constrain worker selection.
+		// Supported prefixes:
+		// - "placement." - explicit placement constraints (e.g., placement.region=us-east)
+		// - "constraint." - worker capability constraints (e.g., constraint.gpu=true)
+		// - "node." - node selector labels (e.g., node.type=gpu)
+		if strings.HasPrefix(k, "placement.") ||
+			strings.HasPrefix(k, "constraint.") ||
+			strings.HasPrefix(k, "node.") {
+			out[k] = v
 		}
-		if k == "approval_granted" || k == "approval_reason" || k == "approval_note" || k == "secrets_present" {
-			continue
-		}
-		if strings.HasPrefix(k, "cordum.") {
-			continue
-		}
-		// These labels are used for traceability/observability and should not constrain placement.
-		// Placement constraints should be expressed via dedicated labels (e.g. hardware/region),
-		// not workflow/run identifiers.
-		if k == "workflow_id" || k == "run_id" || k == "step_id" || k == "node_id" {
-			continue
-		}
-		if k == "worker_id" {
-			continue
-		}
-		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
