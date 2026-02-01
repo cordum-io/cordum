@@ -396,6 +396,10 @@ function loadQueryConfig() {
   if (apiBaseUrl) {
     config.apiBaseUrl = apiBaseUrl;
   }
+  const apiKey = params.get("apiKey");
+  if (apiKey) {
+    config.apiKey = apiKey;
+  }
   const tenantId = params.get("tenantId") || params.get("tenant_id");
   if (tenantId) {
     config.tenantId = tenantId;

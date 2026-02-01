@@ -439,11 +439,6 @@ spec:
             secretKeyRef:
               name: cordum-api-key
               key: API_KEY
-        - name: CORDUM_SUPER_SECRET_API_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: cordum-api-key
-              key: API_KEY
         ports:
         - containerPort: 8080
         - containerPort: 8081

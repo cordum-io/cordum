@@ -467,6 +467,21 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 			return fmt.Errorf("init auth: %w", err)
 		}
 		provider = basic
+
+		// Initialize user store if enabled via environment
+		if env.Bool("CORDUM_USER_AUTH_ENABLED") {
+			userStore, err := NewRedisUserStore(cfg.RedisURL)
+			if err != nil {
+				return fmt.Errorf("init user store: %w", err)
+			}
+			defer userStore.Close()
+			basic.SetUserStore(userStore)
+
+			// Seed default admin user if configured
+			if err := seedDefaultAdminUser(context.Background(), userStore, tenantID); err != nil {
+				logging.Error("api-gateway", "seed admin user failed", "error", err)
+			}
+		}
 	}
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
@@ -833,6 +848,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 	mux.HandleFunc("POST /api/v1/auth/login", s.instrumented("/api/v1/auth/login", s.handleLogin))
 	mux.HandleFunc("GET /api/v1/auth/session", s.instrumented("/api/v1/auth/session", s.handleSession))
 	mux.HandleFunc("POST /api/v1/auth/logout", s.instrumented("/api/v1/auth/logout", s.handleLogout))
+	mux.HandleFunc("POST /api/v1/auth/password", s.instrumented("/api/v1/auth/password", s.handleChangePassword))
+
+	// 1.7 User management (admin only)
+	mux.HandleFunc("POST /api/v1/users", s.instrumented("/api/v1/users", s.handleCreateUser))
 
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))

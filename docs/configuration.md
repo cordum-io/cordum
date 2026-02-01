@@ -25,7 +25,8 @@ Shared across services:
 - `CORDUM_ENV` (`production` enables strict security defaults)
 - `CORDUM_PRODUCTION` (`true` enables strict security defaults)
 - `CORDUM_TLS_MIN_VERSION` (`1.2` or `1.3`, default `1.3` in production)
-- `CORDUM_GRPC_REFLECTION` (set to `1` to enable gRPC reflection)
+- `CORDUM_LOG_FORMAT` (`json` or `text`, default `text`)
+- `CORDUM_GRPC_REFLECTION` (set to `1` to enable gRPC reflection, dev only)
 - `NATS_URL` (default `nats://nats:4222`)
 - `REDIS_URL` (default `redis://redis:6379`)
 - `NATS_USE_JETSTREAM` (`0|1`)
@@ -42,7 +43,6 @@ Shared across services:
 - `API_RATE_LIMIT_RPS`, `API_RATE_LIMIT_BURST` (applied per tenant; falls back to client IP when tenant is missing)
 - `TENANT_ID` (single-tenant default)
 - API keys: `CORDUM_API_KEY`, `API_KEY`, or `CORDUM_API_KEYS` (comma-separated or JSON)
-- Legacy alias (avoid for new setups): `CORDUM_SUPER_SECRET_API_TOKEN`
 - API key file: `CORDUM_API_KEYS_PATH` (same format as `CORDUM_API_KEYS`, reloads on change)
 - Allow anonymous auth (local/dev only): `CORDUM_ALLOW_INSECURE_NO_AUTH=1`
 - Header principal: `CORDUM_ALLOW_HEADER_PRINCIPAL=true` (disabled by default in production)
@@ -57,6 +57,23 @@ Shared across services:
   `CORDUM_PACK_CATALOG_TITLE`, `CORDUM_PACK_CATALOG_DEFAULT_DISABLED=1`
 - Marketplace fetch: `CORDUM_MARKETPLACE_ALLOW_HTTP=1`, `CORDUM_MARKETPLACE_HTTP_TIMEOUT` (e.g. `15s`)
 
+### User authentication
+
+The gateway supports user/password authentication in addition to API key authentication:
+
+- `CORDUM_USER_AUTH_ENABLED=true` - Enable user/password authentication (stores users in Redis)
+- `CORDUM_ADMIN_USERNAME` - Default admin username (default: `admin`)
+- `CORDUM_ADMIN_PASSWORD` - Default admin password (creates admin user on first startup if set)
+- `CORDUM_ADMIN_EMAIL` - Optional admin email
+
+When user auth is enabled, the `/api/v1/auth/login` endpoint accepts both:
+1. User credentials (username/email + password)
+2. API keys (for programmatic access via scripts/CI)
+
+User management endpoints (admin only):
+- `POST /api/v1/users` - Create a new user
+- `POST /api/v1/auth/password` - Change password (authenticated)
+
 ## Context engine
 
 - `CONTEXT_ENGINE_ADDR`
@@ -67,6 +84,7 @@ Shared across services:
 
 - `JOB_META_TTL` / `JOB_META_TTL_SECONDS`
 - `WORKER_SNAPSHOT_INTERVAL`
+- `SCHEDULER_CONFIG_RELOAD_INTERVAL` (interval for config overlay reload, e.g. `30s`)
 - `NATS_JS_ACK_WAIT`, `NATS_JS_MAX_AGE`
 - `NATS_JS_REPLICAS` (JetStream stream replication factor)
 - `SCHEDULER_METRICS_ADDR` (default `:9090`)

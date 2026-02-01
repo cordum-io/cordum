@@ -6,15 +6,41 @@ and is licensed under BUSL-1.1.
 
 ## Current enterprise features
 
-- Enterprise API gateway binary
-- License enforcement at startup
+- Enterprise API gateway binary with license enforcement
 - Enterprise auth provider (multi-tenant API keys + RBAC)
+- User/password authentication with bcrypt-secured credentials
+- SSO/SAML integration
+- Audit export (JSON, CSV, SIEM)
+- Advanced RBAC controls
+
+License configuration (e.g., `CORDUM_LICENSE_KEY`, `CORDUM_LICENSE_PATH`) is
+documented in the `cordum-enterprise` repo.
+
+## Authentication
+
+The platform supports multiple authentication methods:
+
+### API Key Authentication (default)
+- Set via `CORDUM_API_KEY` or `CORDUM_API_KEYS`
+- Used for programmatic access (scripts, CI/CD, workers)
+- Sent via `X-API-Key` header
+
+### User/Password Authentication
+- Enable with `CORDUM_USER_AUTH_ENABLED=true`
+- Users stored in Redis with bcrypt-hashed passwords
+- Supports login via username or email
+- Admin can create users via `POST /api/v1/users`
+- Users can change password via `POST /api/v1/auth/password`
+
+### SSO/SAML (Enterprise)
+- Integrates with identity providers (Okta, Azure AD, etc.)
+- Marked with "Enterprise" badge in dashboard
+- Configure via SAML environment variables
 
 ## Planned enterprise extensions
 
-- SSO/SAML
-- SIEM export
-- Advanced RBAC controls
+- Air-gapped deployment guide
+- FIPS 140-2 compliance mode
 - Dedicated support tooling
 
 ## Licensing model

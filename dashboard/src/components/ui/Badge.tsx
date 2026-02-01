@@ -7,6 +7,7 @@ const variants: Record<string, string> = {
   warning: "bg-[color:rgba(197,138,28,0.18)] text-warning",
   danger: "bg-[color:rgba(184,58,58,0.14)] text-danger",
   info: "bg-[color:rgba(15,127,122,0.12)] text-accent",
+  enterprise: "bg-gradient-to-r from-purple-500/10 to-indigo-500/10 text-purple-600 border border-purple-200",
 };
 
 export function Badge({

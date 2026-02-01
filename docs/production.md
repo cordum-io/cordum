@@ -30,6 +30,8 @@ hardening steps below.
 - TLS/mTLS for NATS and Redis (or use managed services with encryption).
 - Set `CORDUM_ENV=production` (or `CORDUM_PRODUCTION=true`) to enforce TLS on HTTP/gRPC and safety kernel clients.
 - Configure API keys (`CORDUM_API_KEYS` or `CORDUM_API_KEY`); production mode fails without keys.
+- Configure user authentication (`CORDUM_USER_AUTH_ENABLED=true`) for dashboard access with proper user credentials.
+- Set a strong admin password (`CORDUM_ADMIN_PASSWORD`) for initial admin user creation.
 - Configure policy signature verification (`SAFETY_POLICY_PUBLIC_KEY` + signature); production mode fails without a public key.
 - Keep gRPC reflection disabled (enable only for debugging with `CORDUM_GRPC_REFLECTION=1`).
 - NetworkPolicies to restrict lateral traffic (gateway <-> redis/nats/safety).

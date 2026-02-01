@@ -69,6 +69,23 @@ helm install cordum ./cordum-helm \
   --set nats.jetstream.syncInterval=1s
 ```
 
+Enable user/password authentication:
+
+```bash
+helm install cordum ./cordum-helm \
+  -n cordum --create-namespace \
+  --set secrets.apiKey=<your-api-key> \
+  --set gateway.env.userAuthEnabled=true \
+  --set secrets.adminPassword=<secure-password> \
+  --set gateway.env.adminUsername=admin \
+  --set gateway.env.adminEmail=admin@example.com
+```
+
+This creates a default admin user on first startup. Users can then:
+- Login via the dashboard with username/password
+- Change their password via `POST /api/v1/auth/password`
+- Admins can create new users via `POST /api/v1/users`
+
 ## Local dev (kind + local images)
 
 If you are installing from a local clone and do not have published images,
