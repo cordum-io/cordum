@@ -31,6 +31,7 @@ bin/
 coverage*.out
 CODEX.md
 AGENTS.md
+CLAUDE*.md
 docs/private/
 tools/private/
 enterprise/
