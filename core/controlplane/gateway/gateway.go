@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,9 +63,16 @@ const (
 	defaultRateLimitRPS     = 50
 	defaultRateLimitBurst   = 100
 	defaultMaxHeaderBytes   = 1 << 20
+	maxLabelKeyLen          = 256  // Max length for label keys
+	maxLabelValueLen        = 4096 // Max length for label values (4KB)
 	// #nosec G101 -- protocol label, not a credential.
 	wsAPIKeyProtocol = "cordum-api-key"
 )
+
+// validTopicRegex validates topic names to prevent injection attacks.
+// Allows: job.alphanumeric-underscore-dot.name.with.segments
+// Blocks: empty segments (job..), special chars, control chars
+var validTopicRegex = regexp.MustCompile(`^job\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?)*$`)
 
 const (
 	envGatewayGrpcAddr      = "GATEWAY_GRPC_ADDR"
@@ -315,8 +323,12 @@ func (r *submitJobRequest) validate(defaultTenant string) error {
 	if r.Topic == "" {
 		return errors.New("topic is required")
 	}
-	if !strings.HasPrefix(r.Topic, "job.") {
-		return errors.New("topic must start with job.")
+	// SECURITY: Strict topic validation to prevent injection attacks
+	if !validTopicRegex.MatchString(r.Topic) {
+		return errors.New("invalid topic format: must match job.name.segments (alphanumeric, dots, hyphens, underscores only)")
+	}
+	if len(r.Topic) > 256 {
+		return errors.New("topic too long (max 256 chars)")
 	}
 	if r.MaxInputTokens < 0 || r.MaxOutputTokens < 0 || r.MaxTotalTokens < 0 {
 		return errors.New("token limits must be non-negative")
@@ -332,6 +344,15 @@ func (r *submitJobRequest) validate(defaultTenant string) error {
 	}
 	if len(r.Labels) > 50 {
 		return errors.New("too many labels (max 50)")
+	}
+	// SECURITY: Validate label key and value lengths to prevent DoS
+	for k, v := range r.Labels {
+		if len(k) > maxLabelKeyLen {
+			return fmt.Errorf("label key too long (max %d chars)", maxLabelKeyLen)
+		}
+		if len(v) > maxLabelValueLen {
+			return fmt.Errorf("label value too long (max %d chars)", maxLabelValueLen)
+		}
 	}
 	if r.OrgId == "" {
 		if r.TenantId != "" {
@@ -446,6 +467,21 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 			return fmt.Errorf("init auth: %w", err)
 		}
 		provider = basic
+
+		// Initialize user store if enabled via environment
+		if env.Bool("CORDUM_USER_AUTH_ENABLED") {
+			userStore, err := NewRedisUserStore(cfg.RedisURL)
+			if err != nil {
+				return fmt.Errorf("init user store: %w", err)
+			}
+			defer userStore.Close()
+			basic.SetUserStore(userStore)
+
+			// Seed default admin user if configured
+			if err := seedDefaultAdminUser(context.Background(), userStore, tenantID); err != nil {
+				logging.Error("api-gateway", "seed admin user failed", "error", err)
+			}
+		}
 	}
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
@@ -807,6 +843,15 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string) error {
 
 	// 1.5 Auth config (public)
 	mux.HandleFunc("GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
+
+	// 1.6 Auth endpoints
+	mux.HandleFunc("POST /api/v1/auth/login", s.instrumented("/api/v1/auth/login", s.handleLogin))
+	mux.HandleFunc("GET /api/v1/auth/session", s.instrumented("/api/v1/auth/session", s.handleSession))
+	mux.HandleFunc("POST /api/v1/auth/logout", s.instrumented("/api/v1/auth/logout", s.handleLogout))
+	mux.HandleFunc("POST /api/v1/auth/password", s.instrumented("/api/v1/auth/password", s.handleChangePassword))
+
+	// 1.7 User management (admin only)
+	mux.HandleFunc("POST /api/v1/users", s.instrumented("/api/v1/users", s.handleCreateUser))
 
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))

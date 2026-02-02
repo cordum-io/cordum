@@ -12,7 +12,6 @@ Cordum is configured via environment variables and YAML config files.
 - `CORDUM_API_KEY` - single API key
 - `CORDUM_API_KEYS` - comma-separated or JSON list of keys
 - `CORDUM_API_KEYS_PATH` - path to a JSON or CSV list of keys (hot reload)
-- Legacy alias (avoid for new setups): `CORDUM_SUPER_SECRET_API_TOKEN`
 - `CORDUM_TENANT_ID` - default tenant for clients/scripts
 - `CORDUM_ORG_ID` - organization id (defaults to tenant)
 - `CORDUM_ENV=production` (or `CORDUM_PRODUCTION=true`) - enforce production hardening

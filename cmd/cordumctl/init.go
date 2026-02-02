@@ -81,7 +81,6 @@ services:
       - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
       - API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
       - CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
-      - CORDUM_SUPER_SECRET_API_TOKEN=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
       - TENANT_ID=default
       - API_RATE_LIMIT_RPS=50
       - API_RATE_LIMIT_BURST=100

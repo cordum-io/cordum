@@ -8,7 +8,9 @@ import (
 
 type AuthConfig struct {
 	PasswordEnabled  bool   `json:"password_enabled"`
+	UserAuthEnabled  bool   `json:"user_auth_enabled"`
 	SAMLEnabled      bool   `json:"saml_enabled"`
+	SAMLEnterprise   bool   `json:"saml_enterprise"`
 	SAMLLoginURL     string `json:"saml_login_url,omitempty"`
 	SAMLMetadataURL  string `json:"saml_metadata_url,omitempty"`
 	SessionTTL       string `json:"session_ttl"`

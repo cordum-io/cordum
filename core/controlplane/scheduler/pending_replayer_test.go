@@ -117,3 +117,82 @@ func (s *replayerStore) SetJobRequest(_ context.Context, req *pb.JobRequest) err
 func (s *replayerStore) GetJobRequest(_ context.Context, jobID string) (*pb.JobRequest, error) {
 	return s.reqs[jobID], nil
 }
+
+func TestPendingReplayerReplaysApprovedJobs(t *testing.T) {
+	store := &replayerStore{
+		fakeJobStore: newFakeJobStore(),
+		reqs:         map[string]*pb.JobRequest{},
+	}
+
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
+
+	// Create a job in APPROVAL_REQUIRED state with approval_granted label
+	req := &pb.JobRequest{
+		JobId:    "job-approved",
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels:   map[string]string{"approval_granted": "true"},
+	}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := store.SetState(context.Background(), req.JobId, JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	replayer := NewPendingReplayer(engine, store, 0, time.Millisecond)
+	replayer.replayApproved(context.Background(), time.Now())
+
+	if len(bus.published) == 0 {
+		t.Fatalf("expected approved job to be republished")
+	}
+	state, err := store.GetState(context.Background(), req.JobId)
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	// Job should now be running after replay
+	if state != JobStateRunning {
+		t.Fatalf("expected job running, got %s", state)
+	}
+}
+
+func TestPendingReplayerSkipsUnapprovedJobs(t *testing.T) {
+	store := &replayerStore{
+		fakeJobStore: newFakeJobStore(),
+		reqs:         map[string]*pb.JobRequest{},
+	}
+
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
+
+	// Create a job in APPROVAL_REQUIRED state WITHOUT approval_granted label
+	req := &pb.JobRequest{
+		JobId:    "job-unapproved",
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := store.SetState(context.Background(), req.JobId, JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	replayer := NewPendingReplayer(engine, store, 0, time.Millisecond)
+	replayer.replayApproved(context.Background(), time.Now())
+
+	if len(bus.published) != 0 {
+		t.Fatalf("expected unapproved job to be skipped, but was republished")
+	}
+	state, err := store.GetState(context.Background(), req.JobId)
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	// Job should still be in approval state
+	if state != JobStateApproval {
+		t.Fatalf("expected job still in approval state, got %s", state)
+	}
+}

@@ -13,7 +13,7 @@ require jq
 require go
 
 API_BASE=${CORDUM_API_BASE:-http://localhost:8081}
-API_KEY=${CORDUM_API_KEY:-${CORDUM_SUPER_SECRET_API_TOKEN:-${API_KEY:-}}}
+API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
 if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the demo." >&2
   exit 1

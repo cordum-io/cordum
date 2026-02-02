@@ -8,9 +8,20 @@ Base URL (local compose): `http://localhost:8081`
 
 Authentication:
 - HTTP header: `X-API-Key: <key>` (or JWT via `Authorization: Bearer <token>`)
+- Session token: `Authorization: Bearer <session-token>` (from `/api/v1/auth/login`)
 - Tenant header: `X-Tenant-ID: <tenant>`
 - WebSocket stream: `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` + `?tenant_id=<tenant>`
 All endpoints require auth and a tenant header (including `/api/v1/status`).
+
+Auth endpoints (public):
+- `GET /api/v1/auth/config` - Get authentication configuration
+- `POST /api/v1/auth/login` - Login with user/password or API key
+- `GET /api/v1/auth/session` - Validate current session
+- `POST /api/v1/auth/logout` - Logout (no-op for stateless auth)
+- `POST /api/v1/auth/password` - Change password (authenticated)
+
+User management (admin only):
+- `POST /api/v1/users` - Create a new user
 
 Common endpoints:
 - Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream`

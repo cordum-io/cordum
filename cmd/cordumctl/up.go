@@ -103,14 +103,14 @@ func composeEnv() []string {
 }
 
 func apiKeySource(composeFile string) string {
-	if val := firstNonEmptyEnv("CORDUM_API_KEY", "CORDUM_SUPER_SECRET_API_TOKEN", "API_KEY"); val != "" {
+	if val := firstNonEmptyEnv("CORDUM_API_KEY", "API_KEY"); val != "" {
 		return "env"
 	}
 	envPath := ".env"
 	if composeFile != "" {
 		envPath = filepath.Join(filepath.Dir(composeFile), ".env")
 	}
-	if val := readEnvFile(envPath, "CORDUM_API_KEY", "CORDUM_SUPER_SECRET_API_TOKEN", "API_KEY"); val != "" {
+	if val := readEnvFile(envPath, "CORDUM_API_KEY", "API_KEY"); val != "" {
 		return "file"
 	}
 	return ""

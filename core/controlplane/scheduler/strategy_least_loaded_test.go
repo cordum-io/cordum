@@ -144,28 +144,72 @@ func TestLeastLoadedStrategyMarksWorkerOverloadedWhenAtCapacity(t *testing.T) {
 }
 
 func TestFilterPlacementLabels(t *testing.T) {
+	// Only labels with specific prefixes should be treated as placement constraints
 	labels := map[string]string{
 		"preferred_worker_id": "w1",
 		"preferred_pool":      "pool",
 		"approval_granted":    "true",
-		"approval_reason":     "ok",
-		"approval_note":       "note",
-		"secrets_present":     "true",
-		"cordum.trace":        "trace",
 		"workflow_id":         "wf",
 		"run_id":              "run",
-		"step_id":             "step",
-		"node_id":             "node",
-		"worker_id":           "worker",
-		"region":              "us-east",
-		"gpu":                 "true",
+		"amount":              "500", // business label - should be ignored
+		"from":                "alice", // business label - should be ignored
+		"to":                  "bob", // business label - should be ignored
+		"placement.region":    "us-east", // explicit placement constraint
+		"constraint.gpu":      "true", // explicit capability constraint
+		"node.type":           "gpu-node", // node selector
 	}
 	out := filterPlacementLabels(labels)
-	if len(out) != 2 {
-		t.Fatalf("expected 2 placement labels, got %d", len(out))
+	if len(out) != 3 {
+		t.Fatalf("expected 3 placement labels, got %d: %#v", len(out), out)
 	}
-	if out["region"] != "us-east" || out["gpu"] != "true" {
-		t.Fatalf("unexpected placement labels: %#v", out)
+	if out["placement.region"] != "us-east" {
+		t.Fatalf("expected placement.region=us-east, got %#v", out)
+	}
+	if out["constraint.gpu"] != "true" {
+		t.Fatalf("expected constraint.gpu=true, got %#v", out)
+	}
+	if out["node.type"] != "gpu-node" {
+		t.Fatalf("expected node.type=gpu-node, got %#v", out)
+	}
+}
+
+func TestFilterPlacementLabelsIgnoresBusinessLabels(t *testing.T) {
+	// Business labels like amount, from, to should NOT constrain worker placement
+	labels := map[string]string{
+		"amount": "500",
+		"from":   "alice",
+		"to":     "bob",
+		"status": "pending",
+	}
+	out := filterPlacementLabels(labels)
+	if out != nil {
+		t.Fatalf("expected nil (no placement labels), got %#v", out)
+	}
+}
+
+func TestStrategyIgnoresBusinessLabelsForWorkerMatch(t *testing.T) {
+	// Workers should be selected even when jobs have business labels
+	// that workers don't have
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 0, CpuLoad: 10},
+	}
+
+	req := &pb.JobRequest{
+		Topic: "job.default",
+		Labels: map[string]string{
+			"amount": "500",
+			"from":   "alice",
+			"to":     "bob",
+		},
+	}
+
+	subject, err := strategy.PickSubject(req, workers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "worker.w1.jobs" {
+		t.Fatalf("expected subject worker.w1.jobs, got %s", subject)
 	}
 }
 

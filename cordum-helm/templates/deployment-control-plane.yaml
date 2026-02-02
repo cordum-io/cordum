@@ -323,11 +323,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "cordum.fullname" . }}-secrets
                   key: apiKey
-            - name: CORDUM_SUPER_SECRET_API_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cordum.fullname" . }}-secrets
-                  key: apiKey
             - name: TENANT_ID
               value: {{ .Values.gateway.env.tenantId | quote }}
             - name: API_RATE_LIMIT_RPS
@@ -338,6 +333,23 @@ spec:
               value: {{ .Values.gateway.env.redisDataTTL | quote }}
             - name: JOB_META_TTL
               value: {{ .Values.gateway.env.jobMetaTTL | quote }}
+            {{- if .Values.gateway.env.userAuthEnabled }}
+            - name: CORDUM_USER_AUTH_ENABLED
+              value: "true"
+            - name: CORDUM_ADMIN_USERNAME
+              value: {{ .Values.gateway.env.adminUsername | quote }}
+            {{- if .Values.gateway.env.adminEmail }}
+            - name: CORDUM_ADMIN_EMAIL
+              value: {{ .Values.gateway.env.adminEmail | quote }}
+            {{- end }}
+            {{- if .Values.secrets.adminPassword }}
+            - name: CORDUM_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cordum.fullname" . }}-secrets
+                  key: adminPassword
+            {{- end }}
+            {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.gateway.service.grpcPort }}

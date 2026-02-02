@@ -602,7 +602,9 @@ export type BusPacket = {
 
 export type AuthConfig = {
   password_enabled: boolean;
+  user_auth_enabled: boolean;
   saml_enabled: boolean;
+  saml_enterprise: boolean;
   saml_login_url?: string;
   saml_metadata_url?: string;
   session_ttl: string;

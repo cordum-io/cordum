@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://cordum.io/logo.svg" alt="Cordum" width="200"/>
+  <img src="https://cordum.io/_next/image?url=%2Flogo.png&w=1200&q=75" alt="Cordum" width="200"/>
 </p>
 
 <h1 align="center">Cordum</h1>
@@ -33,6 +33,8 @@ Without governance, you're flying blind:
 ## The Solution
 
 Cordum is a **control plane for AI agents** that closes the Trust Gap.
+
+![Cordum control plane](./Screenshot%202026-01-23%20162612.png)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -200,9 +202,9 @@ SDKs: **Go** (stable) | Python (coming soon) | Node (coming soon)
 
 ## Community
 
-- **Discord:** [Join the conversation](https://discord.gg/cordum)
+- **Discord:** [Join the conversation](https://discord.gg/HGGHbU26)
 - **GitHub Discussions:** [Ask questions](https://github.com/cordum-io/cordum/discussions)
-- **Twitter/X:** [@coraboratedai](https://twitter.com/coraboratedai)
+- **Twitter/X:** [@coraboratedai](https://x.com/Cordum_io)
 - **Email:** [admin@cordum.io](mailto:admin@cordum.io)
 
 ## Enterprise
@@ -213,7 +215,7 @@ Cordum Enterprise adds:
 - SIEM export
 - Priority support
 
-[Contact us](mailto:enterprise@cordum.io) for pricing.
+[Contact us](mailto:admin@cordum.io) for pricing.
 
 ## Contributing
 

@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path"
 	"strings"
 
@@ -143,26 +142,6 @@ type MCPRequest struct {
 	Tool     string
 	Resource string
 	Action   string
-}
-
-// LoadSafetyPolicy reads YAML from the given path. If the file is missing or the path is empty, returns nil with no error (allow-all).
-func LoadSafetyPolicy(path string) (*SafetyPolicy, error) {
-	if path == "" {
-		return nil, nil
-	}
-	// #nosec G304 -- policy path is operator-provided.
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read safety policy %s: %w", path, err)
-	}
-	policy, err := ParseSafetyPolicy(data)
-	if err != nil {
-		return nil, fmt.Errorf("parse safety policy %s: %w", path, err)
-	}
-	return policy, nil
 }
 
 // ParseSafetyPolicy parses a policy bundle from YAML bytes.

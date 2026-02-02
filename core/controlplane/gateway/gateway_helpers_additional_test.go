@@ -103,7 +103,6 @@ func TestAddrFromEnv(t *testing.T) {
 }
 
 func TestLoadAPIKeys(t *testing.T) {
-	t.Setenv("CORDUM_SUPER_SECRET_API_TOKEN", "super")
 	t.Setenv("CORDUM_API_KEY", "cordum")
 	t.Setenv("API_KEY", "api")
 
@@ -113,15 +112,6 @@ func TestLoadAPIKeys(t *testing.T) {
 	}
 	if !required {
 		t.Fatalf("expected api key required")
-	}
-	if _, ok := keys["super"]; !ok {
-		t.Fatalf("expected super secret key in key map")
-	}
-
-	t.Setenv("CORDUM_SUPER_SECRET_API_TOKEN", "")
-	keys, _, _, _, _, err = loadBasicAPIKeys()
-	if err != nil {
-		t.Fatalf("load api keys: %v", err)
 	}
 	if _, ok := keys["cordum"]; !ok {
 		t.Fatalf("expected cordum api key in key map")

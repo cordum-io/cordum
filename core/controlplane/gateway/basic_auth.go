@@ -45,6 +45,7 @@ type BasicAuthProvider struct {
 	keysMu               sync.RWMutex
 	jwt                  *jwtValidator
 	jwtRequired          bool
+	userStore            UserStore
 }
 
 func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
@@ -83,6 +84,16 @@ func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 		jwt:                  jwtValidator,
 		jwtRequired:          jwtRequired,
 	}, nil
+}
+
+// SetUserStore sets the user store for user/password authentication.
+func (b *BasicAuthProvider) SetUserStore(store UserStore) {
+	b.userStore = store
+}
+
+// UserStore returns the user store if configured.
+func (b *BasicAuthProvider) UserStore() UserStore {
+	return b.userStore
 }
 
 func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
@@ -205,7 +216,26 @@ func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext,
 }
 
 func (b *BasicAuthProvider) IsPublicPath(path string) bool {
-	return strings.TrimSpace(path) == "/api/v1/auth/config"
+	path = strings.TrimSpace(path)
+	return path == "/api/v1/auth/config" || path == "/api/v1/auth/login"
+}
+
+// AuthConfig returns the auth configuration for the dashboard.
+// Implements AuthConfigProvider interface.
+func (b *BasicAuthProvider) AuthConfig() AuthConfig {
+	b.keysMu.RLock()
+	hasKeys := len(b.keys) > 0
+	b.keysMu.RUnlock()
+	return AuthConfig{
+		PasswordEnabled:  hasKeys,
+		UserAuthEnabled:  b.userStore != nil,
+		SAMLEnabled:      false,
+		SAMLEnterprise:   true, // SSO is always an enterprise feature
+		SessionTTL:       "24h",
+		RequireRBAC:      false,
+		RequirePrincipal: false,
+		DefaultTenant:    b.defaultTenant,
+	}
 }
 
 func (b *BasicAuthProvider) RequireRole(r *http.Request, roles ...string) error {
@@ -321,10 +351,7 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 		requireKey = true
 	}
 
-	single := normalizeAPIKey(os.Getenv("CORDUM_SUPER_SECRET_API_TOKEN"))
-	if single == "" {
-		single = normalizeAPIKey(os.Getenv("CORDUM_API_KEY"))
-	}
+	single := normalizeAPIKey(os.Getenv("CORDUM_API_KEY"))
 	if single == "" {
 		single = normalizeAPIKey(os.Getenv("API_KEY"))
 	}

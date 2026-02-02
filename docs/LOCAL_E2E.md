@@ -85,6 +85,14 @@ curl -sS -X DELETE http://localhost:8081/api/v1/workflows/<workflow_id> \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID"
 ```
 
+## Dashboard Feature Testing
+
+After smoke tests, verify dashboard features at `http://localhost:8082`:
+
+- **Delete workflow**: WorkflowDetailPage > Delete button (with confirmation dialog)
+- **Renew lock**: ToolsPage > Locks > Renew button (extends lock TTL)
+- **Step approval**: Runs use `approveStep` API for workflow step approvals
+
 ## Notes
 - Safety policy (`config/safety.yaml`) denies `sys.*` and allows `job.*` for the default tenant.
 - Scheduler timeouts come from `config/timeouts.yaml`.

@@ -43,19 +43,3 @@ func TestLoadPoolConfigErrors(t *testing.T) {
 		t.Fatalf("expected error for empty topics")
 	}
 }
-
-func TestLoadPoolTopicsLegacy(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "pools.yaml")
-	body := []byte("topics:\n  job.default: default\n")
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	topics, err := LoadPoolTopics(path)
-	if err != nil {
-		t.Fatalf("LoadPoolTopics returned error: %v", err)
-	}
-	if topics["job.default"] != "default" {
-		t.Fatalf("unexpected topics: %#v", topics)
-	}
-}

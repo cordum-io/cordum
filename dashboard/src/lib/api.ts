@@ -174,15 +174,12 @@ export const api = {
     }),
   cancelRun: (workflowId: string, runId: string) =>
     apiRequest<void>(`/api/v1/workflows/${workflowId}/runs/${runId}/cancel`, { method: "POST" }),
+  approveStep: (workflowId: string, runId: string, stepId: string) =>
+    apiRequest<void>(`/api/v1/workflows/${workflowId}/runs/${runId}/steps/${stepId}/approve`, { method: "POST" }),
   rerunRun: (runId: string, options?: { fromStep?: string; dryRun?: boolean }) =>
     apiRequest<{ run_id: string }>(`/api/v1/workflow-runs/${runId}/rerun`, {
       method: "POST",
       body: options ? { from_step: options.fromStep, dry_run: options.dryRun } : undefined,
-    }),
-  approveStep: (workflowId: string, runId: string, stepId: string, approved: boolean) =>
-    apiRequest<void>(`/api/v1/workflows/${workflowId}/runs/${runId}/steps/${stepId}/approve`, {
-      method: "POST",
-      body: { approved },
     }),
   listApprovals: (limit = 100, cursor?: number) =>
     apiRequest<ApprovalsResponse>("/api/v1/approvals", {
