@@ -60,8 +60,8 @@ const (
 	maxJobPayloadBytes      = 2 << 20  // 2 MiB limit for incoming job payloads
 	defaultArtifactMaxBytes = 10 << 20 // 10 MiB default artifact size limit
 	maxPromptChars          = 100000
-	defaultRateLimitRPS     = 50
-	defaultRateLimitBurst   = 100
+	defaultRateLimitRPS     = 500
+	defaultRateLimitBurst   = 1000
 	defaultMaxHeaderBytes   = 1 << 20
 	maxLabelKeyLen          = 256  // Max length for label keys
 	maxLabelValueLen        = 4096 // Max length for label values (4KB)

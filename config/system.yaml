@@ -24,9 +24,9 @@ budget:
   cost_attribution_enabled: true
   cost_centers: []
 rate_limits:
-  requests_per_minute: 600
-  requests_per_hour: 36000
-  burst_size: 100
+  requests_per_minute: 30000
+  requests_per_hour: 1800000
+  burst_size: 1000
   concurrent_jobs: 20
   concurrent_workflows: 5
   queue_size: 100

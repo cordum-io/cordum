@@ -82,8 +82,8 @@ services:
       - API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
       - CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
       - TENANT_ID=default
-      - API_RATE_LIMIT_RPS=50
-      - API_RATE_LIMIT_BURST=100
+      - API_RATE_LIMIT_RPS=500
+      - API_RATE_LIMIT_BURST=1000
       - REDIS_DATA_TTL=24h
       - JOB_META_TTL=168h
     ports:
