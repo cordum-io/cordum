@@ -9,10 +9,11 @@ import (
 
 // MemoryRegistry keeps worker heartbeats in-memory.
 type MemoryRegistry struct {
-	mu      sync.RWMutex
-	workers map[string]*workerEntry
-	ttl     time.Duration
-	stopCh  chan struct{}
+	mu        sync.RWMutex
+	workers   map[string]*workerEntry
+	ttl       time.Duration
+	stopCh    chan struct{}
+	closeOnce sync.Once
 }
 
 type workerEntry struct {
@@ -107,7 +108,7 @@ func (r *MemoryRegistry) expire() {
 	}
 }
 
-// Close stops background expiry loop.
+// Close stops background expiry loop. It is safe to call multiple times.
 func (r *MemoryRegistry) Close() {
-	close(r.stopCh)
+	r.closeOnce.Do(func() { close(r.stopCh) })
 }

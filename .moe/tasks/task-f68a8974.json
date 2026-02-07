@@ -1,0 +1,35 @@
+{
+  "id": "task-f68a8974",
+  "epicId": "epic-da8a6382",
+  "title": "Add missing .dockerignore for dashboard build context",
+  "description": "**Bug**: The `dashboard/` directory has no `.dockerignore` file. Since `docker-compose.yml` sets `context: ./dashboard`, the entire `node_modules/` (195MB+) and `dist/` are sent as build context, causing build failures with \"invalid file request node_modules/.bin/...\" errors.\n\nAdditionally, the root `.dockerignore` did not exclude `dashboard/node_modules` for Go service builds that use `.` as context, causing the same failures.\n\n**Fix applied during E2E**: Created `dashboard/.dockerignore` with `node_modules`, `dist`, `.git`, `*.swp`, `*.tmp`, `*.log`, `*.zip`. Updated root `.dockerignore` to add `**/node_modules`, `dashboard/node_modules`, `dashboard/dist`, `dashboard/src.zip`, `.moe`, `*.exe`, `*.png`, `*.zip`.\n\n**Files**: `dashboard/.dockerignore` (new), `.dockerignore` (updated)",
+  "definitionOfDone": [
+    "dashboard/.dockerignore exists with node_modules and dist excluded",
+    "Root .dockerignore excludes dashboard/node_modules for Go service builds",
+    "docker compose build succeeds without node_modules context errors"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Verify existing dockerignore files already satisfy all DoD items. Both files already exist with correct content from E2E work. No code changes needed.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/.dockerignore",
+        ".dockerignore"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 15,
+  "createdAt": "2026-02-06T12:49:37.875Z",
+  "updatedAt": "2026-02-07T18:38:30.593Z"
+}

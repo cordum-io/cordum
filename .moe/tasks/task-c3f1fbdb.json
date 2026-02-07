@@ -1,0 +1,63 @@
+{
+  "id": "task-c3f1fbdb",
+  "epicId": "epic-da4e0aa4",
+  "title": "Extract packs_marketplace.go from packs.go",
+  "description": "## What\nCreate `core/controlplane/gateway/packs_marketplace.go` by moving all marketplace-related types, handlers, and functions OUT of `packs.go`. Do this AFTER packs_validate.go is extracted.\n\n## Exact items to move\n\n### Marketplace Type Definitions (lines 314-405)\n- `marketplaceCatalogConfig` (lines 314-316)\n- `marketplaceCatalog` (lines 318-323)\n- `marketplaceCatalogFile` (lines 325-328)\n- `marketplaceCatalogPack` (lines 330-345)\n- `marketplaceCatalogStatus` (lines 347-354)\n- `marketplacePackItem` (lines 356-376)\n- `marketplaceResponse` (lines 378-383)\n- `marketplaceCache` (lines 385-388)\n- `marketplaceCatalogEntry` (lines 390-394)\n- `marketplaceInstallRequest` (lines 396-405)\n\n### Marketplace Constants & Vars\n- `marketplaceCacheTTL` const (line 60)\n- `defaultMarketplaceHTTPTimeout` const (line 61)\n- `errMarketplaceNotFound` var (line 64)\n- Marketplace env constants: `envMarketplaceAllowHTTP`, `envMarketplaceHTTPTimeout` (lines 47-48)\n\n### Marketplace HTTP Handlers\n- `(s *server).handleMarketplacePacks` (lines 458-474)\n- `(s *server).handleMarketplaceInstall` (lines 476-610)\n\n### Marketplace Internal Functions\n- `(s *server).marketplaceSnapshot` (lines 937-969)\n- `(s *server).loadMarketplaceEntries` (lines 971-1014)\n- `(s *server).loadPackCatalogs` (lines 1016-1039)\n- `fetchMarketplaceCatalog` (lines 1041-1072)\n- `(s *server).buildMarketplaceResponse` (lines 1074-1132)\n- `(s *server).findMarketplaceEntry` (lines 1134-1172)\n- `(s *server).findMarketplaceEntryByURL` (lines 1174-1189)\n- `compareVersions` (lines 1191-1226)\n- `normalizeVersion` (lines 1228-1232)\n- `parseVersion` (lines 1234-1255)\n- `downloadPackBundle` (lines 1257-1297)\n- `validateMarketplaceURL` (lines 1299-1331)\n- `marketplaceHTTPTimeout` (lines 1333-1340)\n- `marketplaceHTTPClient` (lines 1342-1361)\n- `hostFromURL` (lines 1363-1373)\n- `(s *server).marketplaceAllowedHosts` (lines 1375-1411)\n\n## How\n1. Create `packs_marketplace.go` with `package gateway`\n2. Add imports: `context`, `crypto/tls`, `encoding/json`, `errors`, `fmt`, `io`, `log/slog`, `net/http`, `net/url`, `os`, `strconv`, `strings`, `sync`, `time`, plus project imports\n3. Move all listed items\n4. Remove from packs.go\n5. Run `go build ./cmd/cordum-api-gateway`\n\n## Notes\n- Use function NAMES to locate items (line numbers from original packs.go before any extractions)\n- The marketplace types (lines 314-405) are a contiguous block\n- The marketplace functions (lines 937-1411) are another contiguous block\n- After extraction, packs.go should be ~1400 lines",
+  "definitionOfDone": [
+    "packs_marketplace.go exists with package gateway header",
+    "All marketplace types, handlers, and functions moved from packs.go",
+    "packs.go no longer contains any marketplace code",
+    "go build ./cmd/cordum-api-gateway succeeds"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create `packs_marketplace.go` with package header, imports, and marketplace constants/types.\n\n1. Create file `core/controlplane/gateway/packs_marketplace.go`\n2. Add `package gateway`\n3. Add imports (expect: `context`, `crypto/tls`, `encoding/json`, `errors`, `fmt`, `io`, `log/slog`, `net/http`, `net/url`, `os`, `strconv`, `strings`, `sync`, `time`, plus project imports)\n4. Move marketplace constants from packs.go's const block:\n   - `marketplaceCacheTTL` (line 60)\n   - `defaultMarketplaceHTTPTimeout` (line 61)\n5. Move marketplace env constants:\n   - `envMarketplaceAllowHTTP` (line 47)\n   - `envMarketplaceHTTPTimeout` (line 48)\n6. Move marketplace error var:\n   - `errMarketplaceNotFound` (line 64)\n7. Move all marketplace type definitions (lines 314-405) — contiguous block of 10 types:\n   marketplaceCatalogConfig, marketplaceCatalog, marketplaceCatalogFile, marketplaceCatalogPack, marketplaceCatalogStatus, marketplacePackItem, marketplaceResponse, marketplaceCache, marketplaceCatalogEntry, marketplaceInstallRequest",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/packs_marketplace.go",
+        "core/controlplane/gateway/packs.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Move marketplace HTTP handlers into packs_marketplace.go.\n\nCut from packs.go and paste into packs_marketplace.go:\n- `(s *server).handleMarketplacePacks` (lines 458-474)\n- `(s *server).handleMarketplaceInstall` (lines 476-610)\n\nThese are the two marketplace endpoint handlers. They sit between the type definitions and the core pack handlers.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/packs_marketplace.go",
+        "core/controlplane/gateway/packs.go"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Move marketplace internal functions into packs_marketplace.go.\n\nCut from packs.go lines 937-1411 (contiguous block) and paste into packs_marketplace.go:\n- marketplaceSnapshot, loadMarketplaceEntries, loadPackCatalogs, fetchMarketplaceCatalog\n- buildMarketplaceResponse, findMarketplaceEntry, findMarketplaceEntryByURL\n- compareVersions, normalizeVersion, parseVersion\n- downloadPackBundle, validateMarketplaceURL, marketplaceHTTPTimeout, marketplaceHTTPClient\n- hostFromURL, marketplaceAllowedHosts\n\nThe function after this block is `planSchemas` (line 1413) which stays in packs_core.go.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/packs_marketplace.go",
+        "core/controlplane/gateway/packs.go"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Clean up packs.go imports and verify build.\n\n1. Remove unused imports from packs.go (likely `crypto/tls`, `net/url`, and others only used by marketplace code)\n2. Verify packs.go no longer contains any marketplace types or functions\n3. Run: `go build ./cmd/cordum-api-gateway` — must compile\n4. After this extraction, packs.go should be approximately ~1400 lines",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/packs.go",
+        "core/controlplane/gateway/packs_marketplace.go"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 6,
+  "createdAt": "2026-02-06T14:48:08.188Z",
+  "updatedAt": "2026-02-06T23:18:10.507Z"
+}

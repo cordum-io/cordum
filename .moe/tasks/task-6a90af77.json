@@ -1,0 +1,51 @@
+{
+  "id": "task-6a90af77",
+  "epicId": "epic-decda99c",
+  "title": "useWorkflowStats hook — success rate from run history",
+  "description": "Create a `useWorkflowStats(workflowId)` hook that fetches recent runs for a workflow and computes: success rate (%), last run status, last run time, and a sparkline data array (last 20 runs as succeeded/failed/cancelled).\n\nNo backend changes — compute client-side from `useRuns(workflowId, { limit: 20 })`.\n\n**File:** `dashboard/src/hooks/useWorkflows.ts`\n\n**Interface:**\n```ts\ninterface WorkflowStats {\n  successRate: number;        // 0-100\n  lastRunStatus: RunStatus | null;\n  lastRunTime: string | null; // ISO\n  sparkline: ('succeeded' | 'failed' | 'cancelled' | 'running')[];\n}\nexport function useWorkflowStats(workflowId: string): UseQueryResult<WorkflowStats>\n```\n\nDerived from existing `useRuns` data — no new API call needed, just a wrapper that transforms.",
+  "definitionOfDone": [
+    "useWorkflowStats hook returns success rate, last run info, and sparkline array",
+    "Computed client-side from useRuns data",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add `WorkflowStats` interface and `useWorkflowStats` hook to `dashboard/src/hooks/useWorkflows.ts`.\n\nInterface:\n```ts\ninterface WorkflowStats {\n  successRate: number;  // 0-100\n  lastRunStatus: RunStatus | null;\n  lastRunTime: string | null;\n  sparkline: RunStatus[];  // last 20 runs, newest first\n}\n```\n\nImplementation: Use existing `useWorkflowRuns(workflowId, { limit: 20 })` with a `select` transform:\n1. `successRate = (succeededCount / totalTerminal) * 100` where terminal = succeeded + failed + cancelled + timed_out\n2. `lastRunStatus = runs[0]?.status ?? null`\n3. `lastRunTime = runs[0]?.startedAt ?? null`\n4. `sparkline = runs.map(r => r.status)` (array of up to 20 statuses)\n\nHandle edge cases: empty runs → `{ successRate: 0, lastRunStatus: null, lastRunTime: null, sparkline: [] }`. Division by zero guarded.\n\nSECURITY: No user input — purely derived from typed API responses. `staleTime: 30_000`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useWorkflows.ts"
+      ],
+      "startedAt": "2026-02-07T21:25:10.289Z",
+      "completedAt": "2026-02-07T21:25:29.605Z",
+      "note": "Added WorkflowStats interface and useWorkflowStats hook. Shares query key with useRuns(id, {limit:20}) for cache dedup. Uses select transform with computeWorkflowStats: successRate from terminal runs, lastRunStatus/lastRunTime from most recent, sparkline as status array. staleTime 30s.",
+      "modifiedFiles": [
+        "dashboard/src/hooks/useWorkflows.ts"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Run `node ./node_modules/typescript/bin/tsc --noEmit` to verify types.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T21:25:30.098Z",
+      "completedAt": "2026-02-07T21:25:43.403Z",
+      "note": "tsc --noEmit passes clean."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 2,
+  "createdAt": "2026-02-07T21:04:46.971Z",
+  "updatedAt": "2026-02-07T21:33:56.766Z",
+  "planSubmittedAt": "2026-02-07T21:14:40.463Z",
+  "planApprovedAt": "2026-02-07T21:14:40.465Z"
+}

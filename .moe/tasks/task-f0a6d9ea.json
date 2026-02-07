@@ -1,0 +1,68 @@
+{
+  "id": "task-f0a6d9ea",
+  "epicId": "epic-806e5c17",
+  "title": "Pool utilization heatmap",
+  "description": "Grid of pool cards with utilization gauges (active/capacity). Workers grouped by pool. Color intensity = utilization %.",
+  "definitionOfDone": [
+    "Grid of pool cards showing utilization",
+    "Each card: pool name, active/capacity ratio, utilization gauge (ProgressBar)",
+    "Color intensity maps to utilization % (green < 50%, yellow 50-80%, red > 80%)",
+    "Workers listed under each pool",
+    "Data from useWorkers() grouped by pool",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/home/PoolUtilizationGrid.tsx: Uses useWorkersSummary() hook data grouped by pool. Grid of Card components, each showing: pool name (header), active/capacity ratio as text, ProgressBar component with variant based on utilization (success < 50%, warning 50-80%, danger > 80%). Workers listed inside each card as small rows (name + status dot). Responsive grid (2 cols mobile, 3 cols desktop).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/home/PoolUtilizationGrid.tsx"
+      ],
+      "startedAt": "2026-02-07T01:09:35.500Z",
+      "completedAt": "2026-02-07T01:10:20.679Z",
+      "note": "Created PoolUtilizationGrid: groups workers by pool from useWorkers(), calculates active/capacity utilization %. Each PoolCard shows pool name, ratio, ProgressBar with color variant (success < 50%, warning 50-80%, danger > 80%), and worker list with status dots. Sorted by utilization descending. Loading skeleton and empty state.",
+      "modifiedFiles": [
+        "dashboard/src/components/home/PoolUtilizationGrid.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Integrate PoolUtilizationGrid into HomePage.tsx alongside the pipeline funnel in the two-column layout.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/HomePage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:10:23.993Z",
+      "completedAt": "2026-02-07T01:10:44.682Z",
+      "note": "Added PoolUtilizationGrid below the Safety Feed + Pipeline Funnel two-column section on the Command Center homepage.",
+      "modifiedFiles": [
+        "dashboard/src/pages/HomePage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:10:48.081Z",
+      "completedAt": "2026-02-07T01:11:02.046Z",
+      "note": "tsc --noEmit passes for all pool utilization files. Only pre-existing errors in DLQActions.tsx and PoolGroupedView.tsx (unrelated)."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 5,
+  "createdAt": "2026-02-06T23:47:51.043Z",
+  "updatedAt": "2026-02-07T20:14:13.980Z",
+  "planSubmittedAt": "2026-02-06T23:55:45.119Z",
+  "planApprovedAt": "2026-02-06T23:55:45.121Z"
+}

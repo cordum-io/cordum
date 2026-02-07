@@ -1,0 +1,51 @@
+{
+  "id": "task-c7a40390",
+  "epicId": "epic-dbd90afa",
+  "title": "Add error logging to pack install rollback",
+  "description": "**Severity: MEDIUM**\n\n**File**: `cmd/cordumctl/pack.go:260-273`\n\n**Issue**: All four rollback operations silently discard errors (`_ = restoreConfigOverlay(...)`, etc.). If rollback fails, the operator gets zero feedback and the system is left in an inconsistent state.\n\n**Fix**: Log each rollback error with `slog.Warn` so operators can diagnose partial failures. Example: `if err := restoreConfigOverlay(...); err != nil { slog.Warn(\"rollback: failed to restore config overlay\", \"error\", err) }`",
+  "definitionOfDone": [
+    "All four rollback error paths log warnings via slog.Warn",
+    "Log messages include the operation name and error detail",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Replace the 4 blank-identifier error discards in the `rollback` closure (lines 262, 265, 268, 271) with `if err := ...; err != nil { slog.Warn(\"pack install rollback: <operation> failed\", \"error\", err, \"index\", i) }` for each of the four operations: restoreConfigOverlay, restorePolicyOverlay, rollbackWorkflow, rollbackSchema.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/pack.go"
+      ],
+      "startedAt": "2026-02-05T23:24:58.527Z",
+      "completedAt": "2026-02-05T23:25:48.385Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Ensure `log/slog` is in the import block (likely already imported elsewhere in the file).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/pack.go"
+      ],
+      "completedAt": "2026-02-05T23:25:49.325Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run existing tests with `go test ./cmd/cordumctl/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "completedAt": "2026-02-05T23:25:50.213Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 6,
+  "createdAt": "2026-02-05T22:15:21.852Z",
+  "updatedAt": "2026-02-05T23:30:16.094Z"
+}

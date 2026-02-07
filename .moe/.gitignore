@@ -1,0 +1,4 @@
+# Worker state is ephemeral
+workers/
+# Proposals should be reviewed before committing
+proposals/

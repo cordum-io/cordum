@@ -1,0 +1,42 @@
+{
+  "id": "task-85141da4",
+  "epicId": "epic-cddc11dd",
+  "title": "Fix useJobs.ts — toUpperCase on never type in exhaustive switch",
+  "description": "**File:** `dashboard/src/hooks/useJobs.ts`\n\n**Problem:** Line 52: `return state.toUpperCase()` in the default case of an exhaustive switch. TypeScript correctly infers the type as `never` since all `JobStatus` values are explicitly handled in cases above. TypeScript error TS2339.\n\n**Fix:** Cast to string as a safety-net fallback:\n```typescript\ndefault:\n  return (state as string).toUpperCase();\n```\n\nThis handles any future `JobStatus` values that haven't been added to the switch yet, while satisfying TypeScript.",
+  "definitionOfDone": [
+    "TypeScript error TS2339 in useJobs.ts is resolved",
+    "stateToBackend still correctly maps all known JobStatus values",
+    "tsc --noEmit passes for this file"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "In useJobs.ts line 52, change `return state.toUpperCase()` to `return (state as string).toUpperCase()`. The switch is exhaustive over all known JobStatus values, so TypeScript infers `never` in the default branch. The cast makes this a safe fallback for any future JobStatus values added to the union without updating this switch.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/hooks/useJobs.ts"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Run `node ./node_modules/typescript/bin/tsc --noEmit` and verify TS2339 error is gone for useJobs.ts.",
+      "status": "PENDING",
+      "affectedFiles": []
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "LOW",
+  "order": 27,
+  "createdAt": "2026-02-07T18:27:26.317Z",
+  "updatedAt": "2026-02-07T19:59:57.143Z",
+  "planSubmittedAt": "2026-02-07T18:34:49.780Z",
+  "planApprovedAt": "2026-02-07T18:34:49.781Z"
+}

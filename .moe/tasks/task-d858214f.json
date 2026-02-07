@@ -1,0 +1,85 @@
+{
+  "id": "task-d858214f",
+  "epicId": "epic-cd4f00e4",
+  "title": "Job detail page (/jobs/:id)",
+  "description": "State machine visualization (horizontal step indicator), safety explain() output (which rule, why, eval path, eval time), request/result payloads (context_ptr/result_ptr fetched from memory API), timeline of state transitions, workflow context link if part of a workflow.",
+  "definitionOfDone": [
+    "JobDetailPage at /jobs/:id",
+    "Horizontal state machine visualization showing job lifecycle steps",
+    "Safety explain section: matched rule, reason, eval path, eval time",
+    "Request payload section (fetched via context_ptr from memory API)",
+    "Result payload section (fetched via result_ptr from memory API)",
+    "Timeline of state transitions with timestamps",
+    "Workflow context link if job belongs to a workflow run",
+    "Loading and error states",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/pages/JobDetailPage.tsx: Route /jobs/:id. Uses useJob(id) and useJobDecisions(id). Sections: (1) Header with job ID, type/topic, current state badge, safety decision badge. (2) State machine visualization: horizontal step indicator showing job lifecycle (submitted → safety_check → dispatched → running → succeeded/failed), current step highlighted. (3) Safety explain section: Card showing matched rule name, decision type, reason text, eval path (list of rules evaluated), eval time in ms. This is a KEY section. (4) Request payload: fetched via context_ptr from GET /api/v1/memory/:ptr, displayed as formatted JSON in a pre/code block. (5) Result payload: fetched via result_ptr similarly. (6) Timeline: chronological list of state transitions with timestamps and duration between each. (7) Workflow context: if job.workflowRunId exists, link to /workflows/:wfId/runs/:runId. Loading and error states for each section independently.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/JobDetailPage.tsx"
+      ],
+      "startedAt": "2026-02-07T00:53:22.723Z",
+      "completedAt": "2026-02-07T00:55:13.442Z",
+      "note": "Full job detail page with: header (ID, topic, pool, duration, status/safety badges), state machine, safety explain section, request/result payloads via memory API, timeline, workflow context link. Loading and error states.",
+      "modifiedFiles": [
+        "dashboard/src/pages/JobDetailPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Create dashboard/src/components/jobs/JobStateMachine.tsx: Horizontal step indicator component. Takes current status and renders all lifecycle steps as connected nodes. Current step highlighted with accent color, completed steps with success color, future steps muted. Reusable for job detail and potentially elsewhere.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/jobs/JobStateMachine.tsx"
+      ],
+      "startedAt": "2026-02-07T00:55:13.873Z",
+      "completedAt": "2026-02-07T00:55:20.420Z",
+      "note": "Horizontal 5-step lifecycle indicator: Submitted → Safety Check → Dispatched → Running → Complete. Color-coded: completed=success, current=accent (or danger for failed/cancelled), future=muted. Connector lines between nodes.",
+      "modifiedFiles": [
+        "dashboard/src/components/jobs/JobStateMachine.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Create dashboard/src/components/jobs/SafetyExplainCard.tsx: Card component displaying safety evaluation details. Props: decision (SafetyDecision type from api/types.ts). Shows: decision type as large badge, matched rule name, reason text, eval path as ordered list, eval time. Color-coded border based on decision type.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/jobs/SafetyExplainCard.tsx"
+      ],
+      "startedAt": "2026-02-07T00:55:21.079Z",
+      "completedAt": "2026-02-07T00:55:26.106Z",
+      "note": "Safety explain card with color-coded left border, large decision badge, matched rule, reason text, numbered eval path, eval time. Uses ShieldCheck icon.",
+      "modifiedFiles": [
+        "dashboard/src/components/jobs/SafetyExplainCard.tsx"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:55:26.553Z",
+      "completedAt": "2026-02-07T00:55:31.179Z",
+      "note": "tsc --noEmit passes clean."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 21,
+  "createdAt": "2026-02-06T23:48:29.441Z",
+  "updatedAt": "2026-02-07T20:05:47.765Z",
+  "planSubmittedAt": "2026-02-06T23:56:20.446Z",
+  "planApprovedAt": "2026-02-06T23:56:20.447Z"
+}

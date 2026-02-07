@@ -1,0 +1,28 @@
+{
+  "id": "task-202de272",
+  "epicId": "epic-06442149",
+  "title": "RunOverlayNode: Add Icons for New Job Node Types",
+  "description": "Update the RunOverlayNode component to display correct icons and accent colors for the 3 new job node types during workflow run visualization.\n\n**File (MODIFY):** `dashboard/src/components/workflows/dag/RunOverlayNode.tsx`\n\nAdd entries to `STEP_TYPE_ICONS` map:\n- `\"agent-task\"`: `<MessageSquare className=\"h-3.5 w-3.5\" />` (from lucide-react)\n- `\"pack-action\"`: `<Package className=\"h-3.5 w-3.5\" />`\n- `\"tool-call\"`: `<Wrench className=\"h-3.5 w-3.5\" />`\n\nKeep existing `\"job\"` entry as fallback.\n\nReuse same status overlays (green/red/blue/amber) — only the base icon changes per step type. No other changes needed to status rendering logic.\n\nImport `MessageSquare`, `Package`, `Wrench` from lucide-react.",
+  "definitionOfDone": [
+    "STEP_TYPE_ICONS includes agent-task with MessageSquare icon",
+    "STEP_TYPE_ICONS includes pack-action with Package icon",
+    "STEP_TYPE_ICONS includes tool-call with Wrench icon",
+    "Existing job icon preserved as fallback",
+    "Status overlays unchanged",
+    "TypeScript compiles with no errors"
+  ],
+  "taskRails": [],
+  "implementationPlan": [],
+  "status": "BACKLOG",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 7,
+  "createdAt": "2026-02-07T22:22:27.772Z",
+  "updatedAt": "2026-02-07T22:22:27.772Z"
+}

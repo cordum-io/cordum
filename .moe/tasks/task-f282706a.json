@@ -1,0 +1,114 @@
+{
+  "id": "task-f282706a",
+  "epicId": "epic-57debfb1",
+  "title": "Extended Scheduler Metrics",
+  "description": "Add missing operational metrics:\n- `scheduler_job_lock_wait_seconds` histogram — time spent acquiring job lock\n- `scheduler_dispatch_latency_seconds` histogram — time from job received to dispatched\n- `scheduler_active_goroutines` gauge — current HandlePacket goroutines\n- `scheduler_reconciler_stale_jobs` gauge — stale jobs found per reconcile tick\n\n**Files**: `core/controlplane/scheduler/engine.go`, `core/controlplane/scheduler/reconciler.go`",
+  "definitionOfDone": [
+    "scheduler_job_lock_wait_seconds histogram registered and observed",
+    "scheduler_dispatch_latency_seconds histogram registered and observed",
+    "scheduler_active_goroutines gauge incremented/decremented in HandlePacket",
+    "scheduler_reconciler_stale_jobs gauge set per reconcile tick",
+    "Existing tests pass",
+    "go vet passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Step 1: Add new methods to the Metrics interface in types.go\n\nAdd to `Metrics` interface:\n```go\nObserveJobLockWait(seconds float64)\nObserveDispatchLatency(topic string, seconds float64)\nSetActiveGoroutines(count int)\n```\n\nAdd to a new `ReconcilerMetrics` interface (or extend Metrics):\n```go\nSetStaleJobs(state string, count int)\n```\n\nAlternatively, add all to Metrics if reconciler already uses it. Check if Reconciler has a metrics field — it doesn't currently. Add one.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/types.go"
+      ],
+      "startedAt": "2026-02-07T01:12:17.345Z",
+      "completedAt": "2026-02-07T01:17:12.738Z",
+      "note": "Added 4 new methods to Metrics interface (ObserveJobLockWait, ObserveDispatchLatency, SetActiveGoroutines, SetStaleJobs) in both scheduler types.go and infra metrics.go. Added Prom fields (histogram, histogram vec, gauge, gauge vec) with registration. Added Noop stubs. Updated spyMetrics in pending_replayer_test.go. Added WithMetrics builder to Reconciler. Updated metrics_test.go assertions.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/types.go",
+        "core/controlplane/scheduler/reconciler.go",
+        "core/infra/metrics/metrics.go",
+        "core/infra/metrics/metrics_test.go",
+        "core/controlplane/scheduler/pending_replayer_test.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Step 2: Instrument withJobLock for lock wait time\n\nIn `engine.go` `withJobLock()`, record the time before the lock acquisition loop and observe after acquisition succeeds:\n```go\nlockStart := time.Now()\n// ... lock loop ...\nif e.metrics != nil {\n    e.metrics.ObserveJobLockWait(time.Since(lockStart).Seconds())\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ],
+      "startedAt": "2026-02-07T01:17:15.585Z",
+      "completedAt": "2026-02-07T01:17:31.655Z",
+      "note": "Instrumented withJobLock: record lockStart before loop, observe lock wait duration after acquisition succeeds.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Step 3: Instrument dispatch latency in processJob\n\nIn `engine.go` `processJob()`, record `dispatchStart := time.Now()` at function entry. After successful publish + state transition to DISPATCHED, observe:\n```go\nif e.metrics != nil {\n    e.metrics.ObserveDispatchLatency(topic, time.Since(dispatchStart).Seconds())\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ],
+      "startedAt": "2026-02-07T01:17:34.773Z",
+      "completedAt": "2026-02-07T01:18:10.269Z",
+      "note": "Added dispatchStart := time.Now() at processJob entry (after validation). Observe dispatch latency after successful publish + incJobsDispatched.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Step 4: Track active goroutines in HandlePacket\n\nIn `engine.go` `HandlePacket()`, after the stopped check, increment active goroutines gauge and defer decrement:\n```go\nif e.metrics != nil {\n    e.metrics.SetActiveGoroutines(1)  // or use Inc/Dec pattern\n}\ndefer func() {\n    if e.metrics != nil {\n        e.metrics.SetActiveGoroutines(-1)\n    }\n}()\n```\nNote: Consider using `IncActiveGoroutines`/`DecActiveGoroutines` instead of Set for atomicity.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ],
+      "startedAt": "2026-02-07T01:18:13.612Z",
+      "completedAt": "2026-02-07T01:18:43.028Z",
+      "note": "Added activeHandlers atomic.Int64 field to Engine. In HandlePacket, increment on entry with SetActiveGoroutines, decrement in deferred cleanup.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ]
+    },
+    {
+      "stepId": "step-5",
+      "description": "Step 5: Add metrics to Reconciler for stale jobs count\n\nAdd `metrics Metrics` field to Reconciler struct and `WithMetrics` builder. In `handleTimeouts()`, after listing stale jobs, set gauge:\n```go\nif r.metrics != nil {\n    r.metrics.SetStaleJobs(string(state), len(records))\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/reconciler.go"
+      ],
+      "startedAt": "2026-02-07T01:18:46.455Z",
+      "completedAt": "2026-02-07T01:19:01.475Z",
+      "note": "Instrumented handleTimeouts to call SetStaleJobs after listing stale records, reporting count per state (including 0 when none found).",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/reconciler.go"
+      ]
+    },
+    {
+      "stepId": "step-6",
+      "description": "Step 6: Verify all tests pass and go vet clean\n\nRun `go test ./core/controlplane/scheduler/... -count=3` and `go vet ./core/controlplane/scheduler/...`. Tests use nil metrics so new methods won't affect them.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:19:04.600Z",
+      "completedAt": "2026-02-07T01:19:21.440Z",
+      "note": "All tests pass: scheduler (1.910s) and metrics (0.625s). go vet clean for both packages."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 7,
+  "createdAt": "2026-02-07T00:33:30.156Z",
+  "updatedAt": "2026-02-07T01:21:07.011Z",
+  "planSubmittedAt": "2026-02-07T00:37:28.374Z",
+  "planApprovedAt": "2026-02-07T00:37:28.376Z"
+}

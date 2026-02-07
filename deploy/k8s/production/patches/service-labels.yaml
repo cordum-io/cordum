@@ -13,3 +13,43 @@ metadata:
   namespace: cordum
   labels:
     app: cordum-scheduler
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-context-engine
+  namespace: cordum
+  labels:
+    app: cordum-context-engine
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-safety-kernel
+  namespace: cordum
+  labels:
+    app: cordum-safety-kernel
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-workflow-engine
+  namespace: cordum
+  labels:
+    app: cordum-workflow-engine
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-dashboard
+  namespace: cordum
+  labels:
+    app: cordum-dashboard
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-redis
+  namespace: cordum
+  labels:
+    app: redis

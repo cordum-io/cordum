@@ -1,0 +1,76 @@
+{
+  "id": "task-13e83d7a",
+  "epicId": "epic-dbd90afa",
+  "title": "Add missing test cases for approvals and DLQ",
+  "description": "**Severity: LOW**\n\n**Files**: `core/controlplane/gateway/approvals_test.go`, `core/controlplane/gateway/dlq_test.go`\n\n**Issue**: Missing edge case tests: double-approve idempotency, concurrent approvals, DLQ retry with corrupted metadata, concurrent retries on same job. These are important correctness properties that should be verified.\n\n**Fix**: Add targeted test cases for these scenarios:\n- Double-approve: approve the same item twice, verify idempotent behavior\n- Concurrent approvals: use goroutines to approve simultaneously, verify no race\n- DLQ corrupted metadata: inject bad metadata, verify graceful handling\n- Concurrent DLQ retries: retry the same job from multiple goroutines simultaneously",
+  "definitionOfDone": [
+    "Double-approve idempotency test added",
+    "Concurrent approval race test added",
+    "DLQ corrupted metadata test added",
+    "Concurrent DLQ retry test added",
+    "All tests pass under -race flag"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add `TestApproveJobDoubleApproveIdempotent` to approvals_test.go: approve a job, then approve the same job again. Verify the second call returns 409 Conflict with \"job not awaiting approval\" since the state moved to `pending` after the first approval.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/approvals_test.go"
+      ],
+      "startedAt": "2026-02-05T23:35:10.986Z",
+      "completedAt": "2026-02-05T23:40:14.146Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Add `TestApproveJobConcurrentRace` to approvals_test.go: set up a job in approval state, launch N goroutines (e.g. 10) that all call `handleApproveJob` concurrently. Verify exactly one succeeds (200) and the rest get 409. Use `sync.WaitGroup` and `atomic` counters. Run with `-race`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/approvals_test.go"
+      ],
+      "startedAt": "2026-02-05T23:40:14.611Z",
+      "completedAt": "2026-02-05T23:40:18.713Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add `TestRetryDLQConcurrent` to dlq_test.go: add a DLQ entry with context, launch N goroutines that all call `handleRetryDLQ` concurrently. Verify no panics or data races. Use `-race` flag.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/dlq_test.go"
+      ],
+      "startedAt": "2026-02-05T23:40:19.100Z",
+      "completedAt": "2026-02-05T23:40:22.652Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Add `TestRetryDLQMissingContext` to dlq_test.go: add a DLQ entry but don't set up the context payload in memStore. Call `handleRetryDLQ` and verify it returns a graceful error (not a panic or 500 with unhelpful message).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/dlq_test.go"
+      ],
+      "startedAt": "2026-02-05T23:40:23.061Z",
+      "completedAt": "2026-02-05T23:40:26.733Z"
+    },
+    {
+      "stepId": "step-5",
+      "description": "Run `go test -race -count=3 ./core/controlplane/gateway/...` to verify all tests pass without races.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:40:27.049Z",
+      "completedAt": "2026-02-05T23:41:05.768Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 14,
+  "createdAt": "2026-02-05T22:15:50.455Z",
+  "updatedAt": "2026-02-05T23:43:03.054Z",
+  "priority": "MEDIUM"
+}

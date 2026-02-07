@@ -1,0 +1,53 @@
+{
+  "id": "task-4a5b4d5b",
+  "epicId": "epic-06442149",
+  "title": "Template library list",
+  "description": "Table/cards showing: name, step count, last run time, success rate, trigger type. Click navigates to workflow detail.",
+  "definitionOfDone": [
+    "WorkflowsPage listing all workflow templates",
+    "Table/card view with: name, step count, last run time, success rate %, trigger type",
+    "Click navigates to /workflows/:id",
+    "Create new workflow button linking to builder",
+    "Empty state",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/pages/WorkflowsPage.tsx: Template library list. Table/card hybrid showing: name, step count, last run time (relative), success rate (% with color), trigger type badge. Click row navigates to /workflows/:id. 'Create Workflow' button at top right navigating to /workflows/new. Empty state when no workflows exist. Uses useWorkflows() hook with pagination.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/WorkflowsPage.tsx"
+      ],
+      "startedAt": "2026-02-07T00:27:56.853Z",
+      "completedAt": "2026-02-07T00:28:33.184Z",
+      "modifiedFiles": [
+        "dashboard/src/pages/WorkflowsPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:28:33.973Z",
+      "completedAt": "2026-02-07T00:28:44.732Z",
+      "note": "tsc --noEmit passed with zero errors"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 26,
+  "createdAt": "2026-02-06T23:48:39.263Z",
+  "updatedAt": "2026-02-07T20:07:25.330Z",
+  "planSubmittedAt": "2026-02-06T23:57:10.169Z",
+  "planApprovedAt": "2026-02-06T23:57:10.170Z"
+}

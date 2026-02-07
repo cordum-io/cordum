@@ -16,9 +16,26 @@ patches:
   - path: patches/delete-redis-deployment.yaml
   - path: patches/tls-env.yaml
   - path: patches/service-labels.yaml
+  - path: patches/pod-anti-affinity.yaml
+
+images:
+  - name: cordum-context-engine
+    newTag: v0.1.0
+  - name: cordum-safety-kernel
+    newTag: v0.1.0
+  - name: cordum-scheduler
+    newTag: v0.1.0
+  - name: cordum-api-gateway
+    newTag: v0.1.0
+  - name: cordum-workflow-engine
+    newTag: v0.1.0
+  - name: cordum-dashboard
+    newTag: v0.1.0
 
 replicas:
   - name: cordum-api-gateway
     count: 2
   - name: cordum-safety-kernel
+    count: 2
+  - name: cordum-scheduler
     count: 2

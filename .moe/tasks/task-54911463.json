@@ -1,0 +1,69 @@
+{
+  "id": "task-54911463",
+  "epicId": "epic-e24aac31",
+  "title": "Approval detail modal",
+  "description": "Full job context/payload, explain() output, similar past approvals, diff view. Actions: approve with comment, reject with required reason.",
+  "definitionOfDone": [
+    "Click approval card opens detail modal",
+    "Modal shows: full job context/payload, safety explain() output, similar past approvals (last approved Xh ago)",
+    "Approve button with optional comment",
+    "Reject button with required reason field",
+    "Success/error feedback after action",
+    "Modal closes and list refreshes after action",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/approvals/ApprovalDetailModal.tsx: Modal overlay (similar pattern to CommandPalette). Opens when approval card is clicked. Content: (1) Job context: type, topic, capabilities as badges, metadata as formatted JSON (in pre block — no dangerouslySetInnerHTML for XSS safety). (2) Safety explain: matched rule, decision reason, eval path. (3) Similar past approvals: 'Last approved Xh ago by [actor]' if available from history API. (4) Approve button (success variant) with optional comment textarea. (5) Reject button (danger variant) with required reason textarea (Zod validation: reason min 1 char). On action: call useApproveJob() or useRejectJob() mutation, show success/error feedback, close modal, list auto-refreshes via cache invalidation.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/approvals/ApprovalDetailModal.tsx"
+      ],
+      "startedAt": "2026-02-07T00:45:02.164Z",
+      "completedAt": "2026-02-07T00:45:46.431Z",
+      "note": "Created ApprovalDetailModal with job context display (badges + JSON pre), safety decision section (matched rule + reason), history section, approve with optional comment, reject with required reason, success/error feedback, auto-close on success.",
+      "modifiedFiles": [
+        "dashboard/src/components/approvals/ApprovalDetailModal.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Wire ApprovalDetailModal into ApprovalsPage.tsx: click card sets selectedApprovalId, opens modal. Modal onClose clears selection.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/ApprovalsPage.tsx"
+      ],
+      "startedAt": "2026-02-07T00:45:49.998Z",
+      "completedAt": "2026-02-07T00:46:27.984Z",
+      "note": "Wired ApprovalDetailModal into ApprovalsPage. Clicking a card sets selected approval, opens modal. Modal onClose clears selection. Cards now have cursor-pointer and onClick prop.",
+      "modifiedFiles": [
+        "dashboard/src/pages/ApprovalsPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:46:31.751Z",
+      "completedAt": "2026-02-07T00:47:08.252Z",
+      "note": "tsc --noEmit passes. Fixed RejectInput to use reason field (not comment)."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 45,
+  "createdAt": "2026-02-06T23:49:50.620Z",
+  "updatedAt": "2026-02-07T20:02:48.155Z",
+  "planSubmittedAt": "2026-02-06T23:59:14.765Z",
+  "planApprovedAt": "2026-02-06T23:59:14.767Z"
+}

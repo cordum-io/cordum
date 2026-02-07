@@ -1,0 +1,66 @@
+{
+  "id": "task-87ac9ffc",
+  "epicId": "epic-04065074",
+  "title": "Extract job handlers into gateway_jobs.go",
+  "description": "Move all job-related handlers from gateway_handlers.go into a new gateway_jobs.go file. Functions to move: handleListJobs, handleGetJob, handleListJobDecisions, handleCancelJob, handleRemediateJob, handleSubmitJobHTTP, handleGetMemory, handlePutArtifact, handleGetArtifact, handleGetTrace (~lines 39-1260 covering workers/status, jobs, memory, artifacts, traces). Also move handleGetWorkers and handleStatus since they are job-domain (worker heartbeats). Include any private types/consts defined in that range that are only used by these handlers (e.g., artifactPutRequest, request structs). Keep package gateway. Keep imports minimal — only what these functions need.",
+  "definitionOfDone": [
+    "gateway_jobs.go exists with all job/artifact/trace/worker/status handlers",
+    "Functions removed from gateway_handlers.go",
+    "go build ./cmd/cordum-api-gateway succeeds",
+    "No duplicate function definitions"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create gateway_jobs.go with package gateway declaration and required imports. Copy lines 37-1282 from gateway_handlers.go (the comment marker '// --- Handlers ---' through handleGetTrace). This includes: handleGetWorkers (39-52), handleStatus (54-118), handleListJobs (120-211), handleGetJob (213-375), handleListJobDecisions (377-406), handleGetMemory (408-607), artifactPutRequest struct (609-615), handlePutArtifact (617-692), handleGetArtifact (694-746), handleCancelJob (748-825), remediateJobRequest struct (827-829), handleRemediateJob (831-993), handleSubmitJobHTTP (995-1259), handleGetTrace (1261-1282). Imports needed: context, encoding/base64, encoding/json, errors, fmt, io, net/http, strconv, strings, time, unicode/utf8, plus cordum packages: configsvc, scheduler, artifacts, buildinfo, bus, logging, memory, secrets, capsdk, pb, wf, uuid, redis, protojson, proto, timestamppb.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_jobs.go"
+      ],
+      "startedAt": "2026-02-06T23:17:26.653Z",
+      "completedAt": "2026-02-06T23:20:57.771Z",
+      "note": "Created gateway_jobs.go with all job/artifact/trace/worker/status handlers and their associated types (artifactPutRequest, remediateJobRequest).",
+      "modifiedFiles": [
+        "core/controlplane/gateway/gateway_jobs.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Remove lines 37-1282 from gateway_handlers.go (everything from '// --- Handlers ---' comment through end of handleGetTrace). Keep the package declaration, remaining imports (prune unused), and all other handlers. The file should now start with the workflow section around line 1284.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_handlers.go"
+      ],
+      "startedAt": "2026-02-06T23:20:58.234Z",
+      "completedAt": "2026-02-06T23:22:11.403Z",
+      "note": "Removed lines 37-1282 (job handlers) from gateway_handlers.go and updated imports to only include what the remaining code needs.",
+      "modifiedFiles": [
+        "core/controlplane/gateway/gateway_handlers.go"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run go build ./cmd/cordum-api-gateway to verify compilation. Fix any import issues (unused imports in either file, missing imports in gateway_jobs.go). The build must pass cleanly.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T23:22:11.885Z",
+      "completedAt": "2026-02-06T23:27:11.031Z",
+      "note": "go build ./cmd/cordum-api-gateway passes cleanly. All 12 job handlers verified in gateway_jobs.go, 0 in gateway_handlers.go. No duplicates."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 1,
+  "createdAt": "2026-02-06T23:15:34.184Z",
+  "updatedAt": "2026-02-06T23:27:46.129Z",
+  "planSubmittedAt": "2026-02-06T23:17:07.300Z",
+  "planApprovedAt": "2026-02-06T23:17:07.301Z"
+}

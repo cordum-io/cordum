@@ -1,0 +1,95 @@
+{
+  "id": "task-f121e4c0",
+  "epicId": "epic-411cf33d",
+  "title": "Visual Rule Builder",
+  "description": "Each rule reads like a sentence: \"When a job has capabilities [X] and risk tags [Y] then [Decision] because [reason]\". Build rules by: + Add Rule → pick match conditions from dropdowns → choose decision → type reason. AND/OR logic. Drag-and-drop priority ordering. Conflict detection. Live stats inline.",
+  "definitionOfDone": [
+    "Visual rule builder as DEFAULT policy editing interface",
+    "Each rule rendered as a readable card/sentence",
+    "Add Rule button opens builder: match conditions (capabilities dropdown, risk tags dropdown), decision selector (4-option color-coded: Allow/Deny/Require Approval/Throttle), reason text input",
+    "AND/OR logic toggle per rule (all of these / any of these)",
+    "Drag-and-drop priority ordering (first match wins)",
+    "Live stats inline per rule (triggered N times in 24h + sparkline)",
+    "Conflict detection: warning if higher-priority rule shadows this one",
+    "Save changes via API",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/policy/RuleCard.tsx: Single rule rendered as a readable sentence card. Format: 'When a job has capabilities [cap1] [cap2] and risk tags [tag1] then [Decision] because [reason]'. Capabilities and risk tags as inline Badge components. Decision as large color-coded Badge. Reason as italic text. Inline stats: 'triggered N times in 24h' + mini sparkline. Drag handle on left for priority reordering. Edit button opens inline editing mode. Delete button with confirmation.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/policy/RuleCard.tsx"
+      ],
+      "startedAt": "2026-02-07T00:14:28.762Z",
+      "completedAt": "2026-02-07T00:15:03.930Z",
+      "modifiedFiles": [
+        "dashboard/src/components/policy/RuleCard.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Create dashboard/src/components/policy/RuleEditor.tsx: Inline rule editor form. Match conditions: capabilities dropdown (multi-select, options populated from API or packs), risk tags dropdown (multi-select). Logic toggle: 'all of these' (AND) / 'any of these' (OR) switch. Decision selector: 4 large color-coded buttons (Allow/green, Deny/red, Require Approval/yellow, Throttle/orange) — only one selected. Reason text input. Uses React Hook Form + Zod validation (decision required, at least one match condition). Save/cancel buttons.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/policy/RuleEditor.tsx"
+      ],
+      "startedAt": "2026-02-07T00:15:04.616Z",
+      "completedAt": "2026-02-07T00:15:43.116Z",
+      "modifiedFiles": [
+        "dashboard/src/components/policy/RuleEditor.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Create dashboard/src/components/policy/VisualRuleBuilder.tsx: Container component. Uses usePolicyRules(). Renders ordered list of RuleCard components. 'Add Rule' button at bottom opens empty RuleEditor. Drag-and-drop reordering via HTML5 drag events (onDragStart/onDragOver/onDrop) — updates rule priority order. On reorder, calls useReorderPolicyRules() mutation. Conflict detection: after reorder, scan rules top-to-bottom; if a lower rule's match criteria is a subset of a higher rule's, show warning badge 'This rule may never fire — rule #N matches first'.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/policy/VisualRuleBuilder.tsx"
+      ],
+      "startedAt": "2026-02-07T00:15:43.565Z",
+      "completedAt": "2026-02-07T00:16:16.675Z",
+      "modifiedFiles": [
+        "dashboard/src/components/policy/VisualRuleBuilder.tsx"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Integrate VisualRuleBuilder as 'Builder' tab (DEFAULT active tab) in PolicyPage.tsx.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ],
+      "startedAt": "2026-02-07T00:16:17.168Z",
+      "completedAt": "2026-02-07T00:16:44.404Z",
+      "modifiedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-5",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:16:44.891Z",
+      "completedAt": "2026-02-07T00:16:58.985Z",
+      "note": "tsc --noEmit passes clean."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "CRITICAL",
+  "order": 76,
+  "createdAt": "2026-02-06T23:49:21.786Z",
+  "updatedAt": "2026-02-07T20:02:09.624Z",
+  "planSubmittedAt": "2026-02-06T23:58:29.788Z",
+  "planApprovedAt": "2026-02-06T23:58:29.789Z"
+}

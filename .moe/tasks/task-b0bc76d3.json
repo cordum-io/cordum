@@ -1,0 +1,43 @@
+{
+  "id": "task-b0bc76d3",
+  "epicId": "epic-dbd90afa",
+  "title": "Handle lock release errors in pack operations",
+  "description": "**Severity: HIGH**\n\n**File**: `cmd/cordumctl/pack.go:1188-1193`\n\n**Issue**: Lock release errors are silently ignored in `acquirePackLocks()`:\n```go\nif err := client.acquireLock(ctx, packLock, owner, 60*time.Second); err != nil {\n    _ = client.releaseLock(ctx, global, owner)  // line 1188\n    return func() {}, err\n}\nreturn func() {\n    _ = client.releaseLock(ctx, packLock, owner)  // line 1192\n    _ = client.releaseLock(ctx, global, owner)    // line 1193\n}, nil\n```\n\nIf lock release fails, the resource remains locked, potentially blocking all future pack operations until the lock TTL expires.\n\n**Fix**: Log warnings on lock release failures so operators know when manual intervention may be needed.",
+  "definitionOfDone": [
+    "Lock release errors logged with slog.Warn including lock name and owner",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Replace the 3 blank-identifier lock release calls in `acquirePackLocks` (lines 1188, 1192, 1193) with `if err := client.releaseLock(...); err != nil { slog.Warn(\"pack: failed to release lock\", \"lock\", lockName, \"owner\", owner, \"error\", err) }`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/pack.go"
+      ],
+      "startedAt": "2026-02-06T00:06:41.973Z",
+      "completedAt": "2026-02-06T00:07:14.235Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Run `go test ./cmd/cordumctl/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:07:14.748Z",
+      "completedAt": "2026-02-06T00:07:26.098Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 23,
+  "createdAt": "2026-02-05T22:26:33.154Z",
+  "updatedAt": "2026-02-06T00:26:15.362Z",
+  "priority": "MEDIUM"
+}

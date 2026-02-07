@@ -1,0 +1,63 @@
+{
+  "id": "task-d8ebfc97",
+  "epicId": "epic-decda99c",
+  "title": "Kill /runs standalone route and clean up references",
+  "description": "Remove the standalone `/runs` route now that all run viewing is integrated into `/workflows`. This is the final cleanup task.\n\n**Changes:**\n\n**App.tsx:**\n- Delete `const RunsPage = lazy(() => import(\"./pages/RunsPage\"))` \n- Delete `<Route path=\"/runs\" element={<RunsPage />} />`\n- The `/runs/:id` route was never standalone (runs are at `/workflows/:id/runs/:runId`)\n\n**AppShell.tsx:**\n- Remove the nav item `{ path: \"/runs\", label: \"Runs\", icon: Activity }` from sidebar\n\n**CommandPalette.tsx:**\n- Update any entry returning `/runs` to point to `/workflows` instead\n\n**RunsPage.tsx:**\n- Delete `dashboard/src/pages/RunsPage.tsx` entirely — its content is replaced by ActiveRunsStrip + WorkflowDetailPage run history\n\n**Grep sweep:** Search entire dashboard/src for remaining references to `/runs` as a standalone path (not `/workflows/:id/runs/:runId` which is valid). Fix or remove any found.\n\n**Supersedes** task-e340773f from epic-06442149 (the simpler tab-merge approach that this redesign replaces).",
+  "definitionOfDone": [
+    "RunsPage.tsx deleted",
+    "/runs route removed from App.tsx",
+    "RunsPage lazy import removed from App.tsx",
+    "Runs nav item removed from AppShell sidebar",
+    "CommandPalette /runs reference updated",
+    "No dead references to standalone /runs in codebase",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Remove /runs route and imports from `App.tsx`.\n\nDelete the `RunsPage` lazy import line. Delete the `<Route path=\"/runs\" ...>` element. Keep `/workflows/:id/runs/:runId` route (that's valid).\n\nRemove Runs nav item from `AppShell.tsx` sidebar nav array (if present — exploration showed it may already be absent, but verify and remove if found).\n\nUpdate `CommandPalette` (if it exists) to redirect any `/runs` entry to `/workflows`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/App.tsx",
+        "dashboard/src/components/layout/AppShell.tsx"
+      ],
+      "startedAt": "2026-02-07T21:33:05.506Z",
+      "completedAt": "2026-02-07T21:33:21.403Z",
+      "note": "Removed unused RunDetailPage lazy import from App.tsx (line 21). No standalone /runs route existed (already removed in prior work). AppShell and CommandPalette had no /runs references.",
+      "modifiedFiles": [
+        "dashboard/src/App.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Delete `dashboard/src/pages/RunsPage.tsx` entirely. Delete `dashboard/src/components/workflows/RunsTab.tsx` (no longer imported after WorkflowsPage redesign).\n\nGrep sweep: search dashboard/src for `\"/runs\"` (standalone, not `/workflows/*/runs/`) and fix any remaining dead references. Check imports, links, navigate() calls.\n\nRun `node ./node_modules/typescript/bin/tsc --noEmit` to confirm no broken imports.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/RunsPage.tsx",
+        "dashboard/src/components/workflows/RunsTab.tsx"
+      ],
+      "startedAt": "2026-02-07T21:33:22.048Z",
+      "completedAt": "2026-02-07T21:34:08.503Z",
+      "note": "Deleted RunsTab.tsx and RunDetailPage.tsx. No standalone /runs references remain in codebase. Grep sweep clean. tsc clean.",
+      "modifiedFiles": [
+        "dashboard/src/components/workflows/RunsTab.tsx",
+        "dashboard/src/pages/RunDetailPage.tsx"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 15,
+  "createdAt": "2026-02-07T21:07:06.802Z",
+  "updatedAt": "2026-02-07T21:38:02.518Z",
+  "planSubmittedAt": "2026-02-07T21:16:20.443Z",
+  "planApprovedAt": "2026-02-07T21:16:20.445Z"
+}

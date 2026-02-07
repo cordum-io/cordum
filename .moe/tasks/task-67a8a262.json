@@ -1,0 +1,63 @@
+{
+  "id": "task-67a8a262",
+  "epicId": "epic-dbd90afa",
+  "title": "URL-encode resource IDs in pack API client to prevent path traversal",
+  "description": "**Severity: HIGH**\n\n**File**: `cmd/cordumctl/pack.go` — lines 1670, 1685, 1690, 1701\n\n**Issue**: Resource IDs (schema IDs, workflow IDs) are concatenated directly into URL paths without encoding:\n```go\nc.doJSON(ctx, http.MethodGet, \"/api/v1/schemas/\"+id, nil, &resp)\nc.doJSON(ctx, http.MethodDelete, \"/api/v1/schemas/\"+id, nil, nil)\nc.doJSON(ctx, http.MethodGet, \"/api/v1/workflows/\"+id, nil, &resp)\nc.doJSON(ctx, http.MethodDelete, \"/api/v1/workflows/\"+id, nil, nil)\n```\n\nIf resource IDs contain special characters (e.g., `../`, `%2F`), this could cause path traversal or access to unintended API endpoints.\n\n**Fix**: Use `url.PathEscape(id)` for all resource ID path concatenations.",
+  "definitionOfDone": [
+    "All resource IDs are URL-encoded before path concatenation",
+    "Add test with IDs containing special characters (../, spaces, unicode)",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add `net/url` to the import block in `cmd/cordumctl/pack.go` (if not already imported).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/pack.go"
+      ],
+      "startedAt": "2026-02-06T00:06:32.298Z",
+      "completedAt": "2026-02-06T00:06:52.073Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Replace all 4 instances of raw ID concatenation with `url.PathEscape(id)`:\n- Line 1670: `\"/api/v1/schemas/\"+url.PathEscape(id)`\n- Line 1685: `\"/api/v1/schemas/\"+url.PathEscape(id)`\n- Line 1690: `\"/api/v1/workflows/\"+url.PathEscape(id)`\n- Line 1701: `\"/api/v1/workflows/\"+url.PathEscape(id)`",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/pack.go"
+      ],
+      "startedAt": "2026-02-06T00:06:52.525Z",
+      "completedAt": "2026-02-06T00:07:39.870Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add a unit test in pack_test.go (or a new file) that verifies `url.PathEscape` is applied by testing with IDs containing `../`, spaces, and slashes. Use a mock HTTP server to verify the escaped path is sent.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/pack_test.go"
+      ],
+      "startedAt": "2026-02-06T00:07:40.431Z",
+      "completedAt": "2026-02-06T00:09:32.660Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Run `go test ./cmd/cordumctl/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "completedAt": "2026-02-06T00:09:36.689Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 22,
+  "createdAt": "2026-02-05T22:26:27.899Z",
+  "updatedAt": "2026-02-06T00:25:50.746Z",
+  "priority": "MEDIUM"
+}

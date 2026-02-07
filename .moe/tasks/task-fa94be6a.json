@@ -1,0 +1,54 @@
+{
+  "id": "task-fa94be6a",
+  "epicId": "epic-da8a6382",
+  "title": "Fix NATS poison pill handling — don't ACK unparseable messages",
+  "description": "**Bug**: `core/infra/bus/nats.go:148-168` — When a message fails to unmarshal (poison pill), it's ACKed and lost forever. Should either NAK with delay, send to DLQ, or log and term-ACK.\n\n**Fix**: Distinguish unmarshal errors from handler errors. Unmarshal failures should go to DLQ or be NAKed with bounded retries.\n\n**Files**: `core/infra/bus/nats.go`",
+  "definitionOfDone": [
+    "Unparseable messages are not silently ACKed",
+    "Poison pills either go to DLQ or are NAKed with max retries",
+    "Test covers malformed message scenario"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Modify the message callback in nats.go (lines 148-169) to distinguish unmarshal errors from handler errors. Change the unmarshal error path from ACK to NAK with delay:\n\n```go\ncb := func(msg *nats.Msg) {\n    var packet pb.BusPacket\n    if err := proto.Unmarshal(msg.Data, &packet); err != nil {\n        log.Printf(\"nats bus: poison pill - failed to unmarshal packet: %v\", err)\n        // NAK with delay instead of ACK — gives NATS a chance to redeliver\n        // After max redeliveries (configured on the consumer), NATS moves to DLQ\n        if nakErr := msg.NakWithDelay(5 * time.Second); nakErr != nil {\n            log.Printf(\"nats bus: failed to NAK poison pill: %v\", nakErr)\n        }\n        return\n    }\n    // ... rest of handler unchanged\n}\n```\n\nThis ensures unparseable messages are retried (with backoff) instead of silently lost. NATS JetStream consumers have a MaxDeliver setting that moves messages to the dead letter queue after N attempts.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/infra/bus/nats.go"
+      ],
+      "startedAt": "2026-02-06T00:12:13.483Z",
+      "completedAt": "2026-02-06T00:12:57.151Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Also add error logging for the ACK/NAK calls that currently use `_ =`:\n```go\nif err := msg.Ack(); err != nil {\n    log.Printf(\"nats bus: ack failed: %v\", err)\n}\n```\nApply to all 3 ACK calls (lines 152, 165, 168) and the NAK calls (lines 158, 160).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/infra/bus/nats.go"
+      ],
+      "startedAt": "2026-02-06T00:12:57.635Z",
+      "completedAt": "2026-02-06T00:13:02.639Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run `go test ./core/infra/bus/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:13:03.232Z",
+      "completedAt": "2026-02-06T00:13:17.211Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 11,
+  "reopenReason": "Adding missing tests required by DoD: \"Test covers malformed message scenario\"",
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 11,
+  "createdAt": "2026-02-05T23:42:35.996Z",
+  "updatedAt": "2026-02-07T18:36:24.363Z"
+}

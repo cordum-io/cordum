@@ -29,6 +29,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/protobuf/proto"
 )
@@ -109,6 +111,9 @@ func Run(cfg *config.Config) error {
 
 	grpcServer := grpc.NewServer(serverCreds)
 	pb.RegisterSafetyKernelServer(grpcServer, srv)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(grpcServer, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	if env.Bool(env.EnvGRPCReflection) {
 		reflection.Register(grpcServer)
 	}

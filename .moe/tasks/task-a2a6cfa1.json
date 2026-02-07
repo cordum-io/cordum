@@ -1,0 +1,48 @@
+{
+  "id": "task-a2a6cfa1",
+  "epicId": "epic-28f6937e",
+  "title": "DLQ API hooks + types",
+  "description": "useDLQ(), useRetryDLQ(), useDeleteDLQ().",
+  "definitionOfDone": [
+    "useDLQ() list DLQ entries with pagination",
+    "useRetryDLQ() mutation (retry single or batch)",
+    "useDeleteDLQ() mutation (delete/acknowledge single or batch)",
+    "DLQEntry type in api/types.ts if not defined",
+    "All in hooks/useDLQ.ts",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/hooks/useDLQ.ts: useDLQ(filters?) fetching GET /api/v1/dlq with pagination. useRetryDLQ() mutation (POST /api/v1/dlq/:id/retry, accepts optional pool override). useRetryDLQBatch() mutation (POST /api/v1/dlq/retry with body { ids: string[] }). useDeleteDLQ() mutation (DELETE /api/v1/dlq/:id). useDeleteDLQBatch() mutation (POST /api/v1/dlq/delete with body { ids: string[] }). All mutations invalidate ['dlq'] and ['dlq', 'nav'] caches.",
+      "status": "IN_PROGRESS",
+      "affectedFiles": [
+        "dashboard/src/hooks/useDLQ.ts"
+      ],
+      "startedAt": "2026-02-07T00:22:19.877Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "completedAt": "2026-02-07T00:24:02.817Z",
+      "note": "tsc --noEmit passed with zero errors"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 54,
+  "createdAt": "2026-02-06T23:50:14.635Z",
+  "updatedAt": "2026-02-07T20:03:18.965Z",
+  "planSubmittedAt": "2026-02-07T00:00:08.200Z",
+  "planApprovedAt": "2026-02-07T00:00:08.202Z"
+}

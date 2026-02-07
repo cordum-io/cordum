@@ -1,0 +1,45 @@
+{
+  "id": "task-b6c4f04b",
+  "epicId": "epic-da8a6382",
+  "title": "Fix Redis pipeline error handling in artifacts and job store",
+  "description": "**Bug**: Multiple locations use `_, _ = pipe.Exec(ctx)` ignoring pipeline errors:\n- `core/infra/artifacts/redis_store.go:114`\n- `core/infra/memory/job_store.go:382, 1263`\n- `core/infra/memory/dlq_store.go:90, 136`\n\n**Fix**: Check pipeline exec errors and propagate or log them.\n\n**Files**: `core/infra/artifacts/redis_store.go`, `core/infra/memory/job_store.go`, `core/infra/memory/dlq_store.go`",
+  "definitionOfDone": [
+    "All pipe.Exec() calls check and handle errors",
+    "No silent _ = pipe.Exec() remains in these files"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Replace `_, _ = pipe.Exec(ctx)` with logged error checks in all 5 locations. These are all read-pipeline patterns where individual command results are checked after exec, so partial results are acceptable but errors should be visible:\n\n```go\nif _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {\n    slog.Warn(\"redis pipeline exec\", \"op\", \"<operation>\", \"error\", err)\n}\n```\n\nLocations:\n- `core/infra/artifacts/redis_store.go:114` — op: \"get_artifact\"\n- `core/infra/memory/job_store.go:382` — op: \"build_job_records\"\n- `core/infra/memory/job_store.go:1263` — op: \"get_trace_jobs\"\n- `core/infra/memory/dlq_store.go:90` — op: \"list_dlq\"\n- `core/infra/memory/dlq_store.go:136` — op: \"list_dlq_by_score\"",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/infra/artifacts/redis_store.go",
+        "core/infra/memory/job_store.go",
+        "core/infra/memory/dlq_store.go"
+      ],
+      "startedAt": "2026-02-06T00:13:09.539Z",
+      "completedAt": "2026-02-06T00:14:40.320Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Run `go test ./core/infra/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:14:40.845Z",
+      "completedAt": "2026-02-06T00:14:54.786Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 12,
+  "createdAt": "2026-02-05T23:42:39.635Z",
+  "updatedAt": "2026-02-07T18:36:52.907Z"
+}

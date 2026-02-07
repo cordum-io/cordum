@@ -1,0 +1,52 @@
+{
+  "id": "task-847c2047",
+  "epicId": "epic-411cf33d",
+  "title": "Add policy compliance metrics section to PolicyPage overview",
+  "description": "PolicyPage overview tab shows bundle cards but no aggregate compliance metrics.\n\n**Implementation:**\n- Add a metrics row above the bundle cards showing: total rules across bundles, total snapshots, last publish time\n- Use existing `usePolicyBundles()` and `usePolicySnapshots()` hooks to derive counts\n- Use MetricCard component from `components/ui/` for consistent styling\n- Calculate: total rule count (sum of rules per bundle), active bundles count, snapshot count\n\n**Files:** `dashboard/src/pages/PolicyPage.tsx`",
+  "definitionOfDone": [
+    "Metrics row shows total rules, active bundles, snapshot count",
+    "Uses existing hook data (no new API calls)",
+    "MetricCard styling matches homepage pattern",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Update dashboard/src/pages/PolicyPage.tsx: In the overview tab (line 260-277), add a MetricCard grid row above the bundle cards grid. Import MetricCard from '../components/MetricCard' and usePolicySnapshots from '../hooks/usePolicies'. Derive from existing data: (1) Total Rules = bundles.reduce((sum, b) => sum + b.rules.length, 0), (2) Active Bundles = bundles.filter(b => b.enabled !== false).length, (3) Snapshots = snapshotsData?.items?.length ?? 0, (4) Last Published = most recent bundle.publishedAt formatted with timeAgo(). Render as 4-column MetricCard grid matching HomePage pattern. Add lucide icons (Shield, Layers, History, Clock).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ],
+      "startedAt": "2026-02-07T20:35:13.707Z",
+      "completedAt": "2026-02-07T20:36:04.136Z",
+      "note": "Added MetricCard grid row above bundle cards in overview tab: Total Rules (sum across bundles), Active Bundles (enabled count / total), Snapshots (from usePolicySnapshots), Last Published (most recent publishedAt via timeAgo). Imported MetricCard, usePolicySnapshots, Clock icon.",
+      "modifiedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run node ./node_modules/typescript/bin/tsc --noEmit from dashboard/.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T20:36:04.268Z",
+      "completedAt": "2026-02-07T20:36:17.024Z",
+      "note": "tsc --noEmit passes with zero errors."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 81,
+  "createdAt": "2026-02-07T18:43:18.774Z",
+  "updatedAt": "2026-02-07T20:37:19.291Z",
+  "planSubmittedAt": "2026-02-07T20:06:47.919Z",
+  "planApprovedAt": "2026-02-07T20:06:47.921Z"
+}

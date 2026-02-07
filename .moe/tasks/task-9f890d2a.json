@@ -1,0 +1,54 @@
+{
+  "id": "task-9f890d2a",
+  "epicId": "epic-02364879",
+  "title": "Installed packs grid",
+  "description": "Cards: name, version, status, capabilities provided, job count (24h). Uninstall action.",
+  "definitionOfDone": [
+    "PacksPage with card grid of installed packs",
+    "Each card: name, version, status badge, capabilities list (as badges), job count (24h)",
+    "Uninstall button with confirmation dialog",
+    "Responsive grid (2 cols mobile, 3-4 cols desktop)",
+    "Empty state",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/pages/PacksPage.tsx: Installed packs card grid. Uses usePacks(). Tab toggle: Installed / Marketplace. Installed tab: responsive card grid (2 cols mobile, 3-4 cols desktop). Each card (Card component): pack name (CardTitle), version badge, status badge (StatusBadge), capabilities as Badge list, job count 24h. Uninstall button (danger ghost) with ConfirmDialog. Empty state: 'No packs installed — browse the marketplace'.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/PacksPage.tsx"
+      ],
+      "startedAt": "2026-02-07T00:33:19.440Z",
+      "completedAt": "2026-02-07T00:34:54.936Z",
+      "note": "Built PacksPage with card grid, status badge, capability badges, uninstall button with confirmation dialog, empty state, and responsive grid (1/2/3/4 cols). Job count 24h shows dash since Pack type has no job count field — needs backend support.",
+      "modifiedFiles": [
+        "dashboard/src/pages/PacksPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:34:58.105Z",
+      "completedAt": "2026-02-07T00:35:08.449Z",
+      "note": "tsc --noEmit passes with zero errors."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 60,
+  "createdAt": "2026-02-06T23:50:29.540Z",
+  "updatedAt": "2026-02-07T20:03:25.711Z",
+  "planSubmittedAt": "2026-02-07T00:00:28.123Z",
+  "planApprovedAt": "2026-02-07T00:00:28.125Z"
+}

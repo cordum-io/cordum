@@ -1,102 +1,74 @@
+import type { ComponentType, SVGProps } from "react";
 import {
-  AlertOctagon,
-  AlertTriangle,
-  CheckCircle2,
-  CircleDot,
+  CheckCircle,
   Clock,
-  PauseCircle,
-  PlayCircle,
-  ShieldAlert,
-  ShieldCheck,
-  Slash,
-  TimerOff,
+  Loader,
+  XCircle,
+  AlertTriangle,
+  Circle,
+  Shield,
+  ShieldOff,
 } from "lucide-react";
 
-export type StatusTone = "success" | "warning" | "danger" | "info" | "muted" | "accent";
-export type StatusShape = "circle" | "diamond" | "square" | "shield" | "triangle";
+type IconComponent = ComponentType<SVGProps<SVGSVGElement> & { className?: string }>;
 
-export type StatusMeta = {
+export interface StatusMeta {
   label: string;
-  tone: StatusTone;
-  shape: StatusShape;
-  icon: typeof PlayCircle;
-};
-
-const runStatusMap: Record<string, StatusMeta> = {
-  pending: { label: "Pending", tone: "muted", shape: "circle", icon: CircleDot },
-  running: { label: "Running", tone: "success", shape: "circle", icon: PlayCircle },
-  waiting: { label: "Waiting", tone: "warning", shape: "square", icon: Clock },
-  succeeded: { label: "Succeeded", tone: "success", shape: "circle", icon: CheckCircle2 },
-  failed: { label: "Failed", tone: "danger", shape: "diamond", icon: AlertOctagon },
-  cancelled: { label: "Cancelled", tone: "muted", shape: "diamond", icon: Slash },
-  timed_out: { label: "Timed Out", tone: "danger", shape: "square", icon: TimerOff },
-};
-
-const jobStatusMap: Record<string, StatusMeta> = {
-  PENDING: { label: "Pending", tone: "muted", shape: "circle", icon: CircleDot },
-  APPROVAL_REQUIRED: { label: "Approval", tone: "warning", shape: "shield", icon: ShieldAlert },
-  SCHEDULED: { label: "Scheduled", tone: "info", shape: "square", icon: Clock },
-  DISPATCHED: { label: "Dispatched", tone: "info", shape: "square", icon: PlayCircle },
-  RUNNING: { label: "Running", tone: "success", shape: "circle", icon: PlayCircle },
-  SUCCEEDED: { label: "Succeeded", tone: "success", shape: "circle", icon: CheckCircle2 },
-  FAILED: { label: "Failed", tone: "danger", shape: "diamond", icon: AlertOctagon },
-  CANCELLED: { label: "Cancelled", tone: "muted", shape: "diamond", icon: Slash },
-  TIMEOUT: { label: "Timeout", tone: "danger", shape: "square", icon: TimerOff },
-  DENIED: { label: "Denied", tone: "danger", shape: "triangle", icon: AlertTriangle },
-};
+  tone: "success" | "warning" | "danger" | "info" | "muted" | "accent";
+  shape: "circle" | "diamond" | "square" | "shield" | "triangle";
+  icon: IconComponent;
+}
 
 export function runStatusMeta(status?: string): StatusMeta {
-  if (!status) {
-    return { label: "Unknown", tone: "muted", shape: "square", icon: CircleDot };
+  switch (status) {
+    case "succeeded":
+    case "completed":
+      return { label: status, tone: "success", shape: "circle", icon: CheckCircle };
+    case "waiting":
+      return { label: status, tone: "warning", shape: "circle", icon: Clock };
+    case "running":
+    case "in_progress":
+      return { label: status, tone: "accent", shape: "circle", icon: Loader };
+    case "failed":
+    case "timed_out":
+      return { label: status, tone: "danger", shape: "circle", icon: XCircle };
+    case "pending":
+    case "queued":
+      return { label: status, tone: "warning", shape: "circle", icon: Clock };
+    case "cancelled":
+      return { label: status, tone: "muted", shape: "circle", icon: XCircle };
+    default:
+      return { label: status ?? "unknown", tone: "muted", shape: "circle", icon: Circle };
   }
-  return runStatusMap[status] || {
-    label: status,
-    tone: "muted",
-    shape: "square",
-    icon: PauseCircle,
-  };
 }
 
 export function jobStatusMeta(state?: string): StatusMeta {
-  if (!state) {
-    return { label: "Unknown", tone: "muted", shape: "square", icon: PauseCircle };
+  switch (state) {
+    case "succeeded":
+      return { label: state, tone: "success", shape: "diamond", icon: CheckCircle };
+    case "running":
+    case "dispatched":
+      return { label: state, tone: "accent", shape: "diamond", icon: Loader };
+    case "scheduled":
+      return { label: state, tone: "info", shape: "diamond", icon: Clock };
+    case "approval_required":
+      return { label: "approval", tone: "warning", shape: "shield", icon: Shield };
+    case "failed":
+    case "denied":
+    case "timeout":
+      return { label: state, tone: "danger", shape: "diamond", icon: XCircle };
+    case "pending":
+      return { label: state, tone: "warning", shape: "diamond", icon: Clock };
+    case "cancelled":
+      return { label: state, tone: "muted", shape: "diamond", icon: XCircle };
+    default:
+      return { label: state ?? "unknown", tone: "muted", shape: "diamond", icon: Circle };
   }
-  return jobStatusMap[state] || {
-    label: state,
-    tone: "muted",
-    shape: "square",
-    icon: PauseCircle,
-  };
 }
 
-export function approvalStatusMeta(isRequired?: boolean): StatusMeta {
-  if (isRequired) {
-    return { label: "Awaiting Approval", tone: "warning", shape: "shield", icon: ShieldAlert };
+export function approvalStatusMeta(required?: boolean): StatusMeta {
+  if (required) {
+    return { label: "approval required", tone: "warning", shape: "shield", icon: Shield };
   }
-  return { label: "Approval Granted", tone: "success", shape: "shield", icon: ShieldCheck };
-}
-
-export type DecisionType = "allow" | "deny" | "require_approval" | "throttle" | "allow_with_constraints" | "unknown";
-
-export function decisionTypeMeta(decision?: string): { label: string; shortLabel: string; type: DecisionType; tone: StatusTone } {
-  const normalized = (decision || "").toUpperCase().replace("DECISION_TYPE_", "");
-  if (!normalized) {
-    return { label: "Unknown", shortLabel: "?", type: "unknown", tone: "muted" };
-  }
-  if (normalized.includes("DENY")) {
-    return { label: "Denied", shortLabel: "DENY", type: "deny", tone: "danger" };
-  }
-  if (normalized.includes("REQUIRE_APPROVAL") || normalized.includes("REQUIRE-APPROVAL")) {
-    return { label: "Requires Approval", shortLabel: "APPROVAL", type: "require_approval", tone: "warning" };
-  }
-  if (normalized.includes("THROTTLE")) {
-    return { label: "Throttled", shortLabel: "THROTTLE", type: "throttle", tone: "warning" };
-  }
-  if (normalized.includes("ALLOW_WITH") || normalized.includes("ALLOW-WITH")) {
-    return { label: "Allowed with Constraints", shortLabel: "CONSTRAINED", type: "allow_with_constraints", tone: "info" };
-  }
-  if (normalized.includes("ALLOW")) {
-    return { label: "Allowed", shortLabel: "ALLOW", type: "allow", tone: "success" };
-  }
-  return { label: normalized, shortLabel: normalized.slice(0, 10), type: "unknown", tone: "muted" };
+  return { label: "no approval", tone: "muted", shape: "shield", icon: ShieldOff };
 }

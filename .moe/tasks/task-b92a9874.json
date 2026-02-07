@@ -1,0 +1,67 @@
+{
+  "id": "task-b92a9874",
+  "epicId": "epic-49887694",
+  "title": "Audit filters + full-text search",
+  "description": "Filter by event type, actor, resource type, time range. Search across all fields.",
+  "definitionOfDone": [
+    "Filter bar: event type (multi-select), actor (text input), resource type (dropdown), time range (presets + custom)",
+    "Full-text search input searching across all fields",
+    "Filters and search persisted in URL query params",
+    "Clear all button",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/audit/AuditFiltersBar.tsx: Filter bar above audit table. Event type multi-select (populated from distinct event types), actor text input (Input component with debounce), resource type dropdown (Select), time range presets (1h, 24h, 7d, 30d, custom). Full-text search input at top. All filters synced with URL query params via useSearchParams(). Clear all button. Active filter count.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/audit/AuditFiltersBar.tsx"
+      ],
+      "startedAt": "2026-02-07T01:01:27.051Z",
+      "completedAt": "2026-02-07T01:02:21.544Z",
+      "note": "Created AuditFiltersBar with: full-text search (debounced 400ms, search icon), event type multi-select chips (10 types), actor text input (debounced 400ms), resource type dropdown (Select), time range toggle (1h/24h/7d/30d), active count badge, clear all. All synced with URL params.",
+      "modifiedFiles": [
+        "dashboard/src/components/audit/AuditFiltersBar.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Integrate AuditFiltersBar into AuditLogPage.tsx above the table.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/AuditLogPage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:02:22.083Z",
+      "completedAt": "2026-02-07T01:02:47.378Z",
+      "note": "Added AuditFiltersBar import and placed above table. Added timeRange to the filters object passed to useAuditLog.",
+      "modifiedFiles": [
+        "dashboard/src/pages/AuditLogPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:02:47.929Z",
+      "completedAt": "2026-02-07T01:03:26.650Z",
+      "note": "tsc --noEmit: only error is pre-existing DLQActions.tsx:382 (require without @types/node) — unrelated untracked file not created by this task. All audit filter files compile cleanly."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 50,
+  "createdAt": "2026-02-06T23:50:05.877Z",
+  "updatedAt": "2026-02-07T20:05:30.254Z",
+  "planSubmittedAt": "2026-02-06T23:59:53.948Z",
+  "planApprovedAt": "2026-02-06T23:59:53.949Z"
+}

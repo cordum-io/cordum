@@ -1,0 +1,54 @@
+{
+  "id": "task-c2332a9e",
+  "epicId": "epic-7026bb2b",
+  "title": "Topic autocomplete — free text + suggestions from available topics",
+  "description": "Replace the plain text Input for job node topic with a combo-box: free text entry that also shows a dropdown of known topics when clicked or typing.\\n\\nData source: GET /api/v1/config/system returns pool config with topic→pool mappings. Extract all known topics from this.\\n\\nUI component: Create a Combobox/AutocompleteInput component:\\n- Text input that user can type freely (any topic string allowed)\\n- On focus or typing: dropdown appears with filtered suggestions from known topics\\n- Suggestions show topic name + mapped pool name (e.g. `job.default → default-pool`)\\n- Click suggestion to fill, or keep typing custom topic\\n- Fuzzy match on topic name\\n\\nWire into NodeConfigPanel for job node type, replacing the plain Input for topic field.\\n\\nBackend: may need a lightweight `GET /api/v1/topics` endpoint that returns available topics from config, or reuse existing system config endpoint.",
+  "definitionOfDone": [
+    "Job node topic field shows autocomplete suggestions",
+    "Free text still allowed (not restricted to suggestions)",
+    "Suggestions sourced from system config topics",
+    "Selecting suggestion fills the field",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create `ComboboxInput` component in `dashboard/src/components/ui/ComboboxInput.tsx`.\n\nProps: `{ value: string; onChange: (val: string) => void; suggestions: Array<{ value: string; label: string; description?: string }>; placeholder?: string }`.\n\nBehavior: text Input that shows a dropdown list on focus/typing. Filters suggestions by fuzzy match on value/label. Arrow keys navigate, Enter selects, Escape closes. Click outside closes. Free text always allowed.\n\nDropdown: absolute positioned below input, z-50, max-h-48 overflow-y-auto, each item shows label + description in muted text.\n\nSECURITY: All suggestion labels rendered as text nodes. Input value controlled via React state. No eval or dynamic property access.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/ui/ComboboxInput.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Create `useTopics` hook in `dashboard/src/hooks/useSettings.ts` (or new file).\n\nFetches `GET /api/v1/config/system` and extracts topic list from the pool config's topic-to-pool mappings. Returns `Array<{ value: string; label: string; description: string }>` where description is the pool name.\n\nCache with `staleTime: 60_000` (topics change rarely).",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/hooks/useSettings.ts"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Wire ComboboxInput into NodeConfigPanel for job node topic field.\n\nReplace `<Input {...register('topic')} />` with `<ComboboxInput value={watch('topic')} onChange={(v) => setValue('topic', v)} suggestions={topics} />` where `topics` comes from `useTopics()` hook.\n\nVerify `node ./node_modules/typescript/bin/tsc --noEmit`.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/NodeConfigPanel.tsx"
+      ]
+    }
+  ],
+  "status": "WORKING",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 2,
+  "createdAt": "2026-02-07T22:03:24.285Z",
+  "updatedAt": "2026-02-07T22:04:14.004Z",
+  "planSubmittedAt": "2026-02-07T22:04:14.003Z",
+  "planApprovedAt": "2026-02-07T22:04:14.004Z"
+}

@@ -1,0 +1,64 @@
+{
+  "id": "task-e5861d04",
+  "epicId": "epic-dbd90afa",
+  "title": "Return errors from failed bus subscriptions in gateway startup",
+  "description": "**Severity: HIGH**\n\n**File**: `core/controlplane/gateway/gateway.go:639-719`\n\n**Issue**: `startBusTaps()` subscribes to heartbeat, DLQ, and job events. If any subscription fails, it only logs the error and continues. The gateway runs in a degraded state without heartbeats or DLQ events, but there's no indication to operators.\n\n```go\nif err := s.bus.Subscribe(capsdk.SubjectHeartbeat, \"\", func(p *pb.BusPacket) error {\n    // ...\n}); err != nil {\n    logging.Error(\"api-gateway\", \"bus subscribe failed\", ...)\n    // Function continues! No return or re-throw.\n}\n```\n\n**Fix**: Either return an error from `startBusTaps()` to prevent gateway from starting in degraded state, or implement a health check that reports subscription status so operators can detect the issue.",
+  "definitionOfDone": [
+    "startBusTaps() returns error if any subscription fails",
+    "Gateway startup fails fast if bus subscriptions fail, OR health check reports degraded status",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Change `startBusTaps()` signature from `func (s *server) startBusTaps()` to `func (s *server) startBusTaps() error`. Collect errors from all 4 bus subscriptions (heartbeat, DLQ, sys.job.>, sys.audit.>). If any critical subscription fails (heartbeat or DLQ), return the error. For event taps (sys.job.>, sys.audit.>), log a warning but don't fail startup since they're optional for WS streaming.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-06T00:04:39.461Z",
+      "completedAt": "2026-02-06T00:05:47.339Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Update the caller at line 597 to handle the returned error:\n```go\nif err := s.startBusTaps(); err != nil {\n    return fmt.Errorf(\"start bus taps: %w\", err)\n}\n```\nThis makes gateway startup fail fast if NATS subscriptions are broken.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-06T00:05:47.775Z",
+      "completedAt": "2026-02-06T00:05:56.886Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Update bus_taps_test.go line 62: handle the returned error from `s.startBusTaps()`:\n```go\nif err := s.startBusTaps(); err != nil {\n    t.Fatalf(\"start bus taps: %v\", err)\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/bus_taps_test.go"
+      ],
+      "startedAt": "2026-02-06T00:05:57.168Z",
+      "completedAt": "2026-02-06T00:06:08.716Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Run `go test ./core/controlplane/gateway/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:06:08.937Z",
+      "completedAt": "2026-02-06T00:06:24.327Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 21,
+  "createdAt": "2026-02-05T22:26:21.457Z",
+  "updatedAt": "2026-02-06T00:25:14.894Z",
+  "priority": "MEDIUM"
+}

@@ -1,0 +1,93 @@
+{
+  "id": "task-99224b9b",
+  "epicId": "epic-57debfb1",
+  "title": "Exponential Backoff with Jitter for Retries",
+  "description": "**Problem**: Retries use fixed 2s sleeps. Under load, all retried jobs wake simultaneously — thundering herd on NATS/Redis.\n\n**Fix**:\n- Add `backoffDelay(attempt int) time.Duration` helper: `min(base * 2^attempt + jitter, maxDelay)`\n- Base 1s, Max 30s, Jitter 0-500ms\n- Track `retry_count` in job metadata (add RetryCount to JobRecord if needed)\n- Apply to re-publish paths in `processJob` and `reconciler`\n\n**Files**: `core/controlplane/scheduler/engine.go`, `core/controlplane/scheduler/reconciler.go`, `core/controlplane/scheduler/types.go`",
+  "definitionOfDone": [
+    "backoffDelay helper function implemented with exponential backoff + jitter",
+    "Base 1s, Max 30s, Jitter 0-500ms",
+    "RetryCount tracked in job metadata",
+    "Applied to re-publish paths in processJob and reconciler",
+    "Unit test for backoffDelay verifying bounds and jitter",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Step 1: Add backoffDelay helper function in a new file backoff.go\n\nCreate `core/controlplane/scheduler/backoff.go` with:\n```go\nfunc backoffDelay(attempt int, base, maxDelay time.Duration) time.Duration\n```\n- Formula: `min(base * 2^attempt + jitter, maxDelay)`\n- Jitter: random 0-500ms via `math/rand` (not crypto, perf-sensitive)\n- Clamp attempt to 0-10 to avoid overflow\n- Constants: `backoffBase = 1*time.Second`, `backoffMax = 30*time.Second`, `backoffJitterMax = 500*time.Millisecond`",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/backoff.go"
+      ],
+      "startedAt": "2026-02-07T00:52:07.410Z",
+      "completedAt": "2026-02-07T00:52:19.975Z",
+      "note": "Created backoff.go with backoffDelay helper. Exponential: base * 2^attempt + jitter(0-500ms), clamped to maxDelay=30s. Exponent clamped to 10 to avoid overflow.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/backoff.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Step 2: Add RetryCount field to JobRecord in types.go\n\nIn `core/controlplane/scheduler/types.go`, add to JobRecord struct:\n```go\nRetryCount int `json:\"retry_count,omitempty\"`\n```\nThis tracks how many times the job has been retried for backoff calculation.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/types.go"
+      ],
+      "startedAt": "2026-02-07T00:52:20.441Z",
+      "completedAt": "2026-02-07T00:52:43.036Z",
+      "note": "JobRecord already has Attempts field (line 112 in types.go) and GetAttempts is already on the JobStore interface. No changes needed."
+    },
+    {
+      "stepId": "step-3",
+      "description": "Step 3: Apply backoff to retry paths in engine.go\n\nReplace fixed `retryDelayNoWorkers` (2s) and `retryDelayPublish` (2s) in retry paths within `processJob()` with `backoffDelay(attempts, backoffBase, backoffMax)` where attempts comes from the job store.\n\nSpecifically update:\n- Line 433: `RetryAfter(err, retryDelayNoWorkers)` for retryable scheduling errors\n- Line 468: `RetryAfter(err, retryDelayPublish)` for publish failures\n- Line 333: SafetyThrottle path can keep its dedicated `safetyThrottleDelay`\n\nRead attempt count from store and pass as backoff parameter.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ],
+      "startedAt": "2026-02-07T00:52:43.963Z",
+      "completedAt": "2026-02-07T00:53:57.225Z",
+      "note": "Added attempts lookup at top of processJob. Replaced retryDelayNoWorkers and retryDelayPublish in processJob's dispatch retry paths with backoffDelay(attempts, backoffBase, backoffMax). Reconciler doesn't use RetryAfter so no changes needed there. DLQ emit retry in handleJobResult kept at fixed delay (not a dispatch retry).",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Step 4: Add unit test for backoffDelay\n\nIn `core/controlplane/scheduler/backoff_test.go`:\n- Test attempt=0 returns ~base (1s + 0-500ms jitter)\n- Test attempt=5 returns <= maxDelay (30s)\n- Test attempt=100 (overflow guard) returns maxDelay\n- Test that multiple calls produce different values (jitter)\n- Test bounds: result >= base, result <= maxDelay + jitterMax",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/backoff_test.go"
+      ],
+      "startedAt": "2026-02-07T00:53:57.813Z",
+      "completedAt": "2026-02-07T00:54:17.242Z",
+      "note": "Added 6 tests: attempt=0 bounds, growth at attempt=3, clamp at attempt=100, negative attempt handling, jitter variance across 20 calls, attempt=5 exceeds max and clamps.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/backoff_test.go"
+      ]
+    },
+    {
+      "stepId": "step-5",
+      "description": "Step 5: Verify all tests pass with `go test ./core/controlplane/scheduler/... -count=3`",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:54:17.734Z",
+      "completedAt": "2026-02-07T00:54:30.687Z",
+      "note": "All tests pass with -count=3 (1.863s)."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 4,
+  "createdAt": "2026-02-07T00:33:19.306Z",
+  "updatedAt": "2026-02-07T00:55:47.723Z",
+  "planSubmittedAt": "2026-02-07T00:36:25.796Z",
+  "planApprovedAt": "2026-02-07T00:36:25.798Z"
+}

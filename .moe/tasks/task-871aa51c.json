@@ -1,0 +1,69 @@
+{
+  "id": "task-871aa51c",
+  "epicId": "epic-06442149",
+  "title": "Run history table",
+  "description": "List of runs for a workflow. Columns: run ID, status (RunStatusBadge), started, duration, steps completed/total. Filter by status.",
+  "definitionOfDone": [
+    "Run history table on workflow detail page",
+    "Columns: run ID, status (RunStatusBadge), started, duration, steps completed/total",
+    "Filter by status dropdown",
+    "Click row navigates to /workflows/:id/runs/:runId",
+    "Pagination",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/workflow/RunHistoryTable.tsx: Table component for run history. Props: workflowId. Uses useRuns(workflowId). Columns: run ID (truncated mono), status (RunStatusBadge), started (relative time), duration (formatted), steps completed/total (X/Y text). Filter dropdown above table: status (all, running, succeeded, failed). Click row navigates to /workflows/:id/runs/:runId. Pagination controls.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/RunHistoryTable.tsx"
+      ],
+      "startedAt": "2026-02-07T01:07:53.229Z",
+      "completedAt": "2026-02-07T01:08:46.937Z",
+      "note": "Created RunHistoryTable with: status filter dropdown, paginated table (10/page), RunStatusBadge, click navigates to run detail, duration formatting, steps progress (completed/total).",
+      "modifiedFiles": [
+        "dashboard/src/components/workflow/RunHistoryTable.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Create dashboard/src/pages/WorkflowDetailPage.tsx: Route /workflows/:id. Uses useWorkflow(id). Tabs: Overview (workflow metadata + stats), Runs (RunHistoryTable), Builder (WorkflowBuilder in edit mode). Start Run button triggers useStartRun(). Delete button with ConfirmDialog.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/WorkflowDetailPage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:08:47.373Z",
+      "completedAt": "2026-02-07T01:09:39.918Z",
+      "note": "Created WorkflowDetailPage with tabs (Overview/Runs/Builder), Start Run button, Delete with ConfirmDialog. Added route /workflows/:id in App.tsx.",
+      "modifiedFiles": [
+        "dashboard/src/pages/WorkflowDetailPage.tsx",
+        "dashboard/src/App.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:09:40.252Z",
+      "completedAt": "2026-02-07T01:09:53.670Z",
+      "note": "tsc --noEmit passes clean"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 29,
+  "createdAt": "2026-02-06T23:48:51.916Z",
+  "updatedAt": "2026-02-07T20:15:52.533Z",
+  "planSubmittedAt": "2026-02-06T23:57:34.658Z",
+  "planApprovedAt": "2026-02-06T23:57:34.659Z"
+}

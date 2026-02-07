@@ -1,0 +1,82 @@
+{
+  "id": "task-2eac3ccf",
+  "epicId": "epic-dbd90afa",
+  "title": "Propagate parent context instead of context.Background() in scheduler",
+  "description": "**Severity: HIGH**\n\n**Files**: `core/controlplane/scheduler/engine.go` (~24 locations), `core/controlplane/scheduler/saga.go` (lines 115, 138, 164)\n\n**Issue**: All scheduler operations create fresh `context.Background()` instead of propagating the parent request context. This breaks deadline propagation and distributed tracing.\n\nExample from engine.go:\n```go\nctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)\nok, err := e.jobStore.TryAcquireLock(ctx, key, ttl)\n```\n\nAnd in saga.go:\n```go\nunlockCtx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)\n```\n\n**Fix**: Thread parent context through scheduler methods. Use `context.WithTimeout(parentCtx, storeOpTimeout)` instead of `context.Background()`. This requires updating method signatures to accept context parameters where they don't already.",
+  "definitionOfDone": [
+    "All ~27 context.Background() calls in engine.go and saga.go replaced with parent context",
+    "Method signatures updated to accept context where needed",
+    "Request deadlines propagate through scheduler operations",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "**Analysis**: The scheduler engine receives packets from NATS bus handlers which have no parent HTTP/gRPC request context. Using `context.Background()` is not a propagation bug per se — there's no parent context to propagate. However, the issue is that operations don't respect engine shutdown. When `Stop()` is called, in-flight Redis operations continue running because `context.Background()` never cancels.\n\n**Approach**: Add an engine-level `ctx context.Context` and `cancel context.CancelFunc` to the Engine struct. Create it in `Start()`, cancel it in `Stop()`. All internal operations derive from this context instead of `context.Background()`.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:56:40.329Z",
+      "completedAt": "2026-02-05T23:57:18.650Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Add `ctx context.Context` and `cancel context.CancelFunc` fields to the `Engine` struct. In `Start()`, set `e.ctx, e.cancel = context.WithCancel(context.Background())`. In `Stop()`, call `e.cancel()` before setting `e.stopped`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ],
+      "startedAt": "2026-02-05T23:57:19.133Z",
+      "completedAt": "2026-02-05T23:58:10.665Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Replace all ~20 `context.WithTimeout(context.Background(), storeOpTimeout)` in engine.go with `context.WithTimeout(e.ctx, storeOpTimeout)`. Replace the 3 instances in saga.go similarly — the SagaManager will need access to the engine's context (pass it as a parameter or add a context to SagaManager).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine.go",
+        "core/controlplane/scheduler/saga.go"
+      ],
+      "startedAt": "2026-02-05T23:58:11.251Z",
+      "completedAt": "2026-02-05T23:59:38.943Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "For `CancelJob(ctx, jobID)` which already accepts a caller context: keep using the caller's `ctx` (it comes from the HTTP handler). This is the correct behavior — the caller's deadline should apply.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:59:39.516Z",
+      "completedAt": "2026-02-06T00:01:09.991Z"
+    },
+    {
+      "stepId": "step-5",
+      "description": "Add a test: create an engine, call `Stop()`, then verify that subsequent `HandlePacket` calls fail fast (context cancelled) rather than hanging for `storeOpTimeout`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine_test.go"
+      ],
+      "startedAt": "2026-02-06T00:01:43.557Z",
+      "completedAt": "2026-02-06T00:01:56.524Z"
+    },
+    {
+      "stepId": "step-6",
+      "description": "Run `go test ./core/controlplane/scheduler/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:01:56.661Z",
+      "completedAt": "2026-02-06T00:02:06.420Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 20,
+  "createdAt": "2026-02-05T22:26:14.601Z",
+  "updatedAt": "2026-02-06T00:24:34.410Z",
+  "priority": "MEDIUM"
+}

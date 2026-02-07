@@ -1,0 +1,46 @@
+{
+  "id": "task-8e985d36",
+  "epicId": "epic-cddc11dd",
+  "title": "Fix stale closure and dependency arrays in useLiveBus and RunDetailPage",
+  "description": "**Bug 1**: `dashboard/src/hooks/useLiveBus.ts:190-247` — `invalidateForEvent` is called inside the WebSocket handler but missing from the useEffect dependency array. Query invalidation logic becomes stale.\n\n**Bug 2**: `dashboard/src/pages/RunDetailPage.tsx:89-101` — `runQuery.data` is in the useEffect dependency array that responds to `latestEvent`. This causes the effect to fire whenever run data changes (not just when events arrive), creating unnecessary re-invalidations and potential infinite loops.\n\n**Fix 1**: Add `invalidateForEvent` to the deps array, or wrap it in useCallback with stable deps.\n**Fix 2**: Remove `runQuery.data` from deps. Use a ref to access current data inside the effect.\n\n**Files**: `dashboard/src/hooks/useLiveBus.ts`, `dashboard/src/pages/RunDetailPage.tsx`",
+  "definitionOfDone": [
+    "useLiveBus effect has correct dependency array",
+    "RunDetailPage effect only fires on new events, not data changes",
+    "No React strict mode warnings about missing deps"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Fix useLiveBus.ts stale closure: Wrap `invalidateForEvent` in `useCallback` with stable deps so it can be safely added to the useEffect dependency array. The function at lines 145-186 references `invalidate` which uses `queryClient` — both should be stable refs.\n\nAlternatively, move the `invalidateForEvent` logic into a ref:\n```typescript\nconst invalidateForEventRef = useRef(invalidateForEvent);\ninvalidateForEventRef.current = invalidateForEvent;\n```\nThen in the WebSocket handler (line 216), call `invalidateForEventRef.current(liveEvent)`. This avoids adding it to deps entirely.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useLiveBus.ts"
+      ],
+      "startedAt": "2026-02-06T00:19:24.567Z",
+      "completedAt": "2026-02-06T00:21:55.867Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Fix RunDetailPage.tsx (lines 89-101): Remove `runQuery.data` from the dependency array. Use a ref to access current data:\n```typescript\nconst runDataRef = useRef(runQuery.data);\nrunDataRef.current = runQuery.data;\n\nuseEffect(() => {\n    if (!latestEvent || !runId) return;\n    const runMatch = latestEvent.runId === runId;\n    const jobMatch = latestEvent.jobId\n        ? Object.values(runDataRef.current?.steps || {}).some(step => step.job_id === latestEvent.jobId)\n        : false;\n    if (runMatch || jobMatch) {\n        queryClient.invalidateQueries({ queryKey: [\"run\", runId] });\n        queryClient.invalidateQueries({ queryKey: [\"timeline\", runId] });\n    }\n}, [latestEvent, runId, queryClient]);\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/RunDetailPage.tsx"
+      ],
+      "startedAt": "2026-02-06T00:21:58.320Z",
+      "completedAt": "2026-02-06T09:39:55.507Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 19,
+  "createdAt": "2026-02-05T23:49:17.890Z",
+  "updatedAt": "2026-02-07T18:40:33.720Z"
+}

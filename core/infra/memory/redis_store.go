@@ -74,7 +74,7 @@ func (s *RedisStore) PutContext(ctx context.Context, key string, data []byte) er
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRedisOpTimeout)
+	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
 	defer cancel()
 	return s.client.Set(cctx, key, data, s.dataTTL).Err()
 }
@@ -83,7 +83,7 @@ func (s *RedisStore) GetContext(ctx context.Context, key string) ([]byte, error)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRedisOpTimeout)
+	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
 	defer cancel()
 	val, err := s.client.Get(cctx, key).Bytes()
 	if err != nil {
@@ -96,7 +96,7 @@ func (s *RedisStore) PutResult(ctx context.Context, key string, data []byte) err
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRedisOpTimeout)
+	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
 	defer cancel()
 	return s.client.Set(cctx, key, data, s.dataTTL).Err()
 }
@@ -105,7 +105,7 @@ func (s *RedisStore) GetResult(ctx context.Context, key string) ([]byte, error) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRedisOpTimeout)
+	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
 	defer cancel()
 	val, err := s.client.Get(cctx, key).Bytes()
 	if err != nil {

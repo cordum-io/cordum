@@ -140,7 +140,10 @@ func (s *Service) EffectiveSnapshot(ctx context.Context, orgID, teamID, workflow
 		mergeShallow(result, doc.Data)
 	}
 	version := snapshotVersion(revisions)
-	hash, _ := snapshotHash(result)
+	hash, err := snapshotHash(result)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot hash: %w", err)
+	}
 	return &EffectiveSnapshot{
 		Version: version,
 		Hash:    hash,

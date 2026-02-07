@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -379,7 +380,9 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 		metaCmds[jobID] = pipe.HGetAll(ctx, jobMetaKey(jobID))
 		stateCmds[jobID] = pipe.Get(ctx, jobStateKey(jobID))
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("redis pipeline exec", "op", "build_job_records", "error", err)
+	}
 
 	for _, m := range members {
 		jobID, ok := m.Member.(string)
@@ -921,6 +924,50 @@ func (s *RedisJobStore) CountActiveByTenant(ctx context.Context, tenant string) 
 	return int(count), nil
 }
 
+func (s *RedisJobStore) SetFailureReason(ctx context.Context, jobID, reason string) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	return s.client.HSet(ctx, jobMetaKey(jobID), "failure_reason", reason).Err()
+}
+
+func (s *RedisJobStore) GetFailureReason(ctx context.Context, jobID string) (string, error) {
+	if jobID == "" {
+		return "", fmt.Errorf("jobID required")
+	}
+	val, err := s.client.HGet(ctx, jobMetaKey(jobID), "failure_reason").Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	return val, err
+}
+
+// idempotencyScopedScript atomically checks the legacy key and performs
+// SetNX on the scoped key in a single round-trip, preventing the TOCTOU
+// race between the legacy GET and the scoped SetNX.
+//
+// KEYS[1] = legacy key, KEYS[2] = scoped key
+// ARGV[1] = jobID, ARGV[2] = ttl in ms, ARGV[3] = tenant, ARGV[4] = meta key prefix
+var idempotencyScopedScript = redis.NewScript(`
+local legacyID = redis.call("GET", KEYS[1])
+if legacyID and legacyID ~= false then
+  local metaKey = ARGV[4] .. legacyID
+  local metaTenant = redis.call("HGET", metaKey, "tenant")
+  if not metaTenant or metaTenant == false or metaTenant == "" or metaTenant == ARGV[3] then
+    return "EXISTING:" .. legacyID
+  end
+end
+local ok = redis.call("SET", KEYS[2], ARGV[1], "NX", "PX", ARGV[2])
+if ok then
+  return "OK:" .. ARGV[1]
+end
+local existing = redis.call("GET", KEYS[2])
+if existing and existing ~= false then
+  return "EXISTING:" .. existing
+end
+return "EXISTING:"
+`)
+
 func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, key, jobID string) (bool, string, error) {
 	if key == "" || jobID == "" {
 		return false, "", fmt.Errorf("idempotency key and jobID required")
@@ -945,35 +992,26 @@ func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, 
 		return false, existing, nil
 	}
 
-	legacyID, err := s.client.Get(ctx, jobIdempotencyKey(key)).Result()
-	if err == nil && legacyID != "" {
-		legacyTenant, terr := s.GetTenant(ctx, legacyID)
-		if terr != nil && terr != redis.Nil {
-			return false, "", terr
-		}
-		if legacyTenant == "" || legacyTenant == tenant {
-			return false, legacyID, nil
-		}
-	} else if err != nil && err != redis.Nil {
-		return false, "", err
-	}
-
 	idKey := jobIdempotencyKeyScoped(tenant, key)
 	if idKey == "" {
 		return false, "", fmt.Errorf("idempotency key required")
 	}
-	ok, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
+	legacyKey := jobIdempotencyKey(key)
+	ttlMs := s.metaTTL.Milliseconds()
+	result, err := idempotencyScopedScript.Run(ctx, s.client,
+		[]string{legacyKey, idKey},
+		jobID, ttlMs, tenant, jobMetaKeyPrefix,
+	).Text()
 	if err != nil {
 		return false, "", err
 	}
-	if ok {
-		return true, jobID, nil
+	if strings.HasPrefix(result, "OK:") {
+		return true, result[3:], nil
 	}
-	existing, err := s.client.Get(ctx, idKey).Result()
-	if err != nil && err != redis.Nil {
-		return false, "", err
+	if strings.HasPrefix(result, "EXISTING:") {
+		return false, result[9:], nil
 	}
-	return false, existing, nil
+	return false, "", nil
 }
 
 func (s *RedisJobStore) SetIdempotencyKeyScoped(ctx context.Context, tenant, key, jobID string) error {
@@ -1209,6 +1247,7 @@ func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, l
 	for i := len(raw) - 1; i >= 0; i-- {
 		var entry map[string]any
 		if err := json.Unmarshal([]byte(raw[i]), &entry); err != nil {
+			slog.Warn("job-store: corrupt safety decision skipped", "job_id", jobID, "error", err)
 			continue
 		}
 		record := scheduler.SafetyDecisionRecord{
@@ -1260,7 +1299,9 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 	for _, id := range jobIDs {
 		metaCmds[id] = pipe.HGetAll(ctx, jobMetaKey(id))
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("redis pipeline exec", "op", "get_trace_jobs", "error", err)
+	}
 
 	out := make([]scheduler.JobRecord, 0, len(jobIDs))
 	for _, jobID := range jobIDs {

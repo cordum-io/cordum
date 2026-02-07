@@ -1,0 +1,67 @@
+{
+  "id": "task-0fb91fc6",
+  "epicId": "epic-28f6937e",
+  "title": "Retry attempts panel",
+  "description": "Expand to see all retry attempts with individual errors and timestamps.",
+  "definitionOfDone": [
+    "Expandable panel per DLQ entry",
+    "Shows all retry attempts chronologically",
+    "Each attempt: timestamp, error message, duration",
+    "Visual indication of attempt count vs max retries",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/dlq/RetryAttemptsPanel.tsx: Expandable panel per DLQ entry. Shows all retry attempts as a timeline list (chronological, oldest first). Each attempt: attempt number, timestamp, error message (in code block), duration. Visual: progress dots or numbered steps. Indicator: X of maxRetries attempts used (ProgressBar component).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/dlq/RetryAttemptsPanel.tsx"
+      ],
+      "startedAt": "2026-02-07T00:59:41.894Z",
+      "completedAt": "2026-02-07T01:00:37.556Z",
+      "note": "Created RetryAttemptsPanel component with: timeline UI (numbered dots with connecting line), per-attempt timestamp + error in pre/code block, duration between attempts, retry count vs max with ProgressBar (color-coded: default/warning/danger).",
+      "modifiedFiles": [
+        "dashboard/src/components/dlq/RetryAttemptsPanel.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Integrate RetryAttemptsPanel into DLQPage.tsx row expansion.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/DLQPage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:00:38.018Z",
+      "completedAt": "2026-02-07T01:01:01.617Z",
+      "note": "Replaced inline RetryAttemptsPanel with import from components/dlq/RetryAttemptsPanel. Now passes retryCount and maxRetries for the progress indicator.",
+      "modifiedFiles": [
+        "dashboard/src/pages/DLQPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:01:02.156Z",
+      "completedAt": "2026-02-07T01:01:14.549Z",
+      "note": "tsc --noEmit passes with zero errors."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 56,
+  "createdAt": "2026-02-06T23:50:20.838Z",
+  "updatedAt": "2026-02-07T20:05:37.441Z",
+  "planSubmittedAt": "2026-02-07T00:00:15.777Z",
+  "planApprovedAt": "2026-02-07T00:00:15.779Z"
+}

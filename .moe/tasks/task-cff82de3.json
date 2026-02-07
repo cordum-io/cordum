@@ -1,0 +1,53 @@
+{
+  "id": "task-cff82de3",
+  "epicId": "epic-dbd90afa",
+  "title": "Remove hardcoded CORDUM_DASHBOARD_EMBED_API_KEY=true from docker-compose",
+  "description": "**Severity: HIGH**\n\n**File**: `docker-compose.yml:136`\n\n**Bug**: Dashboard always embeds the API key (hardcoded `true`). This is a security risk — the API key gets baked into the frontend bundle and is visible to any browser user.\n\n**Fix**: Change to `${CORDUM_DASHBOARD_EMBED_API_KEY:-false}` to default to secure behavior. Users who want the convenience can explicitly opt in via .env.",
+  "definitionOfDone": [
+    "CORDUM_DASHBOARD_EMBED_API_KEY defaults to false via env var substitution",
+    "Documented in .env.example with a security note",
+    "docker-compose config validates without errors"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Change hardcoded `CORDUM_DASHBOARD_EMBED_API_KEY=true` on line 136 of docker-compose.yml to `CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}` so it defaults to the secure behavior (not embedding the API key in the frontend bundle).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "docker-compose.yml"
+      ],
+      "startedAt": "2026-02-05T23:24:06.904Z",
+      "completedAt": "2026-02-05T23:24:18.934Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Update .env.example to uncomment `CORDUM_DASHBOARD_EMBED_API_KEY` and add a clear security warning: set to `true` only in development, never in production, as it embeds the API key in the frontend JavaScript bundle.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        ".env.example"
+      ],
+      "startedAt": "2026-02-05T23:24:19.327Z",
+      "completedAt": "2026-02-05T23:24:44.899Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run `docker compose config` to validate the compose file parses correctly with the new variable substitution syntax.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:24:47.747Z",
+      "completedAt": "2026-02-05T23:24:48.979Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 5,
+  "createdAt": "2026-02-05T22:15:18.778Z",
+  "updatedAt": "2026-02-05T23:30:16.063Z"
+}

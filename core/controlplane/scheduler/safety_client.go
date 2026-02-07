@@ -74,11 +74,11 @@ func (c *SafetyClient) Close() error {
 // Check forwards the request to the safety kernel; denies on error/timeout.
 func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecisionRecord, error) {
 	if c.isCircuitOpen() {
-		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "safety kernel circuit open"}, nil
+		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "safety kernel circuit open"}, nil
 	}
 
 	if !c.allowHalfOpenRequest() {
-		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "safety kernel circuit half-open (throttled)"}, nil
+		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "safety kernel circuit half-open (throttled)"}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), safetyTimeout)
@@ -104,7 +104,7 @@ func (c *SafetyClient) Check(req *pb.JobRequest) (SafetyDecisionRecord, error) {
 	resp, err := c.client.Check(ctx, checkReq)
 	if err != nil {
 		c.recordFailure()
-		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: fmt.Sprintf("safety kernel error: %v", err)}, nil
+		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: fmt.Sprintf("safety kernel error: %v", err)}, nil
 	}
 	c.recordSuccess()
 

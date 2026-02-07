@@ -1,0 +1,86 @@
+{
+  "id": "task-0f9d097a",
+  "epicId": "epic-dbd90afa",
+  "title": "Implement graceful shutdown for all gateway goroutines",
+  "description": "**Severity: CRITICAL**\n\n**File**: `core/controlplane/gateway/gateway.go`\n\nThree goroutines are spawned with no shutdown mechanism, causing the gateway to hang on termination:\n\n1. **Event broadcast loop (lines 722-759)**: `go func() { for evt := range s.eventsCh { ... } }()` — channel is never closed, goroutine blocks forever on shutdown.\n2. **gRPC server (lines 626-631)**: `go func() { grpcServer.Serve(grpcLis) }()` — no `GracefulStop()` call on shutdown signal.\n3. **Metrics server (lines 828-842)**: `go func() { srv.ListenAndServe() }()` — no `srv.Shutdown(ctx)` call.\n\n**Fix**: \n- Close `s.eventsCh` during shutdown to unblock the broadcast goroutine.\n- Call `grpcServer.GracefulStop()` on context cancellation / OS signal.\n- Call `metricsSrv.Shutdown(ctx)` on context cancellation / OS signal.\n- Use a `sync.WaitGroup` or errgroup to wait for all goroutines before exiting.",
+  "definitionOfDone": [
+    "All three goroutines (broadcast, gRPC, metrics) shut down cleanly on SIGTERM/SIGINT",
+    "Gateway process exits within graceful shutdown timeout",
+    "No goroutine leaks detectable with goleak",
+    "In-flight gRPC requests complete before server stops",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add signal handling to `startHTTPServer` in gateway.go. Create a context that cancels on SIGTERM/SIGINT using `signal.NotifyContext`. This context drives shutdown of all servers and goroutines.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:41:55.493Z",
+      "completedAt": "2026-02-05T23:47:25.409Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Pass `grpcServer` reference into `startHTTPServer` (or refactor so `RunWithAuth` owns the shutdown). On context cancellation:\n1. Call `srv.Shutdown(shutdownCtx)` for the HTTP server (with a 15s deadline)\n2. Call `grpcServer.GracefulStop()` for the gRPC server\n3. Call `metricsSrv.Shutdown(shutdownCtx)` for the metrics server\n4. Close `s.eventsCh` to unblock the broadcast goroutine\nUse a `sync.WaitGroup` to wait for all goroutines to finish before returning.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:47:28.641Z",
+      "completedAt": "2026-02-05T23:47:33.337Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Refactor the metrics server goroutine (lines 831-845): capture the `*http.Server` in a variable before the goroutine so it's accessible for shutdown. Currently `srv` is created inside the goroutine.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:47:33.933Z",
+      "completedAt": "2026-02-05T23:47:38.514Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Add a `shutdownTimeout` constant (e.g. 15s). On signal, log 'shutting down gracefully...', shut down all servers within the timeout, then force-exit if timeout exceeded.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:47:38.857Z",
+      "completedAt": "2026-02-05T23:47:43.126Z"
+    },
+    {
+      "stepId": "step-5",
+      "description": "Add a test that verifies the gateway shuts down cleanly: start the server in a goroutine, send it a cancel signal, verify all goroutines exit and the function returns nil.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_test.go"
+      ],
+      "startedAt": "2026-02-05T23:47:43.527Z",
+      "completedAt": "2026-02-05T23:49:45.477Z"
+    },
+    {
+      "stepId": "step-6",
+      "description": "Run `go test -race ./core/controlplane/gateway/...` and `go vet ./core/controlplane/gateway/...` to verify correctness.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:49:46.002Z",
+      "completedAt": "2026-02-05T23:49:50.535Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 1,
+  "reopenReason": "Implementation is architecturally correct, but two DoD items are unmet: (1) No dedicated shutdown test — step-5 deliverable is missing. gateway_test.go has no test verifying the shutdown sequence (signal → HTTP drain → gRPC GracefulStop → metrics shutdown). A minimal test could: start startHTTPServer in a goroutine, close shutdownCh, verify it returns nil within a timeout. (2) DoD #3 \"No goroutine leaks detectable with goleak\" — no goleak verification added. Minor improvement: call s.stopBusTaps() in the shutdown goroutine after close(s.shutdownCh) so eventsCh is properly closed and eventsStopped flag is set.",
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 15,
+  "createdAt": "2026-02-05T22:25:38.006Z",
+  "updatedAt": "2026-02-06T10:04:38.407Z",
+  "priority": "MEDIUM"
+}

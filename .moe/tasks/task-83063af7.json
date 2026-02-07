@@ -1,0 +1,70 @@
+{
+  "id": "task-83063af7",
+  "epicId": "epic-dbd90afa",
+  "title": "Log or return JSON encoding errors in HTTP handlers",
+  "description": "**Severity: HIGH**\n\n**Files**: `core/controlplane/gateway/gateway.go`, `auth_config.go`, `chat.go`, `auth_handlers.go`, `packs.go`, `policy_bundles.go`\n\n**Issue**: 66 instances of `_ = json.NewEncoder(w).Encode(...)` across HTTP handlers silently discard encoding errors. If the client disconnects mid-response or memory is exhausted during encoding, partial/corrupted JSON is sent with no logging.\n\n**Key locations** (non-exhaustive):\n- gateway.go: lines 1033, 1099, 1189, 1356, 1387, 1588, 1670, 1723, etc. (~41 instances)\n- chat.go: lines 135, 186, 274\n- auth_handlers.go: lines 85, 116, 132, 355\n- packs.go: lines 427, 455, 473, 609, 665, 888, 931\n- policy_bundles.go: lines 138, 197, 240, 316, 447, 519, 541, 568, 619, 644\n\n**Fix**: Create a helper like `writeJSON(w, v)` that logs encoding errors with `slog.Warn` and returns the error. Replace all 66 instances.",
+  "definitionOfDone": [
+    "A writeJSON helper function exists that logs encoding errors",
+    "All 66 instances of _ = json.NewEncoder(w).Encode() are replaced",
+    "Encoding errors are logged with request context (path, method)",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create a `writeJSON` helper function in a new file `core/controlplane/gateway/json_helpers.go`:\n```go\nfunc writeJSON(w http.ResponseWriter, v any) {\n    w.Header().Set(\"Content-Type\", \"application/json\")\n    if err := json.NewEncoder(w).Encode(v); err != nil {\n        slog.Warn(\"json encode failed\", \"error\", err)\n    }\n}\n```\nKeep it simple — the `Content-Type` header is likely already set in most handlers, so only set it if not already present, or just always set it (idempotent).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/json_helpers.go"
+      ],
+      "startedAt": "2026-02-05T23:54:34.363Z",
+      "completedAt": "2026-02-05T23:55:00.003Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Replace all 66 instances of `_ = json.NewEncoder(w).Encode(...)` in production code files with `writeJSON(w, ...)`. Files: gateway.go (41), policy_bundles.go (10), packs.go (7), auth_handlers.go (4), chat.go (3), auth_config.go (1). Leave test files as-is (they use the pattern for test assertions, not production paths).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go",
+        "core/controlplane/gateway/policy_bundles.go",
+        "core/controlplane/gateway/packs.go",
+        "core/controlplane/gateway/auth_handlers.go",
+        "core/controlplane/gateway/chat.go",
+        "core/controlplane/gateway/auth_config.go"
+      ],
+      "startedAt": "2026-02-05T23:55:00.483Z",
+      "completedAt": "2026-02-06T00:03:57.267Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add a test `TestWriteJSONLogsError` that verifies the helper logs on encoding failure (e.g. pass an unencodable value like `math.Inf(1)` in a struct and verify slog output or just verify no panic).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/json_helpers_test.go"
+      ],
+      "startedAt": "2026-02-06T00:03:57.688Z",
+      "completedAt": "2026-02-06T00:04:09.781Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Run `go test ./core/controlplane/gateway/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:04:10.223Z",
+      "completedAt": "2026-02-06T00:04:23.411Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 1,
+  "reopenReason": "Need to complete steps 3-4: add test and run verification",
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 19,
+  "createdAt": "2026-02-05T22:26:08.595Z",
+  "updatedAt": "2026-02-06T00:23:22.016Z",
+  "priority": "MEDIUM"
+}

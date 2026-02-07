@@ -104,9 +104,9 @@ services:
     depends_on:
       - cordum-api-gateway
     environment:
-      - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-http://localhost:8081}
+      - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-}
       - CORDUM_API_KEY=${CORDUM_API_KEY:-}
-      - CORDUM_DASHBOARD_EMBED_API_KEY=true
+      - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
       - CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default}
       - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-}
       - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-}

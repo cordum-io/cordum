@@ -1,0 +1,16 @@
+{
+  "id": "epic-81e5a709",
+  "projectId": "proj-4aad1c0e",
+  "title": "Full Audit Log Implementation",
+  "description": "Make the Audit Log page show ALL significant system operations (jobs, workflows, runs, policy, packs, config, schemas, DLQ, users) — not just policy publish/rollback. Extends the existing policyAuditEntry struct with resource_type/resource_id, adds a convenience helper, instruments ~23 handlers, and updates the dashboard.",
+  "architectureNotes": "Backend: Extend policyAuditEntry struct in policy_bundles.go with ResourceType and ResourceID fields. Add appendAuditEntry convenience helper. Instrument all state-changing HTTP handlers across gateway.go, policy_bundles.go, packs.go, and auth_handlers.go. Increase audit cap from 100 to 500. Dashboard: Update PolicyAuditEntry type and AuditLogPage component with resource_type badge, resource_id display, and expanded action color mapping.",
+  "epicRails": [
+    "Do not break existing policy audit entries — new fields are omitempty",
+    "Audit calls must go BEFORE the success response write, not after",
+    "Use policyActorID(r) and policyRole(r) consistently for all entries"
+  ],
+  "status": "PLANNED",
+  "order": 5,
+  "createdAt": "2026-02-06T13:07:15.521Z",
+  "updatedAt": "2026-02-06T14:39:45.388Z"
+}

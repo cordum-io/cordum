@@ -1,0 +1,80 @@
+{
+  "id": "task-b36e3f5e",
+  "epicId": "epic-da4e0aa4",
+  "title": "Instrument policy_bundles.go, packs, and auth handlers with audit logging",
+  "description": "## What\nAdd `s.appendAuditEntry(...)` calls to 7 more handlers across policy_bundles.go, packs_core.go, packs_marketplace.go, and auth_handlers.go.\n\n## Pattern\nSame as the gateway handlers task — call goes BEFORE the success response write.\n\n---\n\n## policy_bundles.go (2 handlers)\n\n### 1. handlePutPolicyBundle (lines ~245-322)\nInsert BEFORE the `writeJSON` success response (~line 317):\n```go\ns.appendAuditEntry(r.Context(), \"edit\", \"policy\", bundleID, policyActorID(r), policyRole(r), \"edit policy bundle \"+bundleID)\n```\n- `bundleID` is available locally (set around line 254)\n\n### 2. handleCapturePolicyBundleSnapshot (lines ~573-622)\nInsert BEFORE the `writeJSON(w, snapshot)` success response (~line 620):\n```go\ns.appendAuditEntry(r.Context(), \"snapshot\", \"policy\", snapshot.ID, policyActorID(r), policyRole(r), \"capture policy snapshot \"+snapshot.ID)\n```\n- `snapshot.ID` is available (the snapshot struct has an ID field, set around line 598)\n\n---\n\n## packs_core.go (2 handlers)\n\n### 3. handleInstallPack (post-split, originally lines 612-666)\nInsert BEFORE the success response:\n```go\ns.appendAuditEntry(r.Context(), \"install\", \"pack\", record.ID, policyActorID(r), policyRole(r), \"install pack \"+record.ID)\n```\n- `record` is the packRecord created during installation (check exact var name — may be `rec` or `record`)\n\n### 4. handleUninstallPack (post-split, originally lines 817-889)\nInsert BEFORE the success response:\n```go\ns.appendAuditEntry(r.Context(), \"uninstall\", \"pack\", packID, policyActorID(r), policyRole(r), \"uninstall pack \"+packID)\n```\n- `packID` from URL param\n\n---\n\n## packs_marketplace.go (1 handler)\n\n### 5. handleMarketplaceInstall (post-split, originally lines 476-610)\nInsert BEFORE the success response:\n```go\ns.appendAuditEntry(r.Context(), \"install\", \"pack\", record.ID, policyActorID(r), policyRole(r), \"install marketplace pack \"+record.ID)\n```\n- `record` is the packRecord result (check exact var name)\n\n---\n\n## auth_handlers.go (2 handlers)\n\n### 6. handleCreateUser (lines ~292-364)\nInsert BEFORE the `WriteHeader(http.StatusCreated)` + `writeJSON` success response (~line 353):\n```go\nauthCtx := authFromRequest(r)  // already exists at line 293\ns.appendAuditEntry(r.Context(), \"create\", \"user\", user.ID, authCtx.PrincipalID, authCtx.Role, \"create user \"+user.Username)\n```\n- `authCtx` is already declared at the top of the handler (line 293)\n- `user.ID` and `user.Username` are available from the created user object\n- Use `authCtx.PrincipalID` and `authCtx.Role` instead of `policyActorID`/`policyRole` for auth handlers\n\n### 7. handleChangePassword (lines ~238-288)\nInsert BEFORE `w.WriteHeader(http.StatusNoContent)` (~line 287):\n```go\nauthCtx := authFromRequest(r)  // already exists at line 239\ns.appendAuditEntry(r.Context(), \"change_password\", \"user\", authCtx.PrincipalID, authCtx.PrincipalID, authCtx.Role, \"change password\")\n```\n- `authCtx` is already declared at the top (line 239)\n- Both actor and resource are `authCtx.PrincipalID` (user changing their own password)\n- Check if `authCtx.Role` exists — if the struct uses a different field name, adjust accordingly\n\n## How\n1. Read each file\n2. Find the exact success response point in each handler\n3. Insert audit call BEFORE it\n4. Run `go build ./cmd/cordum-api-gateway`\n\n## Notes\n- For auth_handlers.go, verify the exact field names on the auth context struct — may be `Role` or `Roles` or accessed differently\n- Variable names are approximate — always read the handler to confirm",
+  "definitionOfDone": [
+    "handlePutPolicyBundle has audit call with action=edit, resourceType=policy",
+    "handleCapturePolicyBundleSnapshot has audit call with action=snapshot",
+    "handleInstallPack has audit call with action=install, resourceType=pack",
+    "handleUninstallPack has audit call with action=uninstall, resourceType=pack",
+    "handleMarketplaceInstall has audit call with action=install, resourceType=pack",
+    "handleCreateUser has audit call with action=create, resourceType=user",
+    "handleChangePassword has audit call with action=change_password, resourceType=user",
+    "go build ./cmd/cordum-api-gateway succeeds"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Instrument 2 handlers in policy_bundles.go.\n\n1. **handlePutPolicyBundle** (lines ~245-322): Insert BEFORE the success writeJSON (at ~line 317):\n   ```go\n   s.appendAuditEntry(r.Context(), \"edit\", \"policy\", bundleID, policyActorID(r), policyRole(r), \"edit policy bundle \"+bundleID)\n   ```\n   `bundleID` is available locally.\n\n2. **handleCapturePolicyBundleSnapshot** (lines ~573-622): Insert BEFORE `writeJSON(w, snapshot)` (at ~line 620):\n   ```go\n   s.appendAuditEntry(r.Context(), \"snapshot\", \"policy\", snapshot.ID, policyActorID(r), policyRole(r), \"capture policy snapshot \"+snapshot.ID)\n   ```\n   Check exact field name on snapshot struct.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/policy_bundles.go"
+      ],
+      "startedAt": "2026-02-06T22:22:35.058Z",
+      "completedAt": "2026-02-06T22:23:35.658Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Instrument 2 handlers in packs_core.go.\n\n1. **handleInstallPack**: Insert BEFORE success response:\n   ```go\n   s.appendAuditEntry(r.Context(), \"install\", \"pack\", record.ID, policyActorID(r), policyRole(r), \"install pack \"+record.ID)\n   ```\n   Check exact var name for the pack record (may be `record` or `rec`).\n\n2. **handleUninstallPack**: Insert BEFORE success response:\n   ```go\n   s.appendAuditEntry(r.Context(), \"uninstall\", \"pack\", packID, policyActorID(r), policyRole(r), \"uninstall pack \"+packID)\n   ```\n   `packID` from URL param.\n\nNote: These files are the POST-SPLIT versions. Use function names to locate.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/packs_core.go"
+      ],
+      "completedAt": "2026-02-06T22:23:36.668Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Instrument 1 handler in packs_marketplace.go.\n\n**handleMarketplaceInstall**: Insert BEFORE success response:\n```go\ns.appendAuditEntry(r.Context(), \"install\", \"pack\", record.ID, policyActorID(r), policyRole(r), \"install marketplace pack \"+record.ID)\n```\nCheck exact var name for the pack record.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/packs_marketplace.go"
+      ],
+      "completedAt": "2026-02-06T22:23:37.883Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Instrument 2 handlers in auth_handlers.go.\n\nThese use `authFromRequest(r)` instead of `policyActorID`/`policyRole` since they're auth-specific handlers.\n\n1. **handleCreateUser** (lines 292-364): Insert BEFORE `w.WriteHeader(http.StatusCreated)` at line 353:\n   ```go\n   s.appendAuditEntry(r.Context(), \"create\", \"user\", user.ID, authCtx.PrincipalID, authCtx.Role, \"create user \"+user.Username)\n   ```\n   `authCtx` is already declared at line 293. `user` is the created user (check exact var name).\n\n2. **handleChangePassword** (lines 238-288): Insert BEFORE `w.WriteHeader(http.StatusNoContent)` at line 287:\n   ```go\n   s.appendAuditEntry(r.Context(), \"change_password\", \"user\", authCtx.PrincipalID, authCtx.PrincipalID, authCtx.Role, \"change password\")\n   ```\n   `authCtx` is already declared at line 239. Both actor and resource are `authCtx.PrincipalID`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/auth_handlers.go"
+      ],
+      "completedAt": "2026-02-06T22:23:39.186Z"
+    },
+    {
+      "stepId": "step-5",
+      "description": "Verify build compiles with all 7 audit calls.\n\nRun: `go build ./cmd/cordum-api-gateway` — must compile.\n\nVerify total: 2 (policy_bundles) + 2 (packs_core) + 1 (packs_marketplace) + 2 (auth_handlers) = 7 new audit calls.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/policy_bundles.go",
+        "core/controlplane/gateway/packs_core.go",
+        "core/controlplane/gateway/packs_marketplace.go",
+        "core/controlplane/gateway/auth_handlers.go"
+      ],
+      "completedAt": "2026-02-06T22:23:40.233Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 10,
+  "createdAt": "2026-02-06T14:49:23.224Z",
+  "updatedAt": "2026-02-06T23:24:15.941Z"
+}

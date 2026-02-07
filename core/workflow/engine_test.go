@@ -172,8 +172,14 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 		Status: pb.JobStatus_JOB_STATUS_FAILED,
 	})
 
-	// Wait for backoff retry to trigger.
-	time.Sleep(1200 * time.Millisecond)
+	// Poll until the backoff retry triggers a second publish.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if bus.Count() >= 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if bus.Count() < 2 {
 		t.Fatalf("expected retry publish, got %d", bus.Count())
 	}
@@ -369,11 +375,23 @@ func TestEngineDelayStepCompletes(t *testing.T) {
 		t.Fatalf("expected no publishes for delay step, got %d", bus.Count())
 	}
 
-	time.Sleep(1200 * time.Millisecond)
+	// Poll until the delay step completes and the run succeeds.
+	deadline := time.Now().Add(5 * time.Second)
+	var final *WorkflowRun
+	for time.Now().Before(deadline) {
+		final, _ = store.GetRun(context.Background(), run.ID)
+		if final.Status == RunStatusSucceeded {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
-	if final.Status != RunStatusSucceeded {
-		t.Fatalf("expected run succeeded after delay, got %s", final.Status)
+	if final == nil || final.Status != RunStatusSucceeded {
+		status := "nil"
+		if final != nil {
+			status = string(final.Status)
+		}
+		t.Fatalf("expected run succeeded after delay, got %s", status)
 	}
 	if final.Steps["wait"].Status != StepStatusSucceeded {
 		t.Fatalf("expected delay step succeeded, got %s", final.Steps["wait"].Status)

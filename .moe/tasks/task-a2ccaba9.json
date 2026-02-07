@@ -1,0 +1,79 @@
+{
+  "id": "task-a2ccaba9",
+  "epicId": "epic-cddc11dd",
+  "title": "Standardize error response format across all gateway handlers",
+  "description": "**Bug**: Gateway handlers inconsistently return errors — some use `http.Error()` (plain text), others return JSON objects. The dashboard's `api.ts:120` does `await res.text()` which works for both, but prevents structured error parsing.\n\n**Fix**: Create a helper `writeErrorJSON(w, status, message)` that returns:\n```json\n{\"error\": \"message\", \"status\": 400}\n```\nReplace all `http.Error()` calls in gateway handlers with this helper. The dashboard can then optionally parse JSON errors.\n\n**Scope**: This is a large change — consider doing it incrementally. Start with the most user-facing endpoints (jobs, workflows, auth).\n\n**Files**: `core/controlplane/gateway/gateway.go`, `chat.go`, `auth_handlers.go`, `packs.go`, `policy_bundles.go`",
+  "definitionOfDone": [
+    "All error responses return JSON with {error, status} shape",
+    "Dashboard api.ts can parse structured errors",
+    "Backward compatible — status codes unchanged"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create a `writeErrorJSON` helper (can go in the existing `json_helpers.go` if it exists, or a new file):\n```go\nfunc writeErrorJSON(w http.ResponseWriter, status int, message string) {\n    w.Header().Set(\"Content-Type\", \"application/json\")\n    w.WriteHeader(status)\n    resp := map[string]any{\"error\": message, \"status\": status}\n    if err := json.NewEncoder(w).Encode(resp); err != nil {\n        slog.Warn(\"json encode error response failed\", \"error\", err)\n    }\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-06T00:15:10.172Z",
+      "completedAt": "2026-02-06T00:15:22.950Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Replace `http.Error(w, ...)` calls in the most user-facing handlers with `writeErrorJSON(w, ...)`. Start with:\n- gateway.go: job endpoints (list, get, submit, cancel)\n- auth_handlers.go: login, session\n- chat.go: get/post chat\n\nLeave less-critical handlers (packs, policies, config) for a follow-up.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go",
+        "core/controlplane/gateway/auth_handlers.go",
+        "core/controlplane/gateway/chat.go"
+      ],
+      "startedAt": "2026-02-06T00:15:23.519Z",
+      "completedAt": "2026-02-06T09:38:51.896Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Update dashboard `api.ts` error handling to try JSON parse first, fall back to text:\n```typescript\nif (!res.ok) {\n    const text = await res.text();\n    let message = text;\n    try {\n        const json = JSON.parse(text);\n        message = json.error || text;\n    } catch {}\n    throw new Error(message || `Request failed (${res.status})`);\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/lib/api.ts"
+      ],
+      "startedAt": "2026-02-06T09:38:52.460Z",
+      "completedAt": "2026-02-06T09:39:08.560Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Run backend tests and verify dashboard builds.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T09:39:09.048Z",
+      "completedAt": "2026-02-06T09:39:49.659Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 1,
+  "reopenReason": "DoD item 2 (\"Dashboard api.ts can parse structured errors\") not met.\n\nThe backend writeErrorJSON sends `{\"error\": \"message\", \"status\": 400}` but the dashboard client at `dashboard/src/api/client.ts:86-89` extracts `body.message`, not `body.error`:\n\n```typescript\nconst msg =\n    (body && typeof body === \"object\" && \"message\" in body\n      ? String((body as Record<string, unknown>).message)\n      : null) ?? res.statusText;\n```\n\nThis means the structured error message is never extracted — it falls back to `res.statusText` (e.g., \"Bad Request\" instead of the actual error text).\n\nFix: Change `\"message\" in body` to check for `\"error\"` as well:\n```typescript\nconst msg =\n    (body && typeof body === \"object\" && (\"error\" in body || \"message\" in body)\n      ? String((body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message)\n      : null) ?? res.statusText;\n```\n\nNote: The plan step-3 modified `dashboard/src/lib/api.ts` (a deleted file). The actual client is `dashboard/src/api/client.ts`.",
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 18,
+  "createdAt": "2026-02-05T23:49:10.388Z",
+  "updatedAt": "2026-02-07T20:00:00.482Z",
+  "rejectionDetails": {
+    "failedDodItems": [
+      "Dashboard api.ts can parse structured errors"
+    ],
+    "issues": [
+      {
+        "type": "missing_feature",
+        "description": "Client checks for body.message but backend sends body.error — field name mismatch means error messages are lost, falling back to generic res.statusText",
+        "file": "dashboard/src/api/client.ts",
+        "line": 87
+      }
+    ]
+  }
+}

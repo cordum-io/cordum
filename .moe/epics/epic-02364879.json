@@ -1,0 +1,14 @@
+{
+  "id": "epic-02364879",
+  "projectId": "proj-4aad1c0e",
+  "title": "Packs (/packs)",
+  "description": "Capability pack management. Installed packs grid, pack detail, marketplace browser.",
+  "architectureNotes": "Packs from /api/v1/packs. Marketplace from /api/v1/marketplace. Card grid layout for installed packs. Detail page shows manifest, config, capabilities, pool assignment.",
+  "epicRails": [
+    "Card grid layout for pack display"
+  ],
+  "status": "PLANNED",
+  "order": 9,
+  "createdAt": "2026-02-06T23:46:57.492Z",
+  "updatedAt": "2026-02-07T19:58:36.783Z"
+}

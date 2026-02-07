@@ -1,0 +1,67 @@
+{
+  "id": "task-674626f2",
+  "epicId": "epic-806e5c17",
+  "title": "Add DLQ/Error summary widget to Command Center",
+  "description": "The HomePage (Command Center) is missing a DLQ/error summary section. Add a compact widget showing: recent DLQ entries count, top failure reasons, and a \"View DLQ\" link.\n\n**Implementation:**\n- Create `dashboard/src/components/home/DLQSummary.tsx`\n- Use `useDLQ()` hook from `hooks/useDLQ.ts` to fetch recent entries\n- Display: total count, last 3 failure reasons (truncated), link to `/dlq`\n- Match existing Card + compact layout pattern from other home components\n- Add to HomePage grid below the existing sections\n\n**Files:** `dashboard/src/components/home/DLQSummary.tsx` (new), `dashboard/src/pages/HomePage.tsx`",
+  "definitionOfDone": [
+    "DLQ summary widget renders on Command Center",
+    "Shows count of DLQ entries and recent failure reasons",
+    "Links to /dlq page",
+    "Loading and empty states handled",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/home/DLQSummary.tsx: Compact Card widget using useDLQ({ limit: 5 }). Shows: total DLQ entries count as bold number, last 3 failure reasons (truncated to 60 chars with ellipsis), each as a small row with danger-colored dot + error text. Link to /dlq at bottom ('View all failed jobs →'). Loading state: skeleton lines. Empty state: success-colored checkmark + 'No failed jobs'. Match MetricCard/Card pattern from other home components.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/home/DLQSummary.tsx"
+      ],
+      "startedAt": "2026-02-07T20:18:29.146Z",
+      "completedAt": "2026-02-07T20:18:56.892Z",
+      "note": "Created DLQSummary component using useDLQ({ limit: 5 }). Shows entry count, top 3 failure reasons with danger dots, link to /dlq. Loading skeleton and empty state (checkmark + 'No failed jobs').",
+      "modifiedFiles": [
+        "dashboard/src/components/home/DLQSummary.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Update dashboard/src/pages/HomePage.tsx: Import DLQSummary. Place it after PoolUtilizationGrid, before the EventTimeline + ActiveWorkflowCards two-column grid. DLQSummary sits in a standalone row (full width, compact).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/HomePage.tsx"
+      ],
+      "startedAt": "2026-02-07T20:18:57.334Z",
+      "completedAt": "2026-02-07T20:19:10.753Z",
+      "note": "Added DLQSummary import and placed it after PoolUtilizationGrid, before EventTimeline + ActiveWorkflowCards grid.",
+      "modifiedFiles": [
+        "dashboard/src/pages/HomePage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run node ./node_modules/typescript/bin/tsc --noEmit from dashboard/.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T20:19:11.178Z",
+      "completedAt": "2026-02-07T20:19:24.528Z",
+      "note": "tsc --noEmit clean. No errors in DLQSummary or HomePage."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 7,
+  "createdAt": "2026-02-07T18:42:20.520Z",
+  "updatedAt": "2026-02-07T20:23:07.175Z",
+  "planSubmittedAt": "2026-02-07T20:04:29.393Z",
+  "planApprovedAt": "2026-02-07T20:04:29.395Z"
+}

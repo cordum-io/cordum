@@ -1,0 +1,55 @@
+{
+  "id": "task-2aff551a",
+  "epicId": "epic-e24aac31",
+  "title": "Approvals API hooks + types",
+  "description": "useApprovals(), useApproveJob(), useRejectJob(), useApproveStep() mutations.",
+  "definitionOfDone": [
+    "useApprovals() list pending approvals with polling",
+    "useApproveJob() mutation with cache invalidation",
+    "useRejectJob() mutation (requires reason) with cache invalidation",
+    "useApproveStep() mutation for workflow step approvals",
+    "useApprovalHistory() for past approvals",
+    "All in hooks/useApprovals.ts",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/hooks/useApprovals.ts: useApprovals() fetching GET /api/v1/approvals with 10s refetchInterval (high-priority data). useApprovalHistory(filters) fetching GET /api/v1/approvals/history with pagination and filters. useApproveJob() mutation (POST /api/v1/approvals/:id/approve with optional comment body). useRejectJob() mutation (POST /api/v1/approvals/:id/reject with required reason body). useApproveStep() mutation for workflow step approvals (POST /api/v1/approvals/:id/approve-step). All mutations invalidate ['approvals'] and ['approvals', 'nav'] (the nav badge count). WebSocket events for approval.* invalidate approvals cache.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useApprovals.ts"
+      ],
+      "startedAt": "2026-02-07T00:46:09.761Z",
+      "completedAt": "2026-02-07T00:46:48.175Z",
+      "note": "Added: useApprovalHistory() with pagination/sort filters, useApproveJob() (with alias useApproveApproval for compat), useRejectJob() with required reason field (aliased as useRejectApproval), useApproveStep() for workflow step approvals. All mutations invalidate both ['approvals'] and ['approvals','nav'] for badge count. useApprovals() already had 10s refetchInterval.",
+      "modifiedFiles": [
+        "dashboard/src/hooks/useApprovals.ts"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:46:48.559Z",
+      "completedAt": "2026-02-07T00:47:42.437Z",
+      "note": "tsc --noEmit passes. Initial run had a transient error due to linter modifying ApprovalDetailModal.tsx concurrently; re-run was clean."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 43,
+  "createdAt": "2026-02-06T23:49:42.767Z",
+  "updatedAt": "2026-02-07T20:02:33.602Z",
+  "planSubmittedAt": "2026-02-06T23:59:01.534Z",
+  "planApprovedAt": "2026-02-06T23:59:01.535Z"
+}

@@ -41,7 +41,14 @@ func TestDecisionCacheRespectsTTL(t *testing.T) {
 	if got := srv.getCachedDecision(key); got == nil {
 		t.Fatalf("expected cached decision")
 	}
-	time.Sleep(30 * time.Millisecond)
+	// Poll until the TTL expires and the cache entry is evicted.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srv.getCachedDecision(key) == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if got := srv.getCachedDecision(key); got != nil {
 		t.Fatalf("expected cached decision to expire")
 	}

@@ -84,6 +84,15 @@ spec:
       labels:
         app: nats
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: nats
+              topologyKey: kubernetes.io/hostname
       terminationGracePeriodSeconds: 60
       containers:
       - name: nats
@@ -103,6 +112,12 @@ spec:
           containerPort: 6222
         - name: monitor
           containerPort: 8222
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8222
+          failureThreshold: 30
+          periodSeconds: 5
         livenessProbe:
           httpGet:
             path: /healthz

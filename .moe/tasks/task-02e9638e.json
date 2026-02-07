@@ -1,0 +1,28 @@
+{
+  "id": "task-02e9638e",
+  "epicId": "epic-06442149",
+  "title": "Build WorkflowDetailPage with info, runs history, and metrics",
+  "description": "No workflow detail page exists. WorkflowsPage links to `/workflows/:id` but the route target is missing.\n\n**Implementation:**\n- Create `dashboard/src/pages/WorkflowDetailPage.tsx`\n- Fetch workflow by ID using `useWorkflow(id)` from `hooks/useWorkflows.ts`\n- Show: workflow name, trigger type badge, step count, timeout, metadata, created/updated times\n- Show step list with type icons and dependency visualization (simple list, not full DAG)\n- Show recent runs table (last 20) using `useWorkflowRuns(workflowId)` — reuse RunStatusBadge\n- Add \"Run Now\" button (POST to create run), \"Edit\" button (navigate to edit page)\n- Back navigation to /workflows\n\n**Files:** `dashboard/src/pages/WorkflowDetailPage.tsx` (new), `dashboard/src/App.tsx` (add route)",
+  "definitionOfDone": [
+    "WorkflowDetailPage renders workflow info and step list",
+    "Recent runs table shows run history",
+    "Run Now button triggers workflow execution",
+    "Route registered in App.tsx",
+    "Loading/error states",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 32,
+  "createdAt": "2026-02-07T18:43:07.719Z",
+  "updatedAt": "2026-02-07T20:07:58.453Z"
+}

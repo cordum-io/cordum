@@ -1,0 +1,16 @@
+{
+  "id": "epic-cddc11dd",
+  "projectId": "proj-4aad1c0e",
+  "title": "Dashboard-to-Backend Integration Bugs",
+  "description": "Bugs found in the dashboard frontend ↔ backend API integration layer. Covers CORS misconfiguration, WebSocket issues, React hook bugs, error handling gaps, and state management problems.",
+  "architectureNotes": "The dashboard is a React/TypeScript SPA using React Query for data fetching, Zustand for state, and native WebSocket for real-time events. The backend is a Go HTTP server in core/controlplane/gateway/. CORS middleware is at gateway.go:2450-2478. WebSocket uses the gorilla/websocket library with a custom API key protocol.",
+  "epicRails": [
+    "Do not break existing API contracts",
+    "Frontend fixes must work without backend changes where possible",
+    "Test CORS changes with browser preflight manually"
+  ],
+  "status": "PLANNED",
+  "order": 4,
+  "createdAt": "2026-02-05T23:48:56.070Z",
+  "updatedAt": "2026-02-07T18:27:57.593Z"
+}

@@ -1,0 +1,59 @@
+{
+  "id": "task-bbbbc3f7",
+  "epicId": "epic-decda99c",
+  "title": "NodeDetailPanel — slide-out for step inspection",
+  "description": "When clicking a node in the DAG, a detail panel slides out from the right showing step-specific information. Different content per step type.\n\n**File:** `dashboard/src/components/workflows/dag/NodeDetailPanel.tsx`\n\n**For job steps:**\n- Job ID (link to /jobs/:id), worker that executed it\n- Safety decision with reason (from explain() output if available)\n- Request payload (collapsible JSON viewer)\n- Result payload (collapsible JSON viewer)\n- Duration breakdown\n- Error message if failed\n\n**For approval steps:**\n- Approval status (pending/approved/rejected)\n- Who approved/rejected, when, their comment\n- How long it was pending\n- **If still pending: Approve/Reject buttons** (wired in next task)\n\n**For condition steps:**\n- Expression that was evaluated\n- Result (true/false)\n- Which branch was taken\n\n**For delay steps:**\n- Delay duration configured\n- Time remaining (if in progress) or total wait (if completed)\n\n**For fan-out steps:**\n- Number of parallel branches\n- Status of each branch\n\n**Panel behavior:** Drawer component (reuse existing Drawer from ui/), slides from right, 400px wide. Close on X button or click outside. Shows step name and type in header.",
+  "definitionOfDone": [
+    "NodeDetailPanel renders different content per step type",
+    "Job steps show safety decision, payloads, duration, error",
+    "Approval steps show status, actor, timing",
+    "Condition steps show expression, result, branch taken",
+    "Drawer slides from right, closeable",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create `NodeDetailPanel` in `dashboard/src/components/workflows/dag/NodeDetailPanel.tsx`.\n\nUses existing `Drawer` from ui/. Width 400px, slides right. Header: step name (truncated 60 chars, text-only) + type badge + close X.\n\nProps: `step` (definition), `runStep` (run state), `run`, `onClose`, `onApprove?`, `onReject?` callbacks.\n\nContent per step type:\n- **Job:** RunStatusBadge + duration, safety decision badge + reason, job ID link to /jobs/:id, worker ID, collapsible JSON request/result payloads (<pre> max 5000 chars), error card (red, truncated 500 chars)\n- **Approval:** status badge, actor, comment, pending duration. Approve/Reject buttons rendered if callbacks provided AND status=waiting (disabled stubs here, wired in task-ee932549)\n- **Condition:** expression in monospace, true/false result badge, branch taken\n- **Delay:** configured duration, time remaining if running, total wait if completed\n- **Fan-out:** parallelism value, forEach expression, child branch statuses\n\nSECURITY: All strings via JSX text nodes (never innerHTML). JSON in <pre> text only. Job ID links validated with /^[a-zA-Z0-9_-]+$/. Error/payload strings truncated.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflows/dag/NodeDetailPanel.tsx"
+      ],
+      "startedAt": "2026-02-07T21:17:43.206Z",
+      "completedAt": "2026-02-07T21:19:05.893Z",
+      "note": "Created NodeDetailPanel with per-step-type renderers: JobDetail (status, duration, job ID link, worker, safety decision badge+reason+evalTime, error card, collapsible JSON request/result), ApprovalDetail (status, actor, comment, pending duration, approve/reject buttons when waiting), ConditionDetail (expression, true/false badge, branch taken), DelayDetail (configured delay, elapsed/remaining), FanOutDetail (parallelism, forEach expression, child branch statuses), GenericDetail (notify + unknown types). Uses existing Drawer (size=sm), RunStatusBadge, Badge, Card. All text via JSX (no innerHTML), job ID validated with regex, strings truncated.",
+      "modifiedFiles": [
+        "dashboard/src/components/workflows/dag/NodeDetailPanel.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Export from barrel + verify types.\n\nUpdate `dashboard/src/components/workflows/dag/index.ts` to export NodeDetailPanel. Verify Drawer supports width/className for 400px. Run `node ./node_modules/typescript/bin/tsc --noEmit`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflows/dag/index.ts"
+      ],
+      "startedAt": "2026-02-07T21:19:09.921Z",
+      "completedAt": "2026-02-07T21:19:33.951Z",
+      "note": "Added NodeDetailPanel export to barrel. tsc --noEmit passes clean. Drawer size=sm gives max-w-sm (~384px), close to the 400px target.",
+      "modifiedFiles": [
+        "dashboard/src/components/workflows/dag/index.ts"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "CRITICAL",
+  "order": 8,
+  "createdAt": "2026-02-07T21:05:47.426Z",
+  "updatedAt": "2026-02-07T21:32:28.971Z",
+  "planSubmittedAt": "2026-02-07T21:13:57.002Z",
+  "planApprovedAt": "2026-02-07T21:13:57.004Z"
+}

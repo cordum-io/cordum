@@ -1,0 +1,65 @@
+{
+  "id": "task-05c2cb44",
+  "epicId": "epic-dbd90afa",
+  "title": "Add podAntiAffinity rules for HA deployments",
+  "description": "**Severity: MEDIUM**\n\n**File**: `deploy/k8s/base.yaml` — all Deployments and StatefulSets\n\n**Issue**: Despite configuring HPA with multiple replicas, no podAntiAffinity rules exist. All replicas of a service can be scheduled on the same node, meaning a single node failure takes down the entire service — defeating the purpose of HA.\n\n**Affected**: All Cordum Deployments (api-gateway, scheduler, context-engine, safety-kernel, workflow-engine, dashboard) and StatefulSets (nats, redis).\n\n**Fix**: Add `preferredDuringSchedulingIgnoredDuringExecution` podAntiAffinity with `topologyKey: kubernetes.io/hostname` to spread pods across nodes. Use `preferred` (not `required`) to avoid scheduling failures in small clusters.",
+  "definitionOfDone": [
+    "All Deployments and StatefulSets have podAntiAffinity rules",
+    "Pods spread across different nodes when possible",
+    "kubectl apply --dry-run validates"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "**Create a kustomize patch** for podAntiAffinity at `deploy/k8s/production/patches/pod-anti-affinity.yaml`. This is better placed in the production overlay rather than base.yaml because anti-affinity is only meaningful in multi-node production clusters, not single-node dev environments.\n\nThe patch adds `preferredDuringSchedulingIgnoredDuringExecution` anti-affinity to each Cordum Deployment using `topologyKey: kubernetes.io/hostname`, with weight 100. One strategic-merge-patch per Deployment:\n```yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: cordum-api-gateway\nspec:\n  template:\n    spec:\n      affinity:\n        podAntiAffinity:\n          preferredDuringSchedulingIgnoredDuringExecution:\n          - weight: 100\n            podAffinityTerm:\n              labelSelector:\n                matchLabels:\n                  app: cordum-api-gateway\n              topologyKey: kubernetes.io/hostname\n```\nRepeat for: cordum-scheduler, cordum-safety-kernel, cordum-context-engine, cordum-workflow-engine, cordum-dashboard (6 Deployments). NATS/Redis StatefulSets in production already have their own pod specs.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "deploy/k8s/production/patches/pod-anti-affinity.yaml"
+      ],
+      "startedAt": "2026-02-06T10:07:32.153Z",
+      "completedAt": "2026-02-06T10:07:51.216Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Add the new patch to `deploy/k8s/production/kustomization.yaml` under the `patches:` section:\n```yaml\n  - path: patches/pod-anti-affinity.yaml\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "deploy/k8s/production/kustomization.yaml"
+      ],
+      "startedAt": "2026-02-06T10:07:51.714Z",
+      "completedAt": "2026-02-06T10:08:05.354Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Also add anti-affinity to the NATS and Redis StatefulSets in their respective production files (`nats.yaml`, `redis.yaml`) using the same `preferred` pattern with their `app` labels.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "deploy/k8s/production/nats.yaml",
+        "deploy/k8s/production/redis.yaml"
+      ],
+      "startedAt": "2026-02-06T10:08:06.100Z",
+      "completedAt": "2026-02-06T10:08:24.476Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Validate with `kustomize build deploy/k8s/production/` to verify all YAML is valid and the patches apply correctly.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T10:08:24.795Z",
+      "completedAt": "2026-02-06T10:08:40.203Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 33,
+  "createdAt": "2026-02-05T22:27:48.044Z",
+  "updatedAt": "2026-02-06T12:13:17.929Z",
+  "priority": "LOW"
+}

@@ -1,0 +1,57 @@
+{
+  "id": "task-b8dc5499",
+  "epicId": "epic-7026bb2b",
+  "title": "Condition node dual outputs — true/false branches",
+  "description": "Currently ConditionNode has a single output handle (like all nodes via BaseNode). It needs two named output handles: true (right) and false (left), so edges can route to different next-steps based on condition result.\\n\\nChanges needed:\\n\\n1. **BaseNode enhancement:** Add optional `outputs` prop: `Array<{ id: string; label: string; position: 'left' | 'right' | 'bottom' }>`. When provided, render multiple source Handles with IDs instead of the single bottom handle. Default behavior unchanged for nodes that don't pass this prop.\\n\\n2. **ConditionNode:** Pass `outputs={[{ id: 'true', label: 'True', position: 'right' }, { id: 'false', label: 'False', position: 'left' }]}` to BaseNode. Show small ✓/✗ labels next to each handle.\\n\\n3. **Edge metadata:** When connecting from a named handle, ReactFlow stores `sourceHandle` on the edge. Update `graphToDefinition` to serialize this into step config as `branches: { true: 'step-id', false: 'step-id' }`.\\n\\n4. **definitionToGraph:** Read `branches` from condition step config and create edges with correct `sourceHandle` values.\\n\\n5. **NodeConfigPanel for condition:** Add fields for expression language (JS expression). Show a hint about true/false routing.\\n\\n6. **RunOverlayNode:** For condition steps with run data, highlight which branch was taken (dim the not-taken branch handle).",
+  "definitionOfDone": [
+    "ConditionNode renders two output handles (true/false)",
+    "Edges from condition node carry sourceHandle metadata",
+    "graphToDefinition preserves branch routing in step config",
+    "definitionToGraph recreates branched edges correctly",
+    "Run overlay dims the branch not taken",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Extend BaseNode to support multiple named output handles.\n\nAdd optional prop `outputs?: Array<{ id: string; label: string; position: 'left' | 'right' | 'bottom' }>`.\n\nWhen `outputs` is provided: render multiple `<Handle type='source' id={output.id} position={mapPosition(output.position)} />` with small labels (text-[10px]) instead of the single bottom handle. Position mapping: 'left' = Position.Left, 'right' = Position.Right, 'bottom' = Position.Bottom.\n\nWhen `outputs` is undefined: keep existing single bottom handle (backwards compatible).\n\nSECURITY: Handle IDs are developer-defined strings, not user input.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/nodes/BaseNode.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Update ConditionNode to use dual outputs.\n\nPass `outputs={[{ id: 'true', label: 'True', position: 'right' }, { id: 'false', label: 'False', position: 'left' }]}` to BaseNode. Add small check/X icons next to handles.\n\nUpdate `graphToDefinition` in WorkflowCanvas: when an edge has `sourceHandle`, store it in the step's config as `branches: { [sourceHandle]: targetStepId }`. For condition nodes, this produces `branches: { true: 'step-A', false: 'step-B' }`.\n\nUpdate `definitionToGraph`: when a step has `config.branches`, create edges with `sourceHandle` set to the branch key.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/nodes/ConditionNode.tsx",
+        "dashboard/src/components/workflow/WorkflowCanvas.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Update RunOverlayNode to handle condition branch visualization.\n\nWhen rendering a condition step with run data: check `runStep.output.result` (true/false). Highlight the taken branch handle (full opacity, thicker border) and dim the not-taken handle (opacity-30). Color the taken-branch edge green.\n\nVerify `node ./node_modules/typescript/bin/tsc --noEmit`.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/workflows/dag/RunOverlayNode.tsx",
+        "dashboard/src/components/workflows/dag/dagStyles.ts"
+      ]
+    }
+  ],
+  "status": "WORKING",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "CRITICAL",
+  "order": 3,
+  "createdAt": "2026-02-07T22:03:34.952Z",
+  "updatedAt": "2026-02-07T22:04:24.336Z",
+  "planSubmittedAt": "2026-02-07T22:04:24.335Z",
+  "planApprovedAt": "2026-02-07T22:04:24.336Z"
+}

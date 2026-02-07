@@ -1,0 +1,54 @@
+{
+  "id": "task-e27257fb",
+  "epicId": "epic-411cf33d",
+  "title": "Active bundle overview",
+  "description": "Cards per bundle: name, rule count, version, enabled/disabled toggle, last published, health status.",
+  "definitionOfDone": [
+    "PolicyPage showing active bundles as cards",
+    "Each card: name, rule count, version, enabled/disabled toggle, last published timestamp, health status indicator",
+    "Toggle enabled/disabled with confirmation",
+    "Click card navigates to bundle detail/rules",
+    "Empty state",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/pages/PolicyPage.tsx: Active bundle overview. Uses usePolicyBundles(). Card grid showing each bundle: name (CardTitle), rule count, version badge, enabled/disabled toggle (styled checkbox/switch), last published timestamp (relative time), health status indicator (green/yellow/red dot). Toggle enabled/disabled calls mutation with confirmation. Click card navigates to /policies/:bundleId for rule management. Tab navigation: Overview (this), Rules, Builder, Simulator, Analytics, Snapshots. Empty state with 'No policy bundles configured'.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ],
+      "startedAt": "2026-02-07T00:41:57.625Z",
+      "completedAt": "2026-02-07T00:43:30.583Z",
+      "note": "Rebuilt PolicyPage with: bundle overview card grid (name, rule count, version badge, enabled/disabled badge + toggle switch with confirmation, health dot indicator, last published timestamp), 6-tab navigation (Overview/Rules/Builder/Simulator/Analytics/Snapshots), uses usePolicyBundles() hook, click card navigates to /policy/:bundleId, empty state, loading/error states, preserves existing Builder tab with VisualRuleBuilder.",
+      "modifiedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:43:31.258Z",
+      "completedAt": "2026-02-07T00:43:41.894Z",
+      "note": "tsc --noEmit passes with zero errors."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 74,
+  "createdAt": "2026-02-06T23:49:09.751Z",
+  "updatedAt": "2026-02-07T20:03:46.600Z",
+  "planSubmittedAt": "2026-02-06T23:58:11.089Z",
+  "planApprovedAt": "2026-02-06T23:58:11.090Z"
+}

@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
+	"strings"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
@@ -152,6 +155,42 @@ func TestExtractUserMessage(t *testing.T) {
 	msg = svc.extractUserMessage([]byte("plain"))
 	if msg != "plain" {
 		t.Fatalf("expected fallback string, got %s", msg)
+	}
+}
+
+// NOTE: This test modifies the global slog default; do not add t.Parallel().
+func TestBuildWindowCorruptHistoryLogsWarning(t *testing.T) {
+	svc, srv := newTestService(t)
+	defer srv.Close()
+
+	ctx := context.Background()
+	// Push corrupt JSON into history.
+	svc.redis.RPush(ctx, svc.historyKey("corrupt-mem"), "not-valid-json")
+
+	// Install slog spy.
+	var buf bytes.Buffer
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	orig := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	// Call BuildWindow in CHAT mode — the corrupt entry should be skipped with a warning.
+	resp, err := svc.BuildWindow(ctx, &pb.BuildWindowRequest{
+		MemoryId:       "corrupt-mem",
+		Mode:           pb.ContextMode_CONTEXT_MODE_CHAT,
+		LogicalPayload: []byte(`{"prompt":"hi"}`),
+	})
+	if err != nil {
+		t.Fatalf("build window: %v", err)
+	}
+	// The corrupt entry should not appear in messages (only the user message).
+	if len(resp.Messages) != 1 || resp.Messages[0].GetContent() != "hi" {
+		t.Fatalf("expected only user message, got %d messages", len(resp.Messages))
+	}
+	// Assert warning was logged.
+	logged := buf.String()
+	if !strings.Contains(logged, "corrupt history event") {
+		t.Fatalf("expected slog.Warn for corrupt history event, got: %s", logged)
 	}
 }
 

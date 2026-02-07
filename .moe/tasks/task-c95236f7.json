@@ -1,0 +1,56 @@
+{
+  "id": "task-c95236f7",
+  "epicId": "epic-cddc11dd",
+  "title": "Fix query invalidation throttle, 401 handling, and WebSocket auth encoding",
+  "description": "**Bug 1**: `dashboard/src/hooks/useLiveBus.ts:134-143` — Query invalidation uses a 3s throttle. If two job updates arrive within 3 seconds, the second is silently skipped and the UI shows stale data.\n\n**Bug 2**: `dashboard/src/lib/api.ts:114-119` — On 401 response, credentials are cleared BEFORE the error is thrown. Multiple in-flight requests all clear credentials simultaneously, causing state flicker.\n\n**Bug 3**: `dashboard/src/lib/api.ts:349-359` — `btoa()` failure in `encodeWsApiKey` returns empty string silently. WebSocket connects without auth.\n\n**Fix 1**: Reduce throttle to 500ms, or use trailing-edge debounce so the last update always fires.\n**Fix 2**: Use a flag or debounce to only clear credentials once per 401 batch.\n**Fix 3**: Log a warning when encoding fails. Consider using a polyfill or TextEncoder-based approach.\n\n**Files**: `dashboard/src/hooks/useLiveBus.ts`, `dashboard/src/lib/api.ts`",
+  "definitionOfDone": [
+    "Query invalidation throttle reduced or uses trailing-edge",
+    "401 credentials clearing is debounced",
+    "WebSocket auth encoding logs warnings on failure"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Fix query invalidation throttle in useLiveBus.ts:134-143. Change from leading-edge throttle (skip if too recent) to trailing-edge with flush:\n```typescript\nconst invalidate = (key: unknown[], minInterval = 1000) => {\n    const now = Date.now();\n    const sig = JSON.stringify(key);\n    const last = invalidateRef.current.get(sig) || 0;\n    if (now - last < minInterval) {\n        // Schedule a trailing invalidation\n        if (!pendingRef.current.has(sig)) {\n            pendingRef.current.set(sig, window.setTimeout(() => {\n                pendingRef.current.delete(sig);\n                invalidateRef.current.set(sig, Date.now());\n                queryClient.invalidateQueries({ queryKey: key });\n            }, minInterval - (now - last)));\n        }\n        return;\n    }\n    invalidateRef.current.set(sig, now);\n    queryClient.invalidateQueries({ queryKey: key });\n};\n```\nAlso reduce default minInterval from 3000 to 1000ms.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useLiveBus.ts"
+      ],
+      "startedAt": "2026-02-06T09:46:52.486Z",
+      "completedAt": "2026-02-06T09:47:31.300Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Fix 401 handling in api.ts:114-119. Debounce the credential clearing:\n```typescript\nlet clearing401 = false;\n// Inside fetch wrapper:\nif (res.status === 401 && !clearing401) {\n    clearing401 = true;\n    const updater = useConfigStore.getState().update;\n    if (typeof updater === \"function\") {\n        updater({ apiKey: \"\", principalId: \"\", principalRole: \"\" });\n    }\n    setTimeout(() => { clearing401 = false; }, 1000);\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/lib/api.ts"
+      ],
+      "startedAt": "2026-02-06T09:47:31.784Z",
+      "completedAt": "2026-02-06T09:47:36.219Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Fix WebSocket auth encoding in api.ts:349-359. Add console.warn on failure:\n```typescript\ncatch (e) {\n    console.warn(\"Failed to encode WebSocket API key:\", e);\n    return \"\";\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/lib/api.ts"
+      ],
+      "startedAt": "2026-02-06T09:47:36.687Z",
+      "completedAt": "2026-02-06T09:47:41.916Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 21,
+  "createdAt": "2026-02-05T23:49:29.519Z",
+  "updatedAt": "2026-02-07T18:41:42.698Z"
+}

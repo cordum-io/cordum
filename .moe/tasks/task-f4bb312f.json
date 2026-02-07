@@ -1,0 +1,66 @@
+{
+  "id": "task-f4bb312f",
+  "epicId": "epic-04065074",
+  "title": "Extract config and schema handlers into gateway_config.go",
+  "description": "Move config and schema handlers from gateway_handlers.go into a new gateway_config.go file. Functions to move: handleSetConfig, handleGetConfig, handleGetEffectiveConfig, handleRegisterSchema, handleListSchemas, handleGetSchema, handleDeleteSchema. Include any private types only used by these handlers. Keep package gateway.",
+  "definitionOfDone": [
+    "gateway_config.go exists with all config/schema handlers",
+    "Functions removed from gateway_handlers.go",
+    "go build ./cmd/cordum-api-gateway succeeds"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create gateway_config.go with package gateway declaration and required imports. Move config and schema handlers from gateway_handlers.go: configUpsertRequest struct (~line 1699-1704), handleSetConfig (1706-1747), handleGetConfig (1749-1787), handleGetEffectiveConfig (1789-1814), schemaRegisterRequest struct (1817-1820), handleRegisterSchema (1822-1847), handleListSchemas (1849-1867), handleGetSchema (1869-1895), handleDeleteSchema (1897-1913). Imports needed: encoding/json, net/http, strconv, strings, plus cordum packages: configsvc, schema.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_config.go"
+      ],
+      "startedAt": "2026-02-06T23:31:28.109Z",
+      "completedAt": "2026-02-06T23:31:45.453Z",
+      "modifiedFiles": [
+        "core/controlplane/gateway/gateway_config.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Remove lines ~1698-1913 from gateway_handlers.go (config comment through handleDeleteSchema). Prune unused imports.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_handlers.go"
+      ],
+      "completedAt": "2026-02-06T23:31:46.172Z",
+      "modifiedFiles": [
+        "core/controlplane/gateway/gateway_handlers.go"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run go build ./cmd/cordum-api-gateway to verify compilation.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T23:31:46.647Z",
+      "completedAt": "2026-02-06T23:32:13.550Z",
+      "note": "Removed unused imports: schema from gateway_config.go, configsvc from gateway_handlers.go. Build passes.",
+      "modifiedFiles": [
+        "core/controlplane/gateway/gateway_config.go",
+        "core/controlplane/gateway/gateway_handlers.go"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 3,
+  "createdAt": "2026-02-06T23:15:39.413Z",
+  "updatedAt": "2026-02-06T23:38:43.364Z",
+  "planSubmittedAt": "2026-02-06T23:17:28.989Z",
+  "planApprovedAt": "2026-02-06T23:17:28.990Z"
+}

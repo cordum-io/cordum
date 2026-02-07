@@ -1,0 +1,43 @@
+{
+  "id": "task-55c62194",
+  "epicId": "epic-decda99c",
+  "title": "SuccessSparkline component",
+  "description": "Tiny inline sparkline showing last 20 run outcomes for a workflow. Each run is a thin vertical bar: green (succeeded), red (failed), gray (cancelled), blue (running). Used inside WorkflowTemplateCard.\n\n**File:** `dashboard/src/components/workflows/SuccessSparkline.tsx`\n\n**Props:**\n```ts\ninterface SuccessSparklineProps {\n  data: ('succeeded' | 'failed' | 'cancelled' | 'running')[];\n  className?: string;\n}\n```\n\n**Rendering:** Pure CSS/SVG — no Recharts dependency for this. A flex row of 2px-wide bars, 16px tall, with 1px gap. Colors: succeeded=#22c55e, failed=#ef4444, cancelled=#6b7280, running=#3b82f6.\n\nIf data is empty, render nothing (not an empty container).",
+  "definitionOfDone": [
+    "SuccessSparkline renders colored bars for each run outcome",
+    "Pure CSS/SVG implementation, no chart library",
+    "Empty data renders nothing",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create `SuccessSparkline` in `dashboard/src/components/workflows/SuccessSparkline.tsx`.\n\nPure CSS flex implementation. Props: `data: RunStatus[]`, `className?: string`.\n\nIf `data.length === 0`, return `null`.\n\nRender: `<div className={cn('flex items-end gap-px', className)}>` containing `data.map((status, i) => <div key={i} className=\"w-0.5 h-4\" style={{ backgroundColor: colorMap[status] ?? '#6b7280' }} />)`.\n\nColor map: `succeeded: '#22c55e'`, `failed: '#ef4444'`, `cancelled: '#6b7280'`, `running: '#3b82f6'`, `timed_out: '#ef4444'`, default gray.\n\nMemoize with `React.memo` since data changes infrequently. No chart library needed.\n\nSECURITY: No user input in rendering — status values are typed enum strings. Only inline `backgroundColor` style (no CSS injection vector since values are from hardcoded map).\n\nVerify `node ./node_modules/typescript/bin/tsc --noEmit`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflows/SuccessSparkline.tsx"
+      ],
+      "startedAt": "2026-02-07T21:34:24.985Z",
+      "completedAt": "2026-02-07T21:34:48.673Z",
+      "note": "Created memoized SuccessSparkline: pure CSS flex bars, 2px wide, 16px tall, succeeded bars 100% height, others 75%. Colors from hardcoded map. Returns null for empty data. tsc clean.",
+      "modifiedFiles": [
+        "dashboard/src/components/workflows/SuccessSparkline.tsx"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 4,
+  "createdAt": "2026-02-07T21:05:04.270Z",
+  "updatedAt": "2026-02-07T21:37:55.504Z",
+  "planSubmittedAt": "2026-02-07T21:16:33.577Z",
+  "planApprovedAt": "2026-02-07T21:16:33.579Z"
+}

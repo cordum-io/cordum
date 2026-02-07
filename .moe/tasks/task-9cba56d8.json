@@ -1,0 +1,44 @@
+{
+  "id": "task-9cba56d8",
+  "epicId": "epic-da4e0aa4",
+  "title": "Rename gateway.go → gateway_core.go",
+  "description": "## What\nAfter extracting gateway_helpers.go, gateway_stream.go, and gateway_handlers.go, the remaining gateway.go contains only \"core\" code. Rename it to `gateway_core.go`.\n\n## What should remain (~1100 lines)\n- `server` struct (orig lines 100-133)\n- `(s *server).Close` (orig lines 137-141)\n- `Run` func (orig lines 474-476)\n- `RunWithAuth` func (orig lines 480-676)\n- `startHTTPServer` func (orig lines 873-1103) — route registration\n- Rate limiter types & constructor: `rateBucket`, `keyedRateLimiter`, `newKeyedRateLimiter`, `newKeyedRateLimiterFromEnv`, `(rl *keyedRateLimiter).Allow`, `apiLimiter` var (orig lines 177-260)\n- CORS middleware: `corsMiddleware`, `isAllowedOrigin`, `allowedOriginsFromEnv`, `requestHostname` (orig lines 2460-2559)\n- Rate limit middleware: `rateLimitMiddleware`, `rateLimitKey`, `clientIP` (orig lines 2670-2709)\n- Auth middleware: `apiKeyMiddleware`, `tenantMiddleware` (orig lines 2712-2763)\n- gRPC interceptor: `apiKeyUnaryInterceptor` (orig lines 2603-2615)\n- Env/config helpers: `addrFromEnv`, `dialSafetyKernel`, `safetyTransportCredentials` (orig lines 2617-2668)\n- Metrics: `statusRecorder` struct + methods, `(s *server).instrumented` (orig lines 3145-3204)\n- Remaining constants: `defaultGrpcAddr`, `defaultHttpAddr`, `defaultMetricsAddr`, `defaultArtifactMaxBytes`, `defaultRateLimitRPS`, `defaultRateLimitBurst`, `defaultMaxHeaderBytes`, `shutdownTimeout`, env constants\n- Import block (trim to only what's needed)\n\n## How\n1. `git mv core/controlplane/gateway/gateway.go core/controlplane/gateway/gateway_core.go`\n2. Clean up the import block — remove imports that are no longer used in this file\n3. Run `go build ./cmd/cordum-api-gateway`\n\n## Notes\n- Use `git mv` to preserve history\n- The import block will likely have many unused imports after the extractions — `go build` will tell you which to remove",
+  "definitionOfDone": [
+    "gateway.go no longer exists",
+    "gateway_core.go exists with the core server code",
+    "Import block is clean (no unused imports)",
+    "go build ./cmd/cordum-api-gateway succeeds"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Rename gateway.go to gateway_core.go using git mv.\n\nRun: `git mv core/controlplane/gateway/gateway.go core/controlplane/gateway/gateway_core.go`\n\nThis preserves git history for the file.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go",
+        "core/controlplane/gateway/gateway_core.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Clean up the import block in gateway_core.go.\n\n1. Read the file and identify all imports\n2. Remove any imports that are no longer used (after helpers/stream/handlers were extracted)\n3. Go compiler will flag unused imports on build — use `go build` errors to identify them\n4. Verify the file contains approximately ~1100 lines of core code: server struct, Run/RunWithAuth, startHTTPServer, middleware, rate limiter, metrics, env helpers, gRPC interceptor\n\nRun: `go build ./cmd/cordum-api-gateway` — must compile.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_core.go"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 4,
+  "createdAt": "2026-02-06T14:47:30.970Z",
+  "updatedAt": "2026-02-06T23:15:33.512Z"
+}

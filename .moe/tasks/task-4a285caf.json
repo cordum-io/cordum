@@ -1,0 +1,54 @@
+{
+  "id": "task-4a285caf",
+  "epicId": "epic-cddc11dd",
+  "title": "Add PUT to CORS allowed methods in gateway",
+  "description": "**Bug**: `core/controlplane/gateway/gateway.go:2472` sets CORS `Access-Control-Allow-Methods` to `\"GET, POST, DELETE, OPTIONS\"` but the router registers `PUT /api/v1/policy/bundles/{id}` at line 1002. Browsers block PUT requests because the CORS preflight fails.\n\n**Fix**: Change line 2472 to include PUT:\n```go\nw.Header().Set(\"Access-Control-Allow-Methods\", \"GET, POST, PUT, DELETE, OPTIONS\")\n```\n\n**Files**: `core/controlplane/gateway/gateway.go`",
+  "definitionOfDone": [
+    "PUT is included in Access-Control-Allow-Methods header",
+    "Browser preflight for PUT /api/v1/policy/bundles/{id} succeeds",
+    "Existing CORS tests updated"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "In `core/controlplane/gateway/gateway.go`, find the CORS middleware (around line 2472) and change:\n```go\nw.Header().Set(\"Access-Control-Allow-Methods\", \"GET, POST, DELETE, OPTIONS\")\n```\nTo:\n```go\nw.Header().Set(\"Access-Control-Allow-Methods\", \"GET, POST, PUT, DELETE, OPTIONS\")\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-06T00:09:40.761Z",
+      "completedAt": "2026-02-06T00:09:54.296Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Update any existing CORS tests to verify PUT is in the allowed methods.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_test.go"
+      ],
+      "startedAt": "2026-02-06T00:09:54.772Z",
+      "completedAt": "2026-02-06T00:10:17.721Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run `go test ./core/controlplane/gateway/...` to verify.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:10:18.146Z",
+      "completedAt": "2026-02-06T00:10:29.236Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "CRITICAL",
+  "order": 17,
+  "createdAt": "2026-02-05T23:49:02.848Z",
+  "updatedAt": "2026-02-07T18:31:49.642Z"
+}

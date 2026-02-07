@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -42,5 +41,5 @@ func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
 		resp.SessionTTL = "0s"
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w,resp)
 }

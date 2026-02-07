@@ -1,0 +1,55 @@
+{
+  "id": "task-a849b002",
+  "epicId": "epic-dbd90afa",
+  "title": "Guard MemoryRegistry.Close() against double-close panic",
+  "description": "**Severity: CRITICAL**\n\n**File**: `core/controlplane/scheduler/registry_memory.go:110-113`\n\n**Bug**: `Close()` calls `close(r.stopCh)` with no guard. If called twice, Go panics on closing an already-closed channel. This can happen during error handling or shutdown races.\n\n**Fix**: Add a `sync.Once` to protect the close operation. Replace the bare `close(r.stopCh)` with a `sync.Once`-guarded call.",
+  "definitionOfDone": [
+    "Close() uses sync.Once to prevent double-close panic",
+    "Calling Close() twice does not panic",
+    "Add a unit test that calls Close() twice and verifies no panic",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add a `closeOnce sync.Once` field to the `MemoryRegistry` struct (registry_memory.go:11-16). The `sync` package is already imported.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/registry_memory.go"
+      ],
+      "startedAt": "2026-02-05T22:45:23.185Z",
+      "completedAt": "2026-02-05T22:45:46.107Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Replace the bare `close(r.stopCh)` in `Close()` (line 112) with `r.closeOnce.Do(func() { close(r.stopCh) })`. This makes Close() idempotent — calling it twice is safe.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/registry_memory.go"
+      ],
+      "completedAt": "2026-02-05T22:45:47.563Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add a test `TestMemoryRegistryDoubleCloseNoPanic` in `registry_memory_test.go` that creates a MemoryRegistry, calls Close() twice, and asserts no panic using `require.NotPanics` or a recover guard.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/registry_memory_test.go"
+      ],
+      "startedAt": "2026-02-05T22:45:48.322Z",
+      "completedAt": "2026-02-05T22:46:20.080Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 2,
+  "createdAt": "2026-02-05T22:15:08.904Z",
+  "updatedAt": "2026-02-05T22:47:41.791Z"
+}

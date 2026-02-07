@@ -1,0 +1,66 @@
+{
+  "id": "task-0bb061d2",
+  "epicId": "epic-806e5c17",
+  "title": "Add Quick Actions panel to Command Center",
+  "description": "Add a Quick Actions section to the Command Center with common shortcuts: Submit Job, View Policies, Manage Approvals, Open Search.\n\n**Implementation:**\n- Create `dashboard/src/components/home/QuickActions.tsx`\n- Render 4-6 action cards with icon + label + description\n- Each card navigates to the relevant page via React Router\n- Use existing Card and Button primitives\n- Place in HomePage grid (top section or sidebar area)\n\n**Files:** `dashboard/src/components/home/QuickActions.tsx` (new), `dashboard/src/pages/HomePage.tsx`",
+  "definitionOfDone": [
+    "Quick Actions panel renders on Command Center",
+    "At least 4 action cards with proper navigation",
+    "Responsive grid layout",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/home/QuickActions.tsx: A responsive grid of 4-6 action cards. Each card: icon (Lucide), label, short description, onClick navigates via useNavigate(). Actions: Submit Job (/jobs), Manage Policies (/policy), Review Approvals (/approvals), Search (/search), View Audit (/audit), Browse Packs (/packs). Use Card component for each, responsive grid (2 cols mobile, 3 cols desktop). Hover lift effect.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/home/QuickActions.tsx"
+      ],
+      "startedAt": "2026-02-07T20:19:36.730Z",
+      "completedAt": "2026-02-07T20:19:53.436Z",
+      "note": "6 action cards: Jobs, Policies, Approvals, Search, Audit Log, Packs. Responsive grid (2/3/6 cols). Hover lift effect. Uses Card + Lucide icons.",
+      "modifiedFiles": [
+        "dashboard/src/components/home/QuickActions.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "In dashboard/src/pages/HomePage.tsx: Import QuickActions and place it in the page layout below the metrics grid or in a sidebar area.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/HomePage.tsx"
+      ],
+      "startedAt": "2026-02-07T20:19:53.916Z",
+      "completedAt": "2026-02-07T20:20:12.194Z",
+      "note": "Added QuickActions import and placed after metrics grid, before Safety Feed + Pipeline Funnel section.",
+      "modifiedFiles": [
+        "dashboard/src/pages/HomePage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T20:20:12.655Z",
+      "completedAt": "2026-02-07T20:20:25.900Z",
+      "note": "tsc --noEmit clean."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "LOW",
+  "order": 8,
+  "createdAt": "2026-02-07T18:42:24.910Z",
+  "updatedAt": "2026-02-07T20:35:20.358Z",
+  "planSubmittedAt": "2026-02-07T20:06:46.467Z",
+  "planApprovedAt": "2026-02-07T20:06:46.469Z"
+}

@@ -50,6 +50,23 @@ spec:
     path: /metrics
 ---
 apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cordum-redis
+  namespace: cordum
+spec:
+  namespaceSelector:
+    matchNames:
+    - cordum
+  selector:
+    matchLabels:
+      app: redis
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: cordum-platform
@@ -82,3 +99,11 @@ spec:
       annotations:
         summary: Cordum NATS is down
         description: No NATS monitoring targets have been reachable for 5m.
+    - alert: CordumRedisDown
+      expr: sum by (service) (up{namespace="cordum", service="cordum-redis"}) == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Cordum Redis is down
+        description: No Redis exporter targets have been reachable for 5m.

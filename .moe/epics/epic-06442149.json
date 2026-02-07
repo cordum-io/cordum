@@ -1,0 +1,16 @@
+{
+  "id": "epic-06442149",
+  "projectId": "proj-4aad1c0e",
+  "title": "Workflows (/workflows)",
+  "description": "Template library + DAG visual builder + run management. Full drag-and-drop workflow editor with ReactFlow. Run visualization with live status overlay.",
+  "architectureNotes": "ReactFlow for DAG builder and run visualization. Node types: job, approval, delay, condition, notify, fan-out. Bidirectional: graph ↔ JSON definition. Runs at /workflows/:id/runs/:runId with Gantt timeline (Recharts). JSON/YAML import as secondary input method.",
+  "epicRails": [
+    "ReactFlow for all DAG visualization",
+    "Bidirectional: visual graph ↔ JSON/YAML definition",
+    "Use RunStatusBadge for run states"
+  ],
+  "status": "PLANNED",
+  "order": 4,
+  "createdAt": "2026-02-06T23:46:43.882Z",
+  "updatedAt": "2026-02-07T19:58:30.041Z"
+}

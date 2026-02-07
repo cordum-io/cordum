@@ -1,0 +1,74 @@
+{
+  "id": "task-fe70579e",
+  "epicId": "epic-dbd90afa",
+  "title": "Deduplicate API_KEY / CORDUM_API_KEY env vars",
+  "description": "**Severity: MEDIUM**\n\n**Files**: `docker-compose.yml:90-91`, `cmd/cordumctl/init.go:82-83`\n\n**Issue**: Both `API_KEY` and `CORDUM_API_KEY` are set to the same value redundantly. Code should use a single canonical variable. Having two names for the same thing causes confusion and potential drift.\n\n**Fix**: Audit which variable the gateway actually reads (grep for both in gateway code), remove the legacy one, update docker-compose.yml and the init template in init.go.",
+  "definitionOfDone": [
+    "Determined which env var is canonical (likely CORDUM_API_KEY)",
+    "Removed the legacy duplicate from docker-compose.yml and init.go",
+    "Gateway code reads only the canonical variable",
+    "Existing tests pass",
+    "Documented the canonical variable name"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "The gateway's `loadBasicAPIKeys()` in basic_auth.go:335-361 reads env vars in priority order: CORDUM_API_KEYS → CORDUM_API_KEY → API_KEY. The `API_KEY` fallback exists for backwards compatibility. **Decision**: Keep the fallback chain in gateway code (it's harmless and aids migration), but remove the redundant `API_KEY` line from docker-compose.yml and init.go since `CORDUM_API_KEY` is already set and the fallback makes the duplicate unnecessary.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:26:34.995Z",
+      "completedAt": "2026-02-05T23:26:42.732Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "In docker-compose.yml, remove line 90 (`API_KEY=${CORDUM_API_KEY:?...}`) from the api-gateway service. The gateway will read `CORDUM_API_KEY` directly (line 91). Similarly, in init.go remove the `API_KEY` line (line 82) from the generated compose template, keeping only `CORDUM_API_KEY` (line 83).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "docker-compose.yml",
+        "cmd/cordumctl/init.go"
+      ],
+      "startedAt": "2026-02-05T23:26:43.159Z",
+      "completedAt": "2026-02-05T23:27:10.479Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add a deprecation log in basic_auth.go: when `API_KEY` is used (line 356 path), log `slog.Warn(\"API_KEY env var is deprecated, use CORDUM_API_KEY instead\")` so operators using the legacy variable get notified.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/basic_auth.go"
+      ],
+      "startedAt": "2026-02-05T23:27:11.022Z",
+      "completedAt": "2026-02-05T23:27:39.525Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Update auth_test.go test cases that test `API_KEY` fallback (line 353) to verify the deprecation warning is logged.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/auth_test.go"
+      ],
+      "startedAt": "2026-02-05T23:27:39.911Z",
+      "completedAt": "2026-02-05T23:28:06.163Z"
+    },
+    {
+      "stepId": "step-5",
+      "description": "Run `go test ./core/controlplane/gateway/... ./cmd/cordumctl/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:28:06.663Z",
+      "completedAt": "2026-02-05T23:28:19.241Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 8,
+  "createdAt": "2026-02-05T22:15:28.520Z",
+  "updatedAt": "2026-02-05T23:31:36.948Z"
+}

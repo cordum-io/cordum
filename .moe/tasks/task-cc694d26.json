@@ -1,0 +1,68 @@
+{
+  "id": "task-cc694d26",
+  "epicId": "epic-e24aac31",
+  "title": "Approval history",
+  "description": "Past approvals/rejections with actor, timestamp, reason. Filterable.",
+  "definitionOfDone": [
+    "History tab/section on approvals page",
+    "Table: action (approved/rejected badge), actor, timestamp, job reference, reason/comment",
+    "Filter by action type and time range",
+    "Click row navigates to job detail",
+    "Pagination",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/approvals/ApprovalHistory.tsx: History tab/section on approvals page. Uses useApprovalHistory(filters). Table: action column (approved=success badge, rejected=danger badge), actor (username), timestamp (formatted), job reference (link to /jobs/:id), reason/comment text. Filter bar: action type (approved/rejected/all), time range (1h, 24h, 7d, 30d). Pagination controls.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/approvals/ApprovalHistory.tsx"
+      ],
+      "startedAt": "2026-02-07T01:05:14.973Z",
+      "completedAt": "2026-02-07T01:06:07.361Z",
+      "note": "Created ApprovalHistory component with: table (action badge, actor, timestamp, job link, reason/comment), filter bar (action type: all/approved/rejected; time range: 1h/24h/7d/30d), pagination controls, loading skeleton, error and empty states. Uses useApprovalHistory hook. Click job reference navigates to /jobs/:id.",
+      "modifiedFiles": [
+        "dashboard/src/components/approvals/ApprovalHistory.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Integrate ApprovalHistory as 'History' tab in ApprovalsPage.tsx (tab toggle: Pending / History).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/ApprovalsPage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:06:10.380Z",
+      "completedAt": "2026-02-07T01:06:49.789Z",
+      "note": "Added Pending/History tab toggle to ApprovalsPage. History tab renders ApprovalHistory component. Pending tab retains existing approval cards + detail modal. Tab styling matches packs page pattern (pill-style toggle).",
+      "modifiedFiles": [
+        "dashboard/src/pages/ApprovalsPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:06:53.020Z",
+      "completedAt": "2026-02-07T01:07:06.003Z",
+      "note": "tsc --noEmit passes clean for all approval-related files."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 46,
+  "createdAt": "2026-02-06T23:49:53.663Z",
+  "updatedAt": "2026-02-07T20:27:22.489Z",
+  "planSubmittedAt": "2026-02-06T23:59:18.704Z",
+  "planApprovedAt": "2026-02-06T23:59:18.705Z"
+}

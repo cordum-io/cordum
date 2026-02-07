@@ -1,0 +1,29 @@
+{
+  "id": "task-4ddec2df",
+  "epicId": "epic-06442149",
+  "title": "Node Components: AgentTask, PackAction, ToolCall",
+  "description": "Create 3 new ReactFlow node components to replace the single generic JobNode, plus update the barrel export.\n\n**Files (NEW):**\n- `dashboard/src/components/workflow/nodes/AgentTaskNode.tsx` — Blue accent (`bg-blue-50`), `MessageSquare` icon (lucide). Shows topic + first 30 chars of prompt from config.\n- `dashboard/src/components/workflow/nodes/PackActionNode.tsx` — Violet accent (`bg-violet-50`), `Package` icon. Shows `packId: action` from config.\n- `dashboard/src/components/workflow/nodes/ToolCallNode.tsx` — Amber accent (`bg-amber-50`), `Wrench` icon. Shows capability name from config.\n\n**File (MODIFY):**\n- `dashboard/src/components/workflow/nodes/index.ts` — Add exports for AgentTaskNode, PackActionNode, ToolCallNode.\n\n**Pattern:** Follow existing node pattern exactly — `memo()` wrapper, `BaseNode` with icon + accent + children subtitle. See `JobNode.tsx`, `FanOutNode.tsx`, `ApprovalNode.tsx` for reference. Each truncates display text to 40 chars max. All text via JSX, no innerHTML.\n\n**SECURITY:** All text rendered as JSX nodes, no dangerouslySetInnerHTML.",
+  "definitionOfDone": [
+    "AgentTaskNode renders with MessageSquare icon, blue accent, shows topic + truncated prompt",
+    "PackActionNode renders with Package icon, violet accent, shows packId:action",
+    "ToolCallNode renders with Wrench icon, amber accent, shows capability name",
+    "All nodes use memo() wrapper and BaseNode component",
+    "Display text truncated at 40 chars",
+    "index.ts barrel exports all 3 new nodes",
+    "TypeScript compiles with no errors"
+  ],
+  "taskRails": [],
+  "implementationPlan": [],
+  "status": "BACKLOG",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 2,
+  "createdAt": "2026-02-07T22:21:32.958Z",
+  "updatedAt": "2026-02-07T22:21:32.958Z"
+}

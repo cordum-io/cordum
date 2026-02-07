@@ -1,0 +1,98 @@
+{
+  "id": "task-5735b204",
+  "epicId": "epic-57debfb1",
+  "title": "Safety Circuit Breaker — Add SafetyUnavailable Decision Type",
+  "description": "**Problem**: `safety_client.go` circuit breaker returns `SafetyDeny` when safety kernel is unreachable. This permanently kills jobs — they DLQ with no retry. A 30-second safety kernel restart wipes the entire pending queue.\n\n**Fix**:\n- Add `SafetyUnavailable` to `SafetyDecisionType` in `types.go`\n- In `safety_client.go` `Evaluate()`, return `SafetyUnavailable` when circuit is open (not `SafetyDeny`)\n- In `engine.go` `processJob()`, handle `SafetyUnavailable`: re-publish job to NATS with backoff delay\n- Add metric `scheduler_safety_unavailable_total`\n\n**Files**: `core/controlplane/scheduler/types.go`, `core/controlplane/scheduler/safety_client.go`, `core/controlplane/scheduler/engine.go`",
+  "definitionOfDone": [
+    "SafetyUnavailable added to SafetyDecisionType enum in types.go",
+    "safety_client.go returns SafetyUnavailable (not SafetyDeny) when circuit is open or gRPC unreachable",
+    "engine.go processJob handles SafetyUnavailable by re-publishing job to NATS with backoff",
+    "scheduler_safety_unavailable_total metric incremented on unavailable",
+    "Existing tests pass: go test ./core/controlplane/scheduler/... -count=3",
+    "New unit test for SafetyUnavailable path in processJob"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Step 1: Add SafetyUnavailable to SafetyDecision enum in types.go\n\nIn `core/controlplane/scheduler/types.go`, add a new constant to the SafetyDecision enum block:\n```go\nSafetyUnavailable SafetyDecision = \"UNAVAILABLE\"\n```\nAdd it after `SafetyAllowWithConstraints` (line 25). This is NOT a terminal state — it means 'retry later'.\n\nAlso add `IncSafetyUnavailable(topic string)` to the `Metrics` interface (after `IncSafetyDenied` at line 54).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/types.go"
+      ],
+      "startedAt": "2026-02-07T00:35:18.599Z",
+      "completedAt": "2026-02-07T00:35:38.358Z",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/types.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Step 2: Return SafetyUnavailable from safety_client.go when circuit is open or gRPC fails\n\nIn `core/controlplane/scheduler/safety_client.go`, change the `Check()` method:\n\n1. **Line 77** (circuit open path): Change `SafetyDeny` → `SafetyUnavailable`:\n   ```go\n   return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: \"safety kernel circuit open\"}, nil\n   ```\n\n2. **Line 81** (half-open throttled path): Change `SafetyDeny` → `SafetyUnavailable`:\n   ```go\n   return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: \"safety kernel circuit half-open (throttled)\"}, nil\n   ```\n\n3. **Line 107** (gRPC error path): Change `SafetyDeny` → `SafetyUnavailable`:\n   ```go\n   return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: fmt.Sprintf(\"safety kernel error: %v\", err)}, nil\n   ```\n\nThis ensures transient safety kernel failures don't permanently deny jobs.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/safety_client.go"
+      ],
+      "startedAt": "2026-02-07T00:35:39.033Z",
+      "completedAt": "2026-02-07T00:36:03.290Z",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/safety_client.go"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Step 3: Handle SafetyUnavailable in engine.go processJob()\n\nIn `core/controlplane/scheduler/engine.go`, add a new case in the `switch record.Decision` block in `processJob()` (after the `SafetyThrottle` case at line 321, before the `SafetyRequireApproval` case at line 334):\n\n```go\ncase SafetyUnavailable:\n    logging.Warn(\"safety\", \"safety kernel unavailable, requeueing job\",\n        \"job_id\", jobID,\n        \"topic\", topic,\n        \"reason\", record.Reason,\n        \"trace_id\", traceID,\n    )\n    if e.metrics != nil {\n        e.metrics.IncSafetyUnavailable(topic)\n    }\n    return RetryAfter(fmt.Errorf(\"safety unavailable: %s\", record.Reason), safetyThrottleDelay)\n```\n\nThis re-publishes the job via NATS NAK/retry after a delay (same as throttle), preserving the job for when the safety kernel recovers. The job stays in PENDING state — it is NOT denied, NOT DLQ'd.\n\nAlso add a helper method:\n```go\nfunc (e *Engine) incSafetyUnavailable(topic string) {\n    if e.metrics != nil {\n        e.metrics.IncSafetyUnavailable(topic)\n    }\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ],
+      "startedAt": "2026-02-07T00:36:03.941Z",
+      "completedAt": "2026-02-07T00:36:37.329Z",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/engine.go"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Step 4: Add unit test for SafetyUnavailable path\n\nIn `core/controlplane/scheduler/engine_test.go` (or a new section at the bottom), add:\n\n1. A `fakeSafetyUnavailable` struct implementing `SafetyChecker` that returns `SafetyUnavailable`:\n   ```go\n   type fakeSafetyUnavailable struct{}\n   func (s *fakeSafetyUnavailable) Check(req *pb.JobRequest) (SafetyDecisionRecord, error) {\n       return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: \"circuit open\"}, nil\n   }\n   ```\n\n2. `TestProcessJobSafetyUnavailableRetries`: Create engine with `fakeSafetyUnavailable`, call `processJob()`, assert:\n   - Returns a `retryableError` (not nil)\n   - Job state is NOT `DENIED` — it should be `PENDING` (unchanged from pre-processJob state)\n   - No DLQ message published to bus\n   - The error message contains \"safety unavailable\"\n\n3. Also update `SafetyBasic` in `safety_basic_test.go` to return `SafetyUnavailable` for topic `\"sys.unavailable\"` for broader test scenarios:\n   ```go\n   if req.Topic == \"sys.unavailable\" {\n       return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: \"test unavailable\"}, nil\n   }\n   ```\n\nAlso add `IncSafetyUnavailable` to any test mock of the `Metrics` interface if one exists. If tests use `nil` for metrics (as most do currently), this is already handled by the nil-check guard.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine_test.go",
+        "core/controlplane/scheduler/safety_basic_test.go"
+      ],
+      "startedAt": "2026-02-07T00:36:38.157Z",
+      "completedAt": "2026-02-07T00:38:57.622Z",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/engine_test.go",
+        "core/controlplane/scheduler/safety_basic_test.go",
+        "core/infra/metrics/metrics.go"
+      ]
+    },
+    {
+      "stepId": "step-5",
+      "description": "Step 5: Verify all existing tests pass\n\nRun `go test ./core/controlplane/scheduler/... -count=3` and `go vet ./core/controlplane/scheduler/...`.\n\nEnsure no regressions. Key tests to watch:\n- TestProcessJobPublishesToSubject (still works with SafetyAllow)\n- TestHandleJobResultTreatsCompletedAsSucceeded\n- Any tests that use SafetyDeny paths still correctly deny\n- The new TestProcessJobSafetyUnavailableRetries passes",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:38:58.460Z",
+      "completedAt": "2026-02-07T00:40:00.814Z",
+      "note": "All tests pass (scheduler and metrics). Fixed TestSafetyClientCircuitOpens to expect SafetyUnavailable instead of SafetyDeny for circuit breaker/gRPC error paths.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/safety_client_test.go"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "CRITICAL",
+  "order": 1,
+  "createdAt": "2026-02-07T00:33:06.895Z",
+  "updatedAt": "2026-02-07T00:40:51.672Z",
+  "planSubmittedAt": "2026-02-07T00:34:51.793Z",
+  "planApprovedAt": "2026-02-07T00:34:51.795Z"
+}

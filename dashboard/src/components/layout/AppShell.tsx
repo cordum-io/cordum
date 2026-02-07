@@ -1,6 +1,5 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
-  Activity,
   Boxes,
   Database,
   FileText,
@@ -27,13 +26,12 @@ import { api } from "../../lib/api";
 import { formatCount } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { useUiStore } from "../../state/ui";
-import { useEventStore } from "../../state/events";
+import { ConnectionIndicator } from "../ConnectionIndicator";
 import { useConfigStore } from "../../state/config";
 import { useAuthConfig } from "../../hooks/useAuthConfig";
 
 const navItems = [
   { path: "/", label: "Governance", icon: LayoutGrid },
-  { path: "/runs", label: "Runs", icon: Activity },
   { path: "/workflows", label: "Workflows", icon: Workflow },
   { path: "/policy", label: "Policy Studio", icon: Shield },
   { path: "/context", label: "Context Inspector", icon: Database },
@@ -55,13 +53,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   const setCommandOpen = useUiStore((state) => state.setCommandOpen);
   const theme = useUiStore((state) => state.theme);
   const toggleTheme = useUiStore((state) => state.toggleTheme);
-  const wsStatus = useEventStore((state) => state.status);
   const apiBaseUrl = useConfigStore((state) => state.apiBaseUrl);
   const apiKey = useConfigStore((state) => state.apiKey);
-  const updateConfig = useConfigStore((state) => state.update);
+  const logout = useConfigStore((state) => state.logout);
   const { data: authConfig } = useAuthConfig();
   const [loggingOut, setLoggingOut] = useState(false);
-  const requiresAuth = !!authConfig && (authConfig.password_enabled || authConfig.saml_enabled);
+  const requiresAuth = !!authConfig && (
+    authConfig.password_enabled ||
+    authConfig.user_auth_enabled ||
+    authConfig.saml_enabled
+  );
   const sessionQuery = useQuery({
     queryKey: ["auth-session"],
     queryFn: () => api.getSession(),
@@ -81,8 +82,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     staleTime: 30_000,
   });
 
-  const approvalsCount = approvalsQuery.data?.items.length ?? 0;
-  const dlqCount = dlqQuery.data?.items.length ?? 0;
+  const approvalsCount = approvalsQuery.data?.items?.length ?? 0;
+  const dlqCount = dlqQuery.data?.items?.length ?? 0;
   const navBadges: Record<string, { count: number; variant: "warning" | "danger" }> = {
     "/policy": { count: approvalsCount, variant: "warning" },
     "/dlq": { count: dlqCount, variant: "danger" },
@@ -110,7 +111,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     } catch {
       // Ignore logout failures; clear local session anyway.
     }
-    updateConfig({ apiKey: "", principalId: "", principalRole: "" });
+    logout();
     setLoggingOut(false);
     navigate("/login");
   };
@@ -168,18 +169,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-semibold text-ink">Bus stream</span>
-              <span
-                className={cn(
-                  "rounded-full px-2 py-1 text-[10px] font-semibold uppercase",
-                  wsStatus === "connected"
-                    ? "bg-[color:rgba(31,122,87,0.15)] text-success"
-                    : wsStatus === "connecting"
-                    ? "bg-[color:rgba(197,138,28,0.15)] text-warning"
-                    : "bg-[color:rgba(184,58,58,0.14)] text-danger"
-                )}
-              >
-                {wsStatus}
-              </span>
+              <ConnectionIndicator />
             </div>
             <div className="flex items-center gap-2 text-[11px]">
               <Network className="h-3 w-3" />

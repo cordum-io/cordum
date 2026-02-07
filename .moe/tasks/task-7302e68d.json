@@ -1,0 +1,81 @@
+{
+  "id": "task-7302e68d",
+  "epicId": "epic-da4e0aa4",
+  "title": "Reorganize gateway test files to match new source structure and fix failures",
+  "description": "## What\nAfter the file split (tasks 1-7), reorganize the gateway test files to match the new source file structure. Tests are in the same package so they compile regardless, but they should be organized logically.\n\n## Current Test Files (30 files, 163 tests, 5529 lines)\n\nThe key files that need reorganization are:\n\n### gateway_test.go (513 lines, 14 tests)\nThis file currently tests code from MULTIPLE split targets:\n- `TestNormalizeAPIKeyTrimsQuotes` → tests `normalizeAPIKey` → now in **gateway_helpers.go**\n- `TestHandleStreamUpgradesWebsocketWithInstrumentation` → tests `handleStream` → now in **gateway_stream.go**\n- `TestHandleStreamHonorsAPIKeySubprotocol` → tests `handleStream` → now in **gateway_stream.go**\n- `TestApiKeyFromWebSocketProtocols` → tests `apiKeyFromWebSocket` → now in **gateway_stream.go**\n- `TestEnqueueWSEventNoPanicOnClosedChannel` → tests `enqueueWSEvent` → now in **gateway_stream.go**\n- `TestBroadcastSlowClientCleanupConcurrent` → tests WS broadcast → now in **gateway_stream.go**\n- `TestBroadcastConcurrentSlowClientCleanup` → tests WS broadcast → now in **gateway_stream.go**\n- `TestHandleGetMemoryFetchesContextByPointer` → tests `handleGetMemory` → now in **gateway_handlers.go**\n- `TestHandleGetMemoryReturnsNotFoundForMissingKey` → tests `handleGetMemory` → now in **gateway_handlers.go**\n- `TestHandleAuthConfigDefaults` → tests auth config → stays in **gateway_core** area\n- `TestApiKeyUnaryInterceptor` → tests gRPC interceptor → now in **gateway_core.go**\n- `TestServerCloseClosesUserStore` → tests server lifecycle → **gateway_core.go**\n- `TestSeedDefaultAdminUserRejectsEmptyPassword` → tests auth setup → **gateway_core.go**\n- `TestServerCloseNilUserStoreNoPanic` → tests server lifecycle → **gateway_core.go**\n\nAlso contains helper stubs: `stubMemStore`, `stubUserStore`, `newIPv4Server`\n\n### gateway_helpers_additional_test.go (382 lines, 18 tests)\nTests helpers AND core functions:\n- Helper tests (parsePriority, parseBool, etc.) → match **gateway_helpers.go** ✓\n- `TestAllowedOriginsFromEnv`, `TestRequestHostname` → tests CORS → now in **gateway_core.go**\n- `TestCorsMiddleware`, `TestCorsMiddlewarePUT` → tests CORS middleware → now in **gateway_core.go**\n- `TestRateLimitMiddleware` → tests rate limiter → now in **gateway_core.go**\n- `TestStatusRecorderWriteHeaderAndFlush` → tests metrics → now in **gateway_core.go**\n- `TestGatewaySafetyTransportCredentials` → tests TLS → now in **gateway_core.go**\n- `TestClientIP`, `TestAddrFromEnv` → tests infra → now in **gateway_core.go**\n- `TestHandleListJobDecisions` → tests handler → now in **gateway_handlers.go**\n- `TestSplitWorkflowJobID` → tests stream → now in **gateway_stream.go**\n\n## Recommended New Structure\n\n### Rename/reorganize:\n1. **gateway_test.go** → rename to **gateway_core_test.go**, keep only core tests (server lifecycle, auth config, gRPC interceptor). Move stream tests to gateway_stream_test.go, handler tests to existing handler test files, helper tests to helpers test file.\n\n2. **gateway_helpers_additional_test.go** → rename to **gateway_helpers_test.go**, keep only helper tests. Move core tests (CORS, rate limit, metrics, infra) to gateway_core_test.go. Move handler test to jobs_http_test.go or appropriate handler test file. Move stream test to gateway_stream_test.go.\n\n3. Create **gateway_stream_test.go** with all stream/WebSocket tests extracted from gateway_test.go and gateway_helpers_additional_test.go:\n   - TestHandleStreamUpgradesWebsocketWithInstrumentation\n   - TestHandleStreamHonorsAPIKeySubprotocol\n   - TestApiKeyFromWebSocketProtocols\n   - TestEnqueueWSEventNoPanicOnClosedChannel\n   - TestBroadcastSlowClientCleanupConcurrent\n   - TestBroadcastConcurrentSlowClientCleanup\n   - TestSplitWorkflowJobID\n\n4. Move `stubMemStore` and `stubUserStore` helper structs to **helpers_test.go** (central test infrastructure)\n\n### Files that stay as-is (already well-organized):\n- helpers_test.go (test infrastructure) ✓\n- approvals_test.go ✓\n- artifacts_test.go ✓\n- auth_handlers_test.go ✓\n- auth_test.go ✓\n- bus_taps_test.go ✓\n- chat_test.go ✓\n- config_schema_test.go ✓\n- dlq_test.go ✓\n- grpc_jobs_test.go ✓\n- jobs_http_test.go ✓\n- json_helpers_test.go ✓\n- jwt_test.go ✓\n- locks_test.go ✓\n- marketplace_test.go ✓\n- memory_redis_test.go ✓\n- packs_catalog_test.go ✓\n- packs_helpers_test.go ✓\n- packs_overlay_test.go ✓\n- packs_test.go ✓\n- policy_bundles_test.go ✓\n- policy_helpers_test.go ✓\n- policy_test.go ✓\n- requests_test.go ✓\n- server_start_test.go ✓\n- status_test.go ✓\n- workflow_runs_test.go ✓\n- workflows_test.go ✓\n\n## How\n1. Run `go test ./core/controlplane/gateway/... -count=1` first to establish baseline\n2. Create gateway_stream_test.go, move stream tests into it\n3. Rename gateway_test.go → gateway_core_test.go, remove moved tests\n4. Rename gateway_helpers_additional_test.go → gateway_helpers_test.go, remove moved tests\n5. Move misplaced tests (CORS/rate-limit/metrics from helpers file → core_test)\n6. Move stubMemStore/stubUserStore to helpers_test.go\n7. Run `go test ./core/controlplane/gateway/... -count=1` — all 163 tests must pass\n8. Run `go build ./cmd/cordum-api-gateway` — must compile\n\n## Notes\n- All files are same package `gateway` — moving tests between files is safe\n- No file-path dependencies in any tests (verified by audit)\n- Use `git mv` for renames to preserve history\n- The `flushWriter` helper in gateway_helpers_additional_test.go should stay with helpers or move to helpers_test.go",
+  "definitionOfDone": [
+    "gateway_core_test.go exists with only core/lifecycle/middleware tests",
+    "gateway_helpers_test.go exists with only helper utility tests (renamed from gateway_helpers_additional_test.go)",
+    "gateway_stream_test.go exists with all WebSocket/stream tests",
+    "gateway_test.go no longer exists (renamed to gateway_core_test.go)",
+    "gateway_helpers_additional_test.go no longer exists (renamed)",
+    "go test ./core/controlplane/gateway/... -count=1 passes all 163 tests",
+    "go build ./cmd/cordum-api-gateway succeeds"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Establish test baseline.\n\nRun: `go test ./core/controlplane/gateway/... -count=1`\n\nRecord total test count and ensure all pass BEFORE making any changes. This confirms the file splits and audit instrumentation haven't broken anything.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T22:24:50.016Z",
+      "completedAt": "2026-02-06T22:25:11.573Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Create gateway_stream_test.go with WebSocket/stream tests.\n\n1. Create `core/controlplane/gateway/gateway_stream_test.go` with `package gateway`\n2. Move these tests FROM gateway_test.go:\n   - TestHandleStreamUpgradesWebsocketWithInstrumentation\n   - TestHandleStreamHonorsAPIKeySubprotocol\n   - TestApiKeyFromWebSocketProtocols\n   - TestEnqueueWSEventNoPanicOnClosedChannel\n   - TestBroadcastSlowClientCleanupConcurrent\n   - TestBroadcastConcurrentSlowClientCleanup\n3. Move this test FROM gateway_helpers_additional_test.go:\n   - TestSplitWorkflowJobID\n4. Add necessary imports for the moved tests\n5. Remove the moved test functions from their source files\n6. Run: `go test ./core/controlplane/gateway/... -count=1` — verify same test count, all pass",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_stream_test.go",
+        "core/controlplane/gateway/gateway_test.go",
+        "core/controlplane/gateway/gateway_helpers_additional_test.go"
+      ],
+      "startedAt": "2026-02-06T22:27:19.866Z",
+      "completedAt": "2026-02-06T22:29:35.304Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Rename gateway_test.go → gateway_core_test.go and clean up.\n\n1. `git mv core/controlplane/gateway/gateway_test.go core/controlplane/gateway/gateway_core_test.go`\n2. After the stream tests were removed in step 2, this file should contain only core tests:\n   - TestHandleAuthConfigDefaults\n   - TestApiKeyUnaryInterceptor\n   - TestServerCloseClosesUserStore\n   - TestSeedDefaultAdminUserRejectsEmptyPassword\n   - TestServerCloseNilUserStoreNoPanic\n3. Also move handler tests out to their appropriate test files (or leave if no better home):\n   - TestHandleGetMemoryFetchesContextByPointer → could stay or move\n   - TestHandleGetMemoryReturnsNotFoundForMissingKey → could stay or move\n   - TestNormalizeAPIKeyTrimsQuotes → move to gateway_helpers_test.go (renamed in next step)\n4. Move test helper stubs (`stubMemStore`, `stubUserStore`, `newIPv4Server`) to helpers_test.go if they're used across multiple test files; otherwise keep in place\n5. Clean up imports\n6. Run: `go test ./core/controlplane/gateway/... -count=1` — verify all pass",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_test.go",
+        "core/controlplane/gateway/gateway_core_test.go"
+      ],
+      "startedAt": "2026-02-06T22:29:38.542Z",
+      "completedAt": "2026-02-06T22:29:59.389Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Rename gateway_helpers_additional_test.go → gateway_helpers_test.go and reorganize.\n\n1. `git mv core/controlplane/gateway/gateway_helpers_additional_test.go core/controlplane/gateway/gateway_helpers_test.go`\n2. Move core/middleware tests OUT to gateway_core_test.go:\n   - TestAllowedOriginsFromEnv\n   - TestRequestHostname\n   - TestCorsMiddleware\n   - TestCorsMiddlewarePUT\n   - TestRateLimitMiddleware\n   - TestStatusRecorderWriteHeaderAndFlush\n   - TestGatewaySafetyTransportCredentials\n   - TestClientIP\n   - TestAddrFromEnv\n3. Move handler test OUT to appropriate handler test file:\n   - TestHandleListJobDecisions → jobs_http_test.go or leave\n4. After moves, gateway_helpers_test.go should contain only helper/parser tests\n5. Move `flushWriter` helper to helpers_test.go if used elsewhere, or keep in gateway_helpers_test.go\n6. Clean up imports in all affected files\n7. Run: `go test ./core/controlplane/gateway/... -count=1` — verify all pass",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_helpers_additional_test.go",
+        "core/controlplane/gateway/gateway_helpers_test.go",
+        "core/controlplane/gateway/gateway_core_test.go"
+      ],
+      "startedAt": "2026-02-06T22:30:02.426Z",
+      "completedAt": "2026-02-06T22:32:35.140Z"
+    },
+    {
+      "stepId": "step-5",
+      "description": "Final verification — build and full test suite.\n\n1. Run: `go build ./cmd/cordum-api-gateway` — must compile\n2. Run: `go test ./core/controlplane/gateway/... -count=1` — all tests must pass, same count as baseline\n3. Verify file inventory:\n   - gateway_core_test.go exists (core/middleware tests)\n   - gateway_helpers_test.go exists (helper/parser tests)\n   - gateway_stream_test.go exists (WebSocket/stream tests)\n   - gateway_test.go does NOT exist\n   - gateway_helpers_additional_test.go does NOT exist",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T22:32:38.507Z",
+      "completedAt": "2026-02-06T22:32:50.558Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 12,
+  "createdAt": "2026-02-06T14:55:18.999Z",
+  "updatedAt": "2026-02-06T23:25:33.060Z"
+}

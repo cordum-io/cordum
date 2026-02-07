@@ -8,4 +8,12 @@ vendor
 *.tmp
 *.log
 node_modules
+**/node_modules
+dashboard/node_modules
+dashboard/dist
+dashboard/src.zip
 .next
+.moe
+*.exe
+*.png
+*.zip

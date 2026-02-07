@@ -17,6 +17,12 @@ type Metrics interface {
 	IncJobsDispatched(topic string)
 	IncJobsCompleted(topic, status string)
 	IncSafetyDenied(topic string)
+	IncSafetyUnavailable(topic string)
+	IncOrphanReplayed(topic string)
+	ObserveJobLockWait(seconds float64)
+	ObserveDispatchLatency(topic string, seconds float64)
+	SetActiveGoroutines(count int)
+	SetStaleJobs(state string, count int)
 	IncSagaRecorded()
 	IncSagaRollbackTriggered()
 	IncSagaCompensationDispatched()
@@ -24,6 +30,7 @@ type Metrics interface {
 	ObserveSagaRollback(durationSeconds float64)
 	IncSagaActive()
 	DecSagaActive()
+	IncSagaUnmarshalError()
 }
 
 // GatewayMetrics captures request metrics for the API gateway.
@@ -41,31 +48,45 @@ type WorkflowMetrics interface {
 // Noop implements Metrics without emitting anything.
 type Noop struct{}
 
-func (Noop) IncJobsReceived(string)          {}
-func (Noop) IncJobsDispatched(string)        {}
-func (Noop) IncJobsCompleted(string, string) {}
-func (Noop) IncSafetyDenied(string)          {}
-func (Noop) IncSagaRecorded()                {}
+func (Noop) IncJobsReceived(string)                {}
+func (Noop) IncJobsDispatched(string)              {}
+func (Noop) IncJobsCompleted(string, string)       {}
+func (Noop) IncSafetyDenied(string)                {}
+func (Noop) IncSafetyUnavailable(string)           {}
+func (Noop) IncOrphanReplayed(string)              {}
+func (Noop) ObserveJobLockWait(float64)            {}
+func (Noop) ObserveDispatchLatency(string, float64) {}
+func (Noop) SetActiveGoroutines(int)               {}
+func (Noop) SetStaleJobs(string, int)              {}
+func (Noop) IncSagaRecorded()                      {}
 func (Noop) IncSagaRollbackTriggered()       {}
 func (Noop) IncSagaCompensationDispatched()  {}
 func (Noop) IncSagaCompensationFailed()      {}
 func (Noop) ObserveSagaRollback(float64)     {}
 func (Noop) IncSagaActive()                  {}
 func (Noop) DecSagaActive()                  {}
+func (Noop) IncSagaUnmarshalError()          {}
 
 // Prom implements Metrics backed by Prometheus counters.
 type Prom struct {
-	jobsReceived   *prometheus.CounterVec
-	jobsDispatched *prometheus.CounterVec
-	jobsCompleted  *prometheus.CounterVec
-	safetyDenied   *prometheus.CounterVec
-	sagaRecorded   prometheus.Counter
-	sagaRollbacks  prometheus.Counter
-	sagaDispatched prometheus.Counter
-	sagaFailed     prometheus.Counter
-	sagaActive     prometheus.Gauge
-	sagaDuration   prometheus.Histogram
-	once           sync.Once
+	jobsReceived       *prometheus.CounterVec
+	jobsDispatched     *prometheus.CounterVec
+	jobsCompleted      *prometheus.CounterVec
+	safetyDenied       *prometheus.CounterVec
+	safetyUnavailable  *prometheus.CounterVec
+	orphanReplayed     *prometheus.CounterVec
+	jobLockWait        prometheus.Histogram
+	dispatchLatency    *prometheus.HistogramVec
+	activeGoroutines   prometheus.Gauge
+	staleJobs          *prometheus.GaugeVec
+	sagaRecorded       prometheus.Counter
+	sagaRollbacks      prometheus.Counter
+	sagaDispatched     prometheus.Counter
+	sagaFailed         prometheus.Counter
+	sagaActive         prometheus.Gauge
+	sagaDuration       prometheus.Histogram
+	sagaUnmarshalErrors prometheus.Counter
+	once               sync.Once
 }
 
 func NewProm(namespace string) *Prom {
@@ -90,6 +111,38 @@ func NewProm(namespace string) *Prom {
 			Name:      "safety_denied_total",
 			Help:      "Jobs denied by safety kernel per topic",
 		}, []string{"topic"}),
+		safetyUnavailable: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "safety_unavailable_total",
+			Help:      "Jobs deferred due to safety kernel unavailability per topic",
+		}, []string{"topic"}),
+		orphanReplayed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "scheduler_orphan_replayed_total",
+			Help:      "Orphaned PENDING jobs replayed by the pending replayer",
+		}, []string{"topic"}),
+		jobLockWait: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "scheduler_job_lock_wait_seconds",
+			Help:      "Time spent waiting to acquire per-job lock",
+			Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		}),
+		dispatchLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "scheduler_dispatch_latency_seconds",
+			Help:      "Latency from receive to dispatch per topic",
+			Buckets:   prometheus.DefBuckets,
+		}, []string{"topic"}),
+		activeGoroutines: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "scheduler_active_goroutines",
+			Help:      "Number of active handler goroutines in the scheduler",
+		}),
+		staleJobs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "scheduler_stale_jobs",
+			Help:      "Number of stale jobs detected by reconciler per state",
+		}, []string{"state"}),
 		sagaRecorded: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "saga_recorded_total",
@@ -121,6 +174,11 @@ func NewProm(namespace string) *Prom {
 			Help:      "Saga rollback duration in seconds",
 			Buckets:   prometheus.DefBuckets,
 		}),
+		sagaUnmarshalErrors: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "saga_unmarshal_errors_total",
+			Help:      "Saga compensation entries that failed protobuf unmarshal",
+		}),
 	}
 	p.register()
 	return p
@@ -133,12 +191,19 @@ func (p *Prom) register() {
 			p.jobsDispatched,
 			p.jobsCompleted,
 			p.safetyDenied,
+			p.safetyUnavailable,
+			p.orphanReplayed,
+			p.jobLockWait,
+			p.dispatchLatency,
+			p.activeGoroutines,
+			p.staleJobs,
 			p.sagaRecorded,
 			p.sagaRollbacks,
 			p.sagaDispatched,
 			p.sagaFailed,
 			p.sagaActive,
 			p.sagaDuration,
+			p.sagaUnmarshalErrors,
 		)
 	})
 }
@@ -157,6 +222,34 @@ func (p *Prom) IncJobsCompleted(topic, status string) {
 
 func (p *Prom) IncSafetyDenied(topic string) {
 	p.safetyDenied.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncSafetyUnavailable(topic string) {
+	p.safetyUnavailable.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncOrphanReplayed(topic string) {
+	p.orphanReplayed.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) ObserveJobLockWait(seconds float64) {
+	if seconds >= 0 {
+		p.jobLockWait.Observe(seconds)
+	}
+}
+
+func (p *Prom) ObserveDispatchLatency(topic string, seconds float64) {
+	if seconds >= 0 {
+		p.dispatchLatency.WithLabelValues(topic).Observe(seconds)
+	}
+}
+
+func (p *Prom) SetActiveGoroutines(count int) {
+	p.activeGoroutines.Set(float64(count))
+}
+
+func (p *Prom) SetStaleJobs(state string, count int) {
+	p.staleJobs.WithLabelValues(state).Set(float64(count))
 }
 
 func (p *Prom) IncSagaRecorded() {
@@ -187,6 +280,10 @@ func (p *Prom) IncSagaActive() {
 
 func (p *Prom) DecSagaActive() {
 	p.sagaActive.Dec()
+}
+
+func (p *Prom) IncSagaUnmarshalError() {
+	p.sagaUnmarshalErrors.Inc()
 }
 
 // Handler returns an HTTP handler for /metrics.

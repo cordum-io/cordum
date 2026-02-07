@@ -1,0 +1,44 @@
+{
+  "id": "task-7f783661",
+  "epicId": "epic-dbd90afa",
+  "title": "Check scanner.Err() after scan loop in readEnvFile",
+  "description": "**Severity: HIGH**\n\n**File**: `cmd/cordumctl/up.go:141-158`\n\n**Issue**: `bufio.Scanner.Err()` is never checked after the scan loop in `readEnvFile()`. If an IO error occurs mid-scan (disk failure, permission change), the function silently returns empty string instead of reporting the error.\n\n```go\nscanner := bufio.NewScanner(f)\nfor scanner.Scan() {\n    // ... process lines ...\n}\n// BUG: scanner.Err() never checked\nreturn \"\"\n```\n\n**Fix**: Check `scanner.Err()` after the loop. Since the function returns a string, either log the error, or change the signature to return `(string, error)`.",
+  "definitionOfDone": [
+    "scanner.Err() is checked after scan loop",
+    "IO errors are either logged or returned to caller",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add `scanner.Err()` check after the scan loop (line 157) in `readEnvFile`. Since the function returns `string` (not `(string, error)`), and changing the signature would break callers, log the error:\n```go\nif err := scanner.Err(); err != nil {\n    slog.Warn(\"readEnvFile: scan error\", \"path\", path, \"error\", err)\n}\nreturn \"\"\n```\nThis preserves the existing contract while ensuring IO errors are visible.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/up.go"
+      ],
+      "startedAt": "2026-02-06T09:49:18.003Z",
+      "completedAt": "2026-02-06T09:49:37.609Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Run `go test ./cmd/cordumctl/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T09:49:40.629Z",
+      "completedAt": "2026-02-06T09:49:48.009Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 24,
+  "createdAt": "2026-02-05T22:26:38.482Z",
+  "updatedAt": "2026-02-06T12:07:50.834Z",
+  "priority": "MEDIUM"
+}

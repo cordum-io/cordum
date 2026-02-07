@@ -59,26 +59,78 @@ func TestStartBusTaps(t *testing.T) {
 		t.Fatalf("set job state: %v", err)
 	}
 
-	s.startBusTaps()
-	t.Cleanup(func() { close(s.eventsCh) })
+	if err := s.startBusTaps(); err != nil {
+		t.Fatalf("start bus taps: %v", err)
+	}
+	t.Cleanup(s.stopBusTaps)
 
 	bus.emit(capsdk.SubjectHeartbeat, &pb.BusPacket{Payload: &pb.BusPacket_Heartbeat{Heartbeat: &pb.Heartbeat{WorkerId: "w1"}}})
-	s.workerMu.RLock()
-	_, ok := s.workers["w1"]
-	s.workerMu.RUnlock()
-	if !ok {
-		t.Fatalf("expected worker heartbeat to register")
-	}
+	waitFor(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		s.workerMu.RLock()
+		_, ok := s.workers["w1"]
+		s.workerMu.RUnlock()
+		return ok
+	}, "expected worker heartbeat to register")
 
 	bus.emit(capsdk.SubjectDLQ, &pb.BusPacket{Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: jobID, Status: pb.JobStatus_JOB_STATUS_FAILED, ErrorMessage: "boom"}}})
-	entry, err := s.dlqStore.Get(ctx, jobID)
-	if err != nil || entry == nil {
-		t.Fatalf("expected dlq entry, err=%v", err)
-	}
+	waitFor(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		entry, err := s.dlqStore.Get(ctx, jobID)
+		return err == nil && entry != nil
+	}, "expected dlq entry")
 
 	bus.emit("sys.job.test", &pb.BusPacket{Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: "run-1:step@1", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED}}})
-	updated, _ := s.workflowStore.GetRun(ctx, run.ID)
-	if updated.Status != wf.RunStatusSucceeded {
-		t.Fatalf("expected run succeeded, got %s", updated.Status)
+	waitFor(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		updated, _ := s.workflowStore.GetRun(ctx, run.ID)
+		return updated != nil && updated.Status == wf.RunStatusSucceeded
+	}, "expected run succeeded")
+}
+
+// waitFor polls cond every interval until it returns true or timeout expires.
+func waitFor(t *testing.T, timeout, interval time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(interval)
+	}
+	t.Fatalf("timed out waiting: %s", msg)
+}
+
+func TestJobIDForBusPacket(t *testing.T) {
+	cases := []struct {
+		name   string
+		packet *pb.BusPacket
+		expect string
+	}{
+		{
+			name:   "job_request",
+			packet: &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}},
+			expect: "job-1",
+		},
+		{
+			name:   "job_result",
+			packet: &pb.BusPacket{Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: "job-2"}}},
+			expect: "job-2",
+		},
+		{
+			name:   "job_progress",
+			packet: &pb.BusPacket{Payload: &pb.BusPacket_JobProgress{JobProgress: &pb.JobProgress{JobId: "job-3"}}},
+			expect: "job-3",
+		},
+		{
+			name:   "job_cancel",
+			packet: &pb.BusPacket{Payload: &pb.BusPacket_JobCancel{JobCancel: &pb.JobCancel{JobId: "job-4"}}},
+			expect: "job-4",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := jobIDForBusPacket(tc.packet); got != tc.expect {
+				t.Fatalf("expected %s, got %s", tc.expect, got)
+			}
+		})
 	}
 }

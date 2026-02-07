@@ -1,170 +1,264 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Badge } from "../components/ui/Badge";
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/Button";
-import { Card, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
+import { Card } from "../components/ui/Card";
 import { useAuthConfig } from "../hooks/useAuthConfig";
-import { api } from "../lib/api";
 import { useConfigStore } from "../state/config";
+import { post } from "../api/client";
+import type { User } from "../api/types";
 
-function resolveBaseUrl(apiBaseUrl: string) {
-  if (!apiBaseUrl) {
-    return window.location.origin;
-  }
-  if (apiBaseUrl.startsWith("http://") || apiBaseUrl.startsWith("https://")) {
-    return apiBaseUrl.replace(/\/$/, "");
-  }
-  return `${window.location.origin}${apiBaseUrl.startsWith("/") ? "" : "/"}${apiBaseUrl}`;
+interface LoginResponse {
+  token: string;
+  user: User;
 }
 
-export function LoginPage() {
+export default function LoginPage() {
   const navigate = useNavigate();
-  const { data: authConfig } = useAuthConfig();
-  const apiBaseUrl = useConfigStore((state) => state.apiBaseUrl);
-  const tenantId = useConfigStore((state) => state.tenantId);
-  const updateConfig = useConfigStore((state) => state.update);
+  const [searchParams] = useSearchParams();
+  const returnUrl = searchParams.get("returnUrl") || "/";
+  const { data: authConfig, isLoading: authLoading } = useAuthConfig();
+  const login = useConfigStore((s) => s.login);
+
+  const userAuthEnabled = authConfig?.user_auth_enabled ?? false;
+  const apiKeyEnabled = authConfig?.password_enabled ?? false;
+  const defaultTenant = authConfig?.default_tenant || "default";
+  const authRequired = userAuthEnabled || apiKeyEnabled || authConfig?.saml_enabled;
+
+  type LoginMode = "user" | "apiKey";
+  const [mode, setMode] = useState<LoginMode>(userAuthEnabled ? "user" : "apiKey");
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [tenantInput, setTenantInput] = useState(defaultTenant);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const canUsePassword = authConfig?.password_enabled ?? false;
-  const canUseUserAuth = authConfig?.user_auth_enabled ?? false;
-  const canUseSaml = authConfig?.saml_enabled ?? false;
-  const isSamlEnterprise = authConfig?.saml_enterprise ?? true;
-  const samlLoginUrl = authConfig?.saml_login_url ?? "/api/v1/auth/sso/saml/login";
-  const redirectUrl = useMemo(() => `${window.location.origin}/auth/callback`, []);
+  const showModeToggle = userAuthEnabled && apiKeyEnabled;
+  const effectiveMode: LoginMode = userAuthEnabled ? mode : "apiKey";
 
-  // Determine if any password-based auth is available
-  const canLogin = canUsePassword || canUseUserAuth;
+  useEffect(() => {
+    if (userAuthEnabled) {
+      setMode((m) => (m === "apiKey" && !apiKeyEnabled ? "user" : m));
+    } else {
+      setMode("apiKey");
+    }
+  }, [userAuthEnabled, apiKeyEnabled]);
 
-  const handlePasswordLogin = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setError(null);
-    setLoading(true);
+  useEffect(() => {
+    setTenantInput((t) => t || defaultTenant);
+  }, [defaultTenant]);
+
+  const handlePasswordLogin = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
     try {
-      const res = await api.login({ username, password, tenant: tenantId || undefined });
-      updateConfig({
-        apiKey: res.token,
-        tenantId: res.user.tenant || tenantId,
-        principalId: res.user.id,
-        principalRole: res.user.roles?.[0] || "",
+      const tenant = tenantInput.trim();
+      const res = await post<LoginResponse>("/auth/login", {
+        username,
+        password,
+        tenant: tenant || undefined,
       });
-      navigate("/");
+      login(res.token, res.user);
+      navigate(returnUrl, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
-  const handleSamlLogin = () => {
-    const base = resolveBaseUrl(apiBaseUrl);
-    const url = new URL(samlLoginUrl, base);
-    url.searchParams.set("redirect", redirectUrl);
-    window.location.assign(url.toString());
+  const handleApiKeyLogin = (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed) {
+      setError("API key is required");
+      return;
+    }
+    const tenant = tenantInput.trim() || defaultTenant;
+    login(trimmed, {
+      id: "",
+      username: "api-key-user",
+      email: "",
+      display_name: "API Key User",
+      roles: [],
+      tenant,
+    });
+    navigate(returnUrl, { replace: true });
   };
 
   return (
-    <div className="min-h-screen bg-[color:var(--surface-muted)]">
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center gap-8 px-6 py-12">
-        <div className="text-center">
-          <div className="text-xs uppercase tracking-[0.4em] text-muted">Cordum</div>
-          <h1 className="font-display text-3xl font-semibold text-ink">Enterprise Console</h1>
-          <p className="mt-2 text-sm text-muted">Sign in to manage workflows, packs, and policy controls.</p>
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <Card className="w-full max-w-md p-8">
+        <div className="mb-8 text-center">
+          <img
+            src="/assets/cordum-logo.png"
+            alt="Cordum logo"
+            className="mx-auto mb-4 h-12 w-auto object-contain dark:brightness-0 dark:invert"
+          />
+          <h1 className="font-display text-2xl font-semibold text-ink">
+            Cordum Control Plane
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            Sign in to continue
+          </p>
         </div>
 
-        <Card className="w-full space-y-6 p-6">
-          <CardHeader className="p-0">
-            <CardTitle>Sign In</CardTitle>
-            <CardDescription>Enter your credentials to access the control plane.</CardDescription>
-          </CardHeader>
-
-          <form className="space-y-4" onSubmit={handlePasswordLogin}>
-            <div className="space-y-2">
-              <label htmlFor="username" className="text-sm font-medium text-ink">
-                Email or username
+        {authLoading ? (
+          <div className="py-8 text-center text-sm text-muted">
+            Loading auth configuration...
+          </div>
+        ) : !authRequired ? (
+          <div className="space-y-4 text-center">
+            <p className="text-sm text-muted">
+              Authentication is not required for this deployment.
+            </p>
+            <Button type="button" className="w-full" onClick={() => navigate(returnUrl, { replace: true })}>
+              Continue
+            </Button>
+          </div>
+        ) : effectiveMode === "user" ? (
+          <form onSubmit={handlePasswordLogin} className="space-y-4">
+            {showModeToggle && (
+              <div className="flex rounded-full border border-border p-1">
+                <button
+                  type="button"
+                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
+                    mode === "user" ? "bg-accent/15 text-accent" : "text-muted"
+                  }`}
+                  onClick={() => setMode("user")}
+                >
+                  User
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
+                    mode === "apiKey" ? "bg-accent/15 text-accent" : "text-muted"
+                  }`}
+                  onClick={() => setMode("apiKey")}
+                >
+                  API Key
+                </button>
+              </div>
+            )}
+            <div>
+              <label htmlFor="username" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                Username
               </label>
               <Input
                 id="username"
                 type="text"
                 value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder="Enter your email or username"
-                disabled={!canLogin || loading}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter username"
                 autoComplete="username"
+                required
               />
             </div>
-            <div className="space-y-2">
-              <label htmlFor="password" className="text-sm font-medium text-ink">
+            <div>
+              <label htmlFor="password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
                 Password
               </label>
               <Input
                 id="password"
                 type="password"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Enter your password"
-                disabled={!canLogin || loading}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
                 autoComplete="current-password"
+                required
               />
             </div>
-
-            {error ? <div className="text-xs text-danger">{error}</div> : null}
-
-            <Button type="submit" variant="primary" className="w-full" disabled={!canLogin || loading}>
-              {loading ? "Signing in..." : "Sign In"}
-            </Button>
-
-            {!canLogin ? (
-              <div className="text-center text-xs text-muted">
-                Password login is disabled. Please use SSO or contact your administrator.
-              </div>
-            ) : null}
-          </form>
-
-          {canUseSaml ? (
-            <>
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t border-surface2" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-surface px-2 text-muted">or</span>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleSamlLogin}
-                >
-                  <span className="flex items-center justify-center gap-2">
-                    Continue with SSO
-                    {isSamlEnterprise ? <Badge variant="enterprise">Enterprise</Badge> : null}
-                  </span>
-                </Button>
-              </div>
-            </>
-          ) : (
-            <div className="text-center text-xs text-muted">
-              SSO is not configured.{" "}
-              {isSamlEnterprise ? (
-                <span className="inline-flex items-center gap-1">
-                  <Badge variant="enterprise">Enterprise</Badge>
-                </span>
-              ) : null}
+            <div>
+              <label htmlFor="tenant" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                Tenant
+              </label>
+              <Input
+                id="tenant"
+                type="text"
+                value={tenantInput}
+                onChange={(e) => setTenantInput(e.target.value)}
+                placeholder={defaultTenant}
+                autoComplete="organization"
+              />
             </div>
-          )}
-        </Card>
-
-        <p className="text-center text-xs text-muted">
-          By signing in, you agree to the terms of service and privacy policy.
-        </p>
-      </div>
+            {error && (
+              <div className="rounded-xl bg-[color:rgba(184,58,58,0.1)] px-4 py-2.5 text-sm text-danger">
+                {error}
+              </div>
+            )}
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting ? "Signing in..." : "Sign in"}
+            </Button>
+          </form>
+        ) : (
+          <form onSubmit={handleApiKeyLogin} className="space-y-4">
+            {showModeToggle && (
+              <div className="flex rounded-full border border-border p-1">
+                <button
+                  type="button"
+                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
+                    mode === "user" ? "text-muted" : "bg-accent/15 text-accent"
+                  }`}
+                  onClick={() => setMode("user")}
+                >
+                  User
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
+                    mode === "apiKey" ? "bg-accent/15 text-accent" : "text-muted"
+                  }`}
+                  onClick={() => setMode("apiKey")}
+                >
+                  API Key
+                </button>
+              </div>
+            )}
+            <div>
+              <label htmlFor="api-key" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                API Key
+              </label>
+              <Input
+                id="api-key"
+                type="password"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Enter your API key"
+                autoComplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="tenant-api" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                Tenant
+              </label>
+              <Input
+                id="tenant-api"
+                type="text"
+                value={tenantInput}
+                onChange={(e) => setTenantInput(e.target.value)}
+                placeholder={defaultTenant}
+                autoComplete="organization"
+              />
+            </div>
+            {error && (
+              <div className="rounded-xl bg-[color:rgba(184,58,58,0.1)] px-4 py-2.5 text-sm text-danger">
+                {error}
+              </div>
+            )}
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting ? "Connecting..." : "Connect"}
+            </Button>
+            <p className="text-center text-xs text-muted">
+              API-key authentication mode
+            </p>
+          </form>
+        )}
+      </Card>
     </div>
   );
 }

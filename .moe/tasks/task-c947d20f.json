@@ -1,0 +1,62 @@
+{
+  "id": "task-c947d20f",
+  "epicId": "epic-04065074",
+  "title": "Extract gRPC methods and delete gateway_handlers.go",
+  "description": "Move gRPC handler methods from gateway_handlers.go into a new gateway_grpc.go file: SubmitJob() and GetJobStatus() gRPC methods (~lines 2924-3201). After this, gateway_handlers.go should be empty or nearly empty. If only shared types/constants remain, move them to the appropriate domain file or gateway_helpers.go. Delete gateway_handlers.go once fully emptied. Verify build passes and no test breaks.",
+  "definitionOfDone": [
+    "gateway_grpc.go exists with gRPC methods",
+    "gateway_handlers.go is deleted",
+    "go build ./cmd/cordum-api-gateway succeeds",
+    "go test ./core/controlplane/gateway/... compiles (tests may skip without infra)"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create gateway_grpc.go with package gateway declaration. Move gRPC method implementations from gateway_handlers.go: SubmitJob (~lines 2924-3183) and GetJobStatus (~lines 3185-3201). Also move any comment marker like '// --- gRPC Implementations ---'. Imports needed: context, encoding/json, fmt, strings, time, plus cordum packages: scheduler, bus, capsdk, pb, uuid, codes, status, proto, timestamppb.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_grpc.go"
+      ],
+      "startedAt": "2026-02-06T23:35:20.230Z",
+      "completedAt": "2026-02-06T23:35:38.651Z",
+      "note": "gateway_handlers.go only contained gRPC methods + imports, so renamed directly to gateway_grpc.go instead of creating a new file.",
+      "modifiedFiles": [
+        "core/controlplane/gateway/gateway_grpc.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "After all prior tasks have removed their domains, gateway_handlers.go should now be empty (or contain only the package declaration and unused imports). If any shared types/constants remain that aren't tied to a specific domain, move them to gateway_helpers.go. Delete gateway_handlers.go entirely.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_handlers.go"
+      ],
+      "completedAt": "2026-02-06T23:35:39.925Z",
+      "note": "gateway_handlers.go was renamed (not copied), so it no longer exists. Nothing else to delete."
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run go build ./cmd/cordum-api-gateway to verify clean compilation. Then run go vet ./core/controlplane/gateway/... to check for any issues. Verify test compilation with go test -run='^$' ./core/controlplane/gateway/... (compile-only, no execution).",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T23:35:40.414Z",
+      "completedAt": "2026-02-06T23:36:04.031Z",
+      "note": "go build, go vet, and go test -run='^$' all pass cleanly. gateway_handlers.go no longer exists."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 5,
+  "createdAt": "2026-02-06T23:15:49.039Z",
+  "updatedAt": "2026-02-06T23:39:24.211Z",
+  "planSubmittedAt": "2026-02-06T23:17:56.265Z",
+  "planApprovedAt": "2026-02-06T23:17:56.266Z"
+}

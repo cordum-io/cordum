@@ -1,0 +1,52 @@
+{
+  "id": "task-5149383d",
+  "epicId": "epic-806e5c17",
+  "title": "Status API hooks",
+  "description": "useStatus(), useWorkers(), useRecentJobs(), useRecentRuns() React Query hooks for the command center page.",
+  "definitionOfDone": [
+    "useStatus() fetches GET /api/v1/status with 10s polling",
+    "useWorkers() fetches GET /api/v1/workers",
+    "useRecentJobs() fetches GET /api/v1/jobs?limit=10&sort=created_at:desc",
+    "useRecentRuns() fetches GET /api/v1/workflows/runs?limit=10&sort=created_at:desc",
+    "All hooks use React Query with appropriate stale times",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/hooks/useStatus.ts: useStatus() React Query hook fetching GET /api/v1/status with 10s refetchInterval. Returns system status: worker counts, active jobs, success rate, pending approvals, avg eval latency, pipeline stats. useWorkersSummary() hook fetching GET /api/v1/workers for the command center (re-uses worker type from api/types.ts). useRecentJobs() fetching GET /api/v1/jobs?limit=10&sort=created_at:desc. useRecentRuns() fetching GET /api/v1/workflows/runs?limit=10&sort=created_at:desc. All hooks use apiClient from api/client.ts with proper auth headers.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useStatus.ts"
+      ],
+      "startedAt": "2026-02-07T00:19:23.822Z",
+      "completedAt": "2026-02-07T00:19:34.577Z",
+      "modifiedFiles": [
+        "dashboard/src/hooks/useStatus.ts"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit to ensure hooks compile correctly with api/types.ts types.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:19:35.149Z",
+      "completedAt": "2026-02-07T00:19:47.998Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 1,
+  "createdAt": "2026-02-06T23:47:35.175Z",
+  "updatedAt": "2026-02-07T20:00:18.710Z",
+  "planSubmittedAt": "2026-02-06T23:55:25.472Z",
+  "planApprovedAt": "2026-02-06T23:55:25.473Z"
+}

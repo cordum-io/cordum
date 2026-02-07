@@ -10,6 +10,7 @@ import (
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestDirectSubject(t *testing.T) {
@@ -162,6 +163,71 @@ func TestParseBoolEnv(t *testing.T) {
 	t.Setenv(key, "no")
 	if parseBoolEnv(key) {
 		t.Fatalf("expected false for no")
+	}
+}
+
+func TestProcessBusMsgPoisonPill(t *testing.T) {
+	handlerCalled := false
+	handler := func(p *pb.BusPacket) error {
+		handlerCalled = true
+		return nil
+	}
+
+	// Malformed data should trigger NakDelay (poison pill), handler should NOT be called
+	action, delay := processBusMsg([]byte("not-protobuf-data"), handler)
+	if action != msgActionNakDelay {
+		t.Fatalf("expected NakDelay for poison pill, got action=%d", action)
+	}
+	if delay != 5*time.Second {
+		t.Fatalf("expected 5s delay, got %v", delay)
+	}
+	if handlerCalled {
+		t.Fatal("handler should not be called for poison pill")
+	}
+
+	// Valid protobuf should ACK and call handler
+	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	data, err := proto.Marshal(valid)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	action, _ = processBusMsg(data, handler)
+	if action != msgActionAck {
+		t.Fatalf("expected Ack for valid message, got action=%d", action)
+	}
+	if !handlerCalled {
+		t.Fatal("handler should be called for valid message")
+	}
+}
+
+func TestProcessBusMsgRetryableError(t *testing.T) {
+	handler := func(p *pb.BusPacket) error {
+		return RetryAfter(errors.New("transient"), 2*time.Second)
+	}
+
+	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	data, _ := proto.Marshal(valid)
+
+	action, delay := processBusMsg(data, handler)
+	if action != msgActionNakDelay {
+		t.Fatalf("expected NakDelay for retryable error, got action=%d", action)
+	}
+	if delay != 2*time.Second {
+		t.Fatalf("expected 2s delay, got %v", delay)
+	}
+}
+
+func TestProcessBusMsgNonRetryableError(t *testing.T) {
+	handler := func(p *pb.BusPacket) error {
+		return errors.New("permanent failure")
+	}
+
+	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	data, _ := proto.Marshal(valid)
+
+	action, _ := processBusMsg(data, handler)
+	if action != msgActionAck {
+		t.Fatalf("expected Ack for non-retryable error, got action=%d", action)
 	}
 }
 

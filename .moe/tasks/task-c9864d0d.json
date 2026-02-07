@@ -1,0 +1,35 @@
+{
+  "id": "task-c9864d0d",
+  "epicId": "epic-cddc11dd",
+  "title": "Fix ApprovalsPage.tsx — sort order inverted (ascending instead of descending)",
+  "description": "**File:** `dashboard/src/pages/ApprovalsPage.tsx`\n\n**Problem:** Line 165 comment says \"Sort by wait time descending (longest first)\" but the sort comparator on lines 169-171 sorts ascending:\n```typescript\n(a, b) =>\n  new Date(a.requestedAt).getTime() -\n  new Date(b.requestedAt).getTime(),\n```\nThis shows newest approvals first instead of longest-waiting first.\n\n**Fix:** Reverse the comparison:\n```typescript\n(a, b) =>\n  new Date(b.requestedAt).getTime() -\n  new Date(a.requestedAt).getTime(),\n```\n\nWait — actually, for \"longest waiting first\", we want the OLDEST requestedAt first (smallest timestamp first = ascending). But the comment says \"descending\" which means largest first. Re-reading the intent: \"longest waiting\" = oldest request = smallest timestamp should be first. So ascending IS correct for \"longest waiting first\".\n\nActually the COMMENT is wrong, not the code. \"Sort by wait time descending\" would put newest first. The sort is ascending (a-b), which puts oldest (longest waiting) first — which is the correct UX behavior for an approval queue. Fix the comment to say \"Sort by requested time ascending (longest waiting first)\".",
+  "definitionOfDone": [
+    "Comment accurately describes the sort behavior",
+    "Approvals queue shows longest-waiting items first"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Fix the comment on line 165 from \"Sort by wait time descending (longest first)\" to \"Sort by requested time ascending (longest waiting first)\". The sort comparator (a-b) is correct for showing oldest/longest-waiting approvals at the top — only the comment is inaccurate.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/pages/ApprovalsPage.tsx"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "LOW",
+  "order": 28,
+  "createdAt": "2026-02-07T18:27:33.477Z",
+  "updatedAt": "2026-02-07T19:59:58.211Z",
+  "planSubmittedAt": "2026-02-07T18:35:02.085Z",
+  "planApprovedAt": "2026-02-07T18:35:02.086Z"
+}

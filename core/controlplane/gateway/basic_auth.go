@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -102,6 +103,15 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 	}
 	b.maybeReloadKeys()
 	if token := bearerToken(r.Header.Get("Authorization")); token != "" {
+		// Check session tokens before JWT
+		if strings.HasPrefix(token, "session-") && b.userStore != nil {
+			if redisStore, ok := b.userStore.(*RedisUserStore); ok {
+				authCtx, err := redisStore.ValidateSession(r.Context(), token)
+				if err == nil {
+					return authCtx, nil
+				}
+			}
+		}
 		if b.jwt == nil {
 			return nil, errors.New("jwt auth not configured")
 		}
@@ -185,6 +195,16 @@ func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext,
 			PrincipalID: strings.TrimSpace(principalID),
 			Role:        "anonymous",
 		}, nil
+	}
+	// Check session tokens (from user/password login)
+	if strings.HasPrefix(key, "session-") && b.userStore != nil {
+		if redisStore, ok := b.userStore.(*RedisUserStore); ok {
+			authCtx, err := redisStore.ValidateSession(context.Background(), key)
+			if err == nil {
+				return authCtx, nil
+			}
+			// Session not found or invalid — fall through to API key check
+		}
 	}
 	meta, ok := b.lookupKey(key)
 	if !ok {
@@ -354,6 +374,9 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 	single := normalizeAPIKey(os.Getenv("CORDUM_API_KEY"))
 	if single == "" {
 		single = normalizeAPIKey(os.Getenv("API_KEY"))
+		if single != "" {
+			slog.Warn("API_KEY env var is deprecated, use CORDUM_API_KEY instead")
+		}
 	}
 	if single != "" {
 		keys[single] = apiKeyMeta{Role: "admin"}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -67,7 +68,11 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 		events, _ := s.redis.LRange(ctx, s.historyKey(memoryID), -s.maxHistory, -1).Result()
 		for _, raw := range events {
 			var ev historyEvent
-			if err := json.Unmarshal([]byte(raw), &ev); err == nil && ev.Content != "" {
+			if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+				slog.Warn("context-engine: corrupt history event skipped", "memory_id", memoryID, "error", err)
+				continue
+			}
+			if ev.Content != "" {
 				messages = append(messages, &pb.ModelMessage{Role: ev.Role, Content: ev.Content})
 			}
 		}
@@ -121,8 +126,6 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 	var inputTokens32 int32
 	if inputTokens > math.MaxInt32 {
 		inputTokens32 = math.MaxInt32
-	} else if inputTokens < math.MinInt32 {
-		inputTokens32 = math.MinInt32
 	} else {
 		inputTokens32 = int32(inputTokens)
 	}
@@ -170,7 +173,9 @@ func (s *Service) UpdateMemory(ctx context.Context, req *pb.UpdateMemoryRequest)
 	if pushed && s.maxHistory > 0 {
 		pipe.LTrim(ctx, s.historyKey(memoryID), -s.maxHistory, -1)
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("update memory pipeline: %w", err)
+	}
 	return &pb.UpdateMemoryResponse{}, nil
 }
 
@@ -213,9 +218,11 @@ func (s *Service) loadChunks(ctx context.Context, memoryID string) []chunkRecord
 			continue
 		}
 		var rec chunkRecord
-		if err := json.Unmarshal(val, &rec); err == nil {
-			out = append(out, rec)
+		if err := json.Unmarshal(val, &rec); err != nil {
+			slog.Warn("context-engine: corrupt chunk record skipped", "key", k, "error", err)
+			continue
 		}
+		out = append(out, rec)
 	}
 	return out
 }

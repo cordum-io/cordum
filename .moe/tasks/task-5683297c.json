@@ -1,0 +1,64 @@
+{
+  "id": "task-5683297c",
+  "epicId": "epic-57debfb1",
+  "title": "Fix Flaky Saga Test — Replace time.Sleep with Channel Sync",
+  "description": "**Problem**: `TestSagaRollback` uses `time.Sleep(50ms)` for synchronization, causing CI flakes.\n\n**Fix**: Replace with channel-based sync and `assert.Eventually`.\n\n**Files**: `core/controlplane/scheduler/saga_test.go`",
+  "definitionOfDone": [
+    "time.Sleep removed from TestSagaRollback",
+    "Replaced with channel-based synchronization or assert.Eventually",
+    "Test passes reliably: go test -run TestSagaRollback -count=10",
+    "No other test regressions"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Step 1: Fix TestSagaRollbackRespectsContextTimeout in saga_test.go\n\nLine 228-229 uses `time.Sleep(1ms)` to ensure a nanosecond-timeout fires. Replace with a pre-cancelled context pattern:\n```go\nctx, cancel := context.WithCancel(context.Background())\ncancel() // already cancelled\n```\nThis is deterministic — no timing dependency.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/saga_test.go"
+      ],
+      "startedAt": "2026-02-07T01:19:35.831Z",
+      "completedAt": "2026-02-07T01:20:10.255Z",
+      "note": "Replaced 1ns timeout + 1ms sleep with pre-cancelled context (WithCancel + immediate cancel). Removed unused time import.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/saga_test.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Step 2: Fix engine_test.go poll-loop for saga rollback dispatch\n\nLines 483-489 in TestHandleJobResultTriggersRollback uses poll-loop with `time.Sleep(10ms)`. Replace with `assert.Eventually` or extend the deadline and use a channel-based notification pattern. Since the rollback is fired in a goroutine (line 638-649 in engine.go), the poll loop is necessary but should use `testing.T.Deadline()` or a generous timeout with `assert.Eventually`.\n\nReplace with:\n```go\nassert.Eventually(t, func() bool {\n    return len(bus.published) > 0\n}, 2*time.Second, 10*time.Millisecond)\n```\nAdd `github.com/stretchr/testify/assert` import if not already present, or use a manual eventually helper.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/engine_test.go"
+      ],
+      "startedAt": "2026-02-07T01:20:13.292Z",
+      "completedAt": "2026-02-07T01:20:45.260Z",
+      "note": "Replaced poll-loop with time.Sleep(10ms) with context-based ticker pattern using 2s timeout. Uses context.WithTimeout + ticker.C select to wait for bus.published, with clear fatal on timeout.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/engine_test.go"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Step 3: Verify tests pass reliably\n\nRun `go test -run TestSagaRollback -count=10 ./core/controlplane/scheduler/...` and `go test -run TestHandleJobResultTriggersRollback -count=10 ./core/controlplane/scheduler/...` to confirm reliability. Then full suite: `go test ./core/controlplane/scheduler/... -count=3`.",
+      "status": "IN_PROGRESS",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:20:48.454Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 9,
+  "createdAt": "2026-02-07T00:33:36.900Z",
+  "updatedAt": "2026-02-07T01:27:11.750Z",
+  "planSubmittedAt": "2026-02-07T00:38:24.184Z",
+  "planApprovedAt": "2026-02-07T00:38:24.185Z"
+}

@@ -1,5 +1,7 @@
 # Core stack manifest. For enterprise gateway, apply the overlay from
 # cordum-enterprise/deploy/k8s/enterprise-gateway.yaml after this file.
+# NOTE: Cordum service images are intentionally untagged here. Image tags are
+# set via kustomize overlays (see production/kustomization.yaml).
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -202,9 +204,16 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: context-engine
         image: cordum-context-engine
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
         env:
         - name: REDIS_URL
           value: redis://redis:6379
@@ -213,11 +222,13 @@ spec:
         ports:
         - containerPort: 50070
         livenessProbe:
-          tcpSocket: {port: 50070}
+          grpc:
+            port: 50070
           initialDelaySeconds: 5
           periodSeconds: 10
         readinessProbe:
-          tcpSocket: {port: 50070}
+          grpc:
+            port: 50070
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
@@ -257,9 +268,16 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: safety
         image: cordum-safety-kernel
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -276,11 +294,13 @@ spec:
         ports:
         - containerPort: 50051
         livenessProbe:
-          tcpSocket: {port: 50051}
+          grpc:
+            port: 50051
           initialDelaySeconds: 5
           periodSeconds: 10
         readinessProbe:
-          tcpSocket: {port: 50051}
+          grpc:
+            port: 50051
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
@@ -324,9 +344,16 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: scheduler
         image: cordum-scheduler
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -407,9 +434,16 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: gateway
         image: cordum-api-gateway
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -498,9 +532,16 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: workflow-engine
         image: cordum-workflow-engine
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -565,9 +606,16 @@ spec:
         runAsNonRoot: true
         runAsUser: 101
         runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: dashboard
         image: cordum-dashboard
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
         env:
         - name: CORDUM_API_KEY
           valueFrom:

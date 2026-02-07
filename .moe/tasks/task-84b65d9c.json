@@ -1,0 +1,67 @@
+{
+  "id": "task-84b65d9c",
+  "epicId": "epic-49887694",
+  "title": "Audit entry detail view",
+  "description": "Click row to see full payload and linked resources (navigate to job, workflow, policy).",
+  "definitionOfDone": [
+    "Click table row expands or opens detail panel",
+    "Shows full event payload as formatted JSON",
+    "Linked resources: clickable links to job, workflow, policy, or user detail pages",
+    "Back to list navigation",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/audit/AuditEntryDetail.tsx: Expandable detail panel for audit entries. Click table row expands inline (accordion style) or opens side panel. Shows full event payload as formatted JSON in a pre/code block (syntax highlighted via CSS, no dangerouslySetInnerHTML). Linked resources: clickable links based on resourceType — 'job' links to /jobs/:id, 'workflow' to /workflows/:id, 'policy' to /policies, 'user' to /settings (users tab). Close button or click row again to collapse.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/audit/AuditEntryDetail.tsx"
+      ],
+      "startedAt": "2026-02-07T01:22:50.151Z",
+      "completedAt": "2026-02-07T01:23:26.215Z",
+      "note": "Created inline expandable detail row. Shows header with event badge + timestamp, message, metadata grid (actor, action, resource type, resource ID), linked resource navigation (job/workflow/policy/user/pack/approval), and full payload as formatted JSON in a pre block. No dangerouslySetInnerHTML.",
+      "modifiedFiles": [
+        "dashboard/src/components/audit/AuditEntryDetail.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Integrate AuditEntryDetail into AuditLogPage.tsx table rows.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/AuditLogPage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:23:29.797Z",
+      "completedAt": "2026-02-07T01:24:17.890Z",
+      "note": "Added selectedId state, made table rows clickable (toggle on click), render AuditEntryDetail inline after selected row using React.Fragment. Row highlights when selected.",
+      "modifiedFiles": [
+        "dashboard/src/pages/AuditLogPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:24:23.372Z",
+      "completedAt": "2026-02-07T01:24:38.572Z",
+      "note": "tsc --noEmit passes cleanly."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "LOW",
+  "order": 52,
+  "createdAt": "2026-02-06T23:50:11.368Z",
+  "updatedAt": "2026-02-07T20:07:10.052Z",
+  "planSubmittedAt": "2026-02-07T00:00:04.436Z",
+  "planApprovedAt": "2026-02-07T00:00:04.437Z"
+}

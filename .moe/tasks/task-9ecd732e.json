@@ -1,0 +1,44 @@
+{
+  "id": "task-9ecd732e",
+  "epicId": "epic-da4e0aa4",
+  "title": "Rename packs.go → packs_core.go",
+  "description": "## What\nAfter extracting packs_validate.go and packs_marketplace.go, rename the remaining `packs.go` to `packs_core.go`.\n\n## What should remain (~1400 lines)\n- Pack registry constants: `packRegistryScope`, `packRegistryID`, `packCatalogScope`, `packCatalogID`, `defaultPackCatalog*`, `envPackCatalog*`, `policyConfigScope`, `policyConfigID`, `policyConfigKey`\n- `seedDefaultPackCatalogs` function\n- All core type definitions: `packManifest`, `packMetadata`, `packCompatibility`, `packTopic`, `packResources`, `packResource`, `packOverlays`, `packConfigOverlay`, `packPolicyOverlay`, `packTests`, `packPolicySimulation*`, `packRecord`, `packRecordManifest`, `packRecordResources`, `packRecordOverlays`, `packAppliedConfigOverlay`, `packAppliedPolicyOverlay`, `schemaPlan`, `workflowPlan`, `appliedConfigChange`, `appliedPolicyChange`, `packVerifyResult`, `packInstallOptions`, `packInstallError`\n- HTTP handlers: `handleListPacks`, `handleGetPack`, `handleInstallPack`, `handleUninstallPack`, `handleVerifyPack`\n- Install workflow: `installPackFromDir`\n- Planning & registration: `planSchemas`, `planWorkflows`, `registerSchema`, `registerWorkflow`, `saveWorkflowRequest`, `rollbackSchema`, `rollbackWorkflow`\n- Overlay management: `applyConfigOverlay`, `removeConfigOverlay`, `restoreConfigOverlay`, `applyPolicyOverlay`, `removePolicyOverlay`, `restorePolicyOverlay`\n- Policy simulation: `runPolicySimulation`, `normalizeDecision`\n- Registry management: `loadPackRegistry`, `updatePackRegistry`, `savePackRegistry`, `recordsToAny`, `getConfigDoc`\n- Lock helpers: `policyFragmentID`, `packLockOwner`, `acquirePackLocks`\n\n## How\n1. `git mv core/controlplane/gateway/packs.go core/controlplane/gateway/packs_core.go`\n2. Clean up imports (remove any that are now unused)\n3. Run `go build ./cmd/cordum-api-gateway`\n\n## Notes\n- Use `git mv` to preserve history\n- After this step, the entire Part 1 (file split) is complete",
+  "definitionOfDone": [
+    "packs.go no longer exists",
+    "packs_core.go exists with the remaining pack code",
+    "Import block is clean (no unused imports)",
+    "go build ./cmd/cordum-api-gateway succeeds"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Rename packs.go to packs_core.go using git mv.\n\nRun: `git mv core/controlplane/gateway/packs.go core/controlplane/gateway/packs_core.go`\n\nThis preserves git history for the file.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/packs.go",
+        "core/controlplane/gateway/packs_core.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Clean up imports in packs_core.go and verify build.\n\n1. Read the file and verify ~1400 lines of remaining core pack code\n2. Remove any unused imports (Go compiler will flag these)\n3. Run: `go build ./cmd/cordum-api-gateway` — must compile\n\nAfter this step, all Part 1 file splits are complete:\n- gateway.go → gateway_core.go + gateway_handlers.go + gateway_helpers.go + gateway_stream.go\n- packs.go → packs_core.go + packs_marketplace.go + packs_validate.go",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/packs_core.go"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 7,
+  "createdAt": "2026-02-06T14:48:22.581Z",
+  "updatedAt": "2026-02-06T23:18:30.181Z"
+}

@@ -1,0 +1,36 @@
+{
+  "id": "task-1ba07be0",
+  "epicId": "epic-cddc11dd",
+  "title": "Fix PolicyYamlEditor.tsx — import conflicts with local countRulesFromYaml",
+  "description": "**File:** `dashboard/src/components/policy/PolicyYamlEditor.tsx`\n\n**Problem:** Line 11 imports `countRulesFromYaml` from `../../lib/policy-yaml`, but lines 264-273 define a local function with the same name. TypeScript error TS2440: import declaration conflicts with local declaration.\n\n**Root cause:** The function was originally local, then extracted to `lib/policy-yaml.ts`, but the local copy wasn't removed.\n\n**Fix:** Remove the local function definition (lines 260-273). The imported version from `lib/policy-yaml` is identical — both parse YAML via `validatePolicyYaml()` and count the `rules` array. The import on line 11 is used at line 135.",
+  "definitionOfDone": [
+    "TypeScript error TS2440 in PolicyYamlEditor.tsx is resolved",
+    "Rule count still displays correctly in the editor",
+    "tsc --noEmit passes for this file"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Bug already fixed: the duplicate local countRulesFromYaml function has been removed from PolicyYamlEditor.tsx. The file now only uses the import from lib/policy-yaml.ts (line 11). No changes needed — verify with tsc --noEmit.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/policy/PolicyYamlEditor.tsx"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 25,
+  "createdAt": "2026-02-07T18:27:13.911Z",
+  "updatedAt": "2026-02-07T18:42:39.979Z",
+  "planSubmittedAt": "2026-02-07T18:34:34.005Z",
+  "planApprovedAt": "2026-02-07T18:34:34.006Z"
+}

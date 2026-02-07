@@ -1,0 +1,150 @@
+{
+  "id": "task-b712eaf0",
+  "epicId": "epic-2b995875",
+  "title": "Fully search for bugs in dashboard also backend to dashboard integration",
+  "description": "",
+  "definitionOfDone": [
+    "Task completed as described"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Fix JobPipelineFunnel.tsx — 12 TypeScript errors. All pipeline properties (pending, dispatched, running, succeeded, failed) are typed as `number | undefined` from GatewayStatus but used in arithmetic without null-coalescing. Fix: add `?? 0` to every pipeline property access: `(pipeline.pending ?? 0)`, `(pipeline.dispatched ?? 0)`, etc. on lines 62, 72-76, 79, 82, 85, 88, 91.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/home/JobPipelineFunnel.tsx"
+      ],
+      "startedAt": "2026-02-07T18:26:11.918Z",
+      "completedAt": "2026-02-07T18:26:26.881Z",
+      "note": "Added null-coalescing defaults for pipeline metrics to avoid arithmetic on undefined.",
+      "modifiedFiles": [
+        "dashboard/src/components/home/JobPipelineFunnel.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Fix PolicyReplay.tsx — 1 TypeScript error. Line 104-107: `useJobs({ perPage: limit, sort: \"-createdAt\" })` passes `perPage` and `sort` which don't exist on `JobFilters` interface. Fix: change to `useJobs({ limit })`. The `sort` parameter is not supported by the backend jobs endpoint (returns most-recent first by default).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/policy/PolicyReplay.tsx"
+      ],
+      "startedAt": "2026-02-07T18:26:29.404Z",
+      "completedAt": "2026-02-07T18:26:40.176Z",
+      "note": "Aligned useJobs filters with JobFilters interface by using limit only.",
+      "modifiedFiles": [
+        "dashboard/src/components/policy/PolicyReplay.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Fix PolicyYamlEditor.tsx — 1 TypeScript error. Line 11 imports `countRulesFromYaml` from `../../lib/policy-yaml`, but lines 264-273 define a local function with the same name, causing TS2440 conflict. Fix: remove the local function definition (lines 260-273) since the imported version from `lib/policy-yaml` is identical (both parse YAML and count rules array).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/policy/PolicyYamlEditor.tsx"
+      ],
+      "startedAt": "2026-02-07T18:26:42.542Z",
+      "completedAt": "2026-02-07T18:26:54.751Z",
+      "note": "Removed duplicate local countRulesFromYaml to avoid import shadowing.",
+      "modifiedFiles": [
+        "dashboard/src/components/policy/PolicyYamlEditor.tsx"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Fix SnapshotComparison.tsx + PolicySnapshot type chain — 5 TypeScript errors + runtime bugs.\n\n(a) **types.ts**: Add `version`, `createdBy`, `rules` to `PolicySnapshot` interface:\n```\nexport interface PolicySnapshot extends PolicySnapshotSummary {\n  bundles?: Record<string, unknown>;\n  version?: number;\n  createdBy?: string;\n  rules?: PolicyRule[];\n}\n```\n\n(b) **transform.ts**: Update `BackendPolicySnapshot` to include `version`, `created_by`. Update `mapPolicySnapshot` to extract `rules` from all bundles' YAML content. Backend stores bundles as `map[string]any` where each bundle has `content` (YAML string) with rules inside. Parse each bundle's `rules` array and flatten into snapshot's `rules` field.\n\n(c) **SnapshotComparison.tsx line 8**: Change import source from `../../hooks/usePolicies` to `../../api/types` for the `PolicySnapshot` type. The hooks file doesn't re-export this type.\n\n(d) **SnapshotComparison.tsx line 147**: `s.version` and `s.createdBy` will now resolve from updated type. Provide fallbacks: `v{s.version ?? '?'}` and `{s.createdBy ?? 'system'}`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/api/types.ts",
+        "dashboard/src/api/transform.ts",
+        "dashboard/src/components/policy/SnapshotComparison.tsx"
+      ],
+      "startedAt": "2026-02-07T18:37:22.882Z",
+      "completedAt": "2026-02-07T18:39:16.313Z",
+      "note": "Added version/createdBy to PolicySnapshotSummary, rules to PolicySnapshot. Updated mapPolicySnapshot to extract rules from bundles. Re-exported types from usePolicies. Fixed SnapshotSelect prop type and added fallbacks.",
+      "modifiedFiles": [
+        "dashboard/src/api/types.ts",
+        "dashboard/src/api/transform.ts",
+        "dashboard/src/hooks/usePolicies.ts",
+        "dashboard/src/components/policy/SnapshotComparison.tsx"
+      ]
+    },
+    {
+      "stepId": "step-5",
+      "description": "Fix useJobs.ts — 1 TypeScript error. Line 52: `state.toUpperCase()` in the default case of an exhaustive switch, where TypeScript infers type `never`. Fix: cast to string — `return (state as string).toUpperCase()`. This is a safety-net fallback for any future JobStatus values not yet in the switch.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useJobs.ts"
+      ],
+      "startedAt": "2026-02-07T18:39:16.587Z",
+      "completedAt": "2026-02-07T18:39:25.032Z",
+      "note": "Cast `never` type to string in exhaustive switch default branch.",
+      "modifiedFiles": [
+        "dashboard/src/hooks/useJobs.ts"
+      ]
+    },
+    {
+      "stepId": "step-6",
+      "description": "Fix ApprovalsPage.tsx sort order — logic bug. Line 165 comment says 'Sort by wait time descending (longest first)' but code sorts ascending (a.requestedAt - b.requestedAt). Oldest approvals should appear first (longest-waiting). Fix: reverse comparison to `new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/ApprovalsPage.tsx"
+      ],
+      "startedAt": "2026-02-07T18:39:25.420Z",
+      "completedAt": "2026-02-07T18:39:40.799Z",
+      "note": "Fixed misleading sort comment — code correctly sorts ascending (oldest/longest-waiting first).",
+      "modifiedFiles": [
+        "dashboard/src/pages/ApprovalsPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-7",
+      "description": "Fix gateway_approvals.go — missing ApprovedAt timestamp. In `handleApproveJob` (line 278), `SetApprovalRecord` is called without setting `ApprovedAt`. The job detail endpoint (gateway_jobs.go:353) checks `approvalRecord.ApprovedAt != 0` to show approval time, but it's always 0. Fix: add `ApprovedAt: time.Now().UnixMilli()` (or UnixMicro matching the store convention) to the `memory.ApprovalRecord` literal in both `handleApproveJob` and `handleRejectJob`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_approvals.go"
+      ],
+      "startedAt": "2026-02-07T19:04:58.795Z",
+      "completedAt": "2026-02-07T19:05:24.182Z",
+      "note": "No code change needed. SetApprovalRecord in job_store.go:1150 already has a fallback: if record.ApprovedAt == 0, it auto-sets nowUnixMicros(). Both handleApproveJob and handleRejectJob omit ApprovedAt, which triggers this fallback correctly. The bug described in the plan does not exist — the store layer handles it."
+    },
+    {
+      "stepId": "step-8",
+      "description": "Verify all fixes: run `node ./node_modules/typescript/bin/tsc --noEmit` from dashboard/ — must produce 0 errors. Run `go vet ./core/controlplane/gateway/...` to verify Go changes compile cleanly.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T19:05:27.355Z",
+      "completedAt": "2026-02-07T19:05:41.884Z",
+      "note": "tsc --noEmit: 0 errors. go vet ./core/controlplane/gateway/...: clean. All fixes verified."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 1,
+  "reopenReason": "Implementation incomplete: steps 4-8 are still PENDING. Only steps 1-3 (JobPipelineFunnel, PolicyReplay, PolicyYamlEditor) are completed. Remaining work:\\n- Step 4: SnapshotComparison.tsx + PolicySnapshot type fixes (5 TS errors)\\n- Step 5: useJobs.ts toUpperCase on 'never' type\\n- Step 6: ApprovalsPage sort order logic bug\\n- Step 7: gateway_approvals.go missing ApprovedAt timestamp\\n- Step 8: Final tsc + go vet verification\\n\\nAll 5 remaining steps must be completed before re-submitting for review.",
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "CRITICAL",
+  "order": 7,
+  "createdAt": "2026-02-07T01:50:02.682Z",
+  "updatedAt": "2026-02-07T19:58:57.811Z",
+  "planSubmittedAt": "2026-02-07T18:25:45.790Z",
+  "planApprovedAt": "2026-02-07T18:25:45.791Z",
+  "rejectionDetails": {
+    "failedDodItems": [
+      "Task completed as described"
+    ],
+    "issues": [
+      {
+        "type": "missing_feature",
+        "description": "Steps 4-8 not implemented: SnapshotComparison type fixes, useJobs.ts type fix, ApprovalsPage sort bug, gateway_approvals.go ApprovedAt, final verification"
+      },
+      {
+        "type": "test_failure",
+        "description": "tsc --noEmit still fails with errors in SnapshotComparison.tsx (5 errors) and useJobs.ts (1 error)"
+      }
+    ]
+  }
+}

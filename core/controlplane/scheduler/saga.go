@@ -31,6 +31,7 @@ type SagaManager struct {
 	redis   redis.UniversalClient
 	lockTTL time.Duration
 	metrics SagaMetrics
+	safety  SafetyChecker
 }
 
 func NewSagaManager(bus Bus, rdb redis.UniversalClient) *SagaManager {
@@ -47,6 +48,15 @@ func (s *SagaManager) WithMetrics(metrics SagaMetrics) *SagaManager {
 		return s
 	}
 	s.metrics = metrics
+	return s
+}
+
+// WithSafety attaches an optional safety checker for compensation dispatch.
+func (s *SagaManager) WithSafety(sc SafetyChecker) *SagaManager {
+	if s == nil {
+		return s
+	}
+	s.safety = sc
 	return s
 }
 
@@ -180,7 +190,17 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 
 		var req pb.JobRequest
 		if err := proto.Unmarshal(data, &req); err != nil {
-			logging.Error("scheduler-saga", "unmarshal compensation failed", "workflow_id", workflowID, "error", err)
+			rawHex := hex.EncodeToString(data)
+			if len(rawHex) > 128 {
+				rawHex = rawHex[:128] + "..."
+			}
+			logging.Error("scheduler-saga", "unmarshal compensation failed",
+				"workflow_id", workflowID, "error", err,
+				"raw_bytes_len", len(data), "raw_hex", rawHex)
+			if s.metrics != nil {
+				s.metrics.IncSagaUnmarshalError()
+			}
+			s.sendBrokenCompensationToDLQ(workflowID, data, err)
 			continue
 		}
 
@@ -190,6 +210,32 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 	}
 
 	return nil
+}
+
+// sendBrokenCompensationToDLQ publishes a DLQ entry for data that could not
+// be unmarshalled as a compensation request. Best-effort: publish failures are
+// logged but not propagated.
+func (s *SagaManager) sendBrokenCompensationToDLQ(workflowID string, raw []byte, unmarshalErr error) {
+	if s == nil || s.bus == nil {
+		return
+	}
+	packet := &pb.BusPacket{
+		TraceId:         "saga-unmarshal-" + uuid.NewString(),
+		SenderId:        sagaSenderID,
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				Status:       pb.JobStatus_JOB_STATUS_FAILED_FATAL,
+				ErrorCode:    "saga_unmarshal_failed",
+				ErrorMessage: fmt.Sprintf("workflow %s: unmarshal compensation: %v (raw_len=%d)", workflowID, unmarshalErr, len(raw)),
+			},
+		},
+	}
+	if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
+		logging.Error("scheduler-saga", "failed to send broken compensation to DLQ",
+			"workflow_id", workflowID, "error", err)
+	}
 }
 
 func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string) error {
@@ -210,6 +256,7 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 		req.Labels = map[string]string{}
 	}
 	req.Labels[sagaCompLabel] = "true"
+	req.Labels["is_compensation"] = "true"
 	if workflowID != "" {
 		req.Labels[sagaWorkflowLabel] = workflowID
 	}
@@ -217,8 +264,26 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 		req.Env = map[string]string{}
 	}
 	req.Env[sagaCompLabel] = "true"
+	req.Env["is_compensation"] = "true"
 	if workflowID != "" {
 		req.Env[sagaWorkflowLabel] = workflowID
+	}
+
+	// Soft safety check: deny → skip compensation, unavailable → proceed.
+	if s.safety != nil {
+		record, err := s.safety.Check(req)
+		if err != nil {
+			logging.Warn("scheduler-saga", "safety check error for compensation, proceeding",
+				"job_id", req.JobId, "workflow_id", workflowID, "error", err)
+		} else if record.Decision == SafetyDeny {
+			logging.Warn("scheduler-saga", "compensation denied by safety, skipping",
+				"job_id", req.JobId, "workflow_id", workflowID,
+				"reason", record.Reason, "rule_id", record.RuleID)
+			return nil
+		} else if record.Decision == SafetyUnavailable {
+			logging.Warn("scheduler-saga", "safety unavailable for compensation, proceeding",
+				"job_id", req.JobId, "workflow_id", workflowID)
+		}
 	}
 
 	packet := &pb.BusPacket{

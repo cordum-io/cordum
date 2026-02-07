@@ -1,0 +1,28 @@
+{
+  "id": "task-79f6ca83",
+  "epicId": "epic-06442149",
+  "title": "Backward Compat & Serialization for Job Node Types",
+  "description": "Implement backward compatibility mapping and serialization so existing workflows with `type: \"job\"` continue to work, and new node types serialize correctly to the backend.\n\n**Files (MODIFY):**\n\n1. `dashboard/src/api/transform.ts`\n   - Add `normalizeWorkflowNodeType(type: string, config: Record<string, unknown>): string` function:\n     - If type is not \"job\", return as-is\n     - If config has `packId` → return `\"pack-action\"`\n     - If config has `capability` but no `prompt` → return `\"tool-call\"`\n     - Otherwise → return `\"agent-task\"` (default)\n   - In `mapWorkflow()` (or wherever steps are mapped from backend): call `normalizeWorkflowNodeType()` on each step's type, passing the step config\n   - In `buildWorkflowStepConfig()` or equivalent: extract new fields from backend step into config:\n     - `prompt` from step.prompt or step.input?.prompt\n     - `adapterId` from step.adapter_id or step.meta?.adapter_id\n     - `maxInputTokens`, `maxOutputTokens`, `maxTotalTokens` from step.budget or step.meta?.budget\n     - `memoryId` from step.memory_id or step.meta?.memory_id\n     - `contextMode` from step.context_hints?.mode or step.meta?.context_mode\n     - `packId` from step.meta?.pack_id\n     - `riskTags` from step.meta?.risk_tags\n     - `labels` from step.meta?.labels\n\n2. `dashboard/src/hooks/useWorkflows.ts`\n   - In `buildStepPayload()`: serialize the new config fields for all 3 node types:\n     - `prompt` → `payload.prompt` or `payload.input.prompt`\n     - `adapterId` → `payload.adapter_id` or `meta.adapter_id`\n     - Token budget fields → `payload.budget` or `meta.budget`\n     - `memoryId` → `meta.memory_id`\n     - `contextMode` → context hints\n     - `riskTags`, `requires`, `labels` → already partially handled in meta, extend\n     - `packId` → `meta.pack_id`\n   - All 3 types (`agent-task`, `pack-action`, `tool-call`) serialize to backend `type: \"job\"` — the backend doesn't need to change\n   - Map frontend type to backend type: `if (type === 'agent-task' || type === 'pack-action' || type === 'tool-call') backendType = 'job'`\n\n**Key principle:** Frontend uses 3 specialized types for UX. Backend always sees `type: \"job\"` with different config/meta shapes. The `normalizeWorkflowNodeType()` function handles the reverse mapping when loading from backend.",
+  "definitionOfDone": [
+    "normalizeWorkflowNodeType correctly maps job→agent-task, job+packId→pack-action, job+capability-no-prompt→tool-call",
+    "Existing workflows with type:job load and render as agent-task nodes",
+    "buildStepPayload serializes prompt, adapterId, budget, memoryId, contextMode, packId, riskTags, labels",
+    "All 3 frontend types serialize to backend type:job",
+    "Round-trip save/load preserves all config values",
+    "TypeScript compiles with no errors"
+  ],
+  "taskRails": [],
+  "implementationPlan": [],
+  "status": "BACKLOG",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 6,
+  "createdAt": "2026-02-07T22:22:21.334Z",
+  "updatedAt": "2026-02-07T22:22:21.334Z"
+}

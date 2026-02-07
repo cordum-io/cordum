@@ -1,0 +1,64 @@
+{
+  "id": "task-c8a3a384",
+  "epicId": "epic-da4e0aa4",
+  "title": "Add appendAuditEntry helper + fix existing audit entries",
+  "description": "## What\nAdd an `appendAuditEntry` convenience method to `policy_bundles.go` and fix existing `appendPolicyAudit` calls to include `ResourceType`.\n\n## Step 1: Add appendAuditEntry helper\n\nAdd this method in `policy_bundles.go` right after the existing `appendPolicyAudit` method (which ends at line 1498):\n\n```go\n// appendAuditEntry is a convenience wrapper for appendPolicyAudit that takes\n// individual fields instead of requiring callers to construct policyAuditEntry.\nfunc (s *server) appendAuditEntry(ctx context.Context, action, resourceType, resourceID, actorID, role, message string) {\n\t_ = s.appendPolicyAudit(ctx, policyAuditEntry{\n\t\tAction:       action,\n\t\tResourceType: resourceType,\n\t\tResourceID:   resourceID,\n\t\tActorID:      actorID,\n\t\tRole:         role,\n\t\tMessage:      message,\n\t})\n}\n```\n\n## Step 2: Fix existing publish audit entry (~line 438)\n\nIn `handlePublishPolicyBundles`, the existing `appendPolicyAudit` call (lines 438-447) is missing ResourceType. Add it:\n\n```go\n_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{\n\tAction:         \"publish\",\n\tResourceType:   \"policy\",        // ADD THIS LINE\n\tActorID:        policyActorID(r),\n\tRole:           policyRole(r),\n\tBundleIDs:      targets,\n\tMessage:        strings.TrimSpace(body.Message),\n\tSnapshotBefore: beforeSnapshot,\n\tSnapshotAfter:  afterSnapshot,\n\tCreatedAt:      now,\n})\n```\n\n## Step 3: Fix existing rollback audit entry (~line 510)\n\nIn `handleRollbackPolicyBundles`, the existing `appendPolicyAudit` call (lines 510-519) is missing ResourceType. Add it:\n\n```go\n_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{\n\tAction:         \"rollback\",\n\tResourceType:   \"policy\",        // ADD THIS LINE\n\tActorID:        policyActorID(r),\n\tRole:           policyRole(r),\n\tBundleIDs:      []string{},\n\tMessage:        strings.TrimSpace(body.Message),\n\tSnapshotBefore: beforeSnapshot,\n\tSnapshotAfter:  afterSnapshot,\n\tCreatedAt:      time.Now().UTC().Format(time.RFC3339),\n})\n```\n\n## How\n1. Read policy_bundles.go\n2. Add the `appendAuditEntry` method after `appendPolicyAudit`\n3. Add `ResourceType: \"policy\"` to both existing audit calls\n4. Run `go build ./cmd/cordum-api-gateway`",
+  "definitionOfDone": [
+    "appendAuditEntry method exists in policy_bundles.go",
+    "handlePublishPolicyBundles audit entry has ResourceType: policy",
+    "handleRollbackPolicyBundles audit entry has ResourceType: policy",
+    "go build ./cmd/cordum-api-gateway succeeds"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add `appendAuditEntry` convenience method in policy_bundles.go.\n\nInsert the following method right after `appendPolicyAudit` (which ends at line 1498), before `policyActorID` at line 1500:\n\n```go\nfunc (s *server) appendAuditEntry(ctx context.Context, action, resourceType, resourceID, actorID, role, message string) {\n\t_ = s.appendPolicyAudit(ctx, policyAuditEntry{\n\t\tAction:       action,\n\t\tResourceType: resourceType,\n\t\tResourceID:   resourceID,\n\t\tActorID:      actorID,\n\t\tRole:         role,\n\t\tMessage:      message,\n\t})\n}\n```\n\nNote: `context` is already imported in this file.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/policy_bundles.go"
+      ],
+      "startedAt": "2026-02-06T22:18:24.624Z",
+      "completedAt": "2026-02-06T22:18:42.672Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Add `ResourceType: \"policy\"` to the publish audit entry at line 438.\n\nIn `handlePublishPolicyBundles`, find the `appendPolicyAudit` call at lines 438-447 and add `ResourceType: \"policy\",` after the `Action: \"publish\",` line:\n\n```go\n_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{\n\tAction:         \"publish\",\n\tResourceType:   \"policy\",\n\tActorID:        policyActorID(r),\n\t...\n})\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/policy_bundles.go"
+      ],
+      "completedAt": "2026-02-06T22:18:43.644Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add `ResourceType: \"policy\"` to the rollback audit entry at line 510.\n\nIn `handleRollbackPolicyBundles`, find the `appendPolicyAudit` call at lines 510-519 and add `ResourceType: \"policy\",` after the `Action: \"rollback\",` line:\n\n```go\n_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{\n\tAction:         \"rollback\",\n\tResourceType:   \"policy\",\n\tActorID:        policyActorID(r),\n\t...\n})\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/policy_bundles.go"
+      ],
+      "completedAt": "2026-02-06T22:18:44.626Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Verify build compiles.\n\nRun: `go build ./cmd/cordum-api-gateway` — must compile.\n\nThe new `appendAuditEntry` method will be used by subsequent tasks to instrument handlers.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/policy_bundles.go"
+      ],
+      "completedAt": "2026-02-06T22:18:45.453Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 8,
+  "createdAt": "2026-02-06T14:48:37.483Z",
+  "updatedAt": "2026-02-06T23:19:55.506Z"
+}

@@ -65,6 +65,9 @@ spec:
     - podSelector:
         matchLabels:
           app: cordum-context-engine
+    - podSelector:
+        matchLabels:
+          app: cordum-safety-kernel
     ports:
     - protocol: TCP
       port: 6379

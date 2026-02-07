@@ -1,0 +1,69 @@
+{
+  "id": "task-f4436e9f",
+  "epicId": "epic-decda99c",
+  "title": "RunNowModal — schema-to-form + environment selector",
+  "description": "Modal for manually triggering a workflow run. Renders the workflow's input schema as a form (not raw JSON).\n\n**File:** `dashboard/src/components/workflows/RunNowModal.tsx`\n\n**Content:**\n1. **Input form** generated from the workflow's input schema (JSON Schema → form fields):\n   - `string` → text input\n   - `number` / `integer` → number input\n   - `boolean` → checkbox\n   - `enum` → select dropdown\n   - `object` → nested fieldset\n   - `array` of strings → tag input\n   - Required fields marked with asterisk\n   - Default values pre-filled from schema\n   - If no schema defined, show a raw JSON textarea fallback\n\n2. **Environment selector:** radio group for prod/staging/dev (maps to metadata.environment on the run)\n\n3. **Submit button:** \"Start Run\" — calls `useStartRun(workflowId, { input, environment })`\n   - Loading state during mutation\n   - On success: close modal, navigate to `/workflows/:id/runs/:newRunId`\n   - On error: show error inline\n\n4. **Dry-run checkbox** (disabled for now, placeholder for future dry-run simulation task): \"Preview safety decisions before running\" — grayed out with \"Coming soon\" tooltip\n\n**Props:** `{ workflowId: string; onClose: () => void }`\n\nUses existing `useWorkflow(id)` to get schema, existing `useStartRun()` mutation.",
+  "definitionOfDone": [
+    "Modal renders schema-based form fields for workflow input",
+    "Supports string, number, boolean, enum, object, array types",
+    "Environment selector (prod/staging/dev)",
+    "Start Run calls useStartRun and navigates to new run on success",
+    "Raw JSON fallback when no schema defined",
+    "Dry-run checkbox present but disabled (placeholder)",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create schema-to-form renderer helper in `dashboard/src/components/workflows/SchemaForm.tsx`.\n\nPure component that takes a JSON Schema object and renders form fields:\n- `string` → Input (text)\n- `number`/`integer` → Input (type=number, with min/max from schema)\n- `boolean` → checkbox input\n- `enum` → Select with options from schema.enum array\n- `object` → nested fieldset with recursive SchemaForm for properties\n- `array` of strings → comma-separated Input (split on submit)\n- Required fields: asterisk in label, HTML required attribute\n- Default values: pre-fill from schema.default\n- Max depth: 3 levels (prevent infinite recursion from circular schemas)\n\nProps: `{ schema: Record<string,unknown>; value: Record<string,unknown>; onChange: (val: Record<string,unknown>) => void }`\n\nSECURITY: Schema property names rendered as text labels (never innerHTML). Input values controlled via React state. Number inputs use `parseFloat` with NaN guard. No eval of schema expressions. Schema depth capped at 3 to prevent DoS from malicious deeply-nested schemas.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflows/SchemaForm.tsx"
+      ],
+      "startedAt": "2026-02-07T21:31:14.341Z",
+      "completedAt": "2026-02-07T21:31:52.103Z",
+      "note": "Created SchemaForm with recursive property rendering: string→Input, number/integer→Input[number] with min/max, boolean→checkbox, enum→Select, array→comma-separated Input, object→nested fieldset (depth capped at 3). Required fields marked with asterisk. Defaults pre-filled from schema.default.",
+      "modifiedFiles": [
+        "dashboard/src/components/workflows/SchemaForm.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Create `RunNowModal` in `dashboard/src/components/workflows/RunNowModal.tsx`.\n\nProps: `{ workflowId: string; onClose: () => void }`\n\nUses `useWorkflow(workflowId)` to get schema from `workflow.metadata?.inputSchema`. Uses `useStartRun()` mutation, `useNavigate()`.\n\nLayout (inside a modal/dialog overlay):\n1. Header: \"Run {workflowName}\" (truncated 40 chars, text only) + close X\n2. If schema exists: `<SchemaForm>` component. If no schema: `<Textarea>` for raw JSON with JSON.parse validation on submit.\n3. Environment selector: 3 radio buttons (production/staging/dev), default staging\n4. Dry-run checkbox: disabled, `title=\"Coming soon\"`, grayed out\n5. Footer: Cancel button + \"Start Run\" Button (loading state from mutation)\n\nOn submit: `startRun.mutate({ workflowId, input: formData, environment })`. On success: `onClose()` + `navigate(/workflows/${workflowId}/runs/${newRunId})`. On error: inline red error text.\n\nModal backdrop: fixed inset-0 bg-black/50, centered card max-w-lg.\n\nSECURITY: Raw JSON fallback uses `JSON.parse()` in try/catch (no eval). Form data serialized as plain object. Environment value is one of 3 hardcoded strings. Modal closes on Escape key.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflows/RunNowModal.tsx"
+      ],
+      "startedAt": "2026-02-07T21:31:52.575Z",
+      "completedAt": "2026-02-07T21:32:33.149Z",
+      "note": "Created RunNowModal: modal overlay with workflow name header, SchemaForm for schema-based input or Textarea for raw JSON fallback (with JSON.parse validation), environment radio selector (staging default), disabled dry-run checkbox placeholder, Start Run button with loading state. Closes on Escape/backdrop click. On success navigates to new run URL.",
+      "modifiedFiles": [
+        "dashboard/src/components/workflows/RunNowModal.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify `node ./node_modules/typescript/bin/tsc --noEmit`. Ensure StartRunInput type in useWorkflows accepts environment and input fields.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T21:32:33.597Z",
+      "completedAt": "2026-02-07T21:32:49.393Z",
+      "note": "tsc --noEmit passes clean. StartRunInput already accepts input as Record<string,unknown> which covers both schema form data and raw JSON."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 11,
+  "createdAt": "2026-02-07T21:06:24.623Z",
+  "updatedAt": "2026-02-07T21:37:39.925Z",
+  "planSubmittedAt": "2026-02-07T21:16:06.909Z",
+  "planApprovedAt": "2026-02-07T21:16:06.911Z"
+}

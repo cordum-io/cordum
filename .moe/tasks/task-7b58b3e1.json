@@ -1,0 +1,54 @@
+{
+  "id": "task-7b58b3e1",
+  "epicId": "epic-da8a6382",
+  "title": "Fix lock mode race and TTL loss in Redis Lua scripts",
+  "description": "**Bug 1**: `core/infra/locks/redis_store.go:252` — Lua acquire script allows shared→exclusive mode switch mid-flight, violating lock contract.\n\n**Bug 2**: `core/infra/locks/redis_store.go:289-297` — Release script: if PTTL returns -1 (no expiry), the SET without EX makes the lock permanent.\n\n**Fix**: \n- Lua acquire: reject mode changes on existing locks\n- Lua release: handle PTTL -1/-2 cases explicitly\n\n**Files**: `core/infra/locks/redis_store.go`",
+  "definitionOfDone": [
+    "Lock mode cannot be changed on an existing lock",
+    "PTTL edge cases (-1, -2) are handled in release script",
+    "Lua script unit tests cover both scenarios"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Fix the Lua acquire script (lines 206-262) to reject mode changes on existing locks. At line 251, where `onlyOwner and count > 0` allows mode change to exclusive, add a check that the requested mode matches the current lock mode:\n\nReplace lines 243-260 with:\n```lua\n-- Requesting exclusive on a shared lock\nif count == 0 then\n  return \"\"\nend\nif onlyOwner then\n  -- Same owner holds all shares — allow upgrade to exclusive\n  lock[\"mode\"] = \"exclusive\"\n  owners[owner] = (owners[owner] or 0) + 1\n  lock[\"owners\"] = owners\n  lock[\"updated_at\"] = now\n  lock[\"expires_at\"] = now + math.floor(ttl/1000)\n  local encoded = cjson.encode(lock)\n  redis.call(\"SET\", key, encoded, \"PX\", ttl)\n  return encoded\nend\nreturn \"\"\n```\nThis preserves the single-owner upgrade path but prevents multi-owner mode changes.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/infra/locks/redis_store.go"
+      ],
+      "startedAt": "2026-02-06T00:13:28.456Z",
+      "completedAt": "2026-02-06T00:14:13.904Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Fix the Lua release script (lines 289-297) to handle PTTL edge cases. Replace:\n```lua\nlocal ttl = redis.call(\"PTTL\", key)\nif ttl > 0 then\n  local encoded = cjson.encode(lock)\n  redis.call(\"SET\", key, encoded, \"PX\", ttl)\n  return encoded\nend\nlocal encoded = cjson.encode(lock)\nredis.call(\"SET\", key, encoded)\nreturn encoded\n```\nWith:\n```lua\nlocal ttl = redis.call(\"PTTL\", key)\nlocal encoded = cjson.encode(lock)\nif ttl > 0 then\n  redis.call(\"SET\", key, encoded, \"PX\", ttl)\nelseif ttl == -1 then\n  -- Key exists but has no expiry — this shouldn't happen, set a default\n  redis.call(\"SET\", key, encoded, \"PX\", 30000)\nelse\n  -- Key doesn't exist (ttl == -2), shouldn't reach here after GET succeeded\n  redis.call(\"SET\", key, encoded, \"PX\", 30000)\nend\nreturn encoded\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/infra/locks/redis_store.go"
+      ],
+      "startedAt": "2026-02-06T00:14:14.149Z",
+      "completedAt": "2026-02-06T00:14:18.834Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run `go test ./core/infra/locks/...` to verify no regressions. Add test cases for mode-switch rejection and PTTL edge cases if not already covered.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:14:19.441Z",
+      "completedAt": "2026-02-06T00:14:31.662Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 8,
+  "reopenReason": "DoD #3 not met + epic rail violation: no new tests were added (test file not modified). The PTTL edge case (-1 / no expiry) is not tested. Need a test that: (1) acquires a shared lock, (2) uses miniredis `mr.SetTTL(key, 0)` or PERSIST to remove TTL from the lock key, (3) calls Release for one owner, (4) verifies the key still has a TTL (safety 30s fallback was applied). The mode-switch scenario is already covered by the existing TestRedisStoreShared test, but PTTL is completely untested.",
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 13,
+  "createdAt": "2026-02-05T23:42:43.920Z",
+  "updatedAt": "2026-02-07T18:37:31.495Z"
+}

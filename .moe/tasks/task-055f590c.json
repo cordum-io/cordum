@@ -1,0 +1,66 @@
+{
+  "id": "task-055f590c",
+  "epicId": "epic-dbd90afa",
+  "title": "Fix UserStore use-after-close bug in gateway startup",
+  "description": "**Severity: CRITICAL**\n\n**File**: `core/controlplane/gateway/gateway.go:474-486`\n\n**Bug**: `defer userStore.Close()` on line 479 closes the Redis user store when `RunWithAuth` returns, but the store reference is held by the auth provider via `basic.SetUserStore()` and continues to be used for the server's lifetime. The defer fires at function exit, closing the connection while the server is still running.\n\n**Fix**: Move `userStore.Close()` to the server's graceful shutdown path instead of using defer in the init block. Ensure the store is closed only after the HTTP/gRPC servers have stopped accepting connections.",
+  "definitionOfDone": [
+    "UserStore.Close() is called during graceful shutdown, not via defer in RunWithAuth",
+    "Server can handle auth requests for its full lifetime without connection errors",
+    "Existing tests pass",
+    "Add a test or manual verification that the store remains open while the server is running"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add `userStore UserStore` field to the `server` struct (gateway.go:95-124). This allows the server to own and manage the userStore lifecycle explicitly rather than relying on a defer in the conditional init block.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T22:34:56.759Z",
+      "completedAt": "2026-02-05T22:38:01.960Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "In `RunWithAuth()` (gateway.go:474-486): remove `defer userStore.Close()` from the conditional block. Instead, assign `userStore` to the server struct field after `basic.SetUserStore(userStore)`. The server now owns the reference.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T22:38:02.015Z",
+      "completedAt": "2026-02-05T22:41:50.886Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add a `Close()` method to the `server` struct that closes `s.userStore` (if non-nil). This method should be called after both the HTTP and gRPC servers have stopped. Place the call at the end of `RunWithAuth()`, after `startHTTPServer()` returns and before the function exits. Use `defer s.Close()` after the server struct is constructed (after line 583) so it runs after `startHTTPServer` returns but also covers early-return error paths.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T22:41:50.953Z",
+      "completedAt": "2026-02-05T22:42:17.019Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Add a test in `gateway_test.go` that verifies the userStore remains functional after the server starts handling requests. Create a test that: (1) creates a test gateway with user auth enabled, (2) makes a user-related request, (3) verifies no 'closed connection' errors. Use the existing `newTestGateway` pattern.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_test.go"
+      ],
+      "startedAt": "2026-02-05T22:42:17.450Z",
+      "completedAt": "2026-02-05T22:43:31.136Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 1,
+  "createdAt": "2026-02-05T22:15:07.600Z",
+  "updatedAt": "2026-02-05T22:47:01.825Z"
+}

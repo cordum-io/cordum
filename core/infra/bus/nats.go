@@ -146,26 +146,22 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	}
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		cb := func(msg *nats.Msg) {
-			var packet pb.BusPacket
-			if err := proto.Unmarshal(msg.Data, &packet); err != nil {
-				log.Printf("nats bus: failed to unmarshal packet: %v", err)
-				_ = msg.Ack()
-				return
-			}
-			if err := handler(&packet); err != nil {
-				if delay, ok := RetryDelay(err); ok {
-					if delay > 0 {
-						_ = msg.NakWithDelay(delay)
-					} else {
-						_ = msg.Nak()
-					}
-					return
+			action, delay := processBusMsg(msg.Data, handler)
+			switch action {
+			case msgActionNakDelay:
+				log.Printf("nats bus: nak-with-delay on %s (delay=%v)", subject, delay)
+				if nakErr := msg.NakWithDelay(delay); nakErr != nil {
+					log.Printf("nats bus: nak-with-delay failed: %v", nakErr)
 				}
-				log.Printf("nats bus: handler error (ack): %v", err)
-				_ = msg.Ack()
-				return
+			case msgActionNak:
+				if nakErr := msg.Nak(); nakErr != nil {
+					log.Printf("nats bus: nak failed: %v", nakErr)
+				}
+			default:
+				if ackErr := msg.Ack(); ackErr != nil {
+					log.Printf("nats bus: ack failed: %v", ackErr)
+				}
 			}
-			_ = msg.Ack()
 		}
 
 		opts := []nats.SubOpt{
@@ -212,6 +208,34 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 		return fmt.Errorf("subscribe %s: %w", subject, err)
 	}
 	return nil
+}
+
+// msgAction represents the action to take after processing a NATS message.
+type msgAction int
+
+const (
+	msgActionAck      msgAction = iota // Acknowledge (processed or non-retryable error)
+	msgActionNak                       // Retry immediately
+	msgActionNakDelay                  // Retry after delay (poison pill or retryable error)
+)
+
+// processBusMsg unmarshals raw message data, invokes the handler, and returns
+// the action to take plus an optional NAK delay.
+func processBusMsg(data []byte, handler func(*pb.BusPacket) error) (msgAction, time.Duration) {
+	var packet pb.BusPacket
+	if err := proto.Unmarshal(data, &packet); err != nil {
+		return msgActionNakDelay, 5 * time.Second
+	}
+	if err := handler(&packet); err != nil {
+		if delay, ok := RetryDelay(err); ok {
+			if delay > 0 {
+				return msgActionNakDelay, delay
+			}
+			return msgActionNak, 0
+		}
+		return msgActionAck, 0
+	}
+	return msgActionAck, 0
 }
 
 func (b *NatsBus) IsConnected() bool {

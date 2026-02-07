@@ -1,142 +1,146 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../lib/api";
-import { formatRelative } from "../lib/format";
-import { useWorkflows } from "../hooks/useWorkflows";
-import { usePinStore } from "../state/pins";
-import { Card, CardHeader, CardTitle } from "../components/ui/Card";
+import { Plus, Search, Loader } from "lucide-react";
+import { useWorkflows, useStartRun } from "../hooks/useWorkflows";
+import { ActiveRunsStrip } from "../components/workflows/ActiveRunsStrip";
+import { WorkflowTemplateCard } from "../components/workflows/WorkflowTemplateCard";
 import { Button } from "../components/ui/Button";
-import { Textarea } from "../components/ui/Textarea";
-import { Drawer } from "../components/ui/Drawer";
-import type { Workflow } from "../types/api";
+import { Card } from "../components/ui/Card";
+import { Input } from "../components/ui/Input";
 
-export function WorkflowsPage() {
+// ---------------------------------------------------------------------------
+// Skeleton cards
+// ---------------------------------------------------------------------------
+
+function SkeletonCards({ count = 6 }: { count?: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <Card key={i} className="animate-pulse">
+          <div className="space-y-3">
+            <div className="h-5 w-2/3 rounded bg-surface2" />
+            <div className="flex gap-4">
+              <div className="h-4 w-16 rounded bg-surface2" />
+              <div className="h-4 w-20 rounded bg-surface2" />
+              <div className="h-4 w-14 rounded bg-surface2" />
+            </div>
+            <div className="h-4 w-1/2 rounded bg-surface2" />
+          </div>
+        </Card>
+      ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WorkflowsPage
+// ---------------------------------------------------------------------------
+
+export default function WorkflowsPage() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const workflowsQuery = useWorkflows();
-  const pinStart = usePinStore((state) => state.addPin);
+  const { data: workflows, isLoading, isError } = useWorkflows();
+  const startRun = useStartRun();
+  const [search, setSearch] = useState("");
 
-  const runQueries = useQueries({
-    queries:
-      workflowsQuery.data?.map((workflow) => ({
-        queryKey: ["runs", workflow.id],
-        queryFn: () => api.listRunsByWorkflow(workflow.id),
-      })) ?? [],
-  });
+  const filtered = useMemo(() => {
+    if (!workflows) return [];
+    if (!search.trim()) return workflows;
+    const q = search.toLowerCase();
+    return workflows.filter((wf) => wf.name.toLowerCase().includes(q));
+  }, [workflows, search]);
 
-  const runStats = useMemo(() => {
-    const map = new Map<string, { total: number; success: number; cost: number }>();
-    workflowsQuery.data?.forEach((workflow, index) => {
-      const runs = runQueries[index]?.data || [];
-      const success = runs.filter((run) => run.status === "succeeded").length;
-      const cost = runs.reduce((sum, run) => sum + (run.total_cost || 0), 0);
-      map.set(workflow.id, { total: runs.length, success, cost });
-    });
-    return map;
-  }, [runQueries, workflowsQuery.data]);
-
-  const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
-  const [payload, setPayload] = useState("{}" as string);
-  const [payloadError, setPayloadError] = useState<string | null>(null);
-
-  const startMutation = useMutation({
-    mutationFn: ({ workflow, body }: { workflow: Workflow; body: Record<string, unknown> }) =>
-      api.startRun(workflow.id, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      setSelectedWorkflow(null);
-    },
-    onError: (error: Error) => setPayloadError(error.message),
-  });
+  const handleRunNow = (workflowId: string) => {
+    startRun.mutate({ workflowId });
+  };
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Workflows</CardTitle>
-          <Button variant="subtle" size="sm" type="button" onClick={() => navigate("/workflows/new")}>
-            Create workflow
-          </Button>
-        </CardHeader>
-        {workflowsQuery.isLoading ? (
-          <div className="text-sm text-muted">Loading workflows...</div>
-        ) : workflowsQuery.data?.length ? (
-          <div className="space-y-3">
-            {workflowsQuery.data.map((workflow) => {
-              const stats = runStats.get(workflow.id);
-              const successRate = stats && stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 0;
-              return (
-                <div key={workflow.id} className="rounded-2xl border border-border bg-white/70 p-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div>
-                      <div className="text-sm font-semibold text-ink">{workflow.name || workflow.id}</div>
-                      <div className="text-xs text-muted">{workflow.description || "No description"}</div>
-                      <div className="text-[11px] text-muted">Updated {formatRelative(workflow.updated_at)}</div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" type="button" onClick={() => navigate(`/workflows/${workflow.id}`)}>
-                        Details
-                      </Button>
-                      <Button variant="outline" size="sm" type="button" onClick={() => pinStart({ id: workflow.id, label: workflow.name || workflow.id, type: "workflow" })}>
-                        Pin
-                      </Button>
-                      <Button variant="primary" size="sm" type="button" onClick={() => setSelectedWorkflow(workflow)}>
-                        Start run
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="mt-3 text-xs text-muted">
-                    {stats ? `${stats.total} runs · ${successRate}% success · $${stats.cost.toFixed(4)} est. cost` : "No runs yet"}
-                  </div>
-                </div>
-              );
-            })}
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h1 className="font-display text-2xl font-bold text-ink">Workflows</h1>
+        <Button onClick={() => navigate("/workflows/new")}>
+          <Plus className="h-4 w-4" />
+          Create Workflow
+        </Button>
+      </div>
+
+      {/* Active Runs Strip */}
+      <ActiveRunsStrip />
+
+      {/* Templates Section */}
+      <section>
+        <div className="mb-4 flex items-center gap-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
+            Templates
+          </h2>
+          <div className="relative max-w-xs flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+            <Input
+              placeholder="Search workflows..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 text-sm"
+            />
           </div>
-        ) : (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
-            No workflows are registered yet.
+        </div>
+
+        {isLoading && (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <SkeletonCards />
           </div>
         )}
-      </Card>
 
-      <Drawer open={Boolean(selectedWorkflow)} onClose={() => setSelectedWorkflow(null)}>
-        {selectedWorkflow ? (
-          <div className="space-y-4">
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Start Run</div>
-            <h3 className="text-xl font-semibold text-ink">{selectedWorkflow.name || selectedWorkflow.id}</h3>
-            <div className="text-xs text-muted">Provide JSON input for this workflow.</div>
-            <Textarea
-              rows={10}
-              value={payload}
-              onChange={(event) => setPayload(event.target.value)}
-            />
-            {payloadError ? <div className="text-xs text-danger">{payloadError}</div> : null}
-            <div className="flex gap-2">
+        {isError && (
+          <Card>
+            <p className="py-8 text-center text-muted">
+              Failed to load workflows. Please try again.
+            </p>
+          </Card>
+        )}
+
+        {!isLoading && !isError && filtered.length > 0 && (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filtered.map((wf) => (
+              <WorkflowTemplateCard
+                key={wf.id}
+                workflow={wf}
+                onRunNow={handleRunNow}
+              />
+            ))}
+          </div>
+        )}
+
+        {!isLoading && !isError && workflows && workflows.length > 0 && filtered.length === 0 && (
+          <Card>
+            <p className="py-8 text-center text-sm text-muted">
+              No workflows matching &ldquo;{search}&rdquo;
+            </p>
+          </Card>
+        )}
+
+        {!isLoading && !isError && (!workflows || workflows.length === 0) && (
+          <Card>
+            <div className="py-12 text-center">
+              <p className="text-muted">No workflows yet.</p>
               <Button
-                variant="primary"
-                type="button"
-                onClick={() => {
-                  setPayloadError(null);
-                  try {
-                    const body = JSON.parse(payload || "{}");
-                    startMutation.mutate({ workflow: selectedWorkflow, body });
-                  } catch (error) {
-                    setPayloadError(error instanceof Error ? error.message : "Invalid JSON");
-                  }
-                }}
-                disabled={startMutation.isPending}
+                variant="outline"
+                className="mt-4"
+                onClick={() => navigate("/workflows/new")}
               >
-                Launch run
-              </Button>
-              <Button variant="outline" type="button" onClick={() => setSelectedWorkflow(null)}>
-                Close
+                Create your first workflow
               </Button>
             </div>
-          </div>
-        ) : null}
-      </Drawer>
+          </Card>
+        )}
+      </section>
 
+      {/* Loading indicator for Run Now */}
+      {startRun.isPending && (
+        <div className="fixed bottom-4 right-4 flex items-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-lg">
+          <Loader className="h-4 w-4 animate-spin" />
+          Starting run...
+        </div>
+      )}
     </div>
   );
 }

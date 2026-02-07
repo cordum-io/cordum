@@ -1,0 +1,53 @@
+{
+  "id": "task-ede8d7ee",
+  "epicId": "epic-c40172f1",
+  "title": "Schema API hooks + types",
+  "description": "useSchemas(), useSchema(id), useRegisterSchema(), useDeleteSchema().",
+  "definitionOfDone": [
+    "useSchemas() list registered schemas",
+    "useSchema(id) single schema detail",
+    "useRegisterSchema() mutation",
+    "useDeleteSchema() mutation",
+    "All in hooks/useSchemas.ts",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/hooks/useSchemas.ts: useSchemas() fetching GET /api/v1/schemas. useSchema(id) single schema detail. useRegisterSchema() mutation (POST /api/v1/schemas). useDeleteSchema() mutation (DELETE /api/v1/schemas/:id). All use apiClient with auth.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useSchemas.ts"
+      ],
+      "startedAt": "2026-02-07T00:58:42.521Z",
+      "completedAt": "2026-02-07T00:58:54.896Z",
+      "modifiedFiles": [
+        "dashboard/src/hooks/useSchemas.ts"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:58:57.599Z",
+      "completedAt": "2026-02-07T00:59:07.395Z",
+      "note": "tsc --noEmit passes cleanly"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 69,
+  "createdAt": "2026-02-06T23:50:50.157Z",
+  "updatedAt": "2026-02-07T20:28:47.708Z",
+  "planSubmittedAt": "2026-02-07T00:00:56.921Z",
+  "planApprovedAt": "2026-02-07T00:00:56.922Z"
+}

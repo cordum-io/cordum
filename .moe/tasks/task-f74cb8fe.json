@@ -1,0 +1,54 @@
+{
+  "id": "task-f74cb8fe",
+  "epicId": "epic-da8a6382",
+  "title": "Fix idempotency key race condition in job store",
+  "description": "**Bug**: `core/infra/memory/job_store.go:924-977` — `TryAcquireLock` uses non-transactional `SetNX`. The check for legacy key and setting of scoped key is not atomic, allowing two concurrent requests with the same idempotency key to both succeed.\n\n**Fix**: Use a Lua script or Redis WATCH-MULTI-EXEC to make the check-and-set atomic.\n\n**Files**: `core/infra/memory/job_store.go`",
+  "definitionOfDone": [
+    "Idempotency key check-and-set is atomic (Lua or WATCH/MULTI)",
+    "Concurrent test proves no duplicate acquisition",
+    "Legacy key migration still works"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Replace the non-atomic legacy-check + SetNX in TrySetIdempotencyKeyScoped (job_store.go:947-975) with a Lua script that atomically checks both legacy and scoped keys:\n\n```go\nconst idempotencyScript = `\nlocal legacyKey = KEYS[1]\nlocal scopedKey = KEYS[2]\nlocal jobID = ARGV[1]\nlocal ttl = tonumber(ARGV[2])\n\n-- Check legacy key first\nlocal legacy = redis.call(\"GET\", legacyKey)\nif legacy and legacy ~= false then\n  return legacy  -- Return existing job ID\nend\n\n-- Atomic check-and-set on scoped key\nlocal ok = redis.call(\"SET\", scopedKey, jobID, \"NX\", \"PX\", ttl)\nif ok then\n  return \"OK:\" .. jobID\nend\nlocal existing = redis.call(\"GET\", scopedKey)\nreturn existing or \"\"\n`\n```\n\nParse the result: if it starts with \"OK:\" it's a new acquisition; otherwise it's the existing job ID.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/infra/memory/job_store.go"
+      ],
+      "startedAt": "2026-02-06T00:15:10.805Z",
+      "completedAt": "2026-02-06T00:17:25.763Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Update the Go code to call the Lua script instead of separate Redis commands. Handle the tenant-based routing (empty tenant uses simple SetNX, non-empty tenant uses Lua script with legacy key check).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/infra/memory/job_store.go"
+      ],
+      "startedAt": "2026-02-06T00:17:26.309Z",
+      "completedAt": "2026-02-06T00:17:32.775Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run `go test ./core/infra/memory/...` to verify no regressions. Add a concurrent test that submits two requests with the same idempotency key simultaneously and verifies only one succeeds.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-06T00:17:33.091Z",
+      "completedAt": "2026-02-06T00:18:37.627Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 14,
+  "createdAt": "2026-02-05T23:42:47.846Z",
+  "updatedAt": "2026-02-07T18:38:10.056Z"
+}

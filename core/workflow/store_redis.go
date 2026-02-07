@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -134,7 +135,9 @@ func (s *RedisStore) ListWorkflows(ctx context.Context, orgID string, limit int6
 	for _, id := range ids {
 		cmds[id] = pipe.Get(ctx, workflowKey(id))
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("redis pipeline exec", "op", "workflow_store_batch_get", "error", err)
+	}
 
 	out := make([]*Workflow, 0, len(ids))
 	for _, id := range ids {
@@ -148,6 +151,7 @@ func (s *RedisStore) ListWorkflows(ctx context.Context, orgID string, limit int6
 		}
 		var wf Workflow
 		if err := json.Unmarshal(data, &wf); err != nil {
+			slog.Warn("workflow-store: corrupt workflow skipped", "id", id, "error", err)
 			continue
 		}
 		out = append(out, &wf)
@@ -192,7 +196,9 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 		return fmt.Errorf("create run: %w", err)
 	}
 	if run.IdempotencyKey != "" {
-		_, _ = s.TrySetRunIdempotencyKey(ctx, run.IdempotencyKey, run.ID)
+		if _, err := s.TrySetRunIdempotencyKey(ctx, run.IdempotencyKey, run.ID); err != nil {
+			slog.Warn("workflow: idempotency key set failed", "key", run.IdempotencyKey, "run_id", run.ID, "error", err)
+		}
 	}
 	return nil
 }
@@ -318,7 +324,9 @@ func (s *RedisStore) ListRunsByWorkflow(ctx context.Context, workflowID string, 
 	for _, id := range ids {
 		cmds[id] = pipe.Get(ctx, runKey(id))
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("redis pipeline exec", "op", "workflow_store_batch_get", "error", err)
+	}
 
 	out := make([]*WorkflowRun, 0, len(ids))
 	for _, id := range ids {
@@ -365,7 +373,9 @@ func (s *RedisStore) ListRuns(ctx context.Context, cursorUnix int64, limit int64
 	for _, id := range ids {
 		cmds[id] = pipe.Get(ctx, runKey(id))
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("redis pipeline exec", "op", "workflow_store_batch_get", "error", err)
+	}
 
 	out := make([]*WorkflowRun, 0, len(ids))
 	for _, id := range ids {

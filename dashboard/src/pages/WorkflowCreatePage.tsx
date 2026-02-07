@@ -1,229 +1,151 @@
-import { useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Code, Workflow } from "lucide-react";
-import { api } from "../lib/api";
-import { Card, CardHeader, CardTitle } from "../components/ui/Card";
+import { Upload, GitBranch } from "lucide-react";
 import { Button } from "../components/ui/Button";
-import { Input } from "../components/ui/Input";
 import { Textarea } from "../components/ui/Textarea";
+import { Card } from "../components/ui/Card";
 import { WorkflowBuilder } from "../components/workflow/WorkflowBuilder";
-import type { Workflow as WorkflowType } from "../types/api";
+import { useCreateWorkflow } from "../hooks/useWorkflows";
+import { cn } from "../lib/utils";
+import type { Workflow } from "../api/types";
 
-const defaultWorkflow = {
-  id: "",
-  org_id: "default",
-  team_id: "default",
-  name: "",
-  description: "",
-  version: "1.0.0",
-  timeout_sec: 900,
-  steps: {},
-};
+type CreateMode = "visual" | "import";
 
-export function WorkflowCreatePage() {
+function parseDefinition(raw: string): Partial<Workflow> | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed) as Partial<Workflow>;
+  } catch {
+    // not JSON — ignore
+  }
+  return null;
+}
+
+function ImportPanel() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-
-  const [viewMode, setViewMode] = useState<"visual" | "json">("visual");
-  const [workflowData, setWorkflowData] = useState<Partial<WorkflowType>>(defaultWorkflow);
-  const [jsonPayload, setJsonPayload] = useState(JSON.stringify(defaultWorkflow, null, 2));
+  const createWorkflow = useCreateWorkflow();
+  const [raw, setRaw] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const createMutation = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.createWorkflow(body),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["workflows"] });
-      navigate(`/workflows/${data.id}`);
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-
-  const handleBuilderChange = (workflow: Partial<WorkflowType>) => {
-    setWorkflowData(workflow);
-    setJsonPayload(JSON.stringify(workflow, null, 2));
-  };
-
-  const handleJsonChange = (json: string) => {
-    setJsonPayload(json);
-    try {
-      const parsed = JSON.parse(json);
-      setWorkflowData(parsed);
-      setError(null);
-    } catch {
-      // Don't update workflowData if JSON is invalid
+  const handleImport = useCallback(() => {
+    const definition = parseDefinition(raw);
+    if (!definition) {
+      setError("Invalid JSON. Paste a valid workflow JSON definition.");
+      return;
     }
-  };
-
-  const handleMetaChange = (field: keyof WorkflowType, value: string | number) => {
-    const updated = { ...workflowData, [field]: value };
-    setWorkflowData(updated);
-    setJsonPayload(JSON.stringify(updated, null, 2));
-  };
-
-  const handleSave = () => {
+    if (!definition.name) {
+      setError("Workflow must have a 'name' field.");
+      return;
+    }
     setError(null);
-    try {
-      const body = viewMode === "json" ? JSON.parse(jsonPayload) : workflowData;
-      if (!body.id) {
-        setError("Workflow ID is required");
-        return;
-      }
-      if (!body.name) {
-        setError("Workflow name is required");
-        return;
-      }
-      createMutation.mutate(body);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid JSON");
-    }
-  };
+    createWorkflow.mutate(definition, {
+      onSuccess: () => navigate("/workflows"),
+      onError: (err) => setError(err.message),
+    });
+  }, [raw, createWorkflow, navigate]);
 
-  const currentWorkflowForBuilder = useMemo(() => {
-    try {
-      return viewMode === "json" ? JSON.parse(jsonPayload) : workflowData;
-    } catch {
-      return workflowData;
-    }
-  }, [viewMode, jsonPayload, workflowData]);
+  const handleFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setRaw(reader.result);
+        setError(null);
+      }
+    };
+    reader.readAsText(file);
+  }, []);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="mx-auto max-w-2xl space-y-4">
       <Card>
-        <CardHeader>
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/workflows")}>
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <CardTitle>Create Workflow</CardTitle>
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-ink">Import from JSON</h2>
+            <p className="mt-1 text-xs text-muted">
+              Paste a workflow JSON definition or upload a file.
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant={viewMode === "visual" ? "primary" : "outline"}
-              onClick={() => setViewMode("visual")}
-            >
-              <Workflow className="h-4 w-4 mr-2" />
-              Visual
-            </Button>
-            <Button
-              size="sm"
-              variant={viewMode === "json" ? "primary" : "outline"}
-              onClick={() => setViewMode("json")}
-            >
-              <Code className="h-4 w-4 mr-2" />
-              JSON
-            </Button>
-          </div>
-        </CardHeader>
-      </Card>
 
-      {/* Metadata */}
-      <Card>
-        <div className="grid gap-4 lg:grid-cols-4">
-          <div>
-            <label className="text-xs uppercase tracking-[0.2em] text-muted block mb-2">
-              Workflow ID *
-            </label>
-            <Input
-              value={workflowData.id || ""}
-              onChange={(e) => handleMetaChange("id", e.target.value)}
-              placeholder="my-workflow"
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase tracking-[0.2em] text-muted block mb-2">
-              Name *
-            </label>
-            <Input
-              value={workflowData.name || ""}
-              onChange={(e) => handleMetaChange("name", e.target.value)}
-              placeholder="My Workflow"
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase tracking-[0.2em] text-muted block mb-2">
-              Version
-            </label>
-            <Input
-              value={workflowData.version || "1.0.0"}
-              onChange={(e) => handleMetaChange("version", e.target.value)}
-              placeholder="1.0.0"
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase tracking-[0.2em] text-muted block mb-2">
-              Timeout (sec)
-            </label>
-            <Input
-              type="number"
-              value={workflowData.timeout_sec || 900}
-              onChange={(e) => {
-                const parsed = Number.parseInt(e.target.value, 10);
-                handleMetaChange("timeout_sec", Number.isFinite(parsed) ? parsed : 900);
-              }}
-              placeholder="900"
-            />
-          </div>
-        </div>
-        <div className="mt-4">
-          <label className="text-xs uppercase tracking-[0.2em] text-muted block mb-2">
-            Description
-          </label>
-          <Input
-            value={workflowData.description || ""}
-            onChange={(e) => handleMetaChange("description", e.target.value)}
-            placeholder="Optional description of this workflow"
-          />
-        </div>
-      </Card>
-
-      {/* Builder / JSON Editor */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            {viewMode === "visual" ? "Workflow Steps" : "JSON Definition"}
-          </CardTitle>
-        </CardHeader>
-
-        {viewMode === "visual" ? (
-          <WorkflowBuilder
-            initialWorkflow={currentWorkflowForBuilder}
-            onChange={handleBuilderChange}
-            height={600}
-          />
-        ) : (
           <Textarea
-            rows={24}
-            value={jsonPayload}
-            onChange={(e) => handleJsonChange(e.target.value)}
-            className="font-mono text-sm"
-            placeholder="Paste or edit workflow JSON..."
+            value={raw}
+            onChange={(e) => { setRaw(e.target.value); setError(null); }}
+            placeholder='{"name": "my-workflow", "steps": [...], "timeout": 3600}'
+            rows={16}
+            className="font-mono text-xs"
           />
-        )}
-      </Card>
 
-      {/* Actions */}
-      <Card>
-        <div className="flex items-center justify-between">
-          <div>
-            {error && <div className="text-sm text-danger">{error}</div>}
-          </div>
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => navigate("/workflows")}>
-              Cancel
-            </Button>
+          {error && (
+            <p className="text-xs text-danger">{error}</p>
+          )}
+
+          <div className="flex items-center justify-between">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-accent hover:underline">
+              <Upload className="h-3.5 w-3.5" />
+              Upload file
+              <input
+                type="file"
+                accept=".json,.yaml,.yml"
+                onChange={handleFile}
+                className="hidden"
+              />
+            </label>
+
             <Button
-              variant="primary"
-              onClick={handleSave}
-              disabled={createMutation.isPending}
+              size="sm"
+              onClick={handleImport}
+              disabled={!raw.trim() || createWorkflow.isPending}
             >
-              {createMutation.isPending ? "Creating..." : "Create Workflow"}
+              {createWorkflow.isPending ? "Importing..." : "Import & Create"}
             </Button>
           </div>
         </div>
       </Card>
+    </div>
+  );
+}
+
+export default function WorkflowCreatePage() {
+  const [mode, setMode] = useState<CreateMode>("visual");
+
+  return (
+    <div className="space-y-4">
+      {/* Mode toggle */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1 rounded-full border border-border p-1 w-fit">
+          <button
+            type="button"
+            className={cn(
+              "flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition",
+              mode === "visual"
+                ? "bg-accent/15 text-accent"
+                : "text-muted hover:text-ink",
+            )}
+            onClick={() => setMode("visual")}
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            Visual Builder
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition",
+              mode === "import"
+                ? "bg-accent/15 text-accent"
+                : "text-muted hover:text-ink",
+            )}
+            onClick={() => setMode("import")}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            JSON Import
+          </button>
+        </div>
+      </div>
+
+      {mode === "visual" && <WorkflowBuilder />}
+      {mode === "import" && <ImportPanel />}
     </div>
   );
 }

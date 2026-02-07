@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"testing"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -250,6 +251,38 @@ func TestContainsPool(t *testing.T) {
 		t.Fatalf("expected missing pool")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func benchWorkerSelection(b *testing.B, n int) {
+	b.Helper()
+	routing := routingForTopic("job.bench", "bench-pool")
+	strategy := NewLeastLoadedStrategy(routing)
+
+	workers := make(map[string]*pb.Heartbeat, n)
+	for i := 0; i < n; i++ {
+		wid := fmt.Sprintf("w-%d", i)
+		workers[wid] = &pb.Heartbeat{
+			WorkerId:        wid,
+			Pool:            "bench-pool",
+			ActiveJobs:      int32(i % 10),
+			MaxParallelJobs: 20,
+			CpuLoad:         float32(i%80 + 5),
+			GpuUtilization:  float32(i%60 + 5),
+		}
+	}
+	req := &pb.JobRequest{Topic: "job.bench"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = strategy.PickSubject(req, workers)
+	}
+}
+
+func BenchmarkWorkerSelection100(b *testing.B)  { benchWorkerSelection(b, 100) }
+func BenchmarkWorkerSelection1000(b *testing.B) { benchWorkerSelection(b, 1000) }
 
 func TestIsOverloadedThresholds(t *testing.T) {
 	if !isOverloaded(&pb.Heartbeat{CpuLoad: 95}) {

@@ -1,0 +1,16 @@
+{
+  "id": "epic-806e5c17",
+  "projectId": "proj-4aad1c0e",
+  "title": "Command Center (/)",
+  "description": "The \"is everything on fire?\" screen. Fleet health, safety kernel live feed, job pipeline funnel, pool utilization, event timeline.",
+  "architectureNotes": "Data from /api/v1/status, /api/v1/workers, /api/v1/jobs. Real-time updates via WebSocket events. Recharts for funnel/bar charts. MetricCard grid for fleet health.",
+  "epicRails": [
+    "All charts use Recharts",
+    "Real-time data via WebSocket event stream",
+    "Use MetricCard component for stat display"
+  ],
+  "status": "PLANNED",
+  "order": 1,
+  "createdAt": "2026-02-06T23:46:32.548Z",
+  "updatedAt": "2026-02-07T19:58:24.394Z"
+}

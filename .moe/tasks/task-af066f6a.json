@@ -1,0 +1,44 @@
+{
+  "id": "task-af066f6a",
+  "epicId": "epic-dbd90afa",
+  "title": "Add cordum-safety-kernel to Redis NetworkPolicy",
+  "description": "**Severity: CRITICAL**\n\n**File**: `deploy/k8s/production/networkpolicy.yaml:40-70`\n\n**Bug**: The `cordum-allow-redis` NetworkPolicy ingress rules allow api-gateway, scheduler, workflow-engine, and context-engine to access Redis, but **omit `cordum-safety-kernel`**. The safety kernel uses Redis for decision caching (`kernel_cache_test.go` confirms this). Without network access, the safety kernel cannot cache decisions and may fail entirely.\n\n**Fix**: Add a podSelector entry for safety-kernel:\n```yaml\n- podSelector:\n    matchLabels:\n      app: cordum-safety-kernel\n```",
+  "definitionOfDone": [
+    "cordum-safety-kernel is listed in Redis NetworkPolicy ingress rules",
+    "Safety kernel can reach Redis on port 6379 in production",
+    "kubectl apply --dry-run validates without errors"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add a `cordum-safety-kernel` podSelector entry to the `cordum-allow-redis` NetworkPolicy ingress rules in `deploy/k8s/production/networkpolicy.yaml`. Insert after the `cordum-context-engine` entry (line 67):\n```yaml\n    - podSelector:\n        matchLabels:\n          app: cordum-safety-kernel\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "deploy/k8s/production/networkpolicy.yaml"
+      ],
+      "startedAt": "2026-02-05T23:53:48.431Z",
+      "completedAt": "2026-02-05T23:54:08.596Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Validate with `kubectl apply --dry-run=client -f deploy/k8s/production/networkpolicy.yaml` or `kustomize build deploy/k8s/production/` to verify the YAML is valid.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:54:09.085Z",
+      "completedAt": "2026-02-05T23:54:19.648Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 18,
+  "createdAt": "2026-02-05T22:25:56.847Z",
+  "updatedAt": "2026-02-06T00:22:24.743Z",
+  "priority": "MEDIUM"
+}

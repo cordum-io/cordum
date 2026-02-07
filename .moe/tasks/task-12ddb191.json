@@ -1,0 +1,98 @@
+{
+  "id": "task-12ddb191",
+  "epicId": "epic-411cf33d",
+  "title": "Monaco YAML toggle",
+  "description": "\"View YAML\" / \"Advanced\" tab. Monaco editor with YAML syntax highlighting, error markers, autocomplete. Bidirectional: visual builder generates YAML, YAML edits round-trip back to visual. Diff view against active published version.",
+  "definitionOfDone": [
+    "Toggle button/tab to switch between visual builder and YAML editor",
+    "Monaco editor (@monaco-editor/react) with YAML syntax highlighting",
+    "Error markers for invalid YAML",
+    "Bidirectional: visual → YAML and YAML → visual on same data model",
+    "Diff view comparing draft vs active published version",
+    "Install @monaco-editor/react dependency",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Install @monaco-editor/react dependency: npm install @monaco-editor/react in dashboard/.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/package.json"
+      ],
+      "startedAt": "2026-02-07T00:53:45.892Z",
+      "completedAt": "2026-02-07T00:54:02.089Z",
+      "note": "Installed @monaco-editor/react (added 7 packages)",
+      "modifiedFiles": [
+        "dashboard/package.json",
+        "dashboard/package-lock.json"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Create dashboard/src/components/policy/PolicyYamlEditor.tsx: Toggle tab 'Advanced / YAML' alongside the visual builder. Monaco editor instance (@monaco-editor/react) configured for YAML language. Loads current policy rules serialized to YAML (using yaml library already in deps). On edit: parse YAML back to rule objects, validate with Zod, update error markers in Monaco if invalid. Bidirectional sync: changes in visual builder update YAML content, YAML edits parse back to rule model and update visual builder on save/apply. Diff view toggle: shows side-by-side Monaco diff editor comparing draft YAML vs last published snapshot YAML.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/policy/PolicyYamlEditor.tsx"
+      ],
+      "startedAt": "2026-02-07T00:54:49.959Z",
+      "completedAt": "2026-02-07T00:57:31.540Z",
+      "note": "Created PolicyYamlEditor with Monaco editor, YAML syntax, error markers, diff view, and bidirectional apply",
+      "modifiedFiles": [
+        "dashboard/src/components/policy/PolicyYamlEditor.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Create dashboard/src/lib/policy-yaml.ts: Utility functions for policy YAML round-tripping. rulesToYaml(rules: PolicyRule[]): string — serializes rules to YAML. yamlToRules(yaml: string): PolicyRule[] — parses YAML back to typed rules. validatePolicyYaml(yaml: string): { valid: boolean, errors: string[] } — Zod validation of parsed rules. These ensure bidirectional fidelity.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/lib/policy-yaml.ts"
+      ],
+      "startedAt": "2026-02-07T00:54:05.302Z",
+      "completedAt": "2026-02-07T00:54:46.810Z",
+      "note": "Created rulesToYaml, yamlToRules, and validatePolicyYaml with Zod validation",
+      "modifiedFiles": [
+        "dashboard/src/lib/policy-yaml.ts"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Integrate PolicyYamlEditor as additional tab/toggle in PolicyPage.tsx Builder section.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ],
+      "startedAt": "2026-02-07T00:57:34.291Z",
+      "completedAt": "2026-02-07T00:58:04.532Z",
+      "note": "Added Visual/YAML toggle in the builder tab section. Visual is default, YAML is advanced mode.",
+      "modifiedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-5",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:58:08.078Z",
+      "completedAt": "2026-02-07T00:58:19.946Z",
+      "note": "tsc --noEmit passes cleanly with zero errors"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 77,
+  "createdAt": "2026-02-06T23:49:26.026Z",
+  "updatedAt": "2026-02-07T20:04:01.784Z",
+  "planSubmittedAt": "2026-02-06T23:58:37.308Z",
+  "planApprovedAt": "2026-02-06T23:58:37.309Z"
+}

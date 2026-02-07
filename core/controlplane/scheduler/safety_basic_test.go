@@ -16,5 +16,8 @@ func (s *SafetyBasic) Check(req *pb.JobRequest) (SafetyDecisionRecord, error) {
 	if req.Topic == "sys.destroy" {
 		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "forbidden topic"}, nil
 	}
+	if req.Topic == "sys.unavailable" {
+		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "test unavailable"}, nil
+	}
 	return SafetyDecisionRecord{Decision: SafetyAllow}, nil
 }

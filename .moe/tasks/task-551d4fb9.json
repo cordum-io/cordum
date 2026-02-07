@@ -1,0 +1,70 @@
+{
+  "id": "task-551d4fb9",
+  "epicId": "epic-06442149",
+  "title": "Workflow CRUD",
+  "description": "Create from visual builder or JSON/YAML import. Edit via builder or raw editor toggle. Delete with confirmation.",
+  "definitionOfDone": [
+    "Create workflow from visual builder (save button)",
+    "Create workflow from JSON/YAML import (file upload or paste)",
+    "Edit existing workflow in visual builder",
+    "Toggle to raw JSON/YAML editor view",
+    "Delete workflow with confirmation dialog",
+    "Proper cache invalidation on create/edit/delete",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/pages/WorkflowCreatePage.tsx: Route /workflows/new. Contains WorkflowBuilder in create mode (no existing workflow loaded). Save triggers useCreateWorkflow() mutation, navigates to /workflows/:newId on success. Also supports import: toggle to JSON/YAML text area, parse and load into builder or submit directly.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/WorkflowCreatePage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:11:15.913Z",
+      "completedAt": "2026-02-07T01:12:22.931Z",
+      "note": "Created WorkflowCreatePage at /workflows/new. Two modes: Visual Builder (renders WorkflowBuilder) and JSON Import (textarea + file upload, parses JSON, validates name field, calls useCreateWorkflow()). Added lazy-loaded route in App.tsx before /workflows/:id to avoid conflict.",
+      "modifiedFiles": [
+        "dashboard/src/pages/WorkflowCreatePage.tsx",
+        "dashboard/src/App.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Add edit/delete functionality to WorkflowDetailPage.tsx: Edit button switches to builder tab in edit mode. Delete button with ConfirmDialog, on confirm calls useDeleteWorkflow() and navigates to /workflows. Toggle between visual builder and raw JSON/YAML editor (textarea for now, Monaco in Policy epic).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/WorkflowDetailPage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:12:27.049Z",
+      "completedAt": "2026-02-07T01:13:19.832Z",
+      "note": "Added Raw JSON tab to WorkflowDetailPage. Tab toggle includes Overview/Runs/Builder/Raw JSON. Raw tab: textarea with pre-populated JSON.stringify(workflow), edit and save via useUpdateWorkflow(), JSON validation with error display. Delete already existed with ConfirmDialog. Builder tab already works for visual editing.",
+      "modifiedFiles": [
+        "dashboard/src/pages/WorkflowDetailPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:13:24.829Z",
+      "completedAt": "2026-02-07T01:13:40.289Z",
+      "note": "tsc --noEmit passes for all workflow CRUD files. Only pre-existing errors in DLQActions.tsx and PoolGroupedView.tsx (unrelated)."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 31,
+  "createdAt": "2026-02-06T23:48:59.295Z",
+  "updatedAt": "2026-02-07T20:24:17.435Z",
+  "planSubmittedAt": "2026-02-06T23:57:46.550Z",
+  "planApprovedAt": "2026-02-06T23:57:46.551Z"
+}

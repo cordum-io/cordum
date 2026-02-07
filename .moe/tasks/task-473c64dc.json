@@ -1,0 +1,45 @@
+{
+  "id": "task-473c64dc",
+  "epicId": "epic-da8a6382",
+  "title": "Fix gateway_approvals.go — missing ApprovedAt timestamp in approval records",
+  "description": "**File:** `core/controlplane/gateway/gateway_approvals.go`\n\n**Problem:** In `handleApproveJob` (line 278) and `handleRejectJob`, `SetApprovalRecord` is called without setting the `ApprovedAt` field:\n```go\ns.jobStore.SetApprovalRecord(r.Context(), jobID, memory.ApprovalRecord{\n    ApprovedBy:     approvedBy,\n    ApprovedRole:   approvalRole,\n    Reason:         reason,\n    Note:           note,\n    PolicySnapshot: safetyRecord.PolicySnapshot,\n    JobHash:        safetyRecord.JobHash,\n    // ApprovedAt is MISSING — defaults to 0\n})\n```\n\nThe job detail endpoint (gateway_jobs.go:353-354) checks `approvalRecord.ApprovedAt != 0` to show the approval timestamp, but since it's always 0, the `approval_at` field never appears in job detail responses. The dashboard can never show when an approval happened.\n\n**Fix:** Add `ApprovedAt` to the `ApprovalRecord` in both `handleApproveJob` and `handleRejectJob`. Check the time unit convention used by the memory store (likely `time.Now().UnixMicro()` or `time.Now().UnixMilli()` — match what `gateway_jobs.go:354` expects).",
+  "definitionOfDone": [
+    "ApprovedAt is set in both handleApproveJob and handleRejectJob",
+    "Job detail API response includes approval_at timestamp after approval",
+    "go vet ./core/controlplane/gateway/... passes",
+    "go test ./core/controlplane/gateway/... -count=1 passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "In gateway_approvals.go handleApproveJob(), explicitly set ApprovedAt field in the ApprovalRecord before calling SetApprovalRecord. While the store layer (job_store.go:1150-1151) auto-fills ApprovedAt when 0, relying on this is fragile — the gateway should own the timestamp. Use time.Now().UnixMicro() to match the nowUnixMicros() convention. This makes the code self-documenting and removes the hidden dependency on store-layer auto-fill behavior.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_approvals.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Add a unit test verifying that the approve handler sets ApprovedAt on the ApprovalRecord. Mock the job store and assert that SetApprovalRecord receives a record with ApprovedAt > 0.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "core/controlplane/gateway/approvals_test.go"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 16,
+  "createdAt": "2026-02-07T18:27:41.716Z",
+  "updatedAt": "2026-02-07T20:00:01.772Z",
+  "planSubmittedAt": "2026-02-07T18:33:50.915Z",
+  "planApprovedAt": "2026-02-07T18:33:50.917Z"
+}

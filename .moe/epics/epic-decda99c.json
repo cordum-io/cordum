@@ -1,0 +1,21 @@
+{
+  "id": "epic-decda99c",
+  "projectId": "proj-4aad1c0e",
+  "title": "Workflows Page Redesign — Operational-First UX",
+  "description": "Complete redesign of /workflows and /workflows/:id around operator workflows. Default landing is operational (what's running now), secondary is design (editing definitions). Kills standalone /runs route. Four user intents: (1) what's running/stuck, (2) investigate a failed run, (3) create/modify workflow, (4) trigger a run manually. Three main zones: Active Runs strip, Workflow Templates list, and a detail page with Run History + DAG Visualizer + collapsible Definition editor.",
+  "architectureNotes": "**Reuse:** ReactFlow for DAG (existing WorkflowBuilder nodes), useAllRuns/useRuns hooks, RunStatusBadge, WebSocket stream, useApprovals mutations.\n\n**New components:** ActiveRunsStrip (horizontal scroll, attention-first ordering), DAGRunOverlay (ReactFlow nodes with run state), NodeDetailPanel (slide-out for step inspection), RunNowModal (schema-to-form + dry-run), SuccessSparkline (tiny inline chart from run history).\n\n**API gaps:** (1) Dry-run simulation HTTP endpoint wrapping Safety Kernel Simulate(), (2) workflow success rate aggregation (client-side from last N runs for now), (3) step-level approval action (reuse existing job approval by jobId from step metadata).\n\n**URL structure:** /workflows (templates + active runs strip), /workflows/:id (detail with DAG), /workflows/:id/runs/:runId (pre-selected run in DAG).\n\n**Real-time:** WebSocket events update DAG nodes live — step_completed → green, step_failed → red, approval_required → yellow pulse. Active runs strip also live-updates.",
+  "epicRails": [
+    "ReactFlow for all DAG visualization",
+    "Use RunStatusBadge for run states",
+    "No metrics/analytics charts on this page — that's Command Center",
+    "In-context approvals: approve/reject directly from DAG node detail panel",
+    "Schema-to-form rendering for Run Now modal — not raw JSON",
+    "Attention-first ordering: stuck/failed runs surface before healthy ones",
+    "Collapsible workflow definition — 80% of visits are about runs not editing",
+    "WebSocket-driven live updates for DAG nodes and active runs strip"
+  ],
+  "status": "PLANNED",
+  "order": 13,
+  "createdAt": "2026-02-07T21:04:13.421Z",
+  "updatedAt": "2026-02-07T21:08:10.368Z"
+}

@@ -1,0 +1,76 @@
+{
+  "id": "task-96e926c4",
+  "epicId": "epic-da8a6382",
+  "title": "Fix send-on-closed-channel panic in gateway enqueueWSEvent",
+  "description": "**Bug**: `enqueueWSEvent()` at `core/controlplane/gateway/gateway.go:805-813` sends on `s.eventsCh` which can be closed by `stopBusTaps()` at line 138-143. The `select/default` prevents blocking but does NOT prevent panic on a closed channel.\n\n**Fix approach**: Add an atomic flag (e.g. `s.eventsStopped atomic.Bool`) checked before the send, or use a mutex-guarded send pattern. Alternatively, use recover() in the select case, though atomic flag is cleaner.\n\n**Files**: `core/controlplane/gateway/gateway.go`",
+  "definitionOfDone": [
+    "enqueueWSEvent cannot panic when eventsCh is closed",
+    "Concurrent test proving no panic under stop+send race",
+    "No goroutine leaks introduced"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Add `eventsStopped atomic.Bool` field to the `server` struct in gateway.go. This flag will be set to `true` when `stopBusTaps()` is called, before the channel is closed.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:45:38.613Z",
+      "completedAt": "2026-02-05T23:45:48.620Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Modify `stopBusTaps()` to set `s.eventsStopped.Store(true)` BEFORE closing the channel inside the `sync.Once` block. This ensures the atomic flag is visible to all goroutines before the close happens.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:45:50.838Z",
+      "completedAt": "2026-02-05T23:45:59.524Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Modify `enqueueWSEvent()` to check `s.eventsStopped.Load()` before the select/send. If stopped, return early without sending. The full method becomes:\n```go\nfunc (s *server) enqueueWSEvent(data []byte, tenant string, jobID string) {\n    if s == nil || len(data) == 0 || s.eventsStopped.Load() {\n        return\n    }\n    select {\n    case s.eventsCh <- wsEvent{data: data, tenant: strings.TrimSpace(tenant), jobID: strings.TrimSpace(jobID)}:\n    default:\n    }\n}\n```\nNote: There is still a theoretical TOCTOU window between the Load() check and the send, but since the atomic store happens before close() in stopBusTaps, and the select has a default case, we also add a recover() guard as a safety net.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:46:02.005Z",
+      "completedAt": "2026-02-05T23:46:19.069Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Add a deferred `recover()` inside `enqueueWSEvent` as a defense-in-depth measure for the TOCTOU edge case:\n```go\nfunc (s *server) enqueueWSEvent(data []byte, tenant string, jobID string) {\n    if s == nil || len(data) == 0 || s.eventsStopped.Load() {\n        return\n    }\n    defer func() {\n        if r := recover(); r != nil {\n            // channel was closed between check and send; safe to ignore\n        }\n    }()\n    select {\n    case s.eventsCh <- wsEvent{...}:\n    default:\n    }\n}\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:46:19.565Z",
+      "completedAt": "2026-02-05T23:46:23.071Z"
+    },
+    {
+      "stepId": "step-5",
+      "description": "Write a concurrent regression test in gateway_test.go that:\n1. Creates a server with an eventsCh\n2. Spawns N goroutines calling enqueueWSEvent in a loop\n3. Calls stopBusTaps() concurrently\n4. Asserts no panic occurs (test passes = no panic)\n5. Run with `-race` flag to detect data races",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_test.go"
+      ],
+      "startedAt": "2026-02-05T23:46:23.446Z",
+      "completedAt": "2026-02-05T23:48:05.268Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "CRITICAL",
+  "order": 6,
+  "createdAt": "2026-02-05T23:42:13.459Z",
+  "updatedAt": "2026-02-07T18:31:02.679Z"
+}

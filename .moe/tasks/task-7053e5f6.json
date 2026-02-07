@@ -1,0 +1,83 @@
+{
+  "id": "task-7053e5f6",
+  "epicId": "epic-c40172f1",
+  "title": "Schema viewer/editor",
+  "description": "JSON schema display with field types, constraints. Register new schema form.",
+  "definitionOfDone": [
+    "Schema detail view: formatted JSON schema with field types and constraints",
+    "Tree-view or table of fields: name, type, required, constraints",
+    "Register new schema: form with name/version + JSON schema editor (textarea or Monaco)",
+    "Zod validation for schema form",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/schemas/SchemaViewer.tsx: Schema detail view. Renders JSON schema as a tree-view or table of fields: field name, type, required (boolean badge), constraints (min/max, pattern, enum values). Formatted and readable. For complex nested schemas, indented tree structure.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/schemas/SchemaViewer.tsx"
+      ],
+      "startedAt": "2026-02-07T01:22:42.948Z",
+      "completedAt": "2026-02-07T01:23:01.167Z",
+      "note": "Created SchemaViewer with header card (name, version, dates, field count) and fields table (field name, type badge, required/optional, description).",
+      "modifiedFiles": [
+        "dashboard/src/components/schemas/SchemaViewer.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Create dashboard/src/components/schemas/SchemaRegisterForm.tsx: Register new schema form. React Hook Form + Zod. Fields: name (required), version (required, semver pattern), JSON schema body (textarea or Monaco if available from Policy epic). Zod validates name format and attempts JSON.parse on the schema body. Submit calls useRegisterSchema().",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/schemas/SchemaRegisterForm.tsx"
+      ],
+      "startedAt": "2026-02-07T01:23:05.063Z",
+      "completedAt": "2026-02-07T01:23:37.936Z",
+      "note": "Created SchemaRegisterForm with react-hook-form + Zod validation: name (alphanumeric+dots/dashes/underscores), version (integer >= 1), JSON schema body (textarea, validates JSON.parse). Parses JSON Schema properties into SchemaField[] on submit.",
+      "modifiedFiles": [
+        "dashboard/src/components/schemas/SchemaRegisterForm.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Integrate SchemaViewer (for detail) and SchemaRegisterForm (for creation) into SchemasPage.tsx.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/SchemasPage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:23:46.020Z",
+      "completedAt": "2026-02-07T01:24:53.578Z",
+      "note": "Added SchemaDetailPage for /schemas/:id route with SchemaViewer. Updated SchemasPage with Register Schema button + Drawer containing SchemaRegisterForm. Added route and lazy import in App.tsx.",
+      "modifiedFiles": [
+        "dashboard/src/pages/SchemasPage.tsx",
+        "dashboard/src/pages/SchemaDetailPage.tsx",
+        "dashboard/src/App.tsx"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:24:57.127Z",
+      "completedAt": "2026-02-07T01:25:09.956Z",
+      "note": "tsc --noEmit passes clean."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "LOW",
+  "order": 71,
+  "createdAt": "2026-02-06T23:50:55.915Z",
+  "updatedAt": "2026-02-07T20:07:17.963Z",
+  "planSubmittedAt": "2026-02-07T00:01:05.173Z",
+  "planApprovedAt": "2026-02-07T00:01:05.175Z"
+}

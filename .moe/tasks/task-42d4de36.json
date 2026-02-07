@@ -1,0 +1,28 @@
+{
+  "id": "task-42d4de36",
+  "epicId": "epic-06442149",
+  "title": "Reusable UI Components for Job Node Split",
+  "description": "Create 4 new reusable UI components needed by the job node split config panels.\n\n**Files (all NEW):**\n- `dashboard/src/components/ui/CollapsibleSection.tsx` — Labeled expand/collapse group. Props: `title`, `defaultOpen`, `children`, optional `badge`. Uses ChevronDown icon with rotate transition.\n- `dashboard/src/components/ui/TagInput.tsx` — Multi-value input for string arrays (risk_tags, requires). Renders values as Badges with X remove. Enter/comma commits. Props: `value: string[]`, `onChange`, `suggestions?`, `maxTags?`.\n- `dashboard/src/components/ui/KeyValueEditor.tsx` — Dynamic key-value pairs for labels. Row of key Input + value Input + remove. \"+ Add\" button. Max 50 pairs, key max 64 chars, value max 256 chars.\n- `dashboard/src/components/ui/TokenBudgetGroup.tsx` — Three linked number inputs (input/output/total tokens) with visual ratio bar. Auto-calculates total. Min 0, max 1M, step 100.\n\n**SECURITY:** All text rendered as JSX nodes. TagInput suggestions from typed API data only. KeyValueEditor enforces length limits client-side.\n\n**Pattern:** Follow existing UI primitives in `dashboard/src/components/ui/` (Badge, Input, Select, etc.).",
+  "definitionOfDone": [
+    "CollapsibleSection renders with title, chevron toggle, expand/collapse animation",
+    "TagInput renders tags as Badges, supports Enter/comma to add, X to remove, optional suggestions",
+    "KeyValueEditor renders dynamic key-value rows with add/remove, enforces max 50 pairs and char limits",
+    "TokenBudgetGroup renders 3 linked number inputs with auto-total calculation and ratio bar",
+    "All components use existing Tailwind classes and design tokens (text-ink, bg-surface2, border-border, etc.)",
+    "TypeScript compiles with no errors"
+  ],
+  "taskRails": [],
+  "implementationPlan": [],
+  "status": "BACKLOG",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 1,
+  "createdAt": "2026-02-07T22:21:21.386Z",
+  "updatedAt": "2026-02-07T22:21:21.386Z"
+}

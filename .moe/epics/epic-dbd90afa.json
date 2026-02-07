@@ -1,0 +1,16 @@
+{
+  "id": "epic-dbd90afa",
+  "projectId": "proj-4aad1c0e",
+  "title": "Codebase Audit: Bugs & Dead Code Cleanup",
+  "description": "Deep codebase audit findings organized by severity. Covers critical bugs (use-after-close, double-close panic, race conditions), medium-priority issues (silent error swallowing, env var inconsistencies, k8s manifest gaps), and low-priority improvements (test coverage, security hardening).",
+  "architectureNotes": "",
+  "epicRails": [
+    "Each fix must include a test or verification step",
+    "Do not change public API contracts without discussion",
+    "Keep changes minimal and focused - one issue per PR"
+  ],
+  "status": "PLANNED",
+  "order": 2,
+  "createdAt": "2026-02-05T22:14:58.368Z",
+  "updatedAt": "2026-02-05T22:29:59.145Z"
+}

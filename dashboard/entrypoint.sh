@@ -7,7 +7,7 @@ json_escape() {
 
 API_BASE=$(json_escape "${CORDUM_API_BASE_URL:-}")
 API_KEY=""
-if [ -n "${CORDUM_DASHBOARD_EMBED_API_KEY:-}" ]; then
+if [ "${CORDUM_DASHBOARD_EMBED_API_KEY:-}" = "true" ] || [ "${CORDUM_DASHBOARD_EMBED_API_KEY:-}" = "1" ]; then
   API_KEY=$(json_escape "${CORDUM_API_KEY:-}")
 fi
 TENANT_ID=$(json_escape "${CORDUM_TENANT_ID:-default}")

@@ -99,6 +99,7 @@ func main() {
 		log.Fatalf("failed to connect to safety kernel: %v", err)
 	}
 	defer safetyClient.Close()
+	sagaManager.WithSafety(safetyClient)
 
 	poolCfg, err := config.LoadPoolConfig(cfg.PoolConfigPath)
 	if err != nil {

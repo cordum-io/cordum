@@ -1,0 +1,65 @@
+{
+  "id": "task-9fc39b80",
+  "epicId": "epic-dbd90afa",
+  "title": "Add empty password guard for default admin",
+  "description": "**Severity: LOW**\n\n**File**: `docker-compose.yml:99-101`\n\n**Issue**: `CORDUM_ADMIN_PASSWORD` defaults to empty string. If user auth is enabled but no password is set, the admin account has no password — a security risk.\n\n**Fix**: The gateway should refuse to start with user auth enabled and an empty admin password, or generate a random one and log it at startup. This requires a change in the gateway startup code, not just docker-compose.",
+  "definitionOfDone": [
+    "Gateway exits with a clear error if auth is enabled and admin password is empty",
+    "Error message tells the operator exactly what to set",
+    "Add a test verifying the startup check",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "In gateway.go at the `CORDUM_USER_AUTH_ENABLED` block (lines 475-487), after line 481 (`basic.SetUserStore(userStore)`) and before `seedDefaultAdminUser`, add a check: if `CORDUM_ADMIN_PASSWORD` is empty, return a fatal error: `return fmt.Errorf(\"CORDUM_USER_AUTH_ENABLED is set but CORDUM_ADMIN_PASSWORD is empty; set CORDUM_ADMIN_PASSWORD to configure the admin account\")`. This prevents starting with user auth enabled but no way to create an admin user.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:31:27.798Z",
+      "completedAt": "2026-02-05T23:31:38.849Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "In `seedDefaultAdminUser` (user_store_redis.go:269-271), change the empty password skip from silent `return nil` to `return fmt.Errorf(\"CORDUM_ADMIN_PASSWORD is required when user auth is enabled\")` for defense-in-depth. Callers already handle the error.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/user_store_redis.go"
+      ],
+      "startedAt": "2026-02-05T23:31:39.258Z",
+      "completedAt": "2026-02-05T23:32:04.432Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add a test in a gateway test file that verifies: when `CORDUM_USER_AUTH_ENABLED=true` and `CORDUM_ADMIN_PASSWORD=\"\"`, the gateway startup returns an error containing 'CORDUM_ADMIN_PASSWORD'.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway_test.go"
+      ],
+      "startedAt": "2026-02-05T23:32:05.037Z",
+      "completedAt": "2026-02-05T23:32:22.407Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Run `go test ./core/controlplane/gateway/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:32:22.864Z",
+      "completedAt": "2026-02-05T23:32:36.775Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 12,
+  "createdAt": "2026-02-05T22:15:42.267Z",
+  "updatedAt": "2026-02-05T23:40:38.972Z",
+  "priority": "MEDIUM"
+}

@@ -1,0 +1,51 @@
+{
+  "id": "task-3870471b",
+  "epicId": "epic-dbd90afa",
+  "title": "Add error logging to pack uninstall --purge",
+  "description": "**Severity: MEDIUM**\n\n**File**: `cmd/cordumctl/pack.go:383,386`\n\n**Issue**: `_ = client.deleteWorkflow(...)` and `_ = client.deleteSchema(...)` silently swallow errors during purge cleanup. Operators have no way to know which resources weren't cleaned up.\n\n**Fix**: Log warnings on failure so operators know which resources weren't cleaned up. Example: `if err := client.deleteWorkflow(...); err != nil { slog.Warn(\"purge: failed to delete workflow\", \"error\", err) }`",
+  "definitionOfDone": [
+    "Both deleteWorkflow and deleteSchema error paths log warnings via slog.Warn",
+    "Log messages include the resource name and error detail",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Replace `_ = client.deleteWorkflow(ctx, wfID)` on line 383 with `if err := client.deleteWorkflow(ctx, wfID); err != nil { slog.Warn(\"purge: failed to delete workflow\", \"workflow_id\", wfID, \"error\", err) }`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/pack.go"
+      ],
+      "startedAt": "2026-02-05T23:26:00.365Z",
+      "completedAt": "2026-02-05T23:26:23.865Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Replace `_ = client.deleteSchema(ctx, schemaID)` on line 386 with `if err := client.deleteSchema(ctx, schemaID); err != nil { slog.Warn(\"purge: failed to delete schema\", \"schema_id\", schemaID, \"error\", err) }`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "cmd/cordumctl/pack.go"
+      ],
+      "completedAt": "2026-02-05T23:26:24.855Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Run existing tests with `go test ./cmd/cordumctl/...` to verify no regressions.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "completedAt": "2026-02-05T23:26:25.533Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 7,
+  "createdAt": "2026-02-05T22:15:24.411Z",
+  "updatedAt": "2026-02-05T23:30:16.128Z"
+}

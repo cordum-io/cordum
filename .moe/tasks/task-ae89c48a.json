@@ -1,0 +1,68 @@
+{
+  "id": "task-ae89c48a",
+  "epicId": "epic-806e5c17",
+  "title": "Job pipeline funnel",
+  "description": "Recharts funnel/bar showing: submitted -> safety check -> dispatched -> running -> succeeded/failed. Clickable segments navigate to /jobs?state=X.",
+  "definitionOfDone": [
+    "Recharts bar/funnel chart showing job pipeline stages",
+    "Stages: submitted, safety check, dispatched, running, succeeded, failed",
+    "Each segment clickable — navigates to /jobs?state=X",
+    "Data from useStatus() or dedicated pipeline stats endpoint",
+    "Responsive sizing",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/home/JobPipelineFunnel.tsx: Recharts BarChart (horizontal) showing job pipeline stages: submitted, safety_check, dispatched, running, succeeded, failed. Each bar segment color-coded. Data from useStatus() pipeline stats. Bars are clickable — onClick navigates to /jobs?state=X using useNavigate(). Responsive container (ResponsiveContainer). Tooltip on hover showing exact counts.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/home/JobPipelineFunnel.tsx"
+      ],
+      "startedAt": "2026-02-07T01:04:06.529Z",
+      "completedAt": "2026-02-07T01:04:46.182Z",
+      "note": "Created JobPipelineFunnel with horizontal BarChart (Recharts). 6 stages: Submitted, Safety Check, Dispatched, Running, Succeeded, Failed — color-coded. Clickable bars navigate to /jobs?state=X. Custom tooltip. ResponsiveContainer. Loading skeleton. Data from useStatus().pipeline.",
+      "modifiedFiles": [
+        "dashboard/src/components/home/JobPipelineFunnel.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Integrate JobPipelineFunnel into HomePage.tsx in a two-column layout below the safety feed.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/HomePage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:04:46.705Z",
+      "completedAt": "2026-02-07T01:05:02.061Z",
+      "note": "Added JobPipelineFunnel import. Placed SafetyDecisionFeed and JobPipelineFunnel in a two-column grid layout (lg:grid-cols-2).",
+      "modifiedFiles": [
+        "dashboard/src/pages/HomePage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:05:02.507Z",
+      "completedAt": "2026-02-07T01:06:06.914Z",
+      "note": "tsc --noEmit passes (excluding pre-existing DLQActions.tsx require() error). Linter auto-fixed DLQPage.tsx batch toolbar integration."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 4,
+  "createdAt": "2026-02-06T23:47:47.588Z",
+  "updatedAt": "2026-02-07T20:13:54.787Z",
+  "planSubmittedAt": "2026-02-06T23:55:40.576Z",
+  "planApprovedAt": "2026-02-06T23:55:40.577Z"
+}

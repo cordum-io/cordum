@@ -1,0 +1,96 @@
+{
+  "id": "task-bcdfb630",
+  "epicId": "epic-57debfb1",
+  "title": "Compensation Jobs Bypass Safety Kernel",
+  "description": "**Problem**: `saga.go` `executeCompensation()` dispatches compensation jobs directly to workers without safety evaluation. Malicious workflow could define compensation actions that would normally be denied.\n\n**Fix**:\n- Route compensation jobs through `evaluateSafety()` before dispatch\n- If safety denies, log WARN and skip (don't block rollback)\n- Add `is_compensation: true` metadata for policy-specific rules\n\n**Files**: `core/controlplane/scheduler/saga.go`, `core/controlplane/scheduler/engine.go`",
+  "definitionOfDone": [
+    "Compensation jobs routed through evaluateSafety() before dispatch",
+    "Safety deny logs WARN and skips (does not block rollback)",
+    "is_compensation metadata added to compensation job context",
+    "Existing saga tests pass",
+    "New test: compensation job with safety deny is skipped with warning"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Step 1: Add SafetyChecker field to SagaManager\n\nIn `saga.go`, add `safety SafetyChecker` field to SagaManager struct. Add builder method:\n```go\nfunc (s *SagaManager) WithSafety(sc SafetyChecker) *SagaManager {\n    if s == nil { return s }\n    s.safety = sc\n    return s\n}\n```\nWire it in engine setup (wherever SagaManager is created and passed to Engine).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/saga.go"
+      ],
+      "startedAt": "2026-02-07T00:54:48.336Z",
+      "completedAt": "2026-02-07T00:57:47.631Z",
+      "note": "Added safety SafetyChecker field to SagaManager struct, WithSafety builder method, and wired it in cmd/cordum-scheduler/main.go after safetyClient is created.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/saga.go",
+        "cmd/cordum-scheduler/main.go"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Step 2: Add safety check to dispatchCompensation\n\nIn `saga.go` `dispatchCompensation()`, before publishing to bus:\n1. Set `is_compensation` label and env var on the request\n2. If `s.safety != nil`, call `s.safety.Check(req)`\n3. If decision is SafetyDeny, log WARN with job details and `continue` (skip, don't block rollback)\n4. If decision is SafetyUnavailable, log WARN and proceed (compensation must not be blocked by transient safety issues)\n5. For all other decisions (Allow, Throttle, RequireApproval), proceed with dispatch\n\nThis is a soft check: deny skips the compensation, but doesn't abort the rollback.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/saga.go"
+      ],
+      "startedAt": "2026-02-07T00:57:50.112Z",
+      "completedAt": "2026-02-07T00:58:09.862Z",
+      "note": "Added safety check before bus.Publish in dispatchCompensation. Deny → skip with WARN log, error/unavailable → WARN and proceed. Also added is_compensation labels in same edit (step-3 content).",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/saga.go"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Step 3: Set is_compensation metadata on compensation jobs\n\nIn `dispatchCompensation()` (already adds saga labels), also add:\n```go\nreq.Labels[\"is_compensation\"] = \"true\"\nreq.Env[\"is_compensation\"] = \"true\"\n```\nThis allows safety policies to have specific rules for compensation jobs.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/saga.go"
+      ],
+      "startedAt": "2026-02-07T00:58:12.279Z",
+      "completedAt": "2026-02-07T00:58:16.382Z",
+      "note": "Already done in step-2 edit. is_compensation labels and env vars added to dispatchCompensation.",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/saga.go"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Step 4: Add test for compensation safety deny path\n\nIn `saga_test.go`, add TestSagaCompensationSafetyDenySkips:\n- Create SagaManager with a safety checker that denies all jobs\n- Push valid compensation entry to Redis\n- Call Rollback\n- Assert: no error, no publish to bus (compensation skipped)\n- Assert: saga stack is empty (entry consumed)\n\nAlso add TestSagaCompensationSafetyAllowDispatches:\n- Normal flow still works with safety that allows",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/scheduler/saga_test.go"
+      ],
+      "startedAt": "2026-02-07T00:58:18.836Z",
+      "completedAt": "2026-02-07T00:59:12.193Z",
+      "note": "Added denySafety/allowSafety test stubs. Added TestSagaCompensationSafetyDenySkips (deny→no publish, stack consumed) and TestSagaCompensationSafetyAllowDispatches (allow→1 publish with is_compensation labels).",
+      "modifiedFiles": [
+        "core/controlplane/scheduler/saga_test.go"
+      ]
+    },
+    {
+      "stepId": "step-5",
+      "description": "Step 5: Verify all tests pass with `go test ./core/controlplane/scheduler/... -count=3`",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:59:15.698Z",
+      "completedAt": "2026-02-07T00:59:27.696Z",
+      "note": "All scheduler tests pass with -count=3 (1.909s)."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 6,
+  "createdAt": "2026-02-07T00:33:26.278Z",
+  "updatedAt": "2026-02-07T01:00:10.610Z",
+  "planSubmittedAt": "2026-02-07T00:37:09.592Z",
+  "planApprovedAt": "2026-02-07T00:37:09.593Z"
+}

@@ -1,0 +1,56 @@
+{
+  "id": "task-6f8cebea",
+  "epicId": "epic-a946c2fd",
+  "title": "Settings API hooks",
+  "description": "useConfig(), useSetConfig(), useAuthConfig().",
+  "definitionOfDone": [
+    "useConfig() fetch system config",
+    "useSetConfig() mutation to update config",
+    "useAuthConfig() fetch auth configuration (OAuth, basic, etc.)",
+    "useApiKeys() list API keys",
+    "useCreateApiKey() mutation",
+    "useRevokeApiKey() mutation",
+    "useUsers() list users",
+    "useCreateUser() mutation",
+    "All in hooks/useSettings.ts",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/hooks/useSettings.ts: useConfig() fetching GET /api/v1/config. useSetConfig() mutation (PUT /api/v1/config). useAuthConfig() — re-exports from hooks/useAuthConfig.ts for consistency. useApiKeys() fetching GET /api/v1/auth/keys. useCreateApiKey() mutation (POST /api/v1/auth/keys with { name, scopes }). useRevokeApiKey() mutation (DELETE /api/v1/auth/keys/:id). useUsers() fetching GET /api/v1/users. useCreateUser() mutation (POST /api/v1/users with { username, password, role }). useUpdateUser() mutation. useDeleteUser() mutation. All admin-only endpoints — hooks should handle 403 gracefully.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useSettings.ts"
+      ],
+      "startedAt": "2026-02-07T00:21:32.728Z",
+      "completedAt": "2026-02-07T00:21:49.176Z",
+      "modifiedFiles": [
+        "dashboard/src/hooks/useSettings.ts"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:21:49.782Z",
+      "completedAt": "2026-02-07T00:22:02.970Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 64,
+  "createdAt": "2026-02-06T23:50:38.035Z",
+  "updatedAt": "2026-02-07T20:10:30.886Z",
+  "planSubmittedAt": "2026-02-07T00:00:39.879Z",
+  "planApprovedAt": "2026-02-07T00:00:39.881Z"
+}

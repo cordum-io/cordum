@@ -1,0 +1,15 @@
+{
+  "id": "epic-a946c2fd",
+  "projectId": "proj-4aad1c0e",
+  "title": "Settings (/settings)",
+  "description": "System configuration. API keys, users & RBAC, system health monitoring.",
+  "architectureNotes": "Settings from /api/v1/config. Auth config from /api/v1/auth/config. Tab-based layout: API Keys, Users & RBAC, System Health. React Hook Form + Zod for forms.",
+  "epicRails": [
+    "Tab-based layout",
+    "React Hook Form + Zod for all forms"
+  ],
+  "status": "PLANNED",
+  "order": 10,
+  "createdAt": "2026-02-06T23:46:59.657Z",
+  "updatedAt": "2026-02-07T19:58:38.112Z"
+}

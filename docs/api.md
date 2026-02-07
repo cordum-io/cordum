@@ -25,7 +25,7 @@ User management (admin only):
 
 Common endpoints:
 - Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream`
-- Jobs: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `GET /api/v1/jobs/{id}/decisions`, `POST /api/v1/jobs`, `POST /api/v1/jobs/{id}/cancel`, `POST /api/v1/jobs/{id}/remediate`
+- Jobs: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `GET /api/v1/jobs/{id}/stream` (WebSocket), `GET /api/v1/jobs/{id}/decisions`, `POST /api/v1/jobs`, `POST /api/v1/jobs/{id}/cancel`, `POST /api/v1/jobs/{id}/remediate`
 - Traces: `GET /api/v1/traces/{id}`
 - Workflows: `GET/POST /api/v1/workflows`, `GET/DELETE /api/v1/workflows/{id}`
 - Runs: `POST /api/v1/workflows/{id}/runs`, `GET /api/v1/workflows/{id}/runs`, `GET /api/v1/workflow-runs`, `GET /api/v1/workflow-runs/{id}`, `GET /api/v1/workflow-runs/{id}/timeline`, `GET /api/v1/workflow-runs/{id}/chat`, `POST /api/v1/workflow-runs/{id}/chat`, `POST /api/v1/workflow-runs/{id}/rerun`, `DELETE /api/v1/workflow-runs/{id}`
@@ -39,6 +39,13 @@ Common endpoints:
 - Locks: `GET /api/v1/locks`, `POST /api/v1/locks/acquire`, `POST /api/v1/locks/release`, `POST /api/v1/locks/renew`
 - DLQ: `GET /api/v1/dlq`, `GET /api/v1/dlq/page`, `DELETE /api/v1/dlq/{job_id}`, `POST /api/v1/dlq/{job_id}/retry`
 - Memory pointers: `GET /api/v1/memory?ptr=...`
+
+### Job event streaming (WebSocket)
+Tags: websocket, jobs, streaming
+
+Use `GET /api/v1/jobs/{id}/stream` to receive job events for a single job. The
+connection uses the same API key WebSocket protocol as `/api/v1/stream` and
+requires `X-Tenant-ID` (or `?tenant_id=`) for tenant scoping.
 
 ## gRPC API
 

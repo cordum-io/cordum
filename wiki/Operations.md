@@ -29,7 +29,9 @@ All services log to stdout/stderr. Aggregate with your preferred log collector.
 
 ## Scaling notes
 
+Tags: scaling, scheduler, availability
+
 - Gateway: horizontally scalable behind a service/load balancer.
-- Scheduler: run a single active instance unless you implement leader locks.
+- Scheduler: horizontally scalable; NATS queue groups + Redis locks gate dispatch/reconciler/replay work.
 - Safety Kernel: can be replicated for gRPC throughput.
 - NATS + Redis: use HA deployments with persistence in production.

@@ -1,407 +1,283 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api } from "../lib/api";
-import { epochToMillis, formatDateTime } from "../lib/format";
-import { useConfigStore } from "../state/config";
+import { useParams, Link } from "react-router-dom";
+import { ArrowLeft, ExternalLink, Clock } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+
+import { useJob, useJobDecisions } from "../hooks/useJobs";
+import { get } from "../api/client";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
-import { Button } from "../components/ui/Button";
-import { Input } from "../components/ui/Input";
+import { Badge } from "../components/ui/Badge";
 import { JobStatusBadge } from "../components/StatusBadge";
+import { JobStateMachine } from "../components/jobs/JobStateMachine";
+import { SafetyExplainCard } from "../components/jobs/SafetyExplainCard";
+import { JobActions } from "../components/jobs/JobActions";
 
-export function JobDetailPage() {
-  const { jobId } = useParams();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const tabParam = searchParams.get("tab");
-  const queryClient = useQueryClient();
-  const traceUrlTemplate = useConfigStore((state) => state.traceUrlTemplate);
-  const [reason, setReason] = useState("");
-  const [note, setNote] = useState("");
+// ---------------------------------------------------------------------------
+// Memory payload hook
+// ---------------------------------------------------------------------------
 
-  const jobQuery = useQuery({
-    queryKey: ["job", jobId],
-    queryFn: () => api.getJob(jobId as string),
-    enabled: Boolean(jobId),
+function useMemoryPayload(ptr: string | undefined) {
+  return useQuery<unknown>({
+    queryKey: ["memory", ptr],
+    queryFn: () => get<unknown>(`/memory?ptr=${encodeURIComponent(ptr ?? "")}`),
+    enabled: !!ptr,
+    staleTime: 60_000,
   });
-  const decisionsQuery = useQuery({
-    queryKey: ["job", jobId, "decisions"],
-    queryFn: () => api.listJobDecisions(jobId as string),
-    enabled: Boolean(jobId),
-  });
+}
 
-  const approveMutation = useMutation({
-    mutationFn: () => api.approveJob(jobId as string, { reason, note }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
-      queryClient.invalidateQueries({ queryKey: ["approvals"] });
-      setReason("");
-      setNote("");
-    },
-  });
-  const rejectMutation = useMutation({
-    mutationFn: () => api.rejectJob(jobId as string, { reason, note }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
-      queryClient.invalidateQueries({ queryKey: ["approvals"] });
-      setReason("");
-      setNote("");
-    },
-  });
-  const remediateMutation = useMutation({
-    mutationFn: (remediationId?: string) => api.remediateJob(jobId as string, remediationId),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      if (data?.job_id) {
-        navigate(`/jobs/${data.job_id}`);
-      }
-    },
-  });
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-  const job = jobQuery.data;
-  const decisions = decisionsQuery.data || [];
-
-  useEffect(() => {
-    if (!job || !tabParam || typeof document === "undefined") {
-      return;
-    }
-    const targetId =
-      tabParam === "safety" || tabParam === "decisions"
-        ? "job-safety"
-        : tabParam === "audit"
-        ? "job-audit"
-        : tabParam === "logs"
-        ? "job-logs"
-        : "";
-    if (!targetId) {
-      return;
-    }
-    const node = document.getElementById(targetId);
-    if (node) {
-      node.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, [job, tabParam]);
-
-  const traceUrl = useMemo(() => {
-    if (!job?.trace_id || !traceUrlTemplate) {
-      return "";
-    }
-    return traceUrlTemplate.replace("{{trace_id}}", job.trace_id);
-  }, [job, traceUrlTemplate]);
-
-  const policyLink = useMemo(() => {
-    if (!job) {
-      return "";
-    }
-    const params = new URLSearchParams();
-    if (job.id) {
-      params.set("job_id", job.id);
-    }
-    if (job.topic) {
-      params.set("topic", job.topic);
-    }
-    if (job.tenant) {
-      params.set("tenant", job.tenant);
-    }
-    if (job.capability) {
-      params.set("capability", job.capability);
-    }
-    if (job.pack_id) {
-      params.set("pack_id", job.pack_id);
-    }
-    if (job.actor_id) {
-      params.set("actor_id", job.actor_id);
-    }
-    if (job.actor_type) {
-      params.set("actor_type", job.actor_type);
-    }
-    if (job.risk_tags?.length) {
-      params.set("risk_tags", job.risk_tags.join(","));
-    }
-    if (job.requires?.length) {
-      params.set("requires", job.requires.join(","));
-    }
-    return `/policy?${params.toString()}`;
-  }, [job]);
-
-  const logLines = useMemo(() => {
-    if (!job) {
-      return [];
-    }
-    const lines: Array<{ level: "INFO" | "WARN" | "ERROR"; message: string }> = [];
-    lines.push({ level: "INFO", message: `Job ${job.id} is ${job.state}` });
-    if (job.last_state && job.last_state !== job.state) {
-      lines.push({ level: "INFO", message: `Previous state: ${job.last_state}` });
-    }
-    if (job.approval_required) {
-      lines.push({ level: "WARN", message: "Approval required before execution." });
-    }
-    if (job.error_message) {
-      lines.push({ level: "ERROR", message: job.error_message });
-    }
-    if (job.error_status) {
-      lines.push({ level: "ERROR", message: `Status: ${job.error_status}` });
-    }
-    if (job.error_code) {
-      lines.push({ level: "ERROR", message: `Code: ${job.error_code}` });
-    }
-    return lines;
-  }, [job]);
-
-  if (jobQuery.isLoading) {
-    return <div className="text-sm text-muted">Loading job...</div>;
+function fmtTimestamp(iso?: string): string {
+  if (!iso) return "-";
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return iso;
   }
-  if (!job) {
-    return <div className="text-sm text-muted">Job not found.</div>;
+}
+
+function durationBetween(a?: string, b?: string): string | null {
+  if (!a || !b) return null;
+  const ms = new Date(b).getTime() - new Date(a).getTime();
+  if (ms < 0 || isNaN(ms)) return null;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60_000).toFixed(1)}m`;
+}
+
+// ---------------------------------------------------------------------------
+// Timeline of state transitions (derived from job metadata)
+// ---------------------------------------------------------------------------
+
+interface TimelineEntry {
+  state: string;
+  timestamp: string;
+}
+
+function deriveTimeline(job: {
+  createdAt: string;
+  updatedAt: string;
+  status: string;
+  duration?: number;
+}): TimelineEntry[] {
+  const entries: TimelineEntry[] = [
+    { state: "submitted", timestamp: job.createdAt },
+  ];
+
+  if (job.status !== "pending") {
+    entries.push({ state: job.status, timestamp: job.updatedAt });
   }
 
-  const decisionTimestamp = (value?: number): string => {
-    const ms = epochToMillis(value);
-    if (!ms) {
-      return "-";
-    }
-    return formatDateTime(ms);
-  };
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// Payload viewer
+// ---------------------------------------------------------------------------
+
+function PayloadSection({
+  title,
+  ptr,
+}: {
+  title: string;
+  ptr: string | undefined;
+}) {
+  const { data, isLoading, isError } = useMemoryPayload(ptr);
+
+  if (!ptr) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+        </CardHeader>
+        <p className="text-sm text-muted">No payload pointer available.</p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <span className="text-[10px] font-mono text-muted truncate max-w-[200px]" title={ptr}>
+          {ptr}
+        </span>
+      </CardHeader>
+      {isLoading && (
+        <div className="animate-pulse space-y-2">
+          <div className="h-4 w-3/4 rounded bg-surface2" />
+          <div className="h-4 w-1/2 rounded bg-surface2" />
+        </div>
+      )}
+      {isError && (
+        <p className="text-sm text-danger">Failed to load payload.</p>
+      )}
+      {!isLoading && !isError && data !== undefined && (
+        <pre className="max-h-64 overflow-auto rounded-xl bg-surface2 p-3 text-xs text-ink font-mono">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// JobDetailPage
+// ---------------------------------------------------------------------------
+
+export default function JobDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const { data: job, isLoading, isError } = useJob(id ?? "");
+  const { data: decisions } = useJobDecisions(id ?? "");
+
+  // Use first decision or job's inline decision
+  const safetyDecision = decisions?.[0] ?? job?.safetyDecision;
+  const timeline = job ? deriveTimeline(job) : [];
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent" />
+          <span className="text-sm text-muted">Loading job...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (isError || !job) {
+    return (
+      <div className="space-y-4">
+        <Link to="/jobs" className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
+          <ArrowLeft className="h-4 w-4" /> Back to Jobs
+        </Link>
+        <Card>
+          <p className="py-8 text-center text-sm text-muted">
+            Job not found or failed to load.
+          </p>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Job {job.id.slice(0, 12)}</CardTitle>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" type="button" onClick={() => navigate("/jobs")}>Back to jobs</Button>
-            {job.run_id ? (
-              <Button variant="subtle" size="sm" type="button" onClick={() => navigate(`/runs/${job.run_id}`)}>
-                View run
-              </Button>
-            ) : null}
-            {job.workflow_id ? (
-              <Button variant="subtle" size="sm" type="button" onClick={() => navigate(`/workflows/${job.workflow_id}`)}>
-                View workflow
-              </Button>
-            ) : null}
-            {job.pack_id ? (
-              <Button variant="subtle" size="sm" type="button" onClick={() => navigate(`/packs?pack_id=${job.pack_id}`)}>
-                View pack
-              </Button>
-            ) : null}
-            {policyLink ? (
-              <Button variant="subtle" size="sm" type="button" onClick={() => navigate(policyLink)}>
-                Open policy
-              </Button>
-            ) : null}
-          </div>
-        </CardHeader>
-        <div className="grid gap-4 lg:grid-cols-4">
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Status</div>
-            <JobStatusBadge state={job.state} />
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Topic</div>
-            <div className="text-sm font-semibold text-ink">{job.topic || "-"}</div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Tenant</div>
-            <div className="text-sm font-semibold text-ink">{job.tenant || "default"}</div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Trace</div>
-            <div className="text-sm font-semibold text-ink">
-              {traceUrl ? (
-                <a href={traceUrl} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
-                  {job.trace_id}
-                </a>
-              ) : (
-                job.trace_id || "-"
-              )}
-            </div>
+      {/* Back link */}
+      <Link to="/jobs" className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
+        <ArrowLeft className="h-4 w-4" /> Back to Jobs
+      </Link>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-bold text-ink">
+            Job {job.id.slice(0, 8)}...
+          </h1>
+          <div className="mt-1 flex items-center gap-3 text-sm text-muted">
+            <span className="font-mono">{job.topic}</span>
+            <span>&middot;</span>
+            <span>Pool: {job.pool || "\u2014"}</span>
+            {job.duration !== undefined && (
+              <>
+                <span>&middot;</span>
+                <span>{job.duration}ms</span>
+              </>
+            )}
           </div>
         </div>
-      </Card>
-
-      {job.approval_required ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Approval Required</CardTitle>
-            <div className="text-xs text-muted">Provide a reason or note before approving</div>
-          </CardHeader>
-          <div className="grid gap-3 lg:grid-cols-2">
-            <Input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason" />
-            <Input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Note" />
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              variant="primary"
-              size="sm"
-              type="button"
-              onClick={() => approveMutation.mutate()}
-              disabled={approveMutation.isPending}
-            >
-              Approve
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              type="button"
-              onClick={() => rejectMutation.mutate()}
-              disabled={rejectMutation.isPending}
-            >
-              Reject
-            </Button>
-          </div>
-        </Card>
-      ) : null}
-
-      <Card id="job-safety">
-        <CardHeader>
-          <CardTitle>Policy Decision</CardTitle>
-          <div className="text-xs text-muted">Safety evaluation details</div>
-        </CardHeader>
-        <div className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
-          <div>Decision: {job.safety_decision || "-"}</div>
-          <div>Reason: {job.safety_reason || "-"}</div>
-          <div>Rule: {job.safety_rule_id || "-"}</div>
-          <div>Snapshot: {job.safety_snapshot || "-"}</div>
-          <div>Capability: {job.capability || "-"}</div>
-          <div>Pack: {job.pack_id || "-"}</div>
-        </div>
-        {job.safety_constraints ? (
-          <pre className="mt-3 rounded-2xl border border-border bg-white/70 p-3 text-[11px] text-ink">
-            {JSON.stringify(job.safety_constraints, null, 2)}
-          </pre>
-        ) : null}
-        {job.safety_remediations?.length ? (
-          <div className="mt-4 space-y-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Suggested remediations</div>
-            {job.safety_remediations.map((remediation, index) => (
-              <div key={remediation.id || index} className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="text-sm font-semibold text-ink">{remediation.title || remediation.id || "Remediation"}</div>
-                {remediation.summary ? <div className="mt-1 text-xs text-muted">{remediation.summary}</div> : null}
-                <div className="mt-2 text-xs text-muted">
-                  {remediation.replacement_topic ? `Topic: ${remediation.replacement_topic}` : "Topic: unchanged"}
-                </div>
-                <div className="text-xs text-muted">
-                  {remediation.replacement_capability ? `Capability: ${remediation.replacement_capability}` : "Capability: unchanged"}
-                </div>
-                {remediation.add_labels ? (
-                  <div className="mt-2 text-xs text-muted">
-                    Add labels: {Object.keys(remediation.add_labels).length ? JSON.stringify(remediation.add_labels) : "none"}
-                  </div>
-                ) : null}
-                {remediation.remove_labels?.length ? (
-                  <div className="text-xs text-muted">Remove labels: {remediation.remove_labels.join(", ")}</div>
-                ) : null}
-                <div className="mt-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    onClick={() => remediateMutation.mutate(remediation.id)}
-                    disabled={remediateMutation.isPending}
-                  >
-                    Apply remediation
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </Card>
-
-      <Card id="job-audit">
-        <CardHeader>
-          <CardTitle>Decision Audit Log</CardTitle>
-          <div className="text-xs text-muted">Policy checks recorded for this job</div>
-        </CardHeader>
-        {decisionsQuery.isLoading ? (
-          <div className="text-sm text-muted">Loading decision history...</div>
-        ) : decisions.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
-            No decision history recorded.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {decisions.map((decision, index) => (
-              <div key={`${decision.rule_id || "rule"}-${decision.checked_at || index}`} className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-ink">{decision.decision || "UNKNOWN"}</div>
-                  <div>{decisionTimestamp(decision.checked_at)}</div>
-                </div>
-                <div>Rule: {decision.rule_id || "-"}</div>
-                <div>Snapshot: {decision.policy_snapshot || "-"}</div>
-                {decision.reason ? <div>Reason: {decision.reason}</div> : null}
-                {decision.constraints ? (
-                  <pre className="mt-2 rounded-2xl border border-border bg-white/70 p-3 text-[11px] text-ink">
-                    {JSON.stringify(decision.constraints, null, 2)}
-                  </pre>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Metadata</CardTitle>
-        </CardHeader>
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
-            <div>Actor: {job.actor_id || "-"}</div>
-            <div>Actor type: {job.actor_type || "-"}</div>
-            <div>Idempotency: {job.idempotency_key || "-"}</div>
-            <div>Attempts: {job.attempts ?? 0}</div>
-          </div>
-          <div className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
-            <div>Workflow: {job.workflow_id || "-"}</div>
-            <div>Run: {job.run_id || "-"}</div>
-            <div>Step: {job.step_id || "-"}</div>
-          </div>
-        </div>
-        {job.labels ? (
-          <pre className="mt-3 rounded-2xl border border-border bg-white/70 p-3 text-[11px] text-ink">
-            {JSON.stringify(job.labels, null, 2)}
-          </pre>
-        ) : null}
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Context</CardTitle>
-        </CardHeader>
-        <pre className="rounded-2xl border border-border bg-white/70 p-3 text-[11px] text-ink">
-          {JSON.stringify(job.context || {}, null, 2)}
-        </pre>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Result</CardTitle>
-        </CardHeader>
-        <pre className="rounded-2xl border border-border bg-white/70 p-3 text-[11px] text-ink">
-          {JSON.stringify(job.result || {}, null, 2)}
-        </pre>
-      </Card>
-
-      <Card id="job-logs">
-        <CardHeader>
-          <CardTitle>Logs</CardTitle>
-          <div className="text-xs text-muted">External logs for this job execution</div>
-        </CardHeader>
-        <div className="rounded-2xl border border-border bg-black p-4 font-mono text-xs text-green-400 h-64 overflow-y-auto">
-          {logLines.length ? (
-            logLines.map((line, index) => (
-              <div key={`log-${index}`} className={line.level === "ERROR" ? "text-red-400" : line.level === "WARN" ? "text-yellow-300" : undefined}>
-                [{line.level}] {line.message}
-              </div>
-            ))
-          ) : (
-            <div className="text-muted">No logs recorded for this job yet.</div>
+        <div className="flex items-center gap-3">
+          <JobStatusBadge state={job.status} />
+          {safetyDecision && (
+            <Badge variant={
+              safetyDecision.type === "allow" ? "success" :
+              safetyDecision.type === "deny" ? "danger" :
+              safetyDecision.type === "require_approval" ? "warning" : "info"
+            }>
+              {safetyDecision.type.replace(/_/g, " ")}
+            </Badge>
           )}
         </div>
+      </div>
+
+      {/* Job actions */}
+      <JobActions job={job} />
+
+      {/* State machine visualization */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Lifecycle</CardTitle>
+        </CardHeader>
+        <div className="flex justify-center py-2">
+          <JobStateMachine status={job.status} />
+        </div>
       </Card>
+
+      {/* Safety explain */}
+      {safetyDecision && (
+        <section>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
+            Safety Evaluation
+          </h2>
+          <SafetyExplainCard decision={safetyDecision} />
+        </section>
+      )}
+
+      {/* Payloads */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <PayloadSection title="Request Payload" ptr={job.contextPtr} />
+        <PayloadSection title="Result Payload" ptr={job.resultPtr} />
+      </div>
+
+      {/* Timeline */}
+      {timeline.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Timeline</CardTitle>
+          </CardHeader>
+          <div className="space-y-0">
+            {timeline.map((entry, i) => {
+              const dur = i > 0 ? durationBetween(timeline[i - 1].timestamp, entry.timestamp) : null;
+              return (
+                <div key={i} className="flex items-center gap-3 border-b border-border/40 py-2 last:border-b-0">
+                  <Clock className="h-3.5 w-3.5 shrink-0 text-muted" />
+                  <span className="text-xs font-semibold text-ink capitalize w-24">{entry.state}</span>
+                  <span className="text-xs text-muted font-mono">{fmtTimestamp(entry.timestamp)}</span>
+                  {dur && (
+                    <span className="ml-auto text-[10px] text-muted">+{dur}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Workflow context link */}
+      {job.workflowRunId && (
+        <Card>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">Part of Workflow Run</h3>
+              <p className="mt-0.5 text-xs text-muted font-mono">{job.workflowRunId}</p>
+            </div>
+            <Link
+              to="/workflows"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-ink hover:border-accent hover:text-accent transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              View Workflow
+            </Link>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

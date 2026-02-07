@@ -1,0 +1,62 @@
+{
+  "id": "task-cd3f2deb",
+  "epicId": "epic-decda99c",
+  "title": "WorkflowDetailPage redesign — three-section layout",
+  "description": "Rewrite WorkflowDetailPage as a three-section page. All sections visible without tabs (except Definition which is collapsed).\n\n**File:** `dashboard/src/pages/WorkflowDetailPage.tsx`\n\n**Layout (top to bottom):**\n\n**Header:** Workflow name + description + \"Run Now\" button + \"Edit\" toggle (expands Section C)\n\n**Section A — Run History (always visible):**\n- Table of all runs for this workflow, most recent first\n- Columns: Run ID (mono, truncated), Status (RunStatusBadge), Started (time ago), Duration, Steps (X/Y with mini colored bar — green/red/yellow/gray segments per step outcome), Triggered by\n- Click a row → selects that run for the DAG visualizer (Section B)\n- Most recent run auto-selected on page load\n- Selected row highlighted with accent border\n- If URL is `/workflows/:id/runs/:runId`, pre-select that run\n\n**Section B — DAG Visualizer (hero, takes most vertical space):**\n- Uses DAG Run Overlay nodes from task-db84dd86\n- Shows workflow steps as a ReactFlow graph with the selected run's state overlaid\n- Click any node → opens NodeDetailPanel (task-bbbbc3f7)\n- Min height 400px, resizable\n- If no runs exist, show the DAG in blueprint/neutral mode with a \"No runs yet — click Run Now\" prompt\n\n**Section C — Workflow Definition (collapsed by default):**\n- Expandable via \"Edit Definition\" button in header\n- When expanded: shows workflow JSON/YAML in a code viewer\n- Future: this becomes the visual DAG editor (ReactFlow edit mode)\n- For now: read-only code view with copy button\n\n**Route handling:** `/workflows/:id` shows most recent run. `/workflows/:id/runs/:runId` pre-selects specific run.",
+  "definitionOfDone": [
+    "Three-section layout: Run History + DAG Visualizer + collapsible Definition",
+    "Run History table with clickable rows that select runs for DAG",
+    "Most recent run auto-selected on load",
+    "URL /workflows/:id/runs/:runId pre-selects correct run",
+    "DAG shows selected run state via RunOverlayNode",
+    "Node click opens NodeDetailPanel",
+    "Definition section collapsed by default, expandable",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Rewrite `WorkflowDetailPage.tsx` with three-section layout.\n\n**Route params:** `useParams<{ id: string; runId?: string }>()` for both `/workflows/:id` and `/workflows/:id/runs/:runId`.\n\n**Data fetching:** `useWorkflow(id)`, `useWorkflowRuns(id, { limit: 50 })`. Auto-select most recent run or URL-specified runId via `useState<string | null>`.\n\n**Header:** Workflow name (text, truncated 80 chars), description, \"Run Now\" Button (opens RunNowModal from task-f4436e9f — stub onClick for now), \"Edit Definition\" toggle button.\n\n**Section A — Run History:** Table with columns: Run ID (mono 8-char truncated), Status (RunStatusBadge), Started (timeAgo helper), Duration (formatDuration), Steps mini-bar (colored div segments), Triggered by. Click row sets selectedRunId state + navigates to `/workflows/:id/runs/:runId`.\n\n**Section B — DAG Visualizer:** `<RunDAG>` from dag/ module. Passes workflow + selected run. `onNodeClick` opens NodeDetailPanel via `useState<string | null>(selectedStepId)`. Min-h-[400px]. Blueprint mode if no runs.\n\n**Section C — Definition:** `<details>` element, collapsed. Shows `JSON.stringify(workflow, null, 2)` in `<pre>` with copy button.\n\nSECURITY: All workflow metadata rendered as text. JSON in <pre> only. No eval. Run ID from URL validated against fetched runs list.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/WorkflowDetailPage.tsx"
+      ],
+      "startedAt": "2026-02-07T21:19:49.183Z",
+      "completedAt": "2026-02-07T21:20:50.738Z",
+      "note": "Rewrote WorkflowDetailPage with three-section layout: (A) Run History table with clickable rows, selected row highlighted with accent border, StepsMiniBar with colored segments, (B) DAG Visualizer using RunDAG component with selected run overlay, node click opens NodeDetailPanel, (C) Workflow Definition collapsed by default, expandable via header button, read-only JSON with copy button. Auto-selects most recent run or URL-specified runId. Uses ConfirmDialog for delete. Removed old tab system.",
+      "modifiedFiles": [
+        "dashboard/src/pages/WorkflowDetailPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Update route config in `App.tsx` to add `/workflows/:id/runs/:runId` route pointing to same WorkflowDetailPage component. Ensure both routes render correctly.\n\nVerify `node ./node_modules/typescript/bin/tsc --noEmit` passes.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/App.tsx"
+      ],
+      "startedAt": "2026-02-07T21:20:54.883Z",
+      "completedAt": "2026-02-07T21:21:40.421Z",
+      "note": "Changed /workflows/:id/runs/:runId route from RunDetailPage to WorkflowDetailPage so the detail page handles both URLs with useParams. Cleaned unused imports. tsc --noEmit passes.",
+      "modifiedFiles": [
+        "dashboard/src/App.tsx",
+        "dashboard/src/pages/WorkflowDetailPage.tsx"
+      ]
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "CRITICAL",
+  "order": 10,
+  "createdAt": "2026-02-07T21:06:13.921Z",
+  "updatedAt": "2026-02-07T21:33:11.482Z",
+  "planSubmittedAt": "2026-02-07T21:14:13.623Z",
+  "planApprovedAt": "2026-02-07T21:14:13.625Z"
+}

@@ -1,0 +1,56 @@
+{
+  "id": "task-82539f87",
+  "epicId": "epic-decda99c",
+  "title": "WorkflowsPage redesign — ActiveRunsStrip + Templates list",
+  "description": "Rewrite WorkflowsPage.tsx as the operational-first landing page. Replace current simple card grid with two-zone layout.\n\n**File:** `dashboard/src/pages/WorkflowsPage.tsx`\n\n**Layout (top to bottom):**\n1. **Header:** \"Workflows\" title + \"Create Workflow\" button (right-aligned)\n2. **Active Runs Strip:** `<ActiveRunsStrip />` — always visible at top, shows live state\n3. **Templates section:** heading \"Templates\" + search/filter bar + grid of `<WorkflowTemplateCard />` components\n   - Search by name\n   - Filter by tag (if workflows have tags)\n   - Grid: responsive, 1 col mobile → 2 cols md → 3 cols lg\n\n**Delete old code:** Remove old WorkflowCard component and its helpers (TriggerBadge, SuccessRate) that were inline in WorkflowsPage. These are replaced by the new WorkflowTemplateCard.\n\n**No tabs.** The active runs strip IS the operational view. The templates list IS the design-time entry point. Both visible simultaneously — the strip answers \"what's happening now\" and the list answers \"what workflows exist.\"",
+  "definitionOfDone": [
+    "WorkflowsPage shows ActiveRunsStrip at top",
+    "Templates grid with WorkflowTemplateCard below",
+    "Search by name works",
+    "Create Workflow button navigates to /workflows/new",
+    "Old inline WorkflowCard/TriggerBadge/SuccessRate removed",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Rewrite `dashboard/src/pages/WorkflowsPage.tsx`.\n\nDelete all old inline components: TriggerBadge, SuccessRate, SkeletonCards, WorkflowCard, TABS array, TabId type.\n\nNew layout:\n```tsx\n<div className=\"space-y-6\">\n  {/* Header */}\n  <div className=\"flex items-center justify-between\">\n    <h1>Workflows</h1>\n    <Button onClick={() => navigate('/workflows/new')}>Create Workflow</Button>\n  </div>\n  \n  {/* Active Runs Strip */}\n  <ActiveRunsStrip />\n  \n  {/* Templates Section */}\n  <section>\n    <div className=\"flex items-center gap-3 mb-4\">\n      <h2>Templates</h2>\n      <Input placeholder=\"Search workflows...\" value={search} onChange={...} />\n    </div>\n    <div className=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4\">\n      {filtered.map(wf => <WorkflowTemplateCard key={wf.id} ... />)}\n    </div>\n  </section>\n</div>\n```\n\nSearch: `useState<string>('')`, filter `workflows` by `name.toLowerCase().includes(search.toLowerCase())`. Uses `useWorkflows()` for template list.\n\nImports: ActiveRunsStrip from components/workflows/, WorkflowTemplateCard from components/workflows/.\n\nSECURITY: Search input is local state only, not sent to API. Filtering is client-side string comparison.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/WorkflowsPage.tsx"
+      ],
+      "startedAt": "2026-02-07T21:28:06.585Z",
+      "completedAt": "2026-02-07T21:28:43.338Z",
+      "note": "Rewrote WorkflowsPage: removed old TriggerBadge, SuccessRate, WorkflowCard, TABS, TabId, RunsTab import. New layout: header with Create Workflow button, ActiveRunsStrip always visible, Templates section with search input + responsive grid of WorkflowTemplateCard. Client-side name search with useMemo. Run Now wired to useStartRun with toast-style pending indicator.",
+      "modifiedFiles": [
+        "dashboard/src/pages/WorkflowsPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Delete `RunsTab` import and the old tab switching logic. Verify `dashboard/src/components/workflows/RunsTab.tsx` is no longer imported by any page (it will be removed in task-d8ebfc97).\n\nRun `node ./node_modules/typescript/bin/tsc --noEmit`.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/WorkflowsPage.tsx"
+      ],
+      "startedAt": "2026-02-07T21:28:43.812Z",
+      "completedAt": "2026-02-07T21:29:00.441Z",
+      "note": "RunsTab no longer imported by any page (only its own definition file exists). tsc --noEmit clean. RunsTab.tsx deletion deferred to task-d8ebfc97."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 6,
+  "createdAt": "2026-02-07T21:05:22.669Z",
+  "updatedAt": "2026-02-07T21:36:57.729Z",
+  "planSubmittedAt": "2026-02-07T21:15:29.043Z",
+  "planApprovedAt": "2026-02-07T21:15:29.044Z"
+}

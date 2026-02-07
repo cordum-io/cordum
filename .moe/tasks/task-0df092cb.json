@@ -1,0 +1,68 @@
+{
+  "id": "task-0df092cb",
+  "epicId": "epic-411cf33d",
+  "title": "Policy analytics",
+  "description": "Recharts dashboard: decisions over time (stacked area chart), most-hit rules (bar chart), eval latency trends (line chart). Export-ready for compliance reports.",
+  "definitionOfDone": [
+    "Decisions over time: Recharts stacked area chart (allow/deny/approve/throttle)",
+    "Most-hit rules: Recharts horizontal bar chart",
+    "Eval latency trends: Recharts line chart (p50, p95, p99)",
+    "Time range selector (1h, 24h, 7d, 30d)",
+    "Export button (CSV download of chart data)",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/policy/PolicyAnalytics.tsx: Recharts dashboard. (1) Decisions over time: StackedAreaChart with 4 series (allow, deny, require_approval, throttle) using decision-type colors. Time axis. (2) Most-hit rules: Horizontal BarChart, sorted by hit count, showing rule ID + bar. Top 10 rules. (3) Eval latency trends: LineChart with 3 series (p50, p95, p99) over time. Time range selector: buttons for 1h, 24h, 7d, 30d. Data from GET /api/v1/policy/stats?range=X. Export button: generates CSV from chart data (builds CSV string, triggers browser download via Blob URL). All charts use ResponsiveContainer for responsive sizing.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/policy/PolicyAnalytics.tsx"
+      ],
+      "startedAt": "2026-02-07T01:12:46.001Z",
+      "completedAt": "2026-02-07T01:13:43.046Z",
+      "note": "Created PolicyAnalytics with 3 Recharts charts: stacked AreaChart for decisions over time (allow/deny/require_approval/throttle), horizontal BarChart for top 10 most-hit rules, LineChart for p50/p95/p99 eval latency. Time range selector (1h/24h/7d/30d), CSV export for all chart data, custom tooltips.",
+      "modifiedFiles": [
+        "dashboard/src/components/policy/PolicyAnalytics.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Integrate PolicyAnalytics as 'Analytics' tab in PolicyPage.tsx.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ],
+      "startedAt": "2026-02-07T01:13:43.466Z",
+      "completedAt": "2026-02-07T01:14:04.593Z",
+      "note": "Added PolicyAnalytics import and analytics tab case before the generic fallback.",
+      "modifiedFiles": [
+        "dashboard/src/pages/PolicyPage.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T01:14:05.035Z",
+      "completedAt": "2026-02-07T01:14:17.614Z",
+      "note": "tsc --noEmit passes with no errors."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "MEDIUM",
+  "order": 80,
+  "createdAt": "2026-02-06T23:49:39.133Z",
+  "updatedAt": "2026-02-07T20:06:38.647Z",
+  "planSubmittedAt": "2026-02-06T23:58:56.933Z",
+  "planApprovedAt": "2026-02-06T23:58:56.934Z"
+}

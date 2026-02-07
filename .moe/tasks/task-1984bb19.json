@@ -1,0 +1,69 @@
+{
+  "id": "task-1984bb19",
+  "epicId": "epic-06442149",
+  "title": "DAG Run Visualization",
+  "description": "Same ReactFlow graph but read-only, overlaid with live run status. Nodes colored by step status. Safety decisions shown per job-type step. Animates via WebSocket events.",
+  "definitionOfDone": [
+    "Read-only ReactFlow graph showing workflow run progress",
+    "Nodes colored by step status: pending=gray, running=blue, succeeded=green, failed=red",
+    "Safety decision badges on job-type nodes",
+    "Live updates via WebSocket events",
+    "Animated transitions as status changes",
+    "Links to individual job detail for job-type steps",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/components/workflow/RunVisualization.tsx: Read-only ReactFlow graph for workflow run visualization. Reuses same custom node components but with status overlays. Node background colors based on step status: pending=gray/muted, running=blue/accent, succeeded=green/success, failed=red/danger, skipped=transparent. Safety decision badges on job-type nodes (small Badge component). Animated pulse on running nodes (CSS animation). Edge styling: completed edges solid, pending edges dashed. Subscribes to WebSocket events for live updates (invalidates useRun query).",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/RunVisualization.tsx"
+      ],
+      "startedAt": "2026-02-07T00:49:51.653Z",
+      "completedAt": "2026-02-07T00:50:36.174Z",
+      "note": "Created RunVisualization with RunNode (status-colored border/bg, safety decision badges, pulse animation on running), read-only ReactFlow graph, edge styling (solid green for completed deps, dashed for pending, animated for running).",
+      "modifiedFiles": [
+        "dashboard/src/components/workflow/RunVisualization.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Add click handlers on job-type nodes: clicking navigates to /jobs/:jobId for the corresponding job. Non-job nodes show tooltip with step details on hover.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/RunVisualization.tsx"
+      ],
+      "startedAt": "2026-02-07T00:50:36.634Z",
+      "completedAt": "2026-02-07T00:51:52.929Z",
+      "note": "Added tooltip with step details (type, status, started/completed times, safety decision) on all nodes. Job-type node click navigates to /jobs/:jobId.",
+      "modifiedFiles": [
+        "dashboard/src/components/workflow/RunVisualization.tsx"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:51:53.302Z",
+      "completedAt": "2026-02-07T00:51:57.670Z",
+      "note": "tsc --noEmit passes clean."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 28,
+  "createdAt": "2026-02-06T23:48:49.032Z",
+  "updatedAt": "2026-02-07T20:02:25.600Z",
+  "planSubmittedAt": "2026-02-06T23:57:30.337Z",
+  "planApprovedAt": "2026-02-06T23:57:30.338Z"
+}

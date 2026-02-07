@@ -1,0 +1,24 @@
+{
+  "id": "proj-4aad1c0e",
+  "schemaVersion": 2,
+  "name": "cordum",
+  "rootPath": "D:\\projexts\\cordum",
+  "globalRails": {
+    "techStack": [],
+    "forbiddenPatterns": [],
+    "requiredPatterns": [],
+    "formatting": "",
+    "testing": "",
+    "customRules": []
+  },
+  "settings": {
+    "approvalMode": "TURBO",
+    "speedModeDelayMs": 2000,
+    "autoCreateBranch": false,
+    "branchPattern": "moe/epicId/taskId",
+    "commitPattern": "featepicId: taskTitle",
+    "agentCommand": "claude"
+  },
+  "createdAt": "2026-02-03T11:13:46.487061Z",
+  "updatedAt": "2026-02-05T23:35:40.739Z"
+}

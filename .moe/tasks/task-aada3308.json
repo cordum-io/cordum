@@ -1,0 +1,75 @@
+{
+  "id": "task-aada3308",
+  "epicId": "epic-7026bb2b",
+  "title": "New node types — HTTP Request, Code/Transform, Switch, Loop, Sub-workflow, Error Trigger",
+  "description": "Add 6 new n8n-inspired node types adapted for AI agent orchestration.\\n\\n**1. HTTP Request node** (type: `http`)\\n- Config: method (GET/POST/PUT/DELETE), URL, headers (key-value pairs), body template, timeout\\n- Icon: Globe (lucide)\\n- Use case: call external APIs, webhooks, or microservices as workflow steps\\n- Accent: purple\\n\\n**2. Code/Transform node** (type: `transform`)\\n- Config: expression (JS-like), input mapping, output mapping\\n- Icon: Code (lucide)\\n- Use case: transform data between steps, map/filter arrays, format outputs\\n- Accent: indigo\\n- SECURITY: expression stored as string, evaluated server-side in sandboxed runtime (NOT in browser)\\n\\n**3. Switch node** (type: `switch`)\\n- Config: expression + N cases (value→branch mappings) + default branch\\n- Icon: GitMerge (lucide)\\n- Multiple named output handles (one per case + default). Uses same BaseNode multi-output from condition task.\\n- Accent: teal\\n\\n**4. Loop node** (type: `loop`)\\n- Config: forEach expression (what to iterate), maxIterations (safety cap), parallelism\\n- Icon: Repeat (lucide)\\n- Two outputs: loop-body (connects to sub-steps) and done (continues after loop)\\n- Accent: orange\\n\\n**5. Sub-workflow node** (type: `sub-workflow`)\\n- Config: workflowId (select from existing workflows), input mapping\\n- Icon: Workflow (lucide) or GitBranch\\n- Use case: compose workflows by calling other workflows\\n- Accent: cyan\\n\\n**6. Error Trigger node** (type: `error-trigger`)\\n- Config: catches errors from specific steps or any step, retry config\\n- Icon: AlertTriangle (lucide)\\n- Special: no input handle (triggered by errors), output connects to recovery steps\\n- Accent: red\\n\\nFor each node: create component in nodes/, add to nodeTypes registry in WorkflowCanvas, add config schema + form fields in NodeConfigPanel, add to BuilderSidebar palette, add to RunOverlayNode status rendering.",
+  "definitionOfDone": [
+    "All 6 node types render in builder with correct icons and colors",
+    "Each has config panel with appropriate fields",
+    "Nodes appear in BuilderSidebar palette",
+    "nodeTypes registry updated in WorkflowCanvas",
+    "Switch node has multiple named outputs",
+    "Loop node has loop-body and done outputs",
+    "Error trigger has no input handle",
+    "RunOverlayNode handles new types for run visualization",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create 6 new node components in `dashboard/src/components/workflow/nodes/`.\n\nAll follow existing pattern: memo() wrapper, BaseNode with icon + accent + children.\n\n- `HttpNode.tsx`: Globe icon, purple accent, shows method + URL truncated\n- `TransformNode.tsx`: Code icon, indigo accent, shows expression preview\n- `SwitchNode.tsx`: GitMerge icon, teal accent, uses multi-output BaseNode (N cases + default). Dynamic outputs from config.cases array.\n- `LoopNode.tsx`: Repeat icon, orange accent, dual outputs (loop-body + done)\n- `SubWorkflowNode.tsx`: Workflow icon, cyan accent, shows referenced workflow name\n- `ErrorTriggerNode.tsx`: AlertTriangle icon, red accent, NO input handle (override BaseNode to skip target Handle)\n\nFor ErrorTriggerNode: add optional `hideInput?: boolean` prop to BaseNode.\n\nSECURITY: All config values rendered as text. URL in HttpNode truncated to 60 chars. Expression in TransformNode truncated to 80 chars.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/nodes/HttpNode.tsx",
+        "dashboard/src/components/workflow/nodes/TransformNode.tsx",
+        "dashboard/src/components/workflow/nodes/SwitchNode.tsx",
+        "dashboard/src/components/workflow/nodes/LoopNode.tsx",
+        "dashboard/src/components/workflow/nodes/SubWorkflowNode.tsx",
+        "dashboard/src/components/workflow/nodes/ErrorTriggerNode.tsx",
+        "dashboard/src/components/workflow/nodes/BaseNode.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Register all 6 new types in WorkflowCanvas nodeTypes registry and BuilderSidebar palette.\n\nWorkflowCanvas: add to `nodeTypes` object: `http: HttpNode, transform: TransformNode, switch: SwitchNode, loop: LoopNode, 'sub-workflow': SubWorkflowNode, 'error-trigger': ErrorTriggerNode`.\n\nBuilderSidebar: add 6 entries to NODE_TYPES array with type, label, icon, description for each.\n\nUpdate `nodes/index.ts` barrel export with all new nodes.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/WorkflowCanvas.tsx",
+        "dashboard/src/components/workflow/BuilderSidebar.tsx",
+        "dashboard/src/components/workflow/nodes/index.ts"
+      ]
+    },
+    {
+      "stepId": "step-3",
+      "description": "Add config schemas and form fields for all 6 types in NodeConfigPanel.\n\n- http: Zod schema with method (enum), url (string, required), headers (optional), body (optional), timeout (number)\n- transform: expression (string, required), inputMapping (optional), outputMapping (optional)\n- switch: expression (string), cases (array of {value, label}), defaultBranch (string)\n- loop: forEach (string), maxIterations (number, default 100, max 10000), parallelism (number)\n- sub-workflow: workflowId (string, required — use Select populated from useWorkflows), inputMapping (optional)\n- error-trigger: catchFrom (string[] step IDs or 'any'), retryCount (number), retryDelay (string)\n\nSECURITY: URL field for HTTP node: no javascript: or data: schemes (validate with regex). Expression fields stored as strings only. maxIterations capped at 10000 to prevent abuse.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/workflow/NodeConfigPanel.tsx"
+      ]
+    },
+    {
+      "stepId": "step-4",
+      "description": "Update RunOverlayNode and transform.ts to handle the 6 new types.\n\nRunOverlayNode: add type icons for http, transform, switch, loop, sub-workflow, error-trigger with matching colors.\n\ntransform.ts `normalizeWorkflowNodeType()`: add mappings for new backend type names.\n\nVerify `node ./node_modules/typescript/bin/tsc --noEmit`.",
+      "status": "PENDING",
+      "affectedFiles": [
+        "dashboard/src/components/workflows/dag/RunOverlayNode.tsx",
+        "dashboard/src/api/transform.ts"
+      ]
+    }
+  ],
+  "status": "WORKING",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 4,
+  "createdAt": "2026-02-07T22:03:49.049Z",
+  "updatedAt": "2026-02-07T22:04:41.841Z",
+  "planSubmittedAt": "2026-02-07T22:04:41.839Z",
+  "planApprovedAt": "2026-02-07T22:04:41.841Z"
+}

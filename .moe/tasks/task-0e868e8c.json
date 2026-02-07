@@ -1,0 +1,30 @@
+{
+  "id": "task-0e868e8c",
+  "epicId": "epic-06442149",
+  "title": "Config Panel Components for Job Node Types",
+  "description": "Create 3 config panel components (one per job node type) and modify NodeConfigPanel to delegate to them.\n\n**Files (NEW):**\n- `dashboard/src/components/workflow/job/AgentTaskPanel.tsx`\n  - Essential fields: Topic (Input), Prompt (Textarea 5 rows), Adapter (Select)\n  - Advanced (CollapsibleSection, defaultOpen=false): TokenBudgetGroup, Allow Summarization/Retrieval checkboxes, Memory ID, Deadline, Priority select\n  - Uses react-hook-form + zodResolver with agentTaskSchema\n\n- `dashboard/src/components/workflow/job/PackActionPanel.tsx`\n  - Essential fields: Pack (Select from `usePacks()`), Action (Select from pack topics, updates on pack change), Input (Textarea 4 rows)\n  - Advanced: Risk Tags (TagInput), Requires (TagInput), Timeout, Retry Max\n  - Auto-fills topic + capability from selected pack+action\n  - Uses react-hook-form + zodResolver with packActionSchema\n\n- `dashboard/src/components/workflow/job/ToolCallPanel.tsx`\n  - Essential fields: Capability (Input), Input/Prompt (Textarea 4 rows), Risk Tags (TagInput)\n  - Advanced: Topic (auto-derived, editable), Priority (Select), Timeout, Retry Max, Labels (KeyValueEditor)\n  - Uses react-hook-form + zodResolver with toolCallSchema\n\n**File (MODIFY):** `dashboard/src/components/workflow/NodeConfigPanel.tsx`\n- Add cases for `agent-task`, `pack-action`, `tool-call` that delegate to the respective panel components\n- Keep old `job` case as fallback mapping to AgentTaskPanel\n- Panel width `w-96` for these 3 types (wider than current `w-72`)\n- Each panel receives props: `node`, `onSave`, `onClose` (same interface as current)\n\n**SECURITY:** Prompt is plain textarea (no eval). JSON input validated with JSON.parse in try/catch. Token inputs have min/max. All form values are controlled React state.\n\n**Depends on:** Task 1 (UI components), Task 3 (schemas).",
+  "definitionOfDone": [
+    "AgentTaskPanel shows essential fields + collapsible advanced section with token budget, memory, deadline",
+    "PackActionPanel loads packs from usePacks(), auto-fills topic from pack selection",
+    "ToolCallPanel shows capability input with tag input for risk tags and KeyValueEditor for labels",
+    "NodeConfigPanel delegates to correct panel based on node type",
+    "Old job type falls back to AgentTaskPanel",
+    "Panel width is w-96 for job node types",
+    "All forms use react-hook-form + zodResolver with correct schema",
+    "TypeScript compiles with no errors"
+  ],
+  "taskRails": [],
+  "implementationPlan": [],
+  "status": "BACKLOG",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 4,
+  "createdAt": "2026-02-07T22:21:56.110Z",
+  "updatedAt": "2026-02-07T22:21:56.110Z"
+}

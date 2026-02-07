@@ -1,0 +1,53 @@
+{
+  "id": "task-0b625229",
+  "epicId": "epic-decda99c",
+  "title": "WorkflowTemplateCard redesign",
+  "description": "Redesign the workflow card in the templates list. Currently a basic card with name/description. Needs to become an information-dense operational card.\n\n**File:** `dashboard/src/components/workflows/WorkflowTemplateCard.tsx` (new, extracted from WorkflowsPage)\n\n**Each card shows:**\n- Workflow name (bold, clickable → /workflows/:id)\n- Description (1-2 lines, truncated)\n- Step count: \"7 steps\" with mini step-type icons\n- Last run: time ago + status badge (e.g. \"2h ago ✅\" or \"15m ago ❌\")\n- Success rate: percentage + SuccessSparkline component\n- Trigger type badge: \"Manual\" / \"Scheduled\" / \"Event\" / \"Webhook\" (from workflow.trigger or metadata)\n- **\"Run Now\" button** — small, right-aligned, triggers RunNowModal (wired later, just fires onRunNow callback for now)\n\n**Uses:** `useWorkflowStats(workflow.id)` for success rate and sparkline data.\n\n**Layout:** Card with two rows — top row: name + trigger badge + Run Now button. Bottom row: description, stats (step count, last run, success rate + sparkline).",
+  "definitionOfDone": [
+    "WorkflowTemplateCard shows name, description, step count, last run, success rate, trigger badge, Run Now button",
+    "Uses useWorkflowStats for success rate and sparkline",
+    "Run Now button fires onRunNow callback prop",
+    "Click card navigates to /workflows/:id",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create `WorkflowTemplateCard` in `dashboard/src/components/workflows/WorkflowTemplateCard.tsx`.\n\nProps:\n```ts\ninterface WorkflowTemplateCardProps {\n  workflow: Workflow;\n  onRunNow: (workflowId: string) => void;\n}\n```\n\nUses `useWorkflowStats(workflow.id)` for stats, `useNavigate()` for card click.\n\n**Layout:**\n- Card wrapper: `cursor-pointer hover:shadow-lift`, onClick navigates to `/workflows/${workflow.id}`\n- Top row (flex justify-between): workflow name (font-semibold, truncate max 40 chars, text node) + trigger type Badge (variant from triggerType) + Run Now Button (size=sm, variant=outline, onClick with `e.stopPropagation()` to prevent card nav)\n- Description: text-sm text-muted, line-clamp-2 (truncate to 2 lines)\n- Stats row (flex gap-4 text-xs text-muted): step count (\"N steps\"), last run (timeAgo + tiny RunStatusBadge), success rate (percentage + SuccessSparkline component inline)\n\nStep type mini-icons: map workflow.steps types to 12px lucide icons in a flex row (max 8 shown, +N overflow).\n\nSECURITY: All workflow name/description rendered as text nodes. No innerHTML. Run Now button uses stopPropagation to avoid accidental navigation.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/components/workflows/WorkflowTemplateCard.tsx"
+      ],
+      "startedAt": "2026-02-07T21:27:04.022Z",
+      "completedAt": "2026-02-07T21:27:36.799Z",
+      "note": "Created WorkflowTemplateCard with: top row (name truncated to 40 chars, trigger badge, Run Now button with stopPropagation), description (line-clamp-2), stats row (step count + type mini-icons max 8, last run time + RunStatusBadge, success rate % + inline SuccessSparkline). SuccessSparkline inlined as fallback until dedicated component exists. Uses useWorkflowStats hook for stats data.",
+      "modifiedFiles": [
+        "dashboard/src/components/workflows/WorkflowTemplateCard.tsx"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify `node ./node_modules/typescript/bin/tsc --noEmit`. Ensure SuccessSparkline import path is correct (will be stub/placeholder if task-55c62194 not yet done — use optional import or inline fallback).",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T21:27:37.241Z",
+      "completedAt": "2026-02-07T21:27:51.572Z",
+      "note": "tsc --noEmit passes clean."
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 5,
+  "createdAt": "2026-02-07T21:05:14.082Z",
+  "updatedAt": "2026-02-07T21:36:37.449Z",
+  "planSubmittedAt": "2026-02-07T21:15:14.096Z",
+  "planApprovedAt": "2026-02-07T21:15:14.098Z"
+}

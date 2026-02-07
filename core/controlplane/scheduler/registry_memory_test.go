@@ -90,12 +90,25 @@ func TestMemoryRegistry_Concurrency(t *testing.T) {
 	}
 }
 
+func TestMemoryRegistryDoubleCloseNoPanic(t *testing.T) {
+	r := scheduler.NewMemoryRegistry()
+	r.Close()
+	r.Close() // must not panic
+}
+
 func TestMemoryRegistry_ExpiresStaleWorkers(t *testing.T) {
 	r := scheduler.NewMemoryRegistryWithTTL(10 * time.Millisecond)
 
 	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-expire", Pool: "A"})
 
-	time.Sleep(25 * time.Millisecond) // allow expire loop to run
+	// Poll until the expire loop removes the stale worker.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(r.Snapshot()) == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	snapshot := r.Snapshot()
 	if len(snapshot) != 0 {

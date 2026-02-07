@@ -1,0 +1,15 @@
+{
+  "id": "epic-28f6937e",
+  "projectId": "proj-4aad1c0e",
+  "title": "Dead Letter Queue (/dlq)",
+  "description": "Action screen for failed jobs. Failed jobs list, retry attempts panel, batch actions (retry, delete).",
+  "architectureNotes": "DLQ from /api/v1/dlq. Expandable retry attempts panel per entry. Batch actions for multiple selections. Retry on same or different pool.",
+  "epicRails": [
+    "Support batch actions for multiple selections",
+    "Error messages prominently displayed"
+  ],
+  "status": "PLANNED",
+  "order": 8,
+  "createdAt": "2026-02-06T23:46:55.122Z",
+  "updatedAt": "2026-02-07T19:58:35.194Z"
+}

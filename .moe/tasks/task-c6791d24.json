@@ -1,0 +1,57 @@
+{
+  "id": "task-c6791d24",
+  "epicId": "epic-411cf33d",
+  "title": "Policy API hooks + types",
+  "description": "usePolicyBundles(), usePolicyBundle(id), usePolicyRules(), usePublishPolicy(), useRollbackPolicy(), usePolicyAudit(), usePolicySnapshots(), useSimulatePolicy().",
+  "definitionOfDone": [
+    "usePolicyBundles() list all bundles",
+    "usePolicyBundle(id) single bundle detail with rules",
+    "usePolicyRules() all active rules",
+    "usePublishPolicy() mutation",
+    "useRollbackPolicy() mutation",
+    "usePolicyAudit() audit trail for policy changes",
+    "usePolicySnapshots() list snapshots",
+    "useSimulatePolicy() mutation for policy simulation",
+    "All in hooks/usePolicies.ts",
+    "tsc --noEmit passes"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "Create dashboard/src/hooks/usePolicies.ts: usePolicyBundles() fetching GET /api/v1/policy/bundles. usePolicyBundle(id) single bundle with rules. usePolicyRules() fetching GET /api/v1/policy/rules for all active rules with stats. useUpdatePolicyRule() mutation. useCreatePolicyRule() mutation. useDeletePolicyRule() mutation. useReorderPolicyRules() mutation for priority changes. usePublishPolicy() mutation (POST /api/v1/policy/publish). useRollbackPolicy(snapshotId) mutation (POST /api/v1/policy/rollback). usePolicyAudit() fetching GET /api/v1/policy/audit. usePolicySnapshots() fetching GET /api/v1/policy/snapshots. useSimulatePolicy() mutation (POST /api/v1/policy/simulate). All use apiClient with auth headers.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/usePolicies.ts"
+      ],
+      "startedAt": "2026-02-07T00:24:12.923Z",
+      "completedAt": "2026-02-07T00:24:44.484Z",
+      "modifiedFiles": [
+        "dashboard/src/hooks/usePolicies.ts"
+      ]
+    },
+    {
+      "stepId": "step-2",
+      "description": "Verify: run tsc --noEmit.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-07T00:24:44.925Z",
+      "completedAt": "2026-02-07T00:24:54.283Z",
+      "note": "tsc --noEmit passed with zero errors"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 73,
+  "createdAt": "2026-02-06T23:49:07.939Z",
+  "updatedAt": "2026-02-07T20:03:39.133Z",
+  "planSubmittedAt": "2026-02-06T23:58:06.606Z",
+  "planApprovedAt": "2026-02-06T23:58:06.607Z"
+}

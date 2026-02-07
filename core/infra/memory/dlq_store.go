@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -87,7 +88,9 @@ func (s *DLQStore) List(ctx context.Context, limit int64) ([]DLQEntry, error) {
 	for _, id := range ids {
 		cmds[id] = pipe.Get(ctx, dlqEntryKey(id))
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("redis pipeline exec", "op", "list_dlq", "error", err)
+	}
 
 	out := make([]DLQEntry, 0, len(ids))
 	for _, id := range ids {
@@ -101,6 +104,7 @@ func (s *DLQStore) List(ctx context.Context, limit int64) ([]DLQEntry, error) {
 		}
 		var e DLQEntry
 		if err := json.Unmarshal(data, &e); err != nil {
+			slog.Warn("dlq-store: corrupt entry skipped", "id", id, "error", err)
 			continue
 		}
 		out = append(out, e)
@@ -133,7 +137,9 @@ func (s *DLQStore) ListByScore(ctx context.Context, cursorUnix int64, limit int6
 	for _, id := range ids {
 		cmds[id] = pipe.Get(ctx, dlqEntryKey(id))
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("redis pipeline exec", "op", "list_dlq", "error", err)
+	}
 
 	out := make([]DLQEntry, 0, len(ids))
 	for _, id := range ids {
@@ -147,6 +153,7 @@ func (s *DLQStore) ListByScore(ctx context.Context, cursorUnix int64, limit int6
 		}
 		var e DLQEntry
 		if err := json.Unmarshal(data, &e); err != nil {
+			slog.Warn("dlq-store: corrupt entry skipped", "id", id, "error", err)
 			continue
 		}
 		out = append(out, e)

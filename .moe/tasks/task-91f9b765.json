@@ -1,0 +1,45 @@
+{
+  "id": "task-91f9b765",
+  "epicId": "epic-cddc11dd",
+  "title": "Fix chat message deduplication race between API and WebSocket",
+  "description": "**Bug**: `dashboard/src/hooks/useRunChat.ts:21-63` — When a user sends a chat message, both the API response and the WebSocket broadcast can add the same message to the store. The chat store (`chat.ts`) has dedup logic, but there's a race window where both arrive before dedup is checked.\n\n**Fix**: Use message ID as the dedup key. In `addMessage` in `chat.ts`, check if a message with the same ID already exists before appending. Alternatively, use a Map keyed by message ID instead of an array.\n\n**Files**: `dashboard/src/hooks/useRunChat.ts`, `dashboard/src/state/chat.ts`",
+  "definitionOfDone": [
+    "No duplicate messages appear when API response and WebSocket event arrive concurrently",
+    "Chat store deduplicates by message ID"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "The chat store at state/chat.ts:28 already has ID-based dedup:\n```typescript\nif (thread.messages.some((m) => m.id === message.id)) {\n    return state;\n}\n```\nThis is correct. The actual race is in useRunChat.ts where the same message arrives via:\n1. `setMessages(runId, chatQuery.data.items)` (line 24) — API fetch\n2. `addMessage(runId, message)` (line 59) — WebSocket event\n\nThe `setMessages` call replaces ALL messages, which could overwrite a WebSocket-added message. Fix: Change `setMessages` to merge instead of replace, using ID-based dedup:\n```typescript\nsetMessages: (runId, messages) =>\n    set((state) => {\n        const threads = new Map(state.threads);\n        const existing = threads.get(runId);\n        const existingIds = new Set(existing?.messages.map(m => m.id) || []);\n        const merged = [\n            ...(existing?.messages || []),\n            ...messages.filter(m => !existingIds.has(m.id)),\n        ];\n        threads.set(runId, { run_id: runId, messages: merged, status: \"active\" });\n        return { threads };\n    }),\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/state/chat.ts"
+      ],
+      "startedAt": "2026-02-06T09:40:11.014Z",
+      "completedAt": "2026-02-06T09:40:28.799Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Also fix the duplicate `mutationFn` at useRunChat.ts line 66-67 (copy-paste bug):\n```typescript\nmutationFn: (content: string) => api.sendChatMessage(runId as string, { content }),\nmutationFn: (content: string) => api.sendChatMessage(runId as string, { content }),  // DELETE THIS LINE\n```",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "dashboard/src/hooks/useRunChat.ts"
+      ],
+      "startedAt": "2026-02-06T09:40:29.253Z",
+      "completedAt": "2026-02-06T09:40:34.376Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "WORKER",
+  "parentTaskId": null,
+  "priority": "HIGH",
+  "order": 20,
+  "createdAt": "2026-02-05T23:49:22.620Z",
+  "updatedAt": "2026-02-07T18:40:58.067Z"
+}

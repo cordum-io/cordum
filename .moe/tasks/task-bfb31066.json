@@ -1,0 +1,63 @@
+{
+  "id": "task-bfb31066",
+  "epicId": "epic-dbd90afa",
+  "title": "Improve test coverage for bus_taps_test - add cleanup",
+  "description": "**Severity: LOW**\n\n**File**: `core/controlplane/gateway/bus_taps_test.go:62-63`\n\n**Issue**: Test calls `s.startBusTaps()` but never properly unsubscribes/stops the bus tap goroutines. Only closes `eventsCh`. This leaks goroutines in tests and may cause interference between test cases.\n\n**Fix**: Add proper shutdown of bus subscriptions in test cleanup (e.g. via `t.Cleanup` or deferred stop call). Ensure no goroutine leaks after tests complete.",
+  "definitionOfDone": [
+    "Tests properly clean up bus tap goroutines via t.Cleanup or defer",
+    "No goroutine leaks detectable with goleak or -race",
+    "Existing tests pass"
+  ],
+  "taskRails": [],
+  "implementationPlan": [
+    {
+      "stepId": "step-1",
+      "description": "The broadcast goroutine (gateway.go:723-760) already exits when `eventsCh` is closed, which the test handles via `t.Cleanup`. The real gap is that `startBusTaps` doesn't return or store subscription handles, so bus subscriptions can't be unsubscribed. In tests, the `stubBus` is synchronous (no background goroutines), so there's no actual goroutine leak from subscriptions — the only goroutine is the broadcast loop, which is properly cleaned up.\n\n**Minimal fix**: Add a `stopBusTaps()` method to `server` that closes `eventsCh` (moving responsibility from the caller). In the test, use `t.Cleanup(s.stopBusTaps)` instead of manually closing the channel.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "startedAt": "2026-02-05T23:32:46.807Z",
+      "completedAt": "2026-02-05T23:33:08.870Z"
+    },
+    {
+      "stepId": "step-2",
+      "description": "Add `stopBusTaps` method to `server` struct: close `eventsCh` with a `sync.Once` guard to prevent double-close panics. This also addresses the broadcast goroutine shutdown cleanly.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/gateway.go"
+      ],
+      "completedAt": "2026-02-05T23:33:09.815Z"
+    },
+    {
+      "stepId": "step-3",
+      "description": "Update bus_taps_test.go line 63: replace `t.Cleanup(func() { close(s.eventsCh) })` with `t.Cleanup(s.stopBusTaps)` to use the new idempotent shutdown method.",
+      "status": "COMPLETED",
+      "affectedFiles": [
+        "core/controlplane/gateway/bus_taps_test.go"
+      ],
+      "startedAt": "2026-02-05T23:33:10.451Z",
+      "completedAt": "2026-02-05T23:33:23.678Z"
+    },
+    {
+      "stepId": "step-4",
+      "description": "Run `go test -race -count=5 ./core/controlplane/gateway/...` to verify no races or goroutine leaks.",
+      "status": "COMPLETED",
+      "affectedFiles": [],
+      "startedAt": "2026-02-05T23:33:24.133Z",
+      "completedAt": "2026-02-05T23:36:32.832Z"
+    }
+  ],
+  "status": "DONE",
+  "assignedWorkerId": null,
+  "branch": null,
+  "prLink": null,
+  "reopenCount": 0,
+  "reopenReason": null,
+  "createdBy": "HUMAN",
+  "parentTaskId": null,
+  "order": 13,
+  "createdAt": "2026-02-05T22:15:46.341Z",
+  "updatedAt": "2026-02-05T23:41:45.622Z",
+  "priority": "MEDIUM"
+}
