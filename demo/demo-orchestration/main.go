@@ -23,7 +23,6 @@ var (
 	apiKey    = envOr("CORDUM_API_KEY", "")
 	tenantID  = envOr("CORDUM_TENANT_ID", "default")
 	natsURL   = envOr("NATS_URL", "nats://127.0.0.1:4222")
-	redisURL  = envOr("REDIS_URL", "redis://127.0.0.1:6379/0")
 )
 
 type demoWorker struct {
@@ -78,7 +77,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("nats connect: %v", err)
 	}
-	defer nc.Drain()
+	defer func() { _ = nc.Drain() }()
 
 	// Start heartbeats for all demo workers
 	log.Println("[demo] starting 10 demo workers...")

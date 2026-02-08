@@ -212,7 +212,7 @@ func (s *server) enqueueWSEvent(data []byte, tenant string, jobID string) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			// channel closed between flag check and send; safe to ignore
+			_ = r // channel closed between flag check and send; safe to ignore
 		}
 	}()
 	select {
@@ -291,7 +291,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			_ = ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 			if err := ws.WriteMessage(websocket.TextMessage, msg.data); err != nil {
 				return
 			}
@@ -353,7 +353,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			_ = ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 			if err := ws.WriteMessage(websocket.TextMessage, msg.data); err != nil {
 				return
 			}

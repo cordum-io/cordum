@@ -122,7 +122,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("nats connect: %v", err)
 	}
-	defer nc.Drain()
+	defer func() { _ = nc.Drain() }()
 
 	// Start all workers
 	log.Printf("[mock-bank] starting %d workers across %d pools...", len(bankWorkers), countPools())
