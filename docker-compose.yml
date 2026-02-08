@@ -16,6 +16,7 @@ services:
       - "6379:6379"
 
   cordum-context-engine:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -73,6 +74,7 @@ services:
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
 
   cordum-api-gateway:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -82,21 +84,22 @@ services:
       - nats
       - redis
       - cordum-scheduler
+      - cordum-safety-kernel
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://redis:6379
       - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
-      - "API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
       - "CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
       - TENANT_ID=default
-      - API_RATE_LIMIT_RPS=50
-      - API_RATE_LIMIT_BURST=100
+      - API_RATE_LIMIT_RPS=2000
+      - API_RATE_LIMIT_BURST=4000
       - REDIS_DATA_TTL=24h
       - JOB_META_TTL=168h
       # User authentication (set CORDUM_USER_AUTH_ENABLED=true to enable)
       - CORDUM_USER_AUTH_ENABLED=${CORDUM_USER_AUTH_ENABLED:-false}
       - CORDUM_ADMIN_USERNAME=${CORDUM_ADMIN_USERNAME:-admin}
+      # Required when CORDUM_USER_AUTH_ENABLED=true. Gateway refuses to start if empty.
       - CORDUM_ADMIN_PASSWORD=${CORDUM_ADMIN_PASSWORD:-}
       - CORDUM_ADMIN_EMAIL=${CORDUM_ADMIN_EMAIL:-}
     ports:
@@ -105,6 +108,7 @@ services:
       - "9092:9092"
 
   cordum-workflow-engine:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -125,15 +129,16 @@ services:
       - "9093:9093"
 
   cordum-dashboard:
+    restart: unless-stopped
     build:
       context: ./dashboard
       dockerfile: Dockerfile
     depends_on:
       - cordum-api-gateway
     environment:
-      - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-http://localhost:8081}
+      - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-}
       - CORDUM_API_KEY=${CORDUM_API_KEY:-}
-      - CORDUM_DASHBOARD_EMBED_API_KEY=true
+      - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
       - CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default}
       - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-}
       - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-}

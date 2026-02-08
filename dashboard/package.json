@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "predev": "node scripts/copy-monaco.js",
+    "prebuild": "node scripts/copy-monaco.js",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -13,9 +15,13 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^2.0.3",
     "@hookform/resolvers": "^3.3.4",
+    "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.55.0",
     "clsx": "^2.1.1",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.1.0",
     "lucide-react": "^0.469.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -23,11 +29,13 @@
     "react-router-dom": "^7.12.0",
     "reactflow": "^11.11.4",
     "recharts": "^2.12.7",
+    "tailwind-merge": "^3.4.0",
     "yaml": "^2.8.2",
     "zod": "^3.23.8",
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@types/dagre": "^0.7.53",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

@@ -1,530 +1,524 @@
-import { useEffect, useState, useMemo } from "react";
-import { X, Settings, AlertTriangle } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "../../lib/api";
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import type { Node } from "reactflow";
+import { X, Trash2 } from "lucide-react";
 import { Input } from "../ui/Input";
+import { Select } from "../ui/Select";
+import { Textarea } from "../ui/Textarea";
 import { Button } from "../ui/Button";
-import type { BuilderNode, BuilderNodeData } from "./types";
+import { AgentTaskPanel } from "./job/AgentTaskPanel";
+import { PackActionPanel } from "./job/PackActionPanel";
+import { ToolCallPanel } from "./job/ToolCallPanel";
 
-type Props = {
-  node: BuilderNode | null;
-  onUpdate: (nodeId: string, data: Partial<BuilderNodeData>) => void;
-  onClose: () => void;
-};
+// ---------------------------------------------------------------------------
+// Per-type schemas
+// ---------------------------------------------------------------------------
 
-// Preset options
-const CONDITION_TEMPLATES = [
-  { value: "{{ input.value == true }}", label: "Input is true" },
-  { value: "{{ input.value == false }}", label: "Input is false" },
-  { value: "{{ input.status == 'success' }}", label: "Status is success" },
-  { value: "{{ input.status == 'failed' }}", label: "Status is failed" },
-  { value: "{{ input.count > 0 }}", label: "Count greater than 0" },
-  { value: "{{ input.result != null }}", label: "Result is not null" },
-  { value: "{{ steps.prev.output.approved }}", label: "Previous step approved" },
-  { value: "{{ env.ENVIRONMENT == 'production' }}", label: "Is production env" },
-];
+const jobSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  topic: z.string().min(1, "Topic required"),
+  capabilities: z.string().optional(),
+  timeout: z.string().optional(),
+  retryMax: z.coerce.number().int().min(0).optional(),
+});
 
-const DELAY_PRESETS = [
-  { value: 30, label: "30s" },
-  { value: 60, label: "1m" },
-  { value: 300, label: "5m" },
-  { value: 900, label: "15m" },
-  { value: 1800, label: "30m" },
-  { value: 3600, label: "1h" },
-  { value: 86400, label: "24h" },
-];
+const approvalSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  approverRoles: z.string().optional(),
+  timeout: z.string().optional(),
+});
 
-const FOREACH_TEMPLATES = [
-  { value: "{{ input.items }}", label: "Input items array" },
-  { value: "{{ input.users }}", label: "Input users array" },
-  { value: "{{ input.files }}", label: "Input files array" },
-  { value: "{{ steps.prev.output.results }}", label: "Previous step results" },
-  { value: "{{ range(1, input.count) }}", label: "Range from 1 to count" },
-];
+const delaySchema = z.object({
+  label: z.string().min(1, "Name required"),
+  duration: z.string().min(1, "Duration required"),
+});
 
-const TIMEOUT_PRESETS = [
-  { value: 60, label: "1m" },
-  { value: 300, label: "5m" },
-  { value: 600, label: "10m" },
-  { value: 900, label: "15m" },
-  { value: 1800, label: "30m" },
-  { value: 3600, label: "1h" },
-];
+const conditionSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  expression: z.string().min(1, "Expression required"),
+});
 
-export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
-  const [localData, setLocalData] = useState<Partial<BuilderNodeData>>({});
-  const parseOptionalInt = (value: string) => {
-    const parsed = parseInt(value, 10);
-    return Number.isNaN(parsed) ? undefined : parsed;
+const notifySchema = z.object({
+  label: z.string().min(1, "Name required"),
+  channel: z.string().min(1, "Channel required"),
+  messageTemplate: z.string().optional(),
+});
+
+const fanOutSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  forEach: z.string().min(1, "For-each expression required").optional(),
+  parallelism: z.coerce.number().int().min(1).optional(),
+});
+
+const httpSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  method: z.string().min(1, "Method required"),
+  url: z.string().min(1, "URL required").refine(
+    (v) => !/^(javascript|data):/i.test(v),
+    "Invalid URL scheme",
+  ),
+  headers: z.string().optional(),
+  body: z.string().optional(),
+  timeout: z.string().optional(),
+});
+
+const transformSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  expression: z.string().min(1, "Expression required"),
+  inputMapping: z.string().optional(),
+  outputMapping: z.string().optional(),
+});
+
+const switchSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  expression: z.string().optional(),
+  cases: z.string().optional(),
+  defaultBranch: z.string().optional(),
+});
+
+const loopSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  forEach: z.string().min(1, "For-each expression required"),
+  maxIterations: z.coerce.number().int().min(1).max(10_000).optional(),
+  parallelism: z.coerce.number().int().min(1).optional(),
+});
+
+const subWorkflowSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  workflowId: z.string().min(1, "Workflow ID required"),
+  inputMapping: z.string().optional(),
+});
+
+const errorTriggerSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  catchFrom: z.string().optional(),
+  retryCount: z.coerce.number().int().min(0).optional(),
+  retryDelay: z.string().optional(),
+});
+
+type AnySchema =
+  | typeof jobSchema
+  | typeof approvalSchema
+  | typeof delaySchema
+  | typeof conditionSchema
+  | typeof notifySchema
+  | typeof fanOutSchema
+  | typeof httpSchema
+  | typeof transformSchema
+  | typeof switchSchema
+  | typeof loopSchema
+  | typeof subWorkflowSchema
+  | typeof errorTriggerSchema;
+
+function schemaForType(type: string): AnySchema {
+  switch (type) {
+    case "job": return jobSchema;
+    case "approval": return approvalSchema;
+    case "delay": return delaySchema;
+    case "condition": return conditionSchema;
+    case "notify": return notifySchema;
+    case "fan-out": return fanOutSchema;
+    case "http": return httpSchema;
+    case "transform": return transformSchema;
+    case "switch": return switchSchema;
+    case "loop": return loopSchema;
+    case "sub-workflow": return subWorkflowSchema;
+    case "error-trigger": return errorTriggerSchema;
+    default: return jobSchema;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Flatten node data -> form defaults
+// ---------------------------------------------------------------------------
+
+function nodeToDefaults(node: Node): Record<string, unknown> {
+  const d = node.data ?? {};
+  const config = (d.config ?? {}) as Record<string, unknown>;
+  // Prefer direct backend fields from node.data, fall back to legacy config
+  const caps = d.meta?.capability
+    ? [d.meta.capability, ...(d.meta.requires ?? [])].filter(Boolean)
+    : undefined;
+  return {
+    label: (d.label as string) ?? "",
+    topic: d.topic ?? config.topic ?? "",
+    capabilities: caps ? caps.join(", ") : (Array.isArray(config.capabilities) ? (config.capabilities as string[]).join(", ") : (config.capabilities ?? "")),
+    timeout: d.timeout_sec ? `${d.timeout_sec}s` : (config.timeout ?? ""),
+    retryMax: d.retry?.max_retries ?? config.retryMax ?? 0,
+    approverRoles: Array.isArray(config.approverRoles) ? (config.approverRoles as string[]).join(", ") : (config.approverRoles ?? ""),
+    duration: d.delay_sec ? `${d.delay_sec}s` : (d.delay_until ?? config.duration ?? ""),
+    expression: d.condition ?? config.expression ?? "",
+    channel: config.channel ?? "",
+    messageTemplate: config.messageTemplate ?? "",
+    parallelism: d.max_parallel ?? config.parallelism ?? 1,
+    forEach: d.for_each ?? config.forEach ?? "",
+    // http
+    method: (d.input as Record<string, unknown>)?.method ?? config.method ?? "GET",
+    url: (d.input as Record<string, unknown>)?.url ?? config.url ?? "",
+    headers: config.headers ?? "",
+    body: config.body ?? "",
+    // transform
+    inputMapping: config.inputMapping ?? "",
+    outputMapping: config.outputMapping ?? "",
+    // switch
+    cases: config.cases ?? "",
+    defaultBranch: config.defaultBranch ?? "",
+    // loop
+    maxIterations: config.maxIterations ?? 100,
+    // sub-workflow
+    workflowId: config.workflowId ?? "",
+    // error-trigger
+    catchFrom: config.catchFrom ?? "any",
+    retryCount: config.retryCount ?? 0,
+    retryDelay: config.retryDelay ?? "",
   };
+}
 
-  // Fetch workflows for subworkflow selector
-  const workflowsQuery = useQuery({
-    queryKey: ["workflows"],
-    queryFn: () => api.listWorkflows(),
-    enabled: node?.data.nodeType === "subworkflow",
-  });
+// ---------------------------------------------------------------------------
+// Flatten form values -> node data update
+// ---------------------------------------------------------------------------
 
-  // Fetch packs for topic/capability selectors
-  const packsQuery = useQuery({
-    queryKey: ["packs"],
-    queryFn: () => api.listPacks(),
-    enabled: node?.data.nodeType === "worker",
-  });
+function formToNodeData(type: string, values: Record<string, unknown>) {
+  const label = values.label as string;
+  const config: Record<string, unknown> = {};
+  // Direct backend fields to write alongside legacy config
+  const direct: Record<string, unknown> = {};
 
-  // Derive topics and capabilities from packs
-  const { packOptions, allTopics, capabilitiesForPack } = useMemo(() => {
-    const packs = packsQuery.data?.items || [];
-    const packOpts = packs.map((p) => ({
-      value: p.id,
-      label: p.manifest?.metadata?.title || p.id,
-    }));
-
-    // Collect all topics across packs
-    const topicSet = new Set<string>();
-    const capMap = new Map<string, string[]>();
-
-    packs.forEach((pack) => {
-      // Topics from pack manifest (it's an array)
-      if (pack.manifest?.topics) {
-        pack.manifest.topics.forEach((t) => {
-          if (t.name) topicSet.add(t.name);
-        });
+  switch (type) {
+    case "job":
+      config.topic = values.topic;
+      direct.topic = values.topic;
+      if (values.capabilities) {
+        config.capabilities = (values.capabilities as string).split(",").map((s) => s.trim()).filter(Boolean);
       }
-      // Capabilities from topics
-      const caps: string[] = [];
-      if (pack.manifest?.topics) {
-        pack.manifest.topics.forEach((t) => {
-          if (t.capability) caps.push(t.capability);
-        });
+      if (values.timeout) {
+        config.timeout = values.timeout;
       }
-      capMap.set(pack.id, caps);
-    });
-
-    const topics = Array.from(topicSet).sort().map((t) => ({ value: t, label: t }));
-
-    return {
-      packOptions: packOpts,
-      allTopics: topics,
-      capabilitiesForPack: capMap,
-    };
-  }, [packsQuery.data]);
-
-  // Get capabilities for selected pack
-  const selectedPackId = (localData as { packId?: string }).packId;
-  const availableCapabilities = useMemo(() => {
-    if (!selectedPackId) return [];
-    const caps = capabilitiesForPack.get(selectedPackId) || [];
-    return caps.map((c) => ({ value: c, label: c }));
-  }, [selectedPackId, capabilitiesForPack]);
-
-  useEffect(() => {
-    if (node) {
-      setLocalData({ ...node.data });
-    }
-  }, [node?.id]);
-
-  if (!node) {
-    return (
-      <div className="node-config-panel node-config-panel--empty">
-        <div className="node-config-panel__placeholder">
-          <Settings className="h-8 w-8 text-muted" />
-          <div className="text-sm text-muted mt-2">Select a node to configure</div>
-        </div>
-      </div>
-    );
+      if (typeof values.retryMax === "number" && values.retryMax > 0) {
+        config.retryMax = values.retryMax;
+        direct.retry = { max_retries: values.retryMax };
+      }
+      break;
+    case "approval":
+      if (values.approverRoles) {
+        config.approverRoles = (values.approverRoles as string).split(",").map((s) => s.trim()).filter(Boolean);
+      }
+      if (values.timeout) config.timeout = values.timeout;
+      break;
+    case "delay":
+      config.duration = values.duration;
+      break;
+    case "condition":
+      config.expression = values.expression;
+      direct.condition = values.expression;
+      break;
+    case "notify":
+      config.channel = values.channel;
+      if (values.messageTemplate) config.messageTemplate = values.messageTemplate;
+      break;
+    case "fan-out":
+      if (values.forEach) {
+        config.forEach = values.forEach;
+        direct.for_each = values.forEach;
+      }
+      if (typeof values.parallelism === "number") {
+        config.parallelism = values.parallelism;
+        direct.max_parallel = values.parallelism;
+      }
+      break;
+    case "http":
+      config.method = values.method;
+      config.url = values.url;
+      if (values.headers) config.headers = values.headers;
+      if (values.body) config.body = values.body;
+      if (values.timeout) config.timeout = values.timeout;
+      break;
+    case "transform":
+      config.expression = values.expression;
+      direct.condition = values.expression;
+      if (values.inputMapping) config.inputMapping = values.inputMapping;
+      if (values.outputMapping) config.outputMapping = values.outputMapping;
+      break;
+    case "switch":
+      if (values.expression) config.expression = values.expression;
+      if (values.cases) config.cases = values.cases;
+      if (values.defaultBranch) config.defaultBranch = values.defaultBranch;
+      break;
+    case "loop":
+      config.forEach = values.forEach;
+      direct.for_each = values.forEach as string;
+      if (typeof values.maxIterations === "number") config.maxIterations = values.maxIterations;
+      if (typeof values.parallelism === "number") {
+        config.parallelism = values.parallelism;
+        direct.max_parallel = values.parallelism;
+      }
+      break;
+    case "sub-workflow":
+      config.workflowId = values.workflowId;
+      if (values.inputMapping) config.inputMapping = values.inputMapping;
+      break;
+    case "error-trigger":
+      if (values.catchFrom) config.catchFrom = values.catchFrom;
+      if (typeof values.retryCount === "number" && values.retryCount > 0) config.retryCount = values.retryCount;
+      if (values.retryDelay) config.retryDelay = values.retryDelay;
+      break;
   }
 
-  const handleChange = (key: string, value: unknown) => {
-    const updated = { ...localData, [key]: value };
-    setLocalData(updated);
-    onUpdate(node.id, { [key]: value } as Partial<BuilderNodeData>);
-  };
+  return { label, config, ...direct };
+}
 
-  const handleNestedChange = (parent: string, key: string, value: unknown) => {
-    const parentObj = (localData as Record<string, unknown>)[parent] as Record<string, unknown> || {};
-    const updated = { ...parentObj, [key]: value };
-    handleChange(parent, updated);
-  };
+// ---------------------------------------------------------------------------
+// Config panel
+// ---------------------------------------------------------------------------
 
-  const nodeType = node.data.nodeType;
-  const isUnsupported = nodeType === "parallel" || nodeType === "subworkflow";
+export interface NodeConfigPanelProps {
+  node: Node;
+  onSave: (nodeId: string, data: { label: string; config: Record<string, unknown> }) => void;
+  onClose: () => void;
+  onDelete?: (nodeId: string) => void;
+}
+
+export function NodeConfigPanel({ node, onSave, onClose, onDelete }: NodeConfigPanelProps) {
+  const nodeType = node.type ?? "job";
+  const isStartNode = node.id === "start" || node.type === "start";
+
+  // Delegate to specialized panels for job node types
+  if (nodeType === "agent-task" || nodeType === "job") {
+    return <AgentTaskPanel node={node} onSave={onSave} onClose={onClose} onDelete={onDelete} />;
+  }
+  if (nodeType === "pack-action") {
+    return <PackActionPanel node={node} onSave={onSave} onClose={onClose} onDelete={onDelete} />;
+  }
+  if (nodeType === "tool-call") {
+    return <ToolCallPanel node={node} onSave={onSave} onClose={onClose} onDelete={onDelete} />;
+  }
+
+  const schema = schemaForType(nodeType);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isDirty },
+  } = useForm({
+    resolver: zodResolver(schema),
+    defaultValues: nodeToDefaults(node) as Record<string, string | number>,
+  });
+
+  // Reset form when selected node changes
+  useEffect(() => {
+    reset(nodeToDefaults(node) as Record<string, string | number>);
+  }, [node.id, reset, node]);
+
+  const onSubmit = (values: Record<string, unknown>) => {
+    onSave(node.id, formToNodeData(nodeType, values));
+  };
 
   return (
-    <div className="node-config-panel">
-      <div className="node-config-panel__header">
-        <div className="node-config-panel__title">
-          <Settings className="h-4 w-4" />
-          <span>Configure {node.data.label}</span>
-        </div>
-        <button onClick={onClose} className="node-config-panel__close">
+    <aside className="flex w-72 shrink-0 flex-col border-l border-border bg-surface1 overflow-y-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <h3 className="text-sm font-semibold text-ink capitalize">{nodeType} Config</h3>
+        <button
+          onClick={onClose}
+          className="rounded-lg p-1 text-muted hover:bg-surface2 hover:text-ink transition-colors"
+        >
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      <div className="node-config-panel__content">
-        {isUnsupported && (
-          <div className="node-config-panel__info">
-            <AlertTriangle className="h-4 w-4 text-warning" />
-            <span>This node type is not supported by the current workflow engine.</span>
-          </div>
-        )}
+      {/* Form */}
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-4 p-4">
+        {/* Always: label */}
+        <Field label="Name" error={errors.label?.message as string | undefined}>
+          <Input {...register("label")} placeholder="Step name" />
+        </Field>
 
-        {/* Common fields */}
-        <div className="node-config-panel__section">
-          <label className="node-config-panel__label">Label</label>
-          <Input
-            value={localData.label || ""}
-            onChange={(e) => handleChange("label", e.target.value)}
-            placeholder="Step label"
-          />
-        </div>
-
-        <div className="node-config-panel__section">
-          <label className="node-config-panel__label">Description</label>
-          <Input
-            value={localData.description || ""}
-            onChange={(e) => handleChange("description", e.target.value)}
-            placeholder="Optional description"
-          />
-        </div>
-
-        {nodeType !== "condition" && (
-          <div className="node-config-panel__section">
-            <label className="node-config-panel__label">Run Condition (optional)</label>
-            <select
-              value=""
-              onChange={(e) => {
-                if (e.target.value) handleChange("condition", e.target.value);
-              }}
-              className="node-config-panel__select mb-2"
-            >
-              <option value="">Choose a template...</option>
-              {CONDITION_TEMPLATES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
-            <Input
-              value={(localData as { condition?: string }).condition || ""}
-              onChange={(e) => handleChange("condition", e.target.value)}
-              placeholder="{{ steps.check.output == true }}"
-            />
-            <div className="node-config-panel__hint">
-              When false, the step is skipped and marked succeeded.
-            </div>
-          </div>
-        )}
-
-        {/* Worker fields */}
-        {nodeType === "worker" && (
-          <>
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Topic</label>
-              <div className="node-config-panel__combo">
-                <Input
-                  value={(localData as { topic?: string }).topic || ""}
-                  onChange={(e) => handleChange("topic", e.target.value)}
-                  placeholder="job.default"
-                  list="topic-options"
-                />
-                <datalist id="topic-options">
-                  {allTopics.map((t) => (
-                    <option key={t.value} value={t.value} />
-                  ))}
-                </datalist>
-                {allTopics.length > 0 && (
-                  <select
-                    className="node-config-panel__dropdown-trigger"
-                    value=""
-                    onChange={(e) => {
-                      if (e.target.value) handleChange("topic", e.target.value);
-                    }}
-                  >
-                    <option value="">▾</option>
-                    {allTopics.map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              {packsQuery.isLoading && (
-                <div className="node-config-panel__hint">Loading topics from packs...</div>
-              )}
-            </div>
-
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Pack ID</label>
-              <select
-                value={(localData as { packId?: string }).packId || ""}
-                onChange={(e) => handleChange("packId", e.target.value)}
-                className="node-config-panel__select"
-              >
-                <option value="">Select a pack (optional)...</option>
-                {packOptions.map((p: { value: string; label: string }) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Capability</label>
-              {availableCapabilities.length > 0 ? (
-                <select
-                  value={(localData as { capability?: string }).capability || ""}
-                  onChange={(e) => handleChange("capability", e.target.value)}
-                  className="node-config-panel__select"
-                >
-                  <option value="">Select a capability...</option>
-                  {availableCapabilities.map((c) => (
-                    <option key={c.value} value={c.value}>{c.label}</option>
-                  ))}
-                </select>
-              ) : (
-                <Input
-                  value={(localData as { capability?: string }).capability || ""}
-                  onChange={(e) => handleChange("capability", e.target.value)}
-                  placeholder={selectedPackId ? "No capabilities in pack" : "Select a pack first"}
-                />
-              )}
-            </div>
-
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Timeout (seconds)</label>
-              <div className="node-config-panel__input-with-presets">
-                <Input
-                  type="number"
-                  value={(localData as { timeoutSec?: number }).timeoutSec ?? ""}
-                  onChange={(e) => handleChange("timeoutSec", parseOptionalInt(e.target.value))}
-                  placeholder="300"
-                />
-                <div className="node-config-panel__presets">
-                  {TIMEOUT_PRESETS.map((p) => (
-                    <button
-                      key={p.value}
-                      type="button"
-                      className="node-config-panel__preset-btn"
-                      onClick={() => handleChange("timeoutSec", p.value)}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="node-config-panel__divider" />
-
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Retry - Max Retries</label>
-              <div className="node-config-panel__input-with-presets">
-                <Input
-                  type="number"
-                  value={(localData as { retry?: { maxRetries?: number } }).retry?.maxRetries ?? ""}
-                  onChange={(e) => handleNestedChange("retry", "maxRetries", parseOptionalInt(e.target.value))}
-                  placeholder="3"
-                />
-                <div className="node-config-panel__presets">
-                  {[1, 2, 3, 5].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      className="node-config-panel__preset-btn"
-                      onClick={() => handleNestedChange("retry", "maxRetries", n)}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Approval fields */}
+        {/* Type-specific fields */}
         {nodeType === "approval" && (
-          <div className="node-config-panel__info">
-            <AlertTriangle className="h-4 w-4 text-warning" />
-            <span>Approvals are enforced by safety policy, not the workflow definition.</span>
-          </div>
-        )}
-
-        {/* Condition fields */}
-        {nodeType === "condition" && (
           <>
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Condition Expression</label>
-              <select
-                value=""
-                onChange={(e) => {
-                  if (e.target.value) handleChange("condition", e.target.value);
-                }}
-                className="node-config-panel__select mb-2"
-              >
-                <option value="">Choose a template...</option>
-                {CONDITION_TEMPLATES.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
-              <Input
-                value={(localData as { condition?: string }).condition || ""}
-                onChange={(e) => handleChange("condition", e.target.value)}
-                placeholder="{{ input.value == true }}"
-              />
-              <div className="node-config-panel__hint">
-                Condition steps evaluate the expression and store a boolean result.
-              </div>
-            </div>
+            <Field label="Approver Roles" hint="comma-separated">
+              <Input {...register("approverRoles")} placeholder="admin, reviewer" />
+            </Field>
+            <Field label="Timeout">
+              <Input {...register("timeout")} placeholder="1h" />
+            </Field>
           </>
         )}
 
-        {/* Delay fields */}
         {nodeType === "delay" && (
-          <>
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Delay (seconds)</label>
-              <Input
-                type="number"
-                value={(localData as { delaySec?: number }).delaySec ?? ""}
-                onChange={(e) => handleChange("delaySec", parseOptionalInt(e.target.value))}
-                placeholder="60"
-              />
-              <div className="node-config-panel__presets mt-2">
-                {DELAY_PRESETS.map((p) => (
-                  <button
-                    key={p.value}
-                    type="button"
-                    className="node-config-panel__preset-btn"
-                    onClick={() => handleChange("delaySec", p.value)}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <Field label="Duration" error={errors.duration?.message as string | undefined}>
+            <Input {...register("duration")} placeholder="5m" />
+          </Field>
+        )}
 
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Delay Until</label>
-              <Input
-                type="datetime-local"
-                value={(localData as { delayUntil?: string }).delayUntil || ""}
-                onChange={(e) => handleChange("delayUntil", e.target.value)}
-              />
-              <div className="node-config-panel__hint">
-                Alternative to delay seconds - wait until specific time
-              </div>
-            </div>
+        {nodeType === "condition" && (
+          <Field label="Expression" error={errors.expression?.message as string | undefined}>
+            <Textarea {...register("expression")} placeholder="result.status == 'ok'" rows={3} />
+          </Field>
+        )}
+
+        {nodeType === "notify" && (
+          <>
+            <Field label="Channel" error={errors.channel?.message as string | undefined}>
+              <Input {...register("channel")} placeholder="slack, email" />
+            </Field>
+            <Field label="Message Template">
+              <Textarea {...register("messageTemplate")} placeholder="Job {{jobId}} completed" rows={3} />
+            </Field>
           </>
         )}
 
-        {/* Loop fields */}
+        {nodeType === "fan-out" && (
+          <>
+            <Field label="For Each" hint="expression">
+              <Input {...register("forEach")} placeholder="items" />
+            </Field>
+            <Field label="Parallelism">
+              <Input type="number" {...register("parallelism")} />
+            </Field>
+          </>
+        )}
+
+        {nodeType === "http" && (
+          <>
+            <Field label="Method" error={errors.method?.message as string | undefined}>
+              <Select {...register("method")}>
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+              </Select>
+            </Field>
+            <Field label="URL" error={errors.url?.message as string | undefined}>
+              <Input {...register("url")} placeholder="https://api.example.com/endpoint" />
+            </Field>
+            <Field label="Headers" hint="JSON">
+              <Textarea {...register("headers")} placeholder='{"Content-Type":"application/json"}' rows={3} />
+            </Field>
+            <Field label="Body">
+              <Textarea {...register("body")} placeholder="Request body template" rows={3} />
+            </Field>
+            <Field label="Timeout">
+              <Input {...register("timeout")} placeholder="30s" />
+            </Field>
+          </>
+        )}
+
+        {nodeType === "transform" && (
+          <>
+            <Field label="Expression" error={errors.expression?.message as string | undefined}>
+              <Textarea {...register("expression")} placeholder="result.data.map(item => item.name)" rows={4} />
+            </Field>
+            <Field label="Input Mapping">
+              <Input {...register("inputMapping")} placeholder="$.steps.previous.output" />
+            </Field>
+            <Field label="Output Mapping">
+              <Input {...register("outputMapping")} placeholder="$.result" />
+            </Field>
+          </>
+        )}
+
+        {nodeType === "switch" && (
+          <>
+            <Field label="Expression">
+              <Input {...register("expression")} placeholder="result.status" />
+            </Field>
+            <Field label="Cases" hint="JSON array">
+              <Textarea {...register("cases")} placeholder='[{"value":"ok","label":"Success"},{"value":"err","label":"Error"}]' rows={4} />
+            </Field>
+            <Field label="Default Branch">
+              <Input {...register("defaultBranch")} placeholder="step-id" />
+            </Field>
+          </>
+        )}
+
         {nodeType === "loop" && (
           <>
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">ForEach Expression</label>
-              <select
-                value=""
-                onChange={(e) => {
-                  if (e.target.value) handleChange("forEach", e.target.value);
-                }}
-                className="node-config-panel__select mb-2"
-              >
-                <option value="">Choose a template...</option>
-                {FOREACH_TEMPLATES.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
-              <Input
-                value={(localData as { forEach?: string }).forEach || ""}
-                onChange={(e) => handleChange("forEach", e.target.value)}
-                placeholder="{{ input.items }}"
-              />
-              <div className="node-config-panel__hint">
-                Expression that yields an array to iterate over
-              </div>
-            </div>
-
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Max Parallel</label>
-              <div className="node-config-panel__input-with-presets">
-                <Input
-                  type="number"
-                  value={(localData as { maxParallel?: number }).maxParallel ?? ""}
-                  onChange={(e) => handleChange("maxParallel", parseOptionalInt(e.target.value))}
-                  placeholder="1"
-                />
-                <div className="node-config-panel__presets">
-                  {[1, 2, 5, 10].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      className="node-config-panel__preset-btn"
-                      onClick={() => handleChange("maxParallel", n)}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="node-config-panel__info">
-              <AlertTriangle className="h-4 w-4 text-warning" />
-              <span>Downstream steps run after the loop completes.</span>
-            </div>
+            <Field label="For Each" error={errors.forEach?.message as string | undefined}>
+              <Input {...register("forEach")} placeholder="result.items" />
+            </Field>
+            <Field label="Max Iterations" hint="safety cap, max 10000">
+              <Input type="number" {...register("maxIterations")} />
+            </Field>
+            <Field label="Parallelism">
+              <Input type="number" {...register("parallelism")} />
+            </Field>
           </>
         )}
 
-        {/* Parallel fields */}
-        {nodeType === "parallel" && (
+        {nodeType === "sub-workflow" && (
           <>
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Wait for All</label>
-              <select
-                value={(localData as { waitAll?: boolean }).waitAll !== false ? "true" : "false"}
-                onChange={(e) => handleChange("waitAll", e.target.value === "true")}
-                className="node-config-panel__select"
-              >
-                <option value="true">Yes - Wait for all branches</option>
-                <option value="false">No - Continue when first completes</option>
-              </select>
-            </div>
-
-            <div className="node-config-panel__hint">
-              Connect multiple nodes from this step to create parallel branches
-            </div>
+            <Field label="Workflow ID" error={errors.workflowId?.message as string | undefined}>
+              <Input {...register("workflowId")} placeholder="workflow-abc123" />
+            </Field>
+            <Field label="Input Mapping" hint="JSON">
+              <Textarea {...register("inputMapping")} placeholder='{"param": "$.steps.prev.output"}' rows={3} />
+            </Field>
           </>
         )}
 
-        {/* Subworkflow fields */}
-        {nodeType === "subworkflow" && (
+        {nodeType === "error-trigger" && (
           <>
-            <div className="node-config-panel__section">
-              <label className="node-config-panel__label">Subworkflow</label>
-              <select
-                value={(localData as { subworkflowId?: string }).subworkflowId || ""}
-                onChange={(e) => handleChange("subworkflowId", e.target.value)}
-                className="node-config-panel__select"
-              >
-                <option value="">Select a workflow...</option>
-                {workflowsQuery.data?.map((wf) => (
-                  <option key={wf.id} value={wf.id}>
-                    {wf.name || wf.id}
-                  </option>
-                ))}
-              </select>
-              {workflowsQuery.isLoading && (
-                <div className="node-config-panel__hint">Loading workflows...</div>
-              )}
-            </div>
+            <Field label="Catch From" hint="step IDs or 'any'">
+              <Input {...register("catchFrom")} placeholder="any" />
+            </Field>
+            <Field label="Retry Count">
+              <Input type="number" {...register("retryCount")} />
+            </Field>
+            <Field label="Retry Delay">
+              <Input {...register("retryDelay")} placeholder="5s" />
+            </Field>
           </>
         )}
-      </div>
 
-      <div className="node-config-panel__footer">
-        <Button variant="outline" size="sm" onClick={onClose}>
-          Close
-        </Button>
-      </div>
+        <div className="mt-auto space-y-2 pt-4">
+          <Button type="submit" disabled={!isDirty} className="w-full">
+            Save
+          </Button>
+          {onDelete && !isStartNode && (
+            <Button
+              type="button"
+              variant="danger"
+              size="sm"
+              className="w-full"
+              onClick={() => onDelete(node.id)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete Node
+            </Button>
+          )}
+        </div>
+      </form>
+    </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tiny field wrapper
+// ---------------------------------------------------------------------------
+
+function Field({
+  label,
+  error,
+  hint,
+  children,
+}: {
+  label: string;
+  error?: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="mb-1 flex items-baseline gap-1 text-xs text-muted">
+        {label}
+        {hint && <span className="text-[10px] text-muted/60">({hint})</span>}
+      </label>
+      {children}
+      {error && <p className="mt-0.5 text-[10px] text-danger">{error}</p>}
     </div>
   );
 }

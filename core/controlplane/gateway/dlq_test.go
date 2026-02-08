@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,5 +89,67 @@ func TestHandleRetryDLQ(t *testing.T) {
 	defer bus.mu.Unlock()
 	if len(bus.published) == 0 || bus.published[len(bus.published)-1].subject != capsdk.SubjectSubmit {
 		t.Fatalf("expected submit publish")
+	}
+}
+
+func TestRetryDLQConcurrent(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-concurrent-retry"
+	entry := memory.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
+	if err := s.dlqStore.Add(ctx, entry); err != nil {
+		t.Fatalf("add dlq: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "tenant")
+	_ = s.jobStore.SetTeam(ctx, jobID, "team")
+	_ = s.jobStore.SetPrincipal(ctx, jobID, "principal")
+	if err := s.memStore.PutContext(ctx, memory.MakeContextKey(jobID), []byte(`{"prompt":"hello"}`)); err != nil {
+		t.Fatalf("put context: %v", err)
+	}
+
+	const N = 10
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func() {
+			defer wg.Done()
+			httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/dlq/"+jobID+"/retry", nil)
+			httpReq.Header.Set("X-Tenant-ID", "default")
+			httpReq.SetPathValue("job_id", jobID)
+			rr := httptest.NewRecorder()
+			s.handleRetryDLQ(rr, httpReq)
+
+			if rr.Code == http.StatusInternalServerError {
+				t.Errorf("unexpected 500: %s", rr.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestRetryDLQMissingContext(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-no-context"
+	entry := memory.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
+	if err := s.dlqStore.Add(ctx, entry); err != nil {
+		t.Fatalf("add dlq: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "tenant")
+	_ = s.jobStore.SetTeam(ctx, jobID, "team")
+	_ = s.jobStore.SetPrincipal(ctx, jobID, "principal")
+	// Intentionally skip setting context payload in memStore.
+
+	retryReq := httptest.NewRequest(http.MethodPost, "/api/v1/dlq/"+jobID+"/retry", nil)
+	retryReq.Header.Set("X-Tenant-ID", "default")
+	retryReq.SetPathValue("job_id", jobID)
+	retryRec := httptest.NewRecorder()
+	s.handleRetryDLQ(retryRec, retryReq)
+
+	// Handler should not panic or return an unhelpful 500.
+	if retryRec.Code == http.StatusInternalServerError {
+		t.Fatalf("expected graceful handling of missing context, got 500: %s", retryRec.Body.String())
 	}
 }

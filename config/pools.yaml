@@ -1,5 +1,35 @@
 topics:
   job.default: default
+  job.bank-validators.process: bank-validators
+  job.compliance-agents.process: compliance-agents
+  job.loan-agents.process: loan-agents
+  job.fraud-detection.process: fraud-detection
+  job.credit-agents.process: credit-agents
+  job.risk-agents.process: risk-agents
+  job.bank-executors.process: bank-executors
+  job.notification-service.process: notification-service
+  job.valuation-agents.process: valuation-agents
+  job.underwriting-agents.process: underwriting-agents
 pools:
   default:
+    requires: []
+  bank-validators:
+    requires: []
+  compliance-agents:
+    requires: []
+  loan-agents:
+    requires: []
+  fraud-detection:
+    requires: []
+  credit-agents:
+    requires: []
+  risk-agents:
+    requires: []
+  bank-executors:
+    requires: []
+  notification-service:
+    requires: []
+  valuation-agents:
+    requires: []
+  underwriting-agents:
     requires: []

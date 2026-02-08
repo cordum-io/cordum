@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -111,7 +112,9 @@ func (s *RedisStore) Get(ctx context.Context, ptr string) ([]byte, Metadata, err
 	pipe := s.client.Pipeline()
 	contentCmd := pipe.Get(ctx, key)
 	metaCmd := pipe.Get(ctx, metaKey)
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("redis pipeline exec", "op", "get_artifact", "error", err)
+	}
 
 	content, err := contentCmd.Bytes()
 	if err != nil {

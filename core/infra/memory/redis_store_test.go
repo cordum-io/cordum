@@ -72,3 +72,31 @@ func TestKeyPointerHelpers(t *testing.T) {
 		t.Fatalf("expected error for invalid pointer")
 	}
 }
+
+func TestRedisStoreRespectsContextCancellation(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	if err := store.PutContext(ctx, "ctx:cancelled", []byte("data")); err == nil {
+		t.Fatal("expected error from cancelled context on PutContext")
+	}
+	if _, err := store.GetContext(ctx, "ctx:cancelled"); err == nil {
+		t.Fatal("expected error from cancelled context on GetContext")
+	}
+	if err := store.PutResult(ctx, "res:cancelled", []byte("data")); err == nil {
+		t.Fatal("expected error from cancelled context on PutResult")
+	}
+	if _, err := store.GetResult(ctx, "res:cancelled"); err == nil {
+		t.Fatal("expected error from cancelled context on GetResult")
+	}
+}

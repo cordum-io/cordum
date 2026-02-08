@@ -3,6 +3,8 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,28 +13,30 @@ import (
 )
 
 type fakeReconcileStore struct {
-	mu      sync.RWMutex
-	states  map[string]JobState
-	updated map[string]int64
-	tenants map[string]string
-	teams   map[string]string
-	safety  map[string]SafetyDecisionRecord
-	dead    map[string]int64
-	attempts map[string]int
-	locks   map[string]time.Time
-	fail    bool
+	mu             sync.RWMutex
+	states         map[string]JobState
+	updated        map[string]int64
+	tenants        map[string]string
+	teams          map[string]string
+	safety         map[string]SafetyDecisionRecord
+	dead           map[string]int64
+	attempts       map[string]int
+	locks          map[string]time.Time
+	failureReasons map[string]string
+	fail           bool
 }
 
 func newFakeReconcileStore() *fakeReconcileStore {
 	return &fakeReconcileStore{
-		states:  make(map[string]JobState),
-		updated: make(map[string]int64),
-		tenants: make(map[string]string),
-		teams:   make(map[string]string),
-		safety:  make(map[string]SafetyDecisionRecord),
-		dead:    make(map[string]int64),
-		attempts: make(map[string]int),
-		locks:   make(map[string]time.Time),
+		states:         make(map[string]JobState),
+		updated:        make(map[string]int64),
+		tenants:        make(map[string]string),
+		teams:          make(map[string]string),
+		safety:         make(map[string]SafetyDecisionRecord),
+		dead:           make(map[string]int64),
+		attempts:       make(map[string]int),
+		locks:          make(map[string]time.Time),
+		failureReasons: make(map[string]string),
 	}
 }
 
@@ -194,6 +198,19 @@ func (s *fakeReconcileStore) ReleaseLock(_ context.Context, key string) error {
 	return nil
 }
 
+func (s *fakeReconcileStore) SetFailureReason(_ context.Context, jobID, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failureReasons[jobID] = reason
+	return nil
+}
+
+func (s *fakeReconcileStore) GetFailureReason(_ context.Context, jobID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.failureReasons[jobID], nil
+}
+
 func (s *fakeReconcileStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,9 +242,17 @@ func TestReconcilerTimeouts(t *testing.T) {
 	defer cancel()
 	go reconciler.Start(ctx)
 
-	time.Sleep(50 * time.Millisecond)
+	// Poll until reconciler has processed the timeout transitions.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s1, _ := store.GetState(context.Background(), "dispatched-old")
+		s2, _ := store.GetState(context.Background(), "running-old")
+		if s1 == JobStateTimeout && s2 == JobStateTimeout {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
-	time.Sleep(10 * time.Millisecond)
 
 	if state, _ := store.GetState(context.Background(), "dispatched-old"); state != JobStateTimeout {
 		t.Fatalf("expected dispatched-old to be TIMEOUT, got %s", state)
@@ -240,6 +265,125 @@ func TestReconcilerTimeouts(t *testing.T) {
 	}
 	if state, _ := store.GetState(context.Background(), "succeeded-old"); state != JobStateSucceeded {
 		t.Fatalf("terminal state should be unchanged, got %s", state)
+	}
+}
+
+func TestReconcilerSetsFailureReasonOnTimeout(t *testing.T) {
+	store := newFakeReconcileStore()
+
+	store.states["dispatched-timeout"] = JobStateDispatched
+	store.updated["dispatched-timeout"] = toUnixMicros(time.Now().Add(-5 * time.Minute))
+	store.states["running-timeout"] = JobStateRunning
+	store.updated["running-timeout"] = toUnixMicros(time.Now().Add(-10 * time.Minute))
+
+	reconciler := NewReconciler(store, 1*time.Minute, 1*time.Minute, 10*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go reconciler.Start(ctx)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s1, _ := store.GetState(context.Background(), "dispatched-timeout")
+		s2, _ := store.GetState(context.Background(), "running-timeout")
+		if s1 == JobStateTimeout && s2 == JobStateTimeout {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+
+	if state, _ := store.GetState(context.Background(), "dispatched-timeout"); state != JobStateTimeout {
+		t.Fatalf("expected dispatched-timeout to be TIMEOUT, got %s", state)
+	}
+	if state, _ := store.GetState(context.Background(), "running-timeout"); state != JobStateTimeout {
+		t.Fatalf("expected running-timeout to be TIMEOUT, got %s", state)
+	}
+
+	reason1, _ := store.GetFailureReason(context.Background(), "dispatched-timeout")
+	if reason1 == "" {
+		t.Fatal("expected failure reason for dispatched-timeout, got empty")
+	}
+	if !strings.Contains(reason1, "DISPATCHED") {
+		t.Fatalf("expected reason to mention DISPATCHED, got %q", reason1)
+	}
+
+	reason2, _ := store.GetFailureReason(context.Background(), "running-timeout")
+	if reason2 == "" {
+		t.Fatal("expected failure reason for running-timeout, got empty")
+	}
+	if !strings.Contains(reason2, "RUNNING") {
+		t.Fatalf("expected reason to mention RUNNING, got %q", reason2)
+	}
+}
+
+func TestReconcilerSetsFailureReasonOnDeadlineExpiry(t *testing.T) {
+	store := newFakeReconcileStore()
+
+	store.states["deadline-job"] = JobStateRunning
+	store.updated["deadline-job"] = toUnixMicros(time.Now())
+	store.dead["deadline-job"] = time.Now().Add(-1 * time.Minute).Unix()
+
+	reconciler := NewReconciler(store, 1*time.Hour, 1*time.Hour, 10*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go reconciler.Start(ctx)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s, _ := store.GetState(context.Background(), "deadline-job")
+		if s == JobStateTimeout {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+
+	if state, _ := store.GetState(context.Background(), "deadline-job"); state != JobStateTimeout {
+		t.Fatalf("expected deadline-job to be TIMEOUT, got %s", state)
+	}
+
+	reason, _ := store.GetFailureReason(context.Background(), "deadline-job")
+	if reason != "timeout: deadline expired" {
+		t.Fatalf("expected reason 'timeout: deadline expired', got %q", reason)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+// BenchmarkReconcilerTick benchmarks a single reconciler tick with 500 DISPATCHED
+// jobs that have old timestamps, triggering the timeout path.
+func BenchmarkReconcilerTick(b *testing.B) {
+	const jobCount = 500
+	oldTs := toUnixMicros(time.Now().Add(-10 * time.Minute))
+
+	store := newFakeReconcileStore()
+	rec := NewReconciler(store, time.Minute, time.Minute, time.Second)
+	ctx := context.Background()
+
+	// Seed jobs once before reset.
+	seedJobs := func() {
+		store.mu.Lock()
+		for k := range store.states {
+			delete(store.states, k)
+			delete(store.updated, k)
+		}
+		for i := 0; i < jobCount; i++ {
+			id := fmt.Sprintf("bench-job-%d", i)
+			store.states[id] = JobStateDispatched
+			store.updated[id] = oldTs
+		}
+		store.mu.Unlock()
+	}
+
+	seedJobs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		seedJobs()
+		b.StartTimer()
+		rec.tick(ctx)
 	}
 }
 

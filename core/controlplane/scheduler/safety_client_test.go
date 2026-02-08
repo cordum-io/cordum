@@ -137,8 +137,8 @@ func TestSafetyClientCircuitOpens(t *testing.T) {
 		if err != nil {
 			t.Fatalf("check failed: %v", err)
 		}
-		if record.Decision != SafetyDeny {
-			t.Fatalf("expected deny on failure %d", i)
+		if record.Decision != SafetyUnavailable {
+			t.Fatalf("expected unavailable on failure %d, got %v", i, record.Decision)
 		}
 	}
 
@@ -146,8 +146,8 @@ func TestSafetyClientCircuitOpens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check failed: %v", err)
 	}
-	if record.Decision != SafetyDeny || record.Reason != "safety kernel circuit open" {
-		t.Fatalf("expected circuit open deny, got %v reason=%s", record.Decision, record.Reason)
+	if record.Decision != SafetyUnavailable || record.Reason != "safety kernel circuit open" {
+		t.Fatalf("expected circuit open unavailable, got %v reason=%s", record.Decision, record.Reason)
 	}
 }
 

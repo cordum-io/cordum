@@ -1,482 +1,167 @@
-import { useCallback, useEffect, useState, useRef } from "react";
-import ReactFlow, {
-  Background,
-  BackgroundVariant,
-  Controls,
-  MiniMap,
-  MarkerType,
-  addEdge,
-  useNodesState,
-  useEdgesState,
-  type Connection,
-  type Edge,
-  type Node,
-  type ReactFlowInstance,
-  type XYPosition,
-} from "reactflow";
-import "reactflow/dist/style.css";
+import { useCallback, useRef, useState } from "react";
+import type { Node } from "reactflow";
+import { useNavigate, useParams } from "react-router-dom";
+import { Save } from "lucide-react";
 
 import { Button } from "../ui/Button";
 import { BuilderSidebar } from "./BuilderSidebar";
+import { WorkflowCanvas, graphToDefinition } from "./WorkflowCanvas";
 import { NodeConfigPanel } from "./NodeConfigPanel";
-import { builderNodeTypes } from "./nodeTypes";
-import { NODE_CONFIGS, SUPPORTED_NODE_TYPES, generateStepId } from "./nodes";
-import type {
-  BuilderNode,
-  BuilderNodeData,
-  BuilderEdge,
-  DragData,
-  BuilderNodeType,
-  WorkerNodeData,
-} from "./types";
-import type { Workflow, Step } from "../../types/api";
+import {
+  useWorkflow,
+  useCreateWorkflow,
+  useUpdateWorkflow,
+} from "../../hooks/useWorkflows";
+import { logger } from "../../lib/logger";
 
-const defaultEdgeOptions = {
-  type: "smoothstep",
-  markerEnd: { type: MarkerType.ArrowClosed, color: "#9aa7b0" },
-  style: { stroke: "#9aa7b0", strokeWidth: 1.4 },
-  animated: false,
-};
+// ---------------------------------------------------------------------------
+// WorkflowBuilder — orchestrator
+// ---------------------------------------------------------------------------
 
-type WorkflowBuilderProps = {
-  initialWorkflow?: Partial<Workflow>;
-  onChange: (workflow: Partial<Workflow>) => void;
-  height?: number;
-};
+export function WorkflowBuilder() {
+  const { id: workflowId } = useParams<{ id: string }>();
+  const isEdit = !!workflowId && workflowId !== "new";
+  const navigate = useNavigate();
 
-export function WorkflowBuilder({
-  initialWorkflow,
-  onChange,
-  height = 600,
-}: WorkflowBuilderProps) {
-  const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
-  const [nodes, setNodes, onNodesChange] = useNodesState<BuilderNodeData>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const mergeNodeData = useCallback(
-    (node: Node<BuilderNodeData>, data: Partial<BuilderNodeData>) =>
-      ({ ...node.data, ...data } as BuilderNodeData),
-    []
+  // Load existing workflow if editing
+  const { data: existing, isLoading } = useWorkflow(isEdit ? workflowId : null);
+
+  // Workflow metadata
+  const [name, setName] = useState(existing?.name ?? "");
+  const [description, setDescription] = useState(
+    existing?.description ?? (existing?.metadata?.description as string) ?? "",
   );
 
-  // Get selected node
-  const selectedNode = selectedNodeId
-    ? (nodes.find((n) => n.id === selectedNodeId) as BuilderNode | undefined)
-    : null;
+  // Sync metadata from loaded workflow (only once)
+  const loadedRef = useRef(false);
+  if (existing && !loadedRef.current) {
+    loadedRef.current = true;
+    if (!name) setName(existing.name);
+    if (!description) {
+      const desc = existing.description ?? (typeof existing.metadata?.description === "string" ? existing.metadata.description : "");
+      if (desc) setDescription(desc);
+    }
+  }
 
-  // Delete node handler
-  const deleteNode = useCallback(
-    (id: string) => {
-      setNodes((nds) => nds.filter((node) => node.id !== id));
-      setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
-      if (selectedNodeId === id) {
-        setSelectedNodeId(null);
-      }
-    },
-    [setNodes, setEdges, selectedNodeId]
-  );
+  // Selected node for config panel
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (!selectedNodeId) {
-        return;
-      }
-      const target = event.target as HTMLElement | null;
-      if (target) {
-        const tag = target.tagName.toLowerCase();
-        if (tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable) {
-          return;
-        }
-      }
-      if (event.key === "Delete" || event.key === "Backspace") {
-        event.preventDefault();
-        deleteNode(selectedNodeId);
-      }
-    },
-    [deleteNode, selectedNodeId]
-  );
+  // Graph ref to read current nodes/edges
+  const graphRef = useRef<{ nodes: Node[]; edges: import("reactflow").Edge[] } | null>(null);
 
-  // Select node handler
-  const selectNode = useCallback((id: string) => {
-    setSelectedNodeId(id);
-    setNodes((nds) =>
-      nds.map((node) => ({
-        ...node,
-        data: mergeNodeData(node, { selected: node.id === id }),
-      }))
-    );
-  }, [mergeNodeData, setNodes]);
+  // Mutations
+  const createWorkflow = useCreateWorkflow();
+  const updateWorkflow = useUpdateWorkflow();
+  const saving = createWorkflow.isPending || updateWorkflow.isPending;
 
-  // Update node handler
-  const updateNode = useCallback(
-    (id: string, newData: Partial<BuilderNodeData>) => {
-      setNodes((nds) =>
-        nds.map((node) => {
-          if (node.id === id) {
-            return { ...node, data: mergeNodeData(node, newData) };
-          }
-          return node;
-        })
-      );
-    },
-    [mergeNodeData, setNodes]
-  );
-
-  // Create node from type
-  const createNode = useCallback(
-    (type: BuilderNodeType, position: XYPosition, extraData?: Partial<BuilderNodeData>): BuilderNode => {
-      const config = NODE_CONFIGS[type];
-      const stepId = generateStepId(type);
-      return {
-        id: stepId,
-        type,
-        position,
-        data: {
-          ...config.defaultData,
-          ...extraData,
-          stepId,
-          label: extraData?.label || config.defaultData.label || config.label,
-          engineType: mapNodeTypeToStepType(type),
-          onDelete: deleteNode,
-          onSelect: selectNode,
-        } as BuilderNodeData,
-      };
-    },
-    [deleteNode, selectNode]
-  );
-
-  // Initialize from workflow
-  useEffect(() => {
-    if (!initialWorkflow?.steps) return;
-
-    const steps = initialWorkflow.steps;
-    const stepEntries = Object.entries(steps);
-
-    // Calculate positions in a grid layout
-    const initialNodes: BuilderNode[] = stepEntries.map(([id, step], index) => {
-      const row = Math.floor(index / 3);
-      const col = index % 3;
-      const nodeType = resolveNodeType(step);
-
-      return {
-        id,
-        type: nodeType,
-        position: { x: col * 300 + 100, y: row * 200 + 100 },
-        data: {
-          nodeType,
-          stepId: id,
-          label: step.name || id,
-          engineType: step.type,
-          topic: step.topic,
-          packId: step.meta?.pack_id,
-          capability: step.meta?.capability,
-          riskTags: step.meta?.risk_tags,
-          requires: step.meta?.requires,
-          timeoutSec: step.timeout_sec,
-          condition: step.condition,
-          delaySec: step.delay_sec,
-          delayUntil: step.delay_until,
-          forEach: step.for_each,
-          maxParallel: step.max_parallel,
-          onDelete: deleteNode,
-          onSelect: selectNode,
-        } as BuilderNodeData,
-      };
+  const handleSave = useCallback(() => {
+    if (!graphRef.current) return;
+    const { nodes, edges } = graphRef.current;
+    const definition = graphToDefinition(nodes, edges, {
+      name,
+      description,
+      metadata: { description },
+      timeout_sec: existing?.timeout_sec ?? existing?.timeout ?? 3600,
+      timeout: existing?.timeout ?? 3600,
     });
 
-    // Create edges from depends_on
-    const initialEdges: BuilderEdge[] = [];
-    stepEntries.forEach(([id, step]) => {
-      step.depends_on?.forEach((dep) => {
-        initialEdges.push({
-          id: `${dep}-${id}`,
-          source: dep,
-          target: id,
-        });
+    logger.info("workflow-builder", "Saving workflow", {
+      isEdit,
+      workflowId,
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+    });
+
+    if (isEdit && workflowId) {
+      updateWorkflow.mutate(
+        { ...definition, id: workflowId } as Parameters<typeof updateWorkflow.mutate>[0],
+        { onSuccess: () => navigate(`/workflows/${workflowId}`) },
+      );
+    } else {
+      createWorkflow.mutate(definition, {
+        onSuccess: () => navigate("/workflows"),
       });
-    });
+    }
+  }, [name, description, existing, isEdit, workflowId, createWorkflow, updateWorkflow, navigate]);
 
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
-
-  // Handle connection
-  const onConnect = useCallback(
-    (params: Connection) => {
-      // Add edge with proper source handle for condition/loop nodes
-      setEdges((eds) =>
-        addEdge(
-          {
-            ...params,
-            data: params.sourceHandle ? { condition: params.sourceHandle } : undefined,
-          },
-          eds
-        )
-      );
-    },
-    [setEdges]
-  );
-
-  // Handle drag over
-  const onDragOver = useCallback((event: React.DragEvent) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-  }, []);
-
-  // Handle drop
-  const onDrop = useCallback(
-    (event: React.DragEvent) => {
-      event.preventDefault();
-      setIsDragging(false);
-
-      if (!reactFlowInstance || !reactFlowWrapper.current) return;
-
-      const dataStr = event.dataTransfer.getData("application/json");
-      if (!dataStr) return;
-
-      try {
-        const dragData: DragData = JSON.parse(dataStr);
-        const bounds = reactFlowWrapper.current.getBoundingClientRect();
-        const position = reactFlowInstance.screenToFlowPosition({
-          x: event.clientX - bounds.left,
-          y: event.clientY - bounds.top,
-        });
-
-        let newNode: BuilderNode;
-
-        if (dragData.type === "node") {
-          newNode = createNode(dragData.nodeType, position);
-        } else if (dragData.type === "pack") {
-          // Create worker node with pack topic data
-          newNode = createNode("worker", position, {
-            label: dragData.topic.topicName,
-            topic: dragData.topic.topicName,
-            packId: dragData.topic.packId,
-            capability: dragData.topic.capability,
-            riskTags: dragData.topic.riskTags,
-            requires: dragData.topic.requires,
-          } as Partial<WorkerNodeData>);
-        } else {
-          return;
-        }
-
-        setNodes((nds) => nds.concat(newNode));
-        selectNode(newNode.id);
-      } catch {
-        // Invalid drag data
+  // Handle node config save — update node data in graph
+  const handleNodeConfigSave = useCallback(
+    (nodeId: string, data: { label: string; config: Record<string, unknown> }) => {
+      if (!graphRef.current) return;
+      logger.debug("workflow-builder", "Node config saved", { nodeId, label: data.label });
+      // Mutate the node data in-place (ReactFlow state is ref-synced)
+      const node = graphRef.current.nodes.find((n) => n.id === nodeId);
+      if (node) {
+        node.data = { ...node.data, ...data };
       }
+      setSelectedNode(null);
     },
-    [reactFlowInstance, createNode, setNodes, selectNode]
+    [],
   );
 
-  // Sync changes back to workflow
-  useEffect(() => {
-    const steps: Record<string, Partial<Step>> = {};
+  // Handle node deletion — remove node + connected edges from graph
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      if (!graphRef.current) return;
+      // Prevent deleting start node
+      if (nodeId === "start") return;
+      graphRef.current.nodes = graphRef.current.nodes.filter((n) => n.id !== nodeId);
+      graphRef.current.edges = graphRef.current.edges.filter(
+        (e) => e.source !== nodeId && e.target !== nodeId,
+      );
+      setSelectedNode(null);
+    },
+    [],
+  );
 
-    nodes.forEach((node) => {
-      const data = node.data as BuilderNodeData;
-      const engineType = data.engineType || mapNodeTypeToStepType(data.nodeType);
-      const isWorker = engineType === "worker";
-      const retry = isWorker ? (data as WorkerNodeData).retry : undefined;
-      const meta = isWorker
-        ? {
-            pack_id: (data as WorkerNodeData).packId,
-            capability: (data as WorkerNodeData).capability,
-            risk_tags: (data as WorkerNodeData).riskTags,
-            requires: (data as WorkerNodeData).requires,
-          }
-        : undefined;
-      const hasMeta = meta
-        ? Object.values(meta).some((value) => value !== undefined && value !== null)
-        : false;
-      const deps = edges
-        .filter((edge) => edge.target === node.id)
-        .map((edge) => edge.source);
-
-      steps[node.id] = {
-        id: node.id,
-        name: data.label,
-        type: engineType,
-        topic: isWorker ? (data as WorkerNodeData).topic || "job.default" : undefined,
-        depends_on: deps.length > 0 ? deps : undefined,
-        condition: (data as { condition?: string }).condition,
-        delay_sec: (data as { delaySec?: number }).delaySec,
-        delay_until: (data as { delayUntil?: string }).delayUntil,
-        for_each: (data as { forEach?: string }).forEach,
-        max_parallel: (data as { maxParallel?: number }).maxParallel,
-        timeout_sec: (data as { timeoutSec?: number }).timeoutSec,
-        retry: retry,
-        meta: hasMeta ? meta : undefined,
-      };
-    });
-
-    onChange({
-      ...initialWorkflow,
-      steps: steps as Record<string, Step>,
-    });
-  }, [nodes, edges]);
-
-  // Add node from toolbar
-  const addNodeFromType = (type: BuilderNodeType) => {
-    const position = {
-      x: Math.random() * 200 + 100,
-      y: Math.random() * 200 + 100,
-    };
-    const newNode = createNode(type, position);
-    setNodes((nds) => nds.concat(newNode));
-    selectNode(newNode.id);
-  };
+  if (isEdit && isLoading) {
+    return (
+      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
-    <div className="workflow-builder">
+    <div className="flex h-[calc(100vh-4rem)] flex-col">
       {/* Toolbar */}
-      <div className="workflow-builder__toolbar">
-        {SUPPORTED_NODE_TYPES.map((type) => (
-          <Button key={type} size="sm" variant="outline" onClick={() => addNodeFromType(type)}>
-            + {NODE_CONFIGS[type].label}
-          </Button>
-        ))}
+      <div className="flex items-center justify-between border-b border-border bg-surface1 px-4 py-2">
+        <h1 className="font-display text-lg font-bold text-ink">
+          {isEdit ? "Edit Workflow" : "New Workflow"}
+        </h1>
+        <Button onClick={handleSave} disabled={saving || !name.trim()} size="sm">
+          <Save className="h-4 w-4" />
+          {saving ? "Saving..." : "Save"}
+        </Button>
       </div>
 
-      {/* Main content */}
-      <div className="workflow-builder__content" style={{ height }}>
-        {/* Sidebar */}
+      {/* Main layout */}
+      <div className="flex flex-1 min-h-0">
         <BuilderSidebar
-          onDragStart={() => setIsDragging(true)}
-          onDragEnd={() => setIsDragging(false)}
+          name={name}
+          description={description}
+          onNameChange={setName}
+          onDescriptionChange={setDescription}
         />
 
-        {/* Canvas */}
-        <div
-          ref={reactFlowWrapper}
-          className={`workflow-builder__canvas ${isDragging ? "workflow-builder__canvas--dragging" : ""}`}
-        >
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onInit={setReactFlowInstance}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-            nodeTypes={builderNodeTypes}
-            defaultEdgeOptions={defaultEdgeOptions}
-            fitView
-            snapToGrid
-            snapGrid={[15, 15]}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d0d7dd" />
-            <Controls position="bottom-left" />
-            <MiniMap
-              nodeColor={(node) => {
-                const data = node.data as BuilderNodeData;
-                switch (data.nodeType) {
-                  case "worker":
-                    return "#0f7f7a";
-                  case "approval":
-                    return "#f59e0b";
-                  case "condition":
-                    return "#3b82f6";
-                  case "delay":
-                    return "#9aa7b0";
-                  case "loop":
-                    return "#a855f7";
-                  case "parallel":
-                    return "#06b6d4";
-                  case "subworkflow":
-                    return "#6366f1";
-                  default:
-                    return "#9aa7b0";
-                }
-              }}
-              position="bottom-right"
-            />
-          </ReactFlow>
+        <div className="flex-1 min-h-0">
+          <WorkflowCanvas
+            initialWorkflow={existing ?? undefined}
+            onNodeSelect={setSelectedNode}
+            onNodesDelete={(deleted) => deleted.forEach((n) => handleDeleteNode(n.id))}
+            graphRef={graphRef}
+          />
         </div>
 
-        {/* Config Panel */}
-        <NodeConfigPanel
-          node={selectedNode || null}
-          onUpdate={updateNode}
-          onClose={() => setSelectedNodeId(null)}
-        />
+        {selectedNode && (
+          <NodeConfigPanel
+            node={selectedNode}
+            onSave={handleNodeConfigSave}
+            onClose={() => setSelectedNode(null)}
+            onDelete={handleDeleteNode}
+          />
+        )}
       </div>
     </div>
   );
-}
-
-// Map step type to builder node type
-function mapStepTypeToNodeType(stepType?: string): BuilderNodeType {
-  switch (stepType?.toLowerCase()) {
-    case "approval":
-      return "approval";
-    case "condition":
-    case "if":
-      return "condition";
-    case "delay":
-    case "wait":
-    case "timer":
-      return "delay";
-    case "loop":
-    case "foreach":
-    case "for_each":
-      return "loop";
-    case "parallel":
-    case "fan_out":
-      return "parallel";
-    case "subworkflow":
-    case "workflow":
-    case "call":
-      return "subworkflow";
-    default:
-      return "worker";
-  }
-}
-
-const builderNodeTypeSet = new Set<string>([
-  "worker",
-  "approval",
-  "condition",
-  "delay",
-  "loop",
-  "parallel",
-  "subworkflow",
-]);
-
-function resolveNodeType(step?: Step): BuilderNodeType {
-  const override = step?.meta?.labels?.["ui_node_type"];
-  if (override && builderNodeTypeSet.has(override)) {
-    return override as BuilderNodeType;
-  }
-  return mapStepTypeToNodeType(step?.type);
-}
-
-// Map builder node type to step type
-function mapNodeTypeToStepType(nodeType: BuilderNodeType): string {
-  switch (nodeType) {
-    case "worker":
-      return "worker";
-    case "approval":
-      return "approval";
-    case "condition":
-      return "condition";
-    case "delay":
-      return "delay";
-    case "loop":
-      return "loop";
-    case "parallel":
-      return "parallel";
-    case "subworkflow":
-      return "subworkflow";
-    default:
-      return "worker";
-  }
 }

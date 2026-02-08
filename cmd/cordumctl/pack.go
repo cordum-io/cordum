@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -259,16 +260,24 @@ func runPackInstall(args []string) {
 
 	rollback := func() {
 		for i := len(appliedConfigChanges) - 1; i >= 0; i-- {
-			_ = restoreConfigOverlay(ctx, client, appliedConfigChanges[i])
+			if err := restoreConfigOverlay(ctx, client, appliedConfigChanges[i]); err != nil {
+				slog.Warn("pack install rollback: restore config overlay failed", "error", err, "index", i)
+			}
 		}
 		for i := len(appliedPolicyChanges) - 1; i >= 0; i-- {
-			_ = restorePolicyOverlay(ctx, client, appliedPolicyChanges[i])
+			if err := restorePolicyOverlay(ctx, client, appliedPolicyChanges[i]); err != nil {
+				slog.Warn("pack install rollback: restore policy overlay failed", "error", err, "index", i)
+			}
 		}
 		for i := len(appliedWorkflows) - 1; i >= 0; i-- {
-			_ = rollbackWorkflow(ctx, client, appliedWorkflows[i])
+			if err := rollbackWorkflow(ctx, client, appliedWorkflows[i]); err != nil {
+				slog.Warn("pack install rollback: rollback workflow failed", "error", err, "index", i)
+			}
 		}
 		for i := len(appliedSchemas) - 1; i >= 0; i-- {
-			_ = rollbackSchema(ctx, client, appliedSchemas[i])
+			if err := rollbackSchema(ctx, client, appliedSchemas[i]); err != nil {
+				slog.Warn("pack install rollback: rollback schema failed", "error", err, "index", i)
+			}
 		}
 	}
 
@@ -380,10 +389,14 @@ func runPackUninstall(args []string) {
 	}
 	if *purge {
 		for wfID := range record.Resources.Workflows {
-			_ = client.deleteWorkflow(ctx, wfID)
+			if err := client.deleteWorkflow(ctx, wfID); err != nil {
+				slog.Warn("purge: failed to delete workflow", "workflow_id", wfID, "error", err)
+			}
 		}
 		for schemaID := range record.Resources.Schemas {
-			_ = client.deleteSchema(ctx, schemaID)
+			if err := client.deleteSchema(ctx, schemaID); err != nil {
+				slog.Warn("purge: failed to delete schema", "schema_id", schemaID, "error", err)
+			}
 		}
 	}
 
@@ -667,7 +680,7 @@ func ensureProtocolCompatible(manifest *packManifest) error {
 		return errors.New("compatibility.protocolVersion required")
 	}
 	if manifest.Compatibility.ProtocolVersion != capsdk.DefaultProtocolVersion {
-		return fmt.Errorf("protocolVersion %d not supported (expected %d)", manifest.Compatibility.ProtocolVersion, capsdk.DefaultProtocolVersion)
+		return fmt.Errorf("pack protocol version %d is not compatible with this server (requires version %d); rebuild your pack with a compatible capsdk version", manifest.Compatibility.ProtocolVersion, capsdk.DefaultProtocolVersion)
 	}
 	return nil
 }
@@ -1169,10 +1182,12 @@ func loadPackRegistry(ctx context.Context, client *restClient) (map[string]packR
 func recordsToAny(records map[string]packRecord) map[string]any {
 	data, err := json.Marshal(records)
 	if err != nil {
+		slog.Warn("recordsToAny: marshal failed", "error", err)
 		return map[string]any{}
 	}
 	var out map[string]any
 	if err := json.Unmarshal(data, &out); err != nil {
+		slog.Warn("recordsToAny: unmarshal failed", "error", err)
 		return map[string]any{}
 	}
 	return out
@@ -1185,12 +1200,18 @@ func acquirePackLocks(ctx context.Context, client *restClient, packID, owner str
 	}
 	packLock := "pack:" + packID
 	if err := client.acquireLock(ctx, packLock, owner, 60*time.Second); err != nil {
-		_ = client.releaseLock(ctx, global, owner)
+		if relErr := client.releaseLock(ctx, global, owner); relErr != nil {
+			slog.Warn("pack: failed to release lock", "lock", global, "owner", owner, "error", relErr)
+		}
 		return func() {}, err
 	}
 	return func() {
-		_ = client.releaseLock(ctx, packLock, owner)
-		_ = client.releaseLock(ctx, global, owner)
+		if err := client.releaseLock(ctx, packLock, owner); err != nil {
+			slog.Warn("pack: failed to release lock", "lock", packLock, "owner", owner, "error", err)
+		}
+		if err := client.releaseLock(ctx, global, owner); err != nil {
+			slog.Warn("pack: failed to release lock", "lock", global, "owner", owner, "error", err)
+		}
 	}, nil
 }
 
@@ -1474,10 +1495,12 @@ func deepCopy(value any) any {
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
+		slog.Warn("deepCopy: marshal failed, returning original", "error", err)
 		return value
 	}
 	var out any
 	if err := json.Unmarshal(data, &out); err != nil {
+		slog.Warn("deepCopy: unmarshal failed, returning original", "error", err)
 		return value
 	}
 	return out
@@ -1530,7 +1553,10 @@ func appendCanonicalMap(buf *strings.Builder, m map[string]any) error {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		keyBytes, _ := json.Marshal(k)
+		keyBytes, err := json.Marshal(k)
+		if err != nil {
+			return fmt.Errorf("canonical map key: %w", err)
+		}
 		buf.Write(keyBytes)
 		buf.WriteByte(':')
 		if err := appendCanonical(buf, m[k]); err != nil {
@@ -1619,9 +1645,9 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(resp.Body)
+		data, readErr := io.ReadAll(resp.Body)
 		msg := strings.TrimSpace(string(data))
-		if msg == "" {
+		if msg == "" || readErr != nil {
 			msg = resp.Status
 		}
 		return &httpError{Status: resp.StatusCode, Message: msg}
@@ -1667,7 +1693,7 @@ func (c *restClient) getSchema(ctx context.Context, id string) (map[string]any, 
 	var resp struct {
 		Schema map[string]any `json:"schema"`
 	}
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/schemas/"+id, nil, &resp); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/schemas/"+url.PathEscape(id), nil, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Schema, nil
@@ -1682,12 +1708,12 @@ func (c *restClient) registerSchema(ctx context.Context, id string, schema map[s
 }
 
 func (c *restClient) deleteSchema(ctx context.Context, id string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/schemas/"+id, nil, nil)
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/schemas/"+url.PathEscape(id), nil, nil)
 }
 
 func (c *restClient) getWorkflow(ctx context.Context, id string) (map[string]any, error) {
 	var resp map[string]any
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workflows/"+id, nil, &resp); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workflows/"+url.PathEscape(id), nil, &resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -1698,7 +1724,7 @@ func (c *restClient) createWorkflow(ctx context.Context, workflow map[string]any
 }
 
 func (c *restClient) deleteWorkflow(ctx context.Context, id string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/workflows/"+id, nil, nil)
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/workflows/"+url.PathEscape(id), nil, nil)
 }
 
 func (c *restClient) acquireLock(ctx context.Context, resource, owner string, ttl time.Duration) error {

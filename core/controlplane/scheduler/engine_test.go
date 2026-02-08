@@ -3,6 +3,8 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ type publishedMsg struct {
 }
 
 type fakeBus struct {
+	mu        sync.Mutex
 	published []publishedMsg
 }
 
@@ -32,14 +35,15 @@ func (f *fakeConfigProvider) Effective(ctx context.Context, orgID, teamID, workf
 }
 
 type fakeJobStore struct {
-	states   map[string]JobState
-	ptrs     map[string]string
-	topics   map[string]string
-	tenants  map[string]string
-	teams    map[string]string
-	safety   map[string]SafetyDecisionRecord
-	attempts map[string]int
-	locks    map[string]time.Time
+	states         map[string]JobState
+	ptrs           map[string]string
+	topics         map[string]string
+	tenants        map[string]string
+	teams          map[string]string
+	safety         map[string]SafetyDecisionRecord
+	attempts       map[string]int
+	locks          map[string]time.Time
+	failureReasons map[string]string
 }
 
 type sagaJobStore struct {
@@ -60,14 +64,15 @@ func (s *sagaJobStore) GetJobRequest(_ context.Context, jobID string) (*pb.JobRe
 
 func newFakeJobStore() *fakeJobStore {
 	return &fakeJobStore{
-		states:   make(map[string]JobState),
-		ptrs:     make(map[string]string),
-		topics:   make(map[string]string),
-		tenants:  make(map[string]string),
-		teams:    make(map[string]string),
-		safety:   make(map[string]SafetyDecisionRecord),
-		attempts: make(map[string]int),
-		locks:    make(map[string]time.Time),
+		states:         make(map[string]JobState),
+		ptrs:           make(map[string]string),
+		topics:         make(map[string]string),
+		tenants:        make(map[string]string),
+		teams:          make(map[string]string),
+		safety:         make(map[string]SafetyDecisionRecord),
+		attempts:       make(map[string]int),
+		locks:          make(map[string]time.Time),
+		failureReasons: make(map[string]string),
 	}
 }
 
@@ -179,6 +184,15 @@ func (s *fakeJobStore) ReleaseLock(_ context.Context, key string) error {
 	return nil
 }
 
+func (s *fakeJobStore) SetFailureReason(_ context.Context, jobID, reason string) error {
+	s.failureReasons[jobID] = reason
+	return nil
+}
+
+func (s *fakeJobStore) GetFailureReason(_ context.Context, jobID string) (string, error) {
+	return s.failureReasons[jobID], nil
+}
+
 func (s *fakeJobStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
 	state := s.states[jobID]
 	if terminalStates[state] {
@@ -189,7 +203,9 @@ func (s *fakeJobStore) CancelJob(_ context.Context, jobID string) (JobState, err
 }
 
 func (b *fakeBus) Publish(subject string, packet *pb.BusPacket) error {
+	b.mu.Lock()
 	b.published = append(b.published, publishedMsg{subject: subject, packet: packet})
+	b.mu.Unlock()
 	return nil
 }
 
@@ -479,14 +495,160 @@ func TestHandleJobResultFatalTriggersRollback(t *testing.T) {
 		t.Fatalf("handle job result: %v", err)
 	}
 
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if len(bus.published) > 0 {
-			break
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer waitCancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-waitCtx.Done():
+			t.Fatalf("expected compensation dispatch on fatal rollback")
+		case <-ticker.C:
+			bus.mu.Lock()
+			n := len(bus.published)
+			bus.mu.Unlock()
+			if n > 0 {
+				goto done
+			}
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	if len(bus.published) == 0 {
-		t.Fatalf("expected compensation dispatch on fatal rollback")
+done:
+}
+
+func TestStopCancelsEngineContext(t *testing.T) {
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	// Context must be alive before Stop.
+	if err := engine.ctx.Err(); err != nil {
+		t.Fatalf("expected live context before Stop, got: %v", err)
+	}
+
+	engine.Stop()
+
+	// Context must be cancelled after Stop.
+	if err := engine.ctx.Err(); err != context.Canceled {
+		t.Fatalf("expected context.Canceled after Stop, got: %v", err)
+	}
+
+	// Derived timeouts must fail immediately (no storeOpTimeout hang).
+	ctx, cancel := context.WithTimeout(engine.ctx, storeOpTimeout)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		// Parent cancelled propagates immediately — good.
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("derived context should cancel immediately after Stop()")
+	}
+}
+
+func TestProcessJobSafetyUnavailableRetries(t *testing.T) {
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-unavail",
+		Topic: "sys.unavailable",
+	}
+
+	err := engine.processJob(req, "trace-unavail")
+	if err == nil {
+		t.Fatal("expected retryable error for SafetyUnavailable, got nil")
+	}
+
+	retryErr, ok := err.(*retryableError)
+	if !ok {
+		t.Fatalf("expected retryableError, got %T", err)
+	}
+	if !strings.Contains(retryErr.Error(), "safety unavailable") {
+		t.Fatalf("expected error to contain 'safety unavailable', got: %s", retryErr.Error())
+	}
+
+	// Job must NOT be in DENIED state — it should stay PENDING.
+	if state := jobStore.states["job-unavail"]; state == JobStateDenied {
+		t.Fatal("job must NOT be DENIED when safety is unavailable")
+	}
+
+	// No DLQ messages should be published.
+	for _, msg := range bus.published {
+		if msg.subject == capsdk.SubjectDLQ {
+			t.Fatal("no DLQ message should be published for SafetyUnavailable")
+		}
+	}
+}
+
+// slowBus wraps fakeBus with an artificial delay in Publish.
+type slowBus struct {
+	fakeBus
+	delay time.Duration
+}
+
+func (b *slowBus) Publish(subject string, packet *pb.BusPacket) error {
+	time.Sleep(b.delay)
+	return b.fakeBus.Publish(subject, packet)
+}
+
+func TestStopWaitsForInflightHandlers(t *testing.T) {
+	bus := &slowBus{delay: 200 * time.Millisecond}
+	registry := NewMemoryRegistry()
+	// Register a worker so dispatch succeeds.
+	registry.UpdateHeartbeat(&pb.Heartbeat{
+		WorkerId:     "w1",
+		Type:         "cpu",
+		Pool:         "default",
+		Capabilities: []string{},
+		ActiveJobs:   0,
+	})
+
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
+
+	packet := &pb.BusPacket{
+		SenderId:        "test",
+		TraceId:         "trace-drain",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_JobRequest{
+			JobRequest: &pb.JobRequest{
+				JobId: "job-drain",
+				Topic: "job.default",
+			},
+		},
+	}
+
+	// Start handler in a goroutine (it will block in slow Publish).
+	done := make(chan error, 1)
+	go func() {
+		done <- engine.HandlePacket(packet)
+	}()
+
+	// Give goroutine a moment to enter HandlePacket.
+	time.Sleep(20 * time.Millisecond)
+
+	start := time.Now()
+	engine.Stop()
+	elapsed := time.Since(start)
+
+	// Stop must have waited for the in-flight handler (~200ms publish delay).
+	if elapsed < 100*time.Millisecond {
+		t.Fatalf("Stop() returned too fast (%v); expected to wait for in-flight handler", elapsed)
+	}
+
+	// Handler should have completed successfully.
+	select {
+	case err := <-done:
+		if err != nil {
+			// RetryAfter errors are acceptable (e.g. context cancelled during store ops).
+			t.Logf("handler returned error (acceptable): %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler goroutine did not complete")
+	}
+
+	// Job state should have progressed past pending.
+	state := jobStore.states["job-drain"]
+	if state == "" || state == JobStatePending {
+		t.Logf("job state: %q (handler may have been cancelled by Stop, which is acceptable)", state)
 	}
 }

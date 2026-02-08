@@ -25,6 +25,49 @@ const (
 	userEmailIndexPrefix = "user:email:"
 )
 
+// userRecord is the internal Redis storage representation that includes the password hash.
+// The User struct uses json:"-" on PasswordHash to prevent API leakage, so we need
+// a separate type for Redis serialization.
+type userRecord struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email,omitempty"`
+	PasswordHash string    `json:"password_hash"`
+	Tenant       string    `json:"tenant"`
+	Role         string    `json:"role"`
+	Disabled     bool      `json:"disabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func toUserRecord(u *User) *userRecord {
+	return &userRecord{
+		ID:           u.ID,
+		Username:     u.Username,
+		Email:        u.Email,
+		PasswordHash: u.PasswordHash,
+		Tenant:       u.Tenant,
+		Role:         u.Role,
+		Disabled:     u.Disabled,
+		CreatedAt:    u.CreatedAt,
+		UpdatedAt:    u.UpdatedAt,
+	}
+}
+
+func (r *userRecord) toUser() *User {
+	return &User{
+		ID:           r.ID,
+		Username:     r.Username,
+		Email:        r.Email,
+		PasswordHash: r.PasswordHash,
+		Tenant:       r.Tenant,
+		Role:         r.Role,
+		Disabled:     r.Disabled,
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
+	}
+}
+
 // RedisUserStore implements UserStore using Redis for persistence.
 type RedisUserStore struct {
 	client *redis.Client
@@ -75,11 +118,11 @@ func (s *RedisUserStore) GetByUsername(ctx context.Context, username, tenant str
 	if err != nil {
 		return nil, fmt.Errorf("redis get user: %w", err)
 	}
-	var user User
-	if err := json.Unmarshal(data, &user); err != nil {
+	var rec userRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, fmt.Errorf("unmarshal user: %w", err)
 	}
-	return &user, nil
+	return rec.toUser(), nil
 }
 
 // GetByEmail retrieves a user by email within a tenant.
@@ -180,7 +223,7 @@ func (s *RedisUserStore) Create(ctx context.Context, user *User, password string
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
-	data, err := json.Marshal(user)
+	data, err := json.Marshal(toUserRecord(user))
 	if err != nil {
 		return fmt.Errorf("marshal user: %w", err)
 	}
@@ -224,7 +267,7 @@ func (s *RedisUserStore) UpdatePassword(ctx context.Context, userID, newPassword
 	user.PasswordHash = string(hash)
 	user.UpdatedAt = time.Now().UTC()
 
-	data, err := json.Marshal(user)
+	data, err := json.Marshal(toUserRecord(user))
 	if err != nil {
 		return fmt.Errorf("marshal user: %w", err)
 	}
@@ -253,6 +296,60 @@ func (s *RedisUserStore) Close() error {
 	return nil
 }
 
+// Session token management
+// ---------------------------------------------------------------------------
+
+const sessionKeyPrefix = "session:"
+
+// sessionData stores the auth context for a session token.
+type sessionData struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	Tenant   string `json:"tenant"`
+	Role     string `json:"role"`
+}
+
+// StoreSession stores a session token in Redis with a TTL.
+func (s *RedisUserStore) StoreSession(ctx context.Context, token string, user *User, ttl time.Duration) error {
+	data, err := json.Marshal(sessionData{
+		UserID:   user.ID,
+		Username: user.Username,
+		Tenant:   user.Tenant,
+		Role:     user.Role,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+	return s.client.Set(ctx, sessionKeyPrefix+token, data, ttl).Err()
+}
+
+// DeleteSession removes a session token from Redis.
+func (s *RedisUserStore) DeleteSession(ctx context.Context, token string) error {
+	return s.client.Del(ctx, sessionKeyPrefix+token).Err()
+}
+
+// ValidateSession looks up a session token and returns the associated auth context.
+func (s *RedisUserStore) ValidateSession(ctx context.Context, token string) (*AuthContext, error) {
+	raw, err := s.client.Get(ctx, sessionKeyPrefix+token).Bytes()
+	if err == redis.Nil {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("redis get session: %w", err)
+	}
+	var sd sessionData
+	if err := json.Unmarshal(raw, &sd); err != nil {
+		return nil, fmt.Errorf("unmarshal session: %w", err)
+	}
+	return &AuthContext{
+		Tenant:      sd.Tenant,
+		PrincipalID: sd.UserID,
+		Role:        sd.Role,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+
 // seedDefaultAdminUser creates a default admin user from environment variables if configured.
 // Environment variables:
 //   - CORDUM_ADMIN_USERNAME (default: "admin")
@@ -267,8 +364,7 @@ func seedDefaultAdminUser(ctx context.Context, store UserStore, tenant string) e
 		username = "admin"
 	}
 	if password == "" {
-		// No admin password configured, skip seeding
-		return nil
+		return fmt.Errorf("CORDUM_ADMIN_PASSWORD is required when user auth is enabled")
 	}
 	if tenant == "" {
 		tenant = "default"

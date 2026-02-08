@@ -12,6 +12,7 @@ import (
 type PendingReplayer struct {
 	engine       *Engine
 	store        JobStore
+	metrics      Metrics
 	pendingAge   time.Duration
 	pollInterval time.Duration
 	lockKey      string
@@ -23,7 +24,7 @@ func NewPendingReplayer(engine *Engine, store JobStore, pendingAge, pollInterval
 		pollInterval = 30 * time.Second
 	}
 	if pendingAge <= 0 {
-		pendingAge = 5 * time.Minute
+		pendingAge = 2 * time.Minute
 	}
 	return &PendingReplayer{
 		engine:       engine,
@@ -33,6 +34,12 @@ func NewPendingReplayer(engine *Engine, store JobStore, pendingAge, pollInterval
 		lockKey:      "cordum:replayer:pending",
 		lockTTL:      pollInterval * 2,
 	}
+}
+
+// WithMetrics attaches a metrics collector to the replayer.
+func (r *PendingReplayer) WithMetrics(m Metrics) *PendingReplayer {
+	r.metrics = m
+	return r
 }
 
 func (r *PendingReplayer) Start(ctx context.Context) {
@@ -94,6 +101,7 @@ func (r *PendingReplayer) replayPending(ctx context.Context, cutoff time.Time) {
 	}
 
 	logging.Info("pending-replayer", "replaying pending jobs", "count", len(records))
+	replayed := 0
 	for _, rec := range records {
 		req, err := store.GetJobRequest(ctx, rec.ID)
 		if err != nil || req == nil {
@@ -102,7 +110,15 @@ func (r *PendingReplayer) replayPending(ctx context.Context, cutoff time.Time) {
 		}
 		if err := r.engine.handleJobRequest(req, rec.TraceID); err != nil {
 			logging.Error("pending-replayer", "replay job failed", "job_id", rec.ID, "error", err)
+		} else {
+			replayed++
+			if r.metrics != nil {
+				r.metrics.IncOrphanReplayed(req.Topic)
+			}
 		}
+	}
+	if replayed > 0 {
+		logging.Info("pending-replayer", "replayed orphaned pending jobs", "count", replayed, "total", len(records))
 	}
 }
 

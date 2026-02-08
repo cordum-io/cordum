@@ -4,7 +4,7 @@ metadata:
   name: cordum-api-gateway
   namespace: cordum
 spec:
-  minAvailable: 1
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: cordum-api-gateway
@@ -15,7 +15,7 @@ metadata:
   name: cordum-scheduler
   namespace: cordum
 spec:
-  minAvailable: 1
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: cordum-scheduler
@@ -26,7 +26,7 @@ metadata:
   name: cordum-workflow-engine
   namespace: cordum
 spec:
-  minAvailable: 1
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: cordum-workflow-engine
@@ -37,7 +37,7 @@ metadata:
   name: cordum-safety-kernel
   namespace: cordum
 spec:
-  minAvailable: 1
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: cordum-safety-kernel
@@ -61,3 +61,35 @@ spec:
       target:
         type: Utilization
         averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cordum-scheduler
+  namespace: cordum
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cordum-scheduler
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

@@ -240,6 +240,7 @@ if mode == "shared" then
   redis.call("SET", key, encoded, "PX", ttl)
   return encoded
 end
+-- Requesting exclusive on a shared lock — only allow if sole owner.
 local count = 0
 local onlyOwner = true
 for k, _ in pairs(owners) do
@@ -248,7 +249,11 @@ for k, _ in pairs(owners) do
     onlyOwner = false
   end
 end
-if onlyOwner and count > 0 then
+if count == 0 then
+  return ""
+end
+if onlyOwner then
+  -- Same owner holds all shares — allow upgrade to exclusive.
   lock["mode"] = "exclusive"
   owners[owner] = (owners[owner] or 0) + 1
   lock["owners"] = owners
@@ -287,13 +292,16 @@ end
 lock["owners"] = owners
 lock["updated_at"] = now
 local ttl = redis.call("PTTL", key)
-if ttl > 0 then
-  local encoded = cjson.encode(lock)
-  redis.call("SET", key, encoded, "PX", ttl)
-  return encoded
-end
 local encoded = cjson.encode(lock)
-redis.call("SET", key, encoded)
+if ttl > 0 then
+  redis.call("SET", key, encoded, "PX", ttl)
+elseif ttl == -1 then
+  -- Key exists but has no expiry — apply a safety TTL to prevent permanent lock.
+  redis.call("SET", key, encoded, "PX", 30000)
+else
+  -- Key doesn't exist (ttl == -2); shouldn't reach here after GET, but be safe.
+  redis.call("SET", key, encoded, "PX", 30000)
+end
 return encoded
 `
 

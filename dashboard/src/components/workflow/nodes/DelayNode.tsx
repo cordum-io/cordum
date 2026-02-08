@@ -1,76 +1,21 @@
 import { memo } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
-import type { DelayNodeData } from "../types";
-import { NodeStatus } from "./NodeStatus";
+import type { NodeProps } from "reactflow";
+import { Clock } from "lucide-react";
+import { BaseNode } from "./BaseNode";
 
-function formatDelay(seconds?: number): string {
-  if (!seconds) return "Not set";
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
-}
-
-function DelayNodeComponent({ id, data, selected }: NodeProps<DelayNodeData>) {
-  const isReadOnly = Boolean(data.readOnly);
+export const DelayNode = memo(function DelayNode({ data, selected }: NodeProps) {
+  const config = (data.config ?? {}) as Record<string, unknown>;
+  const duration = (typeof data.delay_sec === "number" ? `${data.delay_sec}s` : "") || (data.delay_until as string) || (typeof config.duration === "string" ? config.duration : "");
   return (
-    <div
-      className={`builder-node builder-node--delay ${selected ? "builder-node--selected" : ""}`}
-      onClick={() => {
-        if (!isReadOnly) {
-          data.onSelect(id);
-        }
-      }}
+    <BaseNode
+      icon={<Clock className="h-4 w-4 text-purple-600" />}
+      label={data.label as string}
+      accent="bg-purple-50"
+      selected={selected}
     >
-      <Handle type="target" position={Position.Left} className="builder-handle" />
-
-      <div className="builder-node__header">
-        <div className="builder-node__icon bg-muted">DL</div>
-        <div className="builder-node__info">
-          <div className="builder-node__label">{data.label}</div>
-          <div className="builder-node__type">Delay</div>
-        </div>
-        {!isReadOnly ? (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              data.onDelete(id);
-            }}
-            className="builder-node__delete"
-          >
-            &times;
-          </button>
-        ) : null}
-      </div>
-
-      <div className="builder-node__body">
-        {data.delaySec && (
-          <div className="builder-node__field">
-            <span className="builder-node__field-label">Wait:</span>
-            <span className="builder-node__field-value builder-node__field-value--mono">
-              {formatDelay(data.delaySec)}
-            </span>
-          </div>
-        )}
-        {data.delayUntil && (
-          <div className="builder-node__field">
-            <span className="builder-node__field-label">Until:</span>
-            <span className="builder-node__field-value builder-node__field-value--mono">
-              {data.delayUntil}
-            </span>
-          </div>
-        )}
-        {!data.delaySec && !data.delayUntil && (
-          <div className="builder-node__empty">
-            No delay configured
-          </div>
-        )}
-      </div>
-
-      {isReadOnly ? <NodeStatus status={data.status} /> : null}
-      <Handle type="source" position={Position.Right} id="output" className="builder-handle" />
-    </div>
+      {duration && (
+        <span>duration: {duration}</span>
+      )}
+    </BaseNode>
   );
-}
-
-export const DelayNode = memo(DelayNodeComponent);
+});

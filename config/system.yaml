@@ -24,12 +24,12 @@ budget:
   cost_attribution_enabled: true
   cost_centers: []
 rate_limits:
-  requests_per_minute: 600
-  requests_per_hour: 36000
-  burst_size: 100
-  concurrent_jobs: 20
+  requests_per_minute: 120000
+  requests_per_hour: 7200000
+  burst_size: 4000
+  concurrent_jobs: 10000
   concurrent_workflows: 5
-  queue_size: 100
+  queue_size: 5000
 retry:
   max_retries: 3
   initial_backoff: 1s
@@ -48,8 +48,6 @@ models:
   allowed_models: ["gpt-4", "llama-3", "claude-3"]
   default_model: "gpt-4"
   fallback_models: ["llama-3"]
-  model_preferences: {}
-  model_cost_limits: {}
 context:
   allowed_memory_ids: ["repo:*", "kb:*"]
   denied_memory_ids: []
@@ -57,11 +55,13 @@ context:
   max_retrieved_chunks: 10
   cross_tenant_access: false
   allowed_connectors: ["github", "slack"]
-  redaction_policies: {}
+  redaction_policies: {} # Config field defined but not yet consumed at runtime
+# TODO: not yet implemented — struct exists but no runtime code reads these fields
 experiment:
   enabled: false
   name: ""
   buckets: []
+# TODO: not yet implemented — struct exists but no runtime code reads these fields
 integrations:
   github:
     enabled: false
@@ -88,6 +88,7 @@ slo:
   error_rate_budget: 0.01
   timeout_seconds: 60
   critical: false
+# TODO: not yet implemented — no backing code or struct exists
 observability:
   otel:
     enabled: false
@@ -100,6 +101,7 @@ observability:
     dashboards:
       system_overview: ""
       workflow_performance: ""
+# TODO: not yet implemented — no backing code or struct exists
 alerting:
   pagerduty:
     enabled: false

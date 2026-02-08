@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +155,9 @@ func readEnvFile(path string, keys ...string) string {
 			continue
 		}
 		return trimQuotes(val)
+	}
+	if err := scanner.Err(); err != nil {
+		slog.Warn("readEnvFile: scan error", "path", path, "error", err)
 	}
 	return ""
 }

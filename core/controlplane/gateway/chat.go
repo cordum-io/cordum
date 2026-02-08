@@ -87,38 +87,38 @@ type chatSendRequest struct {
 
 func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {
-		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
+		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
 	}
 	if s.memStore == nil {
-		http.Error(w, "memory store unavailable", http.StatusServiceUnavailable)
+		writeErrorJSON(w, http.StatusServiceUnavailable, "memory store unavailable")
 		return
 	}
 	runID := r.PathValue("id")
 	if runID == "" {
-		http.Error(w, "missing run id", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "missing run id")
 		return
 	}
 
 	run, err := s.workflowStore.GetRun(r.Context(), runID)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeErrorJSON(w, http.StatusNotFound, "not found")
 		return
 	}
 	if err := s.requireTenantAccess(r, run.OrgID); err != nil {
-		http.Error(w, "tenant access denied", http.StatusForbidden)
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 		return
 	}
 
 	memoryID := runMemoryID(run)
 	if memoryID == "" {
-		http.Error(w, "missing memory id", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "missing memory id")
 		return
 	}
 
 	client, err := chatRedisClient(s.memStore)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotImplemented)
+		writeErrorJSON(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 
@@ -127,12 +127,12 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 	key := chatHistoryKey(memoryID)
 	total, err := client.LLen(r.Context(), key).Result()
 	if err != nil {
-		http.Error(w, "failed to load chat history", http.StatusInternalServerError)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to load chat history")
 		return
 	}
 	if total == 0 {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(chatResponse{Items: []chatMessage{}})
+		writeJSON(w,chatResponse{Items: []chatMessage{}})
 		return
 	}
 
@@ -152,7 +152,7 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 
 	items, err := client.LRange(r.Context(), key, start, end).Result()
 	if err != nil {
-		http.Error(w, "failed to load chat history", http.StatusInternalServerError)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to load chat history")
 		return
 	}
 	if len(items) > 1 {
@@ -164,7 +164,8 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 	messages := make([]chatMessage, 0, len(items))
 	for i, raw := range items {
 		ev := chatEvent{}
-		if json.Unmarshal([]byte(raw), &ev) != nil {
+		if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+			logging.Warn("chat", "corrupt history event, treating as system", "index", i, "error", err)
 			trimmed := strings.TrimSpace(raw)
 			if trimmed == "" {
 				continue
@@ -183,54 +184,54 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 		nc := start - 1
 		nextCursor = &nc
 	}
-	_ = json.NewEncoder(w).Encode(chatResponse{Items: messages, NextCursor: nextCursor})
+	writeJSON(w,chatResponse{Items: messages, NextCursor: nextCursor})
 }
 
 func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {
-		http.Error(w, "workflow store unavailable", http.StatusServiceUnavailable)
+		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
 	}
 	if s.memStore == nil {
-		http.Error(w, "memory store unavailable", http.StatusServiceUnavailable)
+		writeErrorJSON(w, http.StatusServiceUnavailable, "memory store unavailable")
 		return
 	}
 	runID := r.PathValue("id")
 	if runID == "" {
-		http.Error(w, "missing run id", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "missing run id")
 		return
 	}
 
 	run, err := s.workflowStore.GetRun(r.Context(), runID)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeErrorJSON(w, http.StatusNotFound, "not found")
 		return
 	}
 	if err := s.requireTenantAccess(r, run.OrgID); err != nil {
-		http.Error(w, "tenant access denied", http.StatusForbidden)
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 		return
 	}
 
 	var body chatSendRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "invalid body")
 		return
 	}
 	content := strings.TrimSpace(body.Content)
 	if content == "" {
-		http.Error(w, "content required", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "content required")
 		return
 	}
 
 	memoryID := runMemoryID(run)
 	if memoryID == "" {
-		http.Error(w, "missing memory id", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "missing memory id")
 		return
 	}
 
 	client, err := chatRedisClient(s.memStore)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotImplemented)
+		writeErrorJSON(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 
@@ -252,13 +253,13 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := json.Marshal(ev)
 	if err != nil {
-		http.Error(w, "failed to encode chat message", http.StatusInternalServerError)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to encode chat message")
 		return
 	}
 
 	key := chatHistoryKey(memoryID)
 	if err := client.RPush(r.Context(), key, data).Err(); err != nil {
-		http.Error(w, "failed to store chat message", http.StatusInternalServerError)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to store chat message")
 		return
 	}
 	if chatMaxHistory > 0 {
@@ -271,7 +272,7 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(msg)
+	writeJSON(w,msg)
 }
 
 func (s *server) emitChatEvent(run *wf.WorkflowRun, msg chatMessage) {
@@ -289,7 +290,7 @@ func (s *server) emitChatEvent(run *wf.WorkflowRun, msg chatMessage) {
 		logging.Error("api-gateway", "chat event marshal failed", "error", err)
 		return
 	}
-	s.enqueueWSEvent(data, run.OrgID)
+	s.enqueueWSEvent(data, run.OrgID, "")
 }
 
 func runMemoryID(run *wf.WorkflowRun) string {
@@ -403,4 +404,4 @@ func chatCreatedAt(ts int64) string {
 	}
 }
 
-var errChatStoreUnavailable = errors.New("chat history unavailable")
+var errChatStoreUnavailable = errors.New("chat history unavailable: Redis store not configured")

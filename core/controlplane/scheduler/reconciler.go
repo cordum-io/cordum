@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ type Reconciler struct {
 	lockKey         string
 	lockTTL         time.Duration
 	mu              sync.RWMutex
+	metrics         Metrics
 }
 
 func NewReconciler(store JobStore, dispatchTimeout, runningTimeout, pollInterval time.Duration) *Reconciler {
@@ -28,6 +30,12 @@ func NewReconciler(store JobStore, dispatchTimeout, runningTimeout, pollInterval
 		lockKey:         "cordum:reconciler:default",
 		lockTTL:         pollInterval * 2,
 	}
+}
+
+// WithMetrics attaches a Metrics implementation to the reconciler.
+func (r *Reconciler) WithMetrics(m Metrics) *Reconciler {
+	r.metrics = m
+	return r
 }
 
 // Start runs the reconciliation loop until the context is cancelled.
@@ -51,7 +59,9 @@ func (r *Reconciler) Start(ctx context.Context) {
 					continue
 				}
 				r.tick(ctx)
-				_ = r.store.ReleaseLock(ctx, r.lockKey)
+				if err := r.store.ReleaseLock(ctx, r.lockKey); err != nil {
+					logging.Warn("reconciler", "failed to release lock", "key", r.lockKey, "error", err)
+				}
 			} else {
 				r.tick(ctx)
 			}
@@ -62,8 +72,8 @@ func (r *Reconciler) Start(ctx context.Context) {
 func (r *Reconciler) tick(ctx context.Context) {
 	now := time.Now()
 	dispatchTimeout, runningTimeout := r.currentTimeouts()
-	r.handleTimeouts(ctx, JobStateDispatched, now.Add(-dispatchTimeout))
-	r.handleTimeouts(ctx, JobStateRunning, now.Add(-runningTimeout))
+	r.handleTimeouts(ctx, JobStateDispatched, now.Add(-dispatchTimeout), dispatchTimeout)
+	r.handleTimeouts(ctx, JobStateRunning, now.Add(-runningTimeout), runningTimeout)
 	r.handleDeadlineExpirations(ctx, now)
 }
 
@@ -85,7 +95,7 @@ func (r *Reconciler) currentTimeouts() (time.Duration, time.Duration) {
 	return r.dispatchTimeout, r.runningTimeout
 }
 
-func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff time.Time) {
+func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff time.Time, timeout ...time.Duration) {
 	const maxIterations = 100
 	const maxRetriesPerJob = 3
 
@@ -97,6 +107,9 @@ func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff 
 		if err != nil {
 			logging.Error("reconciler", "list jobs", "state", state, "error", err)
 			return
+		}
+		if r.metrics != nil {
+			r.metrics.SetStaleJobs(string(state), len(records))
 		}
 		if len(records) == 0 {
 			return
@@ -112,6 +125,11 @@ func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff 
 				logging.Error("reconciler", "mark timeout", "job_id", rec.ID, "error", err, "retry", failed[rec.ID])
 				continue
 			}
+			reason := fmt.Sprintf("timeout: %s exceeded", state)
+			if len(timeout) > 0 {
+				reason = fmt.Sprintf("timeout: %s >%s", state, timeout[0])
+			}
+			_ = r.store.SetFailureReason(ctx, rec.ID, reason)
 			logging.Info("reconciler", "job timed out", "job_id", rec.ID, "from_state", state)
 			progress++
 		}
@@ -138,6 +156,7 @@ func (r *Reconciler) handleDeadlineExpirations(ctx context.Context, now time.Tim
 		if err := r.store.SetState(ctx, rec.ID, JobStateTimeout); err != nil {
 			logging.Error("reconciler", "mark deadline timeout", "job_id", rec.ID, "error", err)
 		} else {
+			_ = r.store.SetFailureReason(ctx, rec.ID, "timeout: deadline expired")
 			logging.Info("reconciler", "job deadline expired", "job_id", rec.ID)
 		}
 	}

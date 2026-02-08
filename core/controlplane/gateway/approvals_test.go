@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -83,6 +85,9 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	}
 	if record.JobHash != hash {
 		t.Fatalf("expected job hash %q got %q", hash, record.JobHash)
+	}
+	if record.ApprovedAt <= 0 {
+		t.Fatalf("expected ApprovedAt > 0, got %d", record.ApprovedAt)
 	}
 	if len(bus.published) != 1 {
 		t.Fatalf("expected 1 publish, got %d", len(bus.published))
@@ -201,6 +206,9 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	if record.Note != "not safe" {
 		t.Fatalf("expected note not safe got %q", record.Note)
 	}
+	if record.ApprovedAt <= 0 {
+		t.Fatalf("expected ApprovedAt > 0 on rejection, got %d", record.ApprovedAt)
+	}
 }
 
 func TestListApprovalsIncludesJobHash(t *testing.T) {
@@ -309,5 +317,133 @@ func TestGetJobIncludesApprovalMetadata(t *testing.T) {
 	}
 	if payload["approval_job_hash"] != "hash" {
 		t.Fatalf("expected approval_job_hash hash got %#v", payload["approval_job_hash"])
+	}
+}
+
+func TestApproveJobDoubleApproveIdempotent(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-1"})
+
+	jobID := uuid.NewString()
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels:   map[string]string{"workflow_id": "wf-1"},
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
+		Decision:         scheduler.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	approve := func() *httptest.ResponseRecorder {
+		body := `{"reason":"ok","note":"looks fine"}`
+		httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
+		httpReq.Header.Set("X-Tenant-ID", "default")
+		httpReq.SetPathValue("job_id", jobID)
+		httpReq.Header.Set("X-Principal-Id", "alice")
+		httpReq.Header.Set("X-Principal-Role", "admin")
+		rr := httptest.NewRecorder()
+		s.handleApproveJob(rr, httpReq)
+		return rr
+	}
+
+	// First approval should succeed.
+	rr1 := approve()
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first approve: expected 200 got %d body=%s", rr1.Code, rr1.Body.String())
+	}
+
+	// Second approval should return 409 — job is no longer awaiting approval.
+	rr2 := approve()
+	if rr2.Code != http.StatusConflict {
+		t.Fatalf("second approve: expected 409 got %d body=%s", rr2.Code, rr2.Body.String())
+	}
+}
+
+func TestApproveJobConcurrentRace(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-1"})
+
+	jobID := uuid.NewString()
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels:   map[string]string{"workflow_id": "wf-1"},
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
+		Decision:         scheduler.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	const N = 10
+	var wg sync.WaitGroup
+	var okCount, conflictCount atomic.Int32
+
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func() {
+			defer wg.Done()
+			body := `{"reason":"ok","note":"concurrent"}`
+			httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
+			httpReq.Header.Set("X-Tenant-ID", "default")
+			httpReq.SetPathValue("job_id", jobID)
+			httpReq.Header.Set("X-Principal-Id", "alice")
+			httpReq.Header.Set("X-Principal-Role", "admin")
+			rr := httptest.NewRecorder()
+			s.handleApproveJob(rr, httpReq)
+
+			switch rr.Code {
+			case http.StatusOK:
+				okCount.Add(1)
+			case http.StatusConflict:
+				conflictCount.Add(1)
+			default:
+				t.Errorf("unexpected status %d body=%s", rr.Code, rr.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := okCount.Load(); got < 1 {
+		t.Errorf("expected at least 1 approval success, got %d", got)
+	}
+	if total := okCount.Load() + conflictCount.Load(); total != N {
+		t.Errorf("expected %d total responses (200+409), got %d", N, total)
 	}
 }

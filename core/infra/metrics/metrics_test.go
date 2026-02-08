@@ -29,6 +29,10 @@ func TestNoopMetrics(t *testing.T) {
 	m.IncJobsDispatched("topic")
 	m.IncJobsCompleted("topic", "ok")
 	m.IncSafetyDenied("topic")
+	m.ObserveJobLockWait(0.01)
+	m.ObserveDispatchLatency("topic", 0.02)
+	m.SetActiveGoroutines(5)
+	m.SetStaleJobs("DISPATCHED", 2)
 	m.IncSagaRecorded()
 	m.IncSagaRollbackTriggered()
 	m.IncSagaCompensationDispatched()
@@ -45,6 +49,10 @@ func TestPromMetrics(t *testing.T) {
 	m.IncJobsDispatched("job.test")
 	m.IncJobsCompleted("job.test", "ok")
 	m.IncSafetyDenied("job.test")
+	m.ObserveJobLockWait(0.01)
+	m.ObserveDispatchLatency("job.test", 0.02)
+	m.SetActiveGoroutines(3)
+	m.SetStaleJobs("DISPATCHED", 1)
 	m.IncSagaRecorded()
 	m.IncSagaRollbackTriggered()
 	m.IncSagaCompensationDispatched()
@@ -68,6 +76,18 @@ func TestPromMetrics(t *testing.T) {
 	}
 	if !hasMetric(families, "cordum_safety_denied_total", map[string]string{"topic": "job.test"}) {
 		t.Fatalf("expected safety_denied metric")
+	}
+	if !hasMetric(families, "cordum_scheduler_job_lock_wait_seconds", nil) {
+		t.Fatalf("expected job_lock_wait metric")
+	}
+	if !hasMetric(families, "cordum_scheduler_dispatch_latency_seconds", map[string]string{"topic": "job.test"}) {
+		t.Fatalf("expected dispatch_latency metric")
+	}
+	if !hasMetric(families, "cordum_scheduler_active_goroutines", nil) {
+		t.Fatalf("expected active_goroutines metric")
+	}
+	if !hasMetric(families, "cordum_scheduler_stale_jobs", map[string]string{"state": "DISPATCHED"}) {
+		t.Fatalf("expected stale_jobs metric")
 	}
 	if !hasMetric(families, "cordum_saga_recorded_total", nil) {
 		t.Fatalf("expected saga_recorded metric")

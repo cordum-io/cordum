@@ -22,10 +22,10 @@ import (
 
 // Engine coordinates workflow runs, dispatching steps as jobs and updating run state.
 type Engine struct {
-	store *RedisStore
-	bus   scheduler.Bus
-	mem   memory.Store
-	mu    sync.Mutex
+	store    *RedisStore
+	bus      scheduler.Bus
+	mem      memory.Store
+	runLocks sync.Map // per-run mutexes to avoid global serialization
 	// optional callbacks for observability or hooks
 	OnStepDispatched func(runID, stepID, jobID string)
 	OnStepFinished   func(runID, stepID string, status StepStatus)
@@ -63,10 +63,18 @@ func (e *Engine) WithSchemaRegistry(registry *schemas.Registry) *Engine {
 	return e
 }
 
+// lockRun acquires a per-run mutex and returns an unlock function.
+// This replaces the global engine mutex so different runs don't block each other.
+func (e *Engine) lockRun(runID string) func() {
+	val, _ := e.runLocks.LoadOrStore(runID, &sync.Mutex{})
+	mu := val.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // StartRun loads the workflow/run and dispatches any ready steps.
 func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	defer e.lockRun(runID)()
 	wfDef, err := e.store.GetWorkflow(ctx, workflowID)
 	if err != nil {
 		return fmt.Errorf("get workflow: %w", err)
@@ -83,8 +91,7 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 
 // RerunFrom creates a new run that reuses inputs and optionally resumes from a step.
 func (e *Engine) RerunFrom(ctx context.Context, runID, stepID string, dryRun bool) (string, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	defer e.lockRun(runID)()
 	if runID == "" {
 		return "", fmt.Errorf("run id required")
 	}
@@ -160,8 +167,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 		return
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	defer e.lockRun(runID)()
 
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
@@ -300,8 +306,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 
 // ApproveStep resumes a waiting approval step.
 func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved bool) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	defer e.lockRun(runID)()
 
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
@@ -347,8 +352,7 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 
 // CancelRun marks a run and all non-terminal steps as cancelled to prevent further dispatch.
 func (e *Engine) CancelRun(ctx context.Context, runID string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	defer e.lockRun(runID)()
 
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
@@ -359,16 +363,13 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 		return fmt.Errorf("get workflow: %w", err)
 	}
 	now := time.Now().UTC()
-	var cancelJobIDs []string
+	// Ensure all workflow-defined steps exist in the run map.
 	for stepID := range wfDef.Steps {
-		sr := run.Steps[stepID]
-		if sr == nil {
-			sr = &StepRun{StepID: stepID}
+		if _, exists := run.Steps[stepID]; !exists {
+			run.Steps[stepID] = &StepRun{StepID: stepID}
 		}
-		cancelJobIDs = append(cancelJobIDs, collectCancelableJobs(sr)...)
-		cancelStepRun(sr, now)
-		run.Steps[stepID] = sr
 	}
+	var cancelJobIDs []string
 	for id, sr := range run.Steps {
 		if sr == nil {
 			continue

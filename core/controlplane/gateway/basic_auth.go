@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -102,6 +103,15 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 	}
 	b.maybeReloadKeys()
 	if token := bearerToken(r.Header.Get("Authorization")); token != "" {
+		// Check session tokens before JWT
+		if strings.HasPrefix(token, "session-") && b.userStore != nil {
+			if redisStore, ok := b.userStore.(*RedisUserStore); ok {
+				authCtx, err := redisStore.ValidateSession(r.Context(), token)
+				if err == nil {
+					return authCtx, nil
+				}
+			}
+		}
 		if b.jwt == nil {
 			return nil, errors.New("jwt auth not configured")
 		}
@@ -121,7 +131,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 	if key == "" && (websocket.IsWebSocketUpgrade(r) || strings.TrimSpace(r.Header.Get("Sec-WebSocket-Protocol")) != "") {
 		key = normalizeAPIKey(apiKeyFromWebSocket(r))
 	}
-	return b.authenticate(key, headerValue(r, "X-Principal-Id"))
+	return b.authenticate(r.Context(), key, headerValue(r, "X-Principal-Id"))
 }
 
 func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext, error) {
@@ -166,10 +176,10 @@ func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext,
 	if b.jwtRequired {
 		return nil, errors.New("jwt required")
 	}
-	return b.authenticate(key, principalID)
+	return b.authenticate(ctx, key, principalID)
 }
 
-func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext, error) {
+func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID string) (*AuthContext, error) {
 	if b == nil {
 		return &AuthContext{}, nil
 	}
@@ -185,6 +195,16 @@ func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext,
 			PrincipalID: strings.TrimSpace(principalID),
 			Role:        "anonymous",
 		}, nil
+	}
+	// Check session tokens (from user/password login)
+	if strings.HasPrefix(key, "session-") && b.userStore != nil {
+		if redisStore, ok := b.userStore.(*RedisUserStore); ok {
+			authCtx, err := redisStore.ValidateSession(ctx, key)
+			if err == nil {
+				return authCtx, nil
+			}
+			// Session not found or invalid — fall through to API key check
+		}
 	}
 	meta, ok := b.lookupKey(key)
 	if !ok {
@@ -354,6 +374,9 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 	single := normalizeAPIKey(os.Getenv("CORDUM_API_KEY"))
 	if single == "" {
 		single = normalizeAPIKey(os.Getenv("API_KEY"))
+		if single != "" {
+			slog.Warn("API_KEY env var is deprecated, use CORDUM_API_KEY instead")
+		}
 	}
 	if single != "" {
 		keys[single] = apiKeyMeta{Role: "admin"}

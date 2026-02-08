@@ -1,0 +1,68 @@
+import { useEffect, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { useConfigStore } from "../state/config";
+import { AppShell } from "./layout/AppShell";
+import { CommandPalette } from "./CommandPalette";
+import { get } from "../api/client";
+import { ApiError } from "../api/client";
+import { useEventStream } from "../hooks/useEventStream";
+import { useAuthConfig } from "../hooks/useAuthConfig";
+import type { User } from "../api/types";
+
+interface SessionResponse {
+  user: User;
+}
+
+export function ProtectedRoute({ children }: { children: ReactNode }) {
+  const isAuthenticated = useConfigStore((s) => s.isAuthenticated);
+  const logout = useConfigStore((s) => s.logout);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { data: authConfig, isLoading: authLoading } = useAuthConfig();
+  const requiresAuth = !!authConfig && (
+    authConfig.password_enabled ||
+    authConfig.user_auth_enabled ||
+    authConfig.saml_enabled
+  );
+  const isAuthorized = !requiresAuth || isAuthenticated;
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !isAuthorized) {
+      const returnUrl = location.pathname + location.search;
+      navigate(`/login?returnUrl=${encodeURIComponent(returnUrl)}`, { replace: true });
+    }
+  }, [authLoading, isAuthorized, navigate, location.pathname, location.search]);
+
+  // Validate session on mount
+  const sessionQuery = useQuery({
+    queryKey: ["auth-session-validate"],
+    queryFn: () => get<SessionResponse>("/auth/session"),
+    enabled: requiresAuth && isAuthenticated,
+    retry: false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  // Handle 401 from session validation
+  useEffect(() => {
+    if (sessionQuery.error instanceof ApiError && sessionQuery.error.status === 401) {
+      logout();
+    }
+  }, [sessionQuery.error, logout]);
+
+  // Connect WebSocket when authenticated (disconnects on unmount / logout)
+  useEventStream();
+
+  if (!isAuthorized) {
+    return null;
+  }
+
+  return (
+    <>
+      <AppShell>{children}</AppShell>
+      <CommandPalette />
+    </>
+  );
+}

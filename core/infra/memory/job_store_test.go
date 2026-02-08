@@ -3,6 +3,8 @@ package memory
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -790,6 +792,47 @@ func TestRedisJobStoreIdempotencyKeyScoped(t *testing.T) {
 	}
 	if existing != "job-1" {
 		t.Fatalf("expected existing job id to remain, got %s", existing)
+	}
+}
+
+func TestRedisJobStoreIdempotencyKeyScopedConcurrent(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	const n = 20
+	wins := make(chan string, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(id string) {
+			defer wg.Done()
+			ok, _, err := store.TrySetIdempotencyKeyScoped(ctx, "tenant-race", "race-key", id)
+			if err != nil {
+				t.Errorf("TrySetIdempotencyKeyScoped: %v", err)
+				return
+			}
+			if ok {
+				wins <- id
+			}
+		}(fmt.Sprintf("job-%d", i))
+	}
+	wg.Wait()
+	close(wins)
+
+	var winCount int
+	for range wins {
+		winCount++
+	}
+	if winCount != 1 {
+		t.Fatalf("expected exactly 1 winner, got %d", winCount)
 	}
 }
 

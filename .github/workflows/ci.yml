@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     name: Test
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         go-version: ['1.23', '1.24']
@@ -23,7 +23,7 @@ jobs:
         go-version: ${{ matrix.go-version }}
 
     - name: Cache Go modules
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/go/pkg/mod
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
@@ -37,7 +37,7 @@ jobs:
       run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       with:
         files: ./coverage.out
         flags: unittests
@@ -66,7 +66,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -77,7 +77,7 @@ jobs:
         go-version: '1.24'
 
     - name: Cache Go modules
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/go/pkg/mod
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
@@ -88,22 +88,27 @@ jobs:
       run: go mod download
 
     - name: golangci-lint
-      uses: golangci/golangci-lint-action@v3
+      uses: golangci/golangci-lint-action@v6
       with:
         version: latest
         args: --timeout=5m
 
   security:
     name: Security Scan
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Run Gosec Security Scanner
-      uses: securego/gosec@master
+    - name: Set up Go
+      uses: actions/setup-go@v5
       with:
-        args: '-no-fail -fmt sarif -out results.sarif ./...'
+        go-version: '1.24'
+
+    - name: Run Gosec Security Scanner
+      run: |
+        go install github.com/securego/gosec/v2/cmd/gosec@latest
+        gosec -no-fail -fmt sarif -out results.sarif ./...
 
     - name: Upload SARIF file
       uses: github/codeql-action/upload-sarif@v4
@@ -112,7 +117,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4

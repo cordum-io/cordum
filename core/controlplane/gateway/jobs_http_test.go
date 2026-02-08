@@ -96,6 +96,48 @@ func TestHandleSubmitJobHTTPRejectsDisallowedMemoryID(t *testing.T) {
 	}
 }
 
+func TestHandleSubmitJobHTTPRespectsConcurrentJobsLimit(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+
+	ctx := context.Background()
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"rate_limits": map[string]any{
+				"concurrent_jobs": 1,
+				"queue_size":      0,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	seedJobID := "job-seed"
+	if err := s.jobStore.SetTenant(ctx, seedJobID, "default"); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	if err := s.jobStore.SetState(ctx, seedJobID, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.test",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected too many requests, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleListJobsAndGetJob(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()

@@ -23,6 +23,8 @@ kind: Service
 metadata:
   name: cordum-redis
   namespace: cordum
+  labels:
+    app: redis
 spec:
   clusterIP: None
   selector:
@@ -31,6 +33,9 @@ spec:
   - name: redis
     port: 6379
     targetPort: 6379
+  - name: metrics
+    port: 9121
+    targetPort: 9121
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -48,6 +53,15 @@ spec:
       labels:
         app: redis
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: redis
+              topologyKey: kubernetes.io/hostname
       terminationGracePeriodSeconds: 60
       containers:
       - name: redis
@@ -56,6 +70,11 @@ spec:
         ports:
         - name: redis
           containerPort: 6379
+        startupProbe:
+          tcpSocket:
+            port: 6379
+          failureThreshold: 30
+          periodSeconds: 5
         livenessProbe:
           tcpSocket:
             port: 6379
@@ -83,6 +102,33 @@ spec:
           readOnly: true
         - name: data
           mountPath: /data
+      - name: redis-exporter
+        image: oliver006/redis_exporter:v1.58.0
+        ports:
+        - name: metrics
+          containerPort: 9121
+        env:
+        - name: REDIS_ADDR
+          value: "rediss://localhost:6379"
+        - name: REDIS_EXPORTER_TLS_CLIENT_CERT_FILE
+          value: "/etc/redis/tls/tls.crt"
+        - name: REDIS_EXPORTER_TLS_CLIENT_KEY_FILE
+          value: "/etc/redis/tls/tls.key"
+        - name: REDIS_EXPORTER_TLS_CA_CERT_FILE
+          value: "/etc/redis/tls/ca.crt"
+        - name: REDIS_EXPORTER_SKIP_TLS_VERIFICATION
+          value: "false"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+        volumeMounts:
+        - name: tls
+          mountPath: /etc/redis/tls
+          readOnly: true
       volumes:
       - name: config
         configMap:
@@ -125,6 +171,13 @@ spec:
             done
           done
           redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key --cluster create $nodes --cluster-replicas 1 --cluster-yes
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
         volumeMounts:
         - name: client-tls
           mountPath: /etc/cordum/tls/client

@@ -1,1081 +1,137 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Link, useNavigate } from "react-router-dom";
-import { ArrowUpRight, BookOpen, Play, RotateCcw, Save, Sparkles, Trash2, XCircle } from "lucide-react";
-import { api } from "../lib/api";
-import { formatCount, formatRelative, formatShortDate, epochToMillis } from "../lib/format";
-import { getDLQGuidance, getGuidanceSeverityBg } from "../lib/dlq-guidance";
-import { useAllRuns, useWorkflows } from "../hooks/useWorkflows";
-import { useEventStore } from "../state/events";
-import { usePinStore } from "../state/pins";
-import { Card, CardHeader, CardTitle } from "../components/ui/Card";
+import { Users, Activity, Database, Clock } from "lucide-react";
+import { useStatus } from "../hooks/useStatus";
+import { useWorkers } from "../hooks/useWorkers";
 import { MetricCard } from "../components/MetricCard";
-import { ProgressBar } from "../components/ProgressBar";
-import { RunStatusBadge } from "../components/StatusBadge";
+import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
-import { Drawer } from "../components/ui/Drawer";
-import { Textarea } from "../components/ui/Textarea";
-import { Input } from "../components/ui/Input";
-import type { Heartbeat, JobRecord, StepRun, WorkflowRun, Workflow } from "../types/api";
+import { SafetyDecisionFeed } from "../components/home/SafetyDecisionFeed";
+import { JobPipelineFunnel } from "../components/home/JobPipelineFunnel";
+import { PoolUtilizationGrid } from "../components/home/PoolUtilizationGrid";
+import { EventTimeline } from "../components/home/EventTimeline";
+import { ActiveWorkflowCards } from "../components/home/ActiveWorkflowCards";
+import { DLQSummary } from "../components/home/DLQSummary";
+import { QuickActions } from "../components/home/QuickActions";
 
-type RunPreset = {
-  id: string;
-  name: string;
-  workflowId: string;
-  payload: string;
-};
+// ---------------------------------------------------------------------------
+// Skeleton cards
+// ---------------------------------------------------------------------------
 
-const STALE_WORKER_MINUTES = 2;
-
-function loadPresets(): RunPreset[] {
-  try {
-    const stored = localStorage.getItem("cordum-run-presets");
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
+function SkeletonGrid() {
+  return (
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      {Array.from({ length: 5 }, (_, i) => (
+        <Card key={i} className="animate-pulse">
+          <div className="space-y-3">
+            <div className="h-4 w-1/2 rounded bg-surface2" />
+            <div className="h-8 w-2/3 rounded bg-surface2" />
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
 }
 
-function savePresets(presets: RunPreset[]) {
-  localStorage.setItem("cordum-run-presets", JSON.stringify(presets));
+// ---------------------------------------------------------------------------
+// Icon wrapper
+// ---------------------------------------------------------------------------
+
+const iconClass = "h-5 w-5 text-muted";
+
+function formatUptime(seconds?: number): string {
+  if (seconds == null) return "\u2014";
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ${hrs % 24}h`;
 }
 
-function countFanoutChildren(step: StepRun): { total: number; completed: number } {
-  const children = Object.values(step.children || {});
-  if (children.length === 0) return { total: 0, completed: 0 };
-  const completed = children.filter((c) =>
-    ["succeeded", "failed", "cancelled", "timed_out"].includes(c.status)
-  ).length;
-  return { total: children.length, completed };
-}
+// ---------------------------------------------------------------------------
+// HomePage
+// ---------------------------------------------------------------------------
 
-function runProgress(run: WorkflowRun) {
-  const steps = Object.values(run.steps || {});
-  if (steps.length === 0) {
-    return { percent: 0, activeStep: "", activeStatus: "", fanout: null as { total: number; completed: number } | null };
-  }
-  const completed = steps.filter((step) =>
-    ["succeeded", "failed", "cancelled", "timed_out"].includes(step.status)
-  ).length;
-  // First look for running/waiting steps
-  let active = steps.find((step) => ["running", "waiting"].includes(step.status));
-  // If none, look for pending steps (queued but not started)
-  if (!active) {
-    active = steps.find((step) => step.status === "pending");
-  }
-  const fanout = active ? countFanoutChildren(active) : null;
-  return {
-    percent: Math.round((completed / steps.length) * 100),
-    activeStep: active?.step_id || "",
-    activeStatus: active?.status || "",
-    fanout: fanout && fanout.total > 0 ? fanout : null,
-  };
-}
-
-function runTimestamp(run: WorkflowRun) {
-  return run.updated_at || run.started_at || run.created_at || "";
-}
-
-function buildActivity(jobs: JobRecord[]) {
-  const buckets = new Map<string, { time: string; succeeded: number; failed: number; running: number; pending: number }>();
-  jobs.forEach((job) => {
-    const ms = epochToMillis(job.updated_at);
-    if (!ms) {
-      return;
-    }
-    const date = new Date(ms);
-    const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}`;
-    const bucket = buckets.get(key) || {
-      time: new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).toISOString(),
-      succeeded: 0,
-      failed: 0,
-      running: 0,
-      pending: 0,
-    };
-    if (job.state === "SUCCEEDED") {
-      bucket.succeeded += 1;
-    } else if (job.state === "FAILED" || job.state === "DENIED" || job.state === "TIMEOUT") {
-      bucket.failed += 1;
-    } else if (job.state === "RUNNING" || job.state === "DISPATCHED") {
-      bucket.running += 1;
-    } else {
-      bucket.pending += 1;
-    }
-    buckets.set(key, bucket);
-  });
-  return Array.from(buckets.values()).sort((a, b) => a.time.localeCompare(b.time));
-}
-
-function jobUpdatedAt(updatedAt?: number): string {
-  const ms = epochToMillis(updatedAt);
-  if (!ms) {
-    return "";
-  }
-  return new Date(ms).toISOString();
-}
-
-export function HomePage() {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const approvalsQuery = useQuery({
-    queryKey: ["approvals", "summary"],
-    queryFn: () => api.listApprovals(20),
-  });
-  const dlqQuery = useQuery({
-    queryKey: ["dlq", "summary"],
-    queryFn: () => api.listDLQPage(20),
-  });
-  const jobsQuery = useQuery({
-    queryKey: ["jobs", "summary"],
-    queryFn: () => api.listJobs({ limit: 200 }),
-  });
-  const policyQuery = useQuery({
-    queryKey: ["policy", "snapshots"],
-    queryFn: () => api.listPolicySnapshots(),
-  });
-  const workersQuery = useQuery({
-    queryKey: ["workers", "summary"],
-    queryFn: () => api.listWorkers(),
-    refetchInterval: 20_000,
-  });
-  const systemConfigQuery = useQuery({
-    queryKey: ["config", "system", "default"],
-    queryFn: () => api.getConfig("system", "default"),
-  });
-  const { runs, isLoading } = useAllRuns({ limit: 120 });
-  const events = useEventStore((state) => state.events.slice(0, 6));
-  const pinned = usePinStore((state) => state.items);
-  const removePinned = usePinStore((state) => state.removePin);
-  const workflowsQuery = useWorkflows();
-  const workflows = workflowsQuery.data ?? [];
-  const workflowMap = useMemo(() => {
-    const map = new Map<string, { id: string; name?: string; input_schema?: Record<string, unknown> }>();
-    workflows.forEach((w) => map.set(w.id, w));
-    return map;
-  }, [workflows]);
-
-  const workers = useMemo(() => (workersQuery.data || []) as Heartbeat[], [workersQuery.data]);
-  const poolHealth = useMemo(() => {
-    const poolsConfig = (systemConfigQuery.data?.data?.pools || {}) as Record<string, unknown>;
-    const poolDefs = (poolsConfig as { pools?: Record<string, { requires?: string[] }> }).pools || {};
-    const poolNames = new Set<string>([
-      ...Object.keys(poolDefs),
-      ...workers.map((worker) => worker.pool || "default"),
-    ]);
-
-    const cutoff = Date.now() - STALE_WORKER_MINUTES * 60 * 1000;
-    const stats = Array.from(poolNames).map((name) => {
-      const poolWorkers = workers.filter((worker) => (worker.pool || "default") === name);
-      const staleCount = poolWorkers.filter((worker) => {
-        if (!worker.updated_at) return false;
-        const ts = new Date(worker.updated_at).getTime();
-        return Number.isFinite(ts) && ts < cutoff;
-      }).length;
-      return {
-        name,
-        total: poolWorkers.length,
-        stale: staleCount,
-        requires: poolDefs[name]?.requires || [],
-      };
-    });
-
-    return stats.sort((a, b) => b.total - a.total);
-  }, [systemConfigQuery.data, workers]);
-
-  const totalWorkers = workers.length;
-  const staleWorkers = useMemo(() => {
-    const cutoff = Date.now() - STALE_WORKER_MINUTES * 60 * 1000;
-    return workers.filter((worker) => {
-      if (!worker.updated_at) return false;
-      const ts = new Date(worker.updated_at).getTime();
-      return Number.isFinite(ts) && ts < cutoff;
-    });
-  }, [workers]);
-
-  const cancelMutation = useMutation({
-    mutationFn: ({ workflowId, runId }: { workflowId: string; runId: string }) =>
-      api.cancelRun(workflowId, runId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs"] }),
-  });
-
-  const rerunMutation = useMutation({
-    mutationFn: (payload: { runId: string }) => api.rerunRun(payload.runId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs"] }),
-  });
-
-  // Run drawer state
-  const [runDrawerWorkflow, setRunDrawerWorkflow] = useState<Workflow | null>(null);
-  const [runPayload, setRunPayload] = useState("{}");
-  const [runPayloadError, setRunPayloadError] = useState<string | null>(null);
-  const [presets, setPresets] = useState<RunPreset[]>(loadPresets);
-  const [newPresetName, setNewPresetName] = useState("");
-  const [selectedPresetId, setSelectedPresetId] = useState("");
-
-  const startRunMutation = useMutation({
-    mutationFn: ({ workflowId, body }: { workflowId: string; body: Record<string, unknown> }) =>
-      api.startRun(workflowId, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      setRunDrawerWorkflow(null);
-      setRunPayload("{}");
-    },
-    onError: (error: Error) => setRunPayloadError(error.message),
-  });
-
-  const workflowPresets = useMemo(
-    () => presets.filter((p) => p.workflowId === runDrawerWorkflow?.id),
-    [presets, runDrawerWorkflow]
-  );
-
-  const handleSavePreset = () => {
-    if (!newPresetName.trim() || !runDrawerWorkflow) return;
-    const newPreset: RunPreset = {
-      id: `${Date.now()}`,
-      name: newPresetName.trim(),
-      workflowId: runDrawerWorkflow.id,
-      payload: runPayload,
-    };
-    const updated = [...presets, newPreset];
-    setPresets(updated);
-    savePresets(updated);
-    setNewPresetName("");
-  };
-
-  const handleDeletePreset = (id: string) => {
-    const updated = presets.filter((p) => p.id !== id);
-    setPresets(updated);
-    savePresets(updated);
-    if (selectedPresetId === id) setSelectedPresetId("");
-  };
-
-  const handleLoadPreset = (preset: RunPreset) => {
-    setRunPayload(preset.payload);
-    setSelectedPresetId(preset.id);
-  };
-
-  const docsUrl = "https://cordum.io/docs";
-  const openDocs = () => {
-    if (typeof window !== "undefined") {
-      window.open(docsUrl, "_blank", "noopener,noreferrer");
-    }
-  };
-  const workflowCount = workflows.length;
-  const quickWorkflows = useMemo(
-    () =>
-      workflows
-        .slice()
-        .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
-        .slice(0, 3),
-    [workflows]
-  );
-  const showOnboarding = workflowCount === 0 || runs.length === 0;
-  const policyCount = useMemo(() => {
-    const data = policyQuery.data as { snapshots?: string[] } | undefined;
-    return data?.snapshots?.length ?? 0;
-  }, [policyQuery.data]);
-
-  const liveRuns = useMemo(
-    () =>
-      runs
-        .filter((run) => ["running", "waiting", "pending"].includes(run.status))
-        .sort((a, b) => runTimestamp(b).localeCompare(runTimestamp(a)))
-        .slice(0, 5),
-    [runs]
-  );
-
-  const failedRunsCount = useMemo(
-    () => runs.filter((run) => ["failed", "timed_out"].includes(run.status)).length,
-    [runs]
-  );
-
-  const approvals = approvalsQuery.data?.items || [];
-  const attentionApprovals = useMemo(
-    () =>
-      approvals
-        .slice()
-        .sort((a, b) => b.job.updated_at - a.job.updated_at)
-        .slice(0, 3),
-    [approvals]
-  );
-  const attentionFailedRuns = useMemo(
-    () =>
-      runs
-        .filter((run) => ["failed", "timed_out"].includes(run.status))
-        .sort((a, b) => runTimestamp(b).localeCompare(runTimestamp(a)))
-        .slice(0, 3),
-    [runs]
-  );
-  const dlqEntries = dlqQuery.data?.items || [];
-  const attentionDlq = useMemo(
-    () =>
-      dlqEntries
-        .slice()
-        .sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
-        .slice(0, 3),
-    [dlqEntries]
-  );
-
-  const oldestApproval = useMemo(() => {
-    if (!approvals.length) {
-      return "-";
-    }
-    const oldest = approvals.reduce((min, item) => (item.job.updated_at < min.job.updated_at ? item : min), approvals[0]);
-    return formatRelative(jobUpdatedAt(oldest.job.updated_at));
-  }, [approvals]);
-
-  const dlqOldest = useMemo(() => {
-    if (!dlqEntries.length) {
-      return "-";
-    }
-    const sorted = dlqEntries.slice().sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
-    return formatRelative(sorted[0]?.created_at);
-  }, [dlqEntries]);
-
-  const activityData = useMemo(() => buildActivity(jobsQuery.data?.items || []), [jobsQuery.data]);
+export default function HomePage() {
+  const { data: status, isLoading, isError, refetch } = useStatus();
+  const { data: workers } = useWorkers();
+  const workerCount = workers?.length ?? status?.workers?.count ?? 0;
+  const activeJobs = workers?.reduce((sum, w) => sum + (w.activeJobs ?? 0), 0) ?? 0;
+  const natsConnected = status?.nats?.connected;
+  const redisOk = status?.redis?.ok;
 
   return (
-    <div className="space-y-8">
-      <section className="relative overflow-hidden rounded-3xl border border-border bg-[color:var(--surface-glass)] p-6 lg:p-8">
-        <div className="pointer-events-none absolute -right-16 top-0 h-56 w-56 rounded-full bg-[color:rgba(15,127,122,0.2)] blur-3xl" />
-        <div className="pointer-events-none absolute -left-20 bottom-0 h-56 w-56 rounded-full bg-[color:rgba(212,131,58,0.18)] blur-3xl" />
-        <div className="relative grid gap-6 lg:grid-cols-[2fr,1fr]">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-white/80 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
-              <Sparkles className="h-3 w-3 text-accent" />
-              Governance Dashboard
-            </div>
-            <h2 className="mt-4 font-display text-3xl font-semibold text-ink">AI control plane overview.</h2>
-            <p className="mt-2 text-sm text-muted">
-              Track safety posture, approvals, and system health. Launch governed workflows in seconds.
+    <div className="space-y-6">
+      <h1 className="font-display text-2xl font-bold text-ink">
+        Command Center
+      </h1>
+
+      {isLoading && <SkeletonGrid />}
+
+      {!isLoading && isError && (
+        <Card>
+          <div className="flex items-center justify-between py-6">
+            <p className="text-sm text-muted">
+              Failed to load system status.
             </p>
-            <div className="mt-5 flex flex-wrap gap-3">
-              <Button variant="primary" type="button" onClick={() => navigate("/workflows/new")}>
-                Create workflow
-              </Button>
-              <Button variant="outline" type="button" onClick={() => navigate("/runs")}>
-                View runs
-              </Button>
-              <Button
-                variant="ghost"
-                type="button"
-                onClick={openDocs}
-              >
-                <BookOpen className="h-4 w-4" />
-                Docs
-              </Button>
-            </div>
-            <div className="mt-6 flex flex-wrap gap-3 text-xs text-muted">
-              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
-                <span className="font-semibold text-ink">{formatCount(workflowCount)}</span> workflows
-              </div>
-              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
-                <span className="font-semibold text-ink">{formatCount(runs.length)}</span> total runs
-              </div>
-              <div className="rounded-full border border-border bg-white/80 px-3 py-1">
-                <span className="font-semibold text-ink">{formatCount(approvals.length)}</span> approvals
-              </div>
-            </div>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Retry
+            </Button>
           </div>
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-border bg-white/70 p-4">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Quick Launch</div>
-                <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/workflows")}>
-                  Browse
-                </Button>
-              </div>
-              {quickWorkflows.length ? (
-                <div className="mt-3 space-y-2">
-                  {quickWorkflows.map((workflow) => (
-                    <div
-                      key={workflow.id}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-border bg-white/80 px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-ink">
-                          {workflow.name || workflow.id}
-                        </div>
-                        <div className="text-xs text-muted">
-                          {workflow.updated_at ? `Updated ${formatRelative(workflow.updated_at)}` : "No recent updates"}
-                        </div>
-                      </div>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        type="button"
-                        onClick={() => {
-                          setRunDrawerWorkflow(workflow as Workflow);
-                          setRunPayload("{}");
-                          setRunPayloadError(null);
-                          setSelectedPresetId("");
-                        }}
-                      >
-                        <Play className="h-3 w-3" />
-                        Run
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-3 text-sm text-muted">No workflows yet. Create one to launch runs instantly.</div>
-              )}
-              {quickWorkflows.length === 0 ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  className="mt-3 w-full"
-                  onClick={() => navigate("/workflows/new")}
-                >
-                  Create your first workflow
-                </Button>
-              ) : null}
-            </div>
+        </Card>
+      )}
 
-            <div className="rounded-2xl border border-border bg-white/70 p-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
-                {showOnboarding ? "Getting started" : "Ops shortcuts"}
-              </div>
-              {showOnboarding ? (
-                <>
-                  <div className="mt-3 space-y-3 text-sm text-muted">
-                    <div className="flex items-start gap-3">
-                      <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent">
-                        1
-                      </span>
-                      <div>
-                        <div className="font-semibold text-ink">Create a workflow</div>
-                        <div className="text-xs text-muted">Define steps, timeouts, and required approvals.</div>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent">
-                        2
-                      </span>
-                      <div>
-                        <div className="font-semibold text-ink">Install a pack</div>
-                        <div className="text-xs text-muted">Add workers and policies with one click.</div>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent">
-                        3
-                      </span>
-                      <div>
-                        <div className="font-semibold text-ink">Run + approve</div>
-                        <div className="text-xs text-muted">Launch a run and approve it from the inbox.</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button variant="primary" size="sm" type="button" onClick={() => navigate("/workflows/new")}>
-                      Create workflow
-                    </Button>
-                    <Button variant="outline" size="sm" type="button" onClick={() => navigate("/packs")}>
-                      Browse packs
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      type="button"
-                      onClick={openDocs}
-                    >
-                      <BookOpen className="h-4 w-4" />
-                      Quickstart
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <div className="mt-3 space-y-2 text-sm text-muted">
-                  <button
-                    type="button"
-                    onClick={() => navigate("/policy")}
-                    className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
-                  >
-                    <div>
-                      <div className="font-semibold text-ink">Approvals</div>
-                      <div className="text-xs text-muted">{formatCount(approvals.length)} waiting</div>
-                    </div>
-                    <ArrowUpRight className="h-4 w-4 text-muted" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate("/dlq")}
-                    className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
-                  >
-                    <div>
-                      <div className="font-semibold text-ink">DLQ backlog</div>
-                      <div className="text-xs text-muted">{formatCount(dlqEntries.length)} items</div>
-                    </div>
-                    <ArrowUpRight className="h-4 w-4 text-muted" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate("/system")}
-                    className="flex w-full items-center justify-between rounded-xl border border-border bg-white/80 px-3 py-2 text-left transition hover:border-accent"
-                  >
-                    <div>
-                      <div className="font-semibold text-ink">System overview</div>
-                      <div className="text-xs text-muted">Pools, workers, and health</div>
-                    </div>
-                    <ArrowUpRight className="h-4 w-4 text-muted" />
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+      {!isLoading && !isError && status && (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <MetricCard
+            title="Workers"
+            value={workerCount}
+            detail="online"
+            icon={<Users className={iconClass} />}
+          />
+          <MetricCard
+            title="Active Jobs"
+            value={activeJobs}
+            icon={<Activity className={iconClass} />}
+          />
+          <MetricCard
+            title="NATS"
+            value={natsConnected ? "Connected" : "Disconnected"}
+            icon={<Activity className={iconClass} />}
+          />
+          <MetricCard
+            title="Redis"
+            value={redisOk ? "OK" : "Degraded"}
+            icon={<Database className={iconClass} />}
+          />
+          <MetricCard
+            title="Uptime"
+            value={formatUptime(status.uptime_seconds)}
+            icon={<Clock className={iconClass} />}
+          />
         </div>
-      </section>
+      )}
 
-      <section className="grid gap-4 lg:grid-cols-4">
-        <MetricCard
-          title="Approvals"
-          value={formatCount(approvalsQuery.data?.items.length || 0)}
-          detail="Pending approval requests"
-        />
-        <MetricCard
-          title="Failed Runs"
-          value={formatCount(failedRunsCount)}
-          detail="Runs needing attention"
-        />
-        <MetricCard
-          title="DLQ Items"
-          value={formatCount(dlqQuery.data?.items.length || 0)}
-          detail="Dead-letter queue backlog"
-        />
-        <MetricCard
-          title="Policy Snapshots"
-          value={formatCount(policyCount)}
-          detail="Active policy versions"
-        />
-      </section>
+      {/* Quick actions */}
+      <QuickActions />
 
-      <section className="grid gap-4 lg:grid-cols-3">
-        <div className="attention-card border-l-4 border-warning">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-muted">Approvals</div>
-              <div className="text-lg font-semibold text-ink">{formatCount(approvals.length)}</div>
-            </div>
-            <Button variant="outline" size="sm" type="button" onClick={() => navigate("/policy")}>
-              Open inbox
-            </Button>
-          </div>
-          <div className="mt-2 text-xs text-muted">Oldest waiting {oldestApproval}</div>
-          {attentionApprovals.length ? (
-            <div className="mt-3 space-y-2">
-              {attentionApprovals.map((item) => (
-                <div key={item.job.id} className="list-row">
-                  <div className="flex items-center justify-between text-xs text-muted">
-                    <span>Job {item.job.id.slice(0, 8)}</span>
-                    <span>{formatRelative(jobUpdatedAt(item.job.updated_at))}</span>
-                  </div>
-                  <div className="text-sm font-semibold text-ink">{item.job.topic || "job"}</div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-3 text-sm text-muted">No approvals waiting.</div>
-          )}
-        </div>
+      {/* Two-column: Safety Feed + Pipeline Funnel */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <SafetyDecisionFeed />
+        <JobPipelineFunnel />
+      </div>
 
-        <div className="attention-card border-l-4 border-danger">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-muted">Failed runs</div>
-              <div className="text-lg font-semibold text-ink">{formatCount(failedRunsCount)}</div>
-            </div>
-            <Button variant="outline" size="sm" type="button" onClick={() => navigate("/runs")}>
-              Review
-            </Button>
-          </div>
-          <div className="mt-2 text-xs text-muted">Last 24h failures</div>
-          {attentionFailedRuns.length ? (
-            <div className="mt-3 space-y-2">
-              {attentionFailedRuns.map((run) => (
-                <div key={run.id} className="list-row">
-                  <div className="flex items-center justify-between text-xs text-muted">
-                    <Link to={`/runs/${run.id}`} className="hover:underline">
-                      Run {run.id.slice(0, 8)}
-                    </Link>
-                    <span>{formatRelative(runTimestamp(run))}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-ink">{run.workflow_id}</div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        rerunMutation.mutate({ runId: run.id });
-                      }}
-                      disabled={rerunMutation.isPending}
-                      title="Rerun this workflow"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-3 text-sm text-muted">No failed runs right now.</div>
-          )}
-        </div>
+      {/* Pool utilization heatmap */}
+      <PoolUtilizationGrid />
 
-        <div className="attention-card border-l-4 border-danger">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-muted">DLQ backlog</div>
-              <div className="text-lg font-semibold text-ink">{formatCount(dlqEntries.length)}</div>
-            </div>
-            <Button variant="outline" size="sm" type="button" onClick={() => navigate("/dlq")}>
-              Open DLQ
-            </Button>
-          </div>
-          <div className="mt-2 text-xs text-muted">Oldest entry {dlqOldest}</div>
-          {attentionDlq.length ? (
-            <div className="mt-3 space-y-2">
-              {attentionDlq.map((entry) => {
-                const guidance = getDLQGuidance(entry);
-                return (
-                  <div key={entry.job_id} className="list-row">
-                    <div className="flex items-center justify-between text-xs text-muted">
-                      <Link to={`/jobs/${entry.job_id}`} className="hover:underline">
-                        Job {entry.job_id.slice(0, 8)}
-                      </Link>
-                      <span>{formatRelative(entry.created_at)}</span>
-                    </div>
-                    <div className="text-sm font-semibold text-ink">
-                      {entry.reason_code ? (
-                        <span className="font-mono text-warning">{entry.reason_code}</span>
-                      ) : (
-                        entry.reason || entry.status || "Failed job"
-                      )}
-                    </div>
-                    {guidance ? (
-                      <div className={`mt-2 rounded-lg border p-2 text-xs ${getGuidanceSeverityBg(guidance.severity)}`}>
-                        <div className="font-medium text-ink">{guidance.title}</div>
-                        {guidance.action?.href ? (
-                          <Link to={guidance.action.href} className="text-accent hover:underline">
-                            {guidance.action.label}
-                          </Link>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="mt-3 text-sm text-muted">DLQ is clear.</div>
-          )}
-        </div>
-      </section>
+      {/* DLQ / Error summary */}
+      <DLQSummary />
 
-      <section className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Active Runs</CardTitle>
-            <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/runs")}>
-              View all
-            </Button>
-          </CardHeader>
-          {isLoading ? (
-            <div className="text-sm text-muted">Loading run activity...</div>
-          ) : liveRuns.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
-              No active runs right now.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {liveRuns.map((run) => {
-                const { percent, activeStep, activeStatus, fanout } = runProgress(run);
-                const runStatus = run.status;
-                const statusLabel = activeStatus === "waiting" ? "awaiting approval" : activeStatus === "running" ? "executing" : activeStatus === "pending" ? "preparing" : activeStatus || runStatus;
-                return (
-                  <div key={run.id} className="rounded-2xl border border-border bg-white/70 p-4">
-                    <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-                      <div>
-                        <Link to={`/runs/${run.id}`} className="text-sm font-semibold text-ink hover:underline">
-                          {run.workflow_id}
-                        </Link>
-                        <div className="text-xs text-muted">
-                          Run {run.id.slice(0, 8)} · {formatRelative(runTimestamp(run))}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <RunStatusBadge status={run.status} />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          onClick={() => cancelMutation.mutate({ workflowId: run.workflow_id, runId: run.id })}
-                          disabled={cancelMutation.isPending}
-                          title="Cancel run"
-                        >
-                          <XCircle className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <div className="mb-2 flex items-center justify-between text-xs text-muted">
-                        <span>
-                          {activeStep ? (
-                            <>
-                              Step: <span className="font-medium text-ink">{activeStep}</span>
-                              {statusLabel ? ` · ${statusLabel}` : ""}
-                            </>
-                          ) : (
-                            <span className="capitalize">{runStatus || "pending"}</span>
-                          )}
-                          {fanout ? (
-                            <span className="ml-2 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                              {fanout.completed}/{fanout.total} items
-                            </span>
-                          ) : null}
-                        </span>
-                        <span>{percent}%</span>
-                      </div>
-                      <ProgressBar value={percent} />
-                    </div>
-                    <div className="mt-2 flex justify-end">
-                      <Link to={`/runs/${run.id}`}>
-                        <Button variant="ghost" size="sm" type="button">
-                          View timeline
-                        </Button>
-                      </Link>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Pinned Workflows</CardTitle>
-          </CardHeader>
-          {pinned.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
-              Pin workflows or pools to keep them close.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {pinned.map((item) => {
-                const isWorkflow = item.type === "workflow";
-                const isRun = item.type === "run";
-                const isPool = item.type === "pool";
-                const workflow = isWorkflow ? workflowMap.get(item.id) : null;
-                const targetHref = isWorkflow
-                  ? `/workflows/${item.id}`
-                  : isRun
-                  ? `/runs/${item.id}`
-                  : isPool
-                  ? `/pools?pool=${encodeURIComponent(item.id)}`
-                  : "/system";
-                return (
-                  <div key={item.id} className="rounded-2xl border border-border bg-white/70 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <Link to={targetHref} className="text-sm font-semibold text-ink hover:underline">
-                          {item.label}
-                        </Link>
-                        <div className="text-xs text-muted">{item.detail || item.type}</div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {isWorkflow && workflow ? (
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            type="button"
-                            title="Start new run"
-                            onClick={() => {
-                              setRunDrawerWorkflow(workflow as Workflow);
-                              setRunPayload("{}");
-                              setRunPayloadError(null);
-                              setSelectedPresetId("");
-                            }}
-                          >
-                            <Play className="h-3 w-3" />
-                            Run
-                          </Button>
-                        ) : null}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          type="button"
-                          onClick={() => removePinned(item.id)}
-                          title="Unpin"
-                        >
-                          <XCircle className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
-      </section>
-
-      <section className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Policy Activity (24h)</CardTitle>
-            <div className="text-xs text-muted">Jobs evaluated and outcomes</div>
-          </CardHeader>
-          {activityData.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
-              No recent job activity.
-            </div>
-          ) : (
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={activityData} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorSuccess" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#1f7a57" stopOpacity={0.6} />
-                      <stop offset="95%" stopColor="#1f7a57" stopOpacity={0.05} />
-                    </linearGradient>
-                    <linearGradient id="colorFail" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.5} />
-                      <stop offset="95%" stopColor="#b83a3a" stopOpacity={0.05} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="time"
-                    tickFormatter={(value) => formatShortDate(value)}
-                    tick={{ fontSize: 10 }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis hide />
-                  <Tooltip
-                    labelFormatter={(value) => formatShortDate(value as string)}
-                    formatter={(value: number) => [value, "runs"]}
-                  />
-                  <Area type="monotone" dataKey="succeeded" stroke="#1f7a57" fill="url(#colorSuccess)" />
-                  <Area type="monotone" dataKey="failed" stroke="#b83a3a" fill="url(#colorFail)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Pool Health</CardTitle>
-            <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/pools")}>
-              View pools
-            </Button>
-          </CardHeader>
-          <div className="space-y-4">
-            <div className="grid gap-3 lg:grid-cols-2">
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Pools</div>
-                <div className="text-sm font-semibold text-ink">{poolHealth.length}</div>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Workers</div>
-                <div className="text-sm font-semibold text-ink">{totalWorkers}</div>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Healthy</div>
-                <div className="text-sm font-semibold text-ink">{Math.max(0, totalWorkers - staleWorkers.length)}</div>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Stale</div>
-                <div className={`text-sm font-semibold ${staleWorkers.length ? "text-warning" : "text-success"}`}>
-                  {staleWorkers.length}
-                </div>
-              </div>
-            </div>
-            {poolHealth.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted">
-                No workers reporting yet.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {poolHealth.slice(0, 3).map((pool) => (
-                  <div key={pool.name} className="rounded-2xl border border-border bg-white/70 p-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-ink">{pool.name}</div>
-                        <div className="text-xs text-muted">{pool.total} workers</div>
-                      </div>
-                      {pool.stale > 0 ? (
-                        <span className="rounded-full bg-warning/10 px-2 py-1 text-[10px] font-semibold text-warning">
-                          {pool.stale} stale
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-success/10 px-2 py-1 text-[10px] font-semibold text-success">
-                          Healthy
-                        </span>
-                      )}
-                    </div>
-                    {pool.requires.length > 0 ? (
-                      <div className="mt-2 text-[10px] text-muted">
-                        Requires: {pool.requires.join(", ")}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </Card>
-      </section>
-
-      <section>
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Events</CardTitle>
-            <div className="text-xs text-muted">Live bus updates</div>
-          </CardHeader>
-          {events.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border p-6 text-sm text-muted">
-              Waiting for live events.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {events.map((event) => (
-                <div key={event.id} className="rounded-2xl border border-border bg-white/70 p-3">
-                  <div className="text-sm font-semibold text-ink">{event.title}</div>
-                  <div className="text-xs text-muted">{event.detail || ""}</div>
-                  <div className="text-[11px] text-muted">{formatRelative(event.timestamp)}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </section>
-
-      {/* Run Workflow Drawer */}
-      <Drawer open={Boolean(runDrawerWorkflow)} onClose={() => setRunDrawerWorkflow(null)}>
-        {runDrawerWorkflow ? (
-          <div className="space-y-5">
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-muted">Start Run</div>
-              <div className="mt-1 text-lg font-semibold text-ink">
-                {runDrawerWorkflow.name || runDrawerWorkflow.id}
-              </div>
-            </div>
-
-            {/* Presets */}
-            {workflowPresets.length > 0 ? (
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Saved Presets</div>
-                <div className="mt-2 space-y-2">
-                  {workflowPresets.map((preset) => (
-                    <div
-                      key={preset.id}
-                      className={`flex items-center justify-between rounded-xl border p-2 ${
-                        selectedPresetId === preset.id ? "border-accent bg-accent/5" : "border-border"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleLoadPreset(preset)}
-                        className="flex-1 text-left text-sm font-medium text-ink hover:text-accent"
-                      >
-                        {preset.name}
-                      </button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        onClick={() => handleDeletePreset(preset.id)}
-                        title="Delete preset"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Input Schema Info */}
-            {runDrawerWorkflow.input_schema ? (
-              <div className="rounded-xl border border-border bg-white/50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Input Schema</div>
-                <pre className="mt-2 max-h-32 overflow-auto text-[10px] text-muted">
-                  {JSON.stringify(runDrawerWorkflow.input_schema, null, 2)}
-                </pre>
-              </div>
-            ) : null}
-
-            {/* Payload Input */}
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Input Payload (JSON)</div>
-              <Textarea
-                rows={6}
-                value={runPayload}
-                onChange={(event) => {
-                  setRunPayload(event.target.value);
-                  setRunPayloadError(null);
-                }}
-                className="mt-2 font-mono text-xs"
-              />
-              {runPayloadError ? (
-                <div className="mt-1 text-xs text-danger">{runPayloadError}</div>
-              ) : null}
-            </div>
-
-            {/* Save Preset */}
-            <div className="flex gap-2">
-              <Input
-                value={newPresetName}
-                onChange={(event) => setNewPresetName(event.target.value)}
-                placeholder="Preset name"
-                className="flex-1"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                type="button"
-                onClick={handleSavePreset}
-                disabled={!newPresetName.trim()}
-              >
-                <Save className="h-3 w-3" />
-                Save
-              </Button>
-            </div>
-
-            {/* Actions */}
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                type="button"
-                onClick={() => setRunDrawerWorkflow(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                type="button"
-                onClick={() => {
-                  setRunPayloadError(null);
-                  try {
-                    const body = JSON.parse(runPayload || "{}");
-                    startRunMutation.mutate({ workflowId: runDrawerWorkflow.id, body });
-                  } catch (error) {
-                    setRunPayloadError(error instanceof Error ? error.message : "Invalid JSON");
-                  }
-                }}
-                disabled={startRunMutation.isPending}
-              >
-                {startRunMutation.isPending ? "Starting..." : "Launch Run"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </Drawer>
+      {/* Two-column: Event Timeline + Active Workflows */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <EventTimeline />
+        <ActiveWorkflowCards />
+      </div>
     </div>
   );
 }

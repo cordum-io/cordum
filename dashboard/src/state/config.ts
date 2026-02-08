@@ -1,101 +1,151 @@
 import { create } from "zustand";
-import type { RuntimeConfig } from "../lib/runtime-config";
+import { logger } from "../lib/logger";
+import type { User } from "../api/types";
 
-const STORAGE_KEY = "cordum.dashboard.config";
+// ---------------------------------------------------------------------------
+// Persistence helpers
+// ---------------------------------------------------------------------------
 
-type ConfigState = RuntimeConfig & {
-  loaded: boolean;
-  defaults: RuntimeConfig;
-  init: (runtime: RuntimeConfig) => void;
-  update: (patch: Partial<RuntimeConfig>) => void;
-  reset: () => void;
-};
+const TOKEN_KEY = "cordum-api-key";
+const USER_KEY = "cordum-user";
 
-function readStored(): Partial<RuntimeConfig> {
-  if (typeof window === "undefined") {
-    return {};
+function loadToken(): string {
+  if (typeof window !== "undefined") {
+    return window.localStorage.getItem(TOKEN_KEY) ?? "";
   }
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return {};
+  return "";
+}
+
+function persistToken(key: string): void {
+  if (typeof window !== "undefined") {
+    if (key) {
+      window.localStorage.setItem(TOKEN_KEY, key);
+    } else {
+      window.localStorage.removeItem(TOKEN_KEY);
     }
-    const data = JSON.parse(raw) as Partial<RuntimeConfig>;
-    if (!data) {
-      return {};
-    }
-    const { apiKey: _apiKey, ...rest } = data;
-    return rest;
-  } catch {
-    return {};
   }
 }
 
-function writeStored(cfg: RuntimeConfig) {
-  if (typeof window === "undefined") {
-    return;
+function loadUser(): User | null {
+  if (typeof window !== "undefined") {
+    const raw = window.localStorage.getItem(USER_KEY);
+    if (raw) {
+      try {
+        return JSON.parse(raw) as User;
+      } catch {
+        logger.warn("config-store", "Corrupt user data in localStorage, ignoring");
+      }
+    }
   }
-  try {
-    const { apiKey: _apiKey, ...rest } = cfg;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
-  } catch {
-    // Ignore storage errors.
+  return null;
+}
+
+function persistUser(user: User | null): void {
+  if (typeof window !== "undefined") {
+    if (user) {
+      window.localStorage.setItem(USER_KEY, JSON.stringify(user));
+    } else {
+      window.localStorage.removeItem(USER_KEY);
+    }
   }
 }
 
-function mergeOverrides(base: RuntimeConfig, overrides: Partial<RuntimeConfig>): RuntimeConfig {
+// ---------------------------------------------------------------------------
+// Store
+// ---------------------------------------------------------------------------
+
+interface ConfigPatch {
+  apiBaseUrl?: string;
+  apiKey?: string;
+  tenantId?: string;
+  principalId?: string;
+  principalRole?: string;
+  traceUrlTemplate?: string;
+  approvalSlaMs?: number;
+}
+
+interface ConfigState {
+  // Connection
+  apiBaseUrl: string;
+  apiKey: string;
+  tenantId: string;
+  principalId: string;
+  principalRole: string;
+  traceUrlTemplate: string;
+
+  // SLA
+  approvalSlaMs: number;
+
+  // Auth
+  user: User | null;
+  isAuthenticated: boolean;
+
+  // Actions
+  update: (patch: ConfigPatch) => void;
+  login: (token: string, user: User) => void;
+  logout: () => void;
+}
+
+export const useConfigStore = create<ConfigState>((set) => {
+  const savedUser = loadUser();
   return {
-    apiBaseUrl: base.apiBaseUrl?.trim() || overrides.apiBaseUrl?.trim() || "",
-    apiKey: base.apiKey?.trim() || "",
-    tenantId: overrides.tenantId?.trim() || base.tenantId,
-    principalId: overrides.principalId?.trim() || base.principalId,
-    principalRole: overrides.principalRole?.trim() || base.principalRole,
-    traceUrlTemplate: overrides.traceUrlTemplate?.trim() || base.traceUrlTemplate,
+    apiBaseUrl: "",
+    apiKey: loadToken(),
+    tenantId: savedUser?.tenant ?? "",
+    principalId: savedUser?.id ?? "",
+    principalRole: savedUser?.roles?.[0] ?? "",
+    traceUrlTemplate: "",
+    approvalSlaMs: 900_000, // 15 minutes default
+    user: savedUser,
+    isAuthenticated: !!loadToken(),
+
+    update: (patch) =>
+      set((s) => {
+        if (patch.apiKey !== undefined) {
+          persistToken(patch.apiKey);
+        }
+        const next = { ...s, ...patch };
+        return { ...next, isAuthenticated: !!next.apiKey };
+      }),
+
+    login: (token, user) => {
+      logger.info("config-store", "Login", { userId: user.id, tenant: user.tenant });
+      persistToken(token);
+      persistUser(user);
+      set({
+        apiKey: token,
+        user,
+        isAuthenticated: true,
+        tenantId: user.tenant ?? "",
+        principalId: user.id ?? "",
+        principalRole: user.roles?.[0] ?? "",
+      });
+    },
+
+    logout: () => {
+      logger.info("config-store", "Logout");
+      persistToken("");
+      persistUser(null);
+      set({
+        apiKey: "",
+        user: null,
+        isAuthenticated: false,
+        tenantId: "",
+        principalId: "",
+        principalRole: "",
+      });
+    },
   };
+});
+
+// ---------------------------------------------------------------------------
+// SLA helpers
+// ---------------------------------------------------------------------------
+
+export function isSlaBreach(waitMs: number, slaMs: number): boolean {
+  return waitMs > slaMs;
 }
 
-export const useConfigStore = create<ConfigState>((set, get) => ({
-  apiBaseUrl: "",
-  apiKey: "",
-  tenantId: "default",
-  principalId: "",
-  principalRole: "",
-  traceUrlTemplate: "",
-  loaded: false,
-  defaults: {
-    apiBaseUrl: "",
-    apiKey: "",
-    tenantId: "default",
-    principalId: "",
-    principalRole: "",
-    traceUrlTemplate: "",
-  },
-  init: (runtime) => {
-    const stored = readStored();
-    const merged = mergeOverrides(runtime, stored);
-    set({
-      ...merged,
-      defaults: runtime,
-      loaded: true,
-    });
-    writeStored(merged);
-  },
-  update: (patch) => {
-    const current = get();
-    const updated: RuntimeConfig = {
-      apiBaseUrl: patch.apiBaseUrl?.trim() ?? current.apiBaseUrl,
-      apiKey: patch.apiKey?.trim() ?? current.apiKey,
-      tenantId: patch.tenantId?.trim() ?? current.tenantId,
-      principalId: patch.principalId?.trim() ?? current.principalId,
-      principalRole: patch.principalRole?.trim() ?? current.principalRole,
-      traceUrlTemplate: patch.traceUrlTemplate?.trim() ?? current.traceUrlTemplate,
-    };
-    writeStored(updated);
-    set(updated);
-  },
-  reset: () => {
-    const defaults = get().defaults;
-    writeStored(defaults);
-    set(defaults);
-  },
-}));
+export function slaRemainingMs(waitMs: number, slaMs: number): number {
+  return slaMs - waitMs;
+}

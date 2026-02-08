@@ -23,6 +23,7 @@ const (
 	SafetyRequireApproval      SafetyDecision = "REQUIRE_APPROVAL"
 	SafetyThrottle             SafetyDecision = "THROTTLE"
 	SafetyAllowWithConstraints SafetyDecision = "ALLOW_WITH_CONSTRAINTS"
+	SafetyUnavailable          SafetyDecision = "UNAVAILABLE"
 )
 
 // SafetyChecker determines if a job request may proceed.
@@ -52,6 +53,12 @@ type Metrics interface {
 	IncJobsDispatched(topic string)
 	IncJobsCompleted(topic, status string)
 	IncSafetyDenied(topic string)
+	IncSafetyUnavailable(topic string)
+	IncOrphanReplayed(topic string)
+	ObserveJobLockWait(seconds float64)
+	ObserveDispatchLatency(topic string, seconds float64)
+	SetActiveGoroutines(count int)
+	SetStaleJobs(state string, count int)
 }
 
 // SagaMetrics captures metrics for saga rollbacks and compensation handling.
@@ -63,6 +70,7 @@ type SagaMetrics interface {
 	ObserveSagaRollback(durationSeconds float64)
 	IncSagaActive()
 	DecSagaActive()
+	IncSagaUnmarshalError()
 }
 
 // JobState captures lifecycle for a job as seen by the scheduler.
@@ -112,6 +120,7 @@ type JobRecord struct {
 	SafetyRuleID   string   `json:"safety_rule_id,omitempty"`
 	SafetySnapshot string   `json:"safety_snapshot,omitempty"`
 	DeadlineUnix   int64    `json:"deadline_unix,omitempty"`
+	FailureReason  string   `json:"failure_reason,omitempty"`
 }
 
 // JobStore tracks job state and result pointers.
@@ -141,6 +150,8 @@ type JobStore interface {
 	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (bool, error)
 	ReleaseLock(ctx context.Context, key string) error
 	CancelJob(ctx context.Context, jobID string) (JobState, error)
+	SetFailureReason(ctx context.Context, jobID, reason string) error
+	GetFailureReason(ctx context.Context, jobID string) (string, error)
 }
 
 // SafetyDecisionRecord captures a policy decision and constraints for auditing.

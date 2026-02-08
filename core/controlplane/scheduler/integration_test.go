@@ -115,8 +115,14 @@ func TestEngineDispatchesToDirectWorkerAndMarksSucceeded(t *testing.T) {
 	}
 	bus.Publish(capsdk.SubjectSubmit, req)
 
-	// Wait briefly for result handling.
-	time.Sleep(20 * time.Millisecond)
+	// Poll until the async result handler updates the job state.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if store.states[jobID] == JobStateSucceeded {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	if state := store.states[jobID]; state != JobStateSucceeded {
 		t.Fatalf("expected job %s state SUCCEEDED, got %s", jobID, state)

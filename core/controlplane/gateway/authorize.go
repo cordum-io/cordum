@@ -16,6 +16,12 @@ func (s *server) requireRole(r *http.Request, roles ...string) error {
 func (s *server) resolveTenant(r *http.Request, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	headerTenant := headerValue(r, "X-Tenant-ID")
+	// Fall back to auth context tenant (e.g. from session token)
+	if headerTenant == "" {
+		if authCtx := authFromRequest(r); authCtx != nil && authCtx.Tenant != "" {
+			headerTenant = authCtx.Tenant
+		}
+	}
 	if headerTenant == "" {
 		return "", errors.New("tenant id required")
 	}

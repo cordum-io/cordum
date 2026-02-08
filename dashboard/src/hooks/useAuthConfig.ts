@@ -1,17 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../lib/api";
-import type { AuthConfig } from "../types/api";
+import { get } from "../api/client";
+import type { AuthConfig } from "../api/types";
+
+async function fetchAuthConfig(): Promise<AuthConfig> {
+  return get<AuthConfig>("/auth/config");
+}
 
 export function useAuthConfig() {
-  return useQuery<AuthConfig | null>({
+  return useQuery<AuthConfig>({
     queryKey: ["auth-config"],
-    queryFn: async () => {
-      try {
-        return await api.getAuthConfig();
-      } catch {
-        return null;
-      }
-    },
-    staleTime: 60_000,
+    queryFn: fetchAuthConfig,
+    staleTime: 5 * 60_000,
+    retry: 1,
   });
 }

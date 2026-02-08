@@ -1,932 +1,355 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
-import { epochToMillis, formatDateTime, formatDuration } from "../lib/format";
-import { useEventStore } from "../state/events";
-import { Card, CardHeader, CardTitle } from "../components/ui/Card";
+import { useState, useCallback } from "react";
+import { useParams, Link } from "react-router-dom";
+import {
+  ArrowLeft,
+  Loader,
+  RefreshCw,
+  XCircle,
+  Clock,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  Shield,
+} from "lucide-react";
 import { Button } from "../components/ui/Button";
-import { ApprovalStatusBadge, RunStatusBadge } from "../components/StatusBadge";
-import { Drawer } from "../components/ui/Drawer";
-import { Input } from "../components/ui/Input";
-import { WorkflowCanvas } from "../components/workflow/WorkflowCanvas";
-import { ActivityStream } from "../components/activity/ActivityStream";
-import { useRunChat } from "../hooks/useRunChat";
-import type { ActivityItem, SafetyDecision } from "../types/activity";
-import type { ApprovalItem, JobDetail } from "../types/api";
+import { Card } from "../components/ui/Card";
+import { Badge } from "../components/ui/Badge";
+import { RunStatusBadge } from "../components/StatusBadge";
+import { GanttTimeline } from "../components/workflow/GanttTimeline";
+import { RunVisualization } from "../components/workflow/RunVisualization";
+import { useRun, useRerunRun, useCancelRun } from "../hooks/useWorkflows";
+import type { WorkflowStep } from "../api/types";
 
-const detailTabs = ["Overview", "Timeline", "DAG", "Input/Output", "Jobs", "Logs", "Audit Log"] as const;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-export function RunDetailPage() {
-  const { runId } = useParams();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const runIdValue = runId?.trim() || "";
-  const runIdValid = runIdValue.length >= 20;
-  const [activeTab, setActiveTab] = useState<(typeof detailTabs)[number]>("Overview");
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const [approvalReason, setApprovalReason] = useState("");
-  const [approvalNote, setApprovalNote] = useState("");
+function formatDuration(ms: number | undefined): string {
+  if (!ms) return "—";
+  if (ms < 1_000) return `${Math.round(ms)}ms`;
+  const secs = ms / 1_000;
+  if (secs < 60) return `${secs.toFixed(1)}s`;
+  const mins = Math.floor(secs / 60);
+  const remSecs = Math.round(secs % 60);
+  return `${mins}m ${remSecs}s`;
+}
 
-  // Chat hook for real-time agent conversation
-  const chat = useRunChat(runIdValid ? runIdValue : undefined);
+function computeDuration(run: { startedAt?: string; completedAt?: string }): number | undefined {
+  if (!run.startedAt) return undefined;
+  const end = run.completedAt ? new Date(run.completedAt).getTime() : Date.now();
+  return end - new Date(run.startedAt).getTime();
+}
 
-  const runQuery = useQuery({
-    queryKey: ["run", runIdValue],
-    queryFn: () => api.getRun(runIdValue),
-    enabled: runIdValid,
-  });
+const safetyVariant: Record<string, "success" | "danger" | "warning" | "info"> = {
+  allow: "success",
+  deny: "danger",
+  require_approval: "warning",
+  throttle: "info",
+};
 
-  const workflowQuery = useQuery({
-    queryKey: ["workflow", runQuery.data?.workflow_id],
-    queryFn: () => api.getWorkflow(runQuery.data?.workflow_id as string),
-    enabled: Boolean(runQuery.data?.workflow_id),
-  });
+// ---------------------------------------------------------------------------
+// Confirm Dialog
+// ---------------------------------------------------------------------------
 
-  const timelineQuery = useQuery({
-    queryKey: ["timeline", runIdValue],
-    queryFn: () => api.getRunTimeline(runIdValue),
-    enabled: runIdValid,
-  });
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  isPending,
+  onConfirm,
+  onCancel,
+  variant = "primary",
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  isPending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  variant?: "primary" | "danger";
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <Card className="relative z-10 w-full max-w-sm">
+        <div className="space-y-4">
+          <h3 className="font-display text-lg font-semibold text-ink">{title}</h3>
+          <p className="text-sm text-muted">{message}</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
+              Cancel
+            </Button>
+            <Button variant={variant} size="sm" onClick={onConfirm} disabled={isPending}>
+              {isPending ? "Processing…" : confirmLabel}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
 
-  const approvalsQuery = useQuery({
-    queryKey: ["approvals", "run", runId],
-    queryFn: () => api.listApprovals(200),
-    enabled: runIdValid,
-  });
+// ---------------------------------------------------------------------------
+// Step List Item
+// ---------------------------------------------------------------------------
 
-  const failureStep = useMemo(() => {
-    const steps = Object.values(runQuery.data?.steps || {});
-    const failures = steps.filter((step) => ["failed", "timed_out", "cancelled"].includes(step.status));
-    if (failures.length === 0) {
-      return undefined;
-    }
-    return failures.sort((a, b) => (b.completed_at || "").localeCompare(a.completed_at || ""))[0];
-  }, [runQuery.data]);
-  const failureJobId = failureStep?.job_id;
-  const failureJobQuery = useQuery({
-    queryKey: ["job", "failure", failureJobId],
-    queryFn: () => api.getJob(failureJobId as string),
-    enabled: Boolean(failureJobId),
-  });
+function StepItem({ step }: { step: WorkflowStep }) {
+  const [expanded, setExpanded] = useState(false);
+  const duration = computeDuration(step);
+  const safetyDecision = step.output?.safetyDecision as string | undefined;
 
-  const jobQuery = useQuery({
-    queryKey: ["job", selectedJobId],
-    queryFn: () => api.getJob(selectedJobId as string),
-    enabled: Boolean(selectedJobId),
-  });
+  return (
+    <div className="border-b border-border last:border-b-0">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-surface2/40"
+      >
+        <RunStatusBadge status={step.status} />
+        <span className="flex-1 text-sm font-medium text-ink">
+          {step.name || step.id}
+        </span>
+        {safetyDecision && (
+          <Badge variant={safetyVariant[safetyDecision] ?? "default"} className="text-[10px]">
+            <Shield className="mr-0.5 h-3 w-3" />
+            {safetyDecision}
+          </Badge>
+        )}
+        {duration != null && (
+          <span className="flex items-center gap-1 text-xs text-muted">
+            <Clock className="h-3 w-3" />
+            {formatDuration(duration)}
+          </span>
+        )}
+        {expanded ? (
+          <ChevronUp className="h-4 w-4 text-muted" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted" />
+        )}
+      </button>
 
-  const latestEvent = useEventStore((state) => state.events[0]);
+      {expanded && (
+        <div className="space-y-2 border-t border-border bg-surface2/20 px-4 py-3">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <span className="text-muted">Type:</span>{" "}
+              <span className="text-ink">{step.type}</span>
+            </div>
+            <div>
+              <span className="text-muted">ID:</span>{" "}
+              <span className="font-mono text-ink">{step.id}</span>
+            </div>
+            {step.startedAt && (
+              <div>
+                <span className="text-muted">Started:</span>{" "}
+                <span className="text-ink">{new Date(step.startedAt).toLocaleString()}</span>
+              </div>
+            )}
+            {step.completedAt && (
+              <div>
+                <span className="text-muted">Completed:</span>{" "}
+                <span className="text-ink">{new Date(step.completedAt).toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+          {(step.depends_on ?? step.dependsOn)?.length ? (
+            <div className="text-xs">
+              <span className="text-muted">Depends on:</span>{" "}
+              <span className="font-mono text-ink">{(step.depends_on ?? step.dependsOn)!.join(", ")}</span>
+            </div>
+          ) : null}
+          {step.error && (
+            <div className="flex items-start gap-1.5 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-xs text-danger">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+              <span>{step.error}</span>
+            </div>
+          )}
+          {step.output && !step.error && (
+            <pre className="max-h-40 overflow-auto rounded-lg border border-border bg-surface2/30 p-2 text-[11px] text-muted">
+              {JSON.stringify(step.output, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
-  const approvalsByJob = useMemo(() => {
-    const map = new Map<string, ApprovalItem>();
-    approvalsQuery.data?.items.forEach((item) => {
-      map.set(item.job.id, item);
-    });
-    return map;
-  }, [approvalsQuery.data]);
+// ---------------------------------------------------------------------------
+// RunDetailPage
+// ---------------------------------------------------------------------------
 
-  useEffect(() => {
-    if (!latestEvent || !runId) {
-      return;
-    }
-    const runMatch = latestEvent.runId === runId;
-    const jobMatch = latestEvent.jobId
-      ? Object.values(runQuery.data?.steps || {}).some((step) => step.job_id === latestEvent.jobId)
-      : false;
-    if (runMatch || jobMatch) {
-      queryClient.invalidateQueries({ queryKey: ["run", runId] });
-      queryClient.invalidateQueries({ queryKey: ["timeline", runId] });
-    }
-  }, [latestEvent, runId, runQuery.data, queryClient]);
+export default function RunDetailPage() {
+  const { id: workflowId, runId } = useParams<{ id: string; runId: string }>();
+  const { data: run, isLoading, isError } = useRun(runId);
 
-  const rerunMutation = useMutation({
-    mutationFn: (payload: { runId: string; fromStep?: string }) =>
-      api.rerunRun(payload.runId, { fromStep: payload.fromStep }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["run", runId] });
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      queryClient.invalidateQueries({ queryKey: ["timeline", runId] });
-    },
-  });
+  const rerunRun = useRerunRun();
+  const cancelRun = useCancelRun();
 
-  const cancelMutation = useMutation({
-    mutationFn: ({ workflowId, id }: { workflowId: string; id: string }) => api.cancelRun(workflowId, id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["run", runId] }),
-  });
+  const [showRerunConfirm, setShowRerunConfirm] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  const approveJobMutation = useMutation({
-    mutationFn: (jobId: string) => api.approveJob(jobId, { reason: approvalReason, note: approvalNote }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["approvals"] });
-      queryClient.invalidateQueries({ queryKey: ["run", runId] });
-      queryClient.invalidateQueries({ queryKey: ["timeline", runId] });
-    },
-  });
+  const handleRerun = useCallback(() => {
+    if (!runId) return;
+    rerunRun.mutate({ runId }, { onSuccess: () => setShowRerunConfirm(false) });
+  }, [runId, rerunRun]);
 
-  const rejectJobMutation = useMutation({
-    mutationFn: (jobId: string) => api.rejectJob(jobId, { reason: approvalReason, note: approvalNote }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["approvals"] });
-      queryClient.invalidateQueries({ queryKey: ["run", runId] });
-      queryClient.invalidateQueries({ queryKey: ["timeline", runId] });
-    },
-  });
+  const handleCancel = useCallback(() => {
+    if (!workflowId || !runId) return;
+    cancelRun.mutate(
+      { workflowId, runId },
+      { onSuccess: () => setShowCancelConfirm(false) },
+    );
+  }, [workflowId, runId, cancelRun]);
 
-  const run = runQuery.data;
-  const runSteps = Object.values(run?.steps || {});
-  const runApprovals = runSteps
-    .map((step) => (step.job_id ? approvalsByJob.get(step.job_id) : undefined))
-    .filter((item): item is ApprovalItem => Boolean(item));
-
-  const activityItems = useMemo<ActivityItem[]>(() => {
-    if (!run) {
-      return [];
-    }
-    const items: ActivityItem[] = [];
-    const toMillis = (value?: string | number) => {
-      if (!value) return 0;
-      const date = new Date(value);
-      const time = date.getTime();
-      return Number.isNaN(time) ? 0 : time;
-    };
-
-    chat.messages.forEach((message) => {
-      items.push({
-        id: `msg-${message.id}`,
-        type: "message",
-        role: message.role === "agent" ? "agent" : message.role === "system" ? "system" : "user",
-        timestamp: message.created_at,
-        content: message.content,
-        metadata: {
-          step_id: message.step_id,
-          job_id: message.job_id,
-        },
-      });
-    });
-
-    (timelineQuery.data || []).forEach((event) => {
-      items.push({
-        id: `timeline-${event.time}-${event.type}-${event.job_id || event.step_id || ""}`,
-        type: "state_change",
-        role: "system",
-        timestamp: event.time,
-        content: event.message || event.type,
-        payload: {
-          from_step: event.step_id,
-          to_step: event.status,
-        },
-        metadata: {
-          step_id: event.step_id,
-          job_id: event.job_id,
-        },
-      });
-    });
-
-    runApprovals.forEach((approval) => {
-      const decisionRaw = approval.decision ? approval.decision.toUpperCase() : "";
-      const decision =
-        decisionRaw === "APPROVED" || decisionRaw === "ALLOW"
-          ? "ALLOW"
-          : decisionRaw === "DENIED" || decisionRaw === "DENY"
-          ? "DENY"
-          : approval.approval_required
-          ? "REQUIRE_APPROVAL"
-          : "PENDING";
-      const approvalTime = epochToMillis(approval.job.updated_at);
-      const timestamp =
-        (approvalTime ? new Date(approvalTime).toISOString() : null) ||
-        run.started_at ||
-        run.created_at ||
-        new Date().toISOString();
-      items.push({
-        id: `approval-${approval.job.id}`,
-        type: "safety_event",
-        role: "governance",
-        timestamp,
-        content:
-          approval.policy_reason ||
-          approval.job.safety_reason ||
-          approval.job.topic ||
-          "Approval required for this job.",
-        payload: {
-          policy_name: approval.policy_rule_id || approval.policy_snapshot || approval.job.topic || "Policy review",
-          decision: decision as SafetyDecision,
-          requires_action: approval.approval_required ?? decision === "REQUIRE_APPROVAL",
-        },
-        metadata: {
-          job_id: approval.job.id,
-          policy_snapshot: approval.policy_snapshot,
-        },
-      });
-    });
-
-    return items.sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp));
-  }, [chat.messages, timelineQuery.data, runApprovals, run?.created_at, run?.started_at, run]);
-
-  if (runIdValue && !runIdValid) {
-    return <div className="text-sm text-muted">Run ID looks truncated. Use the full ID from the Runs list.</div>;
-  }
-  if (runQuery.isLoading) {
-    return <div className="text-sm text-muted">Loading run details...</div>;
-  }
-  if (runQuery.isError || !run) {
-    return <div className="text-sm text-muted">Run not found.</div>;
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-sm text-muted">
+        <Loader className="mr-2 h-4 w-4 animate-spin" />
+        Loading run details...
+      </div>
+    );
   }
 
-  const primaryApproval = runApprovals[0];
-  const failureJob = failureJobQuery.data;
-  const failureReason =
-    failureJob?.error_message ||
-    failureJob?.error_status ||
-    failureJob?.error_code ||
-    (run.error && typeof run.error === "string"
-      ? run.error
-      : (run.error as Record<string, unknown> | undefined)?.message
-      ? String((run.error as Record<string, unknown>).message)
-      : run.error
-      ? JSON.stringify(run.error)
-      : "");
+  if (isError || !run) {
+    return (
+      <div className="py-16 text-center text-sm text-danger">
+        Failed to load run details. The run may not exist.
+      </div>
+    );
+  }
 
-  const completedSteps = runSteps.filter((step) =>
-    ["succeeded", "failed", "cancelled", "timed_out"].includes(step.status)
-  ).length;
-  const activeStep = runSteps.find((step) => ["running", "waiting", "pending"].includes(step.status));
-  const retryCount = runSteps.reduce((sum, step) => sum + Math.max(0, (step.attempts || 1) - 1), 0);
-  const contextPayload = run.context && Object.keys(run.context).length > 0 ? run.context : run.input;
-  const totalCost = typeof run.total_cost === "number" ? `$${run.total_cost.toFixed(4)}` : "-";
-
-  const stepStatusClass = (status: string) => {
-    if (["running", "waiting"].includes(status)) return "bg-accent animate-pulse";
-    if (["succeeded", "completed"].includes(status)) return "bg-success";
-    if (["failed", "timed_out", "cancelled", "denied"].includes(status)) return "bg-danger";
-    return "bg-muted";
-  };
-
-  const policyLinkForApproval = (approval?: ApprovalItem) => {
-    if (!approval) {
-      return "";
-    }
-    const params = new URLSearchParams();
-    if (approval.job.id) {
-      params.set("job_id", approval.job.id);
-    }
-    if (approval.job.topic) {
-      params.set("topic", approval.job.topic);
-    }
-    if (approval.job.tenant) {
-      params.set("tenant", approval.job.tenant);
-    }
-    if (approval.job.capability) {
-      params.set("capability", approval.job.capability);
-    }
-    if (approval.job.pack_id) {
-      params.set("pack_id", approval.job.pack_id);
-    }
-    if (approval.job.actor_id) {
-      params.set("actor_id", approval.job.actor_id);
-    }
-    if (approval.job.actor_type) {
-      params.set("actor_type", approval.job.actor_type);
-    }
-    if (approval.job.risk_tags?.length) {
-      params.set("risk_tags", approval.job.risk_tags.join(","));
-    }
-    if (approval.job.requires?.length) {
-      params.set("requires", approval.job.requires.join(","));
-    }
-    return `/policy?${params.toString()}`;
-  };
-
-  const policyLinkForJob = (job?: JobDetail) => {
-    if (!job) {
-      return "";
-    }
-    const params = new URLSearchParams();
-    params.set("job_id", job.id);
-    if (job.topic) {
-      params.set("topic", job.topic);
-    }
-    if (job.tenant) {
-      params.set("tenant", job.tenant);
-    }
-    if (job.capability) {
-      params.set("capability", job.capability);
-    }
-    if (job.pack_id) {
-      params.set("pack_id", job.pack_id);
-    }
-    if (job.actor_id) {
-      params.set("actor_id", job.actor_id);
-    }
-    if (job.actor_type) {
-      params.set("actor_type", job.actor_type);
-    }
-    if (job.risk_tags?.length) {
-      params.set("risk_tags", job.risk_tags.join(","));
-    }
-    if (job.requires?.length) {
-      params.set("requires", job.requires.join(","));
-    }
-    return `/policy?${params.toString()}`;
-  };
+  const duration = run.duration ?? computeDuration(run);
+  const isRunning = run.status === "running" || run.status === "waiting" || run.status === "pending";
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Run Summary</CardTitle>
-          <RunStatusBadge status={run.status} />
-        </CardHeader>
-        <div className="grid gap-4 lg:grid-cols-4">
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Outcome</div>
-            <div className="text-sm font-semibold text-ink">{run.status}</div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Root step</div>
-            <div className="text-sm font-semibold text-ink">
-              {failureStep?.step_id || (runApprovals.length ? "Waiting on approvals" : "-")}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Last error</div>
-            <div className="text-sm font-semibold text-ink">{failureReason || "-"}</div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Focus</div>
-            <div className="text-sm font-semibold text-ink">{failureJobId || primaryApproval?.job.id || "-"}</div>
-          </div>
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {failureJobId ? (
-            <Button variant="primary" size="sm" type="button" onClick={() => navigate(`/jobs/${failureJobId}`)}>
-              Open failed job
-            </Button>
-          ) : null}
-          {failureJob ? (
-            <Button variant="outline" size="sm" type="button" onClick={() => navigate(policyLinkForJob(failureJob))}>
-              Open policy
-            </Button>
-          ) : null}
-          {primaryApproval ? (
-            <Button variant="outline" size="sm" type="button" onClick={() => navigate(policyLinkForApproval(primaryApproval))}>
-              Open approval
-            </Button>
-          ) : null}
-          {["failed", "timed_out"].includes(run.status) ? (
-            <Button
-              variant="subtle"
-              size="sm"
-              type="button"
-              onClick={() => rerunMutation.mutate({ runId: run.id })}
-              disabled={rerunMutation.isPending}
-            >
-              Rerun
-            </Button>
-          ) : null}
-          <Button
-            variant="subtle"
-            size="sm"
-            type="button"
-            onClick={() => setActiveTab("Timeline")}
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-1">
+          <Link
+            to={`/workflows/${workflowId}`}
+            className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
           >
-            View timeline
-          </Button>
+            <ArrowLeft className="h-3 w-3" />
+            Back to workflow
+          </Link>
+          <h1 className="font-display text-xl font-bold text-ink">
+            Run <span className="font-mono text-accent">{run.id.slice(0, 12)}</span>
+          </h1>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+            <RunStatusBadge status={run.status} />
+            {run.startedAt && (
+              <span>Started {new Date(run.startedAt).toLocaleString()}</span>
+            )}
+            {duration != null && (
+              <span className="flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                {formatDuration(duration)}
+              </span>
+            )}
+            {run.rerunOf && (
+              <span>
+                Rerun of{" "}
+                <Link
+                  to={`/workflows/${workflowId}/runs/${run.rerunOf}`}
+                  className="font-mono text-accent hover:underline"
+                >
+                  {run.rerunOf.slice(0, 12)}
+                </Link>
+              </span>
+            )}
+            {run.dryRun && <Badge variant="warning">Dry Run</Badge>}
+          </div>
         </div>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Run {run.id.slice(0, 12)}</CardTitle>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              type="button"
-              onClick={() => rerunMutation.mutate({ runId: run.id })}
-              disabled={rerunMutation.isPending}
-            >
-              Rerun
-            </Button>
-            <Button
-              variant="subtle"
-              size="sm"
-              type="button"
-              onClick={() => navigate(`/workflows/${run.workflow_id}`)}
-            >
-              Open workflow
-            </Button>
+        {/* Actions */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowRerunConfirm(true)}
+            disabled={rerunRun.isPending}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Rerun
+          </Button>
+          {isRunning && (
             <Button
               variant="danger"
               size="sm"
-              type="button"
-              onClick={() => cancelMutation.mutate({ workflowId: run.workflow_id, id: run.id })}
-              disabled={cancelMutation.isPending}
+              onClick={() => setShowCancelConfirm(true)}
+              disabled={cancelRun.isPending}
             >
+              <XCircle className="h-3.5 w-3.5" />
               Cancel
             </Button>
-          </div>
-        </CardHeader>
-        <div className="grid gap-4 lg:grid-cols-4">
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Status</div>
-            <RunStatusBadge status={run.status} />
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Duration</div>
-            <div className="text-sm font-semibold text-ink">{formatDuration(run.started_at || run.created_at, run.completed_at)}</div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Workflow</div>
-            <div className="text-sm font-semibold text-ink">{workflowQuery.data?.name || run.workflow_id}</div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Started</div>
-            <div className="text-sm font-semibold text-ink">{formatDateTime(run.started_at || run.created_at)}</div>
-          </div>
-        </div>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <ActivityStream
-          items={activityItems}
-          isLoading={chat.isLoading || timelineQuery.isLoading}
-          runStatus={run.status}
-          isSending={chat.isSending}
-          onSendMessage={chat.sendMessage}
-          onApprove={(jobId) => approveJobMutation.mutate(jobId)}
-          onReject={(jobId) => rejectJobMutation.mutate(jobId)}
-        />
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Active Context</CardTitle>
-            </CardHeader>
-            <div className="rounded-2xl border border-border bg-white/70 p-3 text-xs text-muted">
-              <pre>{JSON.stringify(contextPayload || {}, null, 2)}</pre>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Safety Status</CardTitle>
-              <RunStatusBadge status={run.status} />
-            </CardHeader>
-            <div className="space-y-3">
-              {runApprovals.length ? (
-                <>
-                  <div className="rounded-2xl border border-border bg-white/70 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Approval notes</div>
-                    <div className="mt-2 grid gap-2 lg:grid-cols-2">
-                      <Input
-                        value={approvalReason}
-                        onChange={(event) => setApprovalReason(event.target.value)}
-                        placeholder="Reason"
-                      />
-                      <Input
-                        value={approvalNote}
-                        onChange={(event) => setApprovalNote(event.target.value)}
-                        placeholder="Note"
-                      />
-                    </div>
-                  </div>
-                  {runApprovals.map((approval) => (
-                    <div key={approval.job.id} className="rounded-2xl border border-border bg-white/70 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div className="text-sm font-semibold text-ink">{approval.job.topic || "Job approval"}</div>
-                          <div className="text-xs text-muted">Job {approval.job.id.slice(0, 8)}</div>
-                        </div>
-                        <ApprovalStatusBadge required={approval.approval_required} />
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          onClick={() => navigate(policyLinkForApproval(approval))}
-                        >
-                          Policy
-                        </Button>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          type="button"
-                          onClick={() => approveJobMutation.mutate(approval.job.id)}
-                          disabled={approveJobMutation.isPending}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          type="button"
-                          onClick={() => rejectJobMutation.mutate(approval.job.id)}
-                          disabled={rejectJobMutation.isPending}
-                        >
-                          Reject
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted">
-                  No approvals waiting on this run.
-                </div>
-              )}
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Execution Mini-Map</CardTitle>
-              <div className="text-xs text-muted">{completedSteps}/{runSteps.length} completed</div>
-            </CardHeader>
-            {runSteps.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted">
-                No steps reported yet.
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {runSteps.map((step) => (
-                  <div key={step.step_id} className="flex items-center gap-2 rounded-full border border-border bg-white/70 px-3 py-1">
-                    <span className={`h-2 w-2 rounded-full ${stepStatusClass(step.status)}`} />
-                    <span className="text-[10px] font-semibold text-muted">{step.step_id}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Resource Metrics</CardTitle>
-            </CardHeader>
-            <div className="grid gap-3 lg:grid-cols-2">
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Duration</div>
-                <div className="text-sm font-semibold text-ink">
-                  {formatDuration(run.started_at || run.created_at, run.completed_at)}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Active step</div>
-                <div className="text-sm font-semibold text-ink">{activeStep?.step_id || "-"}</div>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Steps</div>
-                <div className="text-sm font-semibold text-ink">{runSteps.length}</div>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Retries</div>
-                <div className="text-sm font-semibold text-ink">{retryCount}</div>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-3 lg:col-span-2">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted">Estimated cost</div>
-                <div className="text-sm font-semibold text-ink">{totalCost}</div>
-              </div>
-            </div>
-          </Card>
+          )}
         </div>
       </div>
 
+      {/* DAG Visualization */}
       <Card>
-        <CardHeader>
-          <CardTitle>Run Details</CardTitle>
-          <Button variant="ghost" size="sm" type="button" onClick={() => setActiveTab("Timeline")}>
-            Jump to timeline
-          </Button>
-        </CardHeader>
-        <div className="flex flex-wrap gap-2 border-b border-border pb-4">
-          {detailTabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={
-                tab === activeTab
-                  ? "rounded-full bg-[color:rgba(15,127,122,0.16)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-accent"
-                  : "rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted"
-              }
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-        <div className="pt-6">
-          {activeTab === "Overview" && (
-            <div className="space-y-4">
-              {Object.values(run.steps || {}).length === 0 ? (
-                <div className="text-sm text-muted">No steps reported yet.</div>
-              ) : (
-                Object.values(run.steps || {}).map((step) => {
-                  const approval = step.job_id ? approvalsByJob.get(step.job_id) : undefined;
-                  return (
-                    <div key={step.step_id} className="rounded-2xl border border-border bg-white/70 p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm font-semibold text-ink">{step.step_id}</div>
-                        <span className="text-xs text-muted">{step.status}</span>
-                      </div>
-                      <div className="mt-2 text-xs text-muted">
-                        {step.job_id ? `Job ${step.job_id}` : "No job yet"}
-                      </div>
-                      {step.job_id && approval ? (
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <ApprovalStatusBadge required={approval.approval_required} />
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            type="button"
-                            onClick={() => navigate(policyLinkForApproval(approval))}
-                          >
-                            Policy
-                          </Button>
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            type="button"
-                            onClick={() => approveJobMutation.mutate(step.job_id!)}
-                            disabled={approveJobMutation.isPending}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            type="button"
-                            onClick={() => rerunMutation.mutate({ runId: run.id, fromStep: step.step_id })}
-                            disabled={rerunMutation.isPending}
-                          >
-                            Replay from step
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            type="button"
-                            onClick={() => rejectJobMutation.mutate(step.job_id!)}
-                            disabled={rejectJobMutation.isPending}
-                          >
-                            Reject
-                          </Button>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
-
-          {activeTab === "Timeline" && (
-            <div className="space-y-3">
-              {timelineQuery.data?.length ? (
-                timelineQuery.data.map((event) => (
-                  <div key={`${event.time}-${event.type}`} className="rounded-2xl border border-border bg-white/70 p-3">
-                    <div className="text-xs text-muted">{formatDateTime(event.time)}</div>
-                    <div className="text-sm font-semibold text-ink">{event.type}</div>
-                    <div className="text-xs text-muted">
-                      {event.step_id ? `Step ${event.step_id}` : ""}
-                      {event.job_id ? ` · Job ${event.job_id}` : ""}
-                      {event.status ? ` · ${event.status}` : ""}
-                    </div>
-                    {event.message ? <div className="text-xs text-muted">{event.message}</div> : null}
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-muted">No timeline events recorded yet.</div>
-              )}
-            </div>
-          )}
-
-          {activeTab === "DAG" && (
-            <WorkflowCanvas workflow={workflowQuery.data} run={runQuery.data} height={460} />
-          )}
-
-          {activeTab === "Input/Output" && (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted">Input</div>
-                <pre className="text-xs text-ink">{JSON.stringify(run.input || {}, null, 2)}</pre>
-              </div>
-              <div className="rounded-2xl border border-border bg-white/70 p-4">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted">Output</div>
-                <pre className="text-xs text-ink">{JSON.stringify(run.output || run.error || {}, null, 2)}</pre>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "Jobs" && (
-            <div className="space-y-3">
-              {Object.values(run.steps || {}).length === 0 ? (
-                <div className="text-sm text-muted">No jobs created for this run.</div>
-              ) : (
-                Object.values(run.steps || {}).map((step) => {
-                  const approval = step.job_id ? approvalsByJob.get(step.job_id) : undefined;
-                  return (
-                    <div key={step.step_id} className="rounded-2xl border border-border bg-white/70 p-4">
-                      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                          <div className="text-sm font-semibold text-ink">{step.step_id}</div>
-                          <div className="text-xs text-muted">{step.job_id || "No job"}</div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {approval ? <ApprovalStatusBadge required={approval.approval_required} /> : null}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            type="button"
-                            onClick={() => step.job_id && setSelectedJobId(step.job_id)}
-                            disabled={!step.job_id}
-                          >
-                            View job
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            type="button"
-                            onClick={() => rerunMutation.mutate({ runId: run.id, fromStep: step.step_id })}
-                            disabled={rerunMutation.isPending}
-                          >
-                            Replay from step
-                          </Button>
-                        </div>
-                      </div>
-                      {step.job_id && approval ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            type="button"
-                            onClick={() => navigate(policyLinkForApproval(approval))}
-                          >
-                            Policy
-                          </Button>
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            type="button"
-                            onClick={() => approveJobMutation.mutate(step.job_id!)}
-                            disabled={approveJobMutation.isPending}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            type="button"
-                            onClick={() => rejectJobMutation.mutate(step.job_id!)}
-                            disabled={rejectJobMutation.isPending}
-                          >
-                            Reject
-                          </Button>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
-
-          {activeTab === "Logs" && (
-            <div className="rounded-2xl border border-border bg-black p-4 font-mono text-xs text-green-400 h-96 overflow-y-auto">
-              <div>[INFO] Run {run.id} started at {formatDateTime(run.started_at || run.created_at)}</div>
-              <div>[INFO] Workflow: {workflowQuery.data?.name || run.workflow_id}</div>
-              {timelineQuery.data?.map((event, i) => (
-                <div key={i}>
-                  [{formatDateTime(event.time)}] [{event.type.toUpperCase()}] {event.message || event.step_id ? `Step ${event.step_id}` : ""}
-                </div>
-              ))}
-              {run.status === "failed" && (
-                <div className="text-red-400">[ERROR] Run failed: {failureReason}</div>
-              )}
-              {run.status === "succeeded" && (
-                <div>[INFO] Run completed successfully</div>
-              )}
-            </div>
-          )}
-
-          {activeTab === "Audit Log" && (
-            <div className="space-y-3">
-              {(timelineQuery.data || []).map((event) => (
-                <div key={`${event.time}-${event.type}-audit`} className="rounded-2xl border border-border bg-white/70 p-3">
-                  <div className="text-xs text-muted">{formatDateTime(event.time)}</div>
-                  <div className="text-sm font-semibold text-ink">{event.type}</div>
-                  {event.message ? <div className="text-xs text-muted">{event.message}</div> : null}
-                  {event.data ? (
-                    <pre className="mt-2 rounded-xl bg-white/70 p-2 text-[11px] text-ink">
-                      {JSON.stringify(event.data, null, 2)}
-                    </pre>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
+        <div className="p-4">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
+            DAG Visualization
+          </h2>
+          <div style={{ height: 320 }}>
+            <RunVisualization run={run} />
+          </div>
         </div>
       </Card>
 
-      <Drawer open={Boolean(selectedJobId)} onClose={() => setSelectedJobId(null)}>
-        {selectedJobId ? (
-          <div className="space-y-4">
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">Job</div>
-            <h3 className="text-xl font-semibold text-ink">{selectedJobId}</h3>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                type="button"
-                onClick={() => navigate(`/jobs/${selectedJobId}`)}
-              >
-                Open job detail
-              </Button>
-              {jobQuery.data?.pack_id ? (
-                <Button
-                  variant="subtle"
-                  size="sm"
-                  type="button"
-                  onClick={() => navigate(`/packs?pack_id=${jobQuery.data?.pack_id}`)}
-                >
-                  Open pack
-                </Button>
-              ) : null}
-              {jobQuery.data ? (
-                <Button
-                  variant="subtle"
-                  size="sm"
-                  type="button"
-                  onClick={() => {
-                    const params = new URLSearchParams();
-                    params.set("job_id", jobQuery.data?.id || selectedJobId);
-                    if (jobQuery.data?.topic) {
-                      params.set("topic", jobQuery.data.topic);
-                    }
-                    if (jobQuery.data?.tenant) {
-                      params.set("tenant", jobQuery.data.tenant);
-                    }
-                    if (jobQuery.data?.capability) {
-                      params.set("capability", jobQuery.data.capability);
-                    }
-                    if (jobQuery.data?.pack_id) {
-                      params.set("pack_id", jobQuery.data.pack_id);
-                    }
-                    navigate(`/policy?${params.toString()}`);
-                  }}
-                >
-                  Open policy
-                </Button>
-              ) : null}
-            </div>
-            {jobQuery.data?.approval_required ? (
-              <div className="rounded-2xl border border-border bg-white/70 p-3">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted">Approval</div>
-                <div className="grid gap-2 lg:grid-cols-2">
-                  <Input
-                    value={approvalReason}
-                    onChange={(event) => setApprovalReason(event.target.value)}
-                    placeholder="Reason"
-                  />
-                  <Input
-                    value={approvalNote}
-                    onChange={(event) => setApprovalNote(event.target.value)}
-                    placeholder="Note"
-                  />
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    type="button"
-                    onClick={() => approveJobMutation.mutate(selectedJobId)}
-                    disabled={approveJobMutation.isPending}
-                  >
-                    Approve
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    type="button"
-                    onClick={() => rejectJobMutation.mutate(selectedJobId)}
-                    disabled={rejectJobMutation.isPending}
-                  >
-                    Reject
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {jobQuery.isLoading ? (
-              <div className="text-sm text-muted">Loading job details...</div>
-            ) : jobQuery.data ? (
-              <div className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
-                <pre>{JSON.stringify(jobQuery.data, null, 2)}</pre>
-              </div>
-            ) : (
-              <div className="text-sm text-muted">No job details found.</div>
-            )}
+      {/* Gantt Timeline */}
+      {run.steps.length > 0 && <GanttTimeline steps={run.steps} />}
+
+      {/* Step List */}
+      <Card>
+        <div className="px-4 py-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Steps ({run.steps.length})
+          </h2>
+        </div>
+        {run.steps.length === 0 ? (
+          <div className="px-4 pb-4 text-sm text-muted">No steps in this run.</div>
+        ) : (
+          <div className="border-t border-border">
+            {run.steps.map((step) => (
+              <StepItem key={step.id} step={step} />
+            ))}
           </div>
-        ) : null}
-      </Drawer>
+        )}
+      </Card>
+
+      {/* Run Error */}
+      {run.error && (
+        <div className="flex items-start gap-2 rounded-2xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <pre className="whitespace-pre-wrap">{JSON.stringify(run.error, null, 2)}</pre>
+        </div>
+      )}
+
+      {/* Confirm dialogs */}
+      {showRerunConfirm && (
+        <ConfirmDialog
+          title="Rerun this workflow?"
+          message="This will create a new run with the same input. The original run is not affected."
+          confirmLabel="Rerun"
+          isPending={rerunRun.isPending}
+          onConfirm={handleRerun}
+          onCancel={() => setShowRerunConfirm(false)}
+        />
+      )}
+      {showCancelConfirm && (
+        <ConfirmDialog
+          title="Cancel this run?"
+          message="This will attempt to cancel the currently running workflow. Steps already completed will not be rolled back."
+          confirmLabel="Cancel Run"
+          isPending={cancelRun.isPending}
+          onConfirm={handleCancel}
+          onCancel={() => setShowCancelConfirm(false)}
+          variant="danger"
+        />
+      )}
     </div>
   );
 }

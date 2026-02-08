@@ -1,50 +1,27 @@
 import { memo } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
-import type { ConditionNodeData } from "../types";
-import { NodeStatus } from "./NodeStatus";
+import type { NodeProps } from "reactflow";
+import { GitBranch } from "lucide-react";
+import { BaseNode, type OutputHandle } from "./BaseNode";
 
-function ConditionNodeComponent({ id, data, selected }: NodeProps<ConditionNodeData>) {
-  const isReadOnly = Boolean(data.readOnly);
+const CONDITION_OUTPUTS: OutputHandle[] = [
+  { id: "true", label: "\u2713 True", position: "right" },
+  { id: "false", label: "\u2717 False", position: "left" },
+];
+
+export const ConditionNode = memo(function ConditionNode({ data, selected }: NodeProps) {
+  const config = (data.config ?? {}) as Record<string, unknown>;
+  const expression = (data.condition as string) ?? (typeof config.expression === "string" ? config.expression : "");
   return (
-    <div
-      className={`builder-node builder-node--condition ${selected ? "builder-node--selected" : ""}`}
-      onClick={() => {
-        if (!isReadOnly) {
-          data.onSelect(id);
-        }
-      }}
+    <BaseNode
+      icon={<GitBranch className="h-4 w-4 text-teal-600" />}
+      label={data.label as string}
+      accent="bg-teal-50"
+      selected={selected}
+      outputs={CONDITION_OUTPUTS}
     >
-      <Handle type="target" position={Position.Left} className="builder-handle" />
-
-      <div className="builder-node__header">
-        <div className="builder-node__icon bg-info">IF</div>
-        <div className="builder-node__info">
-          <div className="builder-node__label">{data.label}</div>
-          <div className="builder-node__type">Condition</div>
-        </div>
-        {!isReadOnly ? (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              data.onDelete(id);
-            }}
-            className="builder-node__delete"
-          >
-            &times;
-          </button>
-        ) : null}
-      </div>
-
-      <div className="builder-node__body">
-        <div className="builder-node__condition">
-          <code className="text-[10px]">{data.condition || "{{ condition }}"}</code>
-        </div>
-      </div>
-
-      {isReadOnly ? <NodeStatus status={data.status} /> : null}
-      <Handle type="source" position={Position.Right} id="output" className="builder-handle" />
-    </div>
+      {expression && (
+        <span className="truncate block max-w-[120px]">{expression}</span>
+      )}
+    </BaseNode>
   );
-}
-
-export const ConditionNode = memo(ConditionNodeComponent);
+});

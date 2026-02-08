@@ -8,6 +8,7 @@ tenants:
     allowed_repo_hosts: []
     denied_repo_hosts: []
     mcp:
+      # Used by safety kernel (core/controlplane/safetykernel) for MCP filtering.
       # Allow/deny MCP servers/tools/resources when a job declares MCP labels.
       # Leave lists empty to allow all MCP calls (when labels are set).
       allow_servers: []

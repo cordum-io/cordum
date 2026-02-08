@@ -1,39 +1,40 @@
 import { create } from "zustand";
 
-type ThemeMode = "light" | "dark";
+type Theme = "light" | "dark";
+export type AgentsView = "table" | "cards";
 
-type UiState = {
+interface UiState {
+  theme: Theme;
   globalSearch: string;
   commandOpen: boolean;
-  theme: ThemeMode;
+  agentsView: AgentsView;
+  toggleTheme: () => void;
   setGlobalSearch: (value: string) => void;
   setCommandOpen: (open: boolean) => void;
-  setTheme: (theme: ThemeMode) => void;
-  toggleTheme: () => void;
-};
+  setAgentsView: (view: AgentsView) => void;
+}
 
-const THEME_KEY = "cordum-theme";
+const stored =
+  typeof window !== "undefined"
+    ? (window.localStorage.getItem("cordum-theme") as Theme | null)
+    : null;
 
-const resolveInitialTheme = (): ThemeMode => {
-  if (typeof window === "undefined") {
-    return "light";
-  }
-  const stored = window.localStorage.getItem(THEME_KEY);
-  if (stored === "light" || stored === "dark") {
-    return stored;
-  }
-  if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-    return "dark";
-  }
-  return "light";
-};
+const storedAgentsView =
+  typeof window !== "undefined"
+    ? (window.localStorage.getItem("cordum-agents-view") as AgentsView | null)
+    : null;
 
 export const useUiStore = create<UiState>((set) => ({
+  theme: stored === "dark" ? "dark" : "light",
   globalSearch: "",
   commandOpen: false,
-  theme: resolveInitialTheme(),
+  agentsView: storedAgentsView === "cards" ? "cards" : "table",
+  toggleTheme: () =>
+    set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
   setGlobalSearch: (value) => set({ globalSearch: value }),
   setCommandOpen: (open) => set({ commandOpen: open }),
-  setTheme: (theme) => set({ theme }),
-  toggleTheme: () => set((state) => ({ theme: state.theme === "dark" ? "light" : "dark" })),
+  setAgentsView: (view) => {
+    window.localStorage.setItem("cordum-agents-view", view);
+    set({ agentsView: view });
+  },
 }));

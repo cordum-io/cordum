@@ -17,6 +17,9 @@ func TestIsRetryableSchedulingError(t *testing.T) {
 	if !isRetryableSchedulingError(ErrTenantLimit) {
 		t.Fatalf("expected tenant limit to be retryable")
 	}
+	if !isRetryableSchedulingError(ErrNoPoolMapping) {
+		t.Fatalf("expected no pool mapping to be retryable")
+	}
 	if !isRetryableSchedulingError(errors.New("no workers available for pool")) {
 		t.Fatalf("expected substring match to be retryable")
 	}

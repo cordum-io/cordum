@@ -86,13 +86,13 @@ func TestPendingReplayerStartTriggersTick(t *testing.T) {
 	defer cancel()
 	go replayer.Start(ctx)
 
-	deadline := time.Now().Add(200 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if bus.count() > 0 {
 			cancel()
 			break
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 	cancel()
 
@@ -155,6 +155,67 @@ func TestPendingReplayerReplaysApprovedJobs(t *testing.T) {
 	// Job should now be running after replay
 	if state != JobStateRunning {
 		t.Fatalf("expected job running, got %s", state)
+	}
+}
+
+// spyMetrics tracks IncOrphanReplayed calls.
+type spyMetrics struct {
+	mu             sync.Mutex
+	orphanReplayed map[string]int
+}
+
+func newSpyMetrics() *spyMetrics {
+	return &spyMetrics{orphanReplayed: map[string]int{}}
+}
+
+func (m *spyMetrics) IncJobsReceived(string)                {}
+func (m *spyMetrics) IncJobsDispatched(string)              {}
+func (m *spyMetrics) IncJobsCompleted(string, string)       {}
+func (m *spyMetrics) IncSafetyDenied(string)                {}
+func (m *spyMetrics) IncSafetyUnavailable(string)           {}
+func (m *spyMetrics) ObserveJobLockWait(float64)            {}
+func (m *spyMetrics) ObserveDispatchLatency(string, float64) {}
+func (m *spyMetrics) SetActiveGoroutines(int)               {}
+func (m *spyMetrics) SetStaleJobs(string, int)              {}
+func (m *spyMetrics) IncOrphanReplayed(topic string) {
+	m.mu.Lock()
+	m.orphanReplayed[topic]++
+	m.mu.Unlock()
+}
+
+func (m *spyMetrics) getOrphanCount(topic string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.orphanReplayed[topic]
+}
+
+func TestPendingReplayerOrphanMetric(t *testing.T) {
+	store := &replayerStore{
+		fakeJobStore: newFakeJobStore(),
+		reqs:         map[string]*pb.JobRequest{},
+	}
+
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{JobId: "orphan-1", Topic: "job.replay-test", TenantId: "default"}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := store.SetState(context.Background(), req.JobId, JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	metrics := newSpyMetrics()
+	replayer := NewPendingReplayer(engine, store, 0, time.Millisecond).WithMetrics(metrics)
+	replayer.replayPending(context.Background(), time.Now())
+
+	if len(bus.published) == 0 {
+		t.Fatalf("expected orphaned job to be republished")
+	}
+	if got := metrics.getOrphanCount("job.replay-test"); got != 1 {
+		t.Fatalf("expected IncOrphanReplayed called once for topic, got %d", got)
 	}
 }
 

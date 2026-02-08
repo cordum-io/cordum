@@ -46,13 +46,13 @@ const defaultSessionTTL = 24 * time.Hour
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req AuthLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	password := strings.TrimSpace(req.Password)
 	if password == "" {
-		http.Error(w, "password required", http.StatusUnauthorized)
+		writeErrorJSON(w, http.StatusUnauthorized, "password required")
 		return
 	}
 
@@ -74,15 +74,22 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		if err == nil && user != nil {
 			if user.Disabled {
-				http.Error(w, "user is disabled", http.StatusForbidden)
+				writeErrorJSON(w, http.StatusForbidden, "user is disabled")
 				return
 			}
 
 			if userStore.ValidatePassword(r.Context(), user, password) {
 				// User/password authentication successful
 				resp := buildUserLoginResponse(user)
+				// Store session token in Redis for subsequent request validation
+				if redisStore, ok := userStore.(*RedisUserStore); ok {
+					if err := redisStore.StoreSession(r.Context(), resp.Token, user, defaultSessionTTL); err != nil {
+						writeErrorJSON(w, http.StatusInternalServerError, "failed to create session")
+						return
+					}
+				}
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(resp)
+				writeJSON(w,resp)
 				return
 			}
 		}
@@ -94,7 +101,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Create a mock request with the API key header for authentication
 	authReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "/", nil)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	authReq.Header.Set("X-API-Key", apiKey)
@@ -105,7 +112,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Authenticate using existing provider
 	authCtx, err := s.auth.AuthenticateHTTP(authReq)
 	if err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		writeErrorJSON(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
@@ -113,7 +120,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	resp := buildLoginResponse(authCtx, apiKey)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w,resp)
 }
 
 // handleSession validates current session via X-API-Key header.
@@ -121,7 +128,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	// Get auth context from middleware (already validated)
 	authCtx := authFromRequest(r)
 	if authCtx == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -129,11 +136,23 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	resp := buildLoginResponse(authCtx, apiKey)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w,resp)
 }
 
-// handleLogout is a no-op for stateless auth (API key based).
+// handleLogout invalidates the current session token.
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Extract the session token from the auth context
+	key := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if key == "" {
+		if tok := bearerToken(r.Header.Get("Authorization")); tok != "" {
+			key = tok
+		}
+	}
+	if strings.HasPrefix(key, "session-") && s.userStore != nil {
+		if redisStore, ok := s.userStore.(*RedisUserStore); ok {
+			_ = redisStore.DeleteSession(r.Context(), key)
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -238,28 +257,28 @@ func safePrefix(s string, n int) string {
 func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	authCtx := authFromRequest(r)
 	if authCtx == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	basicAuth, ok := s.auth.(*BasicAuthProvider)
 	if !ok || basicAuth.UserStore() == nil {
-		http.Error(w, "user authentication not enabled", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
 	}
 
 	var req ChangePasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if strings.TrimSpace(req.CurrentPassword) == "" {
-		http.Error(w, "current_password required", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "current_password required")
 		return
 	}
 	if strings.TrimSpace(req.NewPassword) == "" {
-		http.Error(w, "new_password required", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "new_password required")
 		return
 	}
 
@@ -268,22 +287,23 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// Get user by principal ID
 	user, err := userStore.GetByID(r.Context(), authCtx.PrincipalID)
 	if err != nil {
-		http.Error(w, "user not found", http.StatusNotFound)
+		writeErrorJSON(w, http.StatusNotFound, "user not found")
 		return
 	}
 
 	// Validate current password
 	if !userStore.ValidatePassword(r.Context(), user, req.CurrentPassword) {
-		http.Error(w, "invalid current password", http.StatusUnauthorized)
+		writeErrorJSON(w, http.StatusUnauthorized, "invalid current password")
 		return
 	}
 
 	// Update password
 	if err := userStore.UpdatePassword(r.Context(), user.ID, req.NewPassword); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	s.appendAuditEntry(r.Context(), "change_password", "user", authCtx.PrincipalID, authCtx.PrincipalID, authCtx.Role, "change password")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -292,34 +312,34 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	authCtx := authFromRequest(r)
 	if authCtx == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	// Require admin role
 	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		http.Error(w, "admin role required", http.StatusForbidden)
+		writeErrorJSON(w, http.StatusForbidden, "admin role required")
 		return
 	}
 
 	basicAuth, ok := s.auth.(*BasicAuthProvider)
 	if !ok || basicAuth.UserStore() == nil {
-		http.Error(w, "user authentication not enabled", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
 	}
 
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if strings.TrimSpace(req.Username) == "" {
-		http.Error(w, "username required", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "username required")
 		return
 	}
 	if strings.TrimSpace(req.Password) == "" {
-		http.Error(w, "password required", http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, "password required")
 		return
 	}
 
@@ -343,16 +363,17 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	userStore := basicAuth.UserStore()
 	if err := userStore.Create(r.Context(), user, req.Password); err != nil {
 		if errors.Is(err, ErrUserAlreadyExists) {
-			http.Error(w, "user already exists", http.StatusConflict)
+			writeErrorJSON(w, http.StatusConflict, "user already exists")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	s.appendAuditEntry(r.Context(), "create", "user", user.ID, authCtx.PrincipalID, authCtx.Role, "create user "+user.Username)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(AuthUser{
+	writeJSON(w,AuthUser{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,

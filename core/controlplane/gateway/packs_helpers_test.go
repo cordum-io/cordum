@@ -3,11 +3,15 @@ package gateway
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	wf "github.com/cordum/cordum/core/workflow"
 )
+
+// versionMu guards mutation of the global buildinfo.Version in tests.
+var versionMu sync.Mutex
 
 func TestNormalizeWorkflowMapAndHash(t *testing.T) {
 	workflow := map[string]any{
@@ -152,9 +156,13 @@ func TestSemverHelpers(t *testing.T) {
 		t.Fatalf("expected compare semver greater")
 	}
 
+	versionMu.Lock()
 	orig := buildinfo.Version
 	buildinfo.Version = "1.2.0"
-	t.Cleanup(func() { buildinfo.Version = orig })
+	t.Cleanup(func() {
+		buildinfo.Version = orig
+		versionMu.Unlock()
+	})
 
 	if err := ensureCoreVersionCompatible("1.3.0"); err == nil {
 		t.Fatalf("expected minCoreVersion error")

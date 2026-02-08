@@ -81,6 +81,43 @@ func TestSubmitJobGRPCRejectsDisallowedMemoryID(t *testing.T) {
 	}
 }
 
+func TestSubmitJobGRPCRespectsConcurrentJobsLimit(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"rate_limits": map[string]any{
+				"concurrent_jobs": 1,
+				"queue_size":      0,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	seedJobID := "job-seed"
+	if err := s.jobStore.SetTenant(ctx, seedJobID, "org-1"); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	if err := s.jobStore.SetState(ctx, seedJobID, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	req := &pb.SubmitJobRequest{
+		Prompt:      "hello",
+		Topic:       "job.default",
+		OrgId:       "org-1",
+		PrincipalId: "principal-1",
+	}
+	_, err := s.SubmitJob(ctx, req)
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("expected resource exhausted, got %v", err)
+	}
+}
+
 func TestDialSafetyKernelTLSRequired(t *testing.T) {
 	t.Setenv("SAFETY_KERNEL_TLS_REQUIRED", "true")
 	t.Setenv("SAFETY_KERNEL_TLS_CA", "")

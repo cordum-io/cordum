@@ -91,13 +91,9 @@ type ResourceConfig struct {
 
 // ModelsConfig - Controls which AI models can be used
 type ModelsConfig struct {
-	AllowedModels    []string          `json:"allowed_models"`
-	DefaultModel     string            `json:"default_model"`
-	FallbackModels   []string          `json:"fallback_models"`
-	ModelPreferences map[string]string `json:"model_preferences"` // topic -> model
-
-	// Cost controls per model
-	ModelCostLimits map[string]float64 `json:"model_cost_limits"`
+	AllowedModels  []string `json:"allowed_models"`
+	DefaultModel   string   `json:"default_model"`
+	FallbackModels []string `json:"fallback_models"`
 }
 
 // ContextConfig / DataAccessConfig - Controls memory and data access

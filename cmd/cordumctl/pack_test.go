@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -199,6 +203,38 @@ func TestValidateTimeoutsPatch(t *testing.T) {
 	}
 	if err := validateTimeoutsPatch(patch, "pack1"); err != nil {
 		t.Fatalf("expected valid timeouts patch: %v", err)
+	}
+}
+
+func TestRestClientEscapesResourceIDs(t *testing.T) {
+	var gotRawPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Use EscapedPath to preserve percent-encoding.
+		gotRawPaths = append(gotRawPaths, r.URL.EscapedPath())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"schema":{}}`))
+	}))
+	defer srv.Close()
+
+	c := &restClient{baseURL: srv.URL, httpClient: srv.Client()}
+	ctx := context.Background()
+
+	// IDs with special characters that could cause path traversal.
+	dangerousIDs := []string{"../etc/passwd", "id with spaces", "slashes/in/id"}
+
+	for _, id := range dangerousIDs {
+		gotRawPaths = nil
+		_, _ = c.getSchema(ctx, id)
+		_ = c.deleteSchema(ctx, id)
+		_, _ = c.getWorkflow(ctx, id)
+		_ = c.deleteWorkflow(ctx, id)
+
+		for _, p := range gotRawPaths {
+			// After PathEscape, "../" becomes "..%2F" and spaces become "%20".
+			if strings.Contains(p, "../") || strings.Contains(p, " ") {
+				t.Errorf("path not properly escaped: %s (from id %q)", p, id)
+			}
+		}
 	}
 }
 
