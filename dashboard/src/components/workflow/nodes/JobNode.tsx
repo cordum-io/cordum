@@ -5,6 +5,7 @@ import { BaseNode } from "./BaseNode";
 
 export const JobNode = memo(function JobNode({ data, selected }: NodeProps) {
   const config = (data.config ?? {}) as Record<string, unknown>;
+  const topic = (data.topic as string) ?? (typeof config.topic === "string" ? config.topic : "");
   return (
     <BaseNode
       icon={<Briefcase className="h-4 w-4 text-blue-600" />}
@@ -12,8 +13,8 @@ export const JobNode = memo(function JobNode({ data, selected }: NodeProps) {
       accent="bg-blue-50"
       selected={selected}
     >
-      {typeof config.topic === "string" && config.topic && (
-        <span>topic: {config.topic}</span>
+      {topic && (
+        <span>topic: {topic}</span>
       )}
     </BaseNode>
   );

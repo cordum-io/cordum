@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import Editor, { DiffEditor } from "@monaco-editor/react";
+import Editor, { DiffEditor, loader } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { Loader, AlertTriangle, GitCompare, FileCode } from "lucide-react";
 import { put } from "../../api/client";
@@ -10,7 +10,10 @@ import {
   validatePolicyYaml,
   countRulesFromYaml,
 } from "../../lib/policy-yaml";
-import { usePolicyBundle } from "../../hooks/usePolicies";
+import { usePolicyBundle, encodePolicyBundleId } from "../../hooks/usePolicies";
+
+const MONACO_BASE_PATH = "/monaco/vs";
+loader.config({ paths: { vs: MONACO_BASE_PATH } });
 
 // ---------------------------------------------------------------------------
 // Component
@@ -85,7 +88,8 @@ export function PolicyYamlEditor({ bundleId }: PolicyYamlEditorProps) {
   // Save mutation — PUT YAML content back to bundle
   const saveMutation = useMutation({
     mutationFn: async (yaml: string) => {
-      await put(`/policy/bundles/${bundleId}`, { content: yaml });
+      const safeId = encodePolicyBundleId(bundleId);
+      await put(`/policy/bundles/${safeId}`, { content: yaml });
       return yaml;
     },
     onSuccess: () => {

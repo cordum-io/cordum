@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import {
   Briefcase,
@@ -7,10 +7,19 @@ import {
   GitBranch,
   Bell,
   GitFork,
+  Globe,
+  Code,
+  GitMerge,
+  Repeat,
+  Workflow,
+  AlertTriangle,
   CheckCircle,
   Loader2,
   XCircle,
   Slash,
+  MessageSquare,
+  Package,
+  Wrench,
 } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import type { RunStatus } from "../../../api/types";
@@ -26,6 +35,8 @@ export interface RunOverlayNodeData {
   duration?: number;
   safetyDecision?: { type: string };
   error?: string;
+  /** For condition steps: which branch was taken (true/false) */
+  conditionResult?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +66,15 @@ const STEP_TYPE_ICONS: Record<string, React.ReactNode> = {
   condition: <GitBranch className="h-3.5 w-3.5" />,
   notify: <Bell className="h-3.5 w-3.5" />,
   "fan-out": <GitFork className="h-3.5 w-3.5" />,
+  http: <Globe className="h-3.5 w-3.5" />,
+  transform: <Code className="h-3.5 w-3.5" />,
+  switch: <GitMerge className="h-3.5 w-3.5" />,
+  loop: <Repeat className="h-3.5 w-3.5" />,
+  "sub-workflow": <Workflow className="h-3.5 w-3.5" />,
+  "error-trigger": <AlertTriangle className="h-3.5 w-3.5" />,
+  "agent-task": <MessageSquare className="h-3.5 w-3.5" />,
+  "pack-action": <Package className="h-3.5 w-3.5" />,
+  "tool-call": <Wrench className="h-3.5 w-3.5" />,
 };
 
 // ---------------------------------------------------------------------------
@@ -164,14 +184,34 @@ const SAFETY_BADGE: Record<string, { label: string; className: string }> = {
 };
 
 // ---------------------------------------------------------------------------
+// Status label
+// ---------------------------------------------------------------------------
+
+const STATUS_LABELS: Record<string, string> = {
+  succeeded: "Succeeded",
+  completed: "Completed",
+  running: "Running",
+  in_progress: "In Progress",
+  failed: "Failed",
+  pending: "Pending",
+  queued: "Queued",
+  waiting: "Waiting",
+  blocked: "Blocked",
+  cancelled: "Cancelled",
+  timed_out: "Timed Out",
+};
+
+// ---------------------------------------------------------------------------
 // RunOverlayNode
 // ---------------------------------------------------------------------------
 
 function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) {
+  const [hovered, setHovered] = useState(false);
   const style = getStatusStyle(data.runStatus);
   const typeIcon = STEP_TYPE_ICONS[data.stepType] ?? STEP_TYPE_ICONS.job;
+  const isJobType = ["job", "agent-task", "pack-action", "tool-call"].includes(data.stepType);
   const safetyBadge =
-    data.stepType === "job" && data.safetyDecision?.type
+    isJobType && data.safetyDecision?.type
       ? SAFETY_BADGE[data.safetyDecision.type]
       : null;
 
@@ -185,7 +225,43 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
         style.dimmed && "opacity-60",
         selected && "ring-2 ring-accent/40",
       )}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
+      {/* Rich hover tooltip */}
+      {hovered && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none">
+          <div className="rounded-lg border border-border bg-surface1 px-3 py-2 shadow-lg text-[11px] whitespace-nowrap space-y-1 min-w-[180px]">
+            <div className="flex items-center gap-1.5 font-semibold text-ink">
+              {typeIcon}
+              {truncate(data.label, 40)}
+            </div>
+            <div className="flex items-center gap-1.5 text-muted">
+              <span className="capitalize">{data.stepType.replace("-", " ")}</span>
+              {data.runStatus && (
+                <>
+                  <span className="text-border">&middot;</span>
+                  <span className={cn(
+                    data.runStatus === "failed" && "text-danger",
+                    (data.runStatus === "succeeded" || data.runStatus === "completed") && "text-success",
+                    (data.runStatus === "running" || data.runStatus === "in_progress") && "text-info",
+                  )}>
+                    {STATUS_LABELS[data.runStatus] ?? data.runStatus}
+                  </span>
+                </>
+              )}
+            </div>
+            {data.duration != null && (
+              <div className="text-muted">Duration: {formatDuration(data.duration)}</div>
+            )}
+            {data.error && (
+              <div className="text-danger whitespace-normal max-w-[250px]">
+                {truncate(data.error, 80)}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <Handle type="target" position={Position.Top} className="!bg-accent !w-2.5 !h-2.5" />
 
       {/* Safety decision corner badge */}
@@ -239,7 +315,47 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
         </div>
       )}
 
-      <Handle type="source" position={Position.Bottom} className="!bg-accent !w-2.5 !h-2.5" />
+      {/* Condition nodes: dual output handles with branch highlighting */}
+      {data.stepType === "condition" ? (
+        <>
+          <Handle
+            type="source"
+            id="true"
+            position={Position.Right}
+            className={cn(
+              "!w-2.5 !h-2.5",
+              data.conditionResult === false ? "!bg-gray-300 !opacity-30" : "!bg-accent",
+            )}
+          />
+          <span
+            className={cn(
+              "absolute right-0 translate-x-full pl-1 top-1/2 -translate-y-1/2 text-[10px] pointer-events-none whitespace-nowrap",
+              data.conditionResult === false ? "text-gray-300" : "text-muted",
+            )}
+          >
+            {"\u2713"} True
+          </span>
+          <Handle
+            type="source"
+            id="false"
+            position={Position.Left}
+            className={cn(
+              "!w-2.5 !h-2.5",
+              data.conditionResult === true ? "!bg-gray-300 !opacity-30" : "!bg-accent",
+            )}
+          />
+          <span
+            className={cn(
+              "absolute left-0 -translate-x-full pr-1 top-1/2 -translate-y-1/2 text-[10px] pointer-events-none whitespace-nowrap",
+              data.conditionResult === true ? "text-gray-300" : "text-muted",
+            )}
+          >
+            {"\u2717"} False
+          </span>
+        </>
+      ) : (
+        <Handle type="source" position={Position.Bottom} className="!bg-accent !w-2.5 !h-2.5" />
+      )}
     </div>
   );
 }

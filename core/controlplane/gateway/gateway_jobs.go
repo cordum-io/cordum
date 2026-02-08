@@ -469,7 +469,7 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 
 		rs, ok := s.memStore.(*memory.RedisStore)
 		if !ok || rs.Client() == nil {
-			writeErrorJSON(w, http.StatusNotImplemented, "memory inspection unavailable")
+			writeErrorJSON(w, http.StatusServiceUnavailable, "memory inspection unavailable: Redis store not configured")
 			return
 		}
 		client := rs.Client()

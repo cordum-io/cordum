@@ -4,6 +4,7 @@ import { useConfigStore } from "../state/config";
 import { useEventStore } from "../state/events";
 import type { StreamEvent } from "../api/types";
 import { normalizeDecisionType } from "../api/transform";
+import { logger } from "../lib/logger";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -219,8 +220,10 @@ export function useEventStream(): void {
       const subprotocol = `cordum-api-key.${encoded}`;
 
       setStatus("connecting");
+      const url = wsUrl(apiBaseUrl);
+      logger.info("ws", "Connecting", { url });
 
-      const ws = new WebSocket(wsUrl(apiBaseUrl), [subprotocol]);
+      const ws = new WebSocket(url, [subprotocol]);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -230,6 +233,7 @@ export function useEventStream(): void {
         }
         backoffRef.current = MIN_BACKOFF_MS;
         setStatus("connected");
+        logger.info("ws", "Connected");
       };
 
       ws.onmessage = (msg) => {
@@ -237,10 +241,14 @@ export function useEventStream(): void {
         try {
           packet = JSON.parse(msg.data as string) as BusPacket;
         } catch {
-          return; // ignore non-JSON frames
+          logger.warn("ws", "Non-JSON frame dropped", { length: (msg.data as string).length });
+          return;
         }
         const event = busPacketToEvent(packet);
-        if (!event) return;
+        if (!event) {
+          logger.debug("ws", "Unrecognized packet dropped");
+          return;
+        }
 
         // Buffer into Zustand store for live feed
         addEvent(event);
@@ -280,7 +288,7 @@ export function useEventStream(): void {
       };
 
       ws.onerror = () => {
-        // onclose will fire after onerror — reconnect handled there
+        logger.error("ws", "Connection error");
       };
 
       ws.onclose = () => {
@@ -296,6 +304,7 @@ export function useEventStream(): void {
           delay * BACKOFF_FACTOR,
           MAX_BACKOFF_MS,
         );
+        logger.warn("ws", "Reconnecting", { backoffMs: delay });
         timerRef.current = setTimeout(connect, delay);
       };
     }

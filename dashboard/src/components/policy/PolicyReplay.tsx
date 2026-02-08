@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { Input } from "../ui/Input";
 import { useJobs } from "../../hooks/useJobs";
 import { post } from "../../api/client";
 import { cn } from "../../lib/utils";
@@ -23,8 +24,16 @@ interface ReplayRow {
 }
 
 type JobLimit = 10 | 50 | 100;
+type TimeRange = "1h" | "6h" | "24h" | "7d" | "custom";
 
 const LIMITS: JobLimit[] = [10, 50, 100];
+const TIME_RANGES: { value: TimeRange; label: string }[] = [
+  { value: "1h", label: "1h" },
+  { value: "6h", label: "6h" },
+  { value: "24h", label: "24h" },
+  { value: "7d", label: "7d" },
+  { value: "custom", label: "Custom" },
+];
 
 // ---------------------------------------------------------------------------
 // Decision badge
@@ -97,12 +106,38 @@ function ImpactSummary({ rows }: { rows: ReplayRow[] }) {
 // PolicyReplay
 // ---------------------------------------------------------------------------
 
+function matchesTimeRange(createdAt: string, range: TimeRange, customStart: string, customEnd: string): boolean {
+  if (range === "custom") {
+    const t = new Date(createdAt).getTime();
+    if (customStart && t < new Date(customStart).getTime()) return false;
+    if (customEnd && t > new Date(customEnd + "T23:59:59").getTime()) return false;
+    return true;
+  }
+  const ms = Date.now() - new Date(createdAt).getTime();
+  const limits: Record<string, number> = {
+    "1h": 60 * 60 * 1000,
+    "6h": 6 * 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+  };
+  return ms <= (limits[range] ?? Infinity);
+}
+
 export function PolicyReplay({ bundleId }: { bundleId: string }) {
   const [limit, setLimit] = useState<JobLimit>(10);
+  const [timeRange, setTimeRange] = useState<TimeRange>("24h");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
 
   // Fetch recent jobs
   const { data: jobsData, isLoading: jobsLoading } = useJobs({ limit });
-  const jobs = jobsData?.items ?? [];
+  const allJobs = jobsData?.items ?? [];
+
+  // Filter by time range
+  const jobs = useMemo(
+    () => allJobs.filter((j) => matchesTimeRange(j.createdAt, timeRange, customStart, customEnd)),
+    [allJobs, timeRange, customStart, customEnd],
+  );
 
   // Batch simulate mutation
   const replayMutation = useMutation<ReplayRow[], Error, Job[]>({
@@ -186,6 +221,47 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
             </div>
             <span className="text-xs text-muted">jobs</span>
           </div>
+
+          {/* Time range filter */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-muted">Time range:</span>
+            <div className="flex rounded-full border border-border">
+              {TIME_RANGES.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setTimeRange(value)}
+                  className={cn(
+                    "px-3 py-1 text-xs font-semibold transition first:rounded-l-full last:rounded-r-full",
+                    timeRange === value
+                      ? "bg-accent/15 text-accent"
+                      : "text-muted hover:text-ink",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom date inputs */}
+          {timeRange === "custom" && (
+            <div className="flex items-center gap-2">
+              <Input
+                type="date"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="!w-auto !py-1 text-xs"
+              />
+              <span className="text-xs text-muted">to</span>
+              <Input
+                type="date"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="!w-auto !py-1 text-xs"
+              />
+            </div>
+          )}
 
           <Button
             onClick={handleReplay}

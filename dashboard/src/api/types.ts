@@ -88,8 +88,30 @@ export interface WorkflowStep {
   id: string;
   name: string;
   type: string;
-  config: Record<string, unknown>;
+  worker_id?: string;
+  topic?: string;
+  depends_on?: string[];
+  condition?: string;
+  for_each?: string;
+  max_parallel?: number;
+  input?: Record<string, unknown>;
+  input_schema?: Record<string, unknown>;
+  input_schema_id?: string;
+  output_path?: string;
+  output_schema?: Record<string, unknown>;
+  output_schema_id?: string;
+  meta?: Record<string, unknown>;
+  on_error?: string;
+  retry?: { max_retries?: number; backoff_sec?: number; backoff_multiplier?: number };
+  timeout_sec?: number;
+  delay_sec?: number;
+  delay_until?: string;
+  route_labels?: Record<string, string>;
+  /** @deprecated Use depends_on */
   dependsOn?: string[];
+  /** Legacy config bag — kept for backward compat during migration */
+  config?: Record<string, unknown>;
+  // Run-time fields (present when viewing runs)
   status?: RunStatus;
   output?: Record<string, unknown>;
   error?: string;
@@ -101,12 +123,16 @@ export interface Workflow {
   id: string;
   name: string;
   steps: WorkflowStep[];
-  timeout: number;
-  metadata: Record<string, unknown>;
+  timeout_sec?: number;
+  /** @deprecated Use timeout_sec */
+  timeout?: number;
+  metadata?: Record<string, unknown>;
   orgId?: string;
   teamId?: string;
   description?: string;
   version?: string;
+  input_schema?: Record<string, unknown>;
+  config?: Record<string, unknown>;
   createdAt?: string;
   updatedAt?: string;
   triggerType?: string;
@@ -148,6 +174,7 @@ export interface PolicyRule {
   priority?: number;
   logic?: string;
   source?: Record<string, unknown>;
+  enabled?: boolean;
 }
 
 export interface PolicyBundle {
@@ -221,6 +248,22 @@ export interface Pack {
 // Audit
 // ---------------------------------------------------------------------------
 
+export type AuditCategory = "safety_decision" | "human_action" | "system_event" | "access_event";
+export type AuditSeverity = "high" | "medium" | "low";
+
+export interface AuditActor {
+  id: string;
+  name?: string;
+  type: "user" | "system" | "agent" | "api_key";
+  role?: string;
+}
+
+export interface AuditResource {
+  type: string;
+  id: string;
+  link: string;
+}
+
 export interface AuditEntry {
   id: string;
   timestamp: string;
@@ -231,6 +274,14 @@ export interface AuditEntry {
   action: string;
   message: string;
   payload?: Record<string, unknown>;
+  // Enriched fields
+  category?: AuditCategory;
+  severity?: AuditSeverity;
+  actorInfo?: AuditActor;
+  resourceInfo?: AuditResource;
+  snapshotBefore?: Record<string, unknown>;
+  snapshotAfter?: Record<string, unknown>;
+  bundleIds?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +314,16 @@ export interface DLQEntry {
 // Approvals
 // ---------------------------------------------------------------------------
 
+export type UrgencyLevel = "fresh" | "aging" | "critical" | "breach";
+
+export interface ApprovalWorkflowContext {
+  workflowId: string;
+  runId: string;
+  stepIndex?: number;
+  stepName?: string;
+  totalSteps?: number;
+}
+
 export interface Approval {
   id: string;
   jobId: string;
@@ -270,10 +331,39 @@ export interface Approval {
   requestedAt: string;
   resolvedAt?: string;
   actor?: string;
+  actorId?: string;
   reason?: string;
   comment?: string;
   policyRule?: string;
   jobContext?: Record<string, unknown>;
+  // Enriched fields
+  topic?: string;
+  safetyDecision?: SafetyDecision;
+  riskTags?: string[];
+  capabilities?: string[];
+  workflowContext?: ApprovalWorkflowContext;
+  humanSummary?: string;
+  urgencyLevel?: UrgencyLevel;
+  waitMs?: number;
+  policySnapshot?: string;
+  jobHash?: string;
+  approvalRef?: string;
+  tenant?: string;
+  contextPtr?: string;
+}
+
+export interface ApprovalHistoryEntry {
+  id: string;
+  action: "approve" | "reject";
+  jobId: string;
+  actor: string;
+  timestamp: string;
+  reason?: string;
+  policyRule?: string;
+  bundleIds?: string[];
+  topic?: string;
+  workflowId?: string;
+  waitDurationMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +484,85 @@ export interface AuthConfig {
   require_principal?: boolean;
   default_tenant: string;
   oauth_enabled?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export type NotificationChannelType = "email" | "slack" | "webhook" | "pagerduty";
+
+export interface NotificationChannel {
+  id: string;
+  name: string;
+  type: NotificationChannelType;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  lastSentAt?: string;
+  error?: string;
+}
+
+export interface NotificationRule {
+  id: string;
+  eventPattern: string;
+  channelIds: string[];
+  throttleMs?: number;
+  muteUntil?: string;
+  enabled: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Environments
+// ---------------------------------------------------------------------------
+
+export interface Environment {
+  id: string;
+  name: string;
+  status: "active" | "maintenance" | "degraded";
+  endpoint?: string;
+  config: Record<string, unknown>;
+  lastPromotedAt?: string;
+  lastDeployedAt?: string;
+}
+
+// ---------------------------------------------------------------------------
+// General Config
+// ---------------------------------------------------------------------------
+
+export interface MaintenanceWindow {
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  message?: string;
+}
+
+export interface MaintenanceSchedule {
+  id: string;
+  startAt: string;
+  endAt: string;
+  message?: string;
+  recurring?: {
+    daysOfWeek: number[]; // 0=Sun..6=Sat
+    startHour: number;
+    endHour: number;
+  };
+}
+
+export interface GeneralConfig {
+  safetyStance: "permissive" | "balanced" | "strict";
+  approvalTimeoutMs: number;
+  autoDenyOnTimeout: boolean;
+  logRetentionDays: number;
+  auditRetentionDays: number;
+  dlqRetentionDays: number;
+  rateLimitPerKey: number;
+  concurrentJobsLimit: number;
+  wsConnectionsLimit: number;
+  maintenanceMode: boolean;
+  maintenanceMessage?: string;
+  maintenanceStartedAt?: string;
+  maintenanceHistory?: MaintenanceWindow[];
+  maintenanceSchedule?: MaintenanceSchedule[];
 }
 
 // ---------------------------------------------------------------------------

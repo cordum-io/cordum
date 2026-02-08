@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Play,
+  Pencil,
   Trash2,
   Copy,
   Check,
@@ -225,6 +226,15 @@ export default function WorkflowDetailPage() {
           >
             <Play className="h-4 w-4" />
             {startRun.isPending ? "Starting\u2026" : "Run Now"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            onClick={() => navigate(`/workflows/${id}/edit`)}
+          >
+            <Pencil className="h-4 w-4" />
+            Edit Workflow
           </Button>
           <Button
             variant="outline"

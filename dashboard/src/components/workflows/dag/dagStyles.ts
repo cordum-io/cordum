@@ -29,7 +29,7 @@ export function markCriticalPath(
       durationMap.set(step.id, Math.max(dur, 0));
     }
 
-    depsMap.set(step.id, step.dependsOn ?? []);
+    depsMap.set(step.id, step.depends_on ?? step.dependsOn ?? []);
   }
 
   // Compute cumulative duration per node (longest path to each node)
@@ -41,9 +41,9 @@ export function markCriticalPath(
   const children = new Map<string, string[]>();
 
   for (const step of steps) {
-    inDegree.set(step.id, (step.dependsOn ?? []).length);
+    inDegree.set(step.id, (step.depends_on ?? step.dependsOn ?? []).length);
     if (!children.has(step.id)) children.set(step.id, []);
-    for (const dep of step.dependsOn ?? []) {
+    for (const dep of step.depends_on ?? step.dependsOn ?? []) {
       if (!children.has(dep)) children.set(dep, []);
       children.get(dep)!.push(step.id);
     }

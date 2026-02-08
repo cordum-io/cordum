@@ -1,4 +1,5 @@
 import { useConfigStore } from "../state/config";
+import { logger } from "../lib/logger";
 
 function baseUrl(): string {
   const { apiBaseUrl } = useConfigStore.getState();
@@ -52,8 +53,15 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
-async function handleResponse<T>(res: Response): Promise<T> {
+async function handleResponse<T>(res: Response, meta: { method: string; path: string; requestId: string; startMs: number }): Promise<T> {
+  const durationMs = Math.round(performance.now() - meta.startMs);
+
   if (res.ok) {
+    logger.info("api-client", `${res.status} ${meta.path}`, {
+      method: meta.method,
+      requestId: meta.requestId,
+      durationMs,
+    });
     // 204 No Content
     if (res.status === 204) return undefined as T;
     return res.json() as Promise<T>;
@@ -63,11 +71,12 @@ async function handleResponse<T>(res: Response): Promise<T> {
   try {
     body = await res.json();
   } catch {
-    // non-JSON error body
+    logger.debug("api-client", "Non-JSON error body", { path: meta.path, requestId: meta.requestId });
   }
 
   // 401 — clear auth and redirect
   if (res.status === 401) {
+    logger.warn("api-client", "Unauthorized", { path: meta.path, requestId: meta.requestId, durationMs });
     useConfigStore.getState().logout();
     if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
       window.location.href = "/login";
@@ -76,10 +85,12 @@ async function handleResponse<T>(res: Response): Promise<T> {
   }
 
   if (res.status === 403) {
+    logger.warn("api-client", "Forbidden", { path: meta.path, requestId: meta.requestId, durationMs });
     throw new ApiError(403, "Forbidden — insufficient permissions", body);
   }
 
   if (res.status === 429) {
+    logger.warn("api-client", "Rate limited", { path: meta.path, requestId: meta.requestId, durationMs });
     throw new ApiError(429, "Rate limit exceeded — please slow down", body);
   }
 
@@ -88,15 +99,29 @@ async function handleResponse<T>(res: Response): Promise<T> {
       ? String((body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message)
       : null) ?? res.statusText;
 
+  logger.error("api-client", `${res.status} ${meta.path}`, {
+    method: meta.method,
+    requestId: meta.requestId,
+    durationMs,
+    error: msg,
+  });
+
   throw new ApiError(res.status, msg, body);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) };
+  const reqId = headers["X-Request-Id"] ?? "unknown";
+  const method = init?.method ?? "GET";
+
+  logger.debug("api-client", `${method} ${path}`, { requestId: reqId });
+
+  const startMs = performance.now();
   const res = await fetch(`${baseUrl()}${path}`, {
     ...init,
-    headers: { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) },
+    headers,
   });
-  return handleResponse<T>(res);
+  return handleResponse<T>(res, { method, path, requestId: reqId, startMs });
 }
 
 // ---------------------------------------------------------------------------

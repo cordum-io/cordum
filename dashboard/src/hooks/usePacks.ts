@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post } from "../api/client";
+import { logger } from "../lib/logger";
 import type { Pack, ApiResponse, MarketplaceResponse } from "../api/types";
 import {
   mapPackRecord,
@@ -70,8 +71,9 @@ interface InstallPackInput {
 export function useInstallPack() {
   const queryClient = useQueryClient();
   return useMutation<Pack, Error, InstallPackInput>({
-    mutationFn: (input) =>
-      post<BackendPackRecord>("/marketplace/install", {
+    mutationFn: (input) => {
+      logger.info("packs", "Installing pack", { packId: input.packId, catalogId: input.catalogId });
+      return post<BackendPackRecord>("/marketplace/install", {
         catalog_id: input.catalogId,
         pack_id: input.packId,
         version: input.version,
@@ -80,10 +82,15 @@ export function useInstallPack() {
         force: input.force,
         upgrade: input.upgrade,
         inactive: input.inactive,
-      }).then(mapPackRecord),
-    onSuccess: () => {
+      }).then(mapPackRecord);
+    },
+    onSuccess: (_, input) => {
+      logger.info("packs", "Pack installed", { packId: input.packId });
       queryClient.invalidateQueries({ queryKey: ["packs"] });
       queryClient.invalidateQueries({ queryKey: ["marketplace-packs"] });
+    },
+    onError: (err, input) => {
+      logger.error("packs", "Pack install failed", { packId: input.packId, error: err.message });
     },
   });
 }
@@ -91,11 +98,18 @@ export function useInstallPack() {
 export function useUninstallPack() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, string>({
-    mutationFn: (id) => post<void>(`/packs/${id}/uninstall`),
+    mutationFn: (id) => {
+      logger.info("packs", "Uninstalling pack", { id });
+      return post<void>(`/packs/${id}/uninstall`);
+    },
     onSuccess: (_data, id) => {
+      logger.info("packs", "Pack uninstalled", { id });
       queryClient.invalidateQueries({ queryKey: ["packs"] });
       queryClient.invalidateQueries({ queryKey: ["pack", id] });
       queryClient.invalidateQueries({ queryKey: ["marketplace-packs"] });
+    },
+    onError: (err, id) => {
+      logger.error("packs", "Pack uninstall failed", { id, error: err.message });
     },
   });
 }

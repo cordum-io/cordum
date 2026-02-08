@@ -477,11 +477,19 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) error {
 	workers := e.registry.Snapshot()
 	subject, err := e.strategy.PickSubject(req, workers)
 	if err != nil {
-		logging.Error("scheduler", "failed to pick subject",
-			"job_id", jobID,
-			"topic", topic,
-			"error", err,
-		)
+		if errors.Is(err, ErrNoPoolMapping) {
+			logging.Warn("scheduler", "no pool mapping for topic, will retry",
+				"job_id", jobID,
+				"topic", topic,
+				"error", err,
+			)
+		} else {
+			logging.Error("scheduler", "failed to pick subject",
+				"job_id", jobID,
+				"topic", topic,
+				"error", err,
+			)
+		}
 		if isRetryableSchedulingError(err) {
 			return RetryAfter(err, backoffDelay(attempts, backoffBase, backoffMax))
 		}
@@ -538,7 +546,7 @@ func isRetryableSchedulingError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrNoWorkers) || errors.Is(err, ErrPoolOverloaded) || errors.Is(err, ErrTenantLimit) {
+	if errors.Is(err, ErrNoWorkers) || errors.Is(err, ErrPoolOverloaded) || errors.Is(err, ErrTenantLimit) || errors.Is(err, ErrNoPoolMapping) {
 		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))

@@ -19,24 +19,41 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 
 import type { Workflow, WorkflowStep } from "../../api/types";
-import { JobNode } from "./nodes/JobNode";
+import { AgentTaskNode } from "./nodes/AgentTaskNode";
+import { PackActionNode } from "./nodes/PackActionNode";
+import { ToolCallNode } from "./nodes/ToolCallNode";
 import { ApprovalNode } from "./nodes/ApprovalNode";
 import { DelayNode } from "./nodes/DelayNode";
 import { ConditionNode } from "./nodes/ConditionNode";
 import { NotifyNode } from "./nodes/NotifyNode";
 import { FanOutNode } from "./nodes/FanOutNode";
+import { HttpNode } from "./nodes/HttpNode";
+import { TransformNode } from "./nodes/TransformNode";
+import { SwitchNode } from "./nodes/SwitchNode";
+import { LoopNode } from "./nodes/LoopNode";
+import { SubWorkflowNode } from "./nodes/SubWorkflowNode";
+import { ErrorTriggerNode } from "./nodes/ErrorTriggerNode";
 
 // ---------------------------------------------------------------------------
 // Node type registry
 // ---------------------------------------------------------------------------
 
 const nodeTypes: NodeTypes = {
-  job: JobNode,
+  job: AgentTaskNode,
+  "agent-task": AgentTaskNode,
+  "pack-action": PackActionNode,
+  "tool-call": ToolCallNode,
   approval: ApprovalNode,
   delay: DelayNode,
   condition: ConditionNode,
   notify: NotifyNode,
   "fan-out": FanOutNode,
+  http: HttpNode,
+  transform: TransformNode,
+  switch: SwitchNode,
+  loop: LoopNode,
+  "sub-workflow": SubWorkflowNode,
+  "error-trigger": ErrorTriggerNode,
 };
 
 // ---------------------------------------------------------------------------
@@ -62,7 +79,7 @@ export function definitionToGraph(workflow: Workflow): GraphData {
 
   workflow.steps.forEach((step, i) => {
     // Lay out vertically; spread columns for fan-out siblings
-    const deps = step.dependsOn ?? [];
+    const deps = step.depends_on ?? step.dependsOn ?? [];
     let x = 300;
     let y = i * Y_STEP + 40;
 
@@ -78,13 +95,14 @@ export function definitionToGraph(workflow: Workflow): GraphData {
     const siblings = workflow.steps.filter(
       (s) =>
         s.id !== step.id &&
-        JSON.stringify(s.dependsOn) === JSON.stringify(deps),
+        JSON.stringify(s.depends_on ?? s.dependsOn) === JSON.stringify(deps),
     );
     const sibIdx = siblings.findIndex((s) => s.id === step.id);
     if (sibIdx > 0) {
       x += sibIdx * GRID;
     }
 
+    // Store direct step fields in node data (+ legacy config for backward compat)
     nodes.push({
       id: step.id,
       type: step.type,
@@ -93,6 +111,26 @@ export function definitionToGraph(workflow: Workflow): GraphData {
         label: step.name || step.id,
         stepId: step.id,
         stepType: step.type,
+        // Direct backend fields
+        topic: step.topic,
+        condition: step.condition,
+        worker_id: step.worker_id,
+        for_each: step.for_each,
+        max_parallel: step.max_parallel,
+        input: step.input,
+        input_schema: step.input_schema,
+        input_schema_id: step.input_schema_id,
+        output_path: step.output_path,
+        output_schema: step.output_schema,
+        output_schema_id: step.output_schema_id,
+        meta: step.meta,
+        on_error: step.on_error,
+        retry: step.retry,
+        timeout_sec: step.timeout_sec,
+        delay_sec: step.delay_sec,
+        delay_until: step.delay_until,
+        route_labels: step.route_labels,
+        // Legacy config bag — kept for backward compat with node components
         config: step.config ?? {},
       },
     });
@@ -106,6 +144,36 @@ export function definitionToGraph(workflow: Workflow): GraphData {
         animated: false,
       });
     }
+
+    // Reconstruct branched edges from config.branches (e.g. condition true/false)
+    const branches = (step.config as Record<string, unknown>)?.branches as
+      | Record<string, string>
+      | undefined;
+    if (branches) {
+      for (const [handleId, targetId] of Object.entries(branches)) {
+        const edgeId = `e-${step.id}-${targetId}-${handleId}`;
+        // Avoid duplicating edges already created from depends_on
+        if (!edges.some((e) => e.source === step.id && e.target === targetId)) {
+          edges.push({
+            id: edgeId,
+            source: step.id,
+            sourceHandle: handleId,
+            target: targetId,
+            type: "smoothstep",
+            animated: false,
+          });
+        } else {
+          // Patch existing edge with sourceHandle
+          const existing = edges.find(
+            (e) => e.source === step.id && e.target === targetId,
+          );
+          if (existing) {
+            existing.sourceHandle = handleId;
+            existing.id = edgeId;
+          }
+        }
+      }
+    }
   });
 
   return { nodes, edges };
@@ -118,13 +186,49 @@ export function graphToDefinition(
 ): Partial<Workflow> {
   const steps: WorkflowStep[] = nodes.map((n) => {
     const incoming = edges.filter((e) => e.target === n.id).map((e) => e.source);
-    return {
+    const d = n.data ?? {};
+
+    // Build branches map from outgoing edges that have a sourceHandle (e.g. condition true/false)
+    const outgoing = edges.filter((e) => e.source === n.id && e.sourceHandle);
+    const branches: Record<string, string> = {};
+    for (const edge of outgoing) {
+      branches[edge.sourceHandle!] = edge.target;
+    }
+
+    // Preserve legacy config with branches
+    const config = { ...((d.config as Record<string, unknown>) ?? {}) };
+    if (Object.keys(branches).length > 0) {
+      config.branches = branches;
+    }
+
+    const step: WorkflowStep = {
       id: n.id,
-      name: (n.data?.label as string) ?? n.id,
+      name: (d.label as string) ?? n.id,
       type: n.type ?? "job",
-      config: (n.data?.config as Record<string, unknown>) ?? {},
-      dependsOn: incoming.length > 0 ? incoming : undefined,
+      depends_on: incoming.length > 0 ? incoming : undefined,
+      // Direct backend fields from node data
+      topic: d.topic as string | undefined,
+      condition: d.condition as string | undefined,
+      worker_id: d.worker_id as string | undefined,
+      for_each: d.for_each as string | undefined,
+      max_parallel: d.max_parallel as number | undefined,
+      input: d.input as Record<string, unknown> | undefined,
+      input_schema: d.input_schema as Record<string, unknown> | undefined,
+      input_schema_id: d.input_schema_id as string | undefined,
+      output_path: d.output_path as string | undefined,
+      output_schema: d.output_schema as Record<string, unknown> | undefined,
+      output_schema_id: d.output_schema_id as string | undefined,
+      meta: d.meta as Record<string, unknown> | undefined,
+      on_error: d.on_error as string | undefined,
+      retry: d.retry as WorkflowStep["retry"],
+      timeout_sec: d.timeout_sec as number | undefined,
+      delay_sec: d.delay_sec as number | undefined,
+      delay_until: d.delay_until as string | undefined,
+      route_labels: d.route_labels as Record<string, string> | undefined,
+      config: Object.keys(config).length > 0 ? config : undefined,
     };
+
+    return step;
   });
 
   return {
@@ -148,6 +252,7 @@ export interface WorkflowCanvasProps {
   onNodesChange?: (nodes: Node[]) => void;
   onEdgesChange?: (edges: Edge[]) => void;
   onNodeSelect?: (node: Node | null) => void;
+  onNodesDelete?: (nodes: Node[]) => void;
   /** Expose nodes/edges via ref for parent to read */
   graphRef?: React.MutableRefObject<{ nodes: Node[]; edges: Edge[] } | null>;
 }
@@ -157,6 +262,7 @@ export function WorkflowCanvas({
   onNodesChange: onNodesChangeProp,
   onEdgesChange: onEdgesChangeProp,
   onNodeSelect,
+  onNodesDelete: onNodesDeleteProp,
   graphRef,
 }: WorkflowCanvasProps) {
   const initial = initialWorkflow ? definitionToGraph(initialWorkflow) : { nodes: [], edges: [] };
@@ -239,6 +345,17 @@ export function WorkflowCanvas({
     onNodeSelect?.(null);
   }, [onNodeSelect]);
 
+  const onNodesDelete = useCallback(
+    (deleted: Node[]) => {
+      // Filter out start nodes — they cannot be deleted
+      const deletable = deleted.filter((n) => n.id !== "start" && n.type !== "start");
+      if (deletable.length > 0) {
+        onNodesDeleteProp?.(deletable);
+      }
+    },
+    [onNodesDeleteProp],
+  );
+
   return (
     <div className="h-full w-full">
       <ReactFlow
@@ -254,7 +371,9 @@ export function WorkflowCanvas({
         }}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
+        onNodesDelete={onNodesDelete}
         nodeTypes={nodeTypes}
+        deleteKeyCode={["Delete", "Backspace"]}
         defaultEdgeOptions={{ type: "smoothstep", animated: false }}
         fitView
         snapToGrid

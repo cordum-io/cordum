@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, del } from "../api/client";
+import { logger } from "../lib/logger";
 import type { Schema, SchemaField, ApiResponse } from "../api/types";
 
 // ---------------------------------------------------------------------------
@@ -51,9 +52,16 @@ interface RegisterSchemaInput {
 export function useRegisterSchema() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, RegisterSchemaInput>({
-    mutationFn: (input) => post<void>("/schemas", input),
-    onSuccess: () => {
+    mutationFn: (input) => {
+      logger.info("schemas", "Registering schema", { id: input.id });
+      return post<void>("/schemas", input);
+    },
+    onSuccess: (_, input) => {
+      logger.info("schemas", "Schema registered", { id: input.id });
       queryClient.invalidateQueries({ queryKey: ["schemas"] });
+    },
+    onError: (err, input) => {
+      logger.error("schemas", "Schema registration failed", { id: input.id, error: err.message });
     },
   });
 }
@@ -61,9 +69,16 @@ export function useRegisterSchema() {
 export function useDeleteSchema() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, string>({
-    mutationFn: (id) => del(`/schemas/${id}`),
-    onSuccess: () => {
+    mutationFn: (id) => {
+      logger.info("schemas", "Deleting schema", { id });
+      return del(`/schemas/${id}`);
+    },
+    onSuccess: (_, id) => {
+      logger.info("schemas", "Schema deleted", { id });
       queryClient.invalidateQueries({ queryKey: ["schemas"] });
+    },
+    onError: (err, id) => {
+      logger.error("schemas", "Schema delete failed", { id, error: err.message });
     },
   });
 }

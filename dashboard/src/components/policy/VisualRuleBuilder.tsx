@@ -1,22 +1,14 @@
 import { useCallback, useRef, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Loader } from "lucide-react";
-import { get, put, post, del } from "../../api/client";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { Plus, Loader, Upload } from "lucide-react";
+import { put, post, del } from "../../api/client";
 import type { PolicyBundle, PolicyRule } from "../../api/types";
+import { usePolicyBundle, useToggleRule, encodePolicyBundleId } from "../../hooks/usePolicies";
 import { Button } from "../ui/Button";
 import { RuleCard } from "./RuleCard";
-import { RuleEditor } from "./RuleEditor";
-
-// ---------------------------------------------------------------------------
-// API helpers
-// ---------------------------------------------------------------------------
-
-function usePolicyBundle(bundleId: string) {
-  return useQuery<PolicyBundle>({
-    queryKey: ["policy-bundle", bundleId],
-    queryFn: () => get<PolicyBundle>(`/policy/bundles/${bundleId}`),
-  });
-}
+import { RuleEditor, type RuleEditorSaveData } from "./RuleEditor";
+import { PublishControls } from "./PublishControls";
 
 // ---------------------------------------------------------------------------
 // Conflict detection
@@ -62,10 +54,14 @@ interface VisualRuleBuilderProps {
 
 export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const toggleRule = useToggleRule();
   const { data: bundle, isLoading, error } = usePolicyBundle(bundleId);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [addingNew, setAddingNew] = useState(false);
+  const [showPublish, setShowPublish] = useState(false);
   const dragIndex = useRef<number | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
 
   const rules = bundle?.rules ?? [];
   const conflicts = detectConflicts(rules);
@@ -73,11 +69,12 @@ export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
   // --- Mutations ---
 
   const saveRuleMutation = useMutation({
-    mutationFn: (payload: { ruleId?: string; data: { matchCriteria: { capabilities: string[]; riskTags: string[] }; logic: string; decisionType: PolicyRule["decisionType"]; reason: string } }) => {
+    mutationFn: (payload: { ruleId?: string; data: RuleEditorSaveData }) => {
+      const safeId = encodePolicyBundleId(bundleId);
       if (payload.ruleId) {
-        return put(`/policy/bundles/${bundleId}/rules/${payload.ruleId}`, payload.data);
+        return put(`/policy/bundles/${safeId}/rules/${payload.ruleId}`, payload.data);
       }
-      return post(`/policy/bundles/${bundleId}/rules`, payload.data);
+      return post(`/policy/bundles/${safeId}/rules`, payload.data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["policy-bundle", bundleId] });
@@ -88,7 +85,7 @@ export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
 
   const deleteRuleMutation = useMutation({
     mutationFn: (ruleId: string) =>
-      del(`/policy/bundles/${bundleId}/rules/${ruleId}`),
+      del(`/policy/bundles/${encodePolicyBundleId(bundleId)}/rules/${ruleId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["policy-bundle", bundleId] });
     },
@@ -96,11 +93,32 @@ export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
 
   const reorderMutation = useMutation({
     mutationFn: (ruleIds: string[]) =>
-      put(`/policy/bundles/${bundleId}/reorder`, { ruleIds }),
+      put(`/policy/bundles/${encodePolicyBundleId(bundleId)}/reorder`, { ruleIds }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["policy-bundle", bundleId] });
     },
   });
+
+  // --- Toggle & Test ---
+
+  const handleToggleEnabled = useCallback(
+    (ruleId: string, enabled: boolean) => {
+      toggleRule.mutate({ bundleId, ruleId, enabled });
+    },
+    [toggleRule, bundleId],
+  );
+
+  const handleTest = useCallback(
+    (rule: PolicyRule) => {
+      const caps = (rule.matchCriteria?.capabilities as string[] | undefined) ?? [];
+      const tags = (rule.matchCriteria?.riskTags as string[] | undefined) ?? [];
+      const params = new URLSearchParams();
+      if (caps.length) params.set("caps", caps.join(","));
+      if (tags.length) params.set("tags", tags.join(","));
+      navigate(`/policies/simulator?${params.toString()}`);
+    },
+    [navigate],
+  );
 
   // --- Drag-and-drop ---
 
@@ -156,7 +174,35 @@ export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
             {rules.length} rule{rules.length !== 1 ? "s" : ""} — first match wins
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            type="button"
+            onClick={() => {
+              setAddingNew(true);
+              setEditingRuleId(null);
+              setTimeout(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Create Rule
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            onClick={() => setShowPublish((v) => !v)}
+          >
+            <Upload className="h-4 w-4" />
+            Publish
+          </Button>
+        </div>
       </div>
+
+      {/* Inline publish controls */}
+      {showPublish && (
+        <PublishControls bundleId={bundleId} ruleCount={rules.length} />
+      )}
 
       {/* Rule list */}
       <div className="space-y-2">
@@ -181,6 +227,8 @@ export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
                 setAddingNew(false);
               }}
               onDelete={() => deleteRuleMutation.mutate(rule.id)}
+              onToggleEnabled={handleToggleEnabled}
+              onTest={handleTest}
               onDragStart={onDragStart}
               onDragOver={onDragOver}
               onDrop={onDrop}
@@ -190,29 +238,31 @@ export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
       </div>
 
       {/* Add new rule */}
-      {addingNew ? (
-        <RuleEditor
-          onSave={(data) => saveRuleMutation.mutate({ data })}
-          onCancel={() => setAddingNew(false)}
-        />
-      ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          type="button"
-          onClick={() => {
-            setAddingNew(true);
-            setEditingRuleId(null);
-          }}
-        >
-          <Plus className="h-4 w-4" />
-          Add Rule
-        </Button>
-      )}
+      <div ref={editorRef}>
+        {addingNew ? (
+          <RuleEditor
+            onSave={(data) => saveRuleMutation.mutate({ data })}
+            onCancel={() => setAddingNew(false)}
+          />
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            onClick={() => {
+              setAddingNew(true);
+              setEditingRuleId(null);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Add Rule
+          </Button>
+        )}
+      </div>
 
       {rules.length === 0 && !addingNew && (
         <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
-          No rules yet. Click &ldquo;Add Rule&rdquo; to create your first policy rule.
+          No rules yet. Click &ldquo;Create Rule&rdquo; to create your first policy rule.
         </div>
       )}
     </div>

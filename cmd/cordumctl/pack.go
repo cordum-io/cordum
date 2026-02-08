@@ -680,7 +680,7 @@ func ensureProtocolCompatible(manifest *packManifest) error {
 		return errors.New("compatibility.protocolVersion required")
 	}
 	if manifest.Compatibility.ProtocolVersion != capsdk.DefaultProtocolVersion {
-		return fmt.Errorf("protocolVersion %d not supported (expected %d)", manifest.Compatibility.ProtocolVersion, capsdk.DefaultProtocolVersion)
+		return fmt.Errorf("pack protocol version %d is not compatible with this server (requires version %d); rebuild your pack with a compatible capsdk version", manifest.Compatibility.ProtocolVersion, capsdk.DefaultProtocolVersion)
 	}
 	return nil
 }
@@ -1645,9 +1645,9 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(resp.Body)
+		data, readErr := io.ReadAll(resp.Body)
 		msg := strings.TrimSpace(string(data))
-		if msg == "" {
+		if msg == "" || readErr != nil {
 			msg = resp.Status
 		}
 		return &httpError{Status: resp.StatusCode, Message: msg}

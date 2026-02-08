@@ -1,34 +1,22 @@
 import { Link } from "react-router-dom";
 import { X } from "lucide-react";
 import { Badge } from "../ui/Badge";
+import { auditResourceLink } from "../../api/transform";
 import type { AuditEntry } from "../../api/types";
 
 // ---------------------------------------------------------------------------
-// Resource link resolver
+// Resource link resolver (uses shared auditResourceLink)
 // ---------------------------------------------------------------------------
 
 function resourceLink(
   resourceType: string,
   resourceId: string,
 ): { to: string; label: string } | null {
-  switch (resourceType.toLowerCase()) {
-    case "job":
-      return { to: `/jobs/${resourceId}`, label: `Job ${resourceId.slice(0, 12)}` };
-    case "workflow":
-      return { to: `/workflows/${resourceId}`, label: `Workflow ${resourceId.slice(0, 12)}` };
-    case "run":
-      return { to: `/workflows`, label: `Run ${resourceId.slice(0, 12)}` };
-    case "policy":
-      return { to: `/policies`, label: "Policies" };
-    case "user":
-      return { to: `/settings`, label: `User ${resourceId.slice(0, 12)}` };
-    case "pack":
-      return { to: `/packs`, label: `Pack ${resourceId.slice(0, 12)}` };
-    case "approval":
-      return { to: `/approvals`, label: `Approval ${resourceId.slice(0, 12)}` };
-    default:
-      return null;
-  }
+  const to = auditResourceLink(resourceType, resourceId);
+  if (!to) return null;
+  const typeName = resourceType.charAt(0).toUpperCase() + resourceType.slice(1);
+  const label = resourceId ? `${typeName} ${resourceId.slice(0, 12)}` : typeName;
+  return { to, label };
 }
 
 // ---------------------------------------------------------------------------

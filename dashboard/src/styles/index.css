@@ -171,6 +171,26 @@ body::before {
   animation: pulse-scan 2.8s ease-out infinite;
 }
 
+@keyframes slideIn {
+  from {
+    transform: translateY(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeHighlight {
+  0% {
+    background-color: rgba(15, 127, 122, 0.08);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
 .animate-slide-in {
   animation: slide-in-right 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }

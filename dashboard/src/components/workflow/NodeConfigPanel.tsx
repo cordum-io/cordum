@@ -3,10 +3,14 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import type { Node } from "reactflow";
-import { X } from "lucide-react";
+import { X, Trash2 } from "lucide-react";
 import { Input } from "../ui/Input";
+import { Select } from "../ui/Select";
 import { Textarea } from "../ui/Textarea";
 import { Button } from "../ui/Button";
+import { AgentTaskPanel } from "./job/AgentTaskPanel";
+import { PackActionPanel } from "./job/PackActionPanel";
+import { ToolCallPanel } from "./job/ToolCallPanel";
 
 // ---------------------------------------------------------------------------
 // Per-type schemas
@@ -48,13 +52,65 @@ const fanOutSchema = z.object({
   parallelism: z.coerce.number().int().min(1).optional(),
 });
 
+const httpSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  method: z.string().min(1, "Method required"),
+  url: z.string().min(1, "URL required").refine(
+    (v) => !/^(javascript|data):/i.test(v),
+    "Invalid URL scheme",
+  ),
+  headers: z.string().optional(),
+  body: z.string().optional(),
+  timeout: z.string().optional(),
+});
+
+const transformSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  expression: z.string().min(1, "Expression required"),
+  inputMapping: z.string().optional(),
+  outputMapping: z.string().optional(),
+});
+
+const switchSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  expression: z.string().optional(),
+  cases: z.string().optional(),
+  defaultBranch: z.string().optional(),
+});
+
+const loopSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  forEach: z.string().min(1, "For-each expression required"),
+  maxIterations: z.coerce.number().int().min(1).max(10_000).optional(),
+  parallelism: z.coerce.number().int().min(1).optional(),
+});
+
+const subWorkflowSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  workflowId: z.string().min(1, "Workflow ID required"),
+  inputMapping: z.string().optional(),
+});
+
+const errorTriggerSchema = z.object({
+  label: z.string().min(1, "Name required"),
+  catchFrom: z.string().optional(),
+  retryCount: z.coerce.number().int().min(0).optional(),
+  retryDelay: z.string().optional(),
+});
+
 type AnySchema =
   | typeof jobSchema
   | typeof approvalSchema
   | typeof delaySchema
   | typeof conditionSchema
   | typeof notifySchema
-  | typeof fanOutSchema;
+  | typeof fanOutSchema
+  | typeof httpSchema
+  | typeof transformSchema
+  | typeof switchSchema
+  | typeof loopSchema
+  | typeof subWorkflowSchema
+  | typeof errorTriggerSchema;
 
 function schemaForType(type: string): AnySchema {
   switch (type) {
@@ -64,6 +120,12 @@ function schemaForType(type: string): AnySchema {
     case "condition": return conditionSchema;
     case "notify": return notifySchema;
     case "fan-out": return fanOutSchema;
+    case "http": return httpSchema;
+    case "transform": return transformSchema;
+    case "switch": return switchSchema;
+    case "loop": return loopSchema;
+    case "sub-workflow": return subWorkflowSchema;
+    case "error-trigger": return errorTriggerSchema;
     default: return jobSchema;
   }
 }
@@ -73,20 +135,44 @@ function schemaForType(type: string): AnySchema {
 // ---------------------------------------------------------------------------
 
 function nodeToDefaults(node: Node): Record<string, unknown> {
-  const config = (node.data?.config ?? {}) as Record<string, unknown>;
+  const d = node.data ?? {};
+  const config = (d.config ?? {}) as Record<string, unknown>;
+  // Prefer direct backend fields from node.data, fall back to legacy config
+  const caps = d.meta?.capability
+    ? [d.meta.capability, ...(d.meta.requires ?? [])].filter(Boolean)
+    : undefined;
   return {
-    label: (node.data?.label as string) ?? "",
-    topic: config.topic ?? "",
-    capabilities: Array.isArray(config.capabilities) ? (config.capabilities as string[]).join(", ") : (config.capabilities ?? ""),
-    timeout: config.timeout ?? "",
-    retryMax: config.retryMax ?? 0,
+    label: (d.label as string) ?? "",
+    topic: d.topic ?? config.topic ?? "",
+    capabilities: caps ? caps.join(", ") : (Array.isArray(config.capabilities) ? (config.capabilities as string[]).join(", ") : (config.capabilities ?? "")),
+    timeout: d.timeout_sec ? `${d.timeout_sec}s` : (config.timeout ?? ""),
+    retryMax: d.retry?.max_retries ?? config.retryMax ?? 0,
     approverRoles: Array.isArray(config.approverRoles) ? (config.approverRoles as string[]).join(", ") : (config.approverRoles ?? ""),
-    duration: config.duration ?? "",
-    expression: config.expression ?? "",
+    duration: d.delay_sec ? `${d.delay_sec}s` : (d.delay_until ?? config.duration ?? ""),
+    expression: d.condition ?? config.expression ?? "",
     channel: config.channel ?? "",
     messageTemplate: config.messageTemplate ?? "",
-    parallelism: config.parallelism ?? 1,
-    forEach: config.forEach ?? "",
+    parallelism: d.max_parallel ?? config.parallelism ?? 1,
+    forEach: d.for_each ?? config.forEach ?? "",
+    // http
+    method: (d.input as Record<string, unknown>)?.method ?? config.method ?? "GET",
+    url: (d.input as Record<string, unknown>)?.url ?? config.url ?? "",
+    headers: config.headers ?? "",
+    body: config.body ?? "",
+    // transform
+    inputMapping: config.inputMapping ?? "",
+    outputMapping: config.outputMapping ?? "",
+    // switch
+    cases: config.cases ?? "",
+    defaultBranch: config.defaultBranch ?? "",
+    // loop
+    maxIterations: config.maxIterations ?? 100,
+    // sub-workflow
+    workflowId: config.workflowId ?? "",
+    // error-trigger
+    catchFrom: config.catchFrom ?? "any",
+    retryCount: config.retryCount ?? 0,
+    retryDelay: config.retryDelay ?? "",
   };
 }
 
@@ -97,15 +183,23 @@ function nodeToDefaults(node: Node): Record<string, unknown> {
 function formToNodeData(type: string, values: Record<string, unknown>) {
   const label = values.label as string;
   const config: Record<string, unknown> = {};
+  // Direct backend fields to write alongside legacy config
+  const direct: Record<string, unknown> = {};
 
   switch (type) {
     case "job":
       config.topic = values.topic;
+      direct.topic = values.topic;
       if (values.capabilities) {
         config.capabilities = (values.capabilities as string).split(",").map((s) => s.trim()).filter(Boolean);
       }
-      if (values.timeout) config.timeout = values.timeout;
-      if (typeof values.retryMax === "number" && values.retryMax > 0) config.retryMax = values.retryMax;
+      if (values.timeout) {
+        config.timeout = values.timeout;
+      }
+      if (typeof values.retryMax === "number" && values.retryMax > 0) {
+        config.retryMax = values.retryMax;
+        direct.retry = { max_retries: values.retryMax };
+      }
       break;
     case "approval":
       if (values.approverRoles) {
@@ -118,18 +212,61 @@ function formToNodeData(type: string, values: Record<string, unknown>) {
       break;
     case "condition":
       config.expression = values.expression;
+      direct.condition = values.expression;
       break;
     case "notify":
       config.channel = values.channel;
       if (values.messageTemplate) config.messageTemplate = values.messageTemplate;
       break;
     case "fan-out":
-      if (values.forEach) config.forEach = values.forEach;
-      if (typeof values.parallelism === "number") config.parallelism = values.parallelism;
+      if (values.forEach) {
+        config.forEach = values.forEach;
+        direct.for_each = values.forEach;
+      }
+      if (typeof values.parallelism === "number") {
+        config.parallelism = values.parallelism;
+        direct.max_parallel = values.parallelism;
+      }
+      break;
+    case "http":
+      config.method = values.method;
+      config.url = values.url;
+      if (values.headers) config.headers = values.headers;
+      if (values.body) config.body = values.body;
+      if (values.timeout) config.timeout = values.timeout;
+      break;
+    case "transform":
+      config.expression = values.expression;
+      direct.condition = values.expression;
+      if (values.inputMapping) config.inputMapping = values.inputMapping;
+      if (values.outputMapping) config.outputMapping = values.outputMapping;
+      break;
+    case "switch":
+      if (values.expression) config.expression = values.expression;
+      if (values.cases) config.cases = values.cases;
+      if (values.defaultBranch) config.defaultBranch = values.defaultBranch;
+      break;
+    case "loop":
+      config.forEach = values.forEach;
+      direct.for_each = values.forEach as string;
+      if (typeof values.maxIterations === "number") config.maxIterations = values.maxIterations;
+      if (typeof values.parallelism === "number") {
+        config.parallelism = values.parallelism;
+        direct.max_parallel = values.parallelism;
+      }
+      break;
+    case "sub-workflow":
+      config.workflowId = values.workflowId;
+      if (values.inputMapping) config.inputMapping = values.inputMapping;
+      break;
+    case "error-trigger":
+      if (values.catchFrom) config.catchFrom = values.catchFrom;
+      if (typeof values.retryCount === "number" && values.retryCount > 0) config.retryCount = values.retryCount;
+      if (values.retryDelay) config.retryDelay = values.retryDelay;
       break;
   }
 
-  return { label, config };
+  return { label, config, ...direct };
 }
 
 // ---------------------------------------------------------------------------
@@ -140,10 +277,24 @@ export interface NodeConfigPanelProps {
   node: Node;
   onSave: (nodeId: string, data: { label: string; config: Record<string, unknown> }) => void;
   onClose: () => void;
+  onDelete?: (nodeId: string) => void;
 }
 
-export function NodeConfigPanel({ node, onSave, onClose }: NodeConfigPanelProps) {
+export function NodeConfigPanel({ node, onSave, onClose, onDelete }: NodeConfigPanelProps) {
   const nodeType = node.type ?? "job";
+  const isStartNode = node.id === "start" || node.type === "start";
+
+  // Delegate to specialized panels for job node types
+  if (nodeType === "agent-task" || nodeType === "job") {
+    return <AgentTaskPanel node={node} onSave={onSave} onClose={onClose} onDelete={onDelete} />;
+  }
+  if (nodeType === "pack-action") {
+    return <PackActionPanel node={node} onSave={onSave} onClose={onClose} onDelete={onDelete} />;
+  }
+  if (nodeType === "tool-call") {
+    return <ToolCallPanel node={node} onSave={onSave} onClose={onClose} onDelete={onDelete} />;
+  }
+
   const schema = schemaForType(nodeType);
 
   const {
@@ -186,23 +337,6 @@ export function NodeConfigPanel({ node, onSave, onClose }: NodeConfigPanelProps)
         </Field>
 
         {/* Type-specific fields */}
-        {nodeType === "job" && (
-          <>
-            <Field label="Topic" error={errors.topic?.message as string | undefined}>
-              <Input {...register("topic")} placeholder="job.default" />
-            </Field>
-            <Field label="Capabilities" hint="comma-separated">
-              <Input {...register("capabilities")} placeholder="read, write" />
-            </Field>
-            <Field label="Timeout">
-              <Input {...register("timeout")} placeholder="30s" />
-            </Field>
-            <Field label="Max Retries">
-              <Input type="number" {...register("retryMax")} />
-            </Field>
-          </>
-        )}
-
         {nodeType === "approval" && (
           <>
             <Field label="Approver Roles" hint="comma-separated">
@@ -248,10 +382,114 @@ export function NodeConfigPanel({ node, onSave, onClose }: NodeConfigPanelProps)
           </>
         )}
 
-        <div className="mt-auto pt-4">
+        {nodeType === "http" && (
+          <>
+            <Field label="Method" error={errors.method?.message as string | undefined}>
+              <Select {...register("method")}>
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+              </Select>
+            </Field>
+            <Field label="URL" error={errors.url?.message as string | undefined}>
+              <Input {...register("url")} placeholder="https://api.example.com/endpoint" />
+            </Field>
+            <Field label="Headers" hint="JSON">
+              <Textarea {...register("headers")} placeholder='{"Content-Type":"application/json"}' rows={3} />
+            </Field>
+            <Field label="Body">
+              <Textarea {...register("body")} placeholder="Request body template" rows={3} />
+            </Field>
+            <Field label="Timeout">
+              <Input {...register("timeout")} placeholder="30s" />
+            </Field>
+          </>
+        )}
+
+        {nodeType === "transform" && (
+          <>
+            <Field label="Expression" error={errors.expression?.message as string | undefined}>
+              <Textarea {...register("expression")} placeholder="result.data.map(item => item.name)" rows={4} />
+            </Field>
+            <Field label="Input Mapping">
+              <Input {...register("inputMapping")} placeholder="$.steps.previous.output" />
+            </Field>
+            <Field label="Output Mapping">
+              <Input {...register("outputMapping")} placeholder="$.result" />
+            </Field>
+          </>
+        )}
+
+        {nodeType === "switch" && (
+          <>
+            <Field label="Expression">
+              <Input {...register("expression")} placeholder="result.status" />
+            </Field>
+            <Field label="Cases" hint="JSON array">
+              <Textarea {...register("cases")} placeholder='[{"value":"ok","label":"Success"},{"value":"err","label":"Error"}]' rows={4} />
+            </Field>
+            <Field label="Default Branch">
+              <Input {...register("defaultBranch")} placeholder="step-id" />
+            </Field>
+          </>
+        )}
+
+        {nodeType === "loop" && (
+          <>
+            <Field label="For Each" error={errors.forEach?.message as string | undefined}>
+              <Input {...register("forEach")} placeholder="result.items" />
+            </Field>
+            <Field label="Max Iterations" hint="safety cap, max 10000">
+              <Input type="number" {...register("maxIterations")} />
+            </Field>
+            <Field label="Parallelism">
+              <Input type="number" {...register("parallelism")} />
+            </Field>
+          </>
+        )}
+
+        {nodeType === "sub-workflow" && (
+          <>
+            <Field label="Workflow ID" error={errors.workflowId?.message as string | undefined}>
+              <Input {...register("workflowId")} placeholder="workflow-abc123" />
+            </Field>
+            <Field label="Input Mapping" hint="JSON">
+              <Textarea {...register("inputMapping")} placeholder='{"param": "$.steps.prev.output"}' rows={3} />
+            </Field>
+          </>
+        )}
+
+        {nodeType === "error-trigger" && (
+          <>
+            <Field label="Catch From" hint="step IDs or 'any'">
+              <Input {...register("catchFrom")} placeholder="any" />
+            </Field>
+            <Field label="Retry Count">
+              <Input type="number" {...register("retryCount")} />
+            </Field>
+            <Field label="Retry Delay">
+              <Input {...register("retryDelay")} placeholder="5s" />
+            </Field>
+          </>
+        )}
+
+        <div className="mt-auto space-y-2 pt-4">
           <Button type="submit" disabled={!isDirty} className="w-full">
             Save
           </Button>
+          {onDelete && !isStartNode && (
+            <Button
+              type="button"
+              variant="danger"
+              size="sm"
+              className="w-full"
+              onClick={() => onDelete(node.id)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete Node
+            </Button>
+          )}
         </div>
       </form>
     </aside>

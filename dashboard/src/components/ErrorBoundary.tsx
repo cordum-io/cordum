@@ -1,4 +1,5 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ReactNode, type ErrorInfo } from "react";
+import { logger } from "../lib/logger";
 
 interface Props {
   children: ReactNode;
@@ -15,8 +16,12 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true };
   }
 
-  componentDidCatch(error: Error) {
-    console.error("Page error:", error);
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    logger.error("error-boundary", "Uncaught render error", {
+      error: error.message,
+      stack: error.stack,
+      componentStack: info.componentStack ?? undefined,
+    });
   }
 
   render() {

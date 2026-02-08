@@ -1,7 +1,15 @@
+import YAML from "yaml";
 import type {
   Job,
   JobStatus,
   SafetyDecision,
+  Approval,
+  UrgencyLevel,
+  AuditEntry,
+  AuditCategory,
+  AuditSeverity,
+  AuditActor,
+  AuditResource,
   Workflow,
   WorkflowRun,
   WorkflowStep,
@@ -72,6 +80,15 @@ export interface BackendWorkflowStep {
     risk_tags?: string[];
     requires?: string[];
     labels?: Record<string, string>;
+    adapter_id?: string;
+    memory_id?: string;
+    context_mode?: string;
+    allow_summarization?: boolean;
+    allow_retrieval?: boolean;
+    deadline_ms?: number;
+    priority?: string;
+    budget?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+    prompt?: string;
   };
   retry?: {
     max_retries?: number;
@@ -142,6 +159,17 @@ export interface BackendApprovalItem {
   policy_reason?: string;
   approval_required?: boolean;
   approval_ref?: string;
+  job_hash?: string;
+  policy_snapshot?: string;
+  context_ptr?: string;
+  resolved_at?: number;
+  resolved_by?: string;
+  resolved_comment?: string;
+  workflow_id?: string;
+  workflow_run_id?: string;
+  step_index?: number;
+  step_name?: string;
+  total_steps?: number;
 }
 
 export interface BackendDLQEntry {
@@ -423,23 +451,46 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
 
 const WORKFLOW_NODE_TYPES = new Set([
   "job",
+  "agent-task",
+  "pack-action",
+  "tool-call",
   "approval",
   "delay",
   "condition",
   "notify",
   "fan-out",
+  "http",
+  "transform",
+  "switch",
+  "loop",
+  "sub-workflow",
+  "error-trigger",
 ]);
 
-function normalizeWorkflowNodeType(raw?: string): { uiType: string; backendType?: string } {
-  const trimmed = (raw || "").trim();
+function normalizeWorkflowNodeType(
+  raw?: string,
+  meta?: Record<string, unknown>,
+): { uiType: string; backendType?: string } {
+  const trimmed = (raw || "").trim().toLowerCase();
   if (!trimmed) {
-    return { uiType: "job" };
+    return { uiType: "agent-task" };
   }
-  const lower = trimmed.toLowerCase();
-  if (WORKFLOW_NODE_TYPES.has(lower)) {
-    return { uiType: lower };
+  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job") {
+    return { uiType: trimmed };
   }
-  return { uiType: "job", backendType: trimmed };
+  // Backend "job" → differentiate into agent-task / pack-action / tool-call
+  if (trimmed === "job" && meta) {
+    if (typeof meta.pack_id === "string" && meta.pack_id) {
+      return { uiType: "pack-action" };
+    }
+    if (typeof meta.capability === "string" && meta.capability && !meta.prompt) {
+      return { uiType: "tool-call" };
+    }
+  }
+  if (trimmed === "job") {
+    return { uiType: "agent-task" };
+  }
+  return { uiType: "agent-task", backendType: trimmed };
 }
 
 function buildWorkflowStepConfig(step: BackendWorkflowStep): Record<string, unknown> {
@@ -472,6 +523,14 @@ function buildWorkflowStepConfig(step: BackendWorkflowStep): Record<string, unkn
     if (typeof input.component === "string" && input.component.trim()) {
       config.channel = input.component;
     }
+    if (typeof input.prompt === "string" && input.prompt.trim()) {
+      config.prompt = input.prompt;
+    }
+    // Budget from input.budget or input itself
+    const budget = (input.budget ?? input) as Record<string, unknown>;
+    if (typeof budget.input_tokens === "number") config.maxInputTokens = budget.input_tokens;
+    if (typeof budget.output_tokens === "number") config.maxOutputTokens = budget.output_tokens;
+    if (typeof budget.total_tokens === "number") config.maxTotalTokens = budget.total_tokens;
   }
   if (step.meta && typeof step.meta === "object") {
     config.meta = step.meta;
@@ -495,6 +554,34 @@ function buildWorkflowStepConfig(step: BackendWorkflowStep): Record<string, unkn
     if (step.meta.pack_id) config.packId = step.meta.pack_id;
     if (step.meta.actor_id) config.actorId = step.meta.actor_id;
     if (step.meta.actor_type) config.actorType = step.meta.actor_type;
+    if (typeof step.meta.adapter_id === "string" && step.meta.adapter_id) {
+      config.adapterId = step.meta.adapter_id;
+    }
+    if (typeof step.meta.memory_id === "string" && step.meta.memory_id) {
+      config.memoryId = step.meta.memory_id;
+    }
+    if (typeof step.meta.context_mode === "string" && step.meta.context_mode) {
+      config.contextMode = step.meta.context_mode;
+    }
+    if (typeof step.meta.allow_summarization === "boolean") {
+      config.allowSummarization = step.meta.allow_summarization;
+    }
+    if (typeof step.meta.allow_retrieval === "boolean") {
+      config.allowRetrieval = step.meta.allow_retrieval;
+    }
+    if (typeof step.meta.deadline_ms === "number") {
+      config.deadlineMs = step.meta.deadline_ms;
+    }
+    if (typeof step.meta.priority === "string" && step.meta.priority) {
+      config.priority = step.meta.priority;
+    }
+    // Budget fallback from meta.budget
+    const metaBudget = step.meta.budget as Record<string, unknown> | undefined;
+    if (metaBudget && typeof metaBudget === "object") {
+      if (typeof metaBudget.input_tokens === "number" && !config.maxInputTokens) config.maxInputTokens = metaBudget.input_tokens;
+      if (typeof metaBudget.output_tokens === "number" && !config.maxOutputTokens) config.maxOutputTokens = metaBudget.output_tokens;
+      if (typeof metaBudget.total_tokens === "number" && !config.maxTotalTokens) config.maxTotalTokens = metaBudget.total_tokens;
+    }
   }
   if (step.route_labels) config.routeLabels = step.route_labels;
   if (step.input_schema) config.inputSchema = step.input_schema;
@@ -507,10 +594,14 @@ function buildWorkflowStepConfig(step: BackendWorkflowStep): Record<string, unkn
 }
 
 export function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): WorkflowStep {
-  let { uiType, backendType } = normalizeWorkflowNodeType(step.type);
-  if (uiType === "job" && step.for_each) {
+  let { uiType, backendType } = normalizeWorkflowNodeType(
+    step.type,
+    step.meta as Record<string, unknown> | undefined,
+  );
+  if (uiType === "agent-task" && step.for_each) {
     uiType = "fan-out";
   }
+  // Legacy config bag for backward compat during migration
   const config = buildWorkflowStepConfig(step);
   if (backendType) {
     config.backendType = backendType;
@@ -519,8 +610,33 @@ export function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): 
     id: step.id || fallbackId,
     name: step.name || fallbackId,
     type: uiType,
+    // Direct backend fields
+    worker_id: step.worker_id,
+    topic: step.topic,
+    depends_on: step.depends_on,
+    condition: step.condition,
+    for_each: step.for_each,
+    max_parallel: step.max_parallel,
+    input: step.input,
+    input_schema: step.input_schema,
+    input_schema_id: step.input_schema_id,
+    output_path: step.output_path,
+    output_schema: step.output_schema,
+    output_schema_id: step.output_schema_id,
+    meta: step.meta as Record<string, unknown> | undefined,
+    retry: step.retry ? {
+      max_retries: step.retry.max_retries,
+      backoff_sec: step.retry.initial_backoff_sec,
+      backoff_multiplier: step.retry.multiplier,
+    } : undefined,
+    timeout_sec: step.timeout_sec,
+    delay_sec: step.delay_sec,
+    delay_until: step.delay_until,
+    route_labels: step.route_labels,
+    // Legacy compat
     config,
     dependsOn: step.depends_on,
+    // Run-time fields
     status: step.status as WorkflowStep["status"],
     output: step.output,
     error: step.error,
@@ -537,6 +653,7 @@ export function mapWorkflow(def: BackendWorkflow): Workflow {
     id: def.id,
     name: def.name || def.id,
     steps,
+    timeout_sec: def.timeout_sec,
     timeout: def.timeout_sec ?? 0,
     metadata: {
       orgId: def.org_id,
@@ -547,6 +664,8 @@ export function mapWorkflow(def: BackendWorkflow): Workflow {
       inputSchema: def.input_schema,
       parameters: def.parameters,
     },
+    input_schema: def.input_schema,
+    config: def.config,
     orgId: def.org_id,
     teamId: def.team_id,
     description: def.description,
@@ -561,7 +680,6 @@ export function mapWorkflowRunStep(step: BackendStepRun, fallbackId: string): Wo
     id: step.step_id || fallbackId,
     name: step.step_id || fallbackId,
     type: "step",
-    config: {},
     status: step.status as WorkflowStep["status"],
     output: (step.output as Record<string, unknown>) ?? undefined,
     error: step.error ? JSON.stringify(step.error) : undefined,
@@ -595,23 +713,70 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
   };
 }
 
-export function mapApprovalItem(item: BackendApprovalItem): {
-  id: string;
-  jobId: string;
-  status: string;
-  requestedAt: string;
-  reason?: string;
-  policyRule?: string;
-  jobContext?: Record<string, unknown>;
-} | null {
+export function computeUrgencyLevel(waitMs: number): UrgencyLevel {
+  if (waitMs < 2 * 60_000) return "fresh";
+  if (waitMs < 15 * 60_000) return "aging";
+  if (waitMs < 60 * 60_000) return "critical";
+  return "breach";
+}
+
+function deriveApprovalStatus(
+  jobState: string | undefined,
+  decision: string | undefined,
+): string {
+  if (decision === "approve" || decision === "approved") return "approved";
+  if (decision === "reject" || decision === "rejected" || decision === "deny")
+    return "rejected";
+  if (
+    jobState === "succeeded" ||
+    jobState === "failed" ||
+    jobState === "cancelled"
+  )
+    return "resolved";
+  return "pending";
+}
+
+function deriveHumanSummary(
+  topic: string,
+  capabilities: string[],
+  policyReason?: string,
+): string {
+  const parts: string[] = [];
+  if (topic) parts.push(`Job on "${topic}"`);
+  if (capabilities.length)
+    parts.push(`requires ${capabilities.join(", ")}`);
+  if (policyReason) parts.push(`— ${policyReason}`);
+  return parts.join(" ") || "Approval requested";
+}
+
+export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
   if (!item.job) return null;
   const job = mapJobRecord(item.job);
+  const now = Date.now();
+  const requestedAt = job.updatedAt || new Date().toISOString();
+  const waitMs = now - new Date(requestedAt).getTime();
+
+  const workflowContext =
+    item.workflow_id || item.workflow_run_id
+      ? {
+          workflowId: item.workflow_id || "",
+          runId: item.workflow_run_id || "",
+          stepIndex: item.step_index,
+          stepName: item.step_name,
+          totalSteps: item.total_steps,
+        }
+      : undefined;
+
   return {
-    id: job.id,
+    id: item.approval_ref || job.id,
     jobId: job.id,
-    status: "pending",
-    requestedAt: job.updatedAt,
+    status: deriveApprovalStatus(item.job.state, item.decision),
+    requestedAt,
+    resolvedAt: item.resolved_at ? microsToISO(item.resolved_at) : undefined,
+    actor: item.resolved_by,
+    actorId: job.actorId,
     reason: item.policy_reason,
+    comment: item.resolved_comment,
     policyRule: item.policy_rule_id,
     jobContext: {
       topic: job.topic,
@@ -619,6 +784,23 @@ export function mapApprovalItem(item: BackendApprovalItem): {
       capabilities: job.capabilities,
       riskTags: job.riskTags,
     },
+    topic: job.topic,
+    safetyDecision: job.safetyDecision,
+    riskTags: job.riskTags,
+    capabilities: job.capabilities,
+    workflowContext,
+    humanSummary: deriveHumanSummary(
+      job.topic,
+      job.capabilities,
+      item.policy_reason,
+    ),
+    urgencyLevel: computeUrgencyLevel(Math.max(0, waitMs)),
+    waitMs: Math.max(0, waitMs),
+    policySnapshot: item.policy_snapshot,
+    jobHash: item.job_hash,
+    approvalRef: item.approval_ref,
+    tenant: job.tenant,
+    contextPtr: item.context_ptr,
   };
 }
 
@@ -681,6 +863,7 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
     priority,
     logic,
     source: typeof raw.source === "object" && raw.source ? (raw.source as Record<string, unknown>) : undefined,
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
   };
 }
 
@@ -705,12 +888,23 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary): Pol
 }
 
 export function mapPolicyBundleDetail(detail: BackendPolicyBundleDetail): PolicyBundle {
+  let rules: PolicyRule[] = [];
+  const content = detail.content ?? "";
+  if (content) {
+    try {
+      const parsed = YAML.parse(content) as Record<string, unknown> | null;
+      const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
+      rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
+    } catch {
+      // YAML parse error — fall back to empty rules
+    }
+  }
   return {
     id: detail.id,
     name: detail.id,
-    rules: [],
+    rules,
     enabled: detail.enabled ?? true,
-    content: detail.content ?? "",
+    content,
     author: detail.author,
     message: detail.message,
     createdAt: detail.created_at,
@@ -718,31 +912,110 @@ export function mapPolicyBundleDetail(detail: BackendPolicyBundleDetail): Policy
   };
 }
 
-export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): {
-  id: string;
-  timestamp: string;
-  eventType: string;
-  actor: string;
-  resourceType: string;
-  resourceId: string;
-  action: string;
-  message: string;
-  payload?: Record<string, unknown>;
-} {
+// ---------------------------------------------------------------------------
+// Audit classification helpers
+// ---------------------------------------------------------------------------
+
+const SAFETY_ACTIONS = new Set(["evaluate", "allow", "deny", "throttle"]);
+const HUMAN_ACTIONS = new Set([
+  "edit", "create", "delete", "approve", "reject", "cancel",
+  "remediate", "change_password", "set", "snapshot", "submit",
+]);
+const SYSTEM_ACTIONS = new Set([
+  "dispatch", "complete", "fail", "timeout", "retry", "escalate",
+]);
+const ACCESS_ACTIONS = new Set(["login", "logout", "register"]);
+
+function classifyAuditCategory(
+  action: string,
+  resourceType: string,
+  actorId: string,
+): AuditCategory {
+  const a = action.toLowerCase();
+  if (SAFETY_ACTIONS.has(a) || resourceType.toLowerCase() === "safety") return "safety_decision";
+  if (ACCESS_ACTIONS.has(a)) return "access_event";
+  if (HUMAN_ACTIONS.has(a) && actorId !== "system") return "human_action";
+  if (SYSTEM_ACTIONS.has(a)) return "system_event";
+  // Default: system_event
+  return "system_event";
+}
+
+const HIGH_SEVERITY_ACTIONS = new Set(["edit", "delete", "create", "set", "change_password"]);
+const HIGH_SEVERITY_RESOURCES = new Set(["policy", "user", "config", "approval"]);
+const MEDIUM_SEVERITY_ACTIONS = new Set(["approve", "reject", "submit", "cancel", "remediate", "snapshot"]);
+
+function classifyAuditSeverity(action: string, resourceType: string): AuditSeverity {
+  const a = action.toLowerCase();
+  const r = resourceType.toLowerCase();
+  if (HIGH_SEVERITY_ACTIONS.has(a) && HIGH_SEVERITY_RESOURCES.has(r)) return "high";
+  if (MEDIUM_SEVERITY_ACTIONS.has(a)) return "medium";
+  return "low";
+}
+
+function deriveAuditActor(actorId: string, role?: string): AuditActor {
+  let type: AuditActor["type"] = "api_key";
+  if (actorId === "system") type = "system";
+  else if (role === "admin" || role === "user") type = "user";
+  return { id: actorId, type, role };
+}
+
+export function auditResourceLink(
+  resourceType: string,
+  resourceId: string,
+): string {
+  switch (resourceType.toLowerCase()) {
+    case "job": return `/jobs/${resourceId}`;
+    case "workflow": return `/workflows/${resourceId}`;
+    case "run": return `/workflows`;
+    case "policy": return `/policies`;
+    case "user": return `/settings`;
+    case "pack": return `/packs`;
+    case "approval": return `/approvals`;
+    default: return "";
+  }
+}
+
+function tryParseJson(raw?: string): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): AuditEntry {
+  const actorId = entry.actor_id || "unknown";
+  const resourceType = entry.resource_type || "policy";
+  const resourceId = entry.resource_id || "";
+  const action = entry.action || "";
+
   return {
     id: entry.id,
     timestamp: entry.created_at || new Date().toISOString(),
-    eventType: entry.action || "policy",
-    actor: entry.actor_id || entry.role || "unknown",
-    resourceType: entry.resource_type || "policy",
-    resourceId: entry.resource_id || "",
-    action: entry.action || "",
+    eventType: action || "policy",
+    actor: actorId || entry.role || "unknown",
+    resourceType,
+    resourceId,
+    action,
     message: entry.message || "",
     payload: {
       bundle_ids: entry.bundle_ids,
       snapshot_before: entry.snapshot_before,
       snapshot_after: entry.snapshot_after,
     },
+    category: classifyAuditCategory(action, resourceType, actorId),
+    severity: classifyAuditSeverity(action, resourceType),
+    actorInfo: deriveAuditActor(actorId, entry.role),
+    resourceInfo: {
+      type: resourceType,
+      id: resourceId,
+      link: auditResourceLink(resourceType, resourceId),
+    },
+    snapshotBefore: tryParseJson(entry.snapshot_before),
+    snapshotAfter: tryParseJson(entry.snapshot_after),
+    bundleIds: entry.bundle_ids,
   };
 }
 
@@ -778,23 +1051,48 @@ export function mapPolicySnapshot(snapshot: BackendPolicySnapshot) {
 
 export function mapPackRecord(record: BackendPackRecord): Pack {
   const metadata = record.manifest?.metadata;
+  const manifest = record.manifest as Record<string, unknown> | undefined;
   const topics = record.manifest?.topics ?? [];
-  const capabilities = Array.from(
-    new Set(
-      topics
-        .map((t) => (t?.capability || "").trim())
-        .filter((c) => c.length > 0),
-    ),
-  );
+
+  // Extract capabilities from topics first
+  const capSet = new Set<string>();
+  for (const t of topics) {
+    const cap = (t?.capability || "").trim();
+    if (cap) capSet.add(cap);
+  }
+
+  // Fallback: manifest.capabilities, manifest.actions, manifest.tools
+  if (capSet.size === 0 && manifest) {
+    const fallbackArrays = [manifest.capabilities, manifest.actions, manifest.tools];
+    for (const arr of fallbackArrays) {
+      if (Array.isArray(arr)) {
+        for (const item of arr) {
+          const name = typeof item === "string" ? item.trim()
+            : typeof item === "object" && item !== null
+              ? (String((item as Record<string, unknown>).name ?? (item as Record<string, unknown>).id ?? "")).trim()
+              : "";
+          if (name) capSet.add(name);
+        }
+      }
+      if (capSet.size > 0) break;
+    }
+  }
+
+  // Derive poolAssignment from manifest
+  const pool = manifest
+    ? String(manifest.pool ?? manifest.poolAssignment ?? manifest.pool_assignment ?? "").trim()
+    : "";
+
   const title = metadata?.title?.trim();
   return {
     id: record.id,
     name: title || metadata?.id || record.id,
     version: record.version || metadata?.version || "",
     status: record.status || "unknown",
-    capabilities,
+    capabilities: Array.from(capSet),
+    poolAssignment: pool || undefined,
     config: {},
-    manifest: record.manifest as Record<string, unknown> | undefined,
+    manifest: manifest,
     resources: record.resources,
     installedAt: record.installed_at,
     installedBy: record.installed_by,

@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEventStore } from "../state/events";
 import type { StreamEvent, WorkflowRun, RunStatus } from "../api/types";
 import type { WorkflowRunListResponse } from "./useWorkflows";
+import { logger } from "../lib/logger";
 
 // ---------------------------------------------------------------------------
 // Event type detection
@@ -129,6 +130,11 @@ export function useRunStream(runId: string | null | undefined): void {
 
       // If filtering by runId, skip events for other runs
       if (runId && eventRunId !== runId) return;
+
+      logger.debug("run-stream", "Processing run event", {
+        type: latest.type,
+        runId: eventRunId,
+      });
 
       const stepId = extractStepId(latest);
       const newStatus = extractStatus(latest);

@@ -1,14 +1,48 @@
+import dagre from "@dagrejs/dagre";
 import type { Node, Edge } from "reactflow";
 import type { Workflow, WorkflowRun, RunStatus } from "../../../api/types";
 import type { RunOverlayNodeData } from "./RunOverlayNode";
 import { markCriticalPath, colorEdgesByStatus } from "./dagStyles";
 
 // ---------------------------------------------------------------------------
-// Layout constants (match WorkflowCanvas)
+// Layout constants
 // ---------------------------------------------------------------------------
 
-const Y_STEP = 140;
-const GRID = 200;
+const NODE_WIDTH = 180;
+const NODE_HEIGHT = 72;
+
+// ---------------------------------------------------------------------------
+// Dagre layout helper
+// ---------------------------------------------------------------------------
+
+function applyDagreLayout(
+  nodes: Node<RunOverlayNodeData>[],
+  edges: Edge[],
+): Node<RunOverlayNodeData>[] {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: "TB", ranksep: 100, nodesep: 80, marginx: 40, marginy: 40 });
+
+  for (const node of nodes) {
+    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  }
+  for (const edge of edges) {
+    g.setEdge(edge.source, edge.target);
+  }
+
+  dagre.layout(g);
+
+  return nodes.map((node) => {
+    const pos = g.node(node.id);
+    return {
+      ...node,
+      position: {
+        x: pos.x - NODE_WIDTH / 2,
+        y: pos.y - NODE_HEIGHT / 2,
+      },
+    };
+  });
+}
 
 // ---------------------------------------------------------------------------
 // buildRunGraph
@@ -52,36 +86,8 @@ export function buildRunGraph(
     }
   }
 
-  // Index for positioning
-  const idxMap = new Map<string, number>();
-  steps.forEach((step, i) => idxMap.set(step.id, i));
-
-  // Build nodes
-  const nodes: Node<RunOverlayNodeData>[] = steps.map((step, i) => {
-    const deps = step.dependsOn ?? [];
-    let x = 300;
-    let y = i * Y_STEP + 40;
-
-    // Position below first dependency
-    if (deps.length > 0) {
-      const parentIdx = idxMap.get(deps[0]);
-      if (parentIdx !== undefined) {
-        y = parentIdx * Y_STEP + Y_STEP + 40;
-      }
-    }
-
-    // Spread siblings horizontally
-    const siblings = steps.filter(
-      (s) =>
-        s.id !== step.id &&
-        JSON.stringify(s.dependsOn) === JSON.stringify(deps),
-    );
-    const sibIdx = siblings.findIndex((s) => s.id === step.id);
-    if (sibIdx > 0) {
-      x += sibIdx * GRID;
-    }
-
-    // Run data overlay
+  // Build nodes (position will be set by dagre)
+  let nodes: Node<RunOverlayNodeData>[] = steps.map((step) => {
     const runStep = runStepMap.get(step.id);
 
     // Safety decision from step config (job steps store it)
@@ -106,7 +112,7 @@ export function buildRunGraph(
     return {
       id: step.id,
       type: "runOverlay",
-      position: { x, y },
+      position: { x: 0, y: 0 }, // dagre will set this
       data,
     };
   });
@@ -114,7 +120,7 @@ export function buildRunGraph(
   // Build edges
   let edges: Edge[] = [];
   for (const step of steps) {
-    for (const dep of step.dependsOn ?? []) {
+    for (const dep of step.depends_on ?? step.dependsOn ?? []) {
       edges.push({
         id: `e-${dep}-${step.id}`,
         source: dep,
@@ -124,7 +130,39 @@ export function buildRunGraph(
         style: { strokeWidth: 1.5, stroke: "var(--border)" },
       });
     }
+
+    // Condition/switch branch edges from config.branches
+    const branches = (step.config as Record<string, unknown>)?.branches as
+      | Record<string, string>
+      | undefined;
+    if (branches) {
+      for (const [handleId, targetId] of Object.entries(branches)) {
+        if (!edges.some((e) => e.source === step.id && e.target === targetId)) {
+          edges.push({
+            id: `e-${step.id}-${targetId}-${handleId}`,
+            source: step.id,
+            sourceHandle: handleId,
+            target: targetId,
+            type: "smoothstep",
+            animated: false,
+            label: handleId,
+            labelStyle: {
+              fontSize: 10,
+              fontWeight: 600,
+              fill: handleId === "true" ? "var(--success, #1f7a57)" : "var(--danger, #b83a3a)",
+            },
+            style: {
+              strokeWidth: 1.5,
+              stroke: handleId === "true" ? "var(--success, #1f7a57)" : "var(--danger, #b83a3a)",
+            },
+          });
+        }
+      }
+    }
   }
+
+  // Apply dagre layout
+  nodes = applyDagreLayout(nodes, edges);
 
   // Apply run-state edge styling
   if (run) {

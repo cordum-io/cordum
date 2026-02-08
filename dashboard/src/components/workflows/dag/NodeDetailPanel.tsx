@@ -467,7 +467,7 @@ function ConditionDetail({
   runStep?: WorkflowStep;
 }) {
   const config = step.config ?? {};
-  const expression = (config.expression as string) ?? (config.condition as string) ?? "";
+  const expression = step.condition ?? (config.expression as string) ?? (config.condition as string) ?? "";
   const output = runStep?.output ?? {};
   const result = output.result as boolean | undefined;
   const branchTaken = (output.branch as string) ?? "";
@@ -512,6 +512,7 @@ function DelayDetail({
 }) {
   const config = step.config ?? {};
   const delayMs =
+    (step.delay_sec != null ? step.delay_sec * 1000 : undefined) ??
     (config.duration as number) ??
     (config.delayMs as number) ??
     (config.delay as number);
@@ -563,12 +564,12 @@ function FanOutDetail({
   run?: WorkflowRun | null;
 }) {
   const config = step.config ?? {};
-  const parallelism = (config.parallelism as number) ?? (config.branches as number);
-  const forEachExpr = (config.forEach as string) ?? "";
+  const parallelism = step.max_parallel ?? (config.parallelism as number) ?? (config.branches as number);
+  const forEachExpr = step.for_each ?? (config.forEach as string) ?? "";
 
   // Find child steps (steps that depend on this fan-out)
   const childSteps = (run?.steps ?? []).filter((rs) =>
-    rs.dependsOn?.includes(step.id),
+    (rs.depends_on ?? rs.dependsOn)?.includes(step.id),
   );
 
   return (

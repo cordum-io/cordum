@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post, put } from "../api/client";
+import { get, post, put, del } from "../api/client";
+import { logger } from "../lib/logger";
 import type {
   PolicyBundle,
   PolicyRule,
@@ -23,6 +24,28 @@ import {
   type BackendPolicyAuditEntry,
 } from "../api/transform";
 
+// Feature flags (disabled by default until gateway endpoints are available).
+export const POLICY_CONFIG_SUPPORTED =
+  import.meta.env.VITE_POLICY_CONFIG_SUPPORTED === "true";
+export const POLICY_STATS_SUPPORTED =
+  import.meta.env.VITE_POLICY_STATS_SUPPORTED === "true";
+
+export function encodePolicyBundleId(id: string): string {
+  return id.replaceAll("/", "~");
+}
+
+function policyBundlePath(id: string): string {
+  return `/policy/bundles/${encodePolicyBundleId(id)}`;
+}
+
+function policyBundleRulePath(bundleId: string, ruleId: string): string {
+  return `${policyBundlePath(bundleId)}/rules/${encodeURIComponent(ruleId)}`;
+}
+
+function policyBundleSimulatePath(bundleId: string): string {
+  return `${policyBundlePath(bundleId)}/simulate`;
+}
+
 // ---------------------------------------------------------------------------
 // Queries — bundles
 // ---------------------------------------------------------------------------
@@ -44,7 +67,7 @@ export function usePolicyBundle(id: string) {
   return useQuery<PolicyBundle>({
     queryKey: ["policy-bundle", id],
     queryFn: async () => {
-      const res = await get<BackendPolicyBundleDetail>(`/policy/bundles/${id}`);
+      const res = await get<BackendPolicyBundleDetail>(policyBundlePath(id));
       return mapPolicyBundleDetail(res);
     },
     enabled: !!id,
@@ -83,11 +106,17 @@ export function usePolicyRules() {
 export function usePublishPolicy() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, { bundleId: string; note?: string; message?: string; author?: string }>({
-    mutationFn: ({ bundleId, note, message, author }) =>
-      post<void>("/policy/publish", { bundle_ids: [bundleId], note, message, author }),
-    onSuccess: () => {
+    mutationFn: ({ bundleId, note, message, author }) => {
+      logger.info("policies", "Publishing policy", { bundleId });
+      return post<void>("/policy/publish", { bundle_ids: [bundleId], note, message, author });
+    },
+    onSuccess: (_, { bundleId }) => {
+      logger.info("policies", "Policy published", { bundleId });
       queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
       queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
+    },
+    onError: (err, { bundleId }) => {
+      logger.error("policies", "Publish failed", { bundleId, error: err.message });
     },
   });
 }
@@ -95,12 +124,37 @@ export function usePublishPolicy() {
 export function useRollbackPolicy() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, { snapshotId: string; note?: string; message?: string; author?: string }>({
-    mutationFn: ({ snapshotId, note, message, author }) =>
-      post<void>("/policy/rollback", { snapshot_id: snapshotId, note, message, author }),
-    onSuccess: () => {
+    mutationFn: ({ snapshotId, note, message, author }) => {
+      logger.info("policies", "Rolling back policy", { snapshotId });
+      return post<void>("/policy/rollback", { snapshot_id: snapshotId, note, message, author });
+    },
+    onSuccess: (_, { snapshotId }) => {
+      logger.info("policies", "Policy rolled back", { snapshotId });
       queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
       queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
       queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
+    },
+    onError: (err, { snapshotId }) => {
+      logger.error("policies", "Rollback failed", { snapshotId, error: err.message });
+    },
+  });
+}
+
+export function useToggleRule() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, { bundleId: string; ruleId: string; enabled: boolean }>({
+    mutationFn: ({ bundleId, ruleId, enabled }) => {
+      logger.info("policies", "Toggling rule", { bundleId, ruleId, enabled });
+      return put<void>(policyBundleRulePath(bundleId, ruleId), { enabled });
+    },
+    onSuccess: (_, { bundleId, ruleId, enabled }) => {
+      logger.info("policies", "Rule toggled", { bundleId, ruleId, enabled });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundle", bundleId] });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
+      queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
+    },
+    onError: (err, { bundleId, ruleId }) => {
+      logger.error("policies", "Toggle rule failed", { bundleId, ruleId, error: err.message });
     },
   });
 }
@@ -188,7 +242,7 @@ export function useSimulatePolicy() {
   return useMutation<SimulateResult, Error, SimulateInput>({
     mutationFn: async (input) => {
       const res = await post<Record<string, unknown>>(
-        `/policy/bundles/${input.bundleId}/simulate`,
+        policyBundleSimulatePath(input.bundleId),
         { request: input.request, content: input.content },
       );
       const rawDecision =
@@ -207,4 +261,128 @@ export function useSimulatePolicy() {
       };
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Policy config — default stance + lockdown
+// ---------------------------------------------------------------------------
+
+export interface PolicyConfig {
+  defaultStance: "allow" | "deny";
+  lockdown: boolean;
+  lockdownReason?: string;
+  lockdownBy?: string;
+  lockdownAt?: string;
+}
+
+const DEFAULT_POLICY_CONFIG: PolicyConfig = { defaultStance: "allow", lockdown: false };
+
+export function usePolicyConfig() {
+  return useQuery<PolicyConfig>({
+    queryKey: ["policy-config"],
+    queryFn: async () => {
+      if (!POLICY_CONFIG_SUPPORTED) return DEFAULT_POLICY_CONFIG;
+      return get<PolicyConfig>("/policy/config");
+    },
+    enabled: POLICY_CONFIG_SUPPORTED,
+    initialData: DEFAULT_POLICY_CONFIG,
+    staleTime: 10_000,
+  });
+}
+
+export function useUpdatePolicyConfig() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, Partial<PolicyConfig>>({
+    mutationFn: (config) => {
+      logger.info("policies", "Updating policy config", { config });
+      if (!POLICY_CONFIG_SUPPORTED) {
+        return Promise.resolve();
+      }
+      return put<void>("/policy/config", config);
+    },
+    onSuccess: () => {
+      logger.info("policies", "Policy config updated");
+      queryClient.invalidateQueries({ queryKey: ["policy-config"] });
+    },
+    onError: (err) => {
+      logger.error("policies", "Policy config update failed", { error: err.message });
+    },
+  });
+}
+
+export function useActivateLockdown() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, { reason: string }>({
+    mutationFn: ({ reason }) => {
+      logger.warn("policies", "Activating lockdown", { reason });
+      if (!POLICY_CONFIG_SUPPORTED) {
+        return Promise.resolve();
+      }
+      return post<void>("/policy/lockdown", { reason });
+    },
+    onSuccess: () => {
+      logger.warn("policies", "Lockdown activated");
+      queryClient.invalidateQueries({ queryKey: ["policy-config"] });
+    },
+    onError: (err) => {
+      logger.error("policies", "Lockdown activation failed", { error: err.message });
+    },
+  });
+}
+
+export function useDeactivateLockdown() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, void>({
+    mutationFn: () => {
+      logger.info("policies", "Deactivating lockdown");
+      if (!POLICY_CONFIG_SUPPORTED) {
+        return Promise.resolve();
+      }
+      return del<void>("/policy/lockdown");
+    },
+    onSuccess: () => {
+      logger.info("policies", "Lockdown deactivated");
+      queryClient.invalidateQueries({ queryKey: ["policy-config"] });
+    },
+    onError: (err) => {
+      logger.error("policies", "Lockdown deactivation failed", { error: err.message });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Policy approvals — frontend-derived pending queue
+// ---------------------------------------------------------------------------
+
+export interface PendingPolicyChange {
+  bundle: PolicyBundle;
+  changeSummary: string;
+}
+
+/**
+ * Derives a list of pending policy changes by comparing each bundle's
+ * `updatedAt` vs `publishedAt`. A bundle is "pending review" if it has
+ * rules and has been updated after its last publish (or never published).
+ *
+ * This is a frontend-computed approval queue until the backend adds a
+ * dedicated policy approval endpoint.
+ */
+export function usePolicyApprovals() {
+  const { data, isLoading, isError } = usePolicyBundles();
+  const bundles = data?.items ?? [];
+
+  const pending: PendingPolicyChange[] = [];
+  for (const b of bundles) {
+    const updatedMs = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    const publishedMs = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+
+    if (b.rules.length > 0 && (!b.publishedAt || updatedMs > publishedMs + 1000)) {
+      const changeSummary = !b.publishedAt
+        ? `${b.rules.length} new rule${b.rules.length !== 1 ? "s" : ""}`
+        : `${b.rules.length} rule${b.rules.length !== 1 ? "s" : ""} modified`;
+      pending.push({ bundle: b, changeSummary });
+    }
+  }
+
+  return { pending, isLoading, isError };
 }

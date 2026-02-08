@@ -118,7 +118,7 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 
 	client, err := chatRedisClient(s.memStore)
 	if err != nil {
-		writeErrorJSON(w, http.StatusNotImplemented, err.Error())
+		writeErrorJSON(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 
@@ -231,7 +231,7 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 
 	client, err := chatRedisClient(s.memStore)
 	if err != nil {
-		writeErrorJSON(w, http.StatusNotImplemented, err.Error())
+		writeErrorJSON(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 
@@ -404,4 +404,4 @@ func chatCreatedAt(ts int64) string {
 	}
 }
 
-var errChatStoreUnavailable = errors.New("chat history unavailable")
+var errChatStoreUnavailable = errors.New("chat history unavailable: Redis store not configured")

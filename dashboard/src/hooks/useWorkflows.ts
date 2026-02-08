@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { del, get, post } from "../api/client";
+import { logger } from "../lib/logger";
 import type { RunStatus, Workflow, WorkflowRun } from "../api/types";
 import {
   mapWorkflow,
@@ -157,116 +158,118 @@ function parseDateToISO(value: string): string | undefined {
 
 function buildStepPayload(step: Workflow["steps"][number]): Record<string, unknown> {
   const config = (step.config ?? {}) as Record<string, unknown>;
+  const JOB_SUBTYPES = new Set(["agent-task", "pack-action", "tool-call", "job"]);
+  const frontendType = step.type || "job";
   const payload: Record<string, unknown> = {
     id: step.id,
     name: step.name,
     type:
       typeof config.backendType === "string" && config.backendType.trim()
         ? config.backendType.trim()
-        : step.type || "job",
+        : JOB_SUBTYPES.has(frontendType)
+          ? "job"
+          : frontendType,
   };
 
-  if (Array.isArray(step.dependsOn) && step.dependsOn.length > 0) {
-    payload.depends_on = step.dependsOn;
+  // Prefer direct backend fields, fall back to legacy config bag
+  const deps = step.depends_on ?? step.dependsOn;
+  if (Array.isArray(deps) && deps.length > 0) {
+    payload.depends_on = deps;
   }
 
-  if (typeof config.topic === "string" && config.topic.trim()) {
-    payload.topic = config.topic.trim();
-  }
-  if (typeof config.workerId === "string" && config.workerId.trim()) {
-    payload.worker_id = config.workerId.trim();
-  }
-  if (typeof config.expression === "string" && config.expression.trim()) {
-    payload.condition = config.expression.trim();
-  }
-  if (typeof config.forEach === "string" && config.forEach.trim()) {
-    payload.for_each = config.forEach.trim();
-  }
-  if (typeof config.parallelism === "number" && config.parallelism > 0) {
-    payload.max_parallel = Math.floor(config.parallelism);
-  }
+  const topic = step.topic ?? (typeof config.topic === "string" ? config.topic : undefined);
+  if (topic?.trim()) payload.topic = topic.trim();
 
-  const timeoutSec = parseDurationSeconds(config.timeout);
-  if (timeoutSec !== undefined) {
-    payload.timeout_sec = timeoutSec;
-  }
+  const workerId = step.worker_id ?? (typeof config.workerId === "string" ? config.workerId : undefined);
+  if (workerId?.trim()) payload.worker_id = workerId.trim();
 
-  const delaySec = parseDurationSeconds(config.duration);
+  const condition = step.condition ?? (typeof config.expression === "string" ? config.expression : undefined);
+  if (condition?.trim()) payload.condition = condition.trim();
+
+  const forEach = step.for_each ?? (typeof config.forEach === "string" ? config.forEach : undefined);
+  if (forEach?.trim()) payload.for_each = forEach.trim();
+
+  const maxParallel = step.max_parallel ?? (typeof config.parallelism === "number" ? config.parallelism : undefined);
+  if (typeof maxParallel === "number" && maxParallel > 0) payload.max_parallel = Math.floor(maxParallel);
+
+  // Timeout: prefer direct field, fall back to config duration parsing
+  const timeoutSec = step.timeout_sec ?? parseDurationSeconds(config.timeout);
+  if (timeoutSec !== undefined) payload.timeout_sec = timeoutSec;
+
+  // Delay
+  const delaySec = step.delay_sec ?? parseDurationSeconds(config.duration);
   if (delaySec !== undefined) {
     payload.delay_sec = delaySec;
-  } else if (typeof config.duration === "string") {
-    const iso = parseDateToISO(config.duration);
-    if (iso) {
-      payload.delay_until = iso;
-    }
+  } else {
+    const delayUntil = step.delay_until ?? (typeof config.duration === "string" ? parseDateToISO(config.duration) : undefined);
+    if (delayUntil) payload.delay_until = delayUntil;
   }
 
-  if (typeof config.retryMax === "number" && config.retryMax > 0) {
+  // Retry
+  if (step.retry?.max_retries) {
+    payload.retry = step.retry;
+  } else if (typeof config.retryMax === "number" && config.retryMax > 0) {
     payload.retry = { max_retries: Math.floor(config.retryMax) };
   }
 
-  if (config.inputSchema && typeof config.inputSchema === "object") {
-    payload.input_schema = config.inputSchema;
-  }
-  if (typeof config.inputSchemaId === "string" && config.inputSchemaId.trim()) {
-    payload.input_schema_id = config.inputSchemaId.trim();
-  }
-  if (config.outputSchema && typeof config.outputSchema === "object") {
-    payload.output_schema = config.outputSchema;
-  }
-  if (typeof config.outputSchemaId === "string" && config.outputSchemaId.trim()) {
-    payload.output_schema_id = config.outputSchemaId.trim();
-  }
-  if (typeof config.outputPath === "string" && config.outputPath.trim()) {
-    payload.output_path = config.outputPath.trim();
-  }
+  // Schemas
+  const inputSchema = step.input_schema ?? (config.inputSchema as Record<string, unknown> | undefined);
+  if (inputSchema && typeof inputSchema === "object") payload.input_schema = inputSchema;
+  const inputSchemaId = step.input_schema_id ?? (typeof config.inputSchemaId === "string" ? config.inputSchemaId : undefined);
+  if (inputSchemaId?.trim()) payload.input_schema_id = inputSchemaId.trim();
+  const outputSchema = step.output_schema ?? (config.outputSchema as Record<string, unknown> | undefined);
+  if (outputSchema && typeof outputSchema === "object") payload.output_schema = outputSchema;
+  const outputSchemaId = step.output_schema_id ?? (typeof config.outputSchemaId === "string" ? config.outputSchemaId : undefined);
+  if (outputSchemaId?.trim()) payload.output_schema_id = outputSchemaId.trim();
+  const outputPath = step.output_path ?? (typeof config.outputPath === "string" ? config.outputPath : undefined);
+  if (outputPath?.trim()) payload.output_path = outputPath.trim();
 
-  if (config.routeLabels && typeof config.routeLabels === "object") {
-    payload.route_labels = config.routeLabels as Record<string, string>;
-  }
+  // Route labels
+  const routeLabels = step.route_labels ?? (config.routeLabels as Record<string, string> | undefined);
+  if (routeLabels && typeof routeLabels === "object") payload.route_labels = routeLabels;
 
+  // Input: prefer direct field, merge with legacy config fields
   const input: Record<string, unknown> = {};
-  if (config.input && typeof config.input === "object") {
-    Object.assign(input, config.input as Record<string, unknown>);
-  }
-  if (typeof config.messageTemplate === "string" && config.messageTemplate.trim()) {
-    input.message = config.messageTemplate.trim();
-  }
-  if (typeof config.channel === "string" && config.channel.trim()) {
-    input.component = config.channel.trim();
-  }
-  if (Object.keys(input).length > 0) {
-    payload.input = input;
-  }
+  const stepInput = step.input ?? (config.input as Record<string, unknown> | undefined);
+  if (stepInput && typeof stepInput === "object") Object.assign(input, stepInput);
+  if (typeof config.messageTemplate === "string" && config.messageTemplate.trim()) input.message = config.messageTemplate.trim();
+  if (typeof config.channel === "string" && config.channel.trim()) input.component = config.channel.trim();
+  if (typeof config.prompt === "string" && config.prompt.trim()) input.prompt = config.prompt.trim();
+  const budgetInput: Record<string, number> = {};
+  if (typeof config.maxInputTokens === "number" && config.maxInputTokens > 0) budgetInput.input_tokens = config.maxInputTokens;
+  if (typeof config.maxOutputTokens === "number" && config.maxOutputTokens > 0) budgetInput.output_tokens = config.maxOutputTokens;
+  if (typeof config.maxTotalTokens === "number" && config.maxTotalTokens > 0) budgetInput.total_tokens = config.maxTotalTokens;
+  if (Object.keys(budgetInput).length > 0) input.budget = budgetInput;
+  if (Object.keys(input).length > 0) payload.input = input;
 
+  // Meta: prefer direct field, merge with legacy config fields
   let meta: Record<string, unknown> = {};
-  if (config.meta && typeof config.meta === "object") {
-    meta = { ...(config.meta as Record<string, unknown>) };
-  }
+  const stepMeta = step.meta ?? (config.meta as Record<string, unknown> | undefined);
+  if (stepMeta && typeof stepMeta === "object") meta = { ...stepMeta };
   const caps = toStringArray(config.capabilities ?? config.capability);
   const requires = toStringArray(config.requires);
   const riskTags = toStringArray(config.riskTags ?? config.risk_tags);
   if (caps.length > 0) {
     meta.capability = caps[0];
     const combined = [...caps.slice(1), ...requires].filter(Boolean);
-    if (combined.length > 0) {
-      meta.requires = combined;
-    }
+    if (combined.length > 0) meta.requires = combined;
   } else if (requires.length > 0) {
     meta.requires = requires;
   }
-  if (riskTags.length > 0) {
-    meta.risk_tags = riskTags;
-  }
-  if (config.labels && typeof config.labels === "object") {
-    meta.labels = config.labels as Record<string, string>;
-  }
+  if (riskTags.length > 0) meta.risk_tags = riskTags;
+  if (config.labels && typeof config.labels === "object") meta.labels = config.labels as Record<string, string>;
   if (typeof config.packId === "string") meta.pack_id = config.packId;
   if (typeof config.actorId === "string") meta.actor_id = config.actorId;
   if (typeof config.actorType === "string") meta.actor_type = config.actorType;
-  if (Object.keys(meta).length > 0) {
-    payload.meta = meta;
-  }
+  if (typeof config.adapterId === "string" && config.adapterId) meta.adapter_id = config.adapterId;
+  if (typeof config.memoryId === "string" && config.memoryId) meta.memory_id = config.memoryId;
+  if (typeof config.contextMode === "string" && config.contextMode) meta.context_mode = config.contextMode;
+  if (typeof config.allowSummarization === "boolean") meta.allow_summarization = config.allowSummarization;
+  if (typeof config.allowRetrieval === "boolean") meta.allow_retrieval = config.allowRetrieval;
+  if (typeof config.deadlineMs === "number" && config.deadlineMs > 0) meta.deadline_ms = config.deadlineMs;
+  if (typeof config.priority === "string" && config.priority) meta.priority = config.priority;
+  if (Object.keys(budgetInput).length > 0 && !meta.budget) meta.budget = budgetInput;
+  if (Object.keys(meta).length > 0) payload.meta = meta;
 
   return payload;
 }
@@ -290,19 +293,25 @@ function toWorkflowUpsertPayload(input: Partial<Workflow> & { id?: string }): Re
   const version = (input.version ?? meta.version) as string | undefined;
   if (version) payload.version = version;
 
-  const timeout =
-    typeof input.timeout === "number"
-      ? input.timeout
-      : typeof meta.timeout === "number"
-        ? meta.timeout
-        : undefined;
-  if (typeof timeout === "number" && timeout > 0) {
-    payload.timeout_sec = Math.floor(timeout);
+  // Prefer direct timeout_sec, fall back to legacy timeout
+  const timeoutSec =
+    typeof input.timeout_sec === "number"
+      ? input.timeout_sec
+      : typeof input.timeout === "number"
+        ? input.timeout
+        : typeof meta.timeout === "number"
+          ? (meta.timeout as number)
+          : undefined;
+  if (typeof timeoutSec === "number" && timeoutSec > 0) {
+    payload.timeout_sec = Math.floor(timeoutSec);
   }
 
-  if (meta.inputSchema) payload.input_schema = meta.inputSchema;
+  // Prefer direct fields, fall back to metadata
+  const inputSchema = input.input_schema ?? meta.inputSchema;
+  if (inputSchema) payload.input_schema = inputSchema;
   if (meta.parameters) payload.parameters = meta.parameters;
-  if (meta.config) payload.config = meta.config;
+  const config = input.config ?? meta.config;
+  if (config) payload.config = config;
 
   if (Array.isArray(input.steps)) {
     const steps: Record<string, unknown> = {};
@@ -346,13 +355,19 @@ export function useWorkflow(id: string | null | undefined) {
 export function useCreateWorkflow() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: Partial<Workflow> & { id?: string }) =>
-      post<WorkflowIdResponse>("/workflows", toWorkflowUpsertPayload(payload ?? {})),
+    mutationFn: (payload: Partial<Workflow> & { id?: string }) => {
+      logger.info("workflows", "Creating workflow", { name: payload.name });
+      return post<WorkflowIdResponse>("/workflows", toWorkflowUpsertPayload(payload ?? {}));
+    },
     onSuccess: (data) => {
+      logger.info("workflows", "Workflow created", { id: data?.id });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       if (data?.id) {
         queryClient.invalidateQueries({ queryKey: ["workflow", data.id] });
       }
+    },
+    onError: (err) => {
+      logger.error("workflows", "Create workflow failed", { error: err.message });
     },
   });
 }
@@ -364,14 +379,19 @@ export function useUpdateWorkflow() {
       if (!payload?.id) {
         throw new Error("workflow id is required");
       }
+      logger.info("workflows", "Updating workflow", { id: payload.id });
       return post<WorkflowIdResponse>("/workflows", toWorkflowUpsertPayload(payload));
     },
     onSuccess: (data, variables) => {
+      logger.info("workflows", "Workflow updated", { id: data?.id || variables?.id });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       const workflowId = data?.id || variables?.id;
       if (workflowId) {
         queryClient.invalidateQueries({ queryKey: ["workflow", workflowId] });
       }
+    },
+    onError: (err, variables) => {
+      logger.error("workflows", "Update workflow failed", { id: variables?.id, error: err.message });
     },
   });
 }
@@ -383,13 +403,18 @@ export function useDeleteWorkflow() {
       if (!workflowId) {
         throw new Error("workflow id is required");
       }
+      logger.info("workflows", "Deleting workflow", { id: workflowId });
       return del<void>(`/workflows/${workflowId}`);
     },
     onSuccess: (_data, workflowId) => {
+      logger.info("workflows", "Workflow deleted", { id: workflowId });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       if (workflowId) {
         queryClient.invalidateQueries({ queryKey: ["workflow", workflowId] });
       }
+    },
+    onError: (err, workflowId) => {
+      logger.error("workflows", "Delete workflow failed", { id: workflowId, error: err.message });
     },
   });
 }
@@ -485,6 +510,7 @@ export function useStartRun() {
       if (!input?.workflowId) {
         throw new Error("workflow id is required");
       }
+      logger.info("workflows", "Starting run", { workflowId: input.workflowId, dryRun: input.dryRun });
       return post<RunIdResponse>(
         `/workflows/${input.workflowId}/runs${buildQuery({
           org_id: input.orgId,
@@ -495,6 +521,7 @@ export function useStartRun() {
       );
     },
     onSuccess: (data, variables) => {
+      logger.info("workflows", "Run started", { workflowId: variables?.workflowId, runId: data?.run_id });
       queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
       if (variables?.workflowId) {
         queryClient.invalidateQueries({ queryKey: ["workflow-runs", variables.workflowId] });
@@ -502,6 +529,9 @@ export function useStartRun() {
       if (data?.run_id) {
         queryClient.invalidateQueries({ queryKey: ["workflow-run", data.run_id] });
       }
+    },
+    onError: (err, variables) => {
+      logger.error("workflows", "Start run failed", { workflowId: variables?.workflowId, error: err.message });
     },
   });
 }
@@ -646,9 +676,11 @@ export function useCancelRun() {
       if (!input?.workflowId || !input?.runId) {
         throw new Error("workflow id and run id are required");
       }
+      logger.info("workflows", "Cancelling run", { workflowId: input.workflowId, runId: input.runId });
       return post<void>(`/workflows/${input.workflowId}/runs/${input.runId}/cancel`);
     },
     onSuccess: (_data, variables) => {
+      logger.info("workflows", "Run cancelled", { workflowId: variables?.workflowId, runId: variables?.runId });
       queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
       if (variables?.workflowId) {
         queryClient.invalidateQueries({ queryKey: ["workflow-runs", variables.workflowId] });
@@ -656,6 +688,9 @@ export function useCancelRun() {
       if (variables?.runId) {
         queryClient.invalidateQueries({ queryKey: ["workflow-run", variables.runId] });
       }
+    },
+    onError: (err, variables) => {
+      logger.error("workflows", "Cancel run failed", { runId: variables?.runId, error: err.message });
     },
   });
 }

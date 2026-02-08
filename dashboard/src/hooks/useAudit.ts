@@ -12,7 +12,12 @@ export interface AuditFilters {
   eventType?: string[];
   actor?: string;
   resourceType?: string;
+  resourceId?: string;
+  severity?: string[];
+  outcome?: string[];
   timeRange?: string;
+  from?: string;
+  to?: string;
   search?: string;
   page?: number;
   perPage?: number;
@@ -28,6 +33,7 @@ const TIME_RANGE_MS: Record<string, number> = {
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
   "30d": 30 * 24 * 60 * 60 * 1000,
+  "90d": 90 * 24 * 60 * 60 * 1000,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,7 +54,25 @@ function applyFilters(entries: AuditEntry[], f: AuditFilters): AuditEntry[] {
   if (f.resourceType) {
     result = result.filter((e) => e.resourceType === f.resourceType);
   }
-  if (f.timeRange && TIME_RANGE_MS[f.timeRange]) {
+  if (f.resourceId) {
+    result = result.filter((e) => e.resourceId === f.resourceId);
+  }
+  if (f.severity?.length) {
+    const set = new Set(f.severity);
+    result = result.filter((e) => e.severity && set.has(e.severity));
+  }
+  if (f.outcome?.length) {
+    const set = new Set(f.outcome);
+    result = result.filter((e) => set.has(e.action.toLowerCase()));
+  }
+  if (f.timeRange === "custom" && (f.from || f.to)) {
+    const fromMs = f.from ? new Date(f.from).getTime() : 0;
+    const toMs = f.to ? new Date(f.to).getTime() : Infinity;
+    result = result.filter((e) => {
+      const t = new Date(e.timestamp).getTime();
+      return t >= fromMs && t <= toMs;
+    });
+  } else if (f.timeRange && TIME_RANGE_MS[f.timeRange]) {
     const cutoff = Date.now() - TIME_RANGE_MS[f.timeRange];
     result = result.filter((e) => new Date(e.timestamp).getTime() >= cutoff);
   }
@@ -60,7 +84,8 @@ function applyFilters(entries: AuditEntry[], f: AuditFilters): AuditEntry[] {
         e.actor.toLowerCase().includes(lower) ||
         e.message.toLowerCase().includes(lower) ||
         e.resourceType.toLowerCase().includes(lower) ||
-        e.resourceId.toLowerCase().includes(lower),
+        e.resourceId.toLowerCase().includes(lower) ||
+        (e.payload && JSON.stringify(e.payload).toLowerCase().includes(lower)),
     );
   }
 
@@ -68,9 +93,9 @@ function applyFilters(entries: AuditEntry[], f: AuditFilters): AuditEntry[] {
 }
 
 function applySort(entries: AuditEntry[], sort?: string): AuditEntry[] {
-  if (!sort) return entries;
+  const effectiveSort = sort || "time-desc";
   const sorted = [...entries];
-  switch (sort) {
+  switch (effectiveSort) {
     case "time-asc":
       sorted.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       break;
@@ -112,6 +137,32 @@ export function useAuditLog(filters: AuditFilters = {}) {
 }
 
 export type ExportFormat = "csv" | "json";
+
+export function useAuditEvent(eventId: string | null) {
+  return useQuery<AuditEntry | null>({
+    queryKey: ["audit", "event", eventId],
+    queryFn: async () => {
+      const res = await get<{ items: BackendPolicyAuditEntry[] }>("/policy/audit");
+      const entries = (res.items ?? []).map(mapPolicyAuditEntry);
+      return entries.find((e) => e.id === eventId) ?? null;
+    },
+    enabled: !!eventId,
+  });
+}
+
+export function useAuditCorrelation(resourceId: string | null) {
+  return useQuery<AuditEntry[]>({
+    queryKey: ["audit", "correlation", resourceId],
+    queryFn: async () => {
+      const res = await get<{ items: BackendPolicyAuditEntry[] }>("/policy/audit");
+      const all = (res.items ?? []).map(mapPolicyAuditEntry);
+      return all
+        .filter((e) => e.resourceId === resourceId)
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    },
+    enabled: !!resourceId,
+  });
+}
 
 export function useAuditExport(
   filters: AuditFilters,

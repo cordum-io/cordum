@@ -110,7 +110,7 @@ func ensureProtocolCompatible(manifest *packManifest) error {
 		return errors.New("compatibility.protocolVersion required")
 	}
 	if manifest.Compatibility.ProtocolVersion != capsdk.DefaultProtocolVersion {
-		return fmt.Errorf("protocolVersion %d not supported (expected %d)", manifest.Compatibility.ProtocolVersion, capsdk.DefaultProtocolVersion)
+		return fmt.Errorf("pack protocol version %d is not compatible with this server (requires version %d); rebuild your pack with a compatible capsdk version", manifest.Compatibility.ProtocolVersion, capsdk.DefaultProtocolVersion)
 	}
 	return nil
 }

@@ -86,6 +86,9 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	if record.JobHash != hash {
 		t.Fatalf("expected job hash %q got %q", hash, record.JobHash)
 	}
+	if record.ApprovedAt <= 0 {
+		t.Fatalf("expected ApprovedAt > 0, got %d", record.ApprovedAt)
+	}
 	if len(bus.published) != 1 {
 		t.Fatalf("expected 1 publish, got %d", len(bus.published))
 	}
@@ -202,6 +205,9 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	}
 	if record.Note != "not safe" {
 		t.Fatalf("expected note not safe got %q", record.Note)
+	}
+	if record.ApprovedAt <= 0 {
+		t.Fatalf("expected ApprovedAt > 0 on rejection, got %d", record.ApprovedAt)
 	}
 }
 

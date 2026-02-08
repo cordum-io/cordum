@@ -5,6 +5,7 @@ import { BaseNode } from "./BaseNode";
 
 export const DelayNode = memo(function DelayNode({ data, selected }: NodeProps) {
   const config = (data.config ?? {}) as Record<string, unknown>;
+  const duration = (typeof data.delay_sec === "number" ? `${data.delay_sec}s` : "") || (data.delay_until as string) || (typeof config.duration === "string" ? config.duration : "");
   return (
     <BaseNode
       icon={<Clock className="h-4 w-4 text-purple-600" />}
@@ -12,8 +13,8 @@ export const DelayNode = memo(function DelayNode({ data, selected }: NodeProps) 
       accent="bg-purple-50"
       selected={selected}
     >
-      {typeof config.duration === "string" && config.duration && (
-        <span>duration: {config.duration}</span>
+      {duration && (
+        <span>duration: {duration}</span>
       )}
     </BaseNode>
   );

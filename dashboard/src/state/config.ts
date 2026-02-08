@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { logger } from "../lib/logger";
 import type { User } from "../api/types";
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ function loadUser(): User | null {
       try {
         return JSON.parse(raw) as User;
       } catch {
-        // corrupt data — ignore
+        logger.warn("config-store", "Corrupt user data in localStorage, ignoring");
       }
     }
   }
@@ -60,6 +61,7 @@ interface ConfigPatch {
   principalId?: string;
   principalRole?: string;
   traceUrlTemplate?: string;
+  approvalSlaMs?: number;
 }
 
 interface ConfigState {
@@ -70,6 +72,9 @@ interface ConfigState {
   principalId: string;
   principalRole: string;
   traceUrlTemplate: string;
+
+  // SLA
+  approvalSlaMs: number;
 
   // Auth
   user: User | null;
@@ -90,6 +95,7 @@ export const useConfigStore = create<ConfigState>((set) => {
     principalId: savedUser?.id ?? "",
     principalRole: savedUser?.roles?.[0] ?? "",
     traceUrlTemplate: "",
+    approvalSlaMs: 900_000, // 15 minutes default
     user: savedUser,
     isAuthenticated: !!loadToken(),
 
@@ -103,6 +109,7 @@ export const useConfigStore = create<ConfigState>((set) => {
       }),
 
     login: (token, user) => {
+      logger.info("config-store", "Login", { userId: user.id, tenant: user.tenant });
       persistToken(token);
       persistUser(user);
       set({
@@ -116,6 +123,7 @@ export const useConfigStore = create<ConfigState>((set) => {
     },
 
     logout: () => {
+      logger.info("config-store", "Logout");
       persistToken("");
       persistUser(null);
       set({
@@ -129,3 +137,15 @@ export const useConfigStore = create<ConfigState>((set) => {
     },
   };
 });
+
+// ---------------------------------------------------------------------------
+// SLA helpers
+// ---------------------------------------------------------------------------
+
+export function isSlaBreach(waitMs: number, slaMs: number): boolean {
+  return waitMs > slaMs;
+}
+
+export function slaRemainingMs(waitMs: number, slaMs: number): number {
+  return slaMs - waitMs;
+}

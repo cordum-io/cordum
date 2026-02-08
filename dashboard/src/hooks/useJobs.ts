@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post } from "../api/client";
+import { logger } from "../lib/logger";
 import type { Job, JobStatus, SafetyDecision, ApiResponse } from "../api/types";
 import {
   mapJobDetail,
@@ -173,10 +174,17 @@ export function useJobDecisions(id: string) {
 export function useCancelJob() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, string>({
-    mutationFn: (id) => post<void>(`/jobs/${id}/cancel`),
+    mutationFn: (id) => {
+      logger.info("jobs", "Cancelling job", { id });
+      return post<void>(`/jobs/${id}/cancel`);
+    },
     onSuccess: (_data, id) => {
+      logger.info("jobs", "Job cancelled", { id });
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["job", id] });
+    },
+    onError: (err, id) => {
+      logger.error("jobs", "Cancel job failed", { id, error: err.message });
     },
   });
 }
@@ -184,10 +192,17 @@ export function useCancelJob() {
 export function useRetryJob() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, string>({
-    mutationFn: (id) => post<void>(`/dlq/${id}/retry`),
+    mutationFn: (id) => {
+      logger.info("jobs", "Retrying job", { id });
+      return post<void>(`/dlq/${id}/retry`);
+    },
     onSuccess: (_data, id) => {
+      logger.info("jobs", "Job retried", { id });
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["job", id] });
+    },
+    onError: (err, id) => {
+      logger.error("jobs", "Retry job failed", { id, error: err.message });
     },
   });
 }

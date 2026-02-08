@@ -8,6 +8,7 @@ import {
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Badge } from "../ui/Badge";
+import { logger } from "../../lib/logger";
 import type { PolicySnapshotSummary } from "../../api/types";
 
 // ---------------------------------------------------------------------------
@@ -88,6 +89,7 @@ export function PublishControls({
   const snapshots = snapshotsData?.items ?? [];
 
   const handlePublish = useCallback(() => {
+    logger.info("publish-controls", "Publish clicked", { bundleId });
     publishPolicy.mutate({ bundleId }, {
       onSuccess: () => {
         setShowPublishConfirm(false);
@@ -99,6 +101,7 @@ export function PublishControls({
 
   const handleRollback = useCallback(() => {
     if (!rollbackTarget) return;
+    logger.info("publish-controls", "Rollback clicked", { snapshotId: rollbackTarget.id });
     rollbackPolicy.mutate({ snapshotId: rollbackTarget.id }, {
       onSuccess: () => setRollbackTarget(null),
     });

@@ -2,7 +2,6 @@ package locks
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -20,9 +19,6 @@ func TestRedisStoreAcquireRelease(t *testing.T) {
 	ctx := context.Background()
 	lock, ok, err := store.Acquire(ctx, "repo:alpha", "worker-a", ModeExclusive, 2*time.Second)
 	if err != nil {
-		if skipEval(err) {
-			t.Skip("miniredis does not support EVAL")
-		}
 		t.Fatalf("acquire: %v", err)
 	}
 	if !ok || lock == nil {
@@ -54,9 +50,6 @@ func TestRedisStoreShared(t *testing.T) {
 
 	ctx := context.Background()
 	if _, ok, err := store.Acquire(ctx, "repo:shared", "worker-a", ModeShared, 2*time.Second); err != nil {
-		if skipEval(err) {
-			t.Skip("miniredis does not support EVAL")
-		}
 		t.Fatalf("acquire shared: %v", err)
 	} else if !ok {
 		t.Fatalf("expected shared acquire ok")
@@ -91,9 +84,6 @@ func TestRedisStoreRenew(t *testing.T) {
 
 	ctx := context.Background()
 	if _, ok, err := store.Acquire(ctx, "repo:renew", "worker-a", ModeExclusive, 2*time.Second); err != nil {
-		if skipEval(err) {
-			t.Skip("miniredis does not support EVAL")
-		}
 		t.Fatalf("acquire: %v", err)
 	} else if !ok {
 		t.Fatalf("expected acquire ok")
@@ -115,9 +105,6 @@ func TestRedisStoreModeChangeRejectedMultiOwner(t *testing.T) {
 
 	// Two owners acquire shared lock
 	if _, ok, err := store.Acquire(ctx, "repo:mode", "worker-a", ModeShared, 2*time.Second); err != nil {
-		if skipEval(err) {
-			t.Skip("miniredis does not support EVAL")
-		}
 		t.Fatalf("acquire shared A: %v", err)
 	} else if !ok {
 		t.Fatalf("expected shared acquire A ok")
@@ -144,9 +131,6 @@ func TestRedisStoreSingleOwnerUpgrade(t *testing.T) {
 
 	// Single owner acquires shared lock
 	if _, ok, err := store.Acquire(ctx, "repo:upgrade", "worker-a", ModeShared, 2*time.Second); err != nil {
-		if skipEval(err) {
-			t.Skip("miniredis does not support EVAL")
-		}
 		t.Fatalf("acquire shared: %v", err)
 	} else if !ok {
 		t.Fatalf("expected shared acquire ok")
@@ -174,9 +158,6 @@ func TestRedisStoreReleasePTTLPreserved(t *testing.T) {
 
 	// Two owners acquire shared lock
 	if _, ok, err := store.Acquire(ctx, "repo:pttl", "worker-a", ModeShared, 5*time.Second); err != nil {
-		if skipEval(err) {
-			t.Skip("miniredis does not support EVAL")
-		}
 		t.Fatalf("acquire shared A: %v", err)
 	} else if !ok {
 		t.Fatalf("expected shared acquire A ok")
@@ -199,12 +180,4 @@ func TestRedisStoreReleasePTTLPreserved(t *testing.T) {
 	if ttl == 0 {
 		t.Fatalf("expected lock to have TTL after partial release, got no expiry")
 	}
-}
-
-func skipEval(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "eval") && strings.Contains(msg, "unknown")
 }

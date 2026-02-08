@@ -4,6 +4,7 @@ import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Textarea } from "../ui/Textarea";
 import { useApproveApproval, useRejectApproval } from "../../hooks/useApprovals";
+import { logger } from "../../lib/logger";
 import type { Approval } from "../../api/types";
 
 type ActionMode = "idle" | "approve" | "reject";
@@ -29,6 +30,7 @@ export function ApprovalDetailModal({
   const isPending = approve.isPending || reject.isPending;
 
   function handleApprove() {
+    logger.info("approval-modal", "Approving", { id: approval.id });
     approve.mutate(
       { id: approval.id, comment: comment.trim() || undefined },
       {
@@ -48,6 +50,7 @@ export function ApprovalDetailModal({
 
   function handleReject() {
     if (!rejectReason.trim()) return;
+    logger.info("approval-modal", "Rejecting", { id: approval.id });
     reject.mutate(
       { id: approval.id, reason: rejectReason.trim() },
       {

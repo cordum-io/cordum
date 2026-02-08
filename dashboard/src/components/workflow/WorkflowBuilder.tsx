@@ -12,6 +12,7 @@ import {
   useCreateWorkflow,
   useUpdateWorkflow,
 } from "../../hooks/useWorkflows";
+import { logger } from "../../lib/logger";
 
 // ---------------------------------------------------------------------------
 // WorkflowBuilder — orchestrator
@@ -28,7 +29,7 @@ export function WorkflowBuilder() {
   // Workflow metadata
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(
-    (existing?.metadata?.description as string) ?? "",
+    existing?.description ?? (existing?.metadata?.description as string) ?? "",
   );
 
   // Sync metadata from loaded workflow (only once)
@@ -36,8 +37,9 @@ export function WorkflowBuilder() {
   if (existing && !loadedRef.current) {
     loadedRef.current = true;
     if (!name) setName(existing.name);
-    if (!description && typeof existing.metadata?.description === "string") {
-      setDescription(existing.metadata.description);
+    if (!description) {
+      const desc = existing.description ?? (typeof existing.metadata?.description === "string" ? existing.metadata.description : "");
+      if (desc) setDescription(desc);
     }
   }
 
@@ -57,14 +59,23 @@ export function WorkflowBuilder() {
     const { nodes, edges } = graphRef.current;
     const definition = graphToDefinition(nodes, edges, {
       name,
+      description,
       metadata: { description },
+      timeout_sec: existing?.timeout_sec ?? existing?.timeout ?? 3600,
       timeout: existing?.timeout ?? 3600,
+    });
+
+    logger.info("workflow-builder", "Saving workflow", {
+      isEdit,
+      workflowId,
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
     });
 
     if (isEdit && workflowId) {
       updateWorkflow.mutate(
         { ...definition, id: workflowId } as Parameters<typeof updateWorkflow.mutate>[0],
-        { onSuccess: () => navigate(`/workflows`) },
+        { onSuccess: () => navigate(`/workflows/${workflowId}`) },
       );
     } else {
       createWorkflow.mutate(definition, {
@@ -77,11 +88,27 @@ export function WorkflowBuilder() {
   const handleNodeConfigSave = useCallback(
     (nodeId: string, data: { label: string; config: Record<string, unknown> }) => {
       if (!graphRef.current) return;
+      logger.debug("workflow-builder", "Node config saved", { nodeId, label: data.label });
       // Mutate the node data in-place (ReactFlow state is ref-synced)
       const node = graphRef.current.nodes.find((n) => n.id === nodeId);
       if (node) {
         node.data = { ...node.data, ...data };
       }
+      setSelectedNode(null);
+    },
+    [],
+  );
+
+  // Handle node deletion — remove node + connected edges from graph
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      if (!graphRef.current) return;
+      // Prevent deleting start node
+      if (nodeId === "start") return;
+      graphRef.current.nodes = graphRef.current.nodes.filter((n) => n.id !== nodeId);
+      graphRef.current.edges = graphRef.current.edges.filter(
+        (e) => e.source !== nodeId && e.target !== nodeId,
+      );
       setSelectedNode(null);
     },
     [],
@@ -121,6 +148,7 @@ export function WorkflowBuilder() {
           <WorkflowCanvas
             initialWorkflow={existing ?? undefined}
             onNodeSelect={setSelectedNode}
+            onNodesDelete={(deleted) => deleted.forEach((n) => handleDeleteNode(n.id))}
             graphRef={graphRef}
           />
         </div>
@@ -130,6 +158,7 @@ export function WorkflowBuilder() {
             node={selectedNode}
             onSave={handleNodeConfigSave}
             onClose={() => setSelectedNode(null)}
+            onDelete={handleDeleteNode}
           />
         )}
       </div>

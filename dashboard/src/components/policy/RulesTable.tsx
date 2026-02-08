@@ -74,7 +74,7 @@ function SkeletonRows({ count = 6 }: { count?: number }) {
 // RulesTable
 // ---------------------------------------------------------------------------
 
-export function RulesTable({ onSelectRule }: { onSelectRule?: (ruleId: string) => void }) {
+export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule) => void }) {
   const { data, isLoading, isError } = usePolicyRules();
   const [filter, setFilter] = useState<string>("all");
 
@@ -88,8 +88,8 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (ruleId: string) =
   const sorted = [...filtered];
 
   const handleRowClick = useCallback(
-    (ruleId: string) => {
-      onSelectRule?.(ruleId);
+    (rule: PolicyRule) => {
+      onSelectRule?.(rule);
     },
     [onSelectRule],
   );
@@ -158,7 +158,7 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (ruleId: string) =
                   <tr
                     key={rule.id}
                     className="cursor-pointer transition-colors hover:bg-surface2/60"
-                    onClick={() => handleRowClick(rule.id)}
+                    onClick={() => handleRowClick(rule)}
                   >
                     <td className="px-4 py-3 font-mono text-xs text-ink">
                       {rule.id.slice(0, 8)}

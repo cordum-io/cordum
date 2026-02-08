@@ -3,6 +3,7 @@ import { RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { useRetryDLQ, useDeleteDLQ } from "../../hooks/useDLQ";
+import { logger } from "../../lib/logger";
 
 // ---------------------------------------------------------------------------
 // Confirm dialog
@@ -81,6 +82,7 @@ export function DLQRowActions({
   }, []);
 
   const handleRetry = useCallback(() => {
+    logger.info("dlq-actions", "Retry clicked", { entryId });
     retryDLQ.mutate(
       { id: entryId },
       {
@@ -98,6 +100,7 @@ export function DLQRowActions({
   }, [entryId, retryDLQ, clearFeedback, onSuccess]);
 
   const handleDelete = useCallback(() => {
+    logger.info("dlq-actions", "Delete clicked", { entryId });
     deleteDLQ.mutate(entryId, {
       onSuccess: () => {
         setShowDeleteConfirm(false);

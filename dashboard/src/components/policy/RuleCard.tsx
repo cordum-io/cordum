@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { GripVertical, Pencil, Trash2, AlertTriangle } from "lucide-react";
+import { useState, useCallback } from "react";
+import { GripVertical, Pencil, Trash2, AlertTriangle, Zap } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
@@ -39,6 +39,8 @@ interface RuleCardProps {
   conflictWarning?: string;
   onEdit: () => void;
   onDelete: () => void;
+  onToggleEnabled?: (ruleId: string, enabled: boolean) => void;
+  onTest?: (rule: PolicyRule) => void;
   onDragStart: (e: React.DragEvent, index: number) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent, index: number) => void;
@@ -50,12 +52,23 @@ export function RuleCard({
   conflictWarning,
   onEdit,
   onDelete,
+  onToggleEnabled,
+  onTest,
   onDragStart,
   onDragOver,
   onDrop,
 }: RuleCardProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const decision = decisionStyles[rule.decisionType] ?? decisionStyles.allow;
+  const isDisabled = rule.enabled === false;
+
+  const handleToggle = useCallback(() => {
+    if (!onToggleEnabled) return;
+    if (!isDisabled) {
+      if (!window.confirm("Disable this rule? It will stop being evaluated.")) return;
+    }
+    onToggleEnabled(rule.id, isDisabled);
+  }, [onToggleEnabled, rule.id, isDisabled]);
 
   const capabilities = (rule.matchCriteria?.capabilities as string[] | undefined) ?? [];
   const riskTags = (rule.matchCriteria?.riskTags as string[] | undefined) ?? [];
@@ -67,6 +80,7 @@ export function RuleCard({
       className={cn(
         "list-row flex items-start gap-3 animate-rise",
         conflictWarning && "border-warning/40",
+        isDisabled && "opacity-50",
       )}
       draggable
       onDragStart={(e) => onDragStart(e, index)}
@@ -82,10 +96,37 @@ export function RuleCard({
         <GripVertical className="h-4 w-4" />
       </button>
 
+      {/* Toggle switch */}
+      {onToggleEnabled && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!isDisabled}
+          aria-label={isDisabled ? "Enable rule" : "Disable rule"}
+          className={cn(
+            "mt-1 relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors",
+            isDisabled ? "bg-muted/30" : "bg-accent",
+          )}
+          onClick={handleToggle}
+        >
+          <span
+            className={cn(
+              "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+              isDisabled ? "translate-x-0" : "translate-x-4",
+            )}
+          />
+        </button>
+      )}
+
       {/* Priority number */}
       <span className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg bg-accent/10 text-[10px] font-bold text-accent">
         {index + 1}
       </span>
+
+      {/* Disabled badge */}
+      {isDisabled && (
+        <Badge variant="warning" className="mt-0.5 text-[10px]">Disabled</Badge>
+      )}
 
       {/* Rule sentence */}
       <div className="flex-1 space-y-2">
@@ -159,6 +200,11 @@ export function RuleCard({
 
       {/* Actions */}
       <div className="flex flex-shrink-0 gap-1">
+        {onTest && (
+          <Button variant="ghost" size="sm" type="button" onClick={() => onTest(rule)} title="Test this rule">
+            <Zap className="h-3.5 w-3.5" />
+          </Button>
+        )}
         <Button variant="ghost" size="sm" type="button" onClick={onEdit}>
           <Pencil className="h-3.5 w-3.5" />
         </Button>

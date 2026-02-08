@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, del } from "../api/client";
+import { logger } from "../lib/logger";
 import type { DLQEntry, ApiResponse } from "../api/types";
 import { mapDLQEntry, type BackendDLQEntry } from "../api/transform";
 
@@ -57,10 +58,16 @@ interface RetryInput {
 export function useRetryDLQ() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, RetryInput>({
-    mutationFn: ({ id }) =>
-      post<void>(`/dlq/${id}/retry`),
-    onSuccess: () => {
+    mutationFn: ({ id }) => {
+      logger.info("dlq", "Retrying DLQ entry", { id });
+      return post<void>(`/dlq/${id}/retry`);
+    },
+    onSuccess: (_, { id }) => {
+      logger.info("dlq", "DLQ entry retried", { id });
       queryClient.invalidateQueries({ queryKey: ["dlq"] });
+    },
+    onError: (err, { id }) => {
+      logger.error("dlq", "DLQ retry failed", { id, error: err.message });
     },
   });
 }
@@ -68,9 +75,16 @@ export function useRetryDLQ() {
 export function useDeleteDLQ() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, string>({
-    mutationFn: (id) => del(`/dlq/${id}`),
-    onSuccess: () => {
+    mutationFn: (id) => {
+      logger.info("dlq", "Deleting DLQ entry", { id });
+      return del(`/dlq/${id}`);
+    },
+    onSuccess: (_, id) => {
+      logger.info("dlq", "DLQ entry deleted", { id });
       queryClient.invalidateQueries({ queryKey: ["dlq"] });
+    },
+    onError: (err, id) => {
+      logger.error("dlq", "DLQ delete failed", { id, error: err.message });
     },
   });
 }

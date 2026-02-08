@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import {
   Play,
+  Pencil,
   Briefcase,
   GitBranch,
   Clock,
@@ -140,6 +141,18 @@ export function WorkflowTemplateCard({ workflow, onRunNow }: WorkflowTemplateCar
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <Badge variant={triggerVariant}>{triggerType}</Badge>
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/workflows/${workflow.id}/edit`);
+            }}
+            title="Edit workflow"
+          >
+            <Pencil className="h-3 w-3" />
+          </Button>
           <Button
             variant="outline"
             size="sm"

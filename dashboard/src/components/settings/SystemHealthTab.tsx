@@ -1,19 +1,34 @@
-import { useQuery } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { get } from "../../api/client";
 import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { ProgressBar } from "../ProgressBar";
-import { Loader, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
+import { cn } from "../../lib/utils";
+import { DependencyGraph } from "./DependencyGraph";
+import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { SystemInfoSection } from "./SystemInfoSection";
+import { DownloadDiagnosticsButton } from "./DownloadDiagnosticsButton";
+import {
+  Loader,
+  CheckCircle,
+  AlertTriangle,
+  XCircle,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface ComponentHealth {
+export interface ComponentHealth {
   name: string;
   status: "healthy" | "degraded" | "down";
   version?: string;
   uptime?: number;
+  latencyMs?: number;
   details?: Record<string, unknown>;
 }
 
@@ -21,14 +36,15 @@ interface GatewayStatus {
   time?: string;
   uptime_seconds?: number;
   build?: { version?: string; commit?: string; date?: string };
-  nats?: { connected?: boolean; status?: string; url?: string };
-  redis?: { ok?: boolean; error?: string };
+  nats?: { connected?: boolean; status?: string; url?: string; latency_ms?: number };
+  redis?: { ok?: boolean; error?: string; latency_ms?: number };
   workers?: { count?: number };
 }
 
-interface SystemHealth {
+export interface SystemHealth {
   overall: "healthy" | "degraded" | "down";
   components: ComponentHealth[];
+  checkedAt: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +80,16 @@ function formatUptime(seconds?: number): string {
   return remainHrs > 0 ? `${days}d ${remainHrs}h` : `${days}d`;
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const secs = Math.floor(diff / 1_000);
+  if (secs < 5) return "just now";
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
+}
+
 function statusIcon(status: string) {
   switch (status) {
     case "healthy":
@@ -88,6 +114,12 @@ function statusVariant(
   }
 }
 
+const BORDER_COLOR: Record<string, string> = {
+  healthy: "border-success/30",
+  degraded: "border-warning/30",
+  down: "border-danger/30 animate-pulse",
+};
+
 function mapGatewayStatus(status: GatewayStatus): SystemHealth {
   const components: ComponentHealth[] = [];
 
@@ -95,6 +127,7 @@ function mapGatewayStatus(status: GatewayStatus): SystemHealth {
   components.push({
     name: "Redis",
     status: redisOk ? "healthy" : "down",
+    latencyMs: status.redis?.latency_ms,
     details: { error: status.redis?.error },
   });
 
@@ -102,6 +135,7 @@ function mapGatewayStatus(status: GatewayStatus): SystemHealth {
   components.push({
     name: "NATS",
     status: natsConnected ? "healthy" : "degraded",
+    latencyMs: status.nats?.latency_ms,
     details: { status: status.nats?.status, url: status.nats?.url },
   });
 
@@ -124,20 +158,57 @@ function mapGatewayStatus(status: GatewayStatus): SystemHealth {
   const overall: SystemHealth["overall"] =
     down > 0 ? "down" : degraded > 0 ? "degraded" : "healthy";
 
-  return { overall, components };
+  return { overall, components, checkedAt: new Date().toISOString() };
 }
 
 // ---------------------------------------------------------------------------
-// Overall summary
+// Latency Sparkline (inline SVG, 60x20)
 // ---------------------------------------------------------------------------
 
-function OverallSummary({ health }: { health: SystemHealth }) {
+const SPARKLINE_MAX_POINTS = 30;
+
+function LatencySparkline({ points }: { points: number[] }) {
+  if (points.length < 2) return null;
+  const max = Math.max(...points, 1);
+  const w = 60;
+  const h = 20;
+  const step = w / (points.length - 1);
+  const d = points
+    .map((v, i) => `${i === 0 ? "M" : "L"}${(i * step).toFixed(1)},${(h - (v / max) * (h - 2) - 1).toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <svg width={w} height={h} className="shrink-0" aria-label="Latency trend">
+      <polyline
+        points={d.replace(/[ML]/g, "").replace(/,/g, " ").trim().split("  ").join(" ")}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        className="text-accent"
+      />
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Overall summary with refresh button
+// ---------------------------------------------------------------------------
+
+function OverallSummary({
+  health,
+  onRefresh,
+  isRefreshing,
+}: {
+  health: SystemHealth;
+  onRefresh: () => void;
+  isRefreshing: boolean;
+}) {
   const healthy = health.components.filter((c) => c.status === "healthy").length;
   const total = health.components.length;
   const pct = total > 0 ? Math.round((healthy / total) * 100) : 0;
 
   return (
-    <Card>
+    <Card className={cn("border-l-4", BORDER_COLOR[health.overall])}>
       <div className="flex items-center gap-4">
         {statusIcon(health.overall)}
         <div className="flex-1">
@@ -149,9 +220,18 @@ function OverallSummary({ health }: { health: SystemHealth }) {
                 : `${total - healthy} component${total - healthy !== 1 ? "s" : ""} down`}
           </p>
           <p className="text-xs text-muted">
-            {healthy}/{total} components healthy
+            {healthy}/{total} components healthy &middot; checked {timeAgo(health.checkedAt)}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          className="rounded-lg p-2 text-muted hover:text-ink hover:bg-surface2 transition-colors disabled:opacity-50"
+          title="Refresh now"
+        >
+          <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+        </button>
         <Badge variant={statusVariant(health.overall)}>
           {health.overall}
         </Badge>
@@ -166,15 +246,21 @@ function OverallSummary({ health }: { health: SystemHealth }) {
 }
 
 // ---------------------------------------------------------------------------
-// Component card
+// Enhanced component card with sparkline
 // ---------------------------------------------------------------------------
 
-function ComponentCard({ component }: { component: ComponentHealth }) {
+function ComponentCard({
+  component,
+  latencyHistory,
+}: {
+  component: ComponentHealth;
+  latencyHistory: number[];
+}) {
   const address = component.details?.address as string | undefined;
   const port = component.details?.port as number | undefined;
 
   return (
-    <Card>
+    <Card className={cn(component.status === "down" && "animate-pulse")}>
       <CardHeader>
         <div className="flex items-center gap-2">
           {statusIcon(component.status)}
@@ -186,15 +272,24 @@ function ComponentCard({ component }: { component: ComponentHealth }) {
       </CardHeader>
       <div className="space-y-1.5 text-xs text-muted">
         {component.version && (
-          <div className="flex justify-between">
+          <div className="flex items-center justify-between">
             <span>Version</span>
-            <span className="font-mono text-ink">{component.version}</span>
+            <Badge variant="info" className="text-[10px]">{component.version}</Badge>
           </div>
         )}
         <div className="flex justify-between">
           <span>Uptime</span>
           <span className="text-ink">{formatUptime(component.uptime)}</span>
         </div>
+        {component.latencyMs != null && (
+          <div className="flex items-center justify-between">
+            <span>Latency</span>
+            <div className="flex items-center gap-2">
+              <LatencySparkline points={latencyHistory} />
+              <span className="font-mono text-ink">{component.latencyMs}ms</span>
+            </div>
+          </div>
+        )}
         {(address || port) && (
           <div className="flex justify-between">
             <span>Connection</span>
@@ -210,19 +305,103 @@ function ComponentCard({ component }: { component: ComponentHealth }) {
 }
 
 // ---------------------------------------------------------------------------
+// Loading skeleton
+// ---------------------------------------------------------------------------
+
+function HealthSkeleton() {
+  return (
+    <div className="space-y-4">
+      <Card className="animate-pulse">
+        <div className="flex items-center gap-4">
+          <div className="h-5 w-5 rounded-full bg-surface2" />
+          <div className="flex-1 space-y-2">
+            <div className="h-4 w-48 rounded bg-surface2" />
+            <div className="h-3 w-32 rounded bg-surface2" />
+          </div>
+        </div>
+        <div className="mt-3 h-2 rounded bg-surface2" />
+      </Card>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 4 }, (_, i) => (
+          <Card key={i} className="animate-pulse">
+            <div className="space-y-3">
+              <div className="h-5 w-1/3 rounded bg-surface2" />
+              <div className="h-4 w-2/3 rounded bg-surface2" />
+              <div className="h-4 w-1/2 rounded bg-surface2" />
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Collapsible section (default collapsed)
+// ---------------------------------------------------------------------------
+
+function CollapsibleSection({
+  title,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="flex w-full items-center justify-between rounded-xl border border-border bg-surface px-4 py-2.5 text-left transition-colors hover:bg-surface2/50"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="text-xs font-semibold text-ink">{title}</span>
+        {open ? (
+          <ChevronUp className="h-4 w-4 text-muted" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted" />
+        )}
+      </button>
+      {open && <div className="mt-3">{children}</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SystemHealthTab (exported)
 // ---------------------------------------------------------------------------
 
 export function SystemHealthTab() {
-  const { data, isLoading, error } = useSystemHealth();
+  const queryClient = useQueryClient();
+  const { data, isLoading, isFetching, error } = useSystemHealth();
+
+  // Track latency history per component (last 30 data points)
+  const latencyHistoryRef = useRef<Record<string, number[]>>({});
+
+  // Append latency on each data fetch
+  if (data) {
+    for (const comp of data.components) {
+      if (comp.latencyMs != null) {
+        const history = latencyHistoryRef.current[comp.name] ?? [];
+        // Only append if the last value differs (avoid duplicates on re-render)
+        if (history.length === 0 || history[history.length - 1] !== comp.latencyMs) {
+          history.push(comp.latencyMs);
+          if (history.length > SPARKLINE_MAX_POINTS) history.shift();
+          latencyHistoryRef.current[comp.name] = history;
+        }
+      }
+    }
+  }
+
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["system-health"] });
+  };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-16 text-sm text-muted">
-        <Loader className="mr-2 h-4 w-4 animate-spin" />
-        Loading system health...
-      </div>
-    );
+    return <HealthSkeleton />;
   }
 
   if (error || !data) {
@@ -237,17 +416,38 @@ export function SystemHealthTab() {
 
   return (
     <div className="space-y-4">
-      <OverallSummary health={data} />
+      <OverallSummary
+        health={data}
+        onRefresh={handleRefresh}
+        isRefreshing={isFetching}
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {data.components.map((comp) => (
-          <ComponentCard key={comp.name} component={comp} />
+          <ComponentCard
+            key={comp.name}
+            component={comp}
+            latencyHistory={latencyHistoryRef.current[comp.name] ?? []}
+          />
         ))}
       </div>
 
-      <p className="text-[11px] text-muted">
-        Auto-refreshes every 30 seconds.
-      </p>
+      <DependencyGraph components={data.components} />
+
+      <CollapsibleSection title="Diagnostics">
+        <DiagnosticsPanel />
+      </CollapsibleSection>
+
+      <CollapsibleSection title="System Information">
+        <SystemInfoSection />
+      </CollapsibleSection>
+
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] text-muted">
+          Auto-refreshes every 30 seconds.
+        </p>
+        <DownloadDiagnosticsButton />
+      </div>
     </div>
   );
 }

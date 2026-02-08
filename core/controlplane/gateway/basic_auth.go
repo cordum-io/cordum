@@ -131,7 +131,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 	if key == "" && (websocket.IsWebSocketUpgrade(r) || strings.TrimSpace(r.Header.Get("Sec-WebSocket-Protocol")) != "") {
 		key = normalizeAPIKey(apiKeyFromWebSocket(r))
 	}
-	return b.authenticate(key, headerValue(r, "X-Principal-Id"))
+	return b.authenticate(r.Context(), key, headerValue(r, "X-Principal-Id"))
 }
 
 func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext, error) {
@@ -176,10 +176,10 @@ func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext,
 	if b.jwtRequired {
 		return nil, errors.New("jwt required")
 	}
-	return b.authenticate(key, principalID)
+	return b.authenticate(ctx, key, principalID)
 }
 
-func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext, error) {
+func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID string) (*AuthContext, error) {
 	if b == nil {
 		return &AuthContext{}, nil
 	}
@@ -199,7 +199,7 @@ func (b *BasicAuthProvider) authenticate(key, principalID string) (*AuthContext,
 	// Check session tokens (from user/password login)
 	if strings.HasPrefix(key, "session-") && b.userStore != nil {
 		if redisStore, ok := b.userStore.(*RedisUserStore); ok {
-			authCtx, err := redisStore.ValidateSession(context.Background(), key)
+			authCtx, err := redisStore.ValidateSession(ctx, key)
 			if err == nil {
 				return authCtx, nil
 			}

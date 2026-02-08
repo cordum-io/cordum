@@ -4,6 +4,7 @@ import { Ban, RotateCcw, ShieldCheck } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { useCancelJob, useRetryJob } from "../../hooks/useJobs";
+import { logger } from "../../lib/logger";
 import type { Job, JobStatus } from "../../api/types";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +60,7 @@ export function JobActions({ job }: JobActionsProps) {
   }, []);
 
   const handleCancel = useCallback(() => {
+    logger.info("job-actions", "Cancel clicked", { jobId: job.id });
     cancelMutation.mutate(job.id, {
       onSuccess: () => {
         setFeedback({ type: "success", message: "Job cancelled successfully." });
@@ -75,6 +77,7 @@ export function JobActions({ job }: JobActionsProps) {
   }, [job.id, cancelMutation, close]);
 
   const handleRetry = useCallback(() => {
+    logger.info("job-actions", "Retry clicked", { jobId: job.id });
     retryMutation.mutate(job.id, {
       onSuccess: () => {
         setFeedback({ type: "success", message: "Job resubmitted for retry." });
@@ -91,9 +94,10 @@ export function JobActions({ job }: JobActionsProps) {
   }, [job.id, retryMutation, close]);
 
   const handleRemediate = useCallback(() => {
+    logger.info("job-actions", "Remediate clicked", { jobId: job.id });
     close();
     navigate("/approvals");
-  }, [close, navigate]);
+  }, [close, navigate, job.id]);
 
   return (
     <>

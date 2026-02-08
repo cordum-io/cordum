@@ -179,7 +179,7 @@ function runToGraph(run: WorkflowRun): { nodes: Node[]; edges: Edge[] } {
   run.steps.forEach((step, i) => idxMap.set(step.id, i));
 
   run.steps.forEach((step, i) => {
-    const deps = step.dependsOn ?? [];
+    const deps = step.depends_on ?? step.dependsOn ?? [];
     let y = i * Y_STEP + 40;
     const x = 300;
 

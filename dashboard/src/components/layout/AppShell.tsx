@@ -1,22 +1,20 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
+  AlertTriangle,
   Boxes,
-  Database,
+  Cpu,
   FileText,
-  Gauge,
-  GitGraph,
   LayoutGrid,
-  Layers,
   ListChecks,
   LogOut,
   Moon,
   Network,
-  AlertTriangle,
+  Settings,
   Shield,
   Sun,
+  UserCheck,
   UserCircle,
   Workflow,
-  Wrench,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -29,21 +27,22 @@ import { useUiStore } from "../../state/ui";
 import { ConnectionIndicator } from "../ConnectionIndicator";
 import { useConfigStore } from "../../state/config";
 import { useAuthConfig } from "../../hooks/useAuthConfig";
+import { MaintenanceBanner } from "./MaintenanceBanner";
+import { logger } from "../../lib/logger";
 
 const navItems = [
-  { path: "/", label: "Governance", icon: LayoutGrid },
-  { path: "/workflows", label: "Workflows", icon: Workflow },
-  { path: "/policy", label: "Policy Studio", icon: Shield },
-  { path: "/context", label: "Context Inspector", icon: Database },
-  { path: "/pools", label: "Worker Pools", icon: Layers },
-  { path: "/packs", label: "Marketplace", icon: Boxes },
-  { path: "/system", label: "Observability", icon: Gauge },
-  { path: "/trace", label: "Traces", icon: GitGraph },
-  { path: "/dlq", label: "DLQ", icon: AlertTriangle },
-  { path: "/audit", label: "Audit Log", icon: FileText },
+  { path: "/", label: "Overview", icon: LayoutGrid },
   { path: "/jobs", label: "Jobs", icon: ListChecks },
-  { path: "/tools", label: "Tools", icon: Wrench },
+  { path: "/workflows", label: "Workflows", icon: Workflow },
+  { path: "/agents", label: "Agent Fleet", icon: Cpu },
+  { path: "/approvals", label: "Approvals", icon: UserCheck },
+  { path: "/policies", label: "Policy Studio", icon: Shield },
+  { path: "/packs", label: "Packs", icon: Boxes },
+  { path: "/dlq", label: "Dead Letters", icon: AlertTriangle },
+  { path: "/audit", label: "Audit Log", icon: FileText },
 ];
+
+const settingsItem = { path: "/settings", label: "Settings", icon: Settings };
 
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -85,7 +84,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const approvalsCount = approvalsQuery.data?.items?.length ?? 0;
   const dlqCount = dlqQuery.data?.items?.length ?? 0;
   const navBadges: Record<string, { count: number; variant: "warning" | "danger" }> = {
-    "/policy": { count: approvalsCount, variant: "warning" },
+    "/approvals": { count: approvalsCount, variant: "warning" },
     "/dlq": { count: dlqCount, variant: "danger" },
   };
 
@@ -105,11 +104,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (loggingOut) {
       return;
     }
+    logger.info("app-shell", "Logging out");
     setLoggingOut(true);
     try {
       await api.logout();
     } catch {
-      // Ignore logout failures; clear local session anyway.
+      logger.warn("app-shell", "Logout API call failed, clearing local session");
     }
     logout();
     setLoggingOut(false);
@@ -130,41 +130,59 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
             <p className="text-xs text-muted">AI orchestration, safety, and runtime clarity.</p>
           </div>
-          <nav className="mt-6 flex flex-1 flex-col gap-3">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const badge = navBadges[item.path];
-              const badgeText = badge && badge.count > 0 ? formatCount(badge.count) : "";
-              return (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  className={({ isActive }) =>
-                    cn(
-                      "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition",
-                      isActive
-                        ? "bg-[color:rgba(15,127,122,0.16)] text-accent"
-                        : "text-ink hover:bg-[color:rgba(15,127,122,0.08)]"
-                    )
-                  }
-                >
-                  <Icon className="h-4 w-4" />
-                  {item.label}
-                  {badgeText ? (
-                    <span
-                      className={cn(
-                        "ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                        badge.variant === "danger"
-                          ? "bg-[color:rgba(184,58,58,0.14)] text-danger"
-                          : "bg-[color:rgba(197,138,28,0.18)] text-warning"
-                      )}
-                    >
-                      {badgeText}
-                    </span>
-                  ) : null}
-                </NavLink>
-              );
-            })}
+          <nav className="mt-6 flex flex-1 flex-col gap-1">
+            <div className="flex flex-1 flex-col gap-1 overflow-y-auto">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const badge = navBadges[item.path];
+                const badgeText = badge && badge.count > 0 ? formatCount(badge.count) : "";
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition",
+                        isActive
+                          ? "bg-[color:rgba(15,127,122,0.16)] text-accent"
+                          : "text-ink hover:bg-[color:rgba(15,127,122,0.08)]"
+                      )
+                    }
+                  >
+                    <Icon className="h-4 w-4" />
+                    {item.label}
+                    {badgeText ? (
+                      <span
+                        className={cn(
+                          "ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          badge.variant === "danger"
+                            ? "bg-[color:rgba(184,58,58,0.14)] text-danger"
+                            : "bg-[color:rgba(197,138,28,0.18)] text-warning"
+                        )}
+                      >
+                        {badgeText}
+                      </span>
+                    ) : null}
+                  </NavLink>
+                );
+              })}
+            </div>
+            <div className="mt-auto border-t border-border pt-3">
+              <NavLink
+                to={settingsItem.path}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition",
+                    isActive
+                      ? "bg-[color:rgba(15,127,122,0.16)] text-accent"
+                      : "text-ink hover:bg-[color:rgba(15,127,122,0.08)]"
+                  )
+                }
+              >
+                <Settings className="h-4 w-4" />
+                {settingsItem.label}
+              </NavLink>
+            </div>
           </nav>
           <div className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
             <div className="mb-2 flex items-center justify-between">
@@ -233,7 +251,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
             </div>
             <nav className="mt-4 flex gap-2 overflow-x-auto pb-2 lg:hidden">
-              {navItems.map((item) => {
+              {[...navItems, settingsItem].map((item) => {
                 const Icon = item.icon;
                 const badge = navBadges[item.path];
                 const badgeText = badge && badge.count > 0 ? formatCount(badge.count) : "";
@@ -267,6 +285,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               })}
             </nav>
           </header>
+          <MaintenanceBanner />
           <main className="flex-1 px-4 py-8 lg:px-10">{children}</main>
         </div>
       </div>

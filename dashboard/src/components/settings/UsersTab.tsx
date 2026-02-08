@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Trash2, KeyRound, X } from "lucide-react";
+import { Trash2, KeyRound, X, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
+import { PermissionMatrix } from "./PermissionMatrix";
+import { UserDetailDrawer } from "./UserDetailDrawer";
 import {
   useUsers,
   useCreateUser,
@@ -16,6 +18,7 @@ import {
 } from "../../hooks/useSettings";
 import { post } from "../../api/client";
 import { useConfigStore } from "../../state/config";
+import { cn } from "../../lib/utils";
 import type { User } from "../../api/types";
 
 // ---------------------------------------------------------------------------
@@ -296,6 +299,97 @@ function ConfirmDelete({
 }
 
 // ---------------------------------------------------------------------------
+// Bulk confirm dialog
+// ---------------------------------------------------------------------------
+
+function BulkConfirmDialog({
+  count,
+  action,
+  role,
+  isPending,
+  onConfirm,
+  onCancel,
+}: {
+  count: number;
+  action: "role" | "delete";
+  role?: string;
+  isPending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="surface-card w-full max-w-sm rounded-3xl p-6 shadow-xl">
+        <h3 className="mb-4 font-display text-lg font-semibold text-ink">
+          {action === "delete" ? "Delete Users" : "Change Role"}
+        </h3>
+        <p className="mb-6 text-sm text-muted">
+          {action === "delete"
+            ? `Are you sure you want to delete ${count} user${count !== 1 ? "s" : ""}? This action cannot be undone.`
+            : `Change the role of ${count} user${count !== 1 ? "s" : ""} to ${role}?`}
+        </p>
+        <div className="flex justify-end gap-3">
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant={action === "delete" ? "danger" : "default"}
+            size="sm"
+            onClick={onConfirm}
+            disabled={isPending}
+          >
+            {isPending ? "Processing..." : "Confirm"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bulk action bar
+// ---------------------------------------------------------------------------
+
+function BulkActionBar({
+  count,
+  onChangeRole,
+  onDelete,
+  onClear,
+}: {
+  count: number;
+  onChangeRole: (role: string) => void;
+  onDelete: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="fixed bottom-6 left-1/2 z-30 -translate-x-1/2 flex items-center gap-3 rounded-2xl border border-border bg-surface px-5 py-3 shadow-xl">
+      <span className="text-xs font-semibold text-ink">
+        {count} selected
+      </span>
+      <Select
+        className="h-7 w-32 text-xs"
+        value=""
+        onChange={(e) => {
+          if (e.target.value) onChangeRole(e.target.value);
+        }}
+      >
+        <option value="">Change role...</option>
+        {ROLES.map((r) => (
+          <option key={r} value={r}>{r}</option>
+        ))}
+      </Select>
+      <Button variant="danger" size="sm" onClick={onDelete}>
+        <Trash2 className="mr-1 h-3 w-3" />
+        Delete
+      </Button>
+      <Button variant="ghost" size="sm" onClick={onClear}>
+        Clear
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // UsersTab
 // ---------------------------------------------------------------------------
 
@@ -307,10 +401,44 @@ export function UsersTab() {
   const [showCreate, setShowCreate] = useState(false);
   const [passwordTarget, setPasswordTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [drawerUser, setDrawerUser] = useState<User | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showMatrix, setShowMatrix] = useState(false);
+
+  // Bulk action confirm state
+  const [bulkConfirm, setBulkConfirm] = useState<{
+    action: "role" | "delete";
+    role?: string;
+  } | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
 
   const currentUserId = useConfigStore((s) => s.user?.id);
   const currentUsername = useConfigStore((s) => s.user?.username);
   const users = data?.items ?? [];
+
+  const isSelf = useCallback(
+    (user: User) => user.id === currentUserId || user.username === currentUsername,
+    [currentUserId, currentUsername],
+  );
+
+  // Selectable users (exclude self)
+  const selectableUsers = users.filter((u) => !isSelf(u));
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) =>
+      prev.size === selectableUsers.length
+        ? new Set()
+        : new Set(selectableUsers.map((u) => u.id)),
+    );
+  }, [selectableUsers]);
 
   function handleRoleChange(user: User, newRole: string) {
     updateUser.mutate({ id: user.id, data: { roles: [newRole] } });
@@ -321,6 +449,32 @@ export function UsersTab() {
     deleteUser.mutate(deleteTarget.id, {
       onSuccess: () => setDeleteTarget(null),
     });
+  }
+
+  // Bulk actions
+  async function handleBulkConfirm() {
+    if (!bulkConfirm) return;
+    setBulkPending(true);
+    const ids = [...selectedIds];
+    if (bulkConfirm.action === "role" && bulkConfirm.role) {
+      for (const id of ids) {
+        await new Promise<void>((resolve) => {
+          updateUser.mutate(
+            { id, data: { roles: [bulkConfirm.role!] } },
+            { onSettled: () => resolve() },
+          );
+        });
+      }
+    } else if (bulkConfirm.action === "delete") {
+      for (const id of ids) {
+        await new Promise<void>((resolve) => {
+          deleteUser.mutate(id, { onSettled: () => resolve() });
+        });
+      }
+    }
+    setBulkPending(false);
+    setBulkConfirm(null);
+    setSelectedIds(new Set());
   }
 
   return (
@@ -339,6 +493,19 @@ export function UsersTab() {
           <table className="w-full text-sm">
             <thead className="border-b border-border">
               <tr>
+                <th className="w-10 px-3 py-3">
+                  {selectableUsers.length > 0 && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size > 0 && selectedIds.size === selectableUsers.length}
+                      ref={(el) => {
+                        if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < selectableUsers.length;
+                      }}
+                      onChange={toggleSelectAll}
+                      className="h-3.5 w-3.5 rounded border-border text-accent focus:ring-accent cursor-pointer"
+                    />
+                  )}
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Username
                 </th>
@@ -358,7 +525,7 @@ export function UsersTab() {
               {isLoading &&
                 Array.from({ length: 3 }, (_, i) => (
                   <tr key={i} className="animate-pulse">
-                    {Array.from({ length: 5 }, (_, j) => (
+                    {Array.from({ length: 6 }, (_, j) => (
                       <td key={j} className="px-4 py-3">
                         <div className="h-4 rounded bg-surface2 w-3/4" />
                       </td>
@@ -368,7 +535,7 @@ export function UsersTab() {
 
               {!isLoading && isError && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
                     Failed to load users.
                   </td>
                 </tr>
@@ -376,7 +543,7 @@ export function UsersTab() {
 
               {!isLoading && !isError && users.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
                     No users yet. Create one to get started.
                   </td>
                 </tr>
@@ -385,26 +552,39 @@ export function UsersTab() {
               {!isLoading &&
                 users.map((user) => {
                   const primaryRole = user.roles[0] ?? "Viewer";
-                  const isSelf =
-                    user.id === currentUserId || user.username === currentUsername;
+                  const self = isSelf(user);
 
                   return (
                     <tr
                       key={user.id}
-                      className="transition-colors hover:bg-surface2/60"
+                      className={cn(
+                        "transition-colors hover:bg-surface2/60 cursor-pointer",
+                        selectedIds.has(user.id) && "bg-accent/5",
+                      )}
+                      onClick={() => setDrawerUser(user)}
                     >
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        {!self && (
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(user.id)}
+                            onChange={() => toggleSelect(user.id)}
+                            className="h-3.5 w-3.5 rounded border-border text-accent focus:ring-accent cursor-pointer"
+                          />
+                        )}
+                      </td>
                       <td className="px-4 py-3 font-medium text-ink">
                         {user.username}
-                        {isSelf && (
+                        {self && (
                           <span className="ml-2 text-xs text-muted">(you)</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <Select
                           value={primaryRole}
                           onChange={(e) => handleRoleChange(user, e.target.value)}
                           className="w-32"
-                          disabled={updateUser.isPending}
+                          disabled={updateUser.isPending || self}
                         >
                           {ROLES.map((r) => (
                             <option key={r} value={r}>
@@ -425,7 +605,7 @@ export function UsersTab() {
                       <td className="px-4 py-3 text-xs text-muted">
                         {timeAgo(user.lastLogin)}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1">
                           <Button
                             variant="ghost"
@@ -440,8 +620,8 @@ export function UsersTab() {
                             size="sm"
                             className="text-danger hover:bg-danger/10"
                             onClick={() => setDeleteTarget(user)}
-                            disabled={isSelf}
-                            title={isSelf ? "Cannot delete yourself" : "Delete user"}
+                            disabled={self}
+                            title={self ? "Cannot delete yourself" : "Delete user"}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -455,6 +635,39 @@ export function UsersTab() {
         </div>
       </div>
 
+      {/* Permission Matrix (collapsible) */}
+      <button
+        type="button"
+        className="flex items-center gap-2 text-xs font-semibold text-muted hover:text-ink transition-colors"
+        onClick={() => setShowMatrix((v) => !v)}
+      >
+        {showMatrix ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        Permission Matrix
+      </button>
+      {showMatrix && <PermissionMatrix />}
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <BulkActionBar
+          count={selectedIds.size}
+          onChangeRole={(role) => setBulkConfirm({ action: "role", role })}
+          onDelete={() => setBulkConfirm({ action: "delete" })}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
+
+      {/* User detail drawer */}
+      <UserDetailDrawer
+        user={drawerUser}
+        open={!!drawerUser}
+        onClose={() => setDrawerUser(null)}
+        onChangePassword={(user) => {
+          setDrawerUser(null);
+          setPasswordTarget(user);
+        }}
+      />
+
+      {/* Modals */}
       {showCreate && <CreateUserModal onClose={() => setShowCreate(false)} />}
       {passwordTarget && (
         <ChangePasswordModal
@@ -468,6 +681,16 @@ export function UsersTab() {
           isPending={deleteUser.isPending}
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+      {bulkConfirm && (
+        <BulkConfirmDialog
+          count={selectedIds.size}
+          action={bulkConfirm.action}
+          role={bulkConfirm.role}
+          isPending={bulkPending}
+          onConfirm={handleBulkConfirm}
+          onCancel={() => setBulkConfirm(null)}
         />
       )}
     </div>
