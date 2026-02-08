@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ type publishedMsg struct {
 }
 
 type fakeBus struct {
+	mu        sync.Mutex
 	published []publishedMsg
 }
 
@@ -201,7 +203,9 @@ func (s *fakeJobStore) CancelJob(_ context.Context, jobID string) (JobState, err
 }
 
 func (b *fakeBus) Publish(subject string, packet *pb.BusPacket) error {
+	b.mu.Lock()
 	b.published = append(b.published, publishedMsg{subject: subject, packet: packet})
+	b.mu.Unlock()
 	return nil
 }
 
@@ -500,7 +504,10 @@ func TestHandleJobResultFatalTriggersRollback(t *testing.T) {
 		case <-waitCtx.Done():
 			t.Fatalf("expected compensation dispatch on fatal rollback")
 		case <-ticker.C:
-			if len(bus.published) > 0 {
+			bus.mu.Lock()
+			n := len(bus.published)
+			bus.mu.Unlock()
+			if n > 0 {
 				goto done
 			}
 		}

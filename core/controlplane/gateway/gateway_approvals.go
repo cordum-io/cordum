@@ -267,6 +267,10 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Labels[bus.LabelBusMsgID] = "approval:" + uuid.NewString()
 	if err := s.jobStore.SetJobRequest(r.Context(), req); err != nil {
+		if strings.Contains(err.Error(), "transaction failed") {
+			writeErrorJSON(w, http.StatusConflict, "concurrent approval conflict; retry")
+			return
+		}
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to persist approval request")
 		return
 	}
@@ -288,6 +292,10 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending); err != nil {
+		if strings.Contains(err.Error(), "transaction failed") {
+			writeErrorJSON(w, http.StatusConflict, "concurrent approval conflict; retry")
+			return
+		}
 		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}

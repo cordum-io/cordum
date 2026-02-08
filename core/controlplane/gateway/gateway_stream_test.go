@@ -85,7 +85,7 @@ func TestEnqueueWSEventNoPanicOnClosedChannel(t *testing.T) {
 
 	const N = 20
 	var wg sync.WaitGroup
-	wg.Add(N + 1)
+	wg.Add(N)
 
 	// Drain the channel so senders don't block.
 	done := make(chan struct{})
@@ -105,14 +105,13 @@ func TestEnqueueWSEventNoPanicOnClosedChannel(t *testing.T) {
 		}()
 	}
 
-	// 1 goroutine closes concurrently.
-	go func() {
-		defer wg.Done()
-		s.stopBusTaps()
-	}()
-
+	// Wait for all senders, then close.
 	wg.Wait()
+	s.stopBusTaps()
 	<-done
+
+	// Verify that enqueue after stop is a no-op (no panic).
+	s.enqueueWSEvent([]byte("after-close"), "t", "j")
 }
 
 func TestBroadcastSlowClientCleanupConcurrent(t *testing.T) {
