@@ -11,6 +11,7 @@ import { EventTimeline } from "../components/home/EventTimeline";
 import { ActiveWorkflowCards } from "../components/home/ActiveWorkflowCards";
 import { DLQSummary } from "../components/home/DLQSummary";
 import { QuickActions } from "../components/home/QuickActions";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Skeleton cards
@@ -53,6 +54,7 @@ function formatUptime(seconds?: number): string {
 // ---------------------------------------------------------------------------
 
 export default function HomePage() {
+  usePageTitle("Overview");
   const { data: status, isLoading, isError, refetch } = useStatus();
   const { data: workers } = useWorkers();
   const workerCount = workers?.length ?? status?.workers?.count ?? 0;

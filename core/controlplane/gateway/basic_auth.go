@@ -47,6 +47,7 @@ type BasicAuthProvider struct {
 	jwt                  *jwtValidator
 	jwtRequired          bool
 	userStore            UserStore
+	keyStore             KeyStore
 }
 
 func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
@@ -95,6 +96,16 @@ func (b *BasicAuthProvider) SetUserStore(store UserStore) {
 // UserStore returns the user store if configured.
 func (b *BasicAuthProvider) UserStore() UserStore {
 	return b.userStore
+}
+
+// SetKeyStore sets the managed key store for runtime API key authentication.
+func (b *BasicAuthProvider) SetKeyStore(ks KeyStore) {
+	b.keyStore = ks
+}
+
+// ManagedKeyStore returns the key store if configured.
+func (b *BasicAuthProvider) ManagedKeyStore() KeyStore {
+	return b.keyStore
 }
 
 func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
@@ -208,6 +219,34 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 	}
 	meta, ok := b.lookupKey(key)
 	if !ok {
+		// Fall back to managed key store (runtime-created keys in Redis)
+		if b.keyStore != nil {
+			mk, err := b.keyStore.ValidateKey(ctx, key)
+			if err == nil {
+				role := "user"
+				for _, scope := range mk.Scopes {
+					if scope == "admin" {
+						role = "admin"
+						break
+					}
+				}
+				tenant := strings.TrimSpace(mk.Tenant)
+				if tenant == "" {
+					tenant = b.defaultTenant
+				}
+				go func() {
+					bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = b.keyStore.RecordUsage(bgCtx, mk.ID)
+				}()
+				return &AuthContext{
+					APIKey:      key,
+					Tenant:      tenant,
+					PrincipalID: strings.TrimSpace(principalID),
+					Role:        role,
+				}, nil
+			}
+		}
 		return nil, errors.New("invalid api key")
 	}
 	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
@@ -300,6 +339,8 @@ func (b *BasicAuthProvider) ResolveTenant(r *http.Request, requested, fallback s
 		}
 		return strings.TrimSpace(fallback), nil
 	}
+	// SECURITY: At this point, either requested==authTenant (checked at line 290)
+	// or AllowCrossTenant is true. Safe to return the requested tenant.
 	if authTenant != "" {
 		return requested, nil
 	}

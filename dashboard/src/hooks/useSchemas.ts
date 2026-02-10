@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, del } from "../api/client";
 import { logger } from "../lib/logger";
+import { useToastStore } from "../state/toast";
 import type { Schema, SchemaField, ApiResponse } from "../api/types";
 
 // ---------------------------------------------------------------------------
@@ -58,10 +59,12 @@ export function useRegisterSchema() {
     },
     onSuccess: (_, input) => {
       logger.info("schemas", "Schema registered", { id: input.id });
+      useToastStore.getState().addToast({ type: "success", title: "Schema registered" });
       queryClient.invalidateQueries({ queryKey: ["schemas"] });
     },
     onError: (err, input) => {
       logger.error("schemas", "Schema registration failed", { id: input.id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Registration failed", description: err.message });
     },
   });
 }
@@ -75,10 +78,12 @@ export function useDeleteSchema() {
     },
     onSuccess: (_, id) => {
       logger.info("schemas", "Schema deleted", { id });
+      useToastStore.getState().addToast({ type: "success", title: "Schema deleted" });
       queryClient.invalidateQueries({ queryKey: ["schemas"] });
     },
     onError: (err, id) => {
       logger.error("schemas", "Schema delete failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to delete schema", description: err.message });
     },
   });
 }

@@ -258,6 +258,7 @@ func TestContainsPool(t *testing.T) {
 
 func benchWorkerSelection(b *testing.B, n int) {
 	b.Helper()
+	silenceLogs(b)
 	routing := routingForTopic("job.bench", "bench-pool")
 	strategy := NewLeastLoadedStrategy(routing)
 

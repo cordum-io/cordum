@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, del, put } from "../api/client";
 import { logger } from "../lib/logger";
+import { useToastStore } from "../state/toast";
 import type {
   ApiKey,
   User,
@@ -41,10 +42,12 @@ export function useSetConfig() {
     },
     onSuccess: () => {
       logger.info("settings", "System config updated");
+      useToastStore.getState().addToast({ type: "success", title: "Settings saved" });
       queryClient.invalidateQueries({ queryKey: ["config"] });
     },
     onError: (err) => {
       logger.error("settings", "System config update failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to save settings", description: err.message });
     },
   });
 }
@@ -138,10 +141,12 @@ export function useCreateApiKey() {
     },
     onSuccess: () => {
       logger.info("settings", "API key created");
+      useToastStore.getState().addToast({ type: "success", title: "API key created" });
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     },
     onError: (err) => {
       logger.error("settings", "API key creation failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to create API key", description: err.message });
     },
   });
 }
@@ -155,10 +160,12 @@ export function useRevokeApiKey() {
     },
     onSuccess: (_, id) => {
       logger.info("settings", "API key revoked", { id });
+      useToastStore.getState().addToast({ type: "success", title: "API key revoked" });
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     },
     onError: (err, id) => {
       logger.error("settings", "API key revocation failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to revoke key", description: err.message });
     },
   });
 }
@@ -190,10 +197,12 @@ export function useCreateUser() {
     },
     onSuccess: () => {
       logger.info("settings", "User created");
+      useToastStore.getState().addToast({ type: "success", title: "User created" });
       queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: (err) => {
       logger.error("settings", "User creation failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to create user", description: err.message });
     },
   });
 }
@@ -212,10 +221,12 @@ export function useUpdateUser() {
     },
     onSuccess: (_, { id }) => {
       logger.info("settings", "User updated", { id });
+      useToastStore.getState().addToast({ type: "success", title: "User updated" });
       queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: (err, { id }) => {
       logger.error("settings", "User update failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to update user", description: err.message });
     },
   });
 }
@@ -229,10 +240,12 @@ export function useDeleteUser() {
     },
     onSuccess: (_, id) => {
       logger.info("settings", "User deleted", { id });
+      useToastStore.getState().addToast({ type: "success", title: "User deleted" });
       queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: (err, id) => {
       logger.error("settings", "User delete failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to delete user", description: err.message });
     },
   });
 }

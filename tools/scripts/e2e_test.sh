@@ -6,9 +6,28 @@
 
 set -euo pipefail
 
-BASE="http://localhost:8082/api/v1"
-GW="http://localhost:8081/api/v1"
-API_KEY="17852da6e8545660dc45cfd37992308cc59ac0917066b7615b8075ad6d5d52b8"
+require() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing dependency: $1" >&2
+    exit 1
+  fi
+}
+
+require curl
+require jq
+
+BASE="${CORDUM_E2E_BASE:-http://localhost:8082/api/v1}"
+GW="${CORDUM_E2E_GW_BASE:-http://localhost:8081/api/v1}"
+API_KEY="${CORDUM_API_KEY:-${API_KEY:-}}"
+TENANT_ID="${CORDUM_TENANT_ID:-default}"
+ADMIN_USERNAME="${CORDUM_ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${CORDUM_ADMIN_PASSWORD:-}"
+REDIS_PASSWORD="${REDIS_PASSWORD:-cordum-dev}"
+
+if [[ -z "${API_KEY}" ]]; then
+  echo "CORDUM_API_KEY is required; export it before running the e2e test." >&2
+  exit 1
+fi
 
 PASS=0
 FAIL=0
@@ -44,6 +63,10 @@ check_body() {
   fi
 }
 
+base64_urlsafe() {
+  printf '%s' "$1" | base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n'
+}
+
 SESSION=""
 
 # =============================================================================
@@ -56,9 +79,20 @@ check "GET / (dashboard)" "200" "$code"
 
 bold "1.2 Dashboard config.json"
 body=$(curl -s http://localhost:8082/config.json)
-code=$(echo "$body" | python -c "import sys,json; d=json.load(sys.stdin); print('200')" 2>/dev/null || echo "ERR")
+if echo "$body" | jq -e . >/dev/null 2>&1; then
+  code="200"
+else
+  code="ERR"
+fi
 check "GET /config.json (valid JSON)" "200" "$code"
-check_body "config.json has empty apiBaseUrl" '"apiBaseUrl": ""' "$body"
+if echo "$body" | jq -e '.apiBaseUrl' >/dev/null 2>&1; then
+  green "  PASS: config.json has apiBaseUrl"
+  PASS=$((PASS+1))
+else
+  red "  FAIL: config.json missing apiBaseUrl"
+  FAIL=$((FAIL+1))
+  ERRORS="${ERRORS}\n  - config.json missing apiBaseUrl"
+fi
 
 bold "1.3 Gateway health"
 code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/health)
@@ -66,17 +100,19 @@ check "GET /health (gateway)" "200" "$code"
 
 bold "1.4 NATS reachable"
 # NATS doesn't speak HTTP; test TCP connectivity
-nats_ok=$(python -c "
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.settimeout(2)
-try:
-    s.connect(('localhost', 4222))
-    s.close()
-    print('ok')
-except:
-    print('fail')
-" 2>/dev/null || echo "fail")
+if command -v nc >/dev/null 2>&1; then
+  if nc -z -w 2 localhost 4222 >/dev/null 2>&1; then
+    nats_ok="ok"
+  else
+    nats_ok="fail"
+  fi
+else
+  if timeout 2 bash -c "cat < /dev/null > /dev/tcp/localhost/4222" >/dev/null 2>&1; then
+    nats_ok="ok"
+  else
+    nats_ok="fail"
+  fi
+fi
 if [ "$nats_ok" = "ok" ]; then
   green "  PASS: NATS reachable (TCP 4222)"
   PASS=$((PASS+1))
@@ -86,10 +122,20 @@ else
 fi
 
 bold "1.5 Redis reachable"
-pong=$(redis-cli -h localhost -p 6379 ping 2>/dev/null || echo "FAIL")
-if [ "$pong" = "PONG" ]; then
-  green "  PASS: Redis PING -> PONG"
-  PASS=$((PASS+1))
+if command -v redis-cli >/dev/null 2>&1; then
+  if [ -n "$REDIS_PASSWORD" ]; then
+    pong=$(redis-cli -h localhost -p 6379 -a "$REDIS_PASSWORD" ping 2>/dev/null || echo "FAIL")
+  else
+    pong=$(redis-cli -h localhost -p 6379 ping 2>/dev/null || echo "FAIL")
+  fi
+  if [ "$pong" = "PONG" ]; then
+    green "  PASS: Redis PING -> PONG"
+    PASS=$((PASS+1))
+  else
+    red "  FAIL: Redis PING -> $pong"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}\n  - Redis ping failed: ${pong}"
+  fi
 else
   yellow "  SKIP: Redis CLI not available"
   SKIP=$((SKIP+1))
@@ -111,40 +157,45 @@ code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/workers")
 check "GET /workers (no auth)" "401" "$code"
 
 bold "2.3 API key auth"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $API_KEY" -H "X-Tenant-ID: default" "$BASE/workers")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $API_KEY" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/workers")
 check "GET /workers (API key)" "200" "$code"
 
 bold "2.4 Invalid API key rejected"
 code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: bad-key" "$BASE/workers")
 check "GET /workers (bad key)" "401" "$code"
 
-bold "2.5 User login (admin/admin123)"
-body=$(curl -s -X POST "$BASE/auth/login" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $API_KEY" \
-  -d '{"username":"admin","password":"admin123"}')
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/auth/login" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $API_KEY" \
-  -d '{"username":"admin","password":"admin123"}')
-check "POST /auth/login" "200" "$code"
+bold "2.5 User login (${ADMIN_USERNAME})"
+if [ -n "$ADMIN_PASSWORD" ]; then
+  body=$(curl -s -X POST "$BASE/auth/login" \
+    -H "Content-Type: application/json" \
+    -H "X-API-Key: $API_KEY" \
+    -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"tenant\":\"${TENANT_ID}\"}")
+  code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/auth/login" \
+    -H "Content-Type: application/json" \
+    -H "X-API-Key: $API_KEY" \
+    -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"tenant\":\"${TENANT_ID}\"}")
+  check "POST /auth/login" "200" "$code"
 
-# Extract session token
-SESSION=$(echo "$body" | python -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
-if [ -n "$SESSION" ]; then
-  green "  PASS: Got session token (${SESSION:0:20}...)"
-  PASS=$((PASS+1))
+  # Extract session token
+  SESSION=$(echo "$body" | jq -r '.token // empty' 2>/dev/null || true)
+  if [ -n "$SESSION" ]; then
+    green "  PASS: Got session token (${SESSION:0:20}...)"
+    PASS=$((PASS+1))
+  else
+    red "  FAIL: No session token in login response"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}\n  - Login: no session token returned"
+    # Fallback to API key for remaining tests
+    SESSION=""
+  fi
 else
-  red "  FAIL: No session token in login response"
-  FAIL=$((FAIL+1))
-  ERRORS="${ERRORS}\n  - Login: no session token returned"
-  # Fallback to API key for remaining tests
-  SESSION=""
+  yellow "  SKIP: CORDUM_ADMIN_PASSWORD not set"
+  SKIP=$((SKIP+1))
 fi
 
 bold "2.6 Session validation"
 if [ -n "$SESSION" ]; then
-  code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $SESSION" -H "X-Tenant-ID: default" "$BASE/auth/session")
+  code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $SESSION" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/auth/session")
   check "GET /auth/session (session token)" "200" "$code"
 else
   yellow "  SKIP: No session token"
@@ -164,52 +215,52 @@ bold "=== PHASE 3: Core API Endpoints ==="
 # =============================================================================
 
 bold "3.1 Workers"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/workers")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/workers")
 check "GET /workers" "200" "$code"
 
 bold "3.2 Status"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/status")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/status")
 check "GET /status" "200" "$code"
 
 bold "3.3 Jobs list"
-body=$(curl -s -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/jobs")
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/jobs")
+body=$(curl -s -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/jobs")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/jobs")
 check "GET /jobs" "200" "$code"
 
 bold "3.4 DLQ page"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/dlq/page?limit=10")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/dlq/page?limit=10")
 check "GET /dlq/page" "200" "$code"
 
 bold "3.5 Approvals"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/approvals?limit=10")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/approvals?limit=10")
 check "GET /approvals" "200" "$code"
 
 bold "3.6 Policy bundles"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/policy/bundles")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/policy/bundles")
 check "GET /policy/bundles" "200" "$code"
 
 bold "3.7 Policy rules"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/policy/rules")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/policy/rules")
 check "GET /policy/rules" "200" "$code"
 
 bold "3.8 Policy audit"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/policy/audit")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/policy/audit")
 check "GET /policy/audit" "200" "$code"
 
 bold "3.9 Workflows"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/workflows")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/workflows")
 check "GET /workflows" "200" "$code"
 
 bold "3.10 Workflow runs"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/workflow-runs?limit=20")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/workflow-runs?limit=20")
 check "GET /workflow-runs" "200" "$code"
 
 bold "3.11 Packs"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/packs")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/packs")
 check "GET /packs" "200" "$code"
 
 bold "3.12 Config / system"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/config")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/config")
 check "GET /config" "200" "$code"
 
 # =============================================================================
@@ -218,15 +269,17 @@ bold "=== PHASE 4: Job Submission Flow ==="
 # =============================================================================
 
 bold "4.1 Submit a job"
-JOB_BODY='{"prompt":"E2E test job","topic":"job.default","metadata":{"test":"e2e"}}'
+# Use job.hello-pack.echo which has the hello-worker listening (pool=hello-pack).
+# Avoid job.default — no workers serve it, causing infinite NAK redelivery noise.
+JOB_BODY='{"prompt":"E2E test job","topic":"job.hello-pack.echo","metadata":{"test":"e2e"}}'
 body=$(curl -s -X POST "$BASE/jobs" \
   -H "$AUTH_HEADER" \
-  -H "X-Tenant-ID: default" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d "$JOB_BODY")
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/jobs" \
   -H "$AUTH_HEADER" \
-  -H "X-Tenant-ID: default" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d "$JOB_BODY")
 
@@ -241,7 +294,7 @@ else
 fi
 
 # Extract job ID
-JOB_ID=$(echo "$body" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('job_id','') or d.get('id',''))" 2>/dev/null || echo "")
+JOB_ID=$(echo "$body" | jq -r '.job_id // .id // empty' 2>/dev/null || true)
 if [ -n "$JOB_ID" ]; then
   green "  PASS: Got job ID: $JOB_ID"
   PASS=$((PASS+1))
@@ -253,7 +306,7 @@ fi
 bold "4.2 Get job detail"
 if [ -n "$JOB_ID" ]; then
   sleep 1
-  code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/jobs/$JOB_ID")
+  code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/jobs/$JOB_ID")
   check "GET /jobs/$JOB_ID" "200" "$code"
 else
   yellow "  SKIP: No job ID"
@@ -262,7 +315,7 @@ fi
 
 bold "4.3 Job appears in listing"
 if [ -n "$JOB_ID" ]; then
-  body=$(curl -s -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/jobs")
+  body=$(curl -s -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/jobs")
   if echo "$body" | grep -q "$JOB_ID"; then
     green "  PASS: Job $JOB_ID found in /jobs listing"
     PASS=$((PASS+1))
@@ -281,7 +334,7 @@ bold "=== PHASE 5: WebSocket Stream ==="
 # =============================================================================
 
 bold "5.1 WebSocket upgrade (API key auth, through proxy)"
-ENCODED=$(python -c "import base64; key=b'$API_KEY'; print(base64.urlsafe_b64encode(key).decode().rstrip('='))")
+ENCODED=$(base64_urlsafe "$API_KEY")
 timeout 3 curl -s -o /dev/null -w "%{http_code}" \
   -H "Upgrade: websocket" \
   -H "Connection: upgrade" \
@@ -300,7 +353,7 @@ fi
 
 bold "5.2 WebSocket with session token (through proxy)"
 if [ -n "$SESSION" ]; then
-  SESS_ENC=$(python -c "import base64; print(base64.urlsafe_b64encode(b'$SESSION').decode().rstrip('='))")
+  SESS_ENC=$(base64_urlsafe "$SESSION")
   timeout 3 curl -s -o /dev/null -w "%{http_code}" \
     -H "Upgrade: websocket" \
     -H "Connection: upgrade" \
@@ -336,7 +389,7 @@ bold "=== PHASE 6: Nginx Proxy Validation ==="
 # =============================================================================
 
 bold "6.1 API proxy works (proxy -> gateway)"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" http://localhost:8082/api/v1/workers)
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" http://localhost:8082/api/v1/workers)
 check "Proxy: /api/v1/workers" "200" "$code"
 
 bold "6.2 SPA fallback (unknown path -> index.html)"
@@ -370,12 +423,12 @@ bold "7.1 Safety evaluate via gateway"
 SAFETY_BODY='{"capabilities":["shell.exec"],"risk_tags":["dangerous"],"metadata":{}}'
 body=$(curl -s -X POST "$BASE/safety/evaluate" \
   -H "$AUTH_HEADER" \
-  -H "X-Tenant-ID: default" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d "$SAFETY_BODY")
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/safety/evaluate" \
   -H "$AUTH_HEADER" \
-  -H "X-Tenant-ID: default" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d "$SAFETY_BODY")
 
@@ -394,7 +447,7 @@ bold "=== PHASE 8: Error Handling ==="
 # =============================================================================
 
 bold "8.1 404 for unknown API path"
-code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: default" "$BASE/nonexistent")
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/nonexistent")
 # 404 or 405 are both acceptable
 if [ "$code" = "404" ] || [ "$code" = "405" ]; then
   green "  PASS: Unknown path returns $code"
@@ -407,7 +460,7 @@ fi
 bold "8.2 Invalid JSON body"
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/jobs" \
   -H "$AUTH_HEADER" \
-  -H "X-Tenant-ID: default" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d "not-json")
 check "POST /jobs with bad JSON" "400" "$code"
@@ -415,7 +468,7 @@ check "POST /jobs with bad JSON" "400" "$code"
 bold "8.3 Missing required field"
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/jobs" \
   -H "$AUTH_HEADER" \
-  -H "X-Tenant-ID: default" \
+  -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d '{}')
 check "POST /jobs with empty body" "400" "$code"
@@ -429,7 +482,7 @@ bold "9.1 Logout"
 if [ -n "$SESSION" ]; then
   code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/auth/logout" \
     -H "X-API-Key: $SESSION" \
-    -H "X-Tenant-ID: default")
+    -H "X-Tenant-ID: ${TENANT_ID}")
   # Accept 200 or 204
   if [ "$code" = "200" ] || [ "$code" = "204" ]; then
     green "  PASS: POST /auth/logout (HTTP $code)"
@@ -440,7 +493,7 @@ if [ -n "$SESSION" ]; then
   fi
 
   bold "9.2 Session invalidated after logout"
-  code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $SESSION" -H "X-Tenant-ID: default" "$BASE/workers")
+  code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $SESSION" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/workers")
   check "GET /workers with expired session" "401" "$code"
 else
   yellow "  SKIP: No session to test logout"

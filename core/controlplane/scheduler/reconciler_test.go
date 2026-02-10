@@ -355,6 +355,7 @@ func TestReconcilerSetsFailureReasonOnDeadlineExpiry(t *testing.T) {
 // BenchmarkReconcilerTick benchmarks a single reconciler tick with 500 DISPATCHED
 // jobs that have old timestamps, triggering the timeout path.
 func BenchmarkReconcilerTick(b *testing.B) {
+	silenceLogs(b)
 	const jobCount = 500
 	oldTs := toUnixMicros(time.Now().Add(-10 * time.Minute))
 

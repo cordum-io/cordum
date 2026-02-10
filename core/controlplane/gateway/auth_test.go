@@ -363,6 +363,74 @@ func TestBasicAuthPublicPathAllowsAuthConfig(t *testing.T) {
 	}
 }
 
+func TestResolveTenantCrossTenantDenied(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key1","tenant":"team-a"}]`,
+	})
+	// Tenant A authenticated, requests tenant B without AllowCrossTenant → denied
+	req := requestWithAuthContext(&AuthContext{
+		APIKey: "key1",
+		Tenant: "team-a",
+	})
+	_, err := provider.ResolveTenant(req, "team-b", "")
+	if err == nil {
+		t.Fatalf("expected tenant access denied when requesting team-b as team-a")
+	}
+	if err.Error() != "tenant access denied" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveTenantOwnTenantAllowed(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key1","tenant":"team-a"}]`,
+	})
+	// Tenant A authenticated, requests own tenant → allowed
+	req := requestWithAuthContext(&AuthContext{
+		APIKey: "key1",
+		Tenant: "team-a",
+	})
+	got, err := provider.ResolveTenant(req, "team-a", "")
+	if err != nil {
+		t.Fatalf("expected own tenant to be allowed: %v", err)
+	}
+	if got != "team-a" {
+		t.Fatalf("expected team-a, got %q", got)
+	}
+}
+
+func TestResolveTenantCrossTenantAllowedWithFlag(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key1","tenant":"team-a","allow_cross_tenant":true}]`,
+	})
+	// AllowCrossTenant=true, tenant A requests tenant B → allowed
+	req := requestWithAuthContext(&AuthContext{
+		APIKey:           "key1",
+		Tenant:           "team-a",
+		AllowCrossTenant: true,
+	})
+	got, err := provider.ResolveTenant(req, "team-b", "")
+	if err != nil {
+		t.Fatalf("expected cross-tenant to be allowed with flag: %v", err)
+	}
+	if got != "team-b" {
+		t.Fatalf("expected team-b, got %q", got)
+	}
+}
+
+func TestResolveTenantAnonymousDeniedNonDefault(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_ALLOW_INSECURE_NO_AUTH": "1",
+	})
+	// Anonymous user (no auth context) requests non-default tenant → denied
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	_, err := provider.ResolveTenant(req, "other-tenant", "")
+	if err == nil {
+		t.Fatalf("expected tenant access denied for anonymous user requesting non-default tenant")
+	}
+}
+
 func TestBasicAuthRequiresKeyInProduction(t *testing.T) {
 	t.Setenv("CORDUM_ENV", "production")
 	t.Setenv("CORDUM_API_KEYS", "")
@@ -370,5 +438,84 @@ func TestBasicAuthRequiresKeyInProduction(t *testing.T) {
 	t.Setenv("API_KEY", "")
 	if _, err := newBasicAuthProvider("default"); err == nil {
 		t.Fatalf("expected api key requirement in production")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Public path ceiling tests
+// ---------------------------------------------------------------------------
+
+// maliciousPathAuth is a provider that claims every /api/ path is public.
+type maliciousPathAuth struct{ publicPathAuth }
+
+func (m *maliciousPathAuth) IsPublicPath(path string) bool {
+	return strings.HasPrefix(path, "/api/")
+}
+
+func TestPublicPathCeilingBlocksArbitraryPaths(t *testing.T) {
+	auth := &maliciousPathAuth{}
+	handler := apiKeyMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// /api/v1/jobs should be blocked even though provider says it's public.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/v1/jobs: expected 401 got %d", rr.Code)
+	}
+
+	// /api/v1/config should be blocked too — not in ceiling.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/v1/config: expected 401 got %d", rr.Code)
+	}
+}
+
+func TestPublicPathCeilingAllowsWhitelistedPaths(t *testing.T) {
+	auth := &maliciousPathAuth{}
+	handler := apiKeyMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, path := range []string{"/api/v1/auth/config", "/api/v1/auth/login"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET %s: expected 200 got %d", path, rr.Code)
+		}
+	}
+}
+
+func TestTenantMiddlewareCeilingBlocksArbitraryPaths(t *testing.T) {
+	auth := &maliciousPathAuth{}
+	handler := tenantMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// /api/v1/jobs without tenant header should get 403 (not bypassed).
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("GET /api/v1/jobs: expected 403 got %d", rr.Code)
+	}
+}
+
+func TestTenantMiddlewareCeilingAllowsWhitelistedPaths(t *testing.T) {
+	auth := &maliciousPathAuth{}
+	handler := tenantMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("GET /api/v1/auth/config: expected 200 got %d", rr.Code)
 	}
 }

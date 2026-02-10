@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -78,8 +80,19 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			// Brute-force protection: check throttle before password validation.
+			if redisStore, ok := userStore.(*RedisUserStore); ok {
+				if err := redisStore.CheckLoginThrottle(r.Context(), username); err != nil {
+					writeErrorJSON(w, http.StatusTooManyRequests, err.Error())
+					return
+				}
+			}
+
 			if userStore.ValidatePassword(r.Context(), user, password) {
-				// User/password authentication successful
+				// User/password authentication successful — clear failed counter.
+				if redisStore, ok := userStore.(*RedisUserStore); ok {
+					redisStore.ClearFailedLogins(r.Context(), username)
+				}
 				resp := buildUserLoginResponse(user)
 				// Store session token in Redis for subsequent request validation
 				if redisStore, ok := userStore.(*RedisUserStore); ok {
@@ -91,6 +104,11 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				writeJSON(w,resp)
 				return
+			}
+
+			// Password validation failed — record the attempt.
+			if redisStore, ok := userStore.(*RedisUserStore); ok {
+				redisStore.RecordFailedLogin(r.Context(), username)
 			}
 		}
 	}
@@ -208,9 +226,13 @@ func buildUserLoginResponse(user *User) AuthLoginResponse {
 		roles = append(roles, user.Role)
 	}
 
-	// Generate a session token for user auth
-	// In a production system, this would be a JWT or opaque session token
-	sessionToken := "session-" + user.ID + "-" + safePrefix(now.Format(time.RFC3339Nano), 16)
+	// Generate a cryptographically random session token (256 bits entropy).
+	var tokenBytes [32]byte
+	if _, err := rand.Read(tokenBytes[:]); err != nil {
+		// Fallback should never happen — crypto/rand failure is fatal-grade.
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
+	sessionToken := "session-" + base64.RawURLEncoding.EncodeToString(tokenBytes[:])
 
 	return AuthLoginResponse{
 		Token:     sessionToken,

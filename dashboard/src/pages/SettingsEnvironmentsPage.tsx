@@ -12,6 +12,7 @@ import { EnvironmentConfigEditor } from "../components/settings/EnvironmentConfi
 import { PromotionDrawer } from "../components/settings/PromotionDrawer";
 import { useEnvironments, useSaveEnvironment } from "../hooks/useSettings";
 import type { Environment } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Add-environment modal schema
@@ -32,6 +33,7 @@ type AddEnvForm = z.infer<typeof addEnvSchema>;
 // ---------------------------------------------------------------------------
 
 export default function SettingsEnvironmentsPage() {
+  usePageTitle("Settings - Environments");
   const { data: environments, isLoading } = useEnvironments();
   const saveEnv = useSaveEnvironment();
 

@@ -19,6 +19,9 @@ import { cn } from "../lib/utils";
 import { useEventStore } from "../state/events";
 import { useConfigStore } from "../state/config";
 import type { Approval, UrgencyLevel } from "../api/types";
+import { DataFreshness } from "../components/ui/DataFreshness";
+import { usePageTitle } from "../hooks/usePageTitle";
+import { RequireRole } from "../components/RequireRole";
 
 type ApprovalsTab = "queue" | "history";
 
@@ -109,12 +112,26 @@ function MiniCard({ approval, active, onClick }: { approval: Approval; active: b
 }
 
 export default function ApprovalsPage() {
-  const { data, isLoading, isError } = useApprovals();
+  usePageTitle("Approvals");
+  const { data, isLoading, isError, dataUpdatedAt, refetch, isRefetching } = useApprovals();
   const { data: historyData } = useApprovalHistory();
   const approveJob = useApproveJob();
   const rejectJob = useRejectJob();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<ApprovalsTab>("queue");
+  const activeTab: ApprovalsTab = (searchParams.get("tab") as ApprovalsTab) || "queue";
+  const setActiveTab = useCallback(
+    (tab: ApprovalsTab) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (tab === "queue") next.delete("tab");
+        else next.set("tab", tab);
+        // Clear other tab's params
+        next.delete("page");
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
   const approvals = data?.items ?? [];
   const resolvedToday = historyData?.items?.length ?? 0;
 
@@ -129,6 +146,8 @@ export default function ApprovalsPage() {
 
   const setFilters = useCallback((next: FilterState) => {
     const params: Record<string, string> = {};
+    const currentTab = searchParams.get("tab");
+    if (currentTab) params.tab = currentTab;
     const currentId = searchParams.get("id");
     if (currentId) params.id = currentId;
     if (next.urgency !== "all") params.urgency = next.urgency;
@@ -149,8 +168,8 @@ export default function ApprovalsPage() {
 
   const selectedId = searchParams.get("id");
   const selectedApproval = useMemo(() => sorted.find((a) => a.id === selectedId) ?? null, [sorted, selectedId]);
-  const openPanel = useCallback((id: string) => { const params: Record<string, string> = { id }; if (filters.urgency !== "all") params.urgency = filters.urgency; if (filters.workflow) params.workflow = filters.workflow; if (filters.rule) params.rule = filters.rule; if (filters.risk !== "all") params.risk = filters.risk; if (filters.sortBy !== "waitTime") params.sortBy = filters.sortBy; if (filters.assignment !== "all") params.assignment = filters.assignment; setSearchParams(params); }, [filters, setSearchParams]);
-  const closePanel = useCallback(() => { const params: Record<string, string> = {}; if (filters.urgency !== "all") params.urgency = filters.urgency; if (filters.workflow) params.workflow = filters.workflow; if (filters.rule) params.rule = filters.rule; if (filters.risk !== "all") params.risk = filters.risk; if (filters.sortBy !== "waitTime") params.sortBy = filters.sortBy; if (filters.assignment !== "all") params.assignment = filters.assignment; setSearchParams(params); }, [filters, setSearchParams]);
+  const openPanel = useCallback((id: string) => { const params: Record<string, string> = { id }; const t = searchParams.get("tab"); if (t) params.tab = t; if (filters.urgency !== "all") params.urgency = filters.urgency; if (filters.workflow) params.workflow = filters.workflow; if (filters.rule) params.rule = filters.rule; if (filters.risk !== "all") params.risk = filters.risk; if (filters.sortBy !== "waitTime") params.sortBy = filters.sortBy; if (filters.assignment !== "all") params.assignment = filters.assignment; setSearchParams(params); }, [filters, searchParams, setSearchParams]);
+  const closePanel = useCallback(() => { const params: Record<string, string> = {}; const t = searchParams.get("tab"); if (t) params.tab = t; if (filters.urgency !== "all") params.urgency = filters.urgency; if (filters.workflow) params.workflow = filters.workflow; if (filters.rule) params.rule = filters.rule; if (filters.risk !== "all") params.risk = filters.risk; if (filters.sortBy !== "waitTime") params.sortBy = filters.sortBy; if (filters.assignment !== "all") params.assignment = filters.assignment; setSearchParams(params); }, [filters, searchParams, setSearchParams]);
   const panelOpen = !!selectedApproval;
 
   const handleApprove = useCallback((id: string, comment?: string) => approveJob.mutateAsync({ id, comment }), [approveJob]);
@@ -159,7 +178,10 @@ export default function ApprovalsPage() {
   return (
     <div className="space-y-4 pb-20">
       <div className="flex items-center justify-between">
-        <h1 className="font-display text-2xl font-bold text-ink">Approvals</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="font-display text-2xl font-bold text-ink">Approvals</h1>
+          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
+        </div>
         {sorted.length > 0 && <Badge variant="warning">{sorted.length} pending</Badge>}
       </div>
       <StatsStrip approvals={approvals} resolvedToday={resolvedToday} selectedCount={selectedIds.size} totalCount={sorted.length} onSelectAll={selectAll} />
@@ -185,7 +207,7 @@ export default function ApprovalsPage() {
             )
           )}
           {panelOpen && selectedApproval && (<ApprovalDetailPanel approval={selectedApproval} allApprovals={approvals} onClose={closePanel} onApprove={handleApprove} onReject={handleReject} />)}
-          {selectedIds.size > 0 && (<BulkActionBar selectedIds={selectedIds} approvals={sorted} onApprove={handleApprove} onReject={handleReject} onClear={clearSelection} onDone={clearSelection} />)}
+          {selectedIds.size > 0 && (<RequireRole roles={["admin", "operator"]}><BulkActionBar selectedIds={selectedIds} approvals={sorted} onApprove={handleApprove} onReject={handleReject} onClear={clearSelection} onDone={clearSelection} /></RequireRole>)}
         </>
       )}
       {activeTab === "history" && <ApprovalHistory />}

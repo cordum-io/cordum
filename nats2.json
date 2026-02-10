@@ -1,0 +1,75 @@
+{
+  "memory": 0,
+  "storage": 0,
+  "reserved_memory": 0,
+  "reserved_storage": 0,
+  "accounts": 1,
+  "ha_assets": 0,
+  "api": {
+    "total": 21,
+    "errors": 4
+  },
+  "server_id": "NCZAB6PBM52J3LEJQNA6E2Q3PVDB5SDGA6SVOQZ5LV6GX6WTNHQ3J6IE",
+  "now": "2026-02-10T09:04:37.218305259Z",
+  "config": {
+    "max_memory": 12531151872,
+    "max_storage": 763692883968,
+    "store_dir": "/data/jetstream/jetstream",
+    "sync_interval": 1000000000
+  },
+  "streams": 2,
+  "consumers": 4,
+  "messages": 0,
+  "bytes": 0,
+  "account_details": [
+    {
+      "name": "$G",
+      "id": "$G",
+      "memory": 0,
+      "storage": 0,
+      "reserved_memory": 18446744073709551615,
+      "reserved_storage": 18446744073709551615,
+      "accounts": 0,
+      "ha_assets": 0,
+      "api": {
+        "total": 21,
+        "errors": 4
+      },
+      "stream_detail": [
+        {
+          "name": "CORDUM_SYS",
+          "created": "2026-02-10T09:00:56.611854726Z",
+          "cluster": {
+            "leader": "NCZAB6PBM52J3LEJQNA6E2Q3PVDB5SDGA6SVOQZ5LV6GX6WTNHQ3J6IE"
+          },
+          "state": {
+            "messages": 0,
+            "bytes": 0,
+            "first_seq": 0,
+            "first_ts": "0001-01-01T00:00:00Z",
+            "last_seq": 0,
+            "last_ts": "0001-01-01T00:00:00Z",
+            "consumer_count": 4
+          }
+        },
+        {
+          "name": "CORDUM_JOBS",
+          "created": "2026-02-10T09:00:56.617286922Z",
+          "cluster": {
+            "leader": "NCZAB6PBM52J3LEJQNA6E2Q3PVDB5SDGA6SVOQZ5LV6GX6WTNHQ3J6IE"
+          },
+          "state": {
+            "messages": 0,
+            "bytes": 0,
+            "first_seq": 0,
+            "first_ts": "0001-01-01T00:00:00Z",
+            "last_seq": 0,
+            "last_ts": "0001-01-01T00:00:00Z",
+            "consumer_count": 0
+          }
+        }
+      ]
+    }
+  ],
+  "total": 1
+}

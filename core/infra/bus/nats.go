@@ -45,6 +45,11 @@ const (
 
 	// LabelBusMsgID overrides JetStream msg-id for explicit resubmits.
 	LabelBusMsgID = "cordum.bus_msg_id"
+
+	// maxJSRedeliveries caps how many times NATS redelivers a failing message.
+	// Without this, a poison message (e.g. proto unmarshal failure) blocks the
+	// MaxAckPending budget indefinitely, preventing new messages from being delivered.
+	maxJSRedeliveries = 100
 )
 
 var (
@@ -146,6 +151,10 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	}
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		cb := func(msg *nats.Msg) {
+			// Log warning when a message is approaching max redelivery
+			if meta, err := msg.Metadata(); err == nil && meta.NumDelivered > 50 {
+				log.Printf("nats bus: message on %s redelivered %d times (max=%d)", subject, meta.NumDelivered, maxJSRedeliveries)
+			}
 			action, delay := processBusMsg(msg.Data, handler)
 			switch action {
 			case msgActionNakDelay:
@@ -169,6 +178,7 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 			nats.AckExplicit(),
 			nats.AckWait(b.ackWait),
 			nats.MaxAckPending(2048),
+			nats.MaxDeliver(maxJSRedeliveries),
 		}
 		if durable := durableName(subject, queue); durable != "" {
 			opts = append(opts, nats.Durable(durable))

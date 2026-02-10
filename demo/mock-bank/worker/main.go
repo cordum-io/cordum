@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	defaultNatsURL  = "nats://127.0.0.1:4222"
-	defaultRedisURL = "redis://127.0.0.1:6379/0"
+	defaultNatsURL = "nats://127.0.0.1:4222"
+	// Default includes auth for password-protected Redis (docker-compose default).
+	// Override REDIS_URL env to connect to a different instance.
+	defaultRedisURL = "redis://:cordum-dev@127.0.0.1:6379/0"
 )
 
 // ---------------------------------------------------------------------------
@@ -116,6 +118,14 @@ func main() {
 
 	natsURL := envOr("NATS_URL", defaultNatsURL)
 	redisURL := envOr("REDIS_URL", defaultRedisURL)
+
+	if !runtime.ValidateRedisURL(redisURL) {
+		log.Println("[mock-bank] WARNING: REDIS_URL has no '@' — may be missing auth credentials")
+	}
+	if err := runtime.PingRedis(redisURL); err != nil {
+		log.Fatalf("[mock-bank] Redis connection failed (check REDIS_URL and password): %v", err)
+	}
+	log.Println("[mock-bank] Redis connection verified")
 
 	log.Println("[mock-bank] connecting to NATS...")
 	nc, err := nats.Connect(natsURL, nats.Name("mock-bank-fleet"), nats.Timeout(5*time.Second))

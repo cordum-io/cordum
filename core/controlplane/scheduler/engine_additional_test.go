@@ -41,6 +41,33 @@ func TestRetryableErrorDelay(t *testing.T) {
 	}
 }
 
+func TestStartStopWithRegistryStats(t *testing.T) {
+	registry := NewMemoryRegistry()
+	defer registry.Close()
+	registry.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w1", Pool: "test"})
+
+	engine := NewEngine(&observedBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	// Start subscribes and launches the stats goroutine.
+	if err := engine.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// Give goroutine a moment to start.
+	time.Sleep(10 * time.Millisecond)
+
+	// Stop must cancel context and allow the stats goroutine to exit cleanly.
+	engine.Stop()
+
+	// Verify engine context is cancelled (stats goroutine uses this to exit).
+	select {
+	case <-engine.ctx.Done():
+		// expected
+	default:
+		t.Fatal("expected engine context to be cancelled after Stop")
+	}
+}
+
 func TestReconcilerUpdateTimeouts(t *testing.T) {
 	rec := NewReconciler(newFakeReconcileStore(), 10*time.Second, 20*time.Second, time.Second)
 	rec.UpdateTimeouts(0, 0)

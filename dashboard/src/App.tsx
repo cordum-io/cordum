@@ -1,8 +1,9 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { LoadingScreen } from "./components/ui/Spinner";
 import { logger } from "./lib/logger";
 
 const queryClient = new QueryClient({
@@ -56,13 +57,12 @@ const SettingsEnvironmentsPage = lazy(() => import("./pages/SettingsEnvironments
 const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
 const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 
-function LoadingFallback() {
-  return (
-    <div className="flex min-h-[200px] items-center justify-center text-sm text-muted">
-      Loading...
-    </div>
-  );
+
+function LocationAwareErrorBoundary({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  return <ErrorBoundary resetKey={location.pathname}>{children}</ErrorBoundary>;
 }
 
 export default function App() {
@@ -70,7 +70,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <ErrorBoundary>
-          <Suspense fallback={<LoadingFallback />}>
+          <Suspense fallback={<LoadingScreen />}>
             <Routes>
               {/* Public route */}
               <Route path="/login" element={<LoginPage />} />
@@ -80,8 +80,8 @@ export default function App() {
                 path="*"
                 element={
                   <ProtectedRoute>
-                    <ErrorBoundary>
-                      <Suspense fallback={<LoadingFallback />}>
+                    <LocationAwareErrorBoundary>
+                      <Suspense fallback={<LoadingScreen />}>
                         <Routes>
                       <Route path="/" element={<HomePage />} />
                       <Route path="/jobs" element={<JobsPage />} />
@@ -120,9 +120,10 @@ export default function App() {
                       {/* Legacy redirects */}
                       <Route path="/pools" element={<Navigate to="/agents" replace />} />
                       <Route path="/system" element={<Navigate to="/settings/health" replace />} />
+                      <Route path="*" element={<NotFoundPage />} />
                         </Routes>
                       </Suspense>
-                    </ErrorBoundary>
+                    </LocationAwareErrorBoundary>
                   </ProtectedRoute>
                 }
               />

@@ -2,11 +2,40 @@ package scheduler
 
 import (
 	"fmt"
+	"io"
+	"log"
+	"log/slog"
+	"os"
 	"testing"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// silenceLogs suppresses log output during benchmarks to prevent log lines from
+// corrupting Go benchmark result format (needed for CI benchmark-action parsing).
+func silenceLogs(b *testing.B) {
+	b.Helper()
+	// Silence standard log package (used by core/infra/logging)
+	origLog := log.Writer()
+	log.SetOutput(io.Discard)
+	// Silence slog (used by some gateway/store code)
+	origSlog := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// Redirect os.Stderr to /dev/null as defense-in-depth
+	origStderr := os.Stderr
+	if devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
+		os.Stderr = devNull
+		b.Cleanup(func() {
+			os.Stderr = origStderr
+			devNull.Close()
+		})
+	}
+	b.Cleanup(func() {
+		log.SetOutput(origLog)
+		slog.SetDefault(origSlog)
+	})
+}
 
 // benchBus discards all publishes to avoid unbounded slice growth in benchmarks.
 type benchBus struct{}
@@ -17,6 +46,7 @@ func (b *benchBus) Subscribe(string, string, func(*pb.BusPacket) error) error { 
 // BenchmarkHandlePacket exercises the full HandlePacket -> processJob path:
 // safety check, strategy pick, bus publish, and state transitions.
 func BenchmarkHandlePacket(b *testing.B) {
+	silenceLogs(b)
 	registry := NewMemoryRegistry()
 	defer registry.Close()
 
@@ -44,6 +74,7 @@ func BenchmarkHandlePacket(b *testing.B) {
 
 // BenchmarkHandleHeartbeat measures the cost of heartbeat processing through HandlePacket.
 func BenchmarkHandleHeartbeat(b *testing.B) {
+	silenceLogs(b)
 	registry := NewMemoryRegistry()
 	defer registry.Close()
 
@@ -73,6 +104,7 @@ func BenchmarkHandleHeartbeat(b *testing.B) {
 // BenchmarkHandlePacketWithLeastLoaded uses the LeastLoadedStrategy with workers registered
 // in the registry to exercise the pool-based selection path.
 func BenchmarkHandlePacketWithLeastLoaded(b *testing.B) {
+	silenceLogs(b)
 	registry := NewMemoryRegistry()
 	defer registry.Close()
 

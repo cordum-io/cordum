@@ -836,6 +836,51 @@ func TestRedisJobStoreIdempotencyKeyScopedConcurrent(t *testing.T) {
 	}
 }
 
+func TestRedisJobStoreIncrAttempts(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-incr"
+
+	// Increment from 0 to 3.
+	for i := 1; i <= 3; i++ {
+		if err := store.IncrAttempts(ctx, jobID); err != nil {
+			t.Fatalf("incr attempts #%d: %v", i, err)
+		}
+		got, err := store.GetAttempts(ctx, jobID)
+		if err != nil {
+			t.Fatalf("get attempts after incr #%d: %v", i, err)
+		}
+		if got != i {
+			t.Fatalf("expected %d attempts after incr #%d, got %d", i, i, got)
+		}
+	}
+}
+
+func TestRedisJobStoreIncrAttemptsEmptyID(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.IncrAttempts(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty jobID")
+	}
+}
+
 func TestActorTypeString(t *testing.T) {
 	if got := actorTypeString(pb.ActorType_ACTOR_TYPE_HUMAN); got != "human" {
 		t.Fatalf("unexpected actor type: %s", got)

@@ -11,6 +11,8 @@ import { ProgressBar } from "../components/ProgressBar";
 import { MaintenanceModeSection } from "../components/settings/MaintenanceModeSection";
 import { cn } from "../lib/utils";
 import type { GeneralConfig } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
+import { RequireRole } from "../components/RequireRole";
 
 // ---------------------------------------------------------------------------
 // Form schema
@@ -126,6 +128,7 @@ function SectionHeader({
 // ---------------------------------------------------------------------------
 
 export default function SettingsConfigPage() {
+  usePageTitle("Settings - Configuration");
   const { data: config, isLoading } = useGeneralConfig();
   const saveConfig = useSetGeneralConfig();
 
@@ -380,33 +383,35 @@ export default function SettingsConfigPage() {
       </Card>
 
       {/* Unsaved changes bar */}
-      {isDirty && (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface px-6 py-3 shadow-lift">
-          <div className="mx-auto flex max-w-4xl items-center justify-between">
-            <p className="text-sm font-medium text-warning">You have unsaved changes</p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                onClick={() => config && reset(toFormValues(config))}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                Discard
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                type="submit"
-                disabled={saveConfig.isPending}
-              >
-                <Save className="h-3.5 w-3.5" />
-                {saveConfig.isPending ? "Saving..." : "Save Changes"}
-              </Button>
+      <RequireRole roles={["admin"]}>
+        {isDirty && (
+          <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface px-6 py-3 shadow-lift">
+            <div className="mx-auto flex max-w-4xl items-center justify-between">
+              <p className="text-sm font-medium text-warning">You have unsaved changes</p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  onClick={() => config && reset(toFormValues(config))}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Discard
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  type="submit"
+                  disabled={saveConfig.isPending}
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {saveConfig.isPending ? "Saving..." : "Save Changes"}
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </RequireRole>
 
       {/* Success/error feedback */}
       {saveConfig.isSuccess && !isDirty && (

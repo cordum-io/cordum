@@ -5,10 +5,12 @@ import { PolicySimulator } from "../components/policy/PolicySimulator";
 import { PolicyReplay } from "../components/policy/PolicyReplay";
 import { BatchSimulator } from "../components/policy/BatchSimulator";
 import { cn } from "../lib/utils";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 type SimTab = "single" | "batch";
 
 export default function PoliciesSimulatorPage() {
+  usePageTitle("Policies - Simulator");
   const { bundleId } = usePolicyBundleContext();
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<SimTab>("single");

@@ -80,6 +80,23 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	isAdmin := s.requireRole(r, "admin") == nil
+
+	natsInfo := map[string]any{
+		"connected": natsConnected,
+		"status":    natsStatus,
+	}
+	if isAdmin {
+		natsInfo["url"] = natsURL
+	}
+
+	redisInfo := map[string]any{
+		"ok": redisOK,
+	}
+	if isAdmin && redisErr != "" {
+		redisInfo["error"] = redisErr
+	}
+
 	resp := map[string]any{
 		"time":           now.Format(time.RFC3339),
 		"uptime_seconds": uptimeSeconds,
@@ -88,15 +105,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"commit":  buildinfo.Commit,
 			"date":    buildinfo.Date,
 		},
-		"nats": map[string]any{
-			"connected": natsConnected,
-			"status":    natsStatus,
-			"url":       natsURL,
-		},
-		"redis": map[string]any{
-			"ok":    redisOK,
-			"error": redisErr,
-		},
+		"nats":    natsInfo,
+		"redis":   redisInfo,
 		"workers": map[string]any{
 			"count": workersCount,
 		},
@@ -166,7 +176,8 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		jobs, err = s.jobStore.ListRecentJobs(r.Context(), limit)
 	}
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "job list failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list jobs")
 		return
 	}
 	// client-side filter to avoid changing store signature
@@ -392,7 +403,8 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 	}
 	decisions, err := s.jobStore.ListSafetyDecisions(r.Context(), id, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "job decisions list failed", "error", err, "job_id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list decisions")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -450,6 +462,26 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 		logging.Info("api-gateway", "memory read", "tenant", auth.Tenant, "principal", auth.PrincipalID, "key", key, "ptr", ptr)
 	} else {
 		logging.Info("api-gateway", "memory read", "tenant", "", "principal", "", "key", key, "ptr", ptr)
+	}
+
+	// Tenant isolation: for ctx:{id} and res:{id} keys, extract the job ID
+	// and verify the requesting user has access to the job's tenant.
+	if (strings.HasPrefix(key, "ctx:") || strings.HasPrefix(key, "res:")) && s.jobStore != nil {
+		var jobID string
+		if strings.HasPrefix(key, "ctx:") {
+			jobID = strings.TrimPrefix(key, "ctx:")
+		} else {
+			jobID = strings.TrimPrefix(key, "res:")
+		}
+		if jobID != "" {
+			jobTenant, _ := s.jobStore.GetTenant(r.Context(), jobID)
+			if jobTenant != "" {
+				if err := s.requireTenantAccess(r, jobTenant); err != nil {
+					writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+					return
+				}
+			}
+		}
 	}
 
 	var (
@@ -575,7 +607,8 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "memory read failed", "error", err, "key", key)
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -675,7 +708,8 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	ptr, err := s.artifactStore.Put(r.Context(), content, meta)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "artifact put failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to store artifact")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -701,7 +735,8 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "artifact not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "artifact get failed", "error", err, "ptr", ptr)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to retrieve artifact")
 		return
 	}
 	maxBytes := artifactMaxBytesLimit(r)
@@ -762,7 +797,8 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "job not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, fmt.Sprintf("failed to cancel job: %v", err))
+		logging.Error("api-gateway", "job cancel failed", "error", err, "job_id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to cancel job")
 		return
 	}
 	if state == "" {
@@ -1261,7 +1297,8 @@ func (s *server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
 
 	jobs, err := s.jobStore.GetTraceJobs(r.Context(), id)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "trace jobs lookup failed", "error", err, "trace_id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to load trace")
 		return
 	}
 	filtered := make([]scheduler.JobRecord, 0, len(jobs))

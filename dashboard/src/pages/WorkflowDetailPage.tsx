@@ -15,6 +15,7 @@ import {
   useStartRun,
   useDeleteWorkflow,
 } from "../hooks/useWorkflows";
+import { RequireRole } from "../components/RequireRole";
 import { useRunStream } from "../hooks/useRunStream";
 import { RunDAG, NodeDetailPanel } from "../components/workflows/dag";
 import { RunStatusBadge } from "../components/StatusBadge";
@@ -24,6 +25,7 @@ import { Card } from "../components/ui/Card";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { cn } from "../lib/utils";
 import type { WorkflowRun, WorkflowStep } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,6 +106,7 @@ function StepsMiniBar({ steps }: { steps: WorkflowStep[] }) {
 
 export default function WorkflowDetailPage() {
   const { id, runId: urlRunId } = useParams<{ id: string; runId?: string }>();
+  usePageTitle(id ? `Workflow ${id.slice(0, 8)}` : "Workflow");
   const navigate = useNavigate();
 
   // Data
@@ -245,6 +248,7 @@ export default function WorkflowDetailPage() {
             <Code className="h-4 w-4" />
             {showDefinition ? "Hide Definition" : "Edit Definition"}
           </Button>
+          <RequireRole roles={["admin"]}>
           <Button
             variant="ghost"
             className="text-danger hover:bg-danger/10"
@@ -253,6 +257,7 @@ export default function WorkflowDetailPage() {
           >
             <Trash2 className="h-4 w-4" />
           </Button>
+          </RequireRole>
         </div>
       </div>
 

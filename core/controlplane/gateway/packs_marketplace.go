@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -186,7 +188,7 @@ type marketplaceInstallRequest struct {
 
 func (s *server) handleMarketplacePacks(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, "config service unavailable")
+		writeErrorJSON(w, http.StatusServiceUnavailable, "marketplace operation failed")
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
@@ -195,7 +197,8 @@ func (s *server) handleMarketplacePacks(w http.ResponseWriter, r *http.Request) 
 	}
 	resp, err := s.marketplaceSnapshot(r.Context(), false)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("marketplace snapshot failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "marketplace operation failed")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -204,11 +207,11 @@ func (s *server) handleMarketplacePacks(w http.ResponseWriter, r *http.Request) 
 
 func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil || s.schemaRegistry == nil || s.workflowStore == nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, "pack dependencies unavailable")
+		writeErrorJSON(w, http.StatusServiceUnavailable, "marketplace operation failed")
 		return
 	}
 	if s.lockStore == nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, "lock store unavailable")
+		writeErrorJSON(w, http.StatusServiceUnavailable, "marketplace operation failed")
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
@@ -222,7 +225,8 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	}
 	allowedHosts, err := s.marketplaceAllowedHosts(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("marketplace allowed hosts lookup failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "marketplace operation failed")
 		return
 	}
 	installURL := strings.TrimSpace(req.URL)
@@ -235,11 +239,12 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		}
 		entry, err := s.findMarketplaceEntryByURL(r.Context(), installURL)
 		if err != nil {
-			status := http.StatusBadRequest
 			if errors.Is(err, errMarketplaceNotFound) {
-				status = http.StatusNotFound
+				writeErrorJSON(w, http.StatusNotFound, "marketplace pack not found")
+			} else {
+				slog.Error("marketplace entry lookup failed", "error", err, "url", installURL)
+				writeErrorJSON(w, http.StatusBadRequest, "marketplace lookup failed")
 			}
-			writeErrorJSON(w, status, err.Error())
 			return
 		}
 		entryURL := strings.TrimSpace(entry.Pack.URL)
@@ -264,11 +269,12 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		}
 		entry, err := s.findMarketplaceEntry(r.Context(), catalogID, packID, strings.TrimSpace(req.Version))
 		if err != nil {
-			status := http.StatusBadRequest
 			if errors.Is(err, errMarketplaceNotFound) {
-				status = http.StatusNotFound
+				writeErrorJSON(w, http.StatusNotFound, "marketplace pack not found")
+			} else {
+				slog.Error("marketplace entry lookup failed", "error", err, "catalog_id", catalogID, "pack_id", packID)
+				writeErrorJSON(w, http.StatusBadRequest, "marketplace lookup failed")
 			}
-			writeErrorJSON(w, status, err.Error())
 			return
 		}
 		installURL = resolvePackURL(strings.TrimSpace(entry.Pack.URL), entry.CatalogURL)
@@ -284,18 +290,20 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if fromCatalog {
-		if host := hostFromURL(installURL); host != "" {
+		if host := hostFromURL(installURL); host != "" && !isPrivateIP(host) {
 			allowedHosts[host] = struct{}{}
 		}
 	}
 	parsed, err := validateMarketplaceURL(installURL, allowedHosts)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		slog.Error("marketplace url validation failed", "error", err, "url", installURL)
+		writeErrorJSON(w, http.StatusBadRequest, "invalid pack url")
 		return
 	}
 	packFile, digest, cleanup, err := downloadPackBundle(r.Context(), parsed, allowedHosts)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		slog.Error("pack download failed", "error", err)
+		writeErrorJSON(w, http.StatusBadRequest, "pack download failed")
 		return
 	}
 	defer cleanup()
@@ -306,13 +314,15 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	// #nosec G304 -- packFile is a temp file path created by this process.
 	fp, err := os.Open(packFile)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		slog.Error("pack file open failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "pack processing failed")
 		return
 	}
 	bundleDir, cleanupDir, err := loadPackBundleFromReader(fp)
 	_ = fp.Close()
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		slog.Error("pack bundle load failed", "error", err)
+		writeErrorJSON(w, http.StatusBadRequest, "invalid pack bundle")
 		return
 	}
 	defer cleanupDir()
@@ -325,12 +335,13 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		InstalledBy: strings.TrimSpace(policyActorID(r)),
 	})
 	if err != nil {
-		status := http.StatusBadRequest
 		var installErr *packInstallError
 		if errors.As(err, &installErr) {
-			status = installErr.Status
+			writeErrorJSON(w, installErr.Status, installErr.Error())
+		} else {
+			slog.Error("pack install failed", "error", err)
+			writeErrorJSON(w, http.StatusInternalServerError, "pack installation failed")
 		}
-		writeErrorJSON(w, status, err.Error())
 		return
 	}
 
@@ -401,7 +412,8 @@ func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatal
 		}
 		catalogFile, err := fetchMarketplaceCatalog(ctx, status.URL)
 		if err != nil {
-			status.Error = err.Error()
+			slog.Error("marketplace catalog fetch failed", "catalog_id", id, "url", status.URL, "error", err)
+			status.Error = "catalog fetch failed"
 			statuses = append(statuses, status)
 			continue
 		}
@@ -421,7 +433,7 @@ func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatal
 
 func (s *server) loadPackCatalogs(ctx context.Context) ([]marketplaceCatalog, error) {
 	if s.configSvc == nil {
-		return nil, errors.New("config service unavailable")
+		return nil, errors.New("marketplace configuration unavailable")
 	}
 	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packCatalogScope), packCatalogID)
 	if err != nil {
@@ -719,6 +731,63 @@ func resolvePackURL(packURL, catalogURL string) string {
 	return base.ResolveReference(parsed).String()
 }
 
+// privateIPNets are RFC 1918 / RFC 4193 / link-local / loopback ranges.
+var privateIPNets = func() []*net.IPNet {
+	cidrs := []string{
+		"127.0.0.0/8",    // IPv4 loopback
+		"10.0.0.0/8",     // RFC 1918
+		"172.16.0.0/12",  // RFC 1918
+		"192.168.0.0/16", // RFC 1918
+		"169.254.0.0/16", // link-local / AWS metadata
+		"::1/128",        // IPv6 loopback
+		"fe80::/10",      // IPv6 link-local
+		"fc00::/7",       // IPv6 unique-local (RFC 4193)
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			panic("bad private CIDR: " + cidr)
+		}
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
+// privateHostnames are hostnames that always resolve to private/internal addresses.
+var privateHostnames = map[string]bool{
+	"localhost":                true,
+	"metadata.google.internal": true,
+}
+
+// skipPrivateIPCheck disables SSRF protection. Only set in tests.
+var skipPrivateIPCheck bool
+
+// isPrivateIP returns true if host is a private/loopback/link-local IP address
+// or a well-known hostname that resolves to one.
+func isPrivateIP(host string) bool {
+	if skipPrivateIPCheck {
+		return false
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	if privateHostnames[host] {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range privateIPNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*url.URL, error) {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
@@ -733,7 +802,7 @@ func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*u
 		// ok
 	case "http":
 		if env.IsProduction() && !env.Bool(envMarketplaceAllowHTTP) {
-			return nil, fmt.Errorf("http marketplace urls not allowed in production")
+			return nil, fmt.Errorf("http scheme not allowed")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
@@ -742,12 +811,19 @@ func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*u
 	if host == "" {
 		return nil, errors.New("url host required")
 	}
+	// SECURITY: Block SSRF — reject private/loopback/link-local addresses
+	// regardless of allowlist contents.
+	if isPrivateIP(host) {
+		slog.Warn("marketplace URL blocked: private address", "host", host)
+		return nil, errors.New("invalid pack url")
+	}
 	if allowedHosts != nil {
 		if len(allowedHosts) == 0 {
-			return nil, errors.New("marketplace host allowlist is empty")
+			return nil, errors.New("invalid pack url")
 		}
 		if _, ok := allowedHosts[host]; !ok {
-			return nil, fmt.Errorf("url host %q not allowed", host)
+			slog.Warn("marketplace URL blocked: host not in allowlist", "host", host)
+			return nil, errors.New("invalid pack url")
 		}
 	}
 	return parsed, nil
@@ -772,7 +848,7 @@ func marketplaceHTTPClient(allowedHosts map[string]struct{}, initialHost string)
 			}
 			if initialHost != "" {
 				if host := strings.ToLower(req.URL.Hostname()); host != "" && host != initialHost {
-					return fmt.Errorf("redirect host %q not allowed", host)
+					return errors.New("redirect not allowed")
 				}
 			}
 			if _, err := validateMarketplaceURL(req.URL.String(), allowedHosts); err != nil {
@@ -814,7 +890,11 @@ func (s *server) marketplaceAllowedHosts(ctx context.Context) (map[string]struct
 			catalogURL = defaultPackCatalogURL
 		}
 		if host := hostFromURL(catalogURL); host != "" {
-			hosts[host] = struct{}{}
+			if isPrivateIP(host) {
+				slog.WarnContext(ctx, "skipping default catalog with private IP", "host", host)
+			} else {
+				hosts[host] = struct{}{}
+			}
 		}
 		return hosts, nil
 	}
@@ -827,6 +907,10 @@ func (s *server) marketplaceAllowedHosts(ctx context.Context) (map[string]struct
 			continue
 		}
 		if host := hostFromURL(catalog.URL); host != "" {
+			if isPrivateIP(host) {
+				slog.WarnContext(ctx, "skipping catalog with private IP", "host", host, "url", catalog.URL)
+				continue
+			}
 			hosts[host] = struct{}{}
 		}
 	}

@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Download } from "lucide-react";
 import { useApprovalHistory } from "../../hooks/useApprovals";
 import { Badge } from "../ui/Badge";
@@ -173,7 +173,20 @@ export function ApprovalHistory() {
   const [search, setSearch] = useState("");
   const [actorFilter, setActorFilter] = useState("");
   const [workflowFilter, setWorkflowFilter] = useState("");
-  const [page, setPage] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(0, parseInt(searchParams.get("page") ?? "0", 10) || 0);
+  const setPage = useCallback(
+    (updater: number | ((prev: number) => number)) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        const newPage = typeof updater === "function" ? updater(page) : updater;
+        if (newPage > 0) next.set("page", String(newPage));
+        else next.delete("page");
+        return next;
+      }, { replace: true });
+    },
+    [page, setSearchParams],
+  );
 
   const { data, isLoading, isError } = useApprovalHistory();
   const allItems = data?.items ?? [];
@@ -225,7 +238,7 @@ export function ApprovalHistory() {
     setActorFilter("");
     setWorkflowFilter("");
     setPage(0);
-  }, []);
+  }, [setPage]);
 
   return (
     <div className="space-y-4">

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { logger } from "../lib/logger";
+import { broadcastSync } from "../hooks/useCrossTabSync";
 import type { User } from "../api/types";
 
 // ---------------------------------------------------------------------------
@@ -8,6 +9,7 @@ import type { User } from "../api/types";
 
 const TOKEN_KEY = "cordum-api-key";
 const USER_KEY = "cordum-user";
+const LOGIN_TS_KEY = "cordum-login-ts";
 
 function loadToken(): string {
   if (typeof window !== "undefined") {
@@ -50,6 +52,24 @@ function persistUser(user: User | null): void {
   }
 }
 
+function loadLoginTimestamp(): number | null {
+  if (typeof window !== "undefined") {
+    const raw = window.localStorage.getItem(LOGIN_TS_KEY);
+    if (raw) return Number(raw) || null;
+  }
+  return null;
+}
+
+function persistLoginTimestamp(ts: number | null): void {
+  if (typeof window !== "undefined") {
+    if (ts) {
+      window.localStorage.setItem(LOGIN_TS_KEY, String(ts));
+    } else {
+      window.localStorage.removeItem(LOGIN_TS_KEY);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -79,11 +99,13 @@ interface ConfigState {
   // Auth
   user: User | null;
   isAuthenticated: boolean;
+  loginTimestamp: number | null;
 
   // Actions
   update: (patch: ConfigPatch) => void;
   login: (token: string, user: User) => void;
   logout: () => void;
+  refreshLoginTimestamp: () => void;
 }
 
 export const useConfigStore = create<ConfigState>((set) => {
@@ -98,6 +120,7 @@ export const useConfigStore = create<ConfigState>((set) => {
     approvalSlaMs: 900_000, // 15 minutes default
     user: savedUser,
     isAuthenticated: !!loadToken(),
+    loginTimestamp: loadLoginTimestamp(),
 
     update: (patch) =>
       set((s) => {
@@ -110,30 +133,43 @@ export const useConfigStore = create<ConfigState>((set) => {
 
     login: (token, user) => {
       logger.info("config-store", "Login", { userId: user.id, tenant: user.tenant });
+      const now = Date.now();
       persistToken(token);
       persistUser(user);
+      persistLoginTimestamp(now);
       set({
         apiKey: token,
         user,
         isAuthenticated: true,
+        loginTimestamp: now,
         tenantId: user.tenant ?? "",
         principalId: user.id ?? "",
         principalRole: user.roles?.[0] ?? "",
       });
+      broadcastSync({ type: "auth-login" });
     },
 
     logout: () => {
       logger.info("config-store", "Logout");
       persistToken("");
       persistUser(null);
+      persistLoginTimestamp(null);
       set({
         apiKey: "",
         user: null,
         isAuthenticated: false,
+        loginTimestamp: null,
         tenantId: "",
         principalId: "",
         principalRole: "",
       });
+      broadcastSync({ type: "auth-logout" });
+    },
+
+    refreshLoginTimestamp: () => {
+      const now = Date.now();
+      persistLoginTimestamp(now);
+      set({ loginTimestamp: now });
     },
   };
 });

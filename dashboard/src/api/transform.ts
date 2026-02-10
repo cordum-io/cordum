@@ -165,6 +165,7 @@ export interface BackendApprovalItem {
   resolved_at?: number;
   resolved_by?: string;
   resolved_comment?: string;
+  constraints?: Record<string, unknown>;
   workflow_id?: string;
   workflow_run_id?: string;
   step_index?: number;
@@ -801,6 +802,7 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     approvalRef: item.approval_ref,
     tenant: job.tenant,
     contextPtr: item.context_ptr,
+    constraints: item.constraints,
   };
 }
 

@@ -34,6 +34,14 @@ func (f *fakeConfigProvider) Effective(ctx context.Context, orgID, teamID, workf
 	return f.cfg, nil
 }
 
+type errStrategy struct {
+	err error
+}
+
+func (s *errStrategy) PickSubject(_ *pb.JobRequest, _ map[string]*pb.Heartbeat) (string, error) {
+	return "", s.err
+}
+
 type fakeJobStore struct {
 	states         map[string]JobState
 	ptrs           map[string]string
@@ -193,6 +201,11 @@ func (s *fakeJobStore) GetFailureReason(_ context.Context, jobID string) (string
 	return s.failureReasons[jobID], nil
 }
 
+func (s *fakeJobStore) IncrAttempts(_ context.Context, jobID string) error {
+	s.attempts[jobID]++
+	return nil
+}
+
 func (s *fakeJobStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
 	state := s.states[jobID]
 	if terminalStates[state] {
@@ -277,6 +290,32 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 	if msg.packet.TraceId != "trace-123" {
 		t.Fatalf("expected trace_id trace-123, got %s", msg.packet.TraceId)
 	}
+}
+
+func TestHandleJobRequestNoWorkersDefersRetry(t *testing.T) {
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	jobStore := newFakeJobStore()
+	strategy := &errStrategy{err: ErrNoWorkers}
+	engine := NewEngine(bus, NewSafetyBasic(), registry, strategy, jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-1",
+		Topic: "job.default",
+	}
+
+	if err := engine.handleJobRequest(req, "trace-1"); err != nil {
+		t.Fatalf("handle job request: %v", err)
+	}
+
+	if state := jobStore.states["job-1"]; state != JobStatePending {
+		t.Fatalf("expected job state PENDING, got %s", state)
+	}
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no publish, got %d", len(bus.published))
+	}
+
+	engine.Stop()
 }
 
 func TestCancelJobPublishesOnlyCancelSubject(t *testing.T) {
@@ -650,5 +689,98 @@ func TestStopWaitsForInflightHandlers(t *testing.T) {
 	state := jobStore.states["job-drain"]
 	if state == "" || state == JobStatePending {
 		t.Logf("job state: %q (handler may have been cancelled by Stop, which is acceptable)", state)
+	}
+}
+
+func TestProcessJobMaxSchedulingRetriesFailsToDLQ(t *testing.T) {
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	jobStore := newFakeJobStore()
+	// Pre-set attempts at the max threshold so processJob gives up immediately.
+	jobStore.attempts["job-stuck"] = maxSchedulingRetries
+	strategy := &errStrategy{err: ErrNoWorkers}
+	engine := NewEngine(bus, NewSafetyBasic(), registry, strategy, jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-stuck",
+		Topic: "job.default",
+	}
+
+	if err := engine.processJob(req, "trace-stuck"); err != nil {
+		t.Fatalf("expected nil (job failed to DLQ), got: %v", err)
+	}
+
+	// Job must be in FAILED state.
+	if state := jobStore.states["job-stuck"]; state != JobStateFailed {
+		t.Fatalf("expected FAILED state, got %s", state)
+	}
+
+	// A DLQ message must have been published.
+	if len(bus.published) != 1 {
+		t.Fatalf("expected 1 DLQ publish, got %d", len(bus.published))
+	}
+	if bus.published[0].subject != capsdk.SubjectDLQ {
+		t.Fatalf("expected DLQ subject, got %s", bus.published[0].subject)
+	}
+	result := bus.published[0].packet.GetJobResult()
+	if result == nil || result.GetErrorCode() != "max_scheduling_retries" {
+		t.Fatalf("expected error code max_scheduling_retries, got %v", result)
+	}
+}
+
+func TestProcessJobBelowMaxRetriesStillRetries(t *testing.T) {
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	jobStore := newFakeJobStore()
+	// Set attempts below max — should still retry, not fail.
+	jobStore.attempts["job-retry"] = maxSchedulingRetries - 1
+	strategy := &errStrategy{err: ErrNoWorkers}
+	engine := NewEngine(bus, NewSafetyBasic(), registry, strategy, jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-retry",
+		Topic: "job.default",
+	}
+
+	err := engine.processJob(req, "trace-retry")
+	if err == nil {
+		t.Fatal("expected retryable error, got nil")
+	}
+	// Must be a RetryAfter error.
+	if _, ok := err.(*retryableError); !ok {
+		t.Fatalf("expected retryableError, got %T", err)
+	}
+
+	// Job must NOT be in FAILED state.
+	if state := jobStore.states["job-retry"]; state == JobStateFailed {
+		t.Fatal("job should not be FAILED when below maxSchedulingRetries")
+	}
+
+	// IncrAttempts should have been called.
+	if jobStore.attempts["job-retry"] != maxSchedulingRetries {
+		t.Fatalf("expected attempts to be incremented to %d, got %d", maxSchedulingRetries, jobStore.attempts["job-retry"])
+	}
+}
+
+func TestProcessJobIncrAttemptsNotCalledOnSuccess(t *testing.T) {
+	bus := &fakeBus{}
+	registry := NewMemoryRegistry()
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, &NaiveStrategy{}, jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-ok",
+		Topic: "job.default",
+	}
+
+	if err := engine.processJob(req, "trace-ok"); err != nil {
+		t.Fatalf("process job: %v", err)
+	}
+
+	// Attempts should only be incremented by SetState(SCHEDULED), not by IncrAttempts.
+	// The fakeJobStore.SetState increments on SCHEDULED, so attempts = 1.
+	// IncrAttempts should NOT have been called (no scheduling error).
+	if jobStore.attempts["job-ok"] != 1 {
+		t.Fatalf("expected attempts=1 (from SetState SCHEDULED only), got %d", jobStore.attempts["job-ok"])
 	}
 }

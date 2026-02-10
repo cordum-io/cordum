@@ -105,6 +105,7 @@ type server struct {
 	safetyConn     *grpc.ClientConn
 	safetyClient   pb.SafetyKernelClient
 	userStore      UserStore
+	keyStore       KeyStore
 
 	marketplaceMu    sync.Mutex
 	marketplaceCache marketplaceCache
@@ -118,6 +119,11 @@ type server struct {
 func (s *server) Close() {
 	if s.userStore != nil {
 		s.userStore.Close()
+	}
+	if s.keyStore != nil {
+		if ks, ok := s.keyStore.(*RedisKeyStore); ok {
+			_ = ks.Close()
+		}
 	}
 }
 
@@ -142,6 +148,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 
 	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
 	var userStore UserStore
+	var keyStore KeyStore
 	if provider == nil {
 		basic, err := newBasicAuthProvider(tenantID)
 		if err != nil {
@@ -157,6 +164,14 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 			}
 			userStore = us
 			basic.SetUserStore(us)
+
+			// Initialize managed API key store
+			ks, err := NewRedisKeyStore(cfg.RedisURL)
+			if err != nil {
+				return fmt.Errorf("init key store: %w", err)
+			}
+			keyStore = ks
+			basic.SetKeyStore(ks)
 
 			if strings.TrimSpace(os.Getenv("CORDUM_ADMIN_PASSWORD")) == "" {
 				return fmt.Errorf("CORDUM_USER_AUTH_ENABLED is set but CORDUM_ADMIN_PASSWORD is empty; set CORDUM_ADMIN_PASSWORD to configure the admin account")
@@ -268,6 +283,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		safetyConn:     safetyConn,
 		safetyClient:   safetyClient,
 		userStore:      userStore,
+		keyStore:       keyStore,
 		shutdownCh:     make(chan struct{}),
 	}
 	defer s.Close()
@@ -367,6 +383,15 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 1.7 User management (admin only)
 	mux.HandleFunc("POST /api/v1/users", s.instrumented("/api/v1/users", s.handleCreateUser))
+	mux.HandleFunc("GET /api/v1/users", s.instrumented("/api/v1/users", s.handleListUsers))
+	mux.HandleFunc("PUT /api/v1/users/{id}", s.instrumented("/api/v1/users/{id}", s.handleUpdateUser))
+	mux.HandleFunc("DELETE /api/v1/users/{id}", s.instrumented("/api/v1/users/{id}", s.handleDeleteUser))
+	mux.HandleFunc("POST /api/v1/users/{id}/password", s.instrumented("/api/v1/users/{id}/password", s.handleChangeUserPassword))
+
+	// 1.8 API Key management (admin only)
+	mux.HandleFunc("GET /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleListKeys))
+	mux.HandleFunc("POST /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleCreateKey))
+	mux.HandleFunc("DELETE /api/v1/auth/keys/{id}", s.instrumented("/api/v1/auth/keys/{id}", s.handleRevokeKey))
 
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))

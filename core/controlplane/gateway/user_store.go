@@ -11,6 +11,7 @@ type User struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
 	Email        string    `json:"email,omitempty"`
+	DisplayName  string    `json:"display_name,omitempty"`
 	PasswordHash string    `json:"-"` // Never exposed in JSON
 	Tenant       string    `json:"tenant"`
 	Role         string    `json:"role"`
@@ -32,6 +33,15 @@ type UserStore interface {
 
 	// Create creates a new user with the given password.
 	Create(ctx context.Context, user *User, password string) error
+
+	// List returns all users for a tenant.
+	List(ctx context.Context, tenant string) ([]*User, error)
+
+	// Update updates a user's mutable fields (email, display name, role).
+	Update(ctx context.Context, user *User) error
+
+	// Delete soft-deletes a user by setting Disabled=true.
+	Delete(ctx context.Context, id string) error
 
 	// UpdatePassword updates a user's password.
 	UpdatePassword(ctx context.Context, userID, newPassword string) error

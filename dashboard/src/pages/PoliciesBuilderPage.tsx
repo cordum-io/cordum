@@ -3,10 +3,12 @@ import { usePolicyBundleContext } from "../components/policy/PolicyBundleContext
 import { PolicyYamlEditor } from "../components/policy/PolicyYamlEditor";
 import { VisualRuleBuilder } from "../components/policy/VisualRuleBuilder";
 import { cn } from "../lib/utils";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 type BuilderTab = "visual" | "yaml";
 
 export default function PoliciesBuilderPage() {
+  usePageTitle("Policies - Builder");
   const { bundleId } = usePolicyBundleContext();
   const [tab, setTab] = useState<BuilderTab>("visual");
 

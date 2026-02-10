@@ -120,7 +120,8 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		wfDef.Steps[id] = &s
 	}
 	if err := s.workflowStore.SaveWorkflow(r.Context(), wfDef); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "workflow save failed", "error", err, "id", wfDef.ID)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to save workflow")
 		return
 	}
 	s.appendAuditEntry(r.Context(), "create", "workflow", wfDef.ID, policyActorID(r), policyRole(r), "create workflow "+wfDef.ID)
@@ -177,7 +178,8 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "workflow delete failed", "error", err, "id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete workflow")
 		return
 	}
 	s.appendAuditEntry(r.Context(), "delete", "workflow", id, policyActorID(r), policyRole(r), "delete workflow "+id)
@@ -196,7 +198,8 @@ func (s *server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.workflowStore.ListWorkflows(r.Context(), orgID, 100)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "workflow list failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list workflows")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -231,7 +234,8 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "workflow not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "workflow get failed", "error", err, "id", wfID)
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if wfDef != nil {
@@ -340,7 +344,8 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		if reservedKey && idempotencyKey != "" {
 			_ = s.workflowStore.DeleteRunIdempotencyKey(r.Context(), idempotencyKey)
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run create failed", "error", err, "run_id", runID)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to create run")
 		return
 	}
 	// Kick off execution
@@ -408,7 +413,8 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	}
 	newID, err := s.workflowEng.RerunFrom(r.Context(), runID, strings.TrimSpace(req.FromStep), req.DryRun)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		logging.Error("api-gateway", "run rerun failed", "error", err, "run_id", runID)
+		writeErrorJSON(w, http.StatusBadRequest, "rerun failed")
 		return
 	}
 	newRun, err := s.workflowStore.GetRun(r.Context(), newID)
@@ -453,7 +459,8 @@ func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	runs, err := s.workflowStore.ListRunsByWorkflow(r.Context(), wfID, 100)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run list failed", "error", err, "workflow_id", wfID)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list runs")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -507,7 +514,8 @@ func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
 
 	runs, err := s.workflowStore.ListRuns(r.Context(), cursor, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run list all failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list runs")
 		return
 	}
 	filtered := make([]*wf.WorkflowRun, 0, len(runs))
@@ -607,7 +615,8 @@ func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	events, err := s.workflowStore.ListTimelineEvents(r.Context(), id, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run timeline failed", "error", err, "run_id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to load timeline")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -639,7 +648,8 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run delete failed", "error", err, "run_id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete run")
 		return
 	}
 	s.appendAuditEntry(r.Context(), "delete", "run", id, policyActorID(r), policyRole(r), "delete run "+id)

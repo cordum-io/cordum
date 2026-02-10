@@ -10,6 +10,7 @@ import { JobStatusBadge } from "../components/StatusBadge";
 import { JobStateMachine } from "../components/jobs/JobStateMachine";
 import { SafetyExplainCard } from "../components/jobs/SafetyExplainCard";
 import { JobActions } from "../components/jobs/JobActions";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Memory payload hook
@@ -135,6 +136,7 @@ function PayloadSection({
 
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
+  usePageTitle(id ? `Job ${id.slice(0, 8)}` : "Job");
   const { data: job, isLoading, isError } = useJob(id ?? "");
   const { data: decisions } = useJobDecisions(id ?? "");
 

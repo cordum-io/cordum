@@ -7,6 +7,7 @@ import { useAuthConfig } from "../hooks/useAuthConfig";
 import { useConfigStore } from "../state/config";
 import { post } from "../api/client";
 import type { User } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 interface LoginResponse {
   token: string;
@@ -14,6 +15,7 @@ interface LoginResponse {
 }
 
 export default function LoginPage() {
+  usePageTitle("Sign In");
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get("returnUrl") || "/";

@@ -350,6 +350,7 @@ export interface Approval {
   approvalRef?: string;
   tenant?: string;
   contextPtr?: string;
+  constraints?: Record<string, unknown>;
 }
 
 export interface ApprovalHistoryEntry {

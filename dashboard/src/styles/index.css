@@ -203,6 +203,21 @@ body::before {
   animation: scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+@keyframes slide-out-right {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+.animate-slide-out {
+  animation: slide-out-right 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Smooth transitions */
 .transition-smooth {
   transition-property: all;

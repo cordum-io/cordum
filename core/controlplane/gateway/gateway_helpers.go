@@ -569,13 +569,14 @@ func rateLimitMiddleware(next http.Handler) http.Handler {
 }
 
 func rateLimitKey(r *http.Request) string {
-	if tenant := strings.TrimSpace(tenantFromRequest(r)); tenant != "" {
-		return "tenant:" + tenant
-	}
+	// SECURITY: Use client IP only. The rate limiter runs BEFORE auth, so the
+	// X-Tenant-ID header is untrusted and must not influence the bucket key.
+	// Including the tenant would let an attacker rotate headers to get fresh
+	// rate-limit buckets from the same IP.
 	if ip := clientIP(r); ip != "" {
 		return "ip:" + ip
 	}
-	return "unknown"
+	return "ip:unknown"
 }
 
 func clientIP(r *http.Request) string {
@@ -588,6 +589,27 @@ func clientIP(r *http.Request) string {
 	return strings.TrimSpace(r.RemoteAddr)
 }
 
+// maxPublicPaths is the hardcoded ceiling of paths that may be public.
+// Even if a PublicPathProvider claims a path is public, it must be in this
+// set. This prevents a buggy or malicious provider from bypassing auth on
+// sensitive endpoints.
+var maxPublicPaths = map[string]bool{
+	"/api/v1/auth/config": true,
+	"/api/v1/auth/login":  true,
+}
+
+// isAllowedPublicPath returns true only when BOTH the provider AND the
+// hardcoded ceiling agree the path is public.
+func isAllowedPublicPath(auth AuthProvider, path string) bool {
+	if !maxPublicPaths[path] {
+		return false
+	}
+	if pp, ok := auth.(PublicPathProvider); ok {
+		return pp.IsPublicPath(path)
+	}
+	return false
+}
+
 // apiKeyMiddleware enforces API key auth and injects auth context.
 func apiKeyMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 	if auth == nil {
@@ -598,7 +620,7 @@ func apiKeyMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if publicPaths, ok := auth.(PublicPathProvider); ok && publicPaths.IsPublicPath(r.URL.Path) {
+		if isAllowedPublicPath(auth, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -623,7 +645,7 @@ func tenantMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if publicPaths, ok := auth.(PublicPathProvider); ok && publicPaths.IsPublicPath(r.URL.Path) {
+		if isAllowedPublicPath(auth, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

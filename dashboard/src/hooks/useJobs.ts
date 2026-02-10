@@ -1,6 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { get, post } from "../api/client";
 import { logger } from "../lib/logger";
+import { useToastStore } from "../state/toast";
 import type { Job, JobStatus, SafetyDecision, ApiResponse } from "../api/types";
 import {
   mapJobDetail,
@@ -173,18 +174,48 @@ export function useJobDecisions(id: string) {
 
 export function useCancelJob() {
   const queryClient = useQueryClient();
-  return useMutation<void, Error, string>({
+  type CancelSnapshot = { previousList: [QueryKey, ApiResponse<Job[]> | undefined][]; previousDetail: Job | undefined; id: string };
+  return useMutation<void, Error, string, CancelSnapshot>({
     mutationFn: (id) => {
       logger.info("jobs", "Cancelling job", { id });
       return post<void>(`/jobs/${id}/cancel`);
     },
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ["jobs"] });
+      await queryClient.cancelQueries({ queryKey: ["job", id] });
+      const previousList = queryClient.getQueriesData<ApiResponse<Job[]>>({ queryKey: ["jobs"] });
+      const previousDetail = queryClient.getQueryData<Job>(["job", id]);
+      queryClient.setQueriesData<ApiResponse<Job[]>>(
+        { queryKey: ["jobs"] },
+        (old) => {
+          if (!old?.items) return old;
+          return { ...old, items: old.items.map((j) => j.id === id ? { ...j, status: "cancelled" as JobStatus } : j) };
+        },
+      );
+      queryClient.setQueryData<Job>(["job", id], (old) =>
+        old ? { ...old, status: "cancelled" as JobStatus } : old,
+      );
+      return { previousList, previousDetail, id };
+    },
     onSuccess: (_data, id) => {
       logger.info("jobs", "Job cancelled", { id });
+      useToastStore.getState().addToast({ type: "success", title: "Job cancelled" });
+    },
+    onError: (err, id, context) => {
+      if (context?.previousList) {
+        for (const [key, data] of context.previousList) {
+          queryClient.setQueryData(key, data);
+        }
+      }
+      if (context?.previousDetail) {
+        queryClient.setQueryData(["job", context.id], context.previousDetail);
+      }
+      logger.error("jobs", "Cancel job failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to cancel job", description: err.message });
+    },
+    onSettled: (_data, _err, id) => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["job", id] });
-    },
-    onError: (err, id) => {
-      logger.error("jobs", "Cancel job failed", { id, error: err.message });
     },
   });
 }
@@ -198,11 +229,13 @@ export function useRetryJob() {
     },
     onSuccess: (_data, id) => {
       logger.info("jobs", "Job retried", { id });
+      useToastStore.getState().addToast({ type: "success", title: "Retrying job" });
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["job", id] });
     },
     onError: (err, id) => {
       logger.error("jobs", "Retry job failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to retry job", description: err.message });
     },
   });
 }

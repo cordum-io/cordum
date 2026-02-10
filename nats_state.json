@@ -1,0 +1,153 @@
+{
+  "memory": 0,
+  "storage": 0,
+  "reserved_memory": 0,
+  "reserved_storage": 0,
+  "accounts": 1,
+  "ha_assets": 0,
+  "api": {
+    "total": 36,
+    "errors": 0
+  },
+  "server_id": "NDSE2JFDRLCHBUSIRIZPPXK37EDBDU3Z4PIT3VT5FFQLERM5O7S6RS7B",
+  "now": "2026-02-10T08:56:45.893156245Z",
+  "config": {
+    "max_memory": 12531151872,
+    "max_storage": 764432394240,
+    "store_dir": "/data/jetstream/jetstream",
+    "sync_interval": 1000000000
+  },
+  "streams": 2,
+  "consumers": 4,
+  "messages": 0,
+  "bytes": 0,
+  "account_details": [
+    {
+      "name": "$G",
+      "id": "$G",
+      "memory": 0,
+      "storage": 0,
+      "reserved_memory": 18446744073709551615,
+      "reserved_storage": 18446744073709551615,
+      "accounts": 0,
+      "ha_assets": 0,
+      "api": {
+        "total": 36,
+        "errors": 0
+      },
+      "stream_detail": [
+        {
+          "name": "CORDUM_JOBS",
+          "created": "2026-02-09T20:12:26.247811705Z",
+          "cluster": {
+            "leader": "NDSE2JFDRLCHBUSIRIZPPXK37EDBDU3Z4PIT3VT5FFQLERM5O7S6RS7B"
+          },
+          "state": {
+            "messages": 0,
+            "bytes": 0,
+            "first_seq": 0,
+            "first_ts": "0001-01-01T00:00:00Z",
+            "last_seq": 0,
+            "last_ts": "0001-01-01T00:00:00Z",
+            "consumer_count": 0
+          }
+        },
+        {
+          "name": "CORDUM_SYS",
+          "created": "2026-02-09T20:12:26.242204659Z",
+          "cluster": {
+            "leader": "NDSE2JFDRLCHBUSIRIZPPXK37EDBDU3Z4PIT3VT5FFQLERM5O7S6RS7B"
+          },
+          "state": {
+            "messages": 0,
+            "bytes": 0,
+            "first_seq": 0,
+            "first_ts": "0001-01-01T00:00:00Z",
+            "last_seq": 0,
+            "last_ts": "0001-01-01T00:00:00Z",
+            "consumer_count": 4
+          },
+          "consumer_detail": [
+            {
+              "stream_name": "CORDUM_SYS",
+              "name": "dur_cordum-scheduler__sys_job_result",
+              "created": "2026-02-09T20:12:26.264476366Z",
+              "delivered": {
+                "consumer_seq": 0,
+                "stream_seq": 0
+              },
+              "ack_floor": {
+                "consumer_seq": 0,
+                "stream_seq": 0
+              },
+              "num_ack_pending": 0,
+              "num_redelivered": 0,
+              "num_waiting": 0,
+              "num_pending": 0,
+              "push_bound": true,
+              "ts": "2026-02-10T08:56:45.893195919Z"
+            },
+            {
+              "stream_name": "CORDUM_SYS",
+              "name": "dur_cordum-scheduler__sys_job_submit",
+              "created": "2026-02-09T20:12:26.261937909Z",
+              "delivered": {
+                "consumer_seq": 0,
+                "stream_seq": 0
+              },
+              "ack_floor": {
+                "consumer_seq": 0,
+                "stream_seq": 0
+              },
+              "num_ack_pending": 0,
+              "num_redelivered": 0,
+              "num_waiting": 0,
+              "num_pending": 0,
+              "push_bound": true,
+              "ts": "2026-02-10T08:56:45.893242965Z"
+            },
+            {
+              "stream_name": "CORDUM_SYS",
+              "name": "dur_cordum-workflow-engine__sys_job_result",
+              "created": "2026-02-09T20:12:32.026074307Z",
+              "delivered": {
+                "consumer_seq": 0,
+                "stream_seq": 0
+              },
+              "ack_floor": {
+                "consumer_seq": 0,
+                "stream_seq": 0
+              },
+              "num_ack_pending": 0,
+              "num_redelivered": 0,
+              "num_waiting": 0,
+              "num_pending": 0,
+              "push_bound": true,
+              "ts": "2026-02-10T08:56:45.893259729Z"
+            },
+            {
+              "stream_name": "CORDUM_SYS",
+              "name": "dur_sys_job_dlq",
+              "created": "2026-02-09T20:12:32.107986307Z",
+              "delivered": {
+                "consumer_seq": 0,
+                "stream_seq": 0
+              },
+              "ack_floor": {
+                "consumer_seq": 0,
+                "stream_seq": 0
+              },
+              "num_ack_pending": 0,
+              "num_redelivered": 0,
+              "num_waiting": 0,
+              "num_pending": 0,
+              "push_bound": true,
+              "ts": "2026-02-10T08:56:45.893276259Z"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "total": 1
+}

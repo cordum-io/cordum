@@ -96,6 +96,78 @@ func TestMemoryRegistryDoubleCloseNoPanic(t *testing.T) {
 	r.Close() // must not panic
 }
 
+func TestMemoryRegistry_StatsEmpty(t *testing.T) {
+	r := scheduler.NewMemoryRegistry()
+	defer r.Close()
+
+	total, byPool := r.Stats()
+	if total != 0 {
+		t.Fatalf("expected 0 total workers, got %d", total)
+	}
+	if len(byPool) != 0 {
+		t.Fatalf("expected empty pool map, got %v", byPool)
+	}
+}
+
+func TestMemoryRegistry_StatsMultiplePools(t *testing.T) {
+	r := scheduler.NewMemoryRegistry()
+	defer r.Close()
+
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w1", Pool: "gpu"})
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w2", Pool: "gpu"})
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w3", Pool: "cpu"})
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w4", Pool: "cpu"})
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w5", Pool: "cpu"})
+
+	total, byPool := r.Stats()
+	if total != 5 {
+		t.Fatalf("expected 5 total workers, got %d", total)
+	}
+	if byPool["gpu"] != 2 {
+		t.Fatalf("expected 2 gpu workers, got %d", byPool["gpu"])
+	}
+	if byPool["cpu"] != 3 {
+		t.Fatalf("expected 3 cpu workers, got %d", byPool["cpu"])
+	}
+}
+
+func TestMemoryRegistry_StatsExcludesExpired(t *testing.T) {
+	r := scheduler.NewMemoryRegistryWithTTL(10 * time.Millisecond)
+	defer r.Close()
+
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-stale", Pool: "A"})
+
+	// Wait for TTL to expire
+	time.Sleep(30 * time.Millisecond)
+
+	total, byPool := r.Stats()
+	if total != 0 {
+		t.Fatalf("expected 0 total workers after expiry, got %d", total)
+	}
+	if len(byPool) != 0 {
+		t.Fatalf("expected empty pool map after expiry, got %v", byPool)
+	}
+}
+
+func TestMemoryRegistry_StatsEmptyPoolName(t *testing.T) {
+	r := scheduler.NewMemoryRegistry()
+	defer r.Close()
+
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w1", Pool: ""})
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w2", Pool: "gpu"})
+
+	total, byPool := r.Stats()
+	if total != 2 {
+		t.Fatalf("expected 2 total workers, got %d", total)
+	}
+	if byPool["(none)"] != 1 {
+		t.Fatalf("expected 1 worker in (none) pool, got %d", byPool["(none)"])
+	}
+	if byPool["gpu"] != 1 {
+		t.Fatalf("expected 1 worker in gpu pool, got %d", byPool["gpu"])
+	}
+}
+
 func TestMemoryRegistry_ExpiresStaleWorkers(t *testing.T) {
 	r := scheduler.NewMemoryRegistryWithTTL(10 * time.Millisecond)
 

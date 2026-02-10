@@ -913,6 +913,15 @@ func (s *RedisJobStore) GetAttempts(ctx context.Context, jobID string) (int, err
 	return parseInt(raw), nil
 }
 
+// IncrAttempts atomically increments the attempt counter for a job.
+// This is used by the scheduler to escalate backoff for retryable scheduling failures.
+func (s *RedisJobStore) IncrAttempts(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	return s.client.HIncrBy(ctx, jobMetaKey(jobID), metaFieldAttempts, 1).Err()
+}
+
 func (s *RedisJobStore) CountActiveByTenant(ctx context.Context, tenant string) (int, error) {
 	if tenant == "" {
 		return 0, fmt.Errorf("tenant required")

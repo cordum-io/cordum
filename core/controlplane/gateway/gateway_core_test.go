@@ -178,6 +178,12 @@ func (s *stubUserStore) GetByID(_ context.Context, _ string) (*User, error) {
 
 func (s *stubUserStore) Create(_ context.Context, _ *User, _ string) error { return nil }
 
+func (s *stubUserStore) List(_ context.Context, _ string) ([]*User, error) { return nil, nil }
+
+func (s *stubUserStore) Update(_ context.Context, _ *User) error { return nil }
+
+func (s *stubUserStore) Delete(_ context.Context, _ string) error { return nil }
+
 func (s *stubUserStore) UpdatePassword(_ context.Context, _, _ string) error { return nil }
 
 func (s *stubUserStore) ValidatePassword(_ context.Context, _ *User, _ string) bool { return false }
@@ -401,6 +407,65 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}
 }
 
+func TestRateLimitKeyIPBased(t *testing.T) {
+	// Verify that rateLimitKey uses only the client IP, so rotating
+	// X-Tenant-ID headers from the same IP produces the SAME bucket key.
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req1.RemoteAddr = "10.0.0.1:12345"
+	req1.Header.Set("X-Tenant-ID", "tenant-a")
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req2.RemoteAddr = "10.0.0.1:12345"
+	req2.Header.Set("X-Tenant-ID", "tenant-b")
+
+	key1 := rateLimitKey(req1)
+	key2 := rateLimitKey(req2)
+
+	// Both keys must be ip:10.0.0.1 — tenant header is ignored.
+	if key1 != "ip:10.0.0.1" {
+		t.Errorf("key1 = %q, want ip:10.0.0.1", key1)
+	}
+	if key1 != key2 {
+		t.Errorf("rotating tenant header created different keys: %q vs %q", key1, key2)
+	}
+}
+
+func TestRateLimitTenantRotationBlocked(t *testing.T) {
+	// With rate=1, burst=1: first request succeeds, second from same IP
+	// with a DIFFERENT tenant header must still be rate-limited.
+	apiLimiterMu.Lock()
+	orig := apiLimiter
+	defer func() {
+		apiLimiter = orig
+		apiLimiterMu.Unlock()
+	}()
+
+	apiLimiter = newKeyedRateLimiter(1, 1)
+	handler := rateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// First request with tenant-a — should succeed.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.RemoteAddr = "10.0.0.1:9999"
+	req.Header.Set("X-Tenant-ID", "tenant-a")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", rr.Code)
+	}
+
+	// Second request from same IP but different tenant — must still be limited.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req2.RemoteAddr = "10.0.0.1:9999"
+	req2.Header.Set("X-Tenant-ID", "tenant-b")
+	rr2 := httptest.NewRecorder()
+	handler.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request with rotated tenant: expected 429, got %d", rr2.Code)
+	}
+}
+
 func TestGatewaySafetyTransportCredentials(t *testing.T) {
 	t.Setenv("SAFETY_KERNEL_TLS_CA", "")
 	t.Setenv("SAFETY_KERNEL_INSECURE", "true")
@@ -410,6 +475,37 @@ func TestGatewaySafetyTransportCredentials(t *testing.T) {
 	}
 	if creds.Info().SecurityProtocol != "insecure" {
 		t.Fatalf("expected insecure credentials")
+	}
+}
+
+func TestAuthConfigReflectsUserStore(t *testing.T) {
+	t.Setenv("CORDUM_API_KEY", "test-key-12345678901234567890123456789012")
+	t.Setenv("CORDUM_ALLOW_INSECURE_NO_AUTH", "")
+	basic, err := newBasicAuthProvider("default")
+	if err != nil {
+		t.Fatalf("newBasicAuthProvider: %v", err)
+	}
+
+	cfg1 := basic.AuthConfig()
+	if cfg1.UserAuthEnabled {
+		t.Fatal("expected UserAuthEnabled=false before SetUserStore")
+	}
+
+	basic.SetUserStore(&stubUserStore{})
+
+	cfg2 := basic.AuthConfig()
+	if !cfg2.UserAuthEnabled {
+		t.Fatal("expected UserAuthEnabled=true after SetUserStore")
+	}
+
+	// Verify through interface chain (mirrors handleAuthConfig path)
+	var provider AuthProvider = basic
+	configProvider, ok := provider.(AuthConfigProvider)
+	if !ok {
+		t.Fatal("BasicAuthProvider does not implement AuthConfigProvider")
+	}
+	if !configProvider.AuthConfig().UserAuthEnabled {
+		t.Fatal("expected UserAuthEnabled=true through interface chain")
 	}
 }
 

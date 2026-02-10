@@ -41,5 +41,5 @@ func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
 		resp.SessionTTL = "0s"
 	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,resp)
+	writeJSON(w, resp)
 }

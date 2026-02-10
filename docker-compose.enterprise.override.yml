@@ -1,7 +1,5 @@
-version: "3.9"
-
 services:
-  cordum-dashboard:
+  dashboard:
     environment:
       # Point the dashboard at the enterprise gateway and rely on login sessions.
       - CORDUM_API_BASE_URL=${CORDUM_ENTERPRISE_API_BASE_URL:-http://localhost:8085}

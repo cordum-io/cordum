@@ -1,7 +1,7 @@
 package gateway
 
 import (
-	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -31,7 +31,8 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.dlqStore.List(r.Context(), limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("dlq list failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list dlq entries")
 		return
 	}
 	if s.jobStore != nil {
@@ -72,7 +73,8 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.dlqStore.ListByScore(r.Context(), cursor, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("dlq list by score failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list dlq entries")
 		return
 	}
 	if s.jobStore != nil {
@@ -124,7 +126,8 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.dlqStore.Delete(r.Context(), jobID); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("dlq delete failed", "error", err, "job_id", jobID)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete dlq entry")
 		return
 	}
 	s.appendAuditEntry(r.Context(), "delete", "dlq", jobID, policyActorID(r), policyRole(r), "delete dlq entry "+jobID)
@@ -223,7 +226,8 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, fmt.Sprintf("publish failed: %v", err))
+		slog.Error("dlq retry publish failed", "error", err, "job_id", newJobID)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to retry dlq entry")
 		return
 	}
 

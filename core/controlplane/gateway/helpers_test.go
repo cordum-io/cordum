@@ -149,6 +149,10 @@ func (c *stubSafetyClient) response() *pb.PolicyCheckResponse {
 func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	t.Helper()
 
+	// Allow loopback in tests (httptest.NewServer binds to 127.0.0.1).
+	skipPrivateIPCheck = true
+	t.Cleanup(func() { skipPrivateIPCheck = false })
+
 	srv, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)

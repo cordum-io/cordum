@@ -1,13 +1,17 @@
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, ListChecks } from "lucide-react";
 import { useJobs, type JobFilters } from "../hooks/useJobs";
 import { JobStatusBadge } from "../components/StatusBadge";
 import { JobFiltersBar } from "../components/jobs/JobFiltersBar";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { cn } from "../lib/utils";
+import { TableEmptyState } from "../components/ui/EmptyState";
+import { SkeletonRow } from "../components/ui/Skeleton";
 import type { Job, SafetyDecision } from "../api/types";
+import { DataFreshness } from "../components/ui/DataFreshness";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Safety decision badge
@@ -64,26 +68,6 @@ function timeAgo(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
-}
-
-// ---------------------------------------------------------------------------
-// Skeleton rows
-// ---------------------------------------------------------------------------
-
-function SkeletonRows({ count = 8 }: { count?: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <tr key={i} className="animate-pulse">
-          {Array.from({ length: 7 }, (_, j) => (
-            <td key={j} className="px-4 py-3">
-              <div className="h-4 rounded bg-surface2 w-3/4" />
-            </td>
-          ))}
-        </tr>
-      ))}
-    </>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +201,7 @@ function Pagination({
 // ---------------------------------------------------------------------------
 
 export default function JobsPage() {
+  usePageTitle("Jobs");
   const navigate = useNavigate();
   const [limit, setLimit] = useState(25);
   const [cursor, setCursor] = useState<number | undefined>(undefined);
@@ -226,7 +211,7 @@ export default function JobsPage() {
   const [sortKey, setSortKey] = useState<SortKey>("updatedAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const { data, isLoading, isError } = useJobs({ ...filters, limit, cursor });
+  const { data, isLoading, isError, dataUpdatedAt, refetch, isRefetching } = useJobs({ ...filters, limit, cursor });
 
   const rawJobs = data?.items ?? [];
   const jobs = useMemo(() => sortJobs(rawJobs, sortKey, sortDir), [rawJobs, sortKey, sortDir]);
@@ -269,6 +254,7 @@ export default function JobsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="font-display text-2xl font-bold text-ink">Jobs</h1>
+        <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
       </div>
 
       <JobFiltersBar
@@ -304,7 +290,7 @@ export default function JobsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {isLoading && <SkeletonRows />}
+              {isLoading && Array.from({ length: 8 }, (_, i) => <SkeletonRow key={i} columns={7} />)}
 
               {!isLoading && isError && (
                 <tr>
@@ -315,11 +301,12 @@ export default function JobsPage() {
               )}
 
               {!isLoading && !isError && jobs.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-muted">
-                    No jobs found. Try adjusting your filters.
-                  </td>
-                </tr>
+                <TableEmptyState
+                  colSpan={7}
+                  icon={ListChecks}
+                  title="No jobs found"
+                  description="Try adjusting your filters or check back later."
+                />
               )}
 
               {!isLoading &&
