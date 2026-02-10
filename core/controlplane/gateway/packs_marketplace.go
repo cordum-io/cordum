@@ -345,7 +345,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "install", "pack", record.ID, policyActorID(r), policyRole(r), "install marketplace pack "+record.ID)
+	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "install marketplace pack "+record.ID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, record)
 }
@@ -763,6 +763,24 @@ var privateHostnames = map[string]bool{
 // skipPrivateIPCheck disables SSRF protection. Only set in tests.
 var skipPrivateIPCheck bool
 
+// lookupHostIPs resolves hostnames for SSRF checks. Overridden in tests.
+var lookupHostIPs = func(ctx context.Context, host string) ([]net.IP, error) {
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr.IP != nil {
+			ips = append(ips, addr.IP)
+		}
+	}
+	if len(ips) == 0 {
+		return nil, errors.New("no resolved IPs")
+	}
+	return ips, nil
+}
+
 // isPrivateIP returns true if host is a private/loopback/link-local IP address
 // or a well-known hostname that resolves to one.
 func isPrivateIP(host string) bool {
@@ -776,9 +794,26 @@ func isPrivateIP(host string) bool {
 	if privateHostnames[host] {
 		return true
 	}
-	ip := net.ParseIP(host)
+	if ip := net.ParseIP(host); ip != nil {
+		return isPrivateNet(ip)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), marketplaceHTTPTimeout())
+	defer cancel()
+	ips, err := lookupHostIPs(ctx, host)
+	if err != nil {
+		return true
+	}
+	for _, ip := range ips {
+		if isPrivateNet(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrivateNet(ip net.IP) bool {
 	if ip == nil {
-		return false
+		return true
 	}
 	for _, n := range privateIPNets {
 		if n.Contains(ip) {
