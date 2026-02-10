@@ -5,7 +5,7 @@
 <h1 align="center">Cordum</h1>
 
 <p align="center">
-  <strong>AI Agent Governance Platform</strong><br/>
+  <strong>AI Agent Governance Control Plan</strong><br/>
   Deploy autonomous agents with built-in safety, observability, and control.
 </p>
 
