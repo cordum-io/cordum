@@ -846,7 +846,8 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.bus.Publish(capsdk.SubjectCancel, cancelBusPacket)
 
-	s.appendAuditEntry(r.Context(), "cancel", "job", id, policyActorID(r), policyRole(r), "cancel job "+id)
+	cancelTopic, _ := s.jobStore.GetTopic(r.Context(), id)
+	s.appendAuditEntryNamed(r.Context(), "cancel", "job", id, cancelTopic, policyActorID(r), policyRole(r), "cancel job "+id)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
 		"id":    id,
@@ -1017,7 +1018,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadGateway, "failed to enqueue job")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "remediate", "job", newJobID, policyActorID(r), policyRole(r), "remediate job "+newJobID)
+	s.appendAuditEntryNamed(r.Context(), "remediate", "job", newJobID, newReq.GetTopic(), policyActorID(r), policyRole(r), "remediate job "+newJobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": newJobID, "trace_id": traceID})
 }
@@ -1280,7 +1281,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 	logging.Info("api-gateway", "job submitted http", "job_id", jobID)
 
-	s.appendAuditEntry(r.Context(), "submit", "job", jobID, policyActorID(r), policyRole(r), "submit job "+jobID)
+	s.appendAuditEntryNamed(r.Context(), "submit", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit job "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{
 		"job_id":   jobID,

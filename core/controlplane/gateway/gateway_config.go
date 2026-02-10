@@ -85,7 +85,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "config update failed")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "set", "config", scopeStr+"/"+scopeID, policyActorID(r), policyRole(r), "set config "+scopeStr+"/"+scopeID)
+	s.appendAuditEntryNamed(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policyActorID(r), policyRole(r), "set config "+scopeStr+"/"+scopeID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -197,7 +197,7 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "register", "schema", req.ID, policyActorID(r), policyRole(r), "register schema "+req.ID)
+	s.appendAuditEntryNamed(r.Context(), "register", "schema", req.ID, req.ID, policyActorID(r), policyRole(r), "register schema "+req.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -270,7 +270,7 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "delete", "schema", id, policyActorID(r), policyRole(r), "delete schema "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "schema", id, id, policyActorID(r), policyRole(r), "delete schema "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

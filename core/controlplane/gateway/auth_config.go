@@ -16,6 +16,8 @@ type AuthConfig struct {
 	RequireRBAC      bool   `json:"require_rbac"`
 	RequirePrincipal bool   `json:"require_principal"`
 	DefaultTenant    string `json:"default_tenant"`
+	OIDCEnabled      bool   `json:"oidc_enabled,omitempty"`
+	OIDCIssuer       string `json:"oidc_issuer,omitempty"`
 }
 
 func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {

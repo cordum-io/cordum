@@ -80,6 +80,22 @@ func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
 	return newKeyedRateLimiter(rps, burst)
 }
 
+func newPublicRateLimiterFromEnv() *keyedRateLimiter {
+	rps := defaultPublicRateLimitRPS
+	burst := defaultPublicRateLimitBurst
+	if val := os.Getenv("API_PUBLIC_RATE_LIMIT_RPS"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			rps = parsed
+		}
+	}
+	if val := os.Getenv("API_PUBLIC_RATE_LIMIT_BURST"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			burst = parsed
+		}
+	}
+	return newKeyedRateLimiter(rps, burst)
+}
+
 func (rl *keyedRateLimiter) Allow(key string) bool {
 	if rl == nil {
 		return true
@@ -124,6 +140,7 @@ func (rl *keyedRateLimiter) Allow(key string) bool {
 }
 
 var apiLimiter = newKeyedRateLimiterFromEnv()
+var publicLimiter = newPublicRateLimiterFromEnv()
 
 type submitJobRequest struct {
 	Prompt             string            `json:"prompt"`
@@ -547,20 +564,36 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	return credentials.NewTLS(cfg), nil
 }
 
-func rateLimitMiddleware(next http.Handler) http.Handler {
-	if apiLimiter == nil {
+func rateLimitMiddleware(auth AuthProvider, next http.Handler) http.Handler {
+	if apiLimiter == nil && publicLimiter == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || !strings.HasPrefix(r.URL.Path, "/api/") {
-			next.ServeHTTP(w, r)
-			return
-		}
 		if r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !apiLimiter.Allow(rateLimitKey(r)) {
+		if r.URL.Path == "/health" {
+			if publicLimiter != nil && !publicLimiter.Allow(publicRateLimitKey(r)) {
+				writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if isAllowedPublicPath(auth, r.URL.Path) {
+			if publicLimiter != nil && !publicLimiter.Allow(publicRateLimitKey(r)) {
+				writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if apiLimiter != nil && !apiLimiter.Allow(rateLimitKey(r)) {
 			writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
@@ -569,10 +602,18 @@ func rateLimitMiddleware(next http.Handler) http.Handler {
 }
 
 func rateLimitKey(r *http.Request) string {
-	// SECURITY: Use client IP only. The rate limiter runs BEFORE auth, so the
-	// X-Tenant-ID header is untrusted and must not influence the bucket key.
-	// Including the tenant would let an attacker rotate headers to get fresh
-	// rate-limit buckets from the same IP.
+	// SECURITY: The rate limiter runs after auth, so prefer the authenticated
+	// tenant. Fall back to client IP if auth context is missing.
+	if authCtx := authFromRequest(r); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
+		return "tenant:" + strings.TrimSpace(authCtx.Tenant)
+	}
+	if ip := clientIP(r); ip != "" {
+		return "ip:" + ip
+	}
+	return "ip:unknown"
+}
+
+func publicRateLimitKey(r *http.Request) string {
 	if ip := clientIP(r); ip != "" {
 		return "ip:" + ip
 	}

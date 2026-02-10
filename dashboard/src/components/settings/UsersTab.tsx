@@ -61,7 +61,12 @@ function timeAgo(iso?: string): string {
 
 const createUserSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z
+    .string()
+    .min(12, "Password must be at least 12 characters")
+    .regex(/[A-Z]/, "Must include an uppercase letter")
+    .regex(/[0-9]/, "Must include a digit")
+    .regex(/[^a-zA-Z0-9]/, "Must include a special character"),
   role: z.string().min(1, "Role is required"),
 });
 
@@ -73,7 +78,12 @@ type CreateUserForm = z.infer<typeof createUserSchema>;
 
 const changePasswordSchema = z
   .object({
-    password: z.string().min(8, "Password must be at least 8 characters"),
+    password: z
+      .string()
+      .min(12, "Password must be at least 12 characters")
+      .regex(/[A-Z]/, "Must include an uppercase letter")
+      .regex(/[0-9]/, "Must include a digit")
+      .regex(/[^a-zA-Z0-9]/, "Must include a special character"),
     confirm: z.string(),
   })
   .refine((d) => d.password === d.confirm, {
@@ -134,7 +144,8 @@ function CreateUserModal({
             <label className="mb-1 block text-xs font-semibold text-muted">
               Password
             </label>
-            <Input type="password" placeholder="Min 8 characters" {...register("password")} />
+            <Input type="password" placeholder="Min 12 characters" {...register("password")} />
+            <p className="mt-1 text-xs text-muted">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
             {errors.password && (
               <p className="mt-1 text-xs text-danger">{errors.password.message}</p>
             )}
@@ -229,7 +240,8 @@ function ChangePasswordModal({
             <label className="mb-1 block text-xs font-semibold text-muted">
               New Password
             </label>
-            <Input type="password" placeholder="Min 8 characters" {...register("password")} />
+            <Input type="password" placeholder="Min 12 characters" {...register("password")} />
+            <p className="mt-1 text-xs text-muted">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
             {errors.password && (
               <p className="mt-1 text-xs text-danger">{errors.password.message}</p>
             )}

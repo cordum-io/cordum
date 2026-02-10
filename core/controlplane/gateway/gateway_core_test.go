@@ -56,7 +56,6 @@ func (s *stubMemStore) GetResult(ctx context.Context, key string) ([]byte, error
 
 func (s *stubMemStore) Close() error { return nil }
 
-
 func TestHandleGetMemoryFetchesContextByPointer(t *testing.T) {
 	s := &server{
 		memStore: &stubMemStore{
@@ -118,7 +117,6 @@ func TestHandleAuthConfigDefaults(t *testing.T) {
 		t.Fatalf("expected session_ttl to be set")
 	}
 }
-
 
 func TestApiKeyUnaryInterceptor(t *testing.T) {
 	t.Setenv("CORDUM_API_KEYS", "secret")
@@ -228,7 +226,7 @@ func TestServerCloseNilUserStoreNoPanic(t *testing.T) {
 	s.Close()
 }
 
-// apiLimiterMu guards mutation of the global apiLimiter in tests.
+// apiLimiterMu guards mutation of the global rate limiters in tests.
 var apiLimiterMu sync.Mutex
 
 func TestAllowedOriginsFromEnv(t *testing.T) {
@@ -373,18 +371,24 @@ func TestCorsMiddlewareAllowsPUT(t *testing.T) {
 
 func TestRateLimitMiddleware(t *testing.T) {
 	apiLimiterMu.Lock()
-	orig := apiLimiter
+	origAPI := apiLimiter
+	origPublic := publicLimiter
 	defer func() {
-		apiLimiter = orig
+		apiLimiter = origAPI
+		publicLimiter = origPublic
 		apiLimiterMu.Unlock()
 	}()
 
 	apiLimiter = newKeyedRateLimiter(1, 1)
-	handler := rateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	publicLimiter = newKeyedRateLimiter(1, 1)
+	auth := newBasicAuthForTest(t, nil)
+	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	})))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	req.Header.Set("X-API-Key", "test-api-key")
 	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -399,70 +403,131 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/health", nil)
-	req.Header.Set("X-Tenant-ID", "default")
+	req.RemoteAddr = "10.0.0.1:12345"
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected health response, got %d", rr.Code)
 	}
-}
 
-func TestRateLimitKeyIPBased(t *testing.T) {
-	// Verify that rateLimitKey uses only the client IP, so rotating
-	// X-Tenant-ID headers from the same IP produces the SAME bucket key.
-	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
-	req1.RemoteAddr = "10.0.0.1:12345"
-	req1.Header.Set("X-Tenant-ID", "tenant-a")
-
-	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
-	req2.RemoteAddr = "10.0.0.1:12345"
-	req2.Header.Set("X-Tenant-ID", "tenant-b")
-
-	key1 := rateLimitKey(req1)
-	key2 := rateLimitKey(req2)
-
-	// Both keys must be ip:10.0.0.1 — tenant header is ignored.
-	if key1 != "ip:10.0.0.1" {
-		t.Errorf("key1 = %q, want ip:10.0.0.1", key1)
-	}
-	if key1 != key2 {
-		t.Errorf("rotating tenant header created different keys: %q vs %q", key1, key2)
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected health rate limit response, got %d", rr.Code)
 	}
 }
 
-func TestRateLimitTenantRotationBlocked(t *testing.T) {
-	// With rate=1, burst=1: first request succeeds, second from same IP
-	// with a DIFFERENT tenant header must still be rate-limited.
+func TestRateLimitAuthOrdering(t *testing.T) {
 	apiLimiterMu.Lock()
-	orig := apiLimiter
+	origAPI := apiLimiter
+	origPublic := publicLimiter
 	defer func() {
-		apiLimiter = orig
+		apiLimiter = origAPI
+		publicLimiter = origPublic
 		apiLimiterMu.Unlock()
 	}()
 
 	apiLimiter = newKeyedRateLimiter(1, 1)
-	handler := rateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	publicLimiter = newKeyedRateLimiter(1, 1)
+	auth := newBasicAuthForTest(t, nil)
+	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, tenantMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	}))))
 
-	// First request with tenant-a — should succeed.
+	unauth := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	unauth.RemoteAddr = "10.0.0.1:12345"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, unauth)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized response, got %d", rr.Code)
+	}
+
+	authReq := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	authReq.RemoteAddr = "10.0.0.1:12345"
+	authReq.Header.Set("X-API-Key", "test-api-key")
+	authReq.Header.Set("X-Tenant-ID", "default")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, authReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected ok response after unauthorized request, got %d", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, authReq)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected rate limit response, got %d", rr.Code)
+	}
+}
+
+func TestRateLimitKeyTenantBased(t *testing.T) {
+	// Verify that authenticated requests use tenant-based keys.
+	req1 := requestWithAuthContext(&AuthContext{Tenant: "tenant-a"})
+	req1.RemoteAddr = "10.0.0.1:12345"
+
+	req2 := requestWithAuthContext(&AuthContext{Tenant: "tenant-b"})
+	req2.RemoteAddr = "10.0.0.1:12345"
+
+	key1 := rateLimitKey(req1)
+	key2 := rateLimitKey(req2)
+
+	if key1 != "tenant:tenant-a" {
+		t.Errorf("key1 = %q, want tenant:tenant-a", key1)
+	}
+	if key2 != "tenant:tenant-b" {
+		t.Errorf("key2 = %q, want tenant:tenant-b", key2)
+	}
+	if key1 == key2 {
+		t.Errorf("different tenants produced same key: %q", key1)
+	}
+
+	// Fallback to IP when no auth context is present.
+	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req3.RemoteAddr = "10.0.0.1:12345"
+	key3 := rateLimitKey(req3)
+	if key3 != "ip:10.0.0.1" {
+		t.Errorf("key3 = %q, want ip:10.0.0.1", key3)
+	}
+}
+
+func TestRateLimitTenantSharedAcrossIPs(t *testing.T) {
+	// With rate=1, burst=1: first request succeeds, second from a
+	// different IP but the same tenant should still be rate-limited.
+	apiLimiterMu.Lock()
+	origAPI := apiLimiter
+	origPublic := publicLimiter
+	defer func() {
+		apiLimiter = origAPI
+		publicLimiter = origPublic
+		apiLimiterMu.Unlock()
+	}()
+
+	apiLimiter = newKeyedRateLimiter(1, 1)
+	publicLimiter = newKeyedRateLimiter(1, 1)
+	auth := newBasicAuthForTest(t, nil)
+	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	// First request for the tenant — should succeed.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
 	req.RemoteAddr = "10.0.0.1:9999"
-	req.Header.Set("X-Tenant-ID", "tenant-a")
+	req.Header.Set("X-API-Key", "test-api-key")
+	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("first request: expected 200, got %d", rr.Code)
 	}
 
-	// Second request from same IP but different tenant — must still be limited.
+	// Second request from different IP but same tenant — must still be limited.
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
-	req2.RemoteAddr = "10.0.0.1:9999"
-	req2.Header.Set("X-Tenant-ID", "tenant-b")
+	req2.RemoteAddr = "10.0.0.2:9999"
+	req2.Header.Set("X-API-Key", "test-api-key")
+	req2.Header.Set("X-Tenant-ID", "default")
 	rr2 := httptest.NewRecorder()
 	handler.ServeHTTP(rr2, req2)
 	if rr2.Code != http.StatusTooManyRequests {
-		t.Fatalf("second request with rotated tenant: expected 429, got %d", rr2.Code)
+		t.Fatalf("second request with same tenant: expected 429, got %d", rr2.Code)
 	}
 }
 
@@ -537,4 +602,3 @@ func TestHandleListJobDecisions(t *testing.T) {
 		t.Fatalf("unexpected decisions: %#v", out)
 	}
 }
-

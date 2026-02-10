@@ -217,6 +217,14 @@ Cordum Enterprise adds:
 
 [Contact us](mailto:admin@cordum.io) for pricing.
 
+## Governance
+
+Cordum follows a transparent governance model with a protocol stability pledge, maintainer structure, and clear decision-making process. See [GOVERNANCE.md](GOVERNANCE.md) for details including:
+
+- **Protocol Stability**: CAP v2 wire format frozen until February 2027
+- **Security**: [SECURITY.md](SECURITY.md) for vulnerability reporting
+- **Versioning**: Semantic versioning with deprecation policy
+
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

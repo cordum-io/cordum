@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -38,17 +39,19 @@ import (
 )
 
 const (
-	defaultGrpcAddr         = ":8080"
-	defaultHttpAddr         = ":8081"
-	defaultMetricsAddr      = ":9092"
-	maxJobPayloadBytes      = 2 << 20  // 2 MiB limit for incoming job payloads
-	defaultArtifactMaxBytes = 10 << 20 // 10 MiB default artifact size limit
-	maxPromptChars          = 100000
-	defaultRateLimitRPS     = 2000
-	defaultRateLimitBurst   = 4000
-	defaultMaxHeaderBytes   = 1 << 20
-	maxLabelKeyLen          = 256  // Max length for label keys
-	maxLabelValueLen        = 4096 // Max length for label values (4KB)
+	defaultGrpcAddr             = ":8080"
+	defaultHttpAddr             = ":8081"
+	defaultMetricsAddr          = ":9092"
+	maxJobPayloadBytes          = 2 << 20  // 2 MiB limit for incoming job payloads
+	defaultArtifactMaxBytes     = 10 << 20 // 10 MiB default artifact size limit
+	maxPromptChars              = 100000
+	defaultRateLimitRPS         = 2000
+	defaultRateLimitBurst       = 4000
+	defaultPublicRateLimitRPS   = 20
+	defaultPublicRateLimitBurst = 40
+	defaultMaxHeaderBytes       = 1 << 20
+	maxLabelKeyLen              = 256  // Max length for label keys
+	maxLabelValueLen            = 4096 // Max length for label values (4KB)
 	// #nosec G101 -- protocol label, not a credential.
 	wsAPIKeyProtocol = "cordum-api-key"
 	shutdownTimeout  = 15 * time.Second
@@ -107,6 +110,8 @@ type server struct {
 	userStore      UserStore
 	keyStore       KeyStore
 
+	auditExporter *audit.BufferedExporter
+
 	marketplaceMu    sync.Mutex
 	marketplaceCache marketplaceCache
 	stopBusTapsOnce  sync.Once
@@ -117,6 +122,9 @@ type server struct {
 // Close releases resources owned by the server, notably the user store
 // connection. It is safe to call with a nil userStore.
 func (s *server) Close() {
+	if s.auditExporter != nil {
+		_ = s.auditExporter.Close()
+	}
 	if s.userStore != nil {
 		s.userStore.Close()
 	}
@@ -181,6 +189,25 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 			if err := seedDefaultAdminUser(context.Background(), userStore, tenantID); err != nil {
 				logging.Error("api-gateway", "seed admin user failed", "error", err)
 			}
+		}
+
+		// Initialize OIDC provider if enabled — wraps basic + OIDC in composite
+		oidcProvider, err := NewOIDCProviderFromEnv()
+		if err != nil {
+			return fmt.Errorf("init oidc: %w", err)
+		}
+		if oidcProvider != nil {
+			defer oidcProvider.Close()
+			oidcAdapter := NewOIDCAuthAdapter(oidcProvider, tenantID)
+			composite, err := NewCompositeAuthProvider(basic, oidcAdapter)
+			if err != nil {
+				return fmt.Errorf("init composite auth: %w", err)
+			}
+			provider = composite
+			logging.Info("api-gateway", "[OIDC] enabled",
+				"issuer", oidcProvider.cfg.IssuerURL,
+				"audience", oidcProvider.cfg.Audience,
+			)
 		}
 	}
 
@@ -262,6 +289,11 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		}
 	}
 
+	auditExporter, err := audit.NewExporterFromEnv()
+	if err != nil {
+		return fmt.Errorf("init audit exporter: %w", err)
+	}
+
 	s := &server{
 		memStore:       memStore,
 		jobStore:       jobStore,
@@ -284,6 +316,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		safetyClient:   safetyClient,
 		userStore:      userStore,
 		keyStore:       keyStore,
+		auditExporter:  auditExporter,
 		shutdownCh:     make(chan struct{}),
 	}
 	defer s.Close()
@@ -504,7 +537,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	}
 
 	// CORS Middleware
-	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(s.auth, tenantMiddleware(s.auth, mux))))
+	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, tenantMiddleware(s.auth, mux))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))
@@ -610,6 +643,7 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 				event.Tenant = authCtx.Tenant
 				event.Principal = authCtx.PrincipalID
 				event.Role = authCtx.Role
+				event.AuthSource = authCtx.AuthSource
 			}
 			if err := exporter.ExportAudit(r.Context(), event); err != nil {
 				logging.Error("api-gateway", "audit export failed", "error", err)

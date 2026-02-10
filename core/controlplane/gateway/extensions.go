@@ -34,6 +34,7 @@ type AuditEvent struct {
 	Tenant     string    `json:"tenant"`
 	Principal  string    `json:"principal"`
 	Role       string    `json:"role"`
+	AuthSource string    `json:"auth_source,omitempty"`
 	RequestID  string    `json:"request_id"`
 }
 

@@ -143,7 +143,7 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "update", "user", userID, authCtx.PrincipalID, authCtx.Role, "update user "+updated.Username)
+	s.appendAuditEntryNamed(r.Context(), "update", "user", userID, updated.Username, authCtx.PrincipalID, authCtx.Role, "update user "+updated.Username)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, userResponse(updated))
 }
@@ -201,7 +201,7 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "delete", "user", userID, authCtx.PrincipalID, authCtx.Role, "delete user "+user.Username)
+	s.appendAuditEntryNamed(r.Context(), "delete", "user", userID, user.Username, authCtx.PrincipalID, authCtx.Role, "delete user "+user.Username)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -264,6 +264,6 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "change_password", "user", userID, authCtx.PrincipalID, authCtx.Role, "admin changed password for "+user.Username)
+	s.appendAuditEntryNamed(r.Context(), "change_password", "user", userID, user.Username, authCtx.PrincipalID, authCtx.Role, "admin changed password for "+user.Username)
 	w.WriteHeader(http.StatusNoContent)
 }

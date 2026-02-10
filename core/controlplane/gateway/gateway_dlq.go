@@ -130,7 +130,8 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete dlq entry")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "delete", "dlq", jobID, policyActorID(r), policyRole(r), "delete dlq entry "+jobID)
+	dlqDeleteTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	s.appendAuditEntryNamed(r.Context(), "delete", "dlq", jobID, dlqDeleteTopic, policyActorID(r), policyRole(r), "delete dlq entry "+jobID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -232,7 +233,8 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.dlqStore.Delete(r.Context(), jobID)
-	s.appendAuditEntry(r.Context(), "retry", "dlq", jobID, policyActorID(r), policyRole(r), "retry dlq entry "+jobID)
+	dlqRetryTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	s.appendAuditEntryNamed(r.Context(), "retry", "dlq", jobID, dlqRetryTopic, policyActorID(r), policyRole(r), "retry dlq entry "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": newJobID})
 }

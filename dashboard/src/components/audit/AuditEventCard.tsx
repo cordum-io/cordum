@@ -95,8 +95,14 @@ function formatTimestampMs(iso?: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Resource link helper
+// Resource display helpers
 // ---------------------------------------------------------------------------
+
+function resourceLabel(entry: AuditEntry): string {
+  if (entry.resourceName) return entry.resourceName;
+  if (!entry.resourceId) return entry.resourceType || "unknown";
+  return `${entry.resourceType}:${entry.resourceId.slice(0, 12)}`;
+}
 
 function resourceLink(resourceType: string, resourceId: string): string | null {
   switch (resourceType?.toLowerCase()) {
@@ -150,12 +156,15 @@ function SafetyDecisionContent({ entry, searchQuery }: { entry: AuditEntry; sear
         </Badge>
         {link ? (
           <Link to={link} className="text-sm font-medium text-accent hover:underline">
-            <HighlightText text={`${entry.resourceType}:${entry.resourceId.slice(0, 12)}`} query={searchQuery ?? ""} />
+            <HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} />
           </Link>
         ) : (
           <span className="text-sm font-medium text-ink">
-            <HighlightText text={`${entry.resourceType}:${entry.resourceId.slice(0, 12)}`} query={searchQuery ?? ""} />
+            <HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} />
           </span>
+        )}
+        {entry.resourceName && entry.resourceId && (
+          <span className="text-xs text-muted">{entry.resourceId.slice(0, 12)}</span>
         )}
       </div>
       {entry.message && (
@@ -184,11 +193,11 @@ function HumanActionContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
         <span className="font-medium text-ink"><HighlightText text={entry.action} query={searchQuery ?? ""} /></span>{" "}
         {link ? (
           <Link to={link} className="text-accent hover:underline">
-            <HighlightText text={`${entry.resourceType}:${entry.resourceId.slice(0, 12)}`} query={searchQuery ?? ""} />
+            <HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} />
           </Link>
         ) : (
           <span className="text-muted">
-            <HighlightText text={`${entry.resourceType}:${entry.resourceId.slice(0, 12)}`} query={searchQuery ?? ""} />
+            <HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} />
           </span>
         )}
       </p>
@@ -212,10 +221,10 @@ function SystemEventContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
       <div className="flex items-center gap-2 text-sm text-muted">
         {link ? (
           <Link to={link} className="text-accent hover:underline">
-            <HighlightText text={`${entry.resourceType}:${entry.resourceId.slice(0, 12)}`} query={searchQuery ?? ""} />
+            <HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} />
           </Link>
         ) : (
-          <span><HighlightText text={`${entry.resourceType}:${entry.resourceId.slice(0, 12)}`} query={searchQuery ?? ""} /></span>
+          <span><HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} /></span>
         )}
         <ArrowRight className="h-3 w-3" />
         <Badge variant="default">{entry.action || entry.eventType}</Badge>

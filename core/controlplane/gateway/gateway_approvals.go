@@ -66,7 +66,13 @@ func (s *server) handleApproveStep(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "approve_step", "run", runID, policyActorID(r), policyRole(r), "approve step in run "+runID)
+	stepApproveWfName := ""
+	if s.workflowStore != nil {
+		if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
+			stepApproveWfName = wfDef.Name
+		}
+	}
+	s.appendAuditEntryNamed(r.Context(), "approve_step", "run", runID, stepApproveWfName, policyActorID(r), policyRole(r), "approve step in run "+runID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -108,7 +114,15 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "cancel", "run", runID, policyActorID(r), policyRole(r), "cancel run "+runID)
+	cancelRunWfName := ""
+	if s.workflowStore != nil {
+		if run, err := s.workflowStore.GetRun(r.Context(), runID); err == nil && run != nil {
+			if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), run.WorkflowID); err == nil && wfDef != nil {
+				cancelRunWfName = wfDef.Name
+			}
+		}
+	}
+	s.appendAuditEntryNamed(r.Context(), "cancel", "run", runID, cancelRunWfName, policyActorID(r), policyRole(r), "cancel run "+runID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -313,7 +327,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "approve", "job", jobID, policyActorID(r), policyRole(r), "approve job "+jobID)
+	s.appendAuditEntryNamed(r.Context(), "approve", "job", jobID, req.GetTopic(), policyActorID(r), policyRole(r), "approve job "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": jobID, "trace_id": traceID})
 }
@@ -403,7 +417,8 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	_ = s.bus.Publish(capsdk.SubjectDLQ, packet)
-	s.appendAuditEntry(r.Context(), "reject", "job", jobID, policyActorID(r), policyRole(r), "reject job "+jobID)
+	rejectTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	s.appendAuditEntryNamed(r.Context(), "reject", "job", jobID, rejectTopic, policyActorID(r), policyRole(r), "reject job "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": jobID})
 }

@@ -124,7 +124,7 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to save workflow")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "create", "workflow", wfDef.ID, policyActorID(r), policyRole(r), "create workflow "+wfDef.ID)
+	s.appendAuditEntryNamed(r.Context(), "create", "workflow", wfDef.ID, wfDef.Name, policyActorID(r), policyRole(r), "create workflow "+wfDef.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]string{"id": wfDef.ID})
@@ -167,7 +167,9 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing id")
 		return
 	}
+	delWfName := ""
 	if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), id); err == nil && wfDef != nil {
+		delWfName = wfDef.Name
 		if err := s.requireTenantAccess(r, wfDef.OrgID); err != nil {
 			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 			return
@@ -182,7 +184,7 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete workflow")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "delete", "workflow", id, policyActorID(r), policyRole(r), "delete workflow "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "workflow", id, delWfName, policyActorID(r), policyRole(r), "delete workflow "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -363,7 +365,11 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
 		}
 	}
-	s.appendAuditEntry(r.Context(), "start", "run", runID, policyActorID(r), policyRole(r), "start run "+runID)
+	startWfName := ""
+	if wfDef != nil {
+		startWfName = wfDef.Name
+	}
+	s.appendAuditEntryNamed(r.Context(), "start", "run", runID, startWfName, policyActorID(r), policyRole(r), "start run "+runID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"run_id": runID})
 }
@@ -435,7 +441,13 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
 	}
-	s.appendAuditEntry(r.Context(), "rerun", "run", newID, policyActorID(r), policyRole(r), "rerun run "+newID)
+	rerunWfName := ""
+	if s.workflowStore != nil {
+		if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
+			rerunWfName = wfDef.Name
+		}
+	}
+	s.appendAuditEntryNamed(r.Context(), "rerun", "run", newID, rerunWfName, policyActorID(r), policyRole(r), "rerun run "+newID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"run_id": newID})
 }
@@ -637,10 +649,14 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing id")
 		return
 	}
+	delRunWfName := ""
 	if run, err := s.workflowStore.GetRun(r.Context(), id); err == nil && run != nil {
 		if err := s.requireTenantAccess(r, run.OrgID); err != nil {
 			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 			return
+		}
+		if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), run.WorkflowID); err == nil && wfDef != nil {
+			delRunWfName = wfDef.Name
 		}
 	}
 	if err := s.workflowStore.DeleteRun(r.Context(), id); err != nil {
@@ -652,7 +668,7 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete run")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "delete", "run", id, policyActorID(r), policyRole(r), "delete run "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "run", id, delRunWfName, policyActorID(r), policyRole(r), "delete run "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

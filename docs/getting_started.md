@@ -107,6 +107,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
 Other runtime examples:
 - `examples/python-worker`
 - `examples/node-worker`
+- `examples/langchain-guard` — [Secure a LangGraph agent with Cordum](tutorials/langchain-guard.md)
 
 ## Open the dashboard (optional)
 

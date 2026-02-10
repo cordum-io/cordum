@@ -166,7 +166,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "create", "api_key", mk.ID, policyActorID(r), policyRole(r), "create api key: "+mk.Name)
+	s.appendAuditEntryNamed(r.Context(), "create", "api_key", mk.ID, mk.Name, policyActorID(r), policyRole(r), "create api key: "+mk.Name)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -208,6 +208,6 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "revoke", "api_key", id, policyActorID(r), policyRole(r), "revoke api key: "+id)
+	s.appendAuditEntryNamed(r.Context(), "revoke", "api_key", id, "", policyActorID(r), policyRole(r), "revoke api key: "+id)
 	w.WriteHeader(http.StatusNoContent)
 }

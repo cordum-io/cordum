@@ -53,6 +53,9 @@ export interface BackendJobDetail extends BackendJobRecord {
   error_status?: string;
   error_code?: string;
   last_state?: string;
+  workflow_id?: string;
+  run_id?: string;
+  step_id?: string;
 }
 
 export interface BackendWorkflowStep {
@@ -195,6 +198,7 @@ export interface BackendPolicyBundleSummary {
   version?: string;
   installed_at?: string;
   sha256?: string;
+  rule_count?: number;
 }
 
 export interface BackendPolicyBundleDetail {
@@ -212,6 +216,7 @@ export interface BackendPolicyAuditEntry {
   action?: string;
   resource_type?: string;
   resource_id?: string;
+  resource_name?: string;
   actor_id?: string;
   role?: string;
   bundle_ids?: string[];
@@ -447,6 +452,8 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
     errorStatus: detail.error_status,
     errorCode: detail.error_code,
     lastState: detail.last_state,
+    workflowRunId: detail.run_id || base.workflowRunId,
+    workflowId: detail.workflow_id,
   };
 }
 
@@ -869,12 +876,22 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
   };
 }
 
-export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary): PolicyBundle {
+export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, content?: string): PolicyBundle {
   const versionNum = Number.parseInt(summary.version ?? "", 10);
+  let rules: PolicyRule[] = [];
+  if (content) {
+    try {
+      const parsed = YAML.parse(content) as Record<string, unknown> | null;
+      const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
+      rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
+    } catch {
+      // YAML parse error — fall back to empty rules
+    }
+  }
   return {
     id: summary.id,
     name: summary.id,
-    rules: [],
+    rules,
     version: Number.isFinite(versionNum) ? versionNum : undefined,
     enabled: summary.enabled ?? true,
     publishedAt: summary.updated_at || summary.created_at,
@@ -991,6 +1008,7 @@ export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): AuditEntry 
   const actorId = entry.actor_id || "unknown";
   const resourceType = entry.resource_type || "policy";
   const resourceId = entry.resource_id || "";
+  const resourceName = entry.resource_name || undefined;
   const action = entry.action || "";
 
   return {
@@ -1000,6 +1018,7 @@ export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): AuditEntry 
     actor: actorId || entry.role || "unknown",
     resourceType,
     resourceId,
+    resourceName,
     action,
     message: entry.message || "",
     payload: {
@@ -1013,6 +1032,7 @@ export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): AuditEntry 
     resourceInfo: {
       type: resourceType,
       id: resourceId,
+      name: resourceName,
       link: auditResourceLink(resourceType, resourceId),
     },
     snapshotBefore: tryParseJson(entry.snapshot_before),

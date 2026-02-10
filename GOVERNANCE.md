@@ -4,15 +4,48 @@
 
 Cordum is a deterministic control plane for autonomous workflows with governance built in. This document outlines how the project is governed, how decisions are made, and how contributors can participate.
 
+## Protocol Stability Pledge
+
+Cordum commits to **wire-format stability** for enterprise adopters:
+
+- **CAP v2 protobuf schemas** (`BusPacket`, `JobRequest`, `JobResult`, `Heartbeat`) are **frozen until February 2027**. No breaking changes to field numbers, field types, or required fields. New fields may be added as `optional`.
+- **Safety Kernel evaluation API** (`POST /api/v1/policy/evaluate` request/response shape) is frozen for the same period.
+- **Gateway REST API** endpoints documented in the [API reference](https://docs.cordum.io/api) will not have breaking changes within a major version.
+
+### Deprecation Policy
+
+Any deprecated API receives **2 minor versions** of deprecation warnings before removal:
+
+1. **Minor N**: Feature marked deprecated in docs, logs emit warnings
+2. **Minor N+1**: Deprecation warnings become errors in strict mode
+3. **Minor N+2**: Feature removed
+
+### Versioning
+
+Cordum follows **Semantic Versioning** (semver):
+
+| Bump | Meaning | Example |
+|------|---------|---------|
+| **Major** | Breaking API or wire-format changes | `1.0.0` → `2.0.0` |
+| **Minor** | New features, backward-compatible | `1.0.0` → `1.1.0` |
+| **Patch** | Bug fixes, security patches | `1.0.0` → `1.0.1` |
+
+### Release Cadence
+
+- **Patch releases**: Monthly (or immediately for critical security fixes)
+- **Minor releases**: Quarterly
+- **Major releases**: Annually, with 6-month migration window
+
 ## Project Structure
 
-### Core Team
 
-The Cordum Core Team consists of maintainers who have demonstrated long-term commitment and technical expertise:
+**Advisors:**
 
-- **Project Lead:** Responsible for project vision and strategic direction
-- **Core Maintainers:** Review PRs, manage releases, guide technical decisions
-- **Area Owners:** Deep expertise in specific components (Safety Kernel, Workflow Engine, etc.)
+| Handle | Focus |
+|--------|-------|
+| *Open — accepting advisor applications* | Security, Protocol Design, Enterprise Integrations |
+
+To apply as an advisor, open an issue with the `governance` label or email governance@cordum.io.
 
 ### Contributors
 

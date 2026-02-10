@@ -35,6 +35,17 @@ export function encodePolicyBundleId(id: string): string {
   return id.replaceAll("/", "~");
 }
 
+function readPolicyBundleContent(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "object" && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.content === "string" && obj.content) return obj.content;
+    if (typeof obj.policy === "string" && obj.policy) return obj.policy;
+    if (typeof obj.data === "string" && obj.data) return obj.data;
+  }
+  return "";
+}
+
 function policyBundlePath(id: string): string {
   return `/policy/bundles/${encodePolicyBundleId(id)}`;
 }
@@ -55,10 +66,17 @@ export function usePolicyBundles() {
   return useQuery<ApiResponse<PolicyBundle[]>>({
     queryKey: ["policy-bundles"],
     queryFn: async () => {
-      const res = await get<{ items: BackendPolicyBundleSummary[] }>(
-        "/policy/bundles",
-      );
-      return { items: (res.items ?? []).map(mapPolicyBundleSummary) };
+      const res = await get<{
+        items: BackendPolicyBundleSummary[];
+        bundles?: Record<string, { content?: string } | string>;
+      }>("/policy/bundles");
+      const bundlesMap = res.bundles ?? {};
+      return {
+        items: (res.items ?? []).map((summary) => {
+          const content = readPolicyBundleContent(bundlesMap[summary.id]);
+          return mapPolicyBundleSummary(summary, content);
+        }),
+      };
     },
     staleTime: 30_000,
   });
@@ -174,6 +192,7 @@ export interface PolicyAuditEntry {
   id: string;
   action: string;
   bundleId: string;
+  resourceName?: string;
   actor: string;
   timestamp: string;
   details?: Record<string, unknown>;
@@ -188,6 +207,7 @@ export function usePolicyAudit() {
         id: entry.id,
         action: entry.action ?? "",
         bundleId: entry.resource_id ?? "",
+        resourceName: entry.resource_name || undefined,
         actor: entry.actor_id ?? entry.role ?? "",
         timestamp: entry.created_at ?? "",
         details: {

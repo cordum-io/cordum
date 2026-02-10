@@ -48,7 +48,7 @@ jobs:
         go test -run=^$ -bench=. -benchmem ./... > benchmark_raw.txt
         # Keep only valid Go benchmark output lines (results + header).
         # This avoids log interleaving that can corrupt benchmark-action parsing.
-        grep -E '^(Benchmark\\S+[ \t]+[0-9]+[ \t]+[0-9.]+[ \t]+ns/op|goos:|goarch:|pkg:|cpu:)' benchmark_raw.txt > benchmark.txt || true
+        grep -E '^(Benchmark[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[0-9.]+[[:space:]]+ns/op|goos:|goarch:|pkg:|cpu:)' benchmark_raw.txt > benchmark.txt || true
         cat benchmark.txt
 
     - name: Check benchmark output

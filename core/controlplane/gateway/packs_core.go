@@ -334,7 +334,7 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "install", "pack", record.ID, policyActorID(r), policyRole(r), "install pack "+record.ID)
+	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "install pack "+record.ID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, record)
 }
@@ -558,7 +558,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "uninstall", "pack", packID, policyActorID(r), policyRole(r), "uninstall pack "+packID)
+	s.appendAuditEntryNamed(r.Context(), "uninstall", "pack", packID, rec.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "uninstall pack "+packID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, rec)
 }

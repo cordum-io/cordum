@@ -325,7 +325,7 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "change_password", "user", authCtx.PrincipalID, authCtx.PrincipalID, authCtx.Role, "change password")
+	s.appendAuditEntryNamed(r.Context(), "change_password", "user", authCtx.PrincipalID, user.Username, authCtx.PrincipalID, authCtx.Role, "change password")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -392,7 +392,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "create", "user", user.ID, authCtx.PrincipalID, authCtx.Role, "create user "+user.Username)
+	s.appendAuditEntryNamed(r.Context(), "create", "user", user.ID, user.Username, authCtx.PrincipalID, authCtx.Role, "create user "+user.Username)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w,AuthUser{

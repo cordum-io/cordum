@@ -119,6 +119,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 			if redisStore, ok := b.userStore.(*RedisUserStore); ok {
 				authCtx, err := redisStore.ValidateSession(r.Context(), token)
 				if err == nil {
+					authCtx.AuthSource = "session"
 					return authCtx, nil
 				}
 			}
@@ -133,6 +134,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 		if ctx.Tenant == "" {
 			ctx.Tenant = b.defaultTenant
 		}
+		ctx.AuthSource = "jwt"
 		return ctx, nil
 	}
 	if b.jwtRequired {
@@ -182,6 +184,7 @@ func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext,
 		if authCtx.Tenant == "" {
 			authCtx.Tenant = b.defaultTenant
 		}
+		authCtx.AuthSource = "jwt"
 		return authCtx, nil
 	}
 	if b.jwtRequired {
@@ -212,6 +215,7 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 		if redisStore, ok := b.userStore.(*RedisUserStore); ok {
 			authCtx, err := redisStore.ValidateSession(ctx, key)
 			if err == nil {
+				authCtx.AuthSource = "session"
 				return authCtx, nil
 			}
 			// Session not found or invalid — fall through to API key check
@@ -244,6 +248,7 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 					Tenant:      tenant,
 					PrincipalID: strings.TrimSpace(principalID),
 					Role:        role,
+					AuthSource:  "api_key",
 				}, nil
 			}
 		}
@@ -271,6 +276,7 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 		PrincipalID:      strings.TrimSpace(principalID),
 		Role:             role,
 		AllowCrossTenant: meta.AllowCrossTenant,
+		AuthSource:       "api_key",
 	}, nil
 }
 
