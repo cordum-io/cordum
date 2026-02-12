@@ -2,9 +2,12 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -19,6 +22,82 @@ const policyContent = `rules:
         - job.*
     decision: allow
 `
+
+type policySimAuth struct{}
+
+func (a *policySimAuth) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
+	return authFromRequest(r), nil
+}
+
+func (a *policySimAuth) AuthenticateGRPC(ctx context.Context) (*AuthContext, error) {
+	return authFromContext(ctx), nil
+}
+
+func (a *policySimAuth) RequireRole(r *http.Request, roles ...string) error {
+	auth := authFromRequest(r)
+	if auth == nil {
+		return errors.New("unauthorized")
+	}
+	role := normalizeRole(auth.Role)
+	if role == "" {
+		return errors.New("role required")
+	}
+	for _, candidate := range roles {
+		if normalizeRole(candidate) == role {
+			return nil
+		}
+	}
+	return errors.New("forbidden")
+}
+
+func (a *policySimAuth) ResolveTenant(r *http.Request, requested, _ string) (string, error) {
+	auth := authFromRequest(r)
+	if auth == nil {
+		return "", errors.New("unauthorized")
+	}
+	requested = strings.TrimSpace(requested)
+	authTenant := strings.TrimSpace(auth.Tenant)
+	if requested != "" && !auth.AllowCrossTenant && authTenant != "" && requested != authTenant {
+		return "", errors.New("tenant access denied")
+	}
+	if requested == "" {
+		if authTenant == "" {
+			return "", errors.New("tenant required")
+		}
+		return authTenant, nil
+	}
+	return requested, nil
+}
+
+func (a *policySimAuth) RequireTenantAccess(r *http.Request, tenant string) error {
+	auth := authFromRequest(r)
+	if auth == nil {
+		return errors.New("unauthorized")
+	}
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		return errors.New("tenant required")
+	}
+	if auth.AllowCrossTenant {
+		return nil
+	}
+	if strings.TrimSpace(auth.Tenant) != tenant {
+		return errors.New("tenant access denied")
+	}
+	return nil
+}
+
+func (a *policySimAuth) ResolvePrincipal(r *http.Request, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested != "" {
+		return requested, nil
+	}
+	auth := authFromRequest(r)
+	if auth == nil || strings.TrimSpace(auth.PrincipalID) == "" {
+		return "", errors.New("principal required")
+	}
+	return strings.TrimSpace(auth.PrincipalID), nil
+}
 
 func TestPolicyBundleHandlers(t *testing.T) {
 	s, _, _ := newTestGateway(t)
@@ -95,6 +174,100 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
 		t.Fatalf("unexpected decision: %v", resp.GetDecision())
 	}
+}
+
+func TestPolicyBundleSimulateAuthAndTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &policySimAuth{}
+
+	tenantPolicy := `rules:
+  - id: deny-tenant-b
+    match:
+      tenants:
+        - tenant-b
+      topics:
+        - job.*
+    decision: deny
+  - id: allow-all
+    match:
+      topics:
+        - job.*
+    decision: allow
+`
+	seed, _ := json.Marshal(map[string]any{
+		"content": tenantPolicy,
+		"enabled": true,
+	})
+	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/test", bytes.NewReader(seed))
+	putReq.Header.Set("X-Tenant-ID", "tenant-a")
+	putReq.SetPathValue("id", "secops/test")
+	putReq = withAuth(putReq, &AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"})
+	putRec := httptest.NewRecorder()
+	s.handlePutPolicyBundle(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("seed bundle: %d %s", putRec.Code, putRec.Body.String())
+	}
+
+	simulate := func(auth *AuthContext, requestedTenant string) (*httptest.ResponseRecorder, *pb.PolicyCheckResponse) {
+		simBody, _ := json.Marshal(map[string]any{
+			"request": map[string]any{
+				"topic":  "job.test",
+				"tenant": requestedTenant,
+			},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/bundles/secops/test/simulate", bytes.NewReader(simBody))
+		headerTenant := requestedTenant
+		if headerTenant == "" {
+			headerTenant = auth.Tenant
+		}
+		req.Header.Set("X-Tenant-ID", headerTenant)
+		req.SetPathValue("id", "secops/test")
+		req = withAuth(req, auth)
+		rec := httptest.NewRecorder()
+		s.handleSimulatePolicyBundle(rec, req)
+		if rec.Code != http.StatusOK {
+			return rec, nil
+		}
+		var resp pb.PolicyCheckResponse
+		if err := protojson.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode simulate response: %v", err)
+		}
+		return rec, &resp
+	}
+
+	t.Run("non-admin forbidden", func(t *testing.T) {
+		rec, _ := simulate(&AuthContext{Tenant: "tenant-a", Role: "viewer", PrincipalID: "user-1"}, "tenant-a")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("cross-tenant denied", func(t *testing.T) {
+		rec, _ := simulate(&AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"}, "tenant-b")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("cross-tenant allowed uses requested tenant", func(t *testing.T) {
+		rec, resp := simulate(&AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1", AllowCrossTenant: true}, "tenant-b")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+			t.Fatalf("expected deny for tenant-b, got %v", resp.GetDecision())
+		}
+	})
+
+	t.Run("admin success uses resolved tenant", func(t *testing.T) {
+		rec, resp := simulate(&AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"}, "tenant-a")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+			t.Fatalf("expected allow for tenant-a, got %v", resp.GetDecision())
+		}
+	})
 }
 
 func TestPolicyBundlePublishRollbackAndAudit(t *testing.T) {

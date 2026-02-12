@@ -55,16 +55,16 @@ func (r *PendingReplayer) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if r.lockKey != "" && r.lockTTL > 0 {
-				ok, err := r.store.TryAcquireLock(ctx, r.lockKey, r.lockTTL)
+				token, err := r.store.TryAcquireLock(ctx, r.lockKey, r.lockTTL)
 				if err != nil {
 					logging.Error("pending-replayer", "lock acquisition failed", "error", err)
 					continue
 				}
-				if !ok {
+				if token == "" {
 					continue
 				}
 				r.tick(ctx)
-				_ = r.store.ReleaseLock(ctx, r.lockKey)
+				_ = r.store.ReleaseLock(ctx, r.lockKey, token)
 			} else {
 				r.tick(ctx)
 			}

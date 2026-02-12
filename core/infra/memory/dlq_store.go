@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -23,12 +26,19 @@ type DLQEntry struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+const (
+	defaultDLQEntryTTL = 30 * 24 * time.Hour
+	dlqEntryTTLDaysEnv = "CORDUM_DLQ_ENTRY_TTL_DAYS"
+	dlqMaxEntries      = 1000
+)
+
 // DLQStore persists DLQ entries in Redis.
 type DLQStore struct {
-	client redis.UniversalClient
+	client   redis.UniversalClient
+	entryTTL time.Duration
 }
 
-func NewDLQStore(url string) (*DLQStore, error) {
+func NewDLQStore(url string, entryTTL time.Duration) (*DLQStore, error) {
 	if url == "" {
 		url = defaultRedisURL
 	}
@@ -41,7 +51,7 @@ func NewDLQStore(url string) (*DLQStore, error) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("connect redis: %w", err)
 	}
-	return &DLQStore{client: client}, nil
+	return &DLQStore{client: client, entryTTL: resolveDLQEntryTTL(entryTTL)}, nil
 }
 
 func (s *DLQStore) Close() error {
@@ -64,11 +74,32 @@ func (s *DLQStore) Add(ctx context.Context, entry DLQEntry) error {
 		return fmt.Errorf("marshal dlq entry: %w", err)
 	}
 	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, dlqEntryKey(entry.JobID), data, 0)
+	pipe.Set(ctx, dlqEntryKey(entry.JobID), data, s.entryTTL)
 	pipe.ZAdd(ctx, dlqIndexKey(), redis.Z{Score: float64(entry.CreatedAt.Unix()), Member: entry.JobID})
-	pipe.ZRemRangeByRank(ctx, dlqIndexKey(), 0, -1001) // keep last ~1000
-	_, err = pipe.Exec(ctx)
-	return err
+	trimCmd := pipe.ZRange(ctx, dlqIndexKey(), 0, -(dlqMaxEntries + 1))
+	remCmd := pipe.ZRemRangeByRank(ctx, dlqIndexKey(), 0, -(dlqMaxEntries + 1)) // keep last ~1000
+	if _, err = pipe.Exec(ctx); err != nil {
+		return err
+	}
+	removed, err := remCmd.Result()
+	if err != nil {
+		return err
+	}
+	if removed == 0 {
+		return nil
+	}
+	trimIDs, err := trimCmd.Result()
+	if err != nil {
+		return err
+	}
+	if len(trimIDs) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(trimIDs))
+	for _, id := range trimIDs {
+		keys = append(keys, dlqEntryKey(id))
+	}
+	return s.client.Del(ctx, keys...).Err()
 }
 
 // List returns recent DLQ entries.
@@ -195,4 +226,26 @@ func dlqEntryKey(jobID string) string {
 
 func dlqIndexKey() string {
 	return "dlq:index"
+}
+
+func resolveDLQEntryTTL(entryTTL time.Duration) time.Duration {
+	if entryTTL > 0 {
+		return entryTTL
+	}
+	if envTTL := dlqEntryTTLFromEnv(); envTTL > 0 {
+		return envTTL
+	}
+	return defaultDLQEntryTTL
+}
+
+func dlqEntryTTLFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(dlqEntryTTLDaysEnv))
+	if raw == "" {
+		return 0
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days <= 0 {
+		return 0
+	}
+	return time.Duration(days) * 24 * time.Hour
 }

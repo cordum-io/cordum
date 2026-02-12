@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"strings"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	capsdk "github.com/cordum-io/cap/v2/sdk/go"
@@ -589,6 +590,95 @@ func TestWorker_Run_HandlerError(t *testing.T) {
 	defer mu.Unlock()
 	if receivedResult.GetStatus() != agentv1.JobStatus_JOB_STATUS_FAILED {
 		t.Errorf("expected failed status, got %v", receivedResult.GetStatus())
+	}
+}
+
+func TestWorker_Run_HandlerPanic(t *testing.T) {
+	_, natsURL := startTestNATS(t)
+
+	w, err := NewWorker(Config{
+		Type:           "panic-test",
+		NatsURL:        natsURL,
+		WorkerID:       "panic-worker",
+		HeartbeatEvery: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewWorker failed: %v", err)
+	}
+	defer w.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = w.Run(ctx, func(ctx context.Context, req *agentv1.JobRequest) (*agentv1.JobResult, error) {
+			panic("boom")
+		})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	nc := testNATSConn(t, natsURL)
+
+	results := make(map[string]*agentv1.JobResult)
+	var mu sync.Mutex
+
+	sub, err := nc.Subscribe(SubjectResult, func(msg *nats.Msg) {
+		var pkt agentv1.BusPacket
+		if err := proto.Unmarshal(msg.Data, &pkt); err != nil {
+			return
+		}
+		if res := pkt.GetJobResult(); res != nil {
+			mu.Lock()
+			results[res.GetJobId()] = res
+			mu.Unlock()
+		}
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	publishJob := func(id string) {
+		jobReq := &agentv1.JobRequest{JobId: id, Topic: "job.panic-test.submit"}
+		packet := &agentv1.BusPacket{
+			TraceId:         id,
+			SenderId:        "test",
+			ProtocolVersion: capsdk.DefaultProtocolVersion,
+			CreatedAt:       timestamppb.Now(),
+			Payload:         &agentv1.BusPacket_JobRequest{JobRequest: jobReq},
+		}
+		data, _ := capsdk.MarshalDeterministic(packet)
+		nc.Publish("job.panic-test.submit", data)
+	}
+
+	publishJob("panic-job-1")
+	publishJob("panic-job-2")
+	nc.Flush()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(results)
+		mu.Unlock()
+		if count >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results after panic, got %d", len(results))
+	}
+	for id, res := range results {
+		if res.GetStatus() != agentv1.JobStatus_JOB_STATUS_FAILED {
+			t.Fatalf("expected failed status for %s, got %v", id, res.GetStatus())
+		}
+		if !strings.Contains(res.GetErrorMessage(), "handler panic") {
+			t.Fatalf("expected panic error message for %s, got %q", id, res.GetErrorMessage())
+		}
 	}
 }
 

@@ -481,9 +481,9 @@ func (s *RedisUserStore) Delete(ctx context.Context, id string) error {
 
 // Login throttle constants.
 const (
-	loginFailedPrefix   = "login:failed:"
-	maxLoginAttempts    = 5
-	loginLockoutPeriod  = 15 * time.Minute
+	loginFailedPrefix  = "login:failed:"
+	maxLoginAttempts   = 5
+	loginLockoutPeriod = 15 * time.Minute
 )
 
 // ErrLoginThrottled is returned when too many failed login attempts are detected.
@@ -517,12 +517,16 @@ func (s *RedisUserStore) RecordFailedLogin(ctx context.Context, username string)
 	pipe := s.client.Pipeline()
 	pipe.Incr(ctx, key)
 	pipe.Expire(ctx, key, loginLockoutPeriod)
-	_, _ = pipe.Exec(ctx) // best-effort
+	if _, err := pipe.Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "failed to record login attempt", "username", username, "error", err)
+	}
 }
 
 // ClearFailedLogins removes the failed login counter on successful auth.
 func (s *RedisUserStore) ClearFailedLogins(ctx context.Context, username string) {
-	_ = s.client.Del(ctx, loginThrottleKey(username)).Err() // best-effort
+	if err := s.client.Del(ctx, loginThrottleKey(username)).Err(); err != nil {
+		slog.WarnContext(ctx, "failed to clear login attempts", "username", username, "error", err)
+	}
 }
 
 // Close closes the Redis client connection.

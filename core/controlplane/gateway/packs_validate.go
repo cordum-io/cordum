@@ -329,6 +329,15 @@ func loadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
 	if id != "" {
 		workflowMap["id"] = id
 	}
+	if rawSteps, ok := workflowMap["steps"]; ok {
+		steps, ok := rawSteps.(map[string]any)
+		if !ok {
+			return nil, "", errors.New("workflow steps must be an object")
+		}
+		if err := validateWorkflowStepMap(steps); err != nil {
+			return nil, "", err
+		}
+	}
 	normalized := normalizeWorkflowMap(workflowMap)
 	digest, err := hashValue(normalized)
 	if err != nil {

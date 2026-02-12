@@ -168,6 +168,21 @@ func TestHelperFunctions(t *testing.T) {
 	}
 }
 
+func TestSplitJobID(t *testing.T) {
+	run, step := splitJobID("run:step@3")
+	if run != "run" || step != "step" {
+		t.Fatalf("unexpected split: %s %s", run, step)
+	}
+	run, step = splitJobID("run:with:step@2")
+	if run != "run" || step != "with:step" {
+		t.Fatalf("unexpected split for multi: %s %s", run, step)
+	}
+	run, step = splitJobID("bad")
+	if run != "" || step != "" {
+		t.Fatalf("expected empty split")
+	}
+}
+
 func TestSetContextPathAndRecordStepOutput(t *testing.T) {
 	run := &WorkflowRun{Context: map[string]any{}}
 	if err := setContextPath(run.Context, "outputs.value", "ok"); err != nil {

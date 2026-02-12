@@ -29,6 +29,7 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	entries, err := s.dlqStore.List(r.Context(), limit)
 	if err != nil {
 		slog.Error("dlq list failed", "error", err)
@@ -65,6 +66,7 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	cursor := int64(0)
 	if q := r.URL.Query().Get("cursor"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
@@ -155,6 +157,11 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	origReq, origReqErr := s.jobStore.GetJobRequest(r.Context(), jobID)
+	if origReqErr != nil {
+		slog.Warn("dlq retry missing original job request", "job_id", jobID, "error", origReqErr)
+		origReq = nil
+	}
 	entry, err := s.dlqStore.Get(r.Context(), jobID)
 	if err != nil {
 		writeErrorJSON(w, http.StatusNotFound, "dlq entry not found")
@@ -185,22 +192,34 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	team, _ := s.jobStore.GetTeam(r.Context(), jobID)
 	principal, _ := s.jobStore.GetPrincipal(r.Context(), jobID)
 
+	envOverrides := map[string]string{
+		"tenant_id":    tenant,
+		"team_id":      team,
+		"retry_of_job": jobID,
+	}
+	labelOverrides := map[string]string{
+		"retry":        "true",
+		"dlq_entry":    jobID,
+		"retry_of_job": jobID,
+	}
+	var baseEnv map[string]string
+	var baseLabels map[string]string
+	if origReq != nil {
+		baseEnv = origReq.GetEnv()
+		baseLabels = origReq.GetLabels()
+	}
+
 	jobReq := &pb.JobRequest{
 		JobId:       newJobID,
 		Topic:       topic,
 		ContextPtr:  ctxPtr,
 		TenantId:    tenant,
 		PrincipalId: principal,
-		Env: map[string]string{
-			"tenant_id":    tenant,
-			"team_id":      team,
-			"retry_of_job": jobID,
-		},
-		Labels: map[string]string{
-			"retry":        "true",
-			"dlq_entry":    jobID,
-			"retry_of_job": jobID,
-		},
+		Env:         mergeStringMap(baseEnv, envOverrides),
+		Labels:      mergeStringMap(baseLabels, labelOverrides),
+	}
+	if origReq != nil {
+		jobReq.Meta = origReq.GetMeta()
 	}
 
 	packet := &pb.BusPacket{
@@ -239,3 +258,16 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"job_id": newJobID})
 }
 
+func mergeStringMap(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range override {
+		out[k] = v
+	}
+	return out
+}

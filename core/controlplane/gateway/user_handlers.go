@@ -45,6 +45,10 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if authCtx.Tenant == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		return
+	}
 	if err := s.auth.RequireRole(r, "admin"); err != nil {
 		writeErrorJSON(w, http.StatusForbidden, "admin role required")
 		return
@@ -77,6 +81,10 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	authCtx := authFromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if authCtx.Tenant == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
 	if err := s.auth.RequireRole(r, "admin"); err != nil {
@@ -156,6 +164,10 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if authCtx.Tenant == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		return
+	}
 	if err := s.auth.RequireRole(r, "admin"); err != nil {
 		writeErrorJSON(w, http.StatusForbidden, "admin role required")
 		return
@@ -211,6 +223,10 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 	authCtx := authFromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if authCtx.Tenant == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
 	if err := s.auth.RequireRole(r, "admin"); err != nil {

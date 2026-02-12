@@ -147,8 +147,8 @@ type JobStore interface {
 	GetSafetyDecision(ctx context.Context, jobID string) (SafetyDecisionRecord, error)
 	GetAttempts(ctx context.Context, jobID string) (int, error)
 	CountActiveByTenant(ctx context.Context, tenant string) (int, error)
-	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (bool, error)
-	ReleaseLock(ctx context.Context, key string) error
+	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error)
+	ReleaseLock(ctx context.Context, key string, token string) error
 	CancelJob(ctx context.Context, jobID string) (JobState, error)
 	SetFailureReason(ctx context.Context, jobID, reason string) error
 	GetFailureReason(ctx context.Context, jobID string) (string, error)

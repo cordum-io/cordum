@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -117,6 +118,114 @@ func TestCancelRunPublishesCancels(t *testing.T) {
 	}
 }
 
+func TestWorkflowTimeoutCancelsRunningJobs(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	wfDef := &Workflow{ID: "wf-timeout", OrgID: "org", TimeoutSec: 1, Steps: map[string]*Step{
+		"step": {ID: "step", Type: StepTypeWorker, Topic: "job.default"},
+	}}
+	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	startedAt := time.Now().UTC().Add(-2 * time.Second)
+	run := &WorkflowRun{
+		ID:         "run-timeout",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org",
+		Steps: map[string]*StepRun{
+			"step": {
+				StepID: "step",
+				Status: StepStatusRunning,
+				JobID:  "job-1",
+				Children: map[string]*StepRun{
+					"step[0]": {StepID: "step[0]", Status: StepStatusRunning, JobID: "job-2"},
+				},
+			},
+		},
+		Status:    RunStatusRunning,
+		CreatedAt: startedAt.Add(-time.Second),
+		UpdatedAt: startedAt,
+		StartedAt: &startedAt,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	updated, _ := store.GetRun(context.Background(), run.ID)
+	if updated.Status != RunStatusTimedOut {
+		t.Fatalf("expected run timed out, got %s", updated.Status)
+	}
+	if updated.Steps["step"].Status != StepStatusTimedOut {
+		t.Fatalf("expected step timed out, got %s", updated.Steps["step"].Status)
+	}
+	if updated.Steps["step"].Children["step[0]"].Status != StepStatusTimedOut {
+		t.Fatalf("expected child step timed out, got %s", updated.Steps["step"].Children["step[0]"].Status)
+	}
+
+	count := 0
+	for _, msg := range bus.Snapshot() {
+		if msg.subject == capsdk.SubjectCancel {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 cancel publishes, got %d", count)
+	}
+
+	events, err := store.ListTimelineEvents(context.Background(), run.ID, 20)
+	if err != nil {
+		t.Fatalf("list timeline: %v", err)
+	}
+	if !hasTimelineEvent(events, "run_status") {
+		t.Fatalf("expected run_status timeline event")
+	}
+}
+
+func TestRunLockCleanupAfterTerminalRuns(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	engine := NewEngine(store, &recordingBus{})
+	wfDef := &Workflow{ID: "wf-locks", OrgID: "org", Steps: map[string]*Step{
+		"step": {ID: "step", Type: StepTypeWorker, Topic: "job.default"},
+	}}
+	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	now := time.Now().UTC()
+	for i := 0; i < 25; i++ {
+		run := &WorkflowRun{
+			ID:         fmt.Sprintf("run-lock-%d", i),
+			WorkflowID: wfDef.ID,
+			OrgID:      "org",
+			Steps:      map[string]*StepRun{},
+			Status:     RunStatusRunning,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			StartedAt:  &now,
+		}
+		if err := store.CreateRun(context.Background(), run); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if err := engine.CancelRun(context.Background(), run.ID); err != nil {
+			t.Fatalf("cancel run: %v", err)
+		}
+	}
+
+	if got := countRunLocks(engine); got != 0 {
+		t.Fatalf("expected 0 run locks, got %d", got)
+	}
+}
+
 func TestEvalForEachVariants(t *testing.T) {
 	scope := map[string]any{"input": map[string]any{"items": []any{"a", "b"}}}
 	items, err := evalForEach("input.items", scope)
@@ -131,6 +240,15 @@ func TestEvalForEachVariants(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for non-array")
 	}
+}
+
+func countRunLocks(engine *Engine) int {
+	count := 0
+	engine.runLocks.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	return count
 }
 
 func TestPutJobContextAndDelay(t *testing.T) {

@@ -3,7 +3,9 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -218,8 +220,14 @@ func TestSessionTokenCryptoRandom(t *testing.T) {
 		Tenant:   "default",
 	}
 
-	resp1 := buildUserLoginResponse(user)
-	resp2 := buildUserLoginResponse(user)
+	resp1, err := buildUserLoginResponse(context.Background(), user)
+	if err != nil {
+		t.Fatalf("buildUserLoginResponse: %v", err)
+	}
+	resp2, err := buildUserLoginResponse(context.Background(), user)
+	if err != nil {
+		t.Fatalf("buildUserLoginResponse: %v", err)
+	}
 
 	// Tokens must differ even for the same user at the same instant.
 	if resp1.Token == resp2.Token {
@@ -238,5 +246,26 @@ func TestSessionTokenCryptoRandom(t *testing.T) {
 	const expectedLen = 8 + 43
 	if len(resp1.Token) != expectedLen {
 		t.Fatalf("expected token length %d, got %d (%s)", expectedLen, len(resp1.Token), resp1.Token)
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("entropy exhausted")
+}
+
+func TestBuildUserLoginResponseRandFailure(t *testing.T) {
+	user := &User{
+		ID:       "user-1",
+		Username: "test",
+		Tenant:   "default",
+	}
+	original := rand.Reader
+	rand.Reader = failingReader{}
+	t.Cleanup(func() { rand.Reader = original })
+
+	if _, err := buildUserLoginResponse(context.Background(), user); err == nil {
+		t.Fatal("expected error on rand failure")
 	}
 }

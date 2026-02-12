@@ -26,8 +26,8 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Decode raw JSON to detect wrapped vs flat format.
 	var raw map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &raw); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 
@@ -184,8 +184,8 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req schemaRegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	data, err := json.Marshal(req.Schema)

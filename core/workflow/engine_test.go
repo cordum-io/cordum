@@ -123,6 +123,71 @@ func TestEngineForEachFanoutAndAggregateSuccess(t *testing.T) {
 	}
 }
 
+func TestEngineForEachFanoutLimitExceeded(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus).WithMaxForEachItems(1)
+
+	wf := &Workflow{
+		ID:    "wf-foreach-limit",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"fan": {
+				ID:      "fan",
+				Type:    StepTypeWorker,
+				Topic:   "job.default",
+				ForEach: "input.items",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-foreach-limit",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Input:      map[string]any{"items": []any{"a", "b"}},
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if bus.Count() != 0 {
+		t.Fatalf("expected no fan-out publishes, got %d", bus.Count())
+	}
+
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusFailed {
+		t.Fatalf("expected run failed, got %s", final.Status)
+	}
+	if final.Steps["fan"] == nil || final.Steps["fan"].Status != StepStatusFailed {
+		t.Fatalf("expected parent step failed, got %#v", final.Steps["fan"])
+	}
+	if msg, ok := final.Steps["fan"].Error["message"].(string); !ok || msg == "" {
+		t.Fatalf("expected error message on step")
+	}
+
+	events, err := store.ListTimelineEvents(context.Background(), run.ID, 20)
+	if err != nil {
+		t.Fatalf("list timeline: %v", err)
+	}
+	if !hasTimelineEvent(events, "step_foreach_failed") {
+		t.Fatalf("expected step_foreach_failed timeline event")
+	}
+}
+
 func TestEngineRetriesAndBackoff(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer store.Close()
@@ -502,5 +567,299 @@ func TestEngineConditionStepEvaluates(t *testing.T) {
 	decisionRaw, ok := final.Context["decision"].(map[string]any)
 	if !ok || decisionRaw["allowed"] != true {
 		t.Fatalf("expected output path decision.allowed to be true")
+	}
+}
+
+func TestEngineConditionEvalErrorFailsRun(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-condition-error",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step": {ID: "step", Type: StepTypeWorker, Topic: "job.default", Condition: "!"},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &WorkflowRun{
+		ID:         "run-condition-error",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Steps:      map[string]*StepRun{},
+		Status:     RunStatusPending,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if bus.Count() != 0 {
+		t.Fatalf("expected no dispatches on condition eval error, got %d", bus.Count())
+	}
+
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusFailed {
+		t.Fatalf("expected run failed, got %s", final.Status)
+	}
+	if final.Steps["step"] == nil || final.Steps["step"].Status != StepStatusFailed {
+		t.Fatalf("expected step failed, got %#v", final.Steps["step"])
+	}
+	if msg, ok := final.Steps["step"].Error["message"].(string); !ok || msg == "" {
+		t.Fatalf("expected error message on step")
+	}
+
+	events, err := store.ListTimelineEvents(context.Background(), run.ID, 20)
+	if err != nil {
+		t.Fatalf("list timeline: %v", err)
+	}
+	if !hasTimelineEvent(events, "step_condition_failed") {
+		t.Fatalf("expected step_condition_failed timeline event")
+	}
+}
+
+func TestEngineForEachEvalErrorFailsRun(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-foreach-error",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"fan": {ID: "fan", Type: StepTypeWorker, Topic: "job.default", ForEach: "input.value"},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &WorkflowRun{
+		ID:         "run-foreach-error",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Input:      map[string]any{"value": "not-array"},
+		Steps:      map[string]*StepRun{},
+		Status:     RunStatusPending,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if bus.Count() != 0 {
+		t.Fatalf("expected no dispatches on for_each eval error, got %d", bus.Count())
+	}
+
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusFailed {
+		t.Fatalf("expected run failed, got %s", final.Status)
+	}
+	if final.Steps["fan"] == nil || final.Steps["fan"].Status != StepStatusFailed {
+		t.Fatalf("expected step failed, got %#v", final.Steps["fan"])
+	}
+
+	events, err := store.ListTimelineEvents(context.Background(), run.ID, 20)
+	if err != nil {
+		t.Fatalf("list timeline: %v", err)
+	}
+	if !hasTimelineEvent(events, "step_foreach_failed") {
+		t.Fatalf("expected step_foreach_failed timeline event")
+	}
+}
+
+func hasTimelineEvent(events []TimelineEvent, eventType string) bool {
+	for _, evt := range events {
+		if evt.Type == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+// --- scheduleAfter / cancellable timer tests ---
+
+func TestScheduleAfterFiresTimer(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	defer engine.Stop()
+
+	// Create a workflow and run with a delay step so scheduleAfter is exercised.
+	wf := &Workflow{
+		ID:    "wf-delay-fire",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"wait": {
+				ID:       "wait",
+				Type:     StepTypeDelay,
+				DelaySec: 0, // zero delay completes immediately — not what we want
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &WorkflowRun{
+		ID:         "run-delay-fire",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Directly test scheduleAfter with a short delay.
+	engine.scheduleAfter(50*time.Millisecond, wf.ID, run.ID)
+	if n := engine.PendingTimers(); n != 1 {
+		t.Fatalf("expected 1 pending timer, got %d", n)
+	}
+
+	// Wait for it to fire.
+	time.Sleep(200 * time.Millisecond)
+	if n := engine.PendingTimers(); n != 0 {
+		t.Fatalf("expected 0 pending timers after fire, got %d", n)
+	}
+}
+
+func TestScheduleAfterMultipleTimers(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	defer engine.Stop()
+
+	wf := &Workflow{
+		ID:    "wf-multi-timer",
+		OrgID: "org-1",
+		Steps: map[string]*Step{},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	// Schedule several timers.
+	for i := 0; i < 5; i++ {
+		runID := uuid.NewString()
+		run := &WorkflowRun{
+			ID:         runID,
+			WorkflowID: wf.ID,
+			OrgID:      "org-1",
+			Status:     RunStatusPending,
+			Steps:      map[string]*StepRun{},
+			CreatedAt:  time.Now().UTC(),
+			UpdatedAt:  time.Now().UTC(),
+		}
+		if err := store.CreateRun(context.Background(), run); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		engine.scheduleAfter(50*time.Millisecond, wf.ID, runID)
+	}
+
+	if n := engine.PendingTimers(); n != 5 {
+		t.Fatalf("expected 5 pending timers, got %d", n)
+	}
+
+	// After all fire, should drain to 0.
+	time.Sleep(300 * time.Millisecond)
+	if n := engine.PendingTimers(); n != 0 {
+		t.Fatalf("expected 0 pending timers, got %d", n)
+	}
+}
+
+func TestStopCancelsPendingTimers(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-stop-cancel",
+		OrgID: "org-1",
+		Steps: map[string]*Step{},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	// Schedule timers with a long delay.
+	for i := 0; i < 3; i++ {
+		runID := uuid.NewString()
+		run := &WorkflowRun{
+			ID:         runID,
+			WorkflowID: wf.ID,
+			OrgID:      "org-1",
+			Status:     RunStatusPending,
+			Steps:      map[string]*StepRun{},
+			CreatedAt:  time.Now().UTC(),
+			UpdatedAt:  time.Now().UTC(),
+		}
+		if err := store.CreateRun(context.Background(), run); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		engine.scheduleAfter(10*time.Second, wf.ID, runID)
+	}
+
+	if n := engine.PendingTimers(); n != 3 {
+		t.Fatalf("expected 3 pending timers, got %d", n)
+	}
+
+	// Stop should cancel all immediately.
+	engine.Stop()
+	if n := engine.PendingTimers(); n != 0 {
+		t.Fatalf("expected 0 pending timers after Stop, got %d", n)
+	}
+
+	// Calling Stop again should be safe.
+	engine.Stop()
+}
+
+func TestScheduleAfterIgnoredAfterStop(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	// Stop first.
+	engine.Stop()
+
+	// Now schedule — should be silently dropped.
+	engine.scheduleAfter(10*time.Millisecond, "wf-x", "run-x")
+	if n := engine.PendingTimers(); n != 0 {
+		t.Fatalf("expected no timers after Stop, got %d", n)
+	}
+}
+
+func TestScheduleAfterZeroDelayIgnored(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	defer engine.Stop()
+
+	engine.scheduleAfter(0, "wf", "run")
+	engine.scheduleAfter(-1*time.Second, "wf", "run")
+	if n := engine.PendingTimers(); n != 0 {
+		t.Fatalf("expected 0 timers for zero/negative delay, got %d", n)
 	}
 }

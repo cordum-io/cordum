@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -509,6 +510,68 @@ func apiKeyUnaryInterceptor(auth AuthProvider) grpc.UnaryServerInterceptor {
 		ctx = context.WithValue(ctx, authContextKey{}, authCtx)
 		return handler(ctx, req)
 	}
+}
+
+var grpcPublicMethods = map[string]bool{
+	"/grpc.health.v1.Health/Check": true,
+	"/grpc.health.v1.Health/Watch": true,
+}
+
+func rateLimitUnaryInterceptor(auth AuthProvider) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if apiLimiter == nil && publicLimiter == nil {
+			return handler(ctx, req)
+		}
+		if info == nil {
+			return handler(ctx, req)
+		}
+		if grpcPublicMethods[info.FullMethod] {
+			if publicLimiter != nil && !publicLimiter.Allow(grpcPublicRateLimitKey(ctx)) {
+				return nil, status.Error(codes.ResourceExhausted, "rate limited")
+			}
+			return handler(ctx, req)
+		}
+		if apiLimiter != nil && !apiLimiter.Allow(grpcRateLimitKey(ctx)) {
+			return nil, status.Error(codes.ResourceExhausted, "rate limited")
+		}
+		return handler(ctx, req)
+	}
+}
+
+func grpcRateLimitKey(ctx context.Context) string {
+	// SECURITY: The rate limiter runs after auth, so prefer the authenticated
+	// tenant. Fall back to client IP if auth context is missing.
+	if authCtx := authFromContext(ctx); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
+		return "tenant:" + strings.TrimSpace(authCtx.Tenant)
+	}
+	if ip := grpcClientIP(ctx); ip != "" {
+		return "ip:" + ip
+	}
+	return "ip:unknown"
+}
+
+func grpcPublicRateLimitKey(ctx context.Context) string {
+	if ip := grpcClientIP(ctx); ip != "" {
+		return "ip:" + ip
+	}
+	return "ip:unknown"
+}
+
+func grpcClientIP(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	peerInfo, ok := peer.FromContext(ctx)
+	if !ok || peerInfo == nil || peerInfo.Addr == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(peerInfo.Addr.String())); err == nil && host != "" {
+		return host
+	}
+	if tcpAddr, ok := peerInfo.Addr.(*net.TCPAddr); ok && tcpAddr.IP != nil {
+		return tcpAddr.IP.String()
+	}
+	return strings.TrimSpace(peerInfo.Addr.String())
 }
 
 func addrFromEnv(key, fallback string) string {

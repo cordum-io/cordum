@@ -26,6 +26,7 @@ import { api } from "../../lib/api";
 import { formatCount } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { useUiStore } from "../../state/ui";
+import { usePresenceCleanup } from "../../state/events";
 import { ConnectionIndicator } from "../ConnectionIndicator";
 import { useConfigStore } from "../../state/config";
 import { useAuthConfig } from "../../hooks/useAuthConfig";
@@ -62,6 +63,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const logout = useConfigStore((state) => state.logout);
   const { data: authConfig } = useAuthConfig();
   const [loggingOut, setLoggingOut] = useState(false);
+
+  usePresenceCleanup();
   const requiresAuth = !!authConfig && (
     authConfig.password_enabled ||
     authConfig.user_auth_enabled ||

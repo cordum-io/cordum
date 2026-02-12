@@ -32,19 +32,13 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
 
-	// Use tenant from auth context when available.
-	orgID := req.GetOrgId()
-	principalID := req.GetPrincipalId()
-	if auth := authFromContext(ctx); auth != nil {
-		if auth.Tenant != "" {
-			orgID = auth.Tenant
-		}
-		if auth.PrincipalID != "" {
-			principalID = auth.PrincipalID
-		}
+	orgID, err := resolveGRPCTenant(ctx, req.GetOrgId(), s.tenant)
+	if err != nil {
+		return nil, err
 	}
-	if orgID == "" {
-		orgID = s.tenant
+	principalID := req.GetPrincipalId()
+	if auth := authFromContext(ctx); auth != nil && auth.PrincipalID != "" {
+		principalID = auth.PrincipalID
 	}
 
 	key := strings.TrimSpace(req.GetIdempotencyKey())
@@ -283,6 +277,26 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 
 	logging.Info("api-gateway", "job submitted", "job_id", jobID)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
+}
+
+func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if auth := authFromContext(ctx); auth != nil {
+		authTenant := strings.TrimSpace(auth.Tenant)
+		if authTenant != "" {
+			if requested != "" && !auth.AllowCrossTenant && requested != authTenant {
+				return "", status.Error(codes.PermissionDenied, "tenant access denied")
+			}
+			if requested == "" {
+				return authTenant, nil
+			}
+			return requested, nil
+		}
+	}
+	if requested != "" {
+		return requested, nil
+	}
+	return strings.TrimSpace(fallback), nil
 }
 
 func (s *server) GetJobStatus(ctx context.Context, req *pb.GetJobStatusRequest) (*pb.GetJobStatusResponse, error) {

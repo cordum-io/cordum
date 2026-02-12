@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, del, put } from "../api/client";
 import { logger } from "../lib/logger";
@@ -317,19 +317,31 @@ export function useSaveNotificationChannel() {
   const setConfig = useSetConfig();
   const queryClient = useQueryClient();
   const { data: channels } = useNotificationChannels();
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
 
-  return useMutation<void, Error, NotificationChannel>({
-    mutationFn: (channel) => {
-      const existing = channels ?? [];
+  return useMutation<NotificationChannel[], Error, NotificationChannel>({
+    mutationFn: async (channel) => {
+      const existing = channelsRef.current ?? [];
       const idx = existing.findIndex((c) => c.id === channel.id);
       const updated = idx >= 0
         ? existing.map((c, i) => (i === idx ? channel : c))
         : [...existing, channel];
       logger.info("settings", "Saving notification channel", { id: channel.id });
-      writeLocalStorage(LS_CHANNELS_KEY, updated);
-      return setConfig.mutateAsync({ notifications: { channels: updated } });
+      await setConfig.mutateAsync({ notifications: { channels: updated } });
+      return updated;
     },
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      writeLocalStorage(LS_CHANNELS_KEY, updated);
+      queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (err) => {
+      logger.error("settings", "Failed to save notification channel", { error: err.message });
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Failed to save channel",
+        description: err.message,
+      });
       queryClient.invalidateQueries({ queryKey: ["config"] });
     },
   });
@@ -339,15 +351,27 @@ export function useDeleteNotificationChannel() {
   const setConfig = useSetConfig();
   const queryClient = useQueryClient();
   const { data: channels } = useNotificationChannels();
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
 
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => {
-      const updated = (channels ?? []).filter((c) => c.id !== id);
+  return useMutation<NotificationChannel[], Error, string>({
+    mutationFn: async (id) => {
+      const updated = (channelsRef.current ?? []).filter((c) => c.id !== id);
       logger.info("settings", "Deleting notification channel", { id });
-      writeLocalStorage(LS_CHANNELS_KEY, updated);
-      return setConfig.mutateAsync({ notifications: { channels: updated } });
+      await setConfig.mutateAsync({ notifications: { channels: updated } });
+      return updated;
     },
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      writeLocalStorage(LS_CHANNELS_KEY, updated);
+      queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (err) => {
+      logger.error("settings", "Failed to delete notification channel", { error: err.message });
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Failed to delete channel",
+        description: err.message,
+      });
       queryClient.invalidateQueries({ queryKey: ["config"] });
     },
   });

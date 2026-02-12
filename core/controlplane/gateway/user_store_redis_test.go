@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -95,6 +97,29 @@ func TestLoginThrottle_IndependentPerUsername(t *testing.T) {
 	// Bob is NOT throttled.
 	if err := store.CheckLoginThrottle(ctx, "bob"); err != nil {
 		t.Fatalf("bob should not be throttled: %v", err)
+	}
+}
+
+func TestLoginThrottleLogsOnRedisFailure(t *testing.T) {
+	store, srv := newTestUserStore(t)
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	previous := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	srv.Close()
+	store.RecordFailedLogin(ctx, "alice")
+	store.ClearFailedLogins(ctx, "alice")
+
+	logs := buf.String()
+	if !strings.Contains(logs, "failed to record login attempt") {
+		t.Fatalf("expected record login warning, got %s", logs)
+	}
+	if !strings.Contains(logs, "failed to clear login attempts") {
+		t.Fatalf("expected clear login warning, got %s", logs)
 	}
 }
 

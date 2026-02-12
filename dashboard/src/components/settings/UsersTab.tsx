@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -194,6 +194,13 @@ function ChangePasswordModal({
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const {
     register,
@@ -204,16 +211,30 @@ function ChangePasswordModal({
     defaultValues: { password: "", confirm: "" },
   });
 
+  const handleClose = () => {
+    abortRef.current?.abort();
+    onClose();
+  };
+
   async function onSubmit(data: ChangePasswordForm) {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setSubmitting(true);
     setError("");
     try {
-      await post(`/users/${user.id}/password`, { password: data.password });
-      onClose();
+      await post(`/users/${user.id}/password`, { password: data.password }, { signal: controller.signal });
+      if (!controller.signal.aborted) {
+        onClose();
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change password");
+      if (!controller.signal.aborted) {
+        setError(err instanceof Error ? err.message : "Failed to change password");
+      }
     } finally {
-      setSubmitting(false);
+      if (!controller.signal.aborted) {
+        setSubmitting(false);
+      }
     }
   }
 
@@ -224,7 +245,7 @@ function ChangePasswordModal({
           <h3 className="font-display text-lg font-semibold text-ink">
             Change Password for {user.username}
           </h3>
-          <button onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
+          <button onClick={handleClose} className="rounded-full p-1 hover:bg-surface2">
             <X className="h-4 w-4 text-muted" />
           </button>
         </div>
@@ -258,7 +279,7 @@ function ChangePasswordModal({
           </div>
 
           <div className="flex justify-end gap-3">
-            <Button variant="ghost" size="sm" type="button" onClick={onClose}>
+            <Button variant="ghost" size="sm" type="button" onClick={handleClose}>
               Cancel
             </Button>
             <Button type="submit" size="sm" disabled={submitting}>

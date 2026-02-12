@@ -132,6 +132,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	stateFilter := strings.ToUpper(r.URL.Query().Get("state"))
 	topicFilter := r.URL.Query().Get("topic")
 	tenantFilter := r.URL.Query().Get("tenant")
@@ -401,6 +402,7 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	decisions, err := s.jobStore.ListSafetyDecisions(r.Context(), id, limit)
 	if err != nil {
 		logging.Error("api-gateway", "job decisions list failed", "error", err, "job_id", id)

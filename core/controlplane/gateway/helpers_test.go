@@ -180,7 +180,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	if err != nil {
 		t.Fatalf("schema registry: %v", err)
 	}
-	dlqStore, err := memory.NewDLQStore(redisURL)
+	dlqStore, err := memory.NewDLQStore(redisURL, 0)
 	if err != nil {
 		t.Fatalf("dlq store: %v", err)
 	}

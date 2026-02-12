@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -49,6 +50,8 @@ func keyTenantKey(tenant string) string {
 	return apiKeyTenantPrefix + tenant
 }
 
+var errKeyNotFound = errors.New("key not found")
+
 // GenerateRawKey creates a cryptographically random API key with the ck_ prefix.
 func GenerateRawKey() (string, error) {
 	b := make([]byte, 32)
@@ -79,25 +82,34 @@ func (s *RedisKeyStore) List(ctx context.Context, tenant string) ([]*ManagedKey,
 	for i, id := range ids {
 		cmds[i] = pipe.Get(ctx, keyRecordKey(id))
 	}
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("list keys pipeline: %w", err)
+	}
 
 	keys := make([]*ManagedKey, 0, len(ids))
-	for _, cmd := range cmds {
+	var errs []error
+	for i, cmd := range cmds {
 		raw, err := cmd.Result()
 		if err == redis.Nil {
 			continue
 		}
 		if err != nil {
+			slog.WarnContext(ctx, "list keys: failed to read key", "key_id", ids[i], "error", err)
+			errs = append(errs, err)
 			continue
 		}
 		var mk ManagedKey
 		if err := json.Unmarshal([]byte(raw), &mk); err != nil {
+			slog.WarnContext(ctx, "list keys: unmarshal failed", "key_id", ids[i], "error", err)
 			continue
 		}
 		if mk.Revoked {
 			continue
 		}
 		keys = append(keys, &mk)
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("list keys: %d commands failed: %w", len(errs), errors.Join(errs...))
 	}
 	return keys, nil
 }
@@ -139,35 +151,50 @@ func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret s
 // Revoke marks a key as revoked and removes its lookup index so it stops working immediately.
 // The tenant parameter ensures callers can only revoke keys belonging to their own tenant.
 func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) error {
-	raw, err := s.client.Get(ctx, keyRecordKey(id)).Result()
-	if err == redis.Nil {
-		return fmt.Errorf("key not found")
-	}
-	if err != nil {
-		return fmt.Errorf("get key: %w", err)
+	txFunc := func(tx *redis.Tx) error {
+		raw, err := tx.Get(ctx, keyRecordKey(id)).Result()
+		if err == redis.Nil {
+			return errKeyNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("get key: %w", err)
+		}
+
+		var mk ManagedKey
+		if err := json.Unmarshal([]byte(raw), &mk); err != nil {
+			return fmt.Errorf("unmarshal key: %w", err)
+		}
+		if mk.Tenant != tenant {
+			return errKeyNotFound
+		}
+		mk.Revoked = true
+
+		data, err := json.Marshal(&mk)
+		if err != nil {
+			return fmt.Errorf("marshal key: %w", err)
+		}
+
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, keyRecordKey(id), data, 0)
+			pipe.Del(ctx, keyLookupKey(mk.LookupHash))
+			return nil
+		})
+		return err
 	}
 
-	var mk ManagedKey
-	if err := json.Unmarshal([]byte(raw), &mk); err != nil {
-		return fmt.Errorf("unmarshal key: %w", err)
+	for i := 0; i < 3; i++ {
+		if err := s.client.Watch(ctx, txFunc, keyRecordKey(id)); err != nil {
+			if errors.Is(err, errKeyNotFound) {
+				return err
+			}
+			if errors.Is(err, redis.TxFailedErr) {
+				continue
+			}
+			return fmt.Errorf("revoke key: %w", err)
+		}
+		return nil
 	}
-	if mk.Tenant != tenant {
-		return fmt.Errorf("key not found")
-	}
-	mk.Revoked = true
-
-	data, err := json.Marshal(&mk)
-	if err != nil {
-		return fmt.Errorf("marshal key: %w", err)
-	}
-
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, keyRecordKey(id), data, 0)
-	pipe.Del(ctx, keyLookupKey(mk.LookupHash))
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("revoke key: %w", err)
-	}
-	return nil
+	return fmt.Errorf("revoke key: too many retries")
 }
 
 // ValidateKey checks a raw API key against the store.

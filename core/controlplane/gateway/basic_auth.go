@@ -48,6 +48,8 @@ type BasicAuthProvider struct {
 	jwtRequired          bool
 	userStore            UserStore
 	keyStore             KeyStore
+	usageWG              sync.WaitGroup
+	usageCtx             context.Context
 }
 
 func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
@@ -85,6 +87,7 @@ func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 		keysModTime:          keysModTime,
 		jwt:                  jwtValidator,
 		jwtRequired:          jwtRequired,
+		usageCtx:             context.Background(),
 	}, nil
 }
 
@@ -101,6 +104,51 @@ func (b *BasicAuthProvider) UserStore() UserStore {
 // SetKeyStore sets the managed key store for runtime API key authentication.
 func (b *BasicAuthProvider) SetKeyStore(ks KeyStore) {
 	b.keyStore = ks
+}
+
+// SetUsageContext sets the base context for usage recording goroutines.
+// When nil, it falls back to a background context.
+func (b *BasicAuthProvider) SetUsageContext(ctx context.Context) {
+	if b == nil {
+		return
+	}
+	if ctx == nil {
+		b.usageCtx = context.Background()
+		return
+	}
+	b.usageCtx = ctx
+}
+
+func (b *BasicAuthProvider) usageContext() context.Context {
+	if b == nil || b.usageCtx == nil {
+		return context.Background()
+	}
+	return b.usageCtx
+}
+
+// DrainUsage waits for all pending API key usage recordings to complete.
+func (b *BasicAuthProvider) DrainUsage() {
+	if b == nil {
+		return
+	}
+	b.usageWG.Wait()
+}
+
+func basicAuthProvider(auth AuthProvider) *BasicAuthProvider {
+	if auth == nil {
+		return nil
+	}
+	switch provider := auth.(type) {
+	case *BasicAuthProvider:
+		return provider
+	case *CompositeAuthProvider:
+		for _, candidate := range provider.providers {
+			if basic, ok := candidate.(*BasicAuthProvider); ok {
+				return basic
+			}
+		}
+	}
+	return nil
 }
 
 // ManagedKeyStore returns the key store if configured.
@@ -238,11 +286,15 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 				if tenant == "" {
 					tenant = b.defaultTenant
 				}
-				go func() {
-					bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				b.usageWG.Add(1)
+				go func(keyID string) {
+					defer b.usageWG.Done()
+					bgCtx, cancel := context.WithTimeout(b.usageContext(), 2*time.Second)
 					defer cancel()
-					_ = b.keyStore.RecordUsage(bgCtx, mk.ID)
-				}()
+					if err := b.keyStore.RecordUsage(bgCtx, keyID); err != nil {
+						slog.Warn("failed to record api key usage", "key_id", keyID, "error", err)
+					}
+				}(mk.ID)
 				return &AuthContext{
 					APIKey:      key,
 					Tenant:      tenant,

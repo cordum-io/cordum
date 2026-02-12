@@ -320,15 +320,27 @@ export interface BackendHeartbeat {
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function microsToISO(raw?: number): string {
-  if (!raw || raw <= 0) return "";
+function logInvalidDateInput(fn: string, raw: unknown): void {
+  if (import.meta.env.DEV && raw != null) {
+    console.warn(`[transform] ${fn} received invalid value`, raw);
+  }
+}
+
+export function microsToISO(raw: unknown): string {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    logInvalidDateInput("microsToISO", raw);
+    return "";
+  }
   const ms = Math.floor(raw / 1000);
   const d = new Date(ms);
   return isNaN(d.getTime()) ? "" : d.toISOString();
 }
 
-export function secondsToISO(raw?: number): string {
-  if (!raw || raw <= 0) return "";
+export function secondsToISO(raw: unknown): string {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    logInvalidDateInput("secondsToISO", raw);
+    return "";
+  }
   const d = new Date(raw * 1000);
   return isNaN(d.getTime()) ? "" : d.toISOString();
 }
@@ -908,7 +920,16 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
 
 export function mapPolicyBundleDetail(detail: BackendPolicyBundleDetail): PolicyBundle {
   let rules: PolicyRule[] = [];
-  const content = detail.content ?? "";
+  if (!detail || typeof detail !== "object") {
+    return {
+      id: "",
+      name: "",
+      rules,
+      enabled: true,
+      content: "",
+    };
+  }
+  const content = typeof detail.content === "string" ? detail.content : "";
   if (content) {
     try {
       const parsed = YAML.parse(content) as Record<string, unknown> | null;
@@ -1159,8 +1180,8 @@ export function mapMarketplaceItem(item: BackendMarketplaceItem): MarketplacePac
 
 export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
   if (!hb || !hb.worker_id) return null;
-  const activeJobs = hb.active_jobs ?? 0;
-  const capacity = hb.max_parallel_jobs ?? 0;
+  const activeJobs = Number(hb.active_jobs) || 0;
+  const capacity = Math.max(0, Number(hb.max_parallel_jobs) || 0);
   const name =
     (hb.labels && (hb.labels.name || hb.labels.worker_name || hb.labels.worker)) ||
     hb.worker_id;
@@ -1172,6 +1193,7 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
     capabilities: hb.capabilities ?? [],
     status,
     activeJobs,
+    // capacity fallback: if backend reports 0 max_parallel_jobs, use at least 1
     capacity: capacity > 0 ? capacity : Math.max(1, activeJobs),
     region: hb.region,
     type: hb.type,

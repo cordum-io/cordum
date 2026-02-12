@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	wf "github.com/cordum/cordum/core/workflow"
@@ -110,5 +111,30 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	s.handleDeleteWorkflow(deleteRR, deleteReq)
 	if deleteRR.Code != http.StatusNoContent {
 		t.Fatalf("delete workflow: %d %s", deleteRR.Code, deleteRR.Body.String())
+	}
+}
+
+func TestCreateWorkflowRejectsInvalidStepID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	payload := map[string]any{
+		"id":     "wf-invalid-step",
+		"org_id": "default",
+		"name":   "Invalid Step",
+		"steps": map[string]any{
+			"bad/step": map[string]any{
+				"type": "approval",
+			},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rr := httptest.NewRecorder()
+	s.handleCreateWorkflow(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid step id, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "workflow step id") {
+		t.Fatalf("expected step id validation error, got %s", rr.Body.String())
 	}
 }

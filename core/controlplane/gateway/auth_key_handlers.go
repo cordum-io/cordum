@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -102,8 +101,8 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createKeyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 

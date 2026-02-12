@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -141,6 +142,10 @@ func (c *Client) endpoint(path string) string {
 	return base + path
 }
 
+func escapePathSegment(value string) string {
+	return url.PathEscape(value)
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
 	return c.doJSONWithHeaders(ctx, method, path, body, out, nil)
 }
@@ -232,7 +237,7 @@ func (c *Client) StartRunWithOptions(ctx context.Context, workflowID string, inp
 	if workflowID == "" {
 		return "", fmt.Errorf("workflow id required")
 	}
-	path := "/api/v1/workflows/" + workflowID + "/runs"
+	path := "/api/v1/workflows/" + escapePathSegment(workflowID) + "/runs"
 	if opts.DryRun {
 		path += "?dry_run=true"
 	}
@@ -255,7 +260,7 @@ func (c *Client) ApproveStep(ctx context.Context, workflowID, runID, stepID stri
 		return fmt.Errorf("workflow id, run id, and step id are required")
 	}
 	body := map[string]bool{"approved": approved}
-	path := "/api/v1/workflows/" + workflowID + "/runs/" + runID + "/steps/" + stepID + "/approve"
+	path := "/api/v1/workflows/" + escapePathSegment(workflowID) + "/runs/" + escapePathSegment(runID) + "/steps/" + escapePathSegment(stepID) + "/approve"
 	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }
 
@@ -265,7 +270,7 @@ func (c *Client) GetRun(ctx context.Context, runID string) (*WorkflowRun, error)
 		return nil, fmt.Errorf("run id required")
 	}
 	var run WorkflowRun
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workflow-runs/"+runID, nil, &run); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workflow-runs/"+escapePathSegment(runID), nil, &run); err != nil {
 		return nil, err
 	}
 	return &run, nil
@@ -276,7 +281,7 @@ func (c *Client) DeleteRun(ctx context.Context, runID string) error {
 	if runID == "" {
 		return fmt.Errorf("run id required")
 	}
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/workflow-runs/"+runID, nil, nil)
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/workflow-runs/"+escapePathSegment(runID), nil, nil)
 }
 
 // DeleteWorkflow deletes a workflow by ID.
@@ -284,7 +289,7 @@ func (c *Client) DeleteWorkflow(ctx context.Context, workflowID string) error {
 	if workflowID == "" {
 		return fmt.Errorf("workflow id required")
 	}
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/workflows/"+workflowID, nil, nil)
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/workflows/"+escapePathSegment(workflowID), nil, nil)
 }
 
 // GetRunTimeline fetches the run timeline.
@@ -293,7 +298,7 @@ func (c *Client) GetRunTimeline(ctx context.Context, runID string) ([]TimelineEv
 		return nil, fmt.Errorf("run id required")
 	}
 	var out []TimelineEvent
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workflow-runs/"+runID+"/timeline", nil, &out); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workflow-runs/"+escapePathSegment(runID)+"/timeline", nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -304,7 +309,7 @@ func (c *Client) ApproveJob(ctx context.Context, jobID string, approved bool) er
 	if jobID == "" {
 		return fmt.Errorf("job id required")
 	}
-	path := "/api/v1/approvals/" + jobID
+	path := "/api/v1/approvals/" + escapePathSegment(jobID)
 	if approved {
 		path += "/approve"
 	} else {
@@ -318,7 +323,7 @@ func (c *Client) RetryDLQ(ctx context.Context, jobID string) error {
 	if jobID == "" {
 		return fmt.Errorf("job id required")
 	}
-	return c.doJSON(ctx, http.MethodPost, "/api/v1/dlq/"+jobID+"/retry", nil, nil)
+	return c.doJSON(ctx, http.MethodPost, "/api/v1/dlq/"+escapePathSegment(jobID)+"/retry", nil, nil)
 }
 
 // SubmitJob submits a new job and returns IDs.
@@ -339,7 +344,7 @@ func (c *Client) GetJob(ctx context.Context, jobID string) (map[string]any, erro
 		return nil, fmt.Errorf("job id required")
 	}
 	var out map[string]any
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/jobs/"+jobID, nil, &out); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/jobs/"+escapePathSegment(jobID), nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -388,7 +393,7 @@ func (c *Client) GetArtifact(ctx context.Context, ptr string) (*Artifact, error)
 		Content  string           `json:"content_base64"`
 		Metadata ArtifactMetadata `json:"metadata"`
 	}
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/artifacts/"+ptr, nil, &resp); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/artifacts/"+escapePathSegment(ptr), nil, &resp); err != nil {
 		return nil, err
 	}
 	data, err := base64.StdEncoding.DecodeString(resp.Content)

@@ -24,6 +24,7 @@ import (
 )
 
 var errMarketplaceNotFound = errors.New("marketplace pack not found")
+var marketplaceCatalogFetchTimeout = 30 * time.Second
 
 func seedDefaultPackCatalogs(ctx context.Context, svc *configsvc.Service) error {
 	if svc == nil {
@@ -168,6 +169,30 @@ type marketplaceCache struct {
 	FetchedAt time.Time
 }
 
+func cloneMarketplaceResponse(resp marketplaceResponse) marketplaceResponse {
+	out := resp
+	if len(resp.Catalogs) > 0 {
+		out.Catalogs = append([]marketplaceCatalogStatus(nil), resp.Catalogs...)
+	}
+	if len(resp.Items) > 0 {
+		out.Items = make([]marketplacePackItem, len(resp.Items))
+		for idx, item := range resp.Items {
+			outItem := item
+			if len(item.Capabilities) > 0 {
+				outItem.Capabilities = append([]string(nil), item.Capabilities...)
+			}
+			if len(item.Requires) > 0 {
+				outItem.Requires = append([]string(nil), item.Requires...)
+			}
+			if len(item.RiskTags) > 0 {
+				outItem.RiskTags = append([]string(nil), item.RiskTags...)
+			}
+			out.Items[idx] = outItem
+		}
+	}
+	return out
+}
+
 type marketplaceCatalogEntry struct {
 	Pack         marketplaceCatalogPack
 	CatalogID    string
@@ -290,7 +315,12 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if fromCatalog {
-		if host := hostFromURL(installURL); host != "" && !isPrivateIP(host) {
+		if _, err := validateMarketplaceURL(installURL, nil); err != nil {
+			slog.Error("marketplace url validation failed", "error", err, "url", installURL)
+			writeErrorJSON(w, http.StatusBadRequest, "invalid pack url")
+			return
+		}
+		if host := hostFromURL(installURL); host != "" {
 			allowedHosts[host] = struct{}{}
 		}
 	}
@@ -358,7 +388,7 @@ func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketp
 		s.marketplaceMu.Lock()
 		cache := s.marketplaceCache
 		if !cache.FetchedAt.IsZero() && time.Since(cache.FetchedAt) < marketplaceCacheTTL {
-			resp := cache.Response
+			resp := cloneMarketplaceResponse(cache.Response)
 			resp.Cached = true
 			if resp.FetchedAt == "" {
 				resp.FetchedAt = cache.FetchedAt.UTC().Format(time.RFC3339)
@@ -410,7 +440,13 @@ func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatal
 			statuses = append(statuses, status)
 			continue
 		}
-		catalogFile, err := fetchMarketplaceCatalog(ctx, status.URL)
+		allowedHosts := map[string]struct{}{}
+		if host := hostFromURL(status.URL); host != "" {
+			allowedHosts[host] = struct{}{}
+		}
+		fetchCtx, cancel := context.WithTimeout(ctx, marketplaceCatalogFetchTimeout)
+		catalogFile, err := fetchMarketplaceCatalog(fetchCtx, status.URL, allowedHosts)
+		cancel()
 		if err != nil {
 			slog.Error("marketplace catalog fetch failed", "catalog_id", id, "url", status.URL, "error", err)
 			status.Error = "catalog fetch failed"
@@ -456,8 +492,8 @@ func (s *server) loadPackCatalogs(ctx context.Context) ([]marketplaceCatalog, er
 	return cfg.Catalogs, nil
 }
 
-func fetchMarketplaceCatalog(ctx context.Context, catalogURL string) (*marketplaceCatalogFile, error) {
-	parsed, err := validateMarketplaceURL(catalogURL, nil)
+func fetchMarketplaceCatalog(ctx context.Context, catalogURL string, allowedHosts map[string]struct{}) (*marketplaceCatalogFile, error) {
+	parsed, err := validateMarketplaceURL(catalogURL, allowedHosts)
 	if err != nil {
 		return nil, err
 	}
@@ -465,13 +501,14 @@ func fetchMarketplaceCatalog(ctx context.Context, catalogURL string) (*marketpla
 	if err != nil {
 		return nil, err
 	}
-	client := marketplaceHTTPClient(nil, parsed.Hostname())
+	client := marketplaceHTTPClient(allowedHosts, parsed.Hostname())
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("catalog fetch failed: %s", resp.Status)
 	}
 	limit := int64(maxCatalogBytes) + 1
@@ -687,6 +724,7 @@ func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[s
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return "", "", func() {}, fmt.Errorf("download failed: %s", resp.Status)
 	}
 	tmpFile, err := os.CreateTemp("", "cordum-pack-*.tgz")
@@ -823,6 +861,52 @@ func isPrivateNet(ip net.IP) bool {
 	return false
 }
 
+func resolveMarketplaceIPs(ctx context.Context, host string) ([]net.IP, error) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return nil, errors.New("host required")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	return lookupHostIPs(ctx, host)
+}
+
+func validateMarketplaceHost(ctx context.Context, host string, allowedHosts map[string]struct{}) ([]net.IP, error) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return nil, errors.New("url host required")
+	}
+	if allowedHosts != nil {
+		if len(allowedHosts) == 0 {
+			return nil, errors.New("invalid pack url")
+		}
+		if _, ok := allowedHosts[host]; !ok {
+			slog.Warn("marketplace URL blocked: host not in allowlist", "host", host)
+			return nil, errors.New("invalid pack url")
+		}
+	}
+	if skipPrivateIPCheck {
+		return resolveMarketplaceIPs(ctx, host)
+	}
+	if privateHostnames[host] {
+		slog.Warn("marketplace URL blocked: private address", "host", host)
+		return nil, errors.New("invalid pack url")
+	}
+	ips, err := resolveMarketplaceIPs(ctx, host)
+	if err != nil {
+		slog.Warn("marketplace URL blocked: host resolution failed", "host", host, "error", err)
+		return nil, errors.New("invalid pack url")
+	}
+	for _, ip := range ips {
+		if isPrivateNet(ip) {
+			slog.Warn("marketplace URL blocked: private address", "host", host, "ip", ip.String())
+			return nil, errors.New("invalid pack url")
+		}
+	}
+	return ips, nil
+}
+
 func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*url.URL, error) {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
@@ -846,20 +930,10 @@ func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*u
 	if host == "" {
 		return nil, errors.New("url host required")
 	}
-	// SECURITY: Block SSRF — reject private/loopback/link-local addresses
-	// regardless of allowlist contents.
-	if isPrivateIP(host) {
-		slog.Warn("marketplace URL blocked: private address", "host", host)
-		return nil, errors.New("invalid pack url")
-	}
-	if allowedHosts != nil {
-		if len(allowedHosts) == 0 {
-			return nil, errors.New("invalid pack url")
-		}
-		if _, ok := allowedHosts[host]; !ok {
-			slog.Warn("marketplace URL blocked: host not in allowlist", "host", host)
-			return nil, errors.New("invalid pack url")
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), marketplaceHTTPTimeout())
+	defer cancel()
+	if _, err := validateMarketplaceHost(ctx, host, allowedHosts); err != nil {
+		return nil, err
 	}
 	return parsed, nil
 }
@@ -875,14 +949,21 @@ func marketplaceHTTPTimeout() time.Duration {
 
 func marketplaceHTTPClient(allowedHosts map[string]struct{}, initialHost string) *http.Client {
 	initialHost = strings.ToLower(strings.TrimSpace(initialHost))
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = marketplaceDialContext(allowedHosts)
 	return &http.Client{
 		Timeout: marketplaceHTTPTimeout(),
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("too many redirects")
 			}
-			if initialHost != "" {
-				if host := strings.ToLower(req.URL.Hostname()); host != "" && host != initialHost {
+			redirectHost := strings.ToLower(req.URL.Hostname())
+			if initialHost != "" && redirectHost != "" && redirectHost != initialHost {
+				if allowedHosts == nil {
+					return errors.New("redirect not allowed")
+				}
+				if _, ok := allowedHosts[redirectHost]; !ok {
 					return errors.New("redirect not allowed")
 				}
 			}
@@ -891,6 +972,34 @@ func marketplaceHTTPClient(allowedHosts map[string]struct{}, initialHost string)
 			}
 			return nil
 		},
+	}
+}
+
+func marketplaceDialContext(allowedHosts map[string]struct{}) func(context.Context, string, string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		resolveCtx, cancel := context.WithTimeout(ctx, marketplaceHTTPTimeout())
+		ips, err := validateMarketplaceHost(resolveCtx, host, allowedHosts)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, errors.New("no resolved IPs")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -254,8 +255,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	}
 	defer schemaRegistry.Close()
 	workflowEng = workflowEng.WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	if raw := strings.TrimSpace(os.Getenv("WORKFLOW_FOREACH_MAX_ITEMS")); raw != "" {
+		if limit, err := strconv.Atoi(raw); err == nil && limit > 0 {
+			workflowEng = workflowEng.WithMaxForEachItems(limit)
+		}
+	}
 
-	dlqStore, err := memory.NewDLQStore(cfg.RedisURL)
+	dlqStore, err := memory.NewDLQStore(cfg.RedisURL, 0)
 	if err != nil {
 		return fmt.Errorf("connect redis dlq store: %w", err)
 	}
@@ -357,7 +363,10 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(grpcCreds),
-		grpc.UnaryInterceptor(apiKeyUnaryInterceptor(s.auth)),
+		grpc.ChainUnaryInterceptor(
+			apiKeyUnaryInterceptor(s.auth),
+			rateLimitUnaryInterceptor(s.auth),
+		),
 	)
 	pb.RegisterCordumApiServer(grpcServer, s)
 	if env.Bool(env.EnvGRPCReflection) {
@@ -536,8 +545,8 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		registrar.RegisterRoutes(mux, s.instrumented)
 	}
 
-	// CORS Middleware
-	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, tenantMiddleware(s.auth, mux))))
+	// Middleware chain: CORS → auth → rate limit → tenant → body limit → mux
+	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))
@@ -570,6 +579,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// Graceful shutdown: on SIGINT/SIGTERM, drain all servers and goroutines.
 	sigCtx, sigStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer sigStop()
+	if basic := basicAuthProvider(s.auth); basic != nil {
+		basic.SetUsageContext(sigCtx)
+	}
 
 	go func() {
 		<-sigCtx.Done()
@@ -591,6 +603,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		// Drain gRPC server (waits for in-flight RPCs to finish).
 		if grpcServer != nil {
 			grpcServer.GracefulStop()
+		}
+
+		if basic := basicAuthProvider(s.auth); basic != nil {
+			basic.DrainUsage()
 		}
 
 		// Shut down metrics server.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestJobStatusFromState(t *testing.T) {
 		scheduler.JobStateTimeout:   pb.JobStatus_JOB_STATUS_TIMEOUT,
 		scheduler.JobStateDenied:    pb.JobStatus_JOB_STATUS_DENIED,
 		scheduler.JobStateCancelled: pb.JobStatus_JOB_STATUS_CANCELLED,
-		"unknown":                  pb.JobStatus_JOB_STATUS_UNSPECIFIED,
+		"unknown":                   pb.JobStatus_JOB_STATUS_UNSPECIFIED,
 	}
 	for state, expect := range cases {
 		if got := jobStatusFromState(state); got != expect {
@@ -86,10 +87,138 @@ func TestReconcilerReconcileRunEarlyReturn(t *testing.T) {
 	r.reconcileRun(context.Background(), "run")
 }
 
+func TestReconcilerFailureReasonPropagation(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	redisURL := "redis://" + srv.Addr()
+	workflowStore, err := wf.NewRedisWorkflowStore(redisURL)
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	defer workflowStore.Close()
+
+	jobStore, err := memory.NewRedisJobStore(redisURL)
+	if err != nil {
+		t.Fatalf("job store: %v", err)
+	}
+	defer jobStore.Close()
+
+	engine := wf.NewEngine(workflowStore, &stubBus{})
+	wfDef := &wf.Workflow{
+		ID:    "wf-err",
+		OrgID: "org",
+		Steps: map[string]*wf.Step{
+			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.test"},
+		},
+	}
+	if err := workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	jobID := "run-err:step@1"
+	run := &wf.WorkflowRun{
+		ID:         "run-err",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org",
+		Status:     wf.RunStatusRunning,
+		Steps: map[string]*wf.StepRun{
+			"step": {StepID: "step", Status: wf.StepStatusRunning, JobID: jobID},
+		},
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := jobStore.SetState(context.Background(), jobID, scheduler.JobStateFailed); err != nil {
+		t.Fatalf("set job state: %v", err)
+	}
+	if err := jobStore.SetFailureReason(context.Background(), jobID, "boom"); err != nil {
+		t.Fatalf("set failure reason: %v", err)
+	}
+
+	rec := newReconciler(workflowStore, engine, jobStore, 10*time.Millisecond, 1)
+	rec.reconcileRun(context.Background(), run.ID)
+
+	final, _ := workflowStore.GetRun(context.Background(), run.ID)
+	if final.Steps["step"] == nil {
+		t.Fatalf("expected step run")
+	}
+	if msg, ok := final.Steps["step"].Error["message"].(string); !ok || msg != "boom" {
+		t.Fatalf("expected failure reason 'boom', got %#v", final.Steps["step"].Error)
+	}
+}
+
+func TestReconcilerFallbackErrorMessage(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	redisURL := "redis://" + srv.Addr()
+	workflowStore, err := wf.NewRedisWorkflowStore(redisURL)
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	defer workflowStore.Close()
+
+	jobStore, err := memory.NewRedisJobStore(redisURL)
+	if err != nil {
+		t.Fatalf("job store: %v", err)
+	}
+	defer jobStore.Close()
+
+	engine := wf.NewEngine(workflowStore, &stubBus{})
+	wfDef := &wf.Workflow{
+		ID:    "wf-fallback",
+		OrgID: "org",
+		Steps: map[string]*wf.Step{
+			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.test"},
+		},
+	}
+	if err := workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	jobID := "run-fallback:step@1"
+	run := &wf.WorkflowRun{
+		ID:         "run-fallback",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org",
+		Status:     wf.RunStatusRunning,
+		Steps: map[string]*wf.StepRun{
+			"step": {StepID: "step", Status: wf.StepStatusRunning, JobID: jobID},
+		},
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := jobStore.SetState(context.Background(), jobID, scheduler.JobStateFailed); err != nil {
+		t.Fatalf("set job state: %v", err)
+	}
+
+	rec := newReconciler(workflowStore, engine, jobStore, 10*time.Millisecond, 1)
+	rec.reconcileRun(context.Background(), run.ID)
+
+	final, _ := workflowStore.GetRun(context.Background(), run.ID)
+	if final.Steps["step"] == nil {
+		t.Fatalf("expected step run")
+	}
+	msg, ok := final.Steps["step"].Error["message"].(string)
+	if !ok || !strings.Contains(msg, jobID) || !strings.Contains(msg, "no error details available") {
+		t.Fatalf("unexpected fallback message: %q", msg)
+	}
+}
+
 func TestSplitJobIDMulti(t *testing.T) {
 	run, step := splitJobID("run:with:step")
-	if run != "run:with" || step != "step" {
+	if run != "run" || step != "with:step" {
 		t.Fatalf("unexpected split for multi: %s %s", run, step)
+	}
+	run, step = splitJobID("run:with:step@2")
+	if run != "run" || step != "with:step" {
+		t.Fatalf("unexpected split for multi with attempt: %s %s", run, step)
 	}
 }
 
@@ -108,9 +237,9 @@ func TestReconcilerHandleJobResultLockBusy(t *testing.T) {
 
 	ctx := context.Background()
 	lockKey := runLockKey("run-1")
-	ok, err := jobStore.TryAcquireLock(ctx, lockKey, time.Second)
-	if err != nil || !ok {
-		t.Fatalf("expected lock acquired: ok=%v err=%v", ok, err)
+	token, err := jobStore.TryAcquireLock(ctx, lockKey, time.Second)
+	if err != nil || token == "" {
+		t.Fatalf("expected lock acquired: token=%q err=%v", token, err)
 	}
 
 	rec := newReconciler(nil, nil, jobStore, 10*time.Millisecond, 1)

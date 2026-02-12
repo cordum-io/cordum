@@ -344,6 +344,10 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 		writeErrorJSON(w, http.StatusServiceUnavailable, "config service unavailable")
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
 	bundleID := bundleIDFromRequest(r)
 	if bundleID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
@@ -354,6 +358,23 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	tenant, err := s.resolveTenant(r, body.Request.Tenant)
+	if err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
+	}
+	body.Request.Tenant = tenant
+	body.Request.OrgId = tenant
+	principalID, err := s.resolvePrincipal(r, body.Request.PrincipalId)
+	if err != nil {
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
+	body.Request.PrincipalId = principalID
+	if body.Request.Meta == nil {
+		body.Request.Meta = &policyMetaRequest{}
+	}
+	body.Request.Meta.TenantId = tenant
 	checkReq, err := buildPolicyCheckRequest(r.Context(), &body.Request, s.configSvc, s.tenant)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
@@ -1629,7 +1650,7 @@ func policyActorID(r *http.Request) string {
 	if auth := authFromRequest(r); auth != nil && auth.PrincipalID != "" {
 		return auth.PrincipalID
 	}
-	return strings.TrimSpace(r.Header.Get("X-Principal-Id"))
+	return ""
 }
 
 func policyRole(r *http.Request) string {
@@ -1639,5 +1660,5 @@ func policyRole(r *http.Request) string {
 	if auth := authFromRequest(r); auth != nil && auth.Role != "" {
 		return normalizeRole(auth.Role)
 	}
-	return normalizeRole(strings.TrimSpace(r.Header.Get("X-Principal-Role")))
+	return ""
 }

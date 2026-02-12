@@ -22,7 +22,6 @@ import (
 
 // ---- Workflow REST Handlers ----
 
-
 type createWorkflowRequest struct {
 	ID          string             `json:"id"`
 	OrgID       string             `json:"org_id"`
@@ -98,6 +97,10 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		if req.Config == nil && existing.Config != nil {
 			req.Config = existing.Config
 		}
+	}
+	if err := validateWorkflowSteps(req.Steps); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	wfDef := &wf.Workflow{
@@ -354,12 +357,12 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	if s.workflowEng != nil {
 		if s.jobStore != nil {
 			lockKey := "cordum:wf:run:lock:" + runID
-			ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+			token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
 			if err != nil {
 				_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
-			} else if ok {
+			} else if token != "" {
 				_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
-				_ = s.jobStore.ReleaseLock(r.Context(), lockKey)
+				_ = s.jobStore.ReleaseLock(r.Context(), lockKey, token)
 			}
 		} else {
 			_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
@@ -431,12 +434,12 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	wfID := newRun.WorkflowID
 	if s.jobStore != nil {
 		lockKey := "cordum:wf:run:lock:" + newID
-		ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+		token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
 		if err != nil {
 			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
-		} else if ok {
+		} else if token != "" {
 			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
-			_ = s.jobStore.ReleaseLock(r.Context(), lockKey)
+			_ = s.jobStore.ReleaseLock(r.Context(), lockKey, token)
 		}
 	} else {
 		_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
@@ -451,7 +454,6 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"run_id": newID})
 }
-
 
 func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {

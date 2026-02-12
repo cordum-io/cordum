@@ -14,7 +14,7 @@ func newDLQStore(t *testing.T) *DLQStore {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	store, err := NewDLQStore("redis://" + srv.Addr())
+	store, err := NewDLQStore("redis://"+srv.Addr(), 0)
 	if err != nil {
 		t.Fatalf("dlq store init: %v", err)
 	}
@@ -62,6 +62,38 @@ func TestDLQStoreCRUD(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("expected empty list, got %+v", list)
+	}
+}
+
+func TestDLQStoreEntryTTL(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewDLQStore("redis://"+srv.Addr(), 2*time.Hour)
+	if err != nil {
+		t.Fatalf("dlq store init: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	entry := DLQEntry{
+		JobID:     "job-ttl",
+		Status:    "FAILED",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := store.Add(ctx, entry); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	ttl, err := store.client.TTL(ctx, dlqEntryKey(entry.JobID)).Result()
+	if err != nil {
+		t.Fatalf("ttl: %v", err)
+	}
+	if ttl <= 0 {
+		t.Fatalf("expected ttl to be set, got %v", ttl)
+	}
+	if ttl > 2*time.Hour || ttl < 2*time.Hour-time.Second {
+		t.Fatalf("expected ttl near 2h, got %s", ttl)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/memory"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 func TestHandleDLQListAndDelete(t *testing.T) {
@@ -89,6 +90,97 @@ func TestHandleRetryDLQ(t *testing.T) {
 	defer bus.mu.Unlock()
 	if len(bus.published) == 0 || bus.published[len(bus.published)-1].subject != capsdk.SubjectSubmit {
 		t.Fatalf("expected submit publish")
+	}
+	req := bus.published[len(bus.published)-1].packet.GetJobRequest()
+	if req == nil {
+		t.Fatalf("expected job request payload")
+	}
+	if meta := req.GetMeta(); meta != nil {
+		if meta.GetCapability() != "" || len(meta.GetRiskTags()) != 0 || len(meta.GetRequires()) != 0 {
+			t.Fatalf("expected fallback retry without risk metadata")
+		}
+	}
+	if req.GetLabels()["retry"] != "true" || req.GetLabels()["retry_of_job"] != jobID {
+		t.Fatalf("expected retry labels on fallback request")
+	}
+}
+
+func TestHandleRetryDLQPreservesRequestFields(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-retry-preserve"
+	entry := memory.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
+	if err := s.dlqStore.Add(ctx, entry); err != nil {
+		t.Fatalf("add dlq: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "tenant")
+	_ = s.jobStore.SetTeam(ctx, jobID, "team")
+	_ = s.jobStore.SetPrincipal(ctx, jobID, "principal")
+	if err := s.memStore.PutContext(ctx, memory.MakeContextKey(jobID), []byte(`{"prompt":"hello"}`)); err != nil {
+		t.Fatalf("put context: %v", err)
+	}
+
+	origReq := &pb.JobRequest{
+		JobId: jobID,
+		Topic: "job.test",
+		Env: map[string]string{
+			"orig_env":     "true",
+			"retry_of_job": "old",
+		},
+		Labels: map[string]string{
+			"priority": "high",
+			"retry":    "false",
+		},
+		Meta: &pb.JobMetadata{
+			Capability: "code_exec",
+			RiskTags:   []string{"data_deletion"},
+			Requires:   []string{"approval"},
+			PackId:     "pack-1",
+		},
+	}
+	if err := s.jobStore.SetJobRequest(ctx, origReq); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+
+	retryReq := httptest.NewRequest(http.MethodPost, "/api/v1/dlq/"+jobID+"/retry", nil)
+	retryReq.Header.Set("X-Tenant-ID", "default")
+	retryReq.SetPathValue("job_id", jobID)
+	retryRec := httptest.NewRecorder()
+	s.handleRetryDLQ(retryRec, retryReq)
+	if retryRec.Code != http.StatusOK {
+		t.Fatalf("unexpected retry status: %d", retryRec.Code)
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) == 0 || bus.published[len(bus.published)-1].subject != capsdk.SubjectSubmit {
+		t.Fatalf("expected submit publish")
+	}
+	req := bus.published[len(bus.published)-1].packet.GetJobRequest()
+	if req == nil {
+		t.Fatalf("expected job request payload")
+	}
+	if req.GetMeta() == nil {
+		t.Fatalf("expected metadata preserved")
+	}
+	if req.GetMeta().GetCapability() != "code_exec" {
+		t.Fatalf("expected capability preserved, got %q", req.GetMeta().GetCapability())
+	}
+	if len(req.GetMeta().GetRiskTags()) != 1 || req.GetMeta().GetRiskTags()[0] != "data_deletion" {
+		t.Fatalf("expected risk tags preserved, got %#v", req.GetMeta().GetRiskTags())
+	}
+	if len(req.GetMeta().GetRequires()) != 1 || req.GetMeta().GetRequires()[0] != "approval" {
+		t.Fatalf("expected requires preserved, got %#v", req.GetMeta().GetRequires())
+	}
+	if req.GetMeta().GetPackId() != "pack-1" {
+		t.Fatalf("expected metadata preserved, got %#v", req.GetMeta())
+	}
+	if req.GetEnv()["orig_env"] != "true" || req.GetEnv()["retry_of_job"] != jobID {
+		t.Fatalf("expected env merged, got %#v", req.GetEnv())
+	}
+	if req.GetLabels()["priority"] != "high" || req.GetLabels()["retry"] != "true" {
+		t.Fatalf("expected labels merged with retry overrides, got %#v", req.GetLabels())
 	}
 }
 

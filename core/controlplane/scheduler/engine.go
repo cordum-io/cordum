@@ -41,14 +41,14 @@ const (
 
 // Engine wires together bus interactions, safety checks, and scheduling decisions.
 type Engine struct {
-	bus      Bus
-	safety   SafetyChecker
-	registry WorkerRegistry
-	strategy SchedulingStrategy
-	jobStore JobStore
-	metrics  Metrics
-	config   ConfigProvider
-	saga     *SagaManager
+	bus            Bus
+	safety         SafetyChecker
+	registry       WorkerRegistry
+	strategy       SchedulingStrategy
+	jobStore       JobStore
+	metrics        Metrics
+	config         ConfigProvider
+	saga           *SagaManager
 	stopped        atomic.Bool
 	activeHandlers atomic.Int64
 	wg             sync.WaitGroup
@@ -76,15 +76,19 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func() error) e
 	key := jobLockKey(jobID)
 	lockStart := time.Now()
 	deadline := lockStart.Add(storeOpTimeout)
+	var (
+		token string
+		err   error
+	)
 	for {
 		ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
-		ok, err := e.jobStore.TryAcquireLock(ctx, key, ttl)
+		token, err = e.jobStore.TryAcquireLock(ctx, key, ttl)
 		cancel()
 		if err != nil {
 			logging.Error("scheduler", "job lock acquisition failed", "job_id", jobID, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
-		if ok {
+		if token != "" {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -98,7 +102,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func() error) e
 	defer func() {
 		ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
 		defer cancel()
-		_ = e.jobStore.ReleaseLock(ctx, key)
+		_ = e.jobStore.ReleaseLock(ctx, key, token)
 	}()
 	return fn()
 }

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -22,18 +23,34 @@ import (
 
 // Engine coordinates workflow runs, dispatching steps as jobs and updating run state.
 type Engine struct {
-	store    *RedisStore
-	bus      scheduler.Bus
-	mem      memory.Store
-	runLocks sync.Map // per-run mutexes to avoid global serialization
+	store           *RedisStore
+	bus             scheduler.Bus
+	mem             memory.Store
+	runLocks        sync.Map // per-run locks to avoid global serialization
+	maxForEachItems int
 	// optional callbacks for observability or hooks
 	OnStepDispatched func(runID, stepID, jobID string)
 	OnStepFinished   func(runID, stepID string, status StepStatus)
 	config           ConfigProvider
 	schemaRegistry   *schemas.Registry
+
+	// timerMu guards pendingTimers. pendingTimers tracks cancellable delay
+	// timers so they can be stopped on engine shutdown without leaking goroutines.
+	timerMu       sync.Mutex
+	pendingTimers []*time.Timer
+	stopped       chan struct{} // closed by Stop(); nil until first use
 }
 
-const maxInlineResultBytes = 256 << 10
+type runLock struct {
+	mu       sync.Mutex
+	refs     atomic.Int32
+	terminal atomic.Bool
+}
+
+const (
+	maxInlineResultBytes   = 256 << 10
+	defaultMaxForEachItems = 1000
+)
 
 // ConfigProvider supplies effective config given identity context.
 type ConfigProvider interface {
@@ -42,7 +59,7 @@ type ConfigProvider interface {
 
 // NewEngine creates a workflow engine bound to a Redis workflow store and bus.
 func NewEngine(store *RedisStore, bus scheduler.Bus) *Engine {
-	return &Engine{store: store, bus: bus}
+	return &Engine{store: store, bus: bus, maxForEachItems: defaultMaxForEachItems}
 }
 
 // WithMemory sets an optional memory store used to persist per-step job context payloads.
@@ -63,13 +80,28 @@ func (e *Engine) WithSchemaRegistry(registry *schemas.Registry) *Engine {
 	return e
 }
 
+// WithMaxForEachItems sets the maximum number of items allowed in for_each fan-out.
+// Values <= 0 are ignored and the default remains in effect.
+func (e *Engine) WithMaxForEachItems(limit int) *Engine {
+	if limit > 0 {
+		e.maxForEachItems = limit
+	}
+	return e
+}
+
 // lockRun acquires a per-run mutex and returns an unlock function.
 // This replaces the global engine mutex so different runs don't block each other.
 func (e *Engine) lockRun(runID string) func() {
-	val, _ := e.runLocks.LoadOrStore(runID, &sync.Mutex{})
-	mu := val.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+	val, _ := e.runLocks.LoadOrStore(runID, &runLock{})
+	lock := val.(*runLock)
+	lock.refs.Add(1)
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		if lock.refs.Add(-1) == 0 && lock.terminal.Load() {
+			e.runLocks.Delete(runID)
+		}
+	}
 }
 
 // StartRun loads the workflow/run and dispatches any ready steps.
@@ -84,6 +116,7 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 		return fmt.Errorf("get run: %w", err)
 	}
 	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
+		e.markRunTerminal(run.ID)
 		return nil
 	}
 	return e.scheduleReady(ctx, wfDef, run)
@@ -176,6 +209,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 	}
 	switch run.Status {
 	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+		e.markRunTerminal(run.ID)
 		return
 	}
 	wfDef, err := e.store.GetWorkflow(ctx, run.WorkflowID)
@@ -184,10 +218,17 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 		return
 	}
 
+	now := time.Now().UTC()
+	if timedOut, err := e.enforceWorkflowTimeout(ctx, wfDef, run, now); err != nil {
+		logging.Error("workflow-engine", "enforce workflow timeout", "run_id", run.ID, "error", err)
+		return
+	} else if timedOut {
+		return
+	}
+
 	prevStatus := run.Status
 	baseStepID, childKey := splitForEachStep(stepID)
 	stepDef := wfDef.Steps[baseStepID]
-	now := time.Now().UTC()
 	attempt := parseAttempt(res.JobId)
 
 	if childKey != "" {
@@ -296,6 +337,9 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 		logging.Error("workflow-engine", "update run", "run_id", run.ID, "error", err)
 		return
 	}
+	if isTerminalRunStatus(run.Status) {
+		e.markRunTerminal(run.ID)
+	}
 
 	if run.Status == RunStatusRunning {
 		if err := e.scheduleReady(ctx, wfDef, run); err != nil {
@@ -316,6 +360,12 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 	if err != nil {
 		return fmt.Errorf("get workflow: %w", err)
 	}
+	now := time.Now().UTC()
+	if timedOut, err := e.enforceWorkflowTimeout(ctx, wfDef, run, now); err != nil {
+		return err
+	} else if timedOut {
+		return fmt.Errorf("run timed out")
+	}
 	sr := run.Steps[stepID]
 	if sr == nil {
 		return fmt.Errorf("step not found")
@@ -323,7 +373,6 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 	if sr.Status != StepStatusWaiting {
 		return fmt.Errorf("step not waiting")
 	}
-	now := time.Now().UTC()
 	prevStatus := run.Status
 	if approved {
 		sr.Status = StepStatusSucceeded
@@ -343,6 +392,9 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 	}
 	if err := e.store.UpdateRun(ctx, run); err != nil {
 		return err
+	}
+	if isTerminalRunStatus(run.Status) {
+		e.markRunTerminal(run.ID)
 	}
 	if approved && run.Status == RunStatusRunning {
 		return e.scheduleReady(ctx, wfDef, run)
@@ -384,6 +436,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 	if err := e.store.UpdateRun(ctx, run); err != nil {
 		return err
 	}
+	e.markRunTerminal(run.ID)
 	e.appendTimeline(ctx, run, "run_status", "", "", string(run.Status), "", "run cancelled", nil)
 	seen := make(map[string]struct{}, len(cancelJobIDs))
 	for _, jobID := range cancelJobIDs {
@@ -395,6 +448,84 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 		}
 		seen[jobID] = struct{}{}
 		e.publishJobCancel(jobID, "workflow run cancelled")
+	}
+	return nil
+}
+
+func (e *Engine) enforceWorkflowTimeout(ctx context.Context, wfDef *Workflow, run *WorkflowRun, now time.Time) (bool, error) {
+	if wfDef == nil || run == nil || wfDef.TimeoutSec <= 0 {
+		return false, nil
+	}
+	switch run.Status {
+	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+		return false, nil
+	}
+	startedAt := run.StartedAt
+	if startedAt == nil {
+		if run.Status == RunStatusPending {
+			return false, nil
+		}
+		if !run.CreatedAt.IsZero() {
+			startedAt = &run.CreatedAt
+		}
+	}
+	if startedAt == nil {
+		return false, nil
+	}
+	deadline := startedAt.Add(time.Duration(wfDef.TimeoutSec) * time.Second)
+	if now.Before(deadline) {
+		return false, nil
+	}
+	if err := e.timeoutRun(ctx, wfDef, run, now); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (e *Engine) timeoutRun(ctx context.Context, wfDef *Workflow, run *WorkflowRun, now time.Time) error {
+	if e == nil || run == nil || wfDef == nil {
+		return nil
+	}
+	// Ensure all workflow-defined steps exist in the run map.
+	if run.Steps == nil {
+		run.Steps = map[string]*StepRun{}
+	}
+	for stepID := range wfDef.Steps {
+		if _, exists := run.Steps[stepID]; !exists {
+			run.Steps[stepID] = &StepRun{StepID: stepID}
+		}
+	}
+	var cancelJobIDs []string
+	for id, sr := range run.Steps {
+		if sr == nil {
+			continue
+		}
+		cancelJobIDs = append(cancelJobIDs, collectCancelableJobs(sr)...)
+		timeoutStepRun(sr, now)
+		run.Steps[id] = sr
+	}
+	run.Status = RunStatusTimedOut
+	run.CompletedAt = &now
+	run.UpdatedAt = now
+	if run.Error == nil {
+		run.Error = map[string]any{}
+	}
+	run.Error["message"] = "workflow run timed out"
+	if err := e.store.UpdateRun(ctx, run); err != nil {
+		return err
+	}
+	e.markRunTerminal(run.ID)
+	e.appendTimeline(ctx, run, "run_status", "", "", string(run.Status), "", "run timed out", map[string]any{"timeout_sec": wfDef.TimeoutSec})
+	seen := make(map[string]struct{}, len(cancelJobIDs))
+	for _, jobID := range cancelJobIDs {
+		if jobID == "" {
+			continue
+		}
+		if _, ok := seen[jobID]; ok {
+			continue
+		}
+		seen[jobID] = struct{}{}
+		e.publishJobCancel(jobID, "workflow run timed out")
 	}
 	return nil
 }
@@ -415,6 +546,28 @@ func cancelStepRun(sr *StepRun, now time.Time) {
 			continue
 		}
 		cancelStepRun(child, now)
+	}
+}
+
+func timeoutStepRun(sr *StepRun, now time.Time) {
+	if sr == nil {
+		return
+	}
+	switch sr.Status {
+	case StepStatusSucceeded, StepStatusFailed, StepStatusCancelled, StepStatusTimedOut:
+		// leave terminal states
+	default:
+		sr.Status = StepStatusTimedOut
+		sr.CompletedAt = &now
+		if sr.Error == nil {
+			sr.Error = map[string]any{"message": "workflow run timed out"}
+		}
+	}
+	for _, child := range sr.Children {
+		if child == nil {
+			continue
+		}
+		timeoutStepRun(child, now)
 	}
 }
 
@@ -456,6 +609,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 		return fmt.Errorf("workflow/run required")
 	}
 	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
+		e.markRunTerminal(run.ID)
 		return nil
 	}
 	now := time.Now().UTC()
@@ -463,6 +617,11 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 	if run.Status == RunStatusPending {
 		run.Status = RunStatusRunning
 		run.StartedAt = &now
+	}
+	if timedOut, err := e.enforceWorkflowTimeout(ctx, wfDef, run, now); err != nil {
+		return err
+	} else if timedOut {
+		return nil
 	}
 
 	for stepID, step := range wfDef.Steps {
@@ -488,6 +647,17 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 			ok, err := evalCondition(step.Condition, buildEvalScope(run, nil))
 			if err != nil {
 				logging.Error("workflow-engine", "condition eval failed", "step_id", stepID, "error", err)
+				parentSR.Status = StepStatusFailed
+				if parentSR.StartedAt == nil {
+					parentSR.StartedAt = &now
+				}
+				parentSR.CompletedAt = &now
+				parentSR.Error = map[string]any{"message": err.Error()}
+				run.Steps[stepID] = parentSR
+				e.appendTimeline(ctx, run, "step_condition_failed", stepID, "", string(parentSR.Status), "", err.Error(), nil)
+				if e.OnStepFinished != nil {
+					e.OnStepFinished(run.ID, stepID, parentSR.Status)
+				}
 				continue
 			}
 			if !ok {
@@ -666,6 +836,35 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 			items, err := evalForEach(step.ForEach, buildEvalScope(run, nil))
 			if err != nil {
 				logging.Error("workflow-engine", "for_each eval failed", "step_id", stepID, "error", err)
+				parentSR.Status = StepStatusFailed
+				if parentSR.StartedAt == nil {
+					parentSR.StartedAt = &now
+				}
+				parentSR.CompletedAt = &now
+				parentSR.Error = map[string]any{"message": err.Error()}
+				run.Steps[stepID] = parentSR
+				e.appendTimeline(ctx, run, "step_foreach_failed", stepID, "", string(parentSR.Status), "", err.Error(), nil)
+				if e.OnStepFinished != nil {
+					e.OnStepFinished(run.ID, stepID, parentSR.Status)
+				}
+				continue
+			}
+			if e.maxForEachItems > 0 && len(items) > e.maxForEachItems {
+				msg := fmt.Sprintf("for_each fan-out exceeds limit (%d > %d)", len(items), e.maxForEachItems)
+				parentSR.Status = StepStatusFailed
+				if parentSR.StartedAt == nil {
+					parentSR.StartedAt = &now
+				}
+				parentSR.CompletedAt = &now
+				parentSR.Error = map[string]any{"message": msg}
+				run.Steps[stepID] = parentSR
+				e.appendTimeline(ctx, run, "step_foreach_failed", stepID, "", string(parentSR.Status), "", msg, map[string]any{
+					"count": len(items),
+					"limit": e.maxForEachItems,
+				})
+				if e.OnStepFinished != nil {
+					e.OnStepFinished(run.ID, stepID, parentSR.Status)
+				}
 				continue
 			}
 			if parentSR.Children == nil {
@@ -824,7 +1023,13 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 		e.appendTimeline(ctx, run, "run_status", "", "", string(run.Status), "", "", nil)
 	}
 	run.UpdatedAt = now
-	return e.store.UpdateRun(ctx, run)
+	if err := e.store.UpdateRun(ctx, run); err != nil {
+		return err
+	}
+	if isTerminalRunStatus(run.Status) {
+		e.markRunTerminal(run.ID)
+	}
+	return nil
 }
 
 func evalCondition(expr string, scope map[string]any) (bool, error) {
@@ -1243,12 +1448,12 @@ func depsSatisfied(step *Step, run *WorkflowRun) bool {
 }
 
 func splitJobID(jobID string) (runID, stepID string) {
-	parts := strings.Split(jobID, ":")
-	if len(parts) < 2 {
+	parts := strings.SplitN(jobID, ":", 2)
+	if len(parts) != 2 {
 		return "", ""
 	}
-	runID = strings.Join(parts[:len(parts)-1], ":")
-	stepID = parts[len(parts)-1]
+	runID = parts[0]
+	stepID = parts[1]
 	if at := strings.LastIndex(stepID, "@"); at > 0 {
 		stepID = stepID[:at]
 	}
@@ -1703,6 +1908,30 @@ func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 	run.Status = RunStatusRunning
 }
 
+func isTerminalRunStatus(status RunStatus) bool {
+	switch status {
+	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *Engine) markRunTerminal(runID string) {
+	if e == nil || runID == "" {
+		return
+	}
+	val, ok := e.runLocks.Load(runID)
+	if !ok {
+		return
+	}
+	lock := val.(*runLock)
+	lock.terminal.Store(true)
+	if lock.refs.Load() == 0 {
+		e.runLocks.Delete(runID)
+	}
+}
+
 func delayForStep(step *Step, now time.Time) (time.Duration, error) {
 	if step == nil {
 		return 0, nil
@@ -1781,14 +2010,75 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 	}
 }
 
+// Stop cancels all pending delay timers and prevents new ones from firing.
+// It is safe to call multiple times.
+func (e *Engine) Stop() {
+	e.timerMu.Lock()
+	defer e.timerMu.Unlock()
+	if e.stopped != nil {
+		select {
+		case <-e.stopped:
+			return // already stopped
+		default:
+		}
+		close(e.stopped)
+	} else {
+		e.stopped = make(chan struct{})
+		close(e.stopped)
+	}
+	for _, t := range e.pendingTimers {
+		t.Stop()
+	}
+	e.pendingTimers = nil
+}
+
+// PendingTimers returns the number of active delay timers (for testing).
+func (e *Engine) PendingTimers() int {
+	e.timerMu.Lock()
+	defer e.timerMu.Unlock()
+	return len(e.pendingTimers)
+}
+
 func (e *Engine) scheduleAfter(delay time.Duration, workflowID, runID string) {
 	if delay <= 0 {
 		return
 	}
-	go func() {
-		time.Sleep(delay)
+	e.timerMu.Lock()
+	if e.stopped != nil {
+		select {
+		case <-e.stopped:
+			e.timerMu.Unlock()
+			return // engine stopped, discard
+		default:
+		}
+	}
+	if e.stopped == nil {
+		e.stopped = make(chan struct{})
+	}
+	stopped := e.stopped
+
+	var t *time.Timer
+	t = time.AfterFunc(delay, func() {
+		// Check if engine was stopped before firing.
+		select {
+		case <-stopped:
+			return
+		default:
+		}
 		_ = e.StartRun(context.Background(), workflowID, runID)
-	}()
+		// Remove ourselves from the pending list.
+		e.timerMu.Lock()
+		defer e.timerMu.Unlock()
+		for i, pt := range e.pendingTimers {
+			if pt == t {
+				e.pendingTimers[i] = e.pendingTimers[len(e.pendingTimers)-1]
+				e.pendingTimers = e.pendingTimers[:len(e.pendingTimers)-1]
+				break
+			}
+		}
+	})
+	e.pendingTimers = append(e.pendingTimers, t)
+	e.timerMu.Unlock()
 }
 
 func (e *Engine) appendTimeline(ctx context.Context, run *WorkflowRun, eventType, stepID, jobID, status, resultPtr, message string, data map[string]any) {

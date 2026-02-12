@@ -17,6 +17,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,12 +51,17 @@ const (
 	defaultPolicyConfigID  = "policy"
 	defaultPolicyConfigKey = "bundles"
 	envDecisionCacheTTL    = "SAFETY_DECISION_CACHE_TTL"
+	envPolicyMaxBytes      = "SAFETY_POLICY_MAX_BYTES"
+	defaultPolicyMaxBytes  = 2 * 1024 * 1024
 )
 
 type cacheEntry struct {
 	resp    *pb.PolicyCheckResponse
 	expires time.Time
 }
+
+// policyLookupIP allows tests to override DNS resolution for policy URL validation.
+var policyLookupIP = net.LookupIP
 
 // Run starts the Safety Kernel gRPC server and blocks until it exits.
 func Run(cfg *config.Config) error {
@@ -834,8 +840,7 @@ func readPolicySource(source string) ([]byte, error) {
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 		return fetchPolicyURL(source)
 	}
-	// #nosec G304 -- policy path is configured by the operator.
-	return os.ReadFile(source)
+	return readPolicyFile(source)
 }
 
 func fetchPolicyURL(raw string) ([]byte, error) {
@@ -847,8 +852,12 @@ func fetchPolicyURL(raw string) ([]byte, error) {
 		return nil, err
 	}
 
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = policyDialContext
+
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout:   10 * time.Second,
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("policy fetch redirect limit exceeded")
@@ -864,7 +873,49 @@ func fetchPolicyURL(raw string) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("policy fetch status %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	limit := policyMaxBytes()
+	if resp.ContentLength > 0 && resp.ContentLength > limit {
+		return nil, fmt.Errorf("policy exceeds max size of %d bytes", limit)
+	}
+	return readPolicyBody(resp.Body, limit)
+}
+
+func readPolicyFile(source string) ([]byte, error) {
+	limit := policyMaxBytes()
+	// #nosec G304 -- policy path is configured by the operator.
+	file, err := os.Open(source)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if info, err := file.Stat(); err == nil && info.Size() > limit {
+		return nil, fmt.Errorf("policy exceeds max size of %d bytes", limit)
+	}
+	return readPolicyBody(file, limit)
+}
+
+func policyMaxBytes() int64 {
+	raw := strings.TrimSpace(os.Getenv(envPolicyMaxBytes))
+	if raw != "" {
+		if val, err := strconv.ParseInt(raw, 10, 64); err == nil && val > 0 {
+			return val
+		}
+	}
+	return defaultPolicyMaxBytes
+}
+
+func readPolicyBody(r io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("invalid policy max size")
+	}
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("policy exceeds max size of %d bytes", limit)
+	}
+	return data, nil
 }
 
 func validatePolicyURL(u *url.URL) error {
@@ -932,7 +983,7 @@ func ensurePublicHost(host string) error {
 		}
 		return nil
 	}
-	ips, err := net.LookupIP(host)
+	ips, err := policyLookupIP(host)
 	if err != nil {
 		return fmt.Errorf("policy url resolve failed: %w", err)
 	}
@@ -945,6 +996,47 @@ func ensurePublicHost(host string) error {
 		}
 	}
 	return nil
+}
+
+func policyDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil, errors.New("policy url missing host")
+	}
+	if allowlist := policyURLAllowlist(); len(allowlist) > 0 && !hostAllowed(host, allowlist) {
+		return nil, fmt.Errorf("policy url host not allowed: %s", host)
+	}
+	ips, err := policyLookupIP(host)
+	if err != nil {
+		return nil, fmt.Errorf("policy url resolve failed: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("policy url resolve failed: %s", host)
+	}
+	if !env.Bool("SAFETY_POLICY_URL_ALLOW_PRIVATE") {
+		for _, ip := range ips {
+			if isPrivateIP(ip) {
+				return nil, fmt.Errorf("policy url host not allowed: %s", host)
+			}
+		}
+	}
+	dialer := &net.Dialer{}
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("policy url resolve failed: %s", host)
 }
 
 func isPrivateIP(ip net.IP) bool {
@@ -973,9 +1065,15 @@ func verifyPolicySignature(data []byte, source string) error {
 	if err != nil {
 		return fmt.Errorf("invalid SAFETY_POLICY_PUBLIC_KEY: %w", err)
 	}
+	if len(pubKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("invalid SAFETY_POLICY_PUBLIC_KEY length: got %d want %d", len(pubKey), ed25519.PublicKeySize)
+	}
 	sig, err := readSignature(source)
 	if err != nil {
 		return err
+	}
+	if len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("invalid policy signature length: got %d want %d", len(sig), ed25519.SignatureSize)
 	}
 	if !ed25519.Verify(ed25519.PublicKey(pubKey), data, sig) {
 		return errors.New("policy signature verification failed")

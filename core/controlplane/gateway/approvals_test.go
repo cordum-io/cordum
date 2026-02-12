@@ -17,6 +17,10 @@ import (
 	"github.com/google/uuid"
 )
 
+func withAuth(req *http.Request, auth *AuthContext) *http.Request {
+	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, auth))
+}
+
 func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	s, bus, safety := newTestGateway(t)
 	safety.setSnapshots([]string{"snap-1"})
@@ -54,8 +58,7 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq.Header.Set("X-Principal-Id", "alice")
-	httpReq.Header.Set("X-Principal-Role", "admin")
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 
 	s.handleApproveJob(rr, httpReq)
@@ -94,6 +97,86 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	}
 	if bus.published[0].subject != capsdk.SubjectSubmit {
 		t.Fatalf("expected publish to %s got %s", capsdk.SubjectSubmit, bus.published[0].subject)
+	}
+}
+
+func TestApproveJobUsesAuthContextForApprover(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-1"})
+
+	setupApprovalJob := func(jobID, principalID string) string {
+		req := &pb.JobRequest{
+			JobId:       jobID,
+			Topic:       "job.test",
+			TenantId:    "default",
+			PrincipalId: principalID,
+		}
+		if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+			t.Fatalf("set job meta: %v", err)
+		}
+		if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+			t.Fatalf("set job req: %v", err)
+		}
+		if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+			t.Fatalf("set state: %v", err)
+		}
+		hash, err := scheduler.HashJobRequest(req)
+		if err != nil {
+			t.Fatalf("hash job: %v", err)
+		}
+		if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
+			Decision:         scheduler.SafetyRequireApproval,
+			ApprovalRequired: true,
+			PolicySnapshot:   "snap-1",
+			JobHash:          hash,
+		}); err != nil {
+			t.Fatalf("set safety decision: %v", err)
+		}
+		return hash
+	}
+
+	jobID := "job-approval-no-auth"
+	submitter := "user-submitter"
+	_ = setupApprovalJob(jobID, submitter)
+
+	noAuthReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", nil)
+	noAuthReq.Header.Set("X-Tenant-ID", "default")
+	noAuthReq.SetPathValue("job_id", jobID)
+	noAuthReq.Header.Set("X-Principal-Id", "spoofed-user")
+	noAuthRec := httptest.NewRecorder()
+	s.handleApproveJob(noAuthRec, noAuthReq)
+	if noAuthRec.Code != http.StatusOK {
+		t.Fatalf("no auth approve: expected 200 got %d body=%s", noAuthRec.Code, noAuthRec.Body.String())
+	}
+	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.ApprovedBy != "system/unknown" {
+		t.Fatalf("expected approved_by system/unknown got %q", record.ApprovedBy)
+	}
+	if record.ApprovedBy == submitter {
+		t.Fatalf("approved_by should not match submitter %q", submitter)
+	}
+
+	jobID = "job-approval-with-auth"
+	_ = setupApprovalJob(jobID, submitter)
+
+	authReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", nil)
+	authReq.Header.Set("X-Tenant-ID", "default")
+	authReq.SetPathValue("job_id", jobID)
+	authReq = withAuth(authReq, &AuthContext{Tenant: "default", PrincipalID: "approver-1", Role: "admin"})
+	authRec := httptest.NewRecorder()
+	s.handleApproveJob(authRec, authReq)
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("auth approve: expected 200 got %d body=%s", authRec.Code, authRec.Body.String())
+	}
+	record, err = s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.ApprovedBy != "approver-1" {
+		t.Fatalf("expected approved_by approver-1 got %q", record.ApprovedBy)
 	}
 }
 
@@ -175,8 +258,7 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(body))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq.Header.Set("X-Principal-Id", "bob")
-	httpReq.Header.Set("X-Principal-Role", "admin")
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleRejectJob(rr, httpReq)
 
@@ -358,8 +440,7 @@ func TestApproveJobDoubleApproveIdempotent(t *testing.T) {
 		httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 		httpReq.Header.Set("X-Tenant-ID", "default")
 		httpReq.SetPathValue("job_id", jobID)
-		httpReq.Header.Set("X-Principal-Id", "alice")
-		httpReq.Header.Set("X-Principal-Role", "admin")
+		httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 		rr := httptest.NewRecorder()
 		s.handleApproveJob(rr, httpReq)
 		return rr
@@ -423,8 +504,7 @@ func TestApproveJobConcurrentRace(t *testing.T) {
 			httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 			httpReq.Header.Set("X-Tenant-ID", "default")
 			httpReq.SetPathValue("job_id", jobID)
-			httpReq.Header.Set("X-Principal-Id", "alice")
-			httpReq.Header.Set("X-Principal-Role", "admin")
+			httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 			rr := httptest.NewRecorder()
 			s.handleApproveJob(rr, httpReq)
 

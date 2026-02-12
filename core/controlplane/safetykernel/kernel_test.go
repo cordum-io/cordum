@@ -2,6 +2,8 @@ package safetykernel
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -313,5 +315,45 @@ func TestNewPolicyLoaderDefaults(t *testing.T) {
 	loader = newPolicyLoader(nil, "/tmp/policy.yaml")
 	if !loader.ShouldWatch() {
 		t.Fatalf("expected ShouldWatch true when source set")
+	}
+}
+
+func TestVerifyPolicySignatureRejectsInvalidPublicKeyLength(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "1")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize-1)))
+	t.Setenv("SAFETY_POLICY_SIGNATURE", base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)))
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("verifyPolicySignature panicked: %v", r)
+		}
+	}()
+
+	err := verifyPolicySignature([]byte("data"), "policy.yaml")
+	if err == nil {
+		t.Fatalf("expected error for invalid public key length")
+	}
+	if !strings.Contains(err.Error(), "SAFETY_POLICY_PUBLIC_KEY length") {
+		t.Fatalf("expected public key length error, got %v", err)
+	}
+}
+
+func TestVerifyPolicySignatureRejectsInvalidSignatureLength(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "1")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)))
+	t.Setenv("SAFETY_POLICY_SIGNATURE", base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize-1)))
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("verifyPolicySignature panicked: %v", r)
+		}
+	}()
+
+	err := verifyPolicySignature([]byte("data"), "policy.yaml")
+	if err == nil {
+		t.Fatalf("expected error for invalid signature length")
+	}
+	if !strings.Contains(err.Error(), "policy signature length") {
+		t.Fatalf("expected signature length error, got %v", err)
 	}
 }

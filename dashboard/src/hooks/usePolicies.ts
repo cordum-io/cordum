@@ -132,7 +132,9 @@ export function usePublishPolicy() {
     onSuccess: (_, { bundleId }) => {
       logger.info("policies", "Policy published", { bundleId });
       useToastStore.getState().addToast({ type: "success", title: "Policy published" });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
       queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
+      queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
       queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
     },
     onError: (err, { bundleId }) => {
@@ -152,6 +154,7 @@ export function useRollbackPolicy() {
     onSuccess: (_, { snapshotId }) => {
       logger.info("policies", "Policy rolled back", { snapshotId });
       useToastStore.getState().addToast({ type: "success", title: "Policy rolled back" });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
       queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
       queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
       queryClient.invalidateQueries({ queryKey: ["policy-rules"] });

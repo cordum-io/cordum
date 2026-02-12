@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -179,15 +180,15 @@ func (s *fakeJobStore) CountActiveByTenant(_ context.Context, _ string) (int, er
 	return 0, nil
 }
 
-func (s *fakeJobStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (bool, error) {
+func (s *fakeJobStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (string, error) {
 	if until, ok := s.locks[key]; ok && until.After(time.Now()) {
-		return false, nil
+		return "", nil
 	}
 	s.locks[key] = time.Now().Add(ttl)
-	return true, nil
+	return fmt.Sprintf("token-%s", key), nil
 }
 
-func (s *fakeJobStore) ReleaseLock(_ context.Context, key string) error {
+func (s *fakeJobStore) ReleaseLock(_ context.Context, key string, _ string) error {
 	delete(s.locks, key)
 	return nil
 }

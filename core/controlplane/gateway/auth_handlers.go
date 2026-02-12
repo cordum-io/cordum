@@ -1,10 +1,13 @@
 package gateway
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -47,8 +50,8 @@ const defaultSessionTTL = 24 * time.Hour
 // 2. API key: For programmatic access (scripts, CI/CD), the password field accepts API keys
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req AuthLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 
@@ -93,7 +96,11 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				if redisStore, ok := userStore.(*RedisUserStore); ok {
 					redisStore.ClearFailedLogins(r.Context(), username)
 				}
-				resp := buildUserLoginResponse(user)
+				resp, err := buildUserLoginResponse(r.Context(), user)
+				if err != nil {
+					writeErrorJSON(w, http.StatusInternalServerError, "internal error")
+					return
+				}
 				// Store session token in Redis for subsequent request validation
 				if redisStore, ok := userStore.(*RedisUserStore); ok {
 					if err := redisStore.StoreSession(r.Context(), resp.Token, user, defaultSessionTTL); err != nil {
@@ -102,7 +109,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				w.Header().Set("Content-Type", "application/json")
-				writeJSON(w,resp)
+				writeJSON(w, resp)
 				return
 			}
 
@@ -138,7 +145,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	resp := buildLoginResponse(authCtx, apiKey)
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,resp)
+	writeJSON(w, resp)
 }
 
 // handleSession validates current session via X-API-Key header.
@@ -154,7 +161,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	resp := buildLoginResponse(authCtx, apiKey)
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,resp)
+	writeJSON(w, resp)
 }
 
 // handleLogout invalidates the current session token.
@@ -217,7 +224,7 @@ func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
 
 // buildUserLoginResponse creates the AuthLoginResponse for user/password auth.
 // For user auth, we generate a session token rather than exposing the password.
-func buildUserLoginResponse(user *User) AuthLoginResponse {
+func buildUserLoginResponse(ctx context.Context, user *User) (AuthLoginResponse, error) {
 	now := time.Now()
 	expiresAt := now.Add(defaultSessionTTL)
 
@@ -228,9 +235,9 @@ func buildUserLoginResponse(user *User) AuthLoginResponse {
 
 	// Generate a cryptographically random session token (256 bits entropy).
 	var tokenBytes [32]byte
-	if _, err := rand.Read(tokenBytes[:]); err != nil {
-		// Fallback should never happen — crypto/rand failure is fatal-grade.
-		panic("crypto/rand.Read failed: " + err.Error())
+	if _, err := io.ReadFull(rand.Reader, tokenBytes[:]); err != nil {
+		slog.ErrorContext(ctx, "crypto/rand failed", "error", err)
+		return AuthLoginResponse{}, fmt.Errorf("crypto/rand: %w", err)
 	}
 	sessionToken := "session-" + base64.RawURLEncoding.EncodeToString(tokenBytes[:])
 
@@ -248,7 +255,7 @@ func buildUserLoginResponse(user *User) AuthLoginResponse {
 			UpdatedAt:   user.UpdatedAt.Format(time.RFC3339),
 			LastLoginAt: now.Format(time.RFC3339),
 		},
-	}
+	}, nil
 }
 
 // maskToken returns a masked version of the token.
@@ -290,8 +297,8 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChangePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 
@@ -337,6 +344,10 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if authCtx.Tenant == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		return
+	}
 
 	// Require admin role
 	if err := s.auth.RequireRole(r, "admin"); err != nil {
@@ -351,8 +362,8 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req CreateUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 
@@ -395,7 +406,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	s.appendAuditEntryNamed(r.Context(), "create", "user", user.ID, user.Username, authCtx.PrincipalID, authCtx.Role, "create user "+user.Username)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	writeJSON(w,AuthUser{
+	writeJSON(w, AuthUser{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,
