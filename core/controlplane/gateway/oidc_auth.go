@@ -674,7 +674,7 @@ func ensurePublicHost(host string) error {
 		return fmt.Errorf("oidc: issuer host not allowed: %s", host)
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		if isPrivateIP(ip) {
+		if isPrivateNet(ip) {
 			return fmt.Errorf("oidc: issuer host not allowed: %s", host)
 		}
 		return nil
@@ -687,7 +687,7 @@ func ensurePublicHost(host string) error {
 		return fmt.Errorf("oidc: issuer host resolve failed: %s", host)
 	}
 	for _, ip := range ips {
-		if isPrivateIP(ip) {
+		if isPrivateNet(ip) {
 			return fmt.Errorf("oidc: issuer host not allowed: %s", host)
 		}
 	}
