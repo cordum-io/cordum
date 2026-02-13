@@ -1,7 +1,8 @@
 package scheduler
 
 import (
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 	"time"
 )
 
@@ -21,14 +22,25 @@ func backoffDelay(attempt int, base, maxDelay time.Duration) time.Duration {
 	if attempt > backoffMaxShift {
 		attempt = backoffMaxShift
 	}
-	delay := base << uint(attempt)
+	delay := base << attempt
 	if delay > maxDelay || delay <= 0 {
 		delay = maxDelay
 	}
-	jitter := time.Duration(rand.Int63n(int64(backoffJitterMax)))
+	jitter := cryptoJitter(backoffJitterMax)
 	total := delay + jitter
 	if total > maxDelay {
 		total = maxDelay
 	}
 	return total
+}
+
+func cryptoJitter(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0
+	}
+	return time.Duration(n.Int64())
 }

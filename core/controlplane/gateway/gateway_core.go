@@ -124,14 +124,20 @@ type server struct {
 // connection. It is safe to call with a nil userStore.
 func (s *server) Close() {
 	if s.auditExporter != nil {
-		_ = s.auditExporter.Close()
+		if err := s.auditExporter.Close(); err != nil {
+			logging.Error("api-gateway", "audit exporter close failed", "error", err)
+		}
 	}
 	if s.userStore != nil {
-		s.userStore.Close()
+		if err := s.userStore.Close(); err != nil {
+			logging.Error("api-gateway", "user store close failed", "error", err)
+		}
 	}
 	if s.keyStore != nil {
 		if ks, ok := s.keyStore.(*RedisKeyStore); ok {
-			_ = ks.Close()
+			if err := ks.Close(); err != nil {
+				logging.Error("api-gateway", "key store close failed", "error", err)
+			}
 		}
 	}
 }

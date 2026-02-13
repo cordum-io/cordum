@@ -3,10 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,10 +20,10 @@ import (
 )
 
 var (
-	apiBase   = envOr("CORDUM_GATEWAY", "http://localhost:8081")
-	apiKey    = envOr("CORDUM_API_KEY", "")
-	tenantID  = envOr("CORDUM_TENANT_ID", "default")
-	natsURL   = envOr("NATS_URL", "nats://127.0.0.1:4222")
+	apiBase  = envOr("CORDUM_GATEWAY", "http://localhost:8081")
+	apiKey   = envOr("CORDUM_API_KEY", "")
+	tenantID = envOr("CORDUM_TENANT_ID", "default")
+	natsURL  = envOr("NATS_URL", "nats://127.0.0.1:4222")
 )
 
 type demoWorker struct {
@@ -47,10 +48,10 @@ var demoWorkers = []demoWorker{
 }
 
 type workflow struct {
-	ID    string            `json:"id"`
-	Name  string            `json:"name"`
-	OrgID string            `json:"org_id"`
-	Steps map[string]step   `json:"steps"`
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	OrgID string          `json:"org_id"`
+	Steps map[string]step `json:"steps"`
 }
 
 type step struct {
@@ -85,7 +86,7 @@ func main() {
 		worker := w
 		go func() {
 			heartbeatFn := func() ([]byte, error) {
-				active := rand.Intn(worker.Capacity / 2)
+				active := randInt(worker.Capacity / 2)
 				return runtime.HeartbeatPayload(worker.ID, worker.PackID, active, worker.Capacity, 0)
 			}
 			if payload, err := heartbeatFn(); err == nil {
@@ -102,47 +103,47 @@ func main() {
 		{
 			ID: "compliance.audit-flow", Name: "Compliance Audit Pipeline", OrgID: tenantID,
 			Steps: map[string]step{
-				"collect": {ID: "collect", Name: "Collect Data", Type: "worker", Topic: "job.compliance.audit", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"collect":  {ID: "collect", Name: "Collect Data", Type: "worker", Topic: "job.compliance.audit", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 				"validate": {ID: "validate", Name: "Validate Records", Type: "worker", Topic: "job.compliance.check", DependsOn: []string{"collect"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 				"approval": {ID: "approval", Name: "Manager Approval", Type: "condition", Condition: "true", DependsOn: []string{"validate"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "approval"}}},
-				"report": {ID: "report", Name: "Generate Report", Type: "worker", Topic: "job.docs.generate", DependsOn: []string{"approval"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"report":   {ID: "report", Name: "Generate Report", Type: "worker", Topic: "job.docs.generate", DependsOn: []string{"approval"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 			},
 		},
 		{
 			ID: "data-ops.etl-pipeline", Name: "Data ETL Pipeline", OrgID: tenantID,
 			Steps: map[string]step{
-				"extract": {ID: "extract", Name: "Extract Data", Type: "worker", Topic: "job.data-ops.transform", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
-				"validate": {ID: "validate", Name: "Validate Schema", Type: "worker", Topic: "job.data-ops.validate", DependsOn: []string{"extract"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"extract":   {ID: "extract", Name: "Extract Data", Type: "worker", Topic: "job.data-ops.transform", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"validate":  {ID: "validate", Name: "Validate Schema", Type: "worker", Topic: "job.data-ops.validate", DependsOn: []string{"extract"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 				"transform": {ID: "transform", Name: "Transform Records", Type: "worker", Topic: "job.data-ops.transform", DependsOn: []string{"validate"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
-				"notify": {ID: "notify", Name: "Send Completion Notice", Type: "worker", Topic: "job.notify.slack", DependsOn: []string{"transform"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"notify":    {ID: "notify", Name: "Send Completion Notice", Type: "worker", Topic: "job.notify.slack", DependsOn: []string{"transform"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 			},
 		},
 		{
 			ID: "ml-pipeline.prediction", Name: "ML Prediction Pipeline", OrgID: tenantID,
 			Steps: map[string]step{
 				"preprocess": {ID: "preprocess", Name: "Preprocess Input", Type: "worker", Topic: "job.data-ops.transform", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
-				"inference": {ID: "inference", Name: "Run Inference", Type: "worker", Topic: "job.ml.inference", DependsOn: []string{"preprocess"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
-				"review": {ID: "review", Name: "Human Review", Type: "condition", Condition: "input.confidence < 0.9", DependsOn: []string{"inference"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "approval"}}},
-				"output": {ID: "output", Name: "Deliver Results", Type: "worker", Topic: "job.notify.webhook", DependsOn: []string{"inference"}, Condition: "input.confidence >= 0.9", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"inference":  {ID: "inference", Name: "Run Inference", Type: "worker", Topic: "job.ml.inference", DependsOn: []string{"preprocess"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"review":     {ID: "review", Name: "Human Review", Type: "condition", Condition: "input.confidence < 0.9", DependsOn: []string{"inference"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "approval"}}},
+				"output":     {ID: "output", Name: "Deliver Results", Type: "worker", Topic: "job.notify.webhook", DependsOn: []string{"inference"}, Condition: "input.confidence >= 0.9", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 			},
 		},
 		{
 			ID: "payments.refund-flow", Name: "Payment Refund Workflow", OrgID: tenantID,
 			Steps: map[string]step{
-				"request": {ID: "request", Name: "Refund Request", Type: "worker", Topic: "job.payments.process", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
-				"verify": {ID: "verify", Name: "Verify Transaction", Type: "worker", Topic: "job.compliance.check", DependsOn: []string{"request"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"request":  {ID: "request", Name: "Refund Request", Type: "worker", Topic: "job.payments.process", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"verify":   {ID: "verify", Name: "Verify Transaction", Type: "worker", Topic: "job.compliance.check", DependsOn: []string{"request"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 				"approval": {ID: "approval", Name: "Finance Approval", Type: "condition", Condition: "input.amount > 100", DependsOn: []string{"verify"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "approval"}}},
-				"process": {ID: "process", Name: "Process Refund", Type: "worker", Topic: "job.payments.refund", DependsOn: []string{"approval"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
-				"notify": {ID: "notify", Name: "Customer Notification", Type: "worker", Topic: "job.notify.email", DependsOn: []string{"process"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"process":  {ID: "process", Name: "Process Refund", Type: "worker", Topic: "job.payments.refund", DependsOn: []string{"approval"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"notify":   {ID: "notify", Name: "Customer Notification", Type: "worker", Topic: "job.notify.email", DependsOn: []string{"process"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 			},
 		},
 		{
 			ID: "documents.review-process", Name: "Document Review Process", OrgID: tenantID,
 			Steps: map[string]step{
-				"ingest": {ID: "ingest", Name: "Ingest Document", Type: "worker", Topic: "job.docs.parse", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"ingest":   {ID: "ingest", Name: "Ingest Document", Type: "worker", Topic: "job.docs.parse", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 				"classify": {ID: "classify", Name: "ML Classification", Type: "worker", Topic: "job.ml.predict", DependsOn: []string{"ingest"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
-				"review": {ID: "review", Name: "Legal Review", Type: "condition", Condition: "input.sensitivity == 'high'", DependsOn: []string{"classify"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "approval"}}},
-				"archive": {ID: "archive", Name: "Archive Document", Type: "worker", Topic: "job.docs.generate", DependsOn: []string{"classify"}, Condition: "input.sensitivity != 'high'", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
+				"review":   {ID: "review", Name: "Legal Review", Type: "condition", Condition: "input.sensitivity == 'high'", DependsOn: []string{"classify"}, Meta: map[string]any{"labels": map[string]string{"ui_node_type": "approval"}}},
+				"archive":  {ID: "archive", Name: "Archive Document", Type: "worker", Topic: "job.docs.generate", DependsOn: []string{"classify"}, Condition: "input.sensitivity != 'high'", Meta: map[string]any{"labels": map[string]string{"ui_node_type": "worker"}}},
 			},
 		},
 	}
@@ -201,6 +202,17 @@ func main() {
 	log.Println("Press Ctrl+C to stop...")
 
 	<-ctx.Done()
+}
+
+func randInt(max int) int {
+	if max <= 0 {
+		return 0
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0
+	}
+	return int(n.Int64())
 }
 
 func createWorkflow(wf workflow) error {

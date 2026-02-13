@@ -150,6 +150,7 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 	if inputTokens > math.MaxInt32 {
 		inputTokens32 = math.MaxInt32
 	} else {
+		// #nosec G115 -- bounded above by MaxInt32.
 		inputTokens32 = int32(inputTokens)
 	}
 

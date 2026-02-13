@@ -3,7 +3,6 @@ package gateway
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -41,14 +40,16 @@ func (s *RedisKeyStore) Close() error {
 	return s.client.Close()
 }
 
-func keyRecordKey(id string) string   { return apiKeyPrefix + id }
-func keyLookupKey(hash string) string { return apiKeyLookupPrefix + hash }
+func keyRecordKey(id string) string { return apiKeyPrefix + id }
 func keyTenantKey(tenant string) string {
 	if tenant == "" {
 		tenant = "default"
 	}
 	return apiKeyTenantPrefix + tenant
 }
+func keyPrefixIndexKey(prefix string) string { return apiKeyPrefixIndexPrefix + prefix }
+
+const apiKeyPrefixLen = 11 // "ck_" + 8 hex chars
 
 var errKeyNotFound = errors.New("key not found")
 
@@ -60,11 +61,11 @@ func GenerateRawKey() (string, error) {
 	}
 	return "ck_" + hex.EncodeToString(b), nil
 }
-
-// sha256Hex returns the hex-encoded SHA-256 hash of a string.
-func sha256Hex(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:])
+func rawKeyPrefix(rawKey string) (string, error) {
+	if len(rawKey) < apiKeyPrefixLen {
+		return "", fmt.Errorf("invalid key length")
+	}
+	return rawKey[:apiKeyPrefixLen], nil
 }
 
 // List returns all non-revoked managed keys for a tenant.
@@ -115,13 +116,19 @@ func (s *RedisKeyStore) List(ctx context.Context, tenant string) ([]*ManagedKey,
 }
 
 // Create stores a new managed API key in Redis.
-// The rawSecret is hashed with bcrypt for storage and SHA-256 for the lookup index.
+// The rawSecret is hashed with bcrypt for storage; a prefix index enables lookup.
 func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret string) error {
 	if key.ID == "" {
 		key.ID = uuid.NewString()
 	}
-	if key.Prefix == "" && len(rawSecret) >= 11 {
-		key.Prefix = rawSecret[:11] // "ck_" + 8 hex chars
+	if key.Prefix == "" {
+		prefix, err := rawKeyPrefix(rawSecret)
+		if err != nil {
+			return fmt.Errorf("derive key prefix: %w", err)
+		}
+		key.Prefix = prefix
+	} else if len(key.Prefix) < apiKeyPrefixLen {
+		return fmt.Errorf("key prefix too short")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(rawSecret), bcrypt.DefaultCost)
@@ -130,9 +137,6 @@ func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret s
 	}
 	key.KeyHash = string(hash)
 
-	lookupHash := sha256Hex(rawSecret)
-	key.LookupHash = lookupHash
-
 	data, err := json.Marshal(key)
 	if err != nil {
 		return fmt.Errorf("marshal key: %w", err)
@@ -140,7 +144,7 @@ func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret s
 
 	pipe := s.client.TxPipeline()
 	pipe.Set(ctx, keyRecordKey(key.ID), data, 0)
-	pipe.Set(ctx, keyLookupKey(lookupHash), key.ID, 0)
+	pipe.SAdd(ctx, keyPrefixIndexKey(key.Prefix), key.ID)
 	pipe.SAdd(ctx, keyTenantKey(key.Tenant), key.ID)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("create key: %w", err)
@@ -176,7 +180,9 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, keyRecordKey(id), data, 0)
-			pipe.Del(ctx, keyLookupKey(mk.LookupHash))
+			if mk.Prefix != "" {
+				pipe.SRem(ctx, keyPrefixIndexKey(mk.Prefix), id)
+			}
 			return nil
 		})
 		return err
@@ -200,38 +206,56 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 // ValidateKey checks a raw API key against the store.
 // Returns the ManagedKey if valid, or an error if not found, revoked, or expired.
 func (s *RedisKeyStore) ValidateKey(ctx context.Context, rawKey string) (*ManagedKey, error) {
-	lookupHash := sha256Hex(rawKey)
-	id, err := s.client.Get(ctx, keyLookupKey(lookupHash)).Result()
-	if err == redis.Nil {
+	prefix, err := rawKeyPrefix(rawKey)
+	if err != nil {
 		return nil, fmt.Errorf("key not found")
 	}
+
+	ids, err := s.client.SMembers(ctx, keyPrefixIndexKey(prefix)).Result()
 	if err != nil {
 		return nil, fmt.Errorf("lookup key: %w", err)
 	}
-
-	raw, err := s.client.Get(ctx, keyRecordKey(id)).Result()
-	if err != nil {
-		return nil, fmt.Errorf("get key record: %w", err)
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("key not found")
 	}
 
-	var mk ManagedKey
-	if err := json.Unmarshal([]byte(raw), &mk); err != nil {
-		return nil, fmt.Errorf("unmarshal key: %w", err)
+	pipe := s.client.Pipeline()
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.Get(ctx, keyRecordKey(id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("lookup key records: %w", err)
 	}
 
-	if mk.Revoked {
-		return nil, fmt.Errorf("key revoked")
-	}
-	if !mk.ExpiresAt.IsZero() && time.Now().After(mk.ExpiresAt) {
-		return nil, fmt.Errorf("key expired")
+	for i, cmd := range cmds {
+		raw, err := cmd.Result()
+		if err == redis.Nil {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("lookup key record: %w", err)
+		}
+		var mk ManagedKey
+		if err := json.Unmarshal([]byte(raw), &mk); err != nil {
+			slog.WarnContext(ctx, "validate key: unmarshal failed", "key_id", ids[i], "error", err)
+			continue
+		}
+
+		// Verify with bcrypt for full security (prefix index is only a hint).
+		if err := bcrypt.CompareHashAndPassword([]byte(mk.KeyHash), []byte(rawKey)); err != nil {
+			continue
+		}
+		if mk.Revoked {
+			return nil, fmt.Errorf("key revoked")
+		}
+		if !mk.ExpiresAt.IsZero() && time.Now().After(mk.ExpiresAt) {
+			return nil, fmt.Errorf("key expired")
+		}
+		return &mk, nil
 	}
 
-	// Verify with bcrypt for full security (SHA-256 is just for fast lookup)
-	if err := bcrypt.CompareHashAndPassword([]byte(mk.KeyHash), []byte(rawKey)); err != nil {
-		return nil, fmt.Errorf("key mismatch")
-	}
-
-	return &mk, nil
+	return nil, fmt.Errorf("key not found")
 }
 
 // RecordUsage increments the usage counter and updates the last-used timestamp.

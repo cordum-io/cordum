@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -48,7 +49,7 @@ func (h conflictHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 		if strings.EqualFold(cmd.Name(), "get") && len(cmd.Args()) > 1 {
 			if key, ok := cmd.Args()[1].(string); ok && key == h.key {
 				if h.always || (h.trigger != nil && h.trigger.CompareAndSwap(false, true)) {
-					_ = h.client.Set(ctx, h.key, `{"id":"id-1","tenant":"tenant-a","lookup_hash":"lookup-id-1","revoked":false}`, 0).Err()
+					_ = h.client.Set(ctx, h.key, `{"id":"id-1","tenant":"tenant-a","prefix":"ck_00000000","revoked":false}`, 0).Err()
 				}
 			}
 		}
@@ -80,16 +81,16 @@ func newTestKeyStore(t *testing.T) (*RedisKeyStore, *miniredis.Miniredis) {
 
 func seedManagedKey(ctx context.Context, t *testing.T, store *RedisKeyStore, tenant, id string) {
 	t.Helper()
-	lookup := "lookup-" + id
-	raw := `{"id":"` + id + `","tenant":"` + tenant + `","lookup_hash":"` + lookup + `","revoked":false}`
+	prefix := "ck_00000000"
+	raw := `{"id":"` + id + `","tenant":"` + tenant + `","prefix":"` + prefix + `","revoked":false}`
 	if err := store.client.SAdd(ctx, keyTenantKey(tenant), id).Err(); err != nil {
 		t.Fatalf("seed tenant set: %v", err)
 	}
 	if err := store.client.Set(ctx, keyRecordKey(id), raw, 0).Err(); err != nil {
 		t.Fatalf("seed key record: %v", err)
 	}
-	if err := store.client.Set(ctx, keyLookupKey(lookup), id, 0).Err(); err != nil {
-		t.Fatalf("seed lookup key: %v", err)
+	if err := store.client.SAdd(ctx, keyPrefixIndexKey(prefix), id).Err(); err != nil {
+		t.Fatalf("seed prefix index: %v", err)
 	}
 }
 
@@ -211,8 +212,8 @@ func TestRevoke_TOCTOU(t *testing.T) {
 	if !mk.Revoked {
 		t.Fatalf("expected key revoked after concurrent revoke")
 	}
-	if _, err := store.client.Get(ctx, keyLookupKey("lookup-id-1")).Result(); err != redis.Nil {
-		t.Fatalf("expected lookup key deleted, got %v", err)
+	if exists, err := store.client.SIsMember(ctx, keyPrefixIndexKey("ck_00000000"), "id-1").Result(); err != nil || exists {
+		t.Fatalf("expected prefix index entry removed, got exists=%v err=%v", exists, err)
 	}
 }
 
@@ -253,5 +254,46 @@ func TestRevoke_MaxRetries(t *testing.T) {
 
 	if err := store.Revoke(ctx, "id-1", "tenant-a"); err == nil || !strings.Contains(err.Error(), "too many retries") {
 		t.Fatalf("expected max retries error, got %v", err)
+	}
+}
+
+func TestValidateKey_Success(t *testing.T) {
+	store, _ := newTestKeyStore(t)
+	ctx := context.Background()
+
+	rawKey, err := GenerateRawKey()
+	if err != nil {
+		t.Fatalf("generate raw key: %v", err)
+	}
+
+	mk := &ManagedKey{
+		Name:      "test-key",
+		Tenant:    "tenant-a",
+		Scopes:    []string{"admin"},
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := store.Create(ctx, mk, rawKey); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	got, err := store.ValidateKey(ctx, rawKey)
+	if err != nil {
+		t.Fatalf("validate key: %v", err)
+	}
+	if got.ID != mk.ID || got.Tenant != mk.Tenant {
+		t.Fatalf("unexpected key: %#v", got)
+	}
+}
+
+func TestValidateKey_NotFound(t *testing.T) {
+	store, _ := newTestKeyStore(t)
+	ctx := context.Background()
+
+	rawKey, err := GenerateRawKey()
+	if err != nil {
+		t.Fatalf("generate raw key: %v", err)
+	}
+	if _, err := store.ValidateKey(ctx, rawKey); err == nil {
+		t.Fatalf("expected key not found error")
 	}
 }

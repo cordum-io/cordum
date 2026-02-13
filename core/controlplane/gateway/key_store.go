@@ -11,7 +11,6 @@ type ManagedKey struct {
 	Name       string    `json:"name"`
 	Prefix     string    `json:"prefix"`
 	KeyHash    string    `json:"key_hash"`
-	LookupHash string    `json:"lookup_hash"`
 	Tenant     string    `json:"tenant"`
 	Scopes     []string  `json:"scopes"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -31,8 +30,9 @@ type KeyStore interface {
 }
 
 // Redis key prefixes for managed API keys.
+// #nosec G101 -- Redis key prefixes, not credentials.
 const (
-	apiKeyPrefix       = "apikey:"
-	apiKeyLookupPrefix = "apikey:lookup:"
-	apiKeyTenantPrefix = "apikey:tenant:"
+	apiKeyPrefix            = "apikey:"
+	apiKeyPrefixIndexPrefix = "apikey:prefix:"
+	apiKeyTenantPrefix      = "apikey:tenant:"
 )
