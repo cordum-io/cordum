@@ -38,6 +38,7 @@ const (
 
 // AuthContext captures request identity for auditing and tenant routing.
 type AuthContext struct {
+	// #nosec G117 -- runtime credential in request context, not a hardcoded secret.
 	APIKey           string
 	Tenant           string
 	PrincipalID      string

@@ -64,6 +64,7 @@ const (
 // Blocks: empty segments (job..), special chars, control chars
 var validTopicRegex = regexp.MustCompile(`^job\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?)*$`)
 
+// #nosec G101 -- environment variable names are identifiers, not credential material.
 const (
 	envGatewayGrpcAddr      = "GATEWAY_GRPC_ADDR"
 	envGatewayHTTPAddr      = "GATEWAY_HTTP_ADDR"

@@ -270,6 +270,7 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 		payload = buf
 	}
 
+	// #nosec G704 -- target URL is constrained by bridge configuration and validated below.
 	req, err := http.NewRequestWithContext(ctx, method, b.baseURL+path, payload)
 	if err != nil {
 		return 0, nil, fmt.Errorf("create request: %w", err)
@@ -299,7 +300,8 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	resp, err := client.Do(req) // #nosec G107 -- URL is validated via validateOutboundTargetURL above.
+	// #nosec G704 -- URL is validated via validateOutboundTargetURL above.
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, fmt.Errorf("request failed: %w", err)
 	}

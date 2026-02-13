@@ -48,7 +48,7 @@ func newJWTValidatorFromEnv() (*jwtValidator, bool, error) {
 	pubKey := strings.TrimSpace(os.Getenv("CORDUM_JWT_PUBLIC_KEY"))
 	pubKeyPath := strings.TrimSpace(os.Getenv("CORDUM_JWT_PUBLIC_KEY_PATH"))
 	if pubKeyPath != "" {
-		// #nosec G304 -- public key path is configured by the operator.
+		// #nosec G304,G703 -- public key path is configured by the operator.
 		data, err := os.ReadFile(pubKeyPath)
 		if err != nil {
 			return nil, false, fmt.Errorf("read jwt public key: %w", err)

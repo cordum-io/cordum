@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -685,18 +684,18 @@ func loadOutputScanners() map[string]OutputScanner {
 	if path == "" {
 		return scanners
 	}
-	data, err := os.ReadFile(path) // #nosec G304 -- scanner path is operator-configurable.
+	data, err := os.ReadFile(path) // #nosec G304,G703 -- scanner path is operator-configurable.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return scanners
 		}
-		log.Printf("safety-kernel: scanner config read failed %q: %v", path, err)
+		log.Printf("safety-kernel: scanner config read failed: %v", err)
 		return scanners
 	}
 
 	var cfg outputScannersFile
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Printf("safety-kernel: scanner config parse failed %q: %v", path, err)
+		log.Printf("safety-kernel: scanner config parse failed: %v", err)
 		return scanners
 	}
 	if len(cfg.Scanners) == 0 {
@@ -717,7 +716,7 @@ func loadOutputScanners() map[string]OutputScanner {
 			scanners["code_injection"] = scanner
 		}
 	}
-	log.Printf("safety-kernel: loaded scanner config from %s (%d scanners)", filepath.Clean(path), len(cfg.Scanners))
+	log.Printf("safety-kernel: loaded scanner config (%d scanners)", len(cfg.Scanners))
 	return scanners
 }
 
