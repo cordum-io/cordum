@@ -610,7 +610,7 @@ func extractTarGzReader(src io.Reader, dest string) error {
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o750); err != nil {
+			if err := os.MkdirAll(target, 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
 				return err
 			}
 		case tar.TypeReg:
@@ -625,11 +625,10 @@ func extractTarGzReader(src io.Reader, dest string) error {
 			if totalSz > maxPackUncompressedBytes {
 				return fmt.Errorf("pack archive exceeds max size (%d bytes)", maxPackUncompressedBytes)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
 				return err
 			}
-			// #nosec G304 -- target path is validated by safeJoin.
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec -- target path is validated by safeJoin.
 			if err != nil {
 				return err
 			}

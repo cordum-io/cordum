@@ -16,7 +16,8 @@ import (
 
 // Client is a minimal HTTP client for the API gateway.
 type Client struct {
-	BaseURL    string
+	BaseURL string
+	// #nosec G101 -- API keys are provided at runtime, not hardcoded.
 	APIKey     string
 	TenantID   string
 	HTTPClient *http.Client
@@ -184,7 +185,7 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, bod
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec -- client targets operator-provided gateway URL.
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}

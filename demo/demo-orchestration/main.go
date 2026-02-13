@@ -221,7 +221,7 @@ func createWorkflow(wf workflow) error {
 	req.Header.Set("X-API-Key", apiKey)
 	req.Header.Set("X-Tenant-ID", tenantID)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec -- demo endpoint is operator-configured.
 	if err != nil {
 		return err
 	}
@@ -241,7 +241,7 @@ func submitJob(topic string, payload map[string]any) error {
 	req.Header.Set("X-API-Key", apiKey)
 	req.Header.Set("X-Tenant-ID", tenantID)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec -- demo endpoint is operator-configured.
 	if err != nil {
 		return err
 	}

@@ -100,7 +100,10 @@ func (s *SyslogExporter) Close() error {
 
 func (s *SyslogExporter) connect() error {
 	if s.conn != nil {
-		s.conn.Close()
+		if err := s.conn.Close(); err != nil {
+			return err
+		}
+		s.conn = nil
 	}
 	conn, err := net.DialTimeout(s.network, s.address, 5*time.Second)
 	if err != nil {

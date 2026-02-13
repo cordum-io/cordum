@@ -38,6 +38,8 @@ func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// #nosec -- JSON response; content-type is set to application/json.
 	_, _ = w.Write(data)
 }
 
@@ -94,6 +96,7 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// #nosec -- JSON response; content-type is set to application/json.
 	_, _ = w.Write(data)
 }
-

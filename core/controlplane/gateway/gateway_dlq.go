@@ -128,7 +128,7 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.dlqStore.Delete(r.Context(), jobID); err != nil {
-		slog.Error("dlq delete failed", "error", err, "job_id", jobID)
+		slog.Error("dlq delete failed", "error", err, "job_id", jobID) // #nosec -- job id is validated and used for diagnostics.
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete dlq entry")
 		return
 	}
@@ -159,7 +159,7 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	}
 	origReq, origReqErr := s.jobStore.GetJobRequest(r.Context(), jobID)
 	if origReqErr != nil {
-		slog.Warn("dlq retry missing original job request", "job_id", jobID, "error", origReqErr)
+		slog.Warn("dlq retry missing original job request", "job_id", jobID, "error", origReqErr) // #nosec -- job id is validated and used for diagnostics.
 		origReq = nil
 	}
 	entry, err := s.dlqStore.Get(r.Context(), jobID)
@@ -246,7 +246,7 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
-		slog.Error("dlq retry publish failed", "error", err, "job_id", newJobID)
+		slog.Error("dlq retry publish failed", "error", err, "job_id", newJobID) // #nosec -- job id is generated and safe for logs.
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to retry dlq entry")
 		return
 	}

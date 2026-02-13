@@ -38,21 +38,24 @@ import (
 
 type server struct {
 	pb.UnimplementedSafetyKernelServer
-	mu        sync.RWMutex
-	policy    *config.SafetyPolicy
-	snapshot  string
-	snapshots []string
-	cacheMu   sync.Mutex
-	cacheTTL  time.Duration
-	cache     map[string]cacheEntry
+	mu           sync.RWMutex
+	policy       *config.SafetyPolicy
+	snapshot     string
+	snapshots    []string
+	cacheMu      sync.Mutex
+	cacheTTL     time.Duration
+	cache        map[string]cacheEntry
+	cacheMaxSize int
 }
 
 const (
-	defaultPolicyConfigID  = "policy"
-	defaultPolicyConfigKey = "bundles"
-	envDecisionCacheTTL    = "SAFETY_DECISION_CACHE_TTL"
-	envPolicyMaxBytes      = "SAFETY_POLICY_MAX_BYTES"
-	defaultPolicyMaxBytes  = 2 * 1024 * 1024
+	defaultPolicyConfigID       = "policy"
+	defaultPolicyConfigKey      = "bundles"
+	envDecisionCacheTTL         = "SAFETY_DECISION_CACHE_TTL"
+	envDecisionCacheMaxSize     = "SAFETY_DECISION_CACHE_MAX_SIZE"
+	envPolicyMaxBytes           = "SAFETY_POLICY_MAX_BYTES"
+	defaultPolicyMaxBytes       = 2 * 1024 * 1024
+	defaultDecisionCacheMaxSize = 10000
 )
 
 type cacheEntry struct {
@@ -106,9 +109,14 @@ func Run(cfg *config.Config) error {
 		return fmt.Errorf("safety kernel tls required in production")
 	}
 
+	cacheMax := parseIntEnv(envDecisionCacheMaxSize, defaultDecisionCacheMaxSize)
+	if cacheMax <= 0 {
+		cacheMax = defaultDecisionCacheMaxSize
+	}
 	srv := &server{
-		cacheTTL: parseDurationEnv(envDecisionCacheTTL),
-		cache:    map[string]cacheEntry{},
+		cacheTTL:     parseDurationEnv(envDecisionCacheTTL),
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: cacheMax,
 	}
 	srv.setPolicy(policy, snapshot)
 	if loader.ShouldWatch() {
@@ -327,6 +335,30 @@ func (s *server) setCachedDecision(key string, resp *pb.PolicyCheckResponse) {
 	if s.cache == nil {
 		s.cache = map[string]cacheEntry{}
 	}
+	if s.cacheMaxSize > 0 && len(s.cache) >= s.cacheMaxSize {
+		now := time.Now()
+		// Sweep expired entries first.
+		for k, entry := range s.cache {
+			if now.After(entry.expires) {
+				delete(s.cache, k)
+			}
+		}
+		// If still at capacity, evict the entry closest to expiry (oldest).
+		for len(s.cache) >= s.cacheMaxSize {
+			var oldestKey string
+			var oldestExp time.Time
+			for k, entry := range s.cache {
+				if oldestKey == "" || entry.expires.Before(oldestExp) {
+					oldestKey = k
+					oldestExp = entry.expires
+				}
+			}
+			if oldestKey == "" {
+				break
+			}
+			delete(s.cache, oldestKey)
+		}
+	}
 	s.cache[key] = cacheEntry{resp: resp, expires: time.Now().Add(s.cacheTTL)}
 }
 
@@ -351,6 +383,18 @@ func parseDurationEnv(key string) time.Duration {
 		return 0
 	}
 	return d
+}
+
+func parseIntEnv(key string, defaultVal int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultVal
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultVal
+	}
+	return val
 }
 
 func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRemediation {
@@ -1086,16 +1130,14 @@ func readSignature(source string) ([]byte, error) {
 		return decodeKey(raw)
 	}
 	if path := strings.TrimSpace(os.Getenv("SAFETY_POLICY_SIGNATURE_PATH")); path != "" {
-		// #nosec G304 -- signature path is configured by the operator.
-		return os.ReadFile(path)
+		return os.ReadFile(path) // #nosec -- signature path is configured by the operator.
 	}
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 		return nil, errors.New("policy signature required but no signature provided")
 	}
 	sigPath := source + ".sig"
-	if _, err := os.Stat(sigPath); err == nil {
-		// #nosec G304 -- signature path is derived from the policy source.
-		return os.ReadFile(sigPath)
+	if _, err := os.Stat(sigPath); err == nil { // #nosec -- signature path is derived from the policy source.
+		return os.ReadFile(sigPath) // #nosec -- signature path is derived from the policy source.
 	}
 	return nil, errors.New("policy signature required but not found")
 }

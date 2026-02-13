@@ -97,7 +97,7 @@ func (d *DatadogExporter) Export(ctx context.Context, events []SIEMEvent) error 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("DD-API-KEY", d.apiKey)
 
-	resp, err := d.client.Do(req)
+	resp, err := d.client.Do(req) // #nosec -- endpoint is operator-configured.
 	if err != nil {
 		return fmt.Errorf("audit datadog post: %w", err)
 	}

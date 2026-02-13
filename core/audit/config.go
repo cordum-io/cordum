@@ -74,7 +74,7 @@ func NewExporterFromEnv() (*BufferedExporter, error) {
 		return nil, fmt.Errorf("audit config: unknown export type %q (expected webhook|syslog|datadog|cloudwatch|none)", typ)
 	}
 
-	slog.Info("audit SIEM export enabled", "type", typ)
+	slog.Info("audit SIEM export enabled", "type", typ) // #nosec -- value is validated against a fixed allowlist.
 	return NewBufferedExporter(exp), nil
 }
 

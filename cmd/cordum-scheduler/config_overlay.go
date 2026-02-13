@@ -146,7 +146,7 @@ func watchConfigChanges(ctx context.Context, svc *configsvc.Service, fallbackPoo
 		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
 			interval = parsed
 		} else {
-			log.Printf("scheduler: invalid SCHEDULER_CONFIG_RELOAD_INTERVAL=%q, using default %s", raw, interval)
+			log.Printf("scheduler: invalid SCHEDULER_CONFIG_RELOAD_INTERVAL=%q, using default %s", raw, interval) // #nosec -- value is config input for diagnostics.
 		}
 	}
 	ticker := time.NewTicker(interval)

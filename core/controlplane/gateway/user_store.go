@@ -65,6 +65,7 @@ var (
 type CreateUserRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email,omitempty"`
+	// #nosec G101 -- password is required in request payloads.
 	Password string `json:"password"`
 	Tenant   string `json:"tenant,omitempty"`
 	Role     string `json:"role,omitempty"`
@@ -72,6 +73,8 @@ type CreateUserRequest struct {
 
 // ChangePasswordRequest is the request body for changing a password.
 type ChangePasswordRequest struct {
+	// #nosec G101 -- password fields are required in request payloads.
 	CurrentPassword string `json:"current_password"`
-	NewPassword     string `json:"new_password"`
+	// #nosec G101 -- password fields are required in request payloads.
+	NewPassword string `json:"new_password"`
 }

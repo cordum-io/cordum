@@ -77,7 +77,7 @@ func (w *WebhookExporter) Export(ctx context.Context, events []SIEMEvent) error 
 		req.Header.Set("X-Cordum-Signature", "sha256="+sig)
 	}
 
-	resp, err := w.client.Do(req)
+	resp, err := w.client.Do(req) // #nosec -- endpoint is operator-configured.
 	if err != nil {
 		return fmt.Errorf("audit webhook post: %w", err)
 	}

@@ -202,7 +202,7 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "key not found")
 			return
 		}
-		slog.Error("revoke key failed", "error", err, "key_id", id)
+		slog.Error("revoke key failed", "error", err, "key_id", id) // #nosec -- key id is validated and safe for logs.
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to revoke key")
 		return
 	}

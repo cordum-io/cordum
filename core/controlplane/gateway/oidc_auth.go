@@ -15,12 +15,15 @@ import (
 	"hash"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/logging"
 )
 
@@ -58,7 +61,12 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 	if cfg.IssuerURL == "" {
 		return nil, errors.New("oidc: issuer URL required")
 	}
-	cfg.IssuerURL = strings.TrimRight(cfg.IssuerURL, "/")
+	cfg.IssuerURL = strings.TrimRight(strings.TrimSpace(cfg.IssuerURL), "/")
+	if parsed, err := validateOIDCURL(cfg.IssuerURL); err != nil {
+		return nil, err
+	} else {
+		cfg.IssuerURL = strings.TrimRight(parsed.String(), "/")
+	}
 	if cfg.ClaimTenant == "" {
 		cfg.ClaimTenant = "org_id"
 	}
@@ -212,7 +220,7 @@ func (p *OIDCProvider) discover() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.httpClient.Do(req) // #nosec -- issuer URL is validated during provider initialization.
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", url, err)
 	}
@@ -241,7 +249,11 @@ func (p *OIDCProvider) discover() (string, error) {
 	if doc.Issuer != "" && doc.Issuer != p.cfg.IssuerURL {
 		return "", fmt.Errorf("oidc: issuer mismatch: discovery=%q config=%q", doc.Issuer, p.cfg.IssuerURL)
 	}
-	return doc.JWKSURI, nil
+	parsedJWKS, err := validateOIDCURL(doc.JWKSURI)
+	if err != nil {
+		return "", fmt.Errorf("oidc: invalid jwks_uri: %w", err)
+	}
+	return parsedJWKS.String(), nil
 }
 
 // refreshJWKS fetches keys from the JWKS endpoint and caches them.
@@ -250,7 +262,7 @@ func (p *OIDCProvider) refreshJWKS() error {
 	if err != nil {
 		return err
 	}
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.httpClient.Do(req) // #nosec -- JWKS URL is validated during discovery.
 	if err != nil {
 		return fmt.Errorf("fetch jwks: %w", err)
 	}
@@ -582,6 +594,104 @@ func isSupportedOIDCAlg(alg string) bool {
 	default:
 		return false
 	}
+}
+
+const (
+	envOIDCIssuerAllowlist = "CORDUM_OIDC_ISSUER_ALLOWLIST"
+	envOIDCAllowPrivate    = "CORDUM_OIDC_ALLOW_PRIVATE"
+	envOIDCAllowHTTP       = "CORDUM_OIDC_ALLOW_HTTP"
+)
+
+func validateOIDCURL(raw string) (*url.URL, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, errors.New("oidc: issuer URL required")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("oidc: invalid issuer url: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return nil, errors.New("oidc: issuer url must include scheme and host")
+	}
+	if parsed.Scheme != "https" {
+		if parsed.Scheme != "http" || (env.IsProduction() && !envBool(envOIDCAllowHTTP)) {
+			return nil, fmt.Errorf("oidc: issuer url must use https")
+		}
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	allowlist := oidcAllowlist()
+	if len(allowlist) > 0 && !hostAllowed(host, allowlist) {
+		return nil, fmt.Errorf("oidc: issuer host not allowed: %s", host)
+	}
+	if env.IsProduction() && !envBool(envOIDCAllowPrivate) {
+		if err := ensurePublicHost(host); err != nil {
+			return nil, err
+		}
+	}
+	return parsed, nil
+}
+
+func oidcAllowlist() []string {
+	raw := strings.TrimSpace(os.Getenv(envOIDCIssuerAllowlist))
+	if raw == "" {
+		return nil
+	}
+	entries := splitCSV(raw)
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		val := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(entry), "."))
+		if val != "" {
+			out = append(out, val)
+		}
+	}
+	return out
+}
+
+func hostAllowed(host string, allowlist []string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	for _, entry := range allowlist {
+		entry = strings.TrimPrefix(entry, ".")
+		if entry == "" {
+			continue
+		}
+		if host == entry || strings.HasSuffix(host, "."+entry) {
+			return true
+		}
+	}
+	return false
+}
+
+func ensurePublicHost(host string) error {
+	if host == "" {
+		return errors.New("oidc: issuer url missing host")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return fmt.Errorf("oidc: issuer host not allowed: %s", host)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("oidc: issuer host not allowed: %s", host)
+		}
+		return nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("oidc: issuer host resolve failed: %w", err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("oidc: issuer host resolve failed: %s", host)
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("oidc: issuer host not allowed: %s", host)
+		}
+	}
+	return nil
 }
 
 // envBool returns true if the named env var is set to a truthy value.

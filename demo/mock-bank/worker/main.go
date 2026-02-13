@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"os"
 	"os/signal"
 	"strconv"
@@ -162,8 +163,8 @@ func main() {
 		// Heartbeat goroutine
 		go func() {
 			heartbeatFn := func() ([]byte, error) {
-				active := rand.Intn(max(worker.Capacity/4, 1))
-				return runtime.HeartbeatPayload(worker.ID, worker.Pool, active, worker.Capacity, rand.Float32()*0.3)
+				active := randInt(max(worker.Capacity/4, 1))
+				return runtime.HeartbeatPayload(worker.ID, worker.Pool, active, worker.Capacity, randFloat32()*0.3)
 			}
 			if payload, err := heartbeatFn(); err == nil {
 				_ = runtime.EmitHeartbeat(nc, payload)
@@ -197,7 +198,7 @@ func makeHandler(workerID, pool string) func(runtime.Context, bankPayload) (bank
 		log.Printf("[%s] processing job=%s topic=%s", workerID, jobID, topic)
 
 		// Simulate processing time (200ms - 2s)
-		time.Sleep(time.Duration(200+rand.Intn(1800)) * time.Millisecond)
+		time.Sleep(time.Duration(200+randInt(1800)) * time.Millisecond)
 
 		amount := parseAmount(payload.Amount)
 		message := payload.Message
@@ -282,4 +283,23 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func randInt(max int) int {
+	if max <= 0 {
+		return 0
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0
+	}
+	return int(n.Int64())
+}
+
+func randFloat32() float32 {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		return 0
+	}
+	return float32(n.Int64()) / 1_000_000
 }

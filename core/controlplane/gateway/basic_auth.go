@@ -292,7 +292,7 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 					bgCtx, cancel := context.WithTimeout(b.usageContext(), 2*time.Second)
 					defer cancel()
 					if err := b.keyStore.RecordUsage(bgCtx, keyID); err != nil {
-						slog.Warn("failed to record api key usage", "key_id", keyID, "error", err)
+						slog.Warn("failed to record api key usage", "key_id", keyID, "error", err) // #nosec -- key id is validated and safe for logs.
 					}
 				}(mk.ID)
 				return &AuthContext{
@@ -483,13 +483,12 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 	}
 
 	if keysPath != "" {
-		info, err := os.Stat(keysPath)
+		info, err := os.Stat(keysPath) // #nosec -- API keys path is configured by the operator.
 		if err != nil {
 			return nil, false, "", time.Time{}, allowHeaderPrincipal, fmt.Errorf("read api keys path: %w", err)
 		}
 		keysModTime = info.ModTime()
-		// #nosec G304 -- API keys path is configured by the operator.
-		rawFile, err := os.ReadFile(keysPath)
+		rawFile, err := os.ReadFile(keysPath) // #nosec -- API keys path is configured by the operator.
 		if err != nil {
 			return nil, false, "", time.Time{}, allowHeaderPrincipal, fmt.Errorf("read api keys: %w", err)
 		}

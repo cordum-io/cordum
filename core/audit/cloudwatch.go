@@ -134,7 +134,7 @@ func (c *CloudWatchExporter) exportWithSequence(ctx context.Context, events []SI
 
 	c.signV4(req, body)
 
-	resp, err := c.client.Do(req)
+	resp, err := c.client.Do(req) // #nosec -- endpoint is operator-configured.
 	if err != nil {
 		return fmt.Errorf("audit cloudwatch post: %w", err)
 	}

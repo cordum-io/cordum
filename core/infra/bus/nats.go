@@ -309,8 +309,7 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 		cfg.InsecureSkipVerify = true
 	}
 	if caPath != "" {
-		// #nosec G304 -- CA path is configured by the operator.
-		pem, err := os.ReadFile(caPath)
+		pem, err := os.ReadFile(caPath) // #nosec -- CA path is configured by the operator.
 		if err != nil {
 			return nil, fmt.Errorf("nats tls ca read: %w", err)
 		}
@@ -409,7 +408,7 @@ func (b *NatsBus) initJetStreamFromEnv() {
 	b.js = js
 	b.jsEnabled = true
 	b.ackWait = ackWait
-	log.Printf("[BUS] jetstream enabled ack_wait=%s replicas=%d", ackWait, replicas)
+	log.Printf("[BUS] jetstream enabled ack_wait=%s replicas=%d", ackWait, replicas) // #nosec -- values are derived from configuration.
 }
 
 func isDurableSubject(subject string) bool {

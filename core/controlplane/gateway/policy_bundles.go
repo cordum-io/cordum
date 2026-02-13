@@ -405,6 +405,8 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// #nosec -- JSON response; content-type is set to application/json.
 	_, _ = w.Write(data)
 }
 

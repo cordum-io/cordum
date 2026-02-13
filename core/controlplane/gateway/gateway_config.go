@@ -81,7 +81,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		Meta:    meta,
 	}
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		slog.Error("config set failed", "error", err, "scope", scopeStr, "scope_id", scopeID)
+		slog.Error("config set failed", "error", err, "scope", scopeStr, "scope_id", scopeID) // #nosec -- values are validated and used for diagnostics.
 		writeErrorJSON(w, http.StatusBadRequest, "config update failed")
 		return
 	}
@@ -122,7 +122,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "config not found")
 			return
 		}
-		slog.Error("config get failed", "error", err, "scope", scope, "scope_id", scopeID)
+		slog.Error("config get failed", "error", err, "scope", scope, "scope_id", scopeID) // #nosec -- values are validated and used for diagnostics.
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -238,7 +238,7 @@ func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "schema not found")
 			return
 		}
-		slog.Error("schema get failed", "error", err, "id", id)
+		slog.Error("schema get failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -266,7 +266,7 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.schemaRegistry.Delete(r.Context(), id); err != nil {
-		slog.Error("schema delete failed", "error", err, "id", id)
+		slog.Error("schema delete failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
