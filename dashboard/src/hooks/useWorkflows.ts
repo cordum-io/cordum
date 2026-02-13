@@ -126,7 +126,7 @@ function parseDurationSeconds(value: unknown): number | undefined {
   const amount = Number.parseFloat(match[1]);
   if (!Number.isFinite(amount)) return undefined;
   const unit = (match[2] || "s").toLowerCase();
-  let seconds = amount;
+  let seconds: number;
   switch (unit) {
     case "ms":
       seconds = amount / 1000;
