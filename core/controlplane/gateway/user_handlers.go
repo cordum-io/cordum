@@ -16,7 +16,8 @@ type updateUserRequest struct {
 
 // adminPasswordRequest is the request body for POST /api/v1/users/{id}/password.
 type adminPasswordRequest struct {
-	Password string `json:"password"` // #nosec G101 -- password is required in request payloads.
+	// #nosec G117 -- password is required in request payloads.
+	Password string `json:"password"`
 }
 
 // userResponse maps a User to the frontend-expected JSON shape.
