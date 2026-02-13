@@ -45,12 +45,16 @@ func newMockOIDCServer(t *testing.T) *mockOIDCServer {
 			"jwks_uri": m.issuer + "/keys",
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(doc)
+		if err := json.NewEncoder(w).Encode(doc); err != nil {
+			t.Fatalf("encode discovery: %v", err)
+		}
 	})
 	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
 		jwks := m.buildJWKS()
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(jwks)
+		if _, err := w.Write(jwks); err != nil {
+			t.Fatalf("write jwks: %v", err)
+		}
 	})
 
 	m.Server = httptest.NewServer(mux)

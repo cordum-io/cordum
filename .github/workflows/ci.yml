@@ -115,10 +115,14 @@ jobs:
         go install github.com/securego/gosec/v2/cmd/gosec@latest
         gosec -no-fail -fmt sarif -out results.sarif ./...
 
+    - name: Sanitize SARIF
+      run: |
+        jq '(.runs[].tool.driver.rules[] |= del(.relationships))' results.sarif > results.cleaned.sarif
+
     - name: Upload SARIF file
       uses: github/codeql-action/upload-sarif@v4
       with:
-        sarif_file: results.sarif
+        sarif_file: results.cleaned.sarif
 
   build:
     name: Build

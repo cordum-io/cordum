@@ -1558,19 +1558,6 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policyAuditEntry) 
 	return nil
 }
 
-// appendAuditEntry is a convenience wrapper for appendPolicyAudit that takes
-// individual fields instead of requiring callers to construct policyAuditEntry.
-func (s *server) appendAuditEntry(ctx context.Context, action, resourceType, resourceID, actorID, role, message string) {
-	_ = s.appendPolicyAudit(ctx, policyAuditEntry{
-		Action:       action,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		ActorID:      actorID,
-		Role:         role,
-		Message:      message,
-	})
-}
-
 func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message string) {
 	_ = s.appendPolicyAudit(ctx, policyAuditEntry{
 		Action:       action,

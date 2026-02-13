@@ -34,10 +34,14 @@ func TestCloudWatchExporter_SequenceToken(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		if call == 1 {
-			w.Write([]byte(`{"nextSequenceToken":"t1"}`))
+			if _, err := w.Write([]byte(`{"nextSequenceToken":"t1"}`)); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 			return
 		}
-		w.Write([]byte(`{"nextSequenceToken":"t2"}`))
+		if _, err := w.Write([]byte(`{"nextSequenceToken":"t2"}`)); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -95,14 +99,18 @@ func TestCloudWatchExporter_RetryOnInvalidSequenceToken(t *testing.T) {
 				t.Errorf("first sequenceToken = %q, want bad", token)
 			}
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(`{"__type":"InvalidSequenceTokenException","expectedSequenceToken":"good"}`))
+			if _, err := w.Write([]byte(`{"__type":"InvalidSequenceTokenException","expectedSequenceToken":"good"}`)); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 			return
 		case 2:
 			if token != "good" {
 				t.Errorf("second sequenceToken = %q, want good", token)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"nextSequenceToken":"next"}`))
+			if _, err := w.Write([]byte(`{"nextSequenceToken":"next"}`)); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 			return
 		default:
 			w.WriteHeader(http.StatusInternalServerError)

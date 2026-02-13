@@ -48,12 +48,6 @@ func (m *mockExporter) totalEvents() int {
 	return n
 }
 
-func (m *mockExporter) batchCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.batches)
-}
-
 func TestBufferedExporter_FlushOnBatchSize(t *testing.T) {
 	mock := &mockExporter{}
 	buf := NewBufferedExporter(mock, WithBatchSize(5), WithFlushInterval(10*time.Second))
