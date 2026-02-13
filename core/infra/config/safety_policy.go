@@ -10,10 +10,19 @@ import (
 
 // SafetyPolicy defines allow/deny rules per tenant.
 type SafetyPolicy struct {
-	Version       string                  `yaml:"version"`
-	Rules         []PolicyRule            `yaml:"rules"`
-	DefaultTenant string                  `yaml:"default_tenant"`
-	Tenants       map[string]TenantPolicy `yaml:"tenants"`
+	Version         string                  `yaml:"version"`
+	Rules           []PolicyRule            `yaml:"rules"`
+	OutputPolicy    OutputPolicyConfig      `yaml:"output_policy"`
+	OutputRules     []OutputPolicyRule      `yaml:"output_rules"`
+	DefaultTenant   string                  `yaml:"default_tenant"`
+	DefaultDecision string                  `yaml:"default_decision" json:"default_decision"` // allow|deny (default: deny = fail-closed)
+	Tenants         map[string]TenantPolicy `yaml:"tenants"`
+}
+
+// OutputPolicyConfig controls output-policy evaluation behavior.
+type OutputPolicyConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	FailMode string `yaml:"fail_mode"` // open|closed (open is current runtime behavior)
 }
 
 type PolicyRule struct {
@@ -23,6 +32,33 @@ type PolicyRule struct {
 	Reason       string              `yaml:"reason"`
 	Constraints  PolicyConstraints   `yaml:"constraints"`
 	Remediations []PolicyRemediation `yaml:"remediations"`
+}
+
+// OutputPolicyRule defines policy checks on job outputs.
+type OutputPolicyRule struct {
+	ID       string            `yaml:"id"`
+	Enabled  *bool             `yaml:"enabled"`
+	Severity string            `yaml:"severity"` // low|medium|high|critical
+	Desc     string            `yaml:"description"`
+	Match    OutputPolicyMatch `yaml:"match"`
+	Decision string            `yaml:"decision"` // allow|deny|quarantine|redact
+	Reason   string            `yaml:"reason"`
+}
+
+// OutputPolicyMatch captures matching criteria for output content checks.
+type OutputPolicyMatch struct {
+	Tenants         []string `yaml:"tenants"`
+	Topics          []string `yaml:"topics"`
+	Capabilities    []string `yaml:"capabilities"`
+	RiskTags        []string `yaml:"risk_tags"`
+	Scanners        []string `yaml:"scanners"`
+	ContentPatterns []string `yaml:"content_patterns"`
+	Keywords        []string `yaml:"keywords"`
+	ContentTypes    []string `yaml:"content_types"`
+	Detectors       []string `yaml:"detectors"` // secret_leak|pii|code_injection|custom
+	OutputSizeGt    int64    `yaml:"output_size_gt"`
+	MaxOutputBytes  int64    `yaml:"max_output_bytes"`
+	HasError        *bool    `yaml:"has_error"`
 }
 
 type PolicyMatch struct {
@@ -181,7 +217,14 @@ func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 			}
 		}
 	}
-	return PolicyDecision{Decision: "allow"}
+	dd := strings.ToLower(strings.TrimSpace(p.DefaultDecision))
+	if dd == "" || dd == "deny" {
+		return PolicyDecision{
+			Decision: "deny",
+			Reason:   "no matching rule — default policy: deny",
+		}
+	}
+	return PolicyDecision{Decision: "allow", Reason: "no matching rule — default policy: allow"}
 }
 
 func normalizeDecision(raw string) string {

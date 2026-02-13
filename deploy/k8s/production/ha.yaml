@@ -68,6 +68,17 @@ spec:
         type: Utilization
         averageUtilization: 80
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cordum-dashboard
+  namespace: cordum
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: cordum-dashboard
+---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -80,6 +91,58 @@ spec:
     name: cordum-scheduler
   minReplicas: 2
   maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cordum-workflow-engine
+  namespace: cordum
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cordum-workflow-engine
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cordum-safety-kernel
+  namespace: cordum
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cordum-safety-kernel
+  minReplicas: 2
+  maxReplicas: 6
   metrics:
   - type: Resource
     resource:

@@ -51,10 +51,8 @@ type EffectiveConfig struct {
     Retry      RetryConfig      `json:"retry"`
     Resources  ResourceConfig   `json:"resources"`
     Models     ModelsConfig     `json:"models"`
-    Context    ContextConfig    `json:"context"` // Added from new plan
-    Experiment ExperimentConfig `json:"experiment"` // Added from new plan
-    Integrations IntegrationConfig `json:"integrations"` // Added from new plan
-    SLO        SLOConfig        `json:"slo"`       // Added from new plan
+    Context    ContextConfig    `json:"context"`
+    SLO        SLOConfig        `json:"slo"`
     
     // Audit trail - shows where each value came from
     Sources    map[string]ConfigSource `json:"sources"`

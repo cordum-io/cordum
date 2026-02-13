@@ -168,15 +168,26 @@ func newSpyMetrics() *spyMetrics {
 	return &spyMetrics{orphanReplayed: map[string]int{}}
 }
 
-func (m *spyMetrics) IncJobsReceived(string)                {}
-func (m *spyMetrics) IncJobsDispatched(string)              {}
-func (m *spyMetrics) IncJobsCompleted(string, string)       {}
-func (m *spyMetrics) IncSafetyDenied(string)                {}
-func (m *spyMetrics) IncSafetyUnavailable(string)           {}
-func (m *spyMetrics) ObserveJobLockWait(float64)            {}
-func (m *spyMetrics) ObserveDispatchLatency(string, float64) {}
-func (m *spyMetrics) SetActiveGoroutines(int)               {}
-func (m *spyMetrics) SetStaleJobs(string, int)              {}
+func (m *spyMetrics) IncJobsReceived(string)                            {}
+func (m *spyMetrics) IncJobsDispatched(string)                          {}
+func (m *spyMetrics) IncJobsCompleted(string, string)                   {}
+func (m *spyMetrics) IncSafetyDenied(string)                            {}
+func (m *spyMetrics) IncSafetyUnavailable(string)                       {}
+func (m *spyMetrics) IncOutputPolicyChecked(string)                     {}
+func (m *spyMetrics) IncOutputPolicyQuarantined(string)                 {}
+func (m *spyMetrics) IncOutputPolicySkipped(string)                     {}
+func (m *spyMetrics) IncAsyncOutputTimeout(string)                      {}
+func (m *spyMetrics) IncOutputEvaluations(string)                       {}
+func (m *spyMetrics) IncOutputDenials(string)                           {}
+func (m *spyMetrics) IncOutputRedactions(string)                        {}
+func (m *spyMetrics) ObserveJobLockWait(float64)                        {}
+func (m *spyMetrics) ObserveDispatchLatency(string, float64)            {}
+func (m *spyMetrics) ObserveOutputCheckLatency(string, string, float64) {}
+func (m *spyMetrics) ObserveOutputEvalDuration(string, float64)         {}
+func (m *spyMetrics) SetActiveGoroutines(int)                           {}
+func (m *spyMetrics) SetStaleJobs(string, int)                          {}
+func (m *spyMetrics) IncDLQEmitFailure(string)                          {}
+func (m *spyMetrics) IncJobCancelFailures()                             {}
 func (m *spyMetrics) IncOrphanReplayed(topic string) {
 	m.mu.Lock()
 	m.orphanReplayed[topic]++

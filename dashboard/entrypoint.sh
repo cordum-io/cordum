@@ -14,8 +14,9 @@ TENANT_ID=$(json_escape "${CORDUM_TENANT_ID:-default}")
 PRINCIPAL_ID=$(json_escape "${CORDUM_PRINCIPAL_ID:-}")
 PRINCIPAL_ROLE=$(json_escape "${CORDUM_PRINCIPAL_ROLE:-}")
 TRACE_URL_TEMPLATE=$(json_escape "${CORDUM_TRACE_URL_TEMPLATE:-}")
+CONFIG_PATH="/tmp/config.json"
 
-cat > /usr/share/nginx/html/config.json <<CONFIGEOF
+cat > "${CONFIG_PATH}" <<CONFIGEOF
 {
   "apiBaseUrl": "${API_BASE}",
   "apiKey": "${API_KEY}",

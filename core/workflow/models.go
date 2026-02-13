@@ -5,20 +5,25 @@ import "time"
 // StepType identifies the kind of step in a workflow.
 type StepType string
 
+// Implemented step types — these have dedicated handlers in engine.go.
+const (
+	StepTypeWorker    StepType = "worker"    // Default job dispatch
+	StepTypeApproval  StepType = "approval"  // Human-in-the-loop gate
+	StepTypeCondition StepType = "condition" // If/else branching
+	StepTypeDelay     StepType = "delay"     // Scheduled wait/timer
+	StepTypeNotify    StepType = "notify"    // System alert emission
+)
+
+// Planned step types — no engine handler yet, dispatched as generic jobs.
 const (
 	StepTypeLLM         StepType = "llm"
-	StepTypeWorker      StepType = "worker"
 	StepTypeHTTP        StepType = "http"
 	StepTypeContainer   StepType = "container"
 	StepTypeScript      StepType = "script"
-	StepTypeApproval    StepType = "approval"
 	StepTypeInput       StepType = "input"
-	StepTypeCondition   StepType = "condition"
 	StepTypeSwitch      StepType = "switch"
 	StepTypeParallel    StepType = "parallel"
 	StepTypeLoop        StepType = "loop"
-	StepTypeDelay       StepType = "delay"
-	StepTypeNotify      StepType = "notify"
 	StepTypeTransform   StepType = "transform"
 	StepTypeStorage     StepType = "storage"
 	StepTypeSubWorkflow StepType = "subworkflow"

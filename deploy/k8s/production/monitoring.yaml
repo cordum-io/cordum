@@ -67,6 +67,40 @@ spec:
     path: /metrics
 ---
 apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cordum-workflow-engine
+  namespace: cordum
+spec:
+  namespaceSelector:
+    matchNames:
+    - cordum
+  selector:
+    matchLabels:
+      app: cordum-workflow-engine
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cordum-safety-kernel
+  namespace: cordum
+spec:
+  namespaceSelector:
+    matchNames:
+    - cordum
+  selector:
+    matchLabels:
+      app: cordum-safety-kernel
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: cordum-platform
@@ -107,3 +141,19 @@ spec:
       annotations:
         summary: Cordum Redis is down
         description: No Redis exporter targets have been reachable for 5m.
+    - alert: CordumWorkflowEngineDown
+      expr: sum by (service) (up{namespace="cordum", service="cordum-workflow-engine"}) == 0
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: Cordum workflow engine is down
+        description: No targets for cordum-workflow-engine have been reachable for 2m.
+    - alert: CordumSafetyKernelDown
+      expr: sum by (service) (up{namespace="cordum", service="cordum-safety-kernel"}) == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: Cordum safety kernel is down
+        description: No targets for cordum-safety-kernel have been reachable for 1m.

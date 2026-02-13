@@ -502,20 +502,20 @@ func planSchemas(ctx context.Context, client *restClient, dir string, manifest *
 	for _, ref := range manifest.Resources.Schemas {
 		schemaMap, digest, err := loadSchemaFile(dir, ref.Path)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("plan schema %s: %w", ref.ID, err)
 		}
 		plan := schemaPlan{ID: ref.ID, Schema: schemaMap, Digest: digest}
 		existing, err := client.getSchema(ctx, ref.ID)
 		if err != nil {
 			if !isNotFound(err) {
-				return nil, err
+				return nil, fmt.Errorf("plan schema %s: %w", ref.ID, err)
 			}
 		} else {
 			plan.Existing = existing
 			plan.HadExisting = true
 			existingDigest, err := hashValue(existing)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("plan schema %s: %w", ref.ID, err)
 			}
 			if existingDigest == digest {
 				plan.Noop = true
@@ -533,20 +533,20 @@ func planWorkflows(ctx context.Context, client *restClient, dir string, manifest
 	for _, ref := range manifest.Resources.Workflows {
 		workflowMap, digest, err := loadWorkflowFile(dir, ref.Path, ref.ID)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("plan workflow %s: %w", ref.ID, err)
 		}
 		plan := workflowPlan{ID: ref.ID, Workflow: workflowMap, Digest: digest}
 		existing, err := client.getWorkflow(ctx, ref.ID)
 		if err != nil {
 			if !isNotFound(err) {
-				return nil, err
+				return nil, fmt.Errorf("plan workflow %s: %w", ref.ID, err)
 			}
 		} else {
 			plan.Existing = existing
 			plan.HadExisting = true
 			existingDigest, err := hashWorkflow(existing)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("plan workflow %s: %w", ref.ID, err)
 			}
 			if existingDigest == digest {
 				plan.Noop = true
@@ -563,14 +563,14 @@ func loadPackBundle(src string) (*packBundle, error) {
 	if isURL(src) {
 		tmpFile, err := downloadToTemp(src)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("load pack bundle: %w", err)
 		}
 		defer os.Remove(tmpFile)
 		return loadPackBundle(tmpFile)
 	}
 	info, err := os.Stat(src)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load pack bundle: %w", err)
 	}
 	if info.IsDir() {
 		return &packBundle{Dir: src}, nil
@@ -580,16 +580,16 @@ func loadPackBundle(src string) (*packBundle, error) {
 	}
 	tmpDir, err := os.MkdirTemp("", "cordum-pack-*")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load pack bundle: %w", err)
 	}
 	if err := extractTarGz(src, tmpDir); err != nil {
 		_ = os.RemoveAll(tmpDir)
-		return nil, err
+		return nil, fmt.Errorf("load pack bundle: %w", err)
 	}
 	root, err := findPackRoot(tmpDir)
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
-		return nil, err
+		return nil, fmt.Errorf("load pack bundle: %w", err)
 	}
 	return &packBundle{
 		Dir: root,
@@ -731,7 +731,7 @@ func fetchGatewayVersion(ctx context.Context, client *restClient) (string, error
 		} `json:"build"`
 	}
 	if err := client.doJSON(ctx, http.MethodGet, "/api/v1/status", nil, &resp); err != nil {
-		return "", err
+		return "", fmt.Errorf("fetch gateway version: %w", err)
 	}
 	return strings.TrimSpace(resp.Build.Version), nil
 }
@@ -863,7 +863,7 @@ func applyConfigOverlay(ctx context.Context, client *restClient, overlay packCon
 	}
 	patch, err := loadPatchFile(dir, overlay.Path)
 	if err != nil {
-		return appliedConfigChange{}, err
+		return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
 	}
 	patchMap, ok := patch.(map[string]any)
 	if !ok {
@@ -880,7 +880,7 @@ func applyConfigOverlay(ctx context.Context, client *restClient, overlay packCon
 	doc, err := client.getConfig(ctx, scope, scopeID)
 	if err != nil {
 		if !isNotFound(err) {
-			return appliedConfigChange{}, err
+			return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
 		}
 		doc = &configDoc{Scope: scope, ScopeID: scopeID, Data: map[string]any{}}
 	}
@@ -889,13 +889,13 @@ func applyConfigOverlay(ctx context.Context, client *restClient, overlay packCon
 	}
 	current := normalizeJSON(doc.Data[key])
 	if err := validateConfigPatch(key, patchMap, packID, current); err != nil {
-		return appliedConfigChange{}, err
+		return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
 	}
 	before := deepCopy(current)
 	updated := mergePatch(current, patchMap)
 	doc.Data[key] = updated
 	if err := client.setConfig(ctx, doc); err != nil {
-		return appliedConfigChange{}, err
+		return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
 	}
 	return appliedConfigChange{
 		Overlay: packAppliedConfigOverlay{
@@ -915,7 +915,7 @@ func removeConfigOverlay(ctx context.Context, client *restClient, overlay packAp
 		if isNotFound(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("remove config overlay %s: %w", overlay.Name, err)
 	}
 	if doc.Data == nil {
 		return nil
@@ -927,7 +927,10 @@ func removeConfigOverlay(ctx context.Context, client *restClient, overlay packAp
 	deletePatch := buildDeletePatch(overlay.Patch)
 	updated := mergePatch(current, deletePatch)
 	doc.Data[overlay.Key] = updated
-	return client.setConfig(ctx, doc)
+	if err := client.setConfig(ctx, doc); err != nil {
+		return fmt.Errorf("remove config overlay %s: %w", overlay.Name, err)
+	}
+	return nil
 }
 
 func restoreConfigOverlay(ctx context.Context, client *restClient, change appliedConfigChange) error {
@@ -935,7 +938,7 @@ func restoreConfigOverlay(ctx context.Context, client *restClient, change applie
 	doc, err := client.getConfig(ctx, overlay.Scope, overlay.ScopeID)
 	if err != nil {
 		if !isNotFound(err) {
-			return err
+			return fmt.Errorf("restore config overlay %s: %w", overlay.Name, err)
 		}
 		doc = &configDoc{Scope: overlay.Scope, ScopeID: overlay.ScopeID, Data: map[string]any{}}
 	}
@@ -947,7 +950,10 @@ func restoreConfigOverlay(ctx context.Context, client *restClient, change applie
 	} else {
 		doc.Data[overlay.Key] = deepCopy(change.Previous)
 	}
-	return client.setConfig(ctx, doc)
+	if err := client.setConfig(ctx, doc); err != nil {
+		return fmt.Errorf("restore config overlay %s: %w", overlay.Name, err)
+	}
+	return nil
 }
 
 func applyPolicyOverlay(ctx context.Context, client *restClient, overlay packPolicyOverlay, packID, packVersion, dir string) (appliedPolicyChange, error) {
@@ -957,18 +963,18 @@ func applyPolicyOverlay(ctx context.Context, client *restClient, overlay packPol
 	}
 	path, err := safeJoin(dir, overlay.Path)
 	if err != nil {
-		return appliedPolicyChange{}, err
+		return appliedPolicyChange{}, fmt.Errorf("apply policy overlay %s: %w", overlay.Name, err)
 	}
 	// #nosec G304 -- path is validated within the pack directory.
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return appliedPolicyChange{}, err
+		return appliedPolicyChange{}, fmt.Errorf("apply policy overlay %s: %w", overlay.Name, err)
 	}
 	fragmentID := policyFragmentID(packID, overlay.Name)
 	doc, err := client.getConfig(ctx, policyConfigScope, policyConfigID)
 	if err != nil {
 		if !isNotFound(err) {
-			return appliedPolicyChange{}, err
+			return appliedPolicyChange{}, fmt.Errorf("apply policy overlay %s: %w", overlay.Name, err)
 		}
 		doc = &configDoc{Scope: policyConfigScope, ScopeID: policyConfigID, Data: map[string]any{}}
 	}
@@ -991,7 +997,7 @@ func applyPolicyOverlay(ctx context.Context, client *restClient, overlay packPol
 	}
 	doc.Data[policyConfigKey] = bundles
 	if err := client.setConfig(ctx, doc); err != nil {
-		return appliedPolicyChange{}, err
+		return appliedPolicyChange{}, fmt.Errorf("apply policy overlay %s: %w", overlay.Name, err)
 	}
 	return appliedPolicyChange{
 		Overlay: packAppliedPolicyOverlay{
@@ -1009,7 +1015,7 @@ func removePolicyOverlay(ctx context.Context, client *restClient, overlay packAp
 		if isNotFound(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("remove policy overlay %s: %w", overlay.Name, err)
 	}
 	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
 	bundles, ok := rawBundles.(map[string]any)
@@ -1018,14 +1024,17 @@ func removePolicyOverlay(ctx context.Context, client *restClient, overlay packAp
 	}
 	delete(bundles, overlay.FragmentID)
 	doc.Data[policyConfigKey] = bundles
-	return client.setConfig(ctx, doc)
+	if err := client.setConfig(ctx, doc); err != nil {
+		return fmt.Errorf("remove policy overlay %s: %w", overlay.Name, err)
+	}
+	return nil
 }
 
 func restorePolicyOverlay(ctx context.Context, client *restClient, change appliedPolicyChange) error {
 	doc, err := client.getConfig(ctx, policyConfigScope, policyConfigID)
 	if err != nil {
 		if !isNotFound(err) {
-			return err
+			return fmt.Errorf("restore policy overlay %s: %w", change.Overlay.Name, err)
 		}
 		doc = &configDoc{Scope: policyConfigScope, ScopeID: policyConfigID, Data: map[string]any{}}
 	}
@@ -1043,7 +1052,10 @@ func restorePolicyOverlay(ctx context.Context, client *restClient, change applie
 		bundles[change.Overlay.FragmentID] = deepCopy(change.Previous)
 	}
 	doc.Data[policyConfigKey] = bundles
-	return client.setConfig(ctx, doc)
+	if err := client.setConfig(ctx, doc); err != nil {
+		return fmt.Errorf("restore policy overlay %s: %w", change.Overlay.Name, err)
+	}
+	return nil
 }
 
 func policyFragmentID(packID, name string) string {
@@ -1098,7 +1110,7 @@ func runPolicySimulation(ctx context.Context, client *restClient, test packPolic
 		Reason   string `json:"reason"`
 	}
 	if err := client.doJSON(ctx, http.MethodPost, "/api/v1/policy/simulate", request, &resp); err != nil {
-		return err
+		return fmt.Errorf("run policy simulation %s: %w", test.Name, err)
 	}
 	got := normalizeDecision(resp.Decision)
 	expect := normalizeDecision(test.ExpectDecision)
@@ -1129,14 +1141,22 @@ func normalizeDecision(raw string) string {
 func updatePackRegistry(ctx context.Context, client *restClient, record packRecord) error {
 	records, doc, err := loadPackRegistry(ctx, client)
 	if err != nil {
-		return err
+		return fmt.Errorf("update pack registry: %w", err)
 	}
 	records[record.ID] = record
 	if doc == nil {
 		doc = &configDoc{Scope: packRegistryScope, ScopeID: packRegistryID, Data: map[string]any{}}
 	}
+	// doc.Data may be nil when the config document exists in Redis
+	// but was stored with an empty/missing data field.
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
+	}
 	doc.Data["installed"] = recordsToAny(records)
-	return client.setConfig(ctx, doc)
+	if err := client.setConfig(ctx, doc); err != nil {
+		return fmt.Errorf("update pack registry: %w", err)
+	}
+	return nil
 }
 
 func listPackRecords(ctx context.Context, client *restClient) (map[string]packRecord, error) {
@@ -1147,7 +1167,7 @@ func listPackRecords(ctx context.Context, client *restClient) (map[string]packRe
 func getPackRecord(ctx context.Context, client *restClient, packID string) (*packRecord, error) {
 	records, _, err := loadPackRegistry(ctx, client)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get pack record %s: %w", packID, err)
 	}
 	rec, ok := records[packID]
 	if !ok {
@@ -1162,7 +1182,10 @@ func loadPackRegistry(ctx context.Context, client *restClient) (map[string]packR
 		if isNotFound(err) {
 			return map[string]packRecord{}, nil, nil
 		}
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("load pack registry: %w", err)
+	}
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
 	}
 	records := map[string]packRecord{}
 	raw := normalizeJSON(doc.Data["installed"])
@@ -1171,10 +1194,10 @@ func loadPackRegistry(ctx context.Context, client *restClient) (map[string]packR
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("load pack registry: %w", err)
 	}
 	if err := json.Unmarshal(data, &records); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("load pack registry: %w", err)
 	}
 	return records, doc, nil
 }
@@ -1196,14 +1219,14 @@ func recordsToAny(records map[string]packRecord) map[string]any {
 func acquirePackLocks(ctx context.Context, client *restClient, packID, owner string) (func(), error) {
 	global := "packs:global"
 	if err := client.acquireLock(ctx, global, owner, 60*time.Second); err != nil {
-		return func() {}, err
+		return func() {}, fmt.Errorf("acquire pack locks: %w", err)
 	}
 	packLock := "pack:" + packID
 	if err := client.acquireLock(ctx, packLock, owner, 60*time.Second); err != nil {
 		if relErr := client.releaseLock(ctx, global, owner); relErr != nil {
 			slog.Warn("pack: failed to release lock", "lock", global, "owner", owner, "error", relErr)
 		}
-		return func() {}, err
+		return func() {}, fmt.Errorf("acquire pack locks: %w", err)
 	}
 	return func() {
 		if err := client.releaseLock(ctx, packLock, owner); err != nil {
@@ -1226,11 +1249,11 @@ func lockOwner() string {
 func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
 	path, err := safeJoin(dir, relPath)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load schema file %s: %w", relPath, err)
 	}
 	payload, err := loadDataFile(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load schema file %s: %w", relPath, err)
 	}
 	schemaMap, ok := payload.(map[string]any)
 	if !ok {
@@ -1238,7 +1261,7 @@ func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
 	}
 	digest, err := hashValue(schemaMap)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load schema file %s: %w", relPath, err)
 	}
 	return schemaMap, digest, nil
 }
@@ -1246,11 +1269,11 @@ func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
 func loadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
 	path, err := safeJoin(dir, relPath)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load workflow file %s: %w", relPath, err)
 	}
 	payload, err := loadDataFile(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load workflow file %s: %w", relPath, err)
 	}
 	workflowMap, ok := payload.(map[string]any)
 	if !ok {
@@ -1262,7 +1285,7 @@ func loadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
 	normalized := normalizeWorkflowMap(workflowMap)
 	digest, err := hashValue(normalized)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load workflow file %s: %w", relPath, err)
 	}
 	return workflowMap, digest, nil
 }
@@ -1288,14 +1311,14 @@ func loadDataFile(path string) (any, error) {
 	// #nosec G304 -- path is validated by safeJoin at call sites.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load data file: %w", err)
 	}
 	var payload any
 	if json.Unmarshal(data, &payload) == nil {
 		return normalizeJSON(payload), nil
 	}
 	if err := yaml.Unmarshal(data, &payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load data file: %w", err)
 	}
 	return normalizeJSON(payload), nil
 }
@@ -1303,9 +1326,13 @@ func loadDataFile(path string) (any, error) {
 func loadPatchFile(dir, relPath string) (any, error) {
 	path, err := safeJoin(dir, relPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load patch file %s: %w", relPath, err)
 	}
-	return loadDataFile(path)
+	data, err := loadDataFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("load patch file %s: %w", relPath, err)
+	}
+	return data, nil
 }
 
 func validateConfigPatch(key string, patch map[string]any, packID string, current any) error {
@@ -1535,7 +1562,7 @@ func appendCanonical(buf *strings.Builder, value any) error {
 	default:
 		encoded, err := json.Marshal(v)
 		if err != nil {
-			return err
+			return fmt.Errorf("canonical encode: %w", err)
 		}
 		buf.Write(encoded)
 		return nil
@@ -1560,7 +1587,7 @@ func appendCanonicalMap(buf *strings.Builder, m map[string]any) error {
 		buf.Write(keyBytes)
 		buf.WriteByte(':')
 		if err := appendCanonical(buf, m[k]); err != nil {
-			return err
+			return fmt.Errorf("canonical encode: %w", err)
 		}
 	}
 	buf.WriteByte('}')
@@ -1574,7 +1601,7 @@ func appendCanonicalSlice(buf *strings.Builder, items []any) error {
 			buf.WriteByte(',')
 		}
 		if err := appendCanonical(buf, item); err != nil {
-			return err
+			return fmt.Errorf("canonical encode: %w", err)
 		}
 	}
 	buf.WriteByte(']')
@@ -1622,13 +1649,13 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 	if body != nil {
 		buf := &strings.Builder{}
 		if err := json.NewEncoder(buf).Encode(body); err != nil {
-			return err
+			return fmt.Errorf("rest %s %s: %w", method, path, err)
 		}
 		payload = strings.NewReader(buf.String())
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.endpoint(path), payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("rest %s %s: %w", method, path, err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -1641,7 +1668,7 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 	}
 	resp, err := c.httpClient.Do(req) // #nosec -- base URL is operator-provided via CLI.
 	if err != nil {
-		return err
+		return fmt.Errorf("rest %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1756,7 +1783,7 @@ func isURL(raw string) bool {
 func downloadToTemp(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("download to temp: %w", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
@@ -1766,12 +1793,12 @@ func downloadToTemp(raw string) (string, error) {
 	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, parsed.String(), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("download to temp: %w", err)
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req) // #nosec -- URL is operator-provided and validated.
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("download to temp: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1779,11 +1806,11 @@ func downloadToTemp(raw string) (string, error) {
 	}
 	tmpFile, err := os.CreateTemp("", "cordum-pack-*.tgz")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("download to temp: %w", err)
 	}
 	defer tmpFile.Close()
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		return "", err
+		return "", fmt.Errorf("download to temp: %w", err)
 	}
 	return tmpFile.Name(), nil
 }
@@ -1797,12 +1824,12 @@ func extractTarGz(path, dest string) error {
 	// #nosec G304 -- pack archive path is provided by the local operator.
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("extract tar.gz: %w", err)
 	}
 	defer file.Close()
 	gz, err := gzip.NewReader(file)
 	if err != nil {
-		return err
+		return fmt.Errorf("extract tar.gz: %w", err)
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
@@ -1816,16 +1843,16 @@ func extractTarGz(path, dest string) error {
 			break
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("extract tar.gz: %w", err)
 		}
 		target, err := safeJoin(dest, hdr.Name)
 		if err != nil {
-			return err
+			return fmt.Errorf("extract tar.gz: %w", err)
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
-				return err
+				return fmt.Errorf("extract tar.gz: %w", err)
 			}
 		case tar.TypeReg:
 			files++
@@ -1840,20 +1867,20 @@ func extractTarGz(path, dest string) error {
 				return fmt.Errorf("pack archive exceeds max size (%d bytes)", maxPackUncompressedBytes)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
-				return err
+				return fmt.Errorf("extract tar.gz: %w", err)
 			}
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec -- target path is validated by safeJoin.
 			if err != nil {
-				return err
+				return fmt.Errorf("extract tar.gz: %w", err)
 			}
 			if _, err := io.CopyN(out, tr, hdr.Size); err != nil && !errors.Is(err, io.EOF) {
 				if cerr := out.Close(); cerr != nil {
 					return cerr
 				}
-				return err
+				return fmt.Errorf("extract tar.gz: %w", err)
 			}
 			if err := out.Close(); err != nil {
-				return err
+				return fmt.Errorf("extract tar.gz: %w", err)
 			}
 		}
 	}

@@ -92,6 +92,7 @@ export function useUrlFilters<S extends FilterSchema>(
       result[key] = parseValue(type, searchParams.get(key));
     }
     return result as FilterValues<S>;
+    // searchParams.toString() used as dep instead of object ref to prevent re-render loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams.toString()]);
 
@@ -109,6 +110,7 @@ export function useUrlFilters<S extends FilterSchema>(
       }
     }
     return count;
+    // searchParams.toString() used as dep instead of object ref to prevent re-render loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams.toString()]);
 
@@ -166,3 +168,10 @@ export function useUrlFilters<S extends FilterSchema>(
 
   return [filters, setFilter, setFilterDebounced, clearAll, activeCount];
 }
+
+/** @internal exported for unit tests */
+export const __urlFiltersInternal = {
+  parseList,
+  serializeValue,
+  parseValue,
+};

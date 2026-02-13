@@ -1,6 +1,6 @@
 # Cordum Roadmap
 
-> **Last Updated:** January 27, 2026
+> **Last Updated:** February 13, 2026
 
 This roadmap outlines our vision for Cordum's evolution. Priorities may shift based on community feedback and production learnings.
 
@@ -9,68 +9,152 @@ This roadmap outlines our vision for Cordum's evolution. Priorities may shift ba
 The path to v1.0.0 focuses on **production hardening** and **API stability**.
 
 ### Stability & Reliability
-- [x] Zero memory leaks over 72h continuous operation
-- [x] 99.96%+ uptime in production deployments
+- [ ] Zero memory leaks over 72h continuous operation (no endurance test yet)
 - [x] Scheduler reconciler for timeouts/deadlines
 - [x] Pending job replayer for stalled/missed dispatches
 - [x] Dead-letter queue (DLQ) capture + retry/inspection endpoints
 - [x] Saga-based compensation rollback for workflows
-- [ ] Complete API documentation with OpenAPI spec
-- [ ] Comprehensive error handling guide
-- [ ] Disaster recovery playbook
+- [x] Complete API documentation with OpenAPI spec
+- [x] Comprehensive error handling guide
+- [x] Disaster recovery playbook
 
 ### Performance
-- [x] 15k ops/sec policy evaluation throughput
-- [x] <5ms p99 end-to-end latency
-- [x] gRPC API option (20% latency reduction target)
-- [x] Policy caching layer (2x throughput target)
+- [ ] 15k ops/sec policy evaluation throughput (target — no benchmark yet)
+- [ ] <5ms p99 end-to-end latency (target — no benchmark yet)
+- [x] gRPC API option
+- [x] Policy caching layer
 - [ ] ARM64 optimization (15% efficiency target)
 
 ### Enterprise Features
-- [x] SSO/SAML integration
+- [x] OIDC/SSO integration
+- [ ] SAML support
 - [x] User/password authentication (separate from API keys)
-- [x] Advanced RBAC
-- [x] Audit export (JSON, CSV, SIEM)
+- [x] Basic role-based access (admin/user)
+- [ ] Advanced RBAC (resource-level permissions, inheritance)
+- [x] Audit event capture
+- [ ] Audit export (JSON, CSV, SIEM)
 - [ ] Air-gapped deployment guide
 - [ ] FIPS 140-2 compliance mode
 
 ---
 
-## Q1 2026: Production Readiness
+## Completed — Q1 2026
 
-### Goals
-- ✅ **v1.0.0 Release Candidate**
-- ✅ **External Security Audit**
-- ✅ **100% API Coverage Tests**
+### Dashboard Full Rebuild (215 tasks across 12 epics)
+- [x] **Foundation & AppShell** — sidebar navigation, routing, command palette (Cmd+K), theme system
+- [x] **Command Center (Overview)** — metrics dashboard, system health, recent activity
+- [x] **Agent Fleet** — worker pool management, heartbeat monitoring, status badges
+- [x] **Jobs** — job list with filters, detail view, state machine visualization, submit drawer, artifacts panel
+- [x] **Workflows** — workflow builder, DAG canvas, run visualization, node config panel, step type nodes
+- [x] **Safety Policies** — policy studio, visual rule builder, bundle editor, output rules tab
+- [x] **Approvals** — approval queue with badge count, approve/reject actions
+- [x] **Audit Trail** — audit log with filters, export, search
+- [x] **Dead Letter Queue** — DLQ page with retry/inspect, badge count
+- [x] **Packs** — pack catalog, install/uninstall, marketplace browser
+- [x] **Settings** — system health tab, users management, API key management, MCP config
+- [x] **Schemas** — schema registry, validation, detail views
 
-### Features
+### Security & Production Readiness (16 tasks)
+- [x] **SSRF mitigation** — private IP filtering in marketplace URL validation
+- [x] **Auth hardening** — public path whitelist, session token entropy (crypto/rand)
+- [x] **Rate limit fix** — moved rate limiter after auth middleware
+- [x] **HSTS headers** — Strict-Transport-Security on all responses
+- [x] **Egress network policy** — Kubernetes NetworkPolicy for outbound traffic
+- [x] **Redis persistence** — AOF + RDB backup configuration
+- [x] **K8s dashboard fix** — production overlay corrections
+- [x] **Tenant isolation** — memory store cross-tenant protection
+- [x] **Docker health checks** — health probes for all containers
+- [x] **Error sanitization** — strip internal details from error responses
+- [x] **Password policy** — minimum complexity requirements
+- [x] **Brute-force protection** — login attempt rate limiting
 
-#### Safety Kernel Enhancements
-- [x] **Policy hot-reload** - Update policies without restart
-- [x] **Policy simulation mode** - Test changes before apply
-- [x] **Policy versioning** - Track and rollback policy changes
-- [ ] **Constraint templates** - Reusable constraint patterns
+### Bug Fixes — System Audit (25 tasks)
+- [x] Concurrency fixes in scheduler engine (per-run mutex)
+- [x] Error handling gaps in gateway and workflow engine
+- [x] Resource leak fixes (context cancellation, defer patterns)
+- [x] JSON encoding issues in API responses
+- [x] Policy bundle mapping fixes (YAML content parsing)
+- [x] Dashboard-to-backend integration bugs (transform layer, API contract)
 
-#### Workflow Engine Improvements
-- [x] **Parallel step execution** - Run independent steps concurrently (40% faster)
-- [x] **Conditional branching** - If/else logic in workflows
-- [x] **Loop constructs** - For-each over datasets
-- [x] **Approval steps** - Human-in-the-loop workflow gating
-- [x] **Delay/timer steps** - Scheduled waits and retries
-- [x] **Notify steps** - Emit system alerts from workflows
-- [ ] **Workflow templates** - Parameterized workflow definitions
+### Missing Backend Endpoints (3 tasks)
+- [x] **API Key CRUD** — GET/POST/DELETE /auth/keys
+- [x] **User CRUD** — GET/PUT/DELETE /users + password change
+- [x] **Config shape alignment** — backend {scope,data} wrapper → frontend flat transform
 
-#### Observability
-- [ ] **Distributed tracing** - OpenTelemetry integration
-- [ ] **Detailed metrics** - Extended Prometheus metrics
-- [ ] **Log aggregation** - ELK/Loki integration guide
-- [ ] **Performance profiling** - Built-in pprof endpoints
+---
+
+## In Progress — Q1 2026
+
+### Output Policy + MCP Server (10 tasks)
+- [x] Output policy gRPC contract (`output_policy.proto`)
+- [x] Safety kernel output scanners (content patterns, detectors)
+- [x] Scheduler output safety client integration
+- [ ] MCP server stdio + HTTP/SSE modes
+- [ ] MCP tools and resources catalog
+- [ ] Dashboard output quarantine UX
+- [ ] Dashboard remediation drawer
+
+### Workflow Step Types (6 tasks)
+- [x] **Switch** — multi-branch condition evaluation
+- [x] **Transform** — inline expression evaluation with `${ }` syntax
+- [ ] **Parallel** — concurrent branch execution
+- [ ] **Loop** — iterative execution with break conditions
+- [ ] **Storage** — read/write workflow context paths
+- [ ] **Sub-workflow** — nested workflow invocation
+
+### Dashboard Feature Gaps (11 tasks)
+- [x] Workflow run deletion (single + bulk)
+- [x] Policy snapshot capture with name/label
+- [x] Policy explain UI
+- [ ] Memory panel for job context
+- [ ] Job submit drawer enhancements
+- [ ] Workflow builder improvements
+- [ ] Settings MCP configuration page
+
+### Documentation Gaps (10 tasks)
+- [x] Output policy operator guide (`docs/output-policy.md`)
+- [x] Workflow step types reference (`docs/workflow-step-types.md`)
+- [x] API reference (`docs/api-reference.md`)
+- [x] Safety kernel deep reference (`docs/safety-kernel.md`)
+- [x] MCP server guide (`docs/mcp-server.md`)
+- [x] Scheduler internals (`docs/scheduler-internals.md`)
+- [x] Dashboard guide (`docs/dashboard-guide.md`)
+- [x] Configuration reference (`docs/configuration-reference.md`)
+- [x] CLI reference (`docs/cli-reference.md`)
+- [x] Architecture Decision Records (`docs/adr/`)
+
+---
+
+## Q1 2026: Remaining Production Readiness
+
+### Safety Kernel Enhancements
+- [x] **Policy hot-reload** — update policies without restart
+- [x] **Policy simulation mode** — test changes before apply
+- [x] **Policy versioning** — track and rollback policy changes
+- [ ] **Constraint templates** — reusable constraint patterns
+
+### Workflow Engine Improvements
+- [x] **Fan-out step execution** — for_each over datasets with parallel dispatch
+- [x] **Conditional branching** — if/else logic in workflows
+- [x] **Approval steps** — human-in-the-loop workflow gating
+- [x] **Delay/timer steps** — scheduled waits and retries
+- [x] **Notify steps** — emit system alerts from workflows
+- [x] **Switch steps** — multi-branch condition routing
+- [x] **Transform steps** — inline expression evaluation
+- [ ] **Loop constructs** — iterative loops within workflows
+- [ ] **Workflow templates** — parameterized workflow definitions
+
+### Observability
+- [ ] **Distributed tracing** — OpenTelemetry integration
+- [ ] **Detailed metrics** — extended Prometheus metrics
+- [ ] **Log aggregation** — ELK/Loki integration guide
+- [ ] **Performance profiling** — built-in pprof endpoints
 
 ### Documentation
-- [ ] Architecture deep-dive series
+- [x] Architecture deep-dive (ADRs)
 - [ ] Migration guide (from Temporal, Airflow)
 - [ ] Best practices guide
-- [ ] Troubleshooting cookbook
+- [x] Troubleshooting cookbook
 
 ---
 
@@ -84,29 +168,29 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 ### Features
 
 #### Distributed Scheduler
-- [ ] **Multi-region support** - Deploy across regions
-- [ ] **Sharded job queue** - Horizontal scaling
-- [ ] **Worker affinity** - Sticky routing for stateful jobs
-- [ ] **Auto-scaling** - Dynamic worker pool management
+- [ ] **Multi-region support** — deploy across regions
+- [ ] **Sharded job queue** — horizontal scaling
+- [ ] **Worker affinity** — sticky routing for stateful jobs
+- [ ] **Auto-scaling** — dynamic worker pool management
 
 #### Pack Ecosystem
-- [ ] **Public pack registry** - Discover and share packs
-- [x] **Pack marketplace** - Curated pack collection
-- [x] **Pack templates** - Scaffolding tool for new packs
-- [x] **Pack install/uninstall with overlays** - Config/policy/schema/workflow merges
-- [ ] **Pack testing framework** - Automated pack validation
+- [ ] **Public pack registry** — discover and share packs
+- [x] **Pack marketplace** — curated pack collection
+- [ ] **Pack templates** — scaffolding tool for new packs
+- [x] **Pack install/uninstall with overlays** — config/policy/schema/workflow merges
+- [ ] **Pack testing framework** — automated pack validation
 
 #### Developer Experience
-- [ ] **VS Code extension** - Syntax highlighting, debugging
-- [x] **Local dev mode** - Simplified single-node setup
-- [ ] **Interactive CLI** - Better command-line UX
-- [ ] **Workflow debugger** - Step-through execution
+- [ ] **VS Code extension** — syntax highlighting, debugging
+- [x] **Local dev mode** — simplified single-node setup
+- [ ] **Interactive CLI** — better command-line UX
+- [ ] **Workflow debugger** — step-through execution
 
 ### Integrations
-- [ ] **Terraform provider** - Infrastructure as code
-- [ ] **Kubernetes operator** - Native K8s deployment
-- [ ] **Cloud provider SDKs** - AWS, GCP, Azure helpers
-- [ ] **Popular SaaS integrations** - Slack, PagerDuty, etc.
+- [ ] **Terraform provider** — infrastructure as code
+- [ ] **Kubernetes operator** — native K8s deployment
+- [ ] **Cloud provider SDKs** — AWS, GCP, Azure helpers
+- [ ] **Popular SaaS integrations** — Slack, PagerDuty, etc.
 
 ---
 
@@ -120,22 +204,22 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 ### Features
 
 #### Intelligent Scheduling
-- [ ] **Predictive scheduling** - ML-based resource prediction
-- [ ] **Adaptive rate limiting** - Self-tuning based on load
-- [ ] **Anomaly detection** - Automatic failure pattern detection
-- [ ] **Cost optimization** - Minimize cloud costs automatically
+- [ ] **Predictive scheduling** — ML-based resource prediction
+- [ ] **Adaptive rate limiting** — self-tuning based on load
+- [ ] **Anomaly detection** — automatic failure pattern detection
+- [ ] **Cost optimization** — minimize cloud costs automatically
 
 #### Self-Healing
-- [ ] **Automatic retry strategies** - Learn from failure patterns
-- [ ] **Circuit breaker patterns** - Prevent cascade failures
-- [ ] **Automatic rollback** - Revert on policy violations
-- [ ] **Health check automation** - Auto-disable unhealthy workers
+- [ ] **Automatic retry strategies** — learn from failure patterns
+- [x] **Circuit breaker patterns** — prevent cascade failures
+- [ ] **Automatic rollback** — revert on policy violations
+- [ ] **Health check automation** — auto-disable unhealthy workers
 
 #### Advanced Policies
-- [ ] **ML-assisted policy authoring** - Suggest policies from logs
-- [ ] **Policy conflict detection** - Find contradictory rules
-- [ ] **Policy impact analysis** - Predict effects before deploy
-- [ ] **Compliance templates** - SOC2, HIPAA, PCI presets
+- [ ] **ML-assisted policy authoring** — suggest policies from logs
+- [ ] **Policy conflict detection** — find contradictory rules
+- [ ] **Policy impact analysis** — predict effects before deploy
+- [ ] **Compliance templates** — SOC2, HIPAA, PCI presets
 
 ---
 
@@ -149,22 +233,22 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 ### Features
 
 #### Global Distribution
-- [ ] **Multi-datacenter replication** - Active-active clusters
-- [ ] **Edge computing support** - Run closer to data sources
-- [ ] **Latency-based routing** - Route to nearest region
-- [ ] **Data residency controls** - GDPR/compliance requirements
+- [ ] **Multi-datacenter replication** — active-active clusters
+- [ ] **Edge computing support** — run closer to data sources
+- [ ] **Latency-based routing** — route to nearest region
+- [ ] **Data residency controls** — GDPR/compliance requirements
 
 #### Massive Scale
-- [ ] **Sharded event streams** - Handle millions of events/sec
-- [ ] **Tiered storage** - Archive old workflows cost-effectively
-- [ ] **Query optimization** - Fast search over billions of jobs
-- [ ] **Capacity planning** - Predict resource needs
+- [ ] **Sharded event streams** — handle millions of events/sec
+- [ ] **Tiered storage** — archive old workflows cost-effectively
+- [ ] **Query optimization** — fast search over billions of jobs
+- [ ] **Capacity planning** — predict resource needs
 
 #### Enterprise Governance
-- [ ] **Multi-tenancy** - Isolated environments per tenant
-- [ ] **Chargeback/showback** - Cost allocation reporting
-- [ ] **Compliance dashboards** - Real-time compliance status
-- [ ] **Custom SLA enforcement** - Automated SLA tracking
+- [ ] **Multi-tenancy** — isolated environments per tenant
+- [ ] **Chargeback/showback** — cost allocation reporting
+- [ ] **Compliance dashboards** — real-time compliance status
+- [ ] **Custom SLA enforcement** — automated SLA tracking
 
 ---
 
@@ -173,16 +257,16 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 ### Research & Innovation
 
 #### Experimental Features
-- **Quantum-resistant crypto** - Prepare for post-quantum world
-- **Serverless workers** - FaaS integration for elastic scaling
-- **Blockchain integration** - Immutable audit trail options
-- **AI policy authoring** - Natural language to policy DSL
+- **Quantum-resistant crypto** — prepare for post-quantum world
+- **Serverless workers** — FaaS integration for elastic scaling
+- **Blockchain integration** — immutable audit trail options
+- **AI policy authoring** — natural language to policy DSL
 
 #### Platform Evolution
-- **Plugin architecture** - Custom components without forking
-- **GraphQL subscriptions** - Real-time data push
-- **Mobile SDK** - iOS/Android workflow management
-- **No-code workflow builder** - Visual workflow designer
+- **Plugin architecture** — custom components without forking
+- **GraphQL subscriptions** — real-time data push
+- **Mobile SDK** — iOS/Android workflow management
+- **No-code workflow builder** — visual workflow designer
 
 ---
 
@@ -191,7 +275,7 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 Vote on features at: https://github.com/cordum-io/cordum/discussions/categories/feature-requests
 
 **Top Community Requests:**
-1. ⭐ Policy hot-reload (Q1 2026)
+1. ⭐ Policy hot-reload (done)
 2. ⭐ VS Code extension (Q2 2026)
 3. ⭐ Terraform provider (Q2 2026)
 4. ⭐ Workflow templates (Q1 2026)
@@ -202,14 +286,14 @@ Vote on features at: https://github.com/cordum-io/cordum/discussions/categories/
 ## Deprecations & Breaking Changes
 
 ### v1.0.0 Breaking Changes
-- ❌ **Old API endpoints** - /v0/* deprecated, use /v1/*
-- ❌ **Legacy pack format** - Migrate to new pack schema
-- ❌ **Insecure defaults** - TLS required, auth enforced
+- ❌ **Old API endpoints** — /v0/* deprecated, use /v1/*
+- ❌ **Legacy pack format** — migrate to new pack schema
+- ❌ **Insecure defaults** — TLS required, auth enforced
 
 ### Migration Support
-- 📖 **Migration guide** - Step-by-step upgrade instructions
-- 🛠️ **Migration tools** - Automated conversion scripts
-- 🆘 **Migration support** - Dedicated Slack channel
+- 📖 **Migration guide** — step-by-step upgrade instructions
+- 🛠️ **Migration tools** — automated conversion scripts
+- 🆘 **Migration support** — dedicated Slack channel
 
 ---
 
@@ -243,11 +327,11 @@ We track these metrics to measure progress:
 
 | Metric | Current | Q2 2026 Goal | Q4 2026 Goal |
 |--------|---------|--------------|--------------|
-| Production Adopters | 15+ | 100+ | 500+ |
-| Jobs Processed (Total) | 500M+ | 10B+ | 100B+ |
-| Throughput (ops/sec) | 15k | 25k | 50k |
-| Latency (p99) | 4.2ms | 3.0ms | 2.0ms |
-| Uptime | 99.96% | 99.99% | 99.99% |
+| Production Adopters | 0 (pre-v1.0) | 100+ | 500+ |
+| Jobs Processed (Total) | N/A (pre-v1.0) | 10B+ | 100B+ |
+| Throughput (ops/sec) | untested | 25k | 50k |
+| Latency (p99) | untested | 3.0ms | 2.0ms |
+| Uptime | N/A | 99.99% | 99.99% |
 | GitHub Stars | TBD | 1000+ | 5000+ |
 | Community Contributors | TBD | 50+ | 200+ |
 
@@ -261,5 +345,5 @@ We track these metrics to measure progress:
 
 ---
 
-**Last updated:** January 2026
+**Last updated:** February 2026
 **Next review:** April 2026

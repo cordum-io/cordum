@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	// bcryptCost is the cost factor for bcrypt hashing.
-	bcryptCost = 12
+	// defaultBcryptCost is the cost factor for bcrypt hashing.
+	defaultBcryptCost = 12
 
 	// userKeyPrefix is the Redis key prefix for user records.
 	userKeyPrefix = "user:"
@@ -29,6 +29,20 @@ const (
 	// userTenantIndexPrefix is the Redis key prefix for the tenant user set.
 	userTenantIndexPrefix = "user:tenant:"
 )
+
+// createUserLua atomically checks that the username key (KEYS[1]) and
+// optional email key (KEYS[2]) don't exist, then creates all user records.
+// Returns 1 on success, 0 if username or email already exists.
+// ARGV: 1=userData, 2=idKey, 3=idVal, 4=emailVal, 5=tenantIdx, 6=userID
+var createUserLua = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+if KEYS[2] ~= '' and redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('SET', ARGV[2], ARGV[3])
+if KEYS[2] ~= '' then redis.call('SET', KEYS[2], ARGV[4]) end
+redis.call('SADD', ARGV[5], ARGV[6])
+return 1
+`)
 
 // userRecord is the internal Redis storage representation that includes the password hash.
 // The User struct uses json:"-" on PasswordHash to prevent API leakage, so we need
@@ -240,30 +254,8 @@ func (s *RedisUserStore) Create(ctx context.Context, user *User, password string
 		user.ID = uuid.New().String()
 	}
 
-	// Check if user already exists
-	key := userKey(user.Tenant, user.Username)
-	exists, err := s.client.Exists(ctx, key).Result()
-	if err != nil {
-		return fmt.Errorf("check user exists: %w", err)
-	}
-	if exists > 0 {
-		return ErrUserAlreadyExists
-	}
-
-	// Check if email is already in use
-	if user.Email != "" {
-		emailKey := userEmailKey(user.Tenant, user.Email)
-		emailExists, err := s.client.Exists(ctx, emailKey).Result()
-		if err != nil {
-			return fmt.Errorf("check email exists: %w", err)
-		}
-		if emailExists > 0 {
-			return ErrUserAlreadyExists
-		}
-	}
-
-	// Hash the password
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	// Hash the password before taking any locks — bcrypt is expensive.
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCostFromEnv())
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
@@ -278,17 +270,27 @@ func (s *RedisUserStore) Create(ctx context.Context, user *User, password string
 		return fmt.Errorf("marshal user: %w", err)
 	}
 
-	// Use a transaction to set user and indexes atomically
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, key, data, 0)
-	pipe.Set(ctx, userIDKey(user.ID), user.Tenant+":"+user.Username, 0)
+	key := userKey(user.Tenant, user.Username)
+	idKey := userIDKey(user.ID)
+	emailKey := ""
+	emailVal := ""
 	if user.Email != "" {
-		pipe.Set(ctx, userEmailKey(user.Tenant, user.Email), user.Username, 0)
+		emailKey = userEmailKey(user.Tenant, user.Email)
+		emailVal = user.Username
 	}
-	pipe.SAdd(ctx, userTenantIndexPrefix+user.Tenant, user.ID)
+	tenantIdx := userTenantIndexPrefix + user.Tenant
+	idVal := user.Tenant + ":" + user.Username
 
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("redis set user: %w", err)
+	// Atomically check username+email uniqueness and create all keys.
+	result, err := createUserLua.Run(ctx, s.client,
+		[]string{key, emailKey},
+		string(data), idKey, idVal, emailVal, tenantIdx, user.ID,
+	).Int64()
+	if err != nil {
+		return fmt.Errorf("redis create user: %w", err)
+	}
+	if result == 0 {
+		return ErrUserAlreadyExists
 	}
 	return nil
 }
@@ -311,7 +313,7 @@ func (s *RedisUserStore) UpdatePassword(ctx context.Context, userID, newPassword
 	}
 
 	// Hash the new password
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcryptCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcryptCostFromEnv())
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
@@ -473,18 +475,34 @@ func (s *RedisUserStore) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("marshal user: %w", err)
 	}
 
-	if err := s.client.Set(ctx, userKey(user.Tenant, user.Username), data, 0).Err(); err != nil {
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, userKey(user.Tenant, user.Username), data, 0)
+	// Clean up email index so the address can be reused.
+	if user.Email != "" {
+		pipe.Del(ctx, userEmailKey(user.Tenant, user.Email))
+	}
+	// Remove from tenant index so the user no longer appears in listings.
+	pipe.SRem(ctx, userTenantIndexPrefix+user.Tenant, user.Username)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis soft-delete user: %w", err)
 	}
 	return nil
 }
 
 // Login throttle constants.
-const (
-	loginFailedPrefix  = "login:failed:"
-	maxLoginAttempts   = 5
-	loginLockoutPeriod = 15 * time.Minute
-)
+const loginFailedPrefix = "login:failed:"
+
+func maxLoginAttempts() int {
+	return intFromEnv("MAX_LOGIN_ATTEMPTS", 5)
+}
+
+func loginLockoutPeriod() time.Duration {
+	return durationFromEnv("LOGIN_LOCKOUT_PERIOD", 15*time.Minute)
+}
+
+func bcryptCostFromEnv() int {
+	return intFromEnv("CORDUM_BCRYPT_COST", defaultBcryptCost)
+}
 
 // ErrLoginThrottled is returned when too many failed login attempts are detected.
 var ErrLoginThrottled = errors.New("too many failed login attempts, try again later")
@@ -504,19 +522,19 @@ func (s *RedisUserStore) CheckLoginThrottle(ctx context.Context, username string
 	if err != nil {
 		return nil // fail open — don't block logins if Redis has issues
 	}
-	if count >= maxLoginAttempts {
+	if count >= maxLoginAttempts() {
 		return ErrLoginThrottled
 	}
 	return nil
 }
 
 // RecordFailedLogin increments the failed login counter for a username.
-// Sets a TTL of loginLockoutPeriod on the key.
+// Sets a TTL of loginLockoutPeriod() on the key.
 func (s *RedisUserStore) RecordFailedLogin(ctx context.Context, username string) {
 	key := loginThrottleKey(username)
 	pipe := s.client.Pipeline()
 	pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, loginLockoutPeriod)
+	pipe.Expire(ctx, key, loginLockoutPeriod())
 	if _, err := pipe.Exec(ctx); err != nil {
 		slog.WarnContext(ctx, "failed to record login attempt", "username", username, "error", err)
 	}
@@ -641,7 +659,7 @@ func seedDefaultAdminUser(ctx context.Context, store UserStore, tenant string) e
 		username = "admin"
 	}
 	if password == "" {
-		return fmt.Errorf("CORDUM_ADMIN_PASSWORD is required when user auth is enabled")
+		return fmt.Errorf("cordum_admin_password is required when user auth is enabled")
 	}
 	if tenant == "" {
 		tenant = "default"

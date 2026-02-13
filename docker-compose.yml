@@ -32,6 +32,9 @@ services:
 
   context-engine:
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
     build:
       context: .
       dockerfile: Dockerfile
@@ -45,6 +48,11 @@ services:
       - CONTEXT_ENGINE_ADDR=:50070
     ports:
       - "50070:50070"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 50070"]
       interval: 10s
@@ -54,6 +62,9 @@ services:
 
   safety-kernel:
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
     build:
       context: .
       dockerfile: Dockerfile
@@ -71,6 +82,11 @@ services:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
     ports:
       - "50051:50051"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 50051"]
       interval: 10s
@@ -80,6 +96,9 @@ services:
 
   scheduler:
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
     build:
       context: .
       dockerfile: Dockerfile
@@ -104,6 +123,11 @@ services:
     volumes:
       - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/metrics"]
       interval: 10s
@@ -113,6 +137,9 @@ services:
 
   api-gateway:
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
     build:
       context: .
       dockerfile: Dockerfile
@@ -152,6 +179,11 @@ services:
       - "8080:8080"
       - "8081:8081"
       - "9092:9092"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8081/health"]
       interval: 10s
@@ -161,6 +193,9 @@ services:
 
   workflow-engine:
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
     build:
       context: .
       dockerfile: Dockerfile
@@ -182,6 +217,11 @@ services:
       - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200
     ports:
       - "9093:9093"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9093/health"]
       interval: 10s
@@ -191,6 +231,11 @@ services:
 
   dashboard:
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
     build:
       context: ./dashboard
       dockerfile: Dockerfile
@@ -206,6 +251,11 @@ services:
       - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-}
     ports:
       - "8082:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/healthz"]
       interval: 10s

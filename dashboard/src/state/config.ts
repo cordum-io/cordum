@@ -7,6 +7,9 @@ import type { User } from "../api/types";
 // Persistence helpers
 // ---------------------------------------------------------------------------
 
+// SECURITY NOTE: API key stored in localStorage for stateless SPA auth.
+// Accepted risk — mitigated by: no dangerouslySetInnerHTML, X-Tenant-ID
+// isolation, CSP headers, and HttpOnly not applicable (JS needs the token).
 const TOKEN_KEY = "cordum-api-key";
 const USER_KEY = "cordum-user";
 const LOGIN_TS_KEY = "cordum-login-ts";

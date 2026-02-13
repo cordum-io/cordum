@@ -29,8 +29,17 @@ func TestNoopMetrics(t *testing.T) {
 	m.IncJobsDispatched("topic")
 	m.IncJobsCompleted("topic", "ok")
 	m.IncSafetyDenied("topic")
+	m.IncOutputPolicyChecked("topic")
+	m.IncOutputPolicyQuarantined("topic")
+	m.IncOutputPolicySkipped("topic")
+	m.IncAsyncOutputTimeout("topic")
+	m.IncOutputEvaluations("topic")
+	m.IncOutputDenials("topic")
+	m.IncOutputRedactions("topic")
 	m.ObserveJobLockWait(0.01)
 	m.ObserveDispatchLatency("topic", 0.02)
+	m.ObserveOutputCheckLatency("topic", "sync", 0.01)
+	m.ObserveOutputEvalDuration("topic", 0.005)
 	m.SetActiveGoroutines(5)
 	m.SetStaleJobs("DISPATCHED", 2)
 	m.IncSagaRecorded()
@@ -40,6 +49,7 @@ func TestNoopMetrics(t *testing.T) {
 	m.ObserveSagaRollback(0.1)
 	m.IncSagaActive()
 	m.DecSagaActive()
+	m.IncJobCancelFailures()
 }
 
 func TestPromMetrics(t *testing.T) {
@@ -49,8 +59,17 @@ func TestPromMetrics(t *testing.T) {
 	m.IncJobsDispatched("job.test")
 	m.IncJobsCompleted("job.test", "ok")
 	m.IncSafetyDenied("job.test")
+	m.IncOutputPolicyChecked("job.test")
+	m.IncOutputPolicyQuarantined("job.test")
+	m.IncOutputPolicySkipped("job.test")
+	m.IncAsyncOutputTimeout("job.test")
+	m.IncOutputEvaluations("job.test")
+	m.IncOutputDenials("job.test")
+	m.IncOutputRedactions("job.test")
 	m.ObserveJobLockWait(0.01)
 	m.ObserveDispatchLatency("job.test", 0.02)
+	m.ObserveOutputCheckLatency("job.test", "sync", 0.01)
+	m.ObserveOutputEvalDuration("job.test", 0.005)
 	m.SetActiveGoroutines(3)
 	m.SetStaleJobs("DISPATCHED", 1)
 	m.IncSagaRecorded()
@@ -60,6 +79,7 @@ func TestPromMetrics(t *testing.T) {
 	m.ObserveSagaRollback(0.05)
 	m.IncSagaActive()
 	m.DecSagaActive()
+	m.IncJobCancelFailures()
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -77,11 +97,35 @@ func TestPromMetrics(t *testing.T) {
 	if !hasMetric(families, "cordum_safety_denied_total", map[string]string{"topic": "job.test"}) {
 		t.Fatalf("expected safety_denied metric")
 	}
+	if !hasMetric(families, "cordum_output_policy_checked_total", map[string]string{"topic": "job.test"}) {
+		t.Fatalf("expected output_policy_checked metric")
+	}
+	if !hasMetric(families, "cordum_output_policy_quarantined_total", map[string]string{"topic": "job.test"}) {
+		t.Fatalf("expected output_policy_quarantined metric")
+	}
+	if !hasMetric(families, "cordum_output_policy_skipped_total", map[string]string{"topic": "job.test"}) {
+		t.Fatalf("expected output_policy_skipped metric")
+	}
+	if !hasMetric(families, "cordum_output_evaluations_total", map[string]string{"topic": "job.test"}) {
+		t.Fatalf("expected output_evaluations metric")
+	}
+	if !hasMetric(families, "cordum_output_denials_total", map[string]string{"topic": "job.test"}) {
+		t.Fatalf("expected output_denials metric")
+	}
+	if !hasMetric(families, "cordum_output_redactions_total", map[string]string{"topic": "job.test"}) {
+		t.Fatalf("expected output_redactions metric")
+	}
 	if !hasMetric(families, "cordum_scheduler_job_lock_wait_seconds", nil) {
 		t.Fatalf("expected job_lock_wait metric")
 	}
 	if !hasMetric(families, "cordum_scheduler_dispatch_latency_seconds", map[string]string{"topic": "job.test"}) {
 		t.Fatalf("expected dispatch_latency metric")
+	}
+	if !hasMetric(families, "cordum_output_check_latency_seconds", map[string]string{"topic": "job.test", "phase": "sync"}) {
+		t.Fatalf("expected output_check_latency metric")
+	}
+	if !hasMetric(families, "cordum_output_eval_duration_seconds", map[string]string{"topic": "job.test"}) {
+		t.Fatalf("expected output_eval_duration metric")
 	}
 	if !hasMetric(families, "cordum_scheduler_active_goroutines", nil) {
 		t.Fatalf("expected active_goroutines metric")
@@ -106,6 +150,9 @@ func TestPromMetrics(t *testing.T) {
 	}
 	if !hasMetric(families, "cordum_saga_rollback_duration_seconds", nil) {
 		t.Fatalf("expected saga_rollback_duration metric")
+	}
+	if !hasMetric(families, "cordum_job_cancel_failures_total", nil) {
+		t.Fatalf("expected job_cancel_failures metric")
 	}
 }
 

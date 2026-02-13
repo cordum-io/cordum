@@ -93,6 +93,16 @@ stringData:
   CORDUM_ADMIN_PASSWORD: ""
   CORDUM_ADMIN_EMAIL: ""
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cordum-redis-secret
+  namespace: cordum
+type: Opaque
+stringData:
+  # REQUIRED: set to a strong Redis password before applying.
+  REDIS_PASSWORD: ""
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -106,9 +116,21 @@ spec:
     metadata:
       labels: {app: nats}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: nats
         image: nats:2.10
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         args: ["-c", "/etc/nats/nats.conf"]
         ports:
         - name: client
@@ -167,9 +189,21 @@ spec:
     metadata:
       labels: {app: redis}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: redis
         image: redis:7
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         ports:
         - containerPort: 6379
         livenessProbe:
@@ -228,8 +262,13 @@ spec:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
         env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         - name: REDIS_URL
-          value: redis://redis:6379
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
         - name: CONTEXT_ENGINE_ADDR
           value: :50070
         ports:
@@ -294,8 +333,13 @@ spec:
         env:
         - name: NATS_URL
           value: nats://nats:4222
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         - name: REDIS_URL
-          value: redis://redis:6379
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
         - name: SAFETY_KERNEL_ADDR
           value: :50051
         - name: SAFETY_POLICY_PATH
@@ -372,8 +416,13 @@ spec:
           value: nats://nats:4222
         - name: NATS_USE_JETSTREAM
           value: "1"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         - name: REDIS_URL
-          value: redis://redis:6379
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
         - name: SAFETY_KERNEL_ADDR
           value: cordum-safety-kernel:50051
         - name: POOL_CONFIG_PATH
@@ -462,8 +511,13 @@ spec:
           value: nats://nats:4222
         - name: NATS_USE_JETSTREAM
           value: "1"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         - name: REDIS_URL
-          value: redis://redis:6379
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
         - name: SAFETY_KERNEL_ADDR
           value: cordum-safety-kernel:50051
         - name: TENANT_ID
@@ -580,8 +634,13 @@ spec:
           value: nats://nats:4222
         - name: NATS_USE_JETSTREAM
           value: "1"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         - name: REDIS_URL
-          value: redis://redis:6379
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
         - name: WORKFLOW_ENGINE_HTTP_ADDR
           value: :9093
         - name: WORKFLOW_ENGINE_SCAN_INTERVAL
@@ -715,3 +774,4 @@ spec:
   - name: http
     port: 8080
     targetPort: 8080
+

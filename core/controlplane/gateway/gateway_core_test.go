@@ -215,8 +215,8 @@ func TestSeedDefaultAdminUserRejectsEmptyPassword(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty admin password")
 	}
-	if !strings.Contains(err.Error(), "CORDUM_ADMIN_PASSWORD") {
-		t.Fatalf("error should mention CORDUM_ADMIN_PASSWORD, got: %v", err)
+	if !strings.Contains(err.Error(), "cordum_admin_password") {
+		t.Fatalf("error should mention cordum_admin_password, got: %v", err)
 	}
 }
 

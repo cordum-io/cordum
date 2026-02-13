@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -13,6 +13,8 @@ import { cn } from "../lib/utils";
 import type { GeneralConfig } from "../api/types";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { RequireRole } from "../components/RequireRole";
+
+const EffectiveConfigPanel = lazy(() => import("../components/settings/EffectiveConfigPanel"));
 
 // ---------------------------------------------------------------------------
 // Form schema
@@ -127,8 +129,16 @@ function SectionHeader({
 // Page
 // ---------------------------------------------------------------------------
 
+type ConfigTab = "configuration" | "effective";
+
+const TABS: { key: ConfigTab; label: string }[] = [
+  { key: "configuration", label: "Configuration" },
+  { key: "effective", label: "Effective Config" },
+];
+
 export default function SettingsConfigPage() {
   usePageTitle("Settings - Configuration");
+  const [tab, setTab] = useState<ConfigTab>("configuration");
   const { data: config, isLoading } = useGeneralConfig();
   const saveConfig = useSetGeneralConfig();
 
@@ -178,6 +188,41 @@ export default function SettingsConfigPage() {
 
   return (
     <div className="space-y-6 pb-20">
+      {/* Tab switcher */}
+      <div className="flex gap-1 rounded-xl bg-surface2 p-1 w-fit">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={cn(
+              "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
+              tab === t.key
+                ? "bg-surface text-ink shadow-sm"
+                : "text-muted hover:text-ink",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "effective" && (
+        <Suspense
+          fallback={
+            <div className="space-y-4">
+              {Array.from({ length: 2 }, (_, i) => (
+                <div key={i} className="h-48 animate-pulse rounded-2xl bg-surface2" />
+              ))}
+            </div>
+          }
+        >
+          <EffectiveConfigPanel />
+        </Suspense>
+      )}
+
+      {tab === "configuration" && (
+      <>
       {/* Maintenance Mode — first for high-urgency visibility */}
       <MaintenanceModeSection />
 
@@ -423,6 +468,8 @@ export default function SettingsConfigPage() {
         </p>
       )}
     </form>
+      </>
+      )}
     </div>
   );
 }

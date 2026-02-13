@@ -166,6 +166,25 @@ export function useRollbackPolicy() {
   });
 }
 
+export function useCaptureSnapshot() {
+  const queryClient = useQueryClient();
+  return useMutation<{ snapshot_id: string; captured_at: string }, Error, { name?: string; note?: string }>({
+    mutationFn: (input) => {
+      logger.info("policies", "Capturing snapshot", { name: input.name, note: input.note });
+      return post<{ snapshot_id: string; captured_at: string }>("/policy/bundles/snapshots", input);
+    },
+    onSuccess: () => {
+      logger.info("policies", "Snapshot captured");
+      useToastStore.getState().addToast({ type: "success", title: "Snapshot captured" });
+      queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
+    },
+    onError: (err) => {
+      logger.error("policies", "Snapshot capture failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Snapshot failed", description: err.message });
+    },
+  });
+}
+
 export function useToggleRule() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, { bundleId: string; ruleId: string; enabled: boolean }>({
@@ -183,6 +202,64 @@ export function useToggleRule() {
     onError: (err, { bundleId, ruleId }) => {
       logger.error("policies", "Toggle rule failed", { bundleId, ruleId, error: err.message });
       useToastStore.getState().addToast({ type: "error", title: "Failed to update rule", description: err.message });
+    },
+  });
+}
+
+export interface UpdatePolicyBundleInput {
+  id: string;
+  content: string;
+  author?: string;
+  message?: string;
+  enabled?: boolean;
+}
+
+export interface UpdatePolicyBundleResponse {
+  id: string;
+  updated_at?: string;
+}
+
+export function useUpdatePolicyBundle() {
+  const queryClient = useQueryClient();
+  return useMutation<UpdatePolicyBundleResponse, Error, UpdatePolicyBundleInput>({
+    mutationFn: async ({ id, content, author, message, enabled }) => {
+      const normalizedID = id.trim();
+      const normalizedContent = content.trim();
+      if (!normalizedID) {
+        throw new Error("bundle id required");
+      }
+      if (!normalizedContent) {
+        throw new Error("content required");
+      }
+
+      const payload: Record<string, unknown> = { content: normalizedContent };
+      if (author && author.trim()) payload.author = author.trim();
+      if (message && message.trim()) payload.message = message.trim();
+      if (typeof enabled === "boolean") payload.enabled = enabled;
+
+      logger.info("policies", "Updating policy bundle", { bundleId: normalizedID });
+      return put<UpdatePolicyBundleResponse>(policyBundlePath(normalizedID), payload);
+    },
+    onSuccess: (_, { id }) => {
+      const normalizedID = id.trim();
+      logger.info("policies", "Policy bundle updated", { bundleId: normalizedID });
+      useToastStore
+        .getState()
+        .addToast({ type: "success", title: "Policy bundle updated" });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundle", normalizedID] });
+      queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
+    },
+    onError: (err, { id }) => {
+      logger.error("policies", "Update policy bundle failed", {
+        bundleId: id.trim(),
+        error: err.message,
+      });
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Failed to update bundle",
+        description: err.message,
+      });
     },
   });
 }
@@ -288,6 +365,96 @@ export function useSimulatePolicy() {
         reason: typeof res.reason === "string" ? res.reason : undefined,
         evaluationTimeMs: Number(res.eval_time_ms ?? res.evalTimeMs ?? 0) || undefined,
         details: res,
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mutation — explain
+// ---------------------------------------------------------------------------
+
+export interface ExplainCondition {
+  field: string;
+  operator: string;
+  expected: string;
+  actual: string;
+  passed: boolean;
+}
+
+export interface ExplainRuleStep {
+  ruleId: string;
+  ruleName?: string;
+  decision: string;
+  reason: string;
+  matched: boolean;
+  conditions: ExplainCondition[];
+}
+
+export interface ExplainResult {
+  decision: string;
+  matchedRule?: string;
+  reason?: string;
+  evaluationTimeMs?: number;
+  policySnapshot?: string;
+  evaluationChain: ExplainRuleStep[];
+  raw: Record<string, unknown>;
+}
+
+function mapExplainCondition(raw: Record<string, unknown>): ExplainCondition {
+  return {
+    field: String(raw.field ?? raw.key ?? ""),
+    operator: String(raw.operator ?? raw.op ?? "match"),
+    expected: String(raw.expected ?? raw.want ?? ""),
+    actual: String(raw.actual ?? raw.got ?? ""),
+    passed: Boolean(raw.passed ?? raw.ok ?? false),
+  };
+}
+
+function mapExplainRuleStep(raw: Record<string, unknown>): ExplainRuleStep {
+  const conditions = Array.isArray(raw.conditions)
+    ? (raw.conditions as Record<string, unknown>[]).map(mapExplainCondition)
+    : [];
+  return {
+    ruleId: String(raw.rule_id ?? raw.ruleId ?? "unknown"),
+    ruleName: typeof raw.rule_name === "string" ? raw.rule_name : undefined,
+    decision: String(raw.decision ?? ""),
+    reason: String(raw.reason ?? ""),
+    matched: Boolean(raw.matched),
+    conditions,
+  };
+}
+
+export interface ExplainInput {
+  request: Record<string, unknown>;
+}
+
+export function useExplainPolicy() {
+  return useMutation<ExplainResult, Error, ExplainInput>({
+    mutationFn: async (input) => {
+      const res = await post<Record<string, unknown>>("/policy/explain", {
+        ...input.request,
+      });
+      const rawDecision =
+        typeof res.decision === "string"
+          ? res.decision
+          : typeof res.decisionType === "string"
+            ? res.decisionType
+            : "";
+      const decision = normalizeDecisionType(rawDecision);
+
+      const evalPath = Array.isArray(res.evaluation_path)
+        ? (res.evaluation_path as Record<string, unknown>[]).map(mapExplainRuleStep)
+        : [];
+
+      return {
+        decision,
+        matchedRule: String(res.rule_id ?? res.matched_rule_id ?? res.matchedRule ?? ""),
+        reason: typeof res.reason === "string" ? res.reason : undefined,
+        evaluationTimeMs: Number(res.eval_time_ms ?? res.evalTimeMs ?? 0) || undefined,
+        policySnapshot: typeof res.policy_snapshot === "string" ? res.policy_snapshot : undefined,
+        evaluationChain: evalPath,
+        raw: res,
       };
     },
   });
@@ -422,3 +589,12 @@ export function usePolicyApprovals() {
 
   return { pending, isLoading, isError };
 }
+
+/** @internal exported for unit tests */
+export const __policiesInternal = {
+  readPolicyBundleContent,
+  policyBundlePath,
+  policyBundleRulePath,
+  policyBundleSimulatePath,
+  DEFAULT_POLICY_CONFIG,
+};

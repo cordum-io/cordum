@@ -1287,7 +1287,6 @@ var AMDLoader;
 	u.ModuleManager = c;
 })(AMDLoader || (AMDLoader = {}));
 var define, AMDLoader;
-AMDLoader = AMDLoader || {};
 (function (u) {
 	const y = new u.Environment();
 	let m = null;
@@ -1364,6 +1363,6 @@ AMDLoader = AMDLoader || {};
 			}),
 			(define.amd = p.amd),
 			typeof doNotInitLoader > 'u' && c());
-})(AMDLoader);
+})(AMDLoader || (AMDLoader = {}));
 
 //# sourceMappingURL=../../min-maps/vs/loader.js.map

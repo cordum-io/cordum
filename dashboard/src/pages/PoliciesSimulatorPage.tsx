@@ -2,12 +2,13 @@ import { useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { usePolicyBundleContext } from "../components/policy/PolicyBundleContext";
 import { PolicySimulator } from "../components/policy/PolicySimulator";
+import type { SimulatorMode } from "../components/policy/PolicySimulator";
 import { PolicyReplay } from "../components/policy/PolicyReplay";
 import { BatchSimulator } from "../components/policy/BatchSimulator";
 import { cn } from "../lib/utils";
 import { usePageTitle } from "../hooks/usePageTitle";
 
-type SimTab = "single" | "batch";
+type SimTab = "single" | "explain" | "batch";
 
 export default function PoliciesSimulatorPage() {
   usePageTitle("Policies - Simulator");
@@ -33,12 +34,15 @@ export default function PoliciesSimulatorPage() {
     );
   }
 
+  const simulatorMode: SimulatorMode = tab === "explain" ? "explain" : "simulate";
+
   return (
     <div className="space-y-6">
       {/* Tab toggle */}
       <div className="flex gap-1 rounded-full border border-border p-1 w-fit">
         {([
           { key: "single" as const, label: "Single Test" },
+          { key: "explain" as const, label: "Explain" },
           { key: "batch" as const, label: "Batch Test" },
         ]).map(({ key, label }) => (
           <button
@@ -58,17 +62,18 @@ export default function PoliciesSimulatorPage() {
       </div>
 
       {/* Tab content */}
-      {tab === "single" ? (
+      {tab === "batch" ? (
+        <BatchSimulator bundleId={bundleId} />
+      ) : (
         <div className="space-y-8">
           <PolicySimulator
             bundleId={bundleId}
+            mode={simulatorMode}
             initialCapabilities={initialCapabilities}
             initialRiskTags={initialRiskTags}
           />
-          <PolicyReplay bundleId={bundleId} />
+          {tab === "single" && <PolicyReplay bundleId={bundleId} />}
         </div>
-      ) : (
-        <BatchSimulator bundleId={bundleId} />
       )}
     </div>
   );

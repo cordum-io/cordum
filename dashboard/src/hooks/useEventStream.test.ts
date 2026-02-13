@@ -163,13 +163,15 @@ describe("useEventStream", () => {
     expect(events[0].type).toBe("job.submit");
   });
 
-  it("invalidates React Query caches for job events", () => {
+  it("invalidates React Query caches for job events including DLQ", () => {
     useEventStream();
     MockWebSocket.instances[0].simulateOpen();
     MockWebSocket.instances[0].simulateMessage({
       jobRequest: { jobId: "j1" },
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["jobs"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["dlq"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["dlq", "nav"] });
   });
 
   it("ignores non-JSON messages", () => {

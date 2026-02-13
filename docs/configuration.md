@@ -1,5 +1,7 @@
 # Configuration
 
+> For a comprehensive field-by-field reference of all config schemas, the config overlay system, and the complete environment variables master table, see [configuration-reference.md](configuration-reference.md).
+
 Cordum uses a mix of config files (mounted into containers) and environment
 variables.
 
@@ -28,7 +30,7 @@ Shared across services:
 - `CORDUM_LOG_FORMAT` (`json` or `text`, default `text`)
 - `CORDUM_GRPC_REFLECTION` (set to `1` to enable gRPC reflection, dev only)
 - `NATS_URL` (default `nats://nats:4222`)
-- `REDIS_URL` (default `redis://redis:6379`)
+- `REDIS_URL` (compose default `redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379`)
 - `NATS_USE_JETSTREAM` (`0|1`)
 - `POOL_CONFIG_PATH`, `TIMEOUT_CONFIG_PATH`
 - `SAFETY_KERNEL_ADDR`
@@ -85,6 +87,7 @@ User management endpoints (admin only):
 - `JOB_META_TTL` / `JOB_META_TTL_SECONDS`
 - `WORKER_SNAPSHOT_INTERVAL`
 - `SCHEDULER_CONFIG_RELOAD_INTERVAL` (interval for config overlay reload, e.g. `30s`)
+- `OUTPUT_POLICY_ENABLED` (`0|1|true|false`, default disabled)
 - `NATS_JS_ACK_WAIT`, `NATS_JS_MAX_AGE`
 - `NATS_JS_REPLICAS` (JetStream stream replication factor)
 - `SCHEDULER_METRICS_ADDR` (default `:9090`)

@@ -11,24 +11,26 @@ import (
 
 // Reconciler periodically inspects job state to enforce timeouts and cleanup.
 type Reconciler struct {
-	store           JobStore
-	dispatchTimeout time.Duration
-	runningTimeout  time.Duration
-	pollInterval    time.Duration
-	lockKey         string
-	lockTTL         time.Duration
-	mu              sync.RWMutex
-	metrics         Metrics
+	store            JobStore
+	dispatchTimeout  time.Duration
+	runningTimeout   time.Duration
+	scheduledTimeout time.Duration
+	pollInterval     time.Duration
+	lockKey          string
+	lockTTL          time.Duration
+	mu               sync.RWMutex
+	metrics          Metrics
 }
 
 func NewReconciler(store JobStore, dispatchTimeout, runningTimeout, pollInterval time.Duration) *Reconciler {
 	return &Reconciler{
-		store:           store,
-		dispatchTimeout: dispatchTimeout,
-		runningTimeout:  runningTimeout,
-		pollInterval:    pollInterval,
-		lockKey:         "cordum:reconciler:default",
-		lockTTL:         pollInterval * 2,
+		store:            store,
+		dispatchTimeout:  dispatchTimeout,
+		runningTimeout:   runningTimeout,
+		scheduledTimeout: 60 * time.Second,
+		pollInterval:     pollInterval,
+		lockKey:          "cordum:reconciler:default",
+		lockTTL:          pollInterval * 2,
 	}
 }
 
@@ -71,7 +73,8 @@ func (r *Reconciler) Start(ctx context.Context) {
 
 func (r *Reconciler) tick(ctx context.Context) {
 	now := time.Now()
-	dispatchTimeout, runningTimeout := r.currentTimeouts()
+	dispatchTimeout, runningTimeout, scheduledTimeout := r.currentTimeouts()
+	r.handleTimeouts(ctx, JobStateScheduled, now.Add(-scheduledTimeout), scheduledTimeout)
 	r.handleTimeouts(ctx, JobStateDispatched, now.Add(-dispatchTimeout), dispatchTimeout)
 	r.handleTimeouts(ctx, JobStateRunning, now.Add(-runningTimeout), runningTimeout)
 	r.handleDeadlineExpirations(ctx, now)
@@ -89,10 +92,10 @@ func (r *Reconciler) UpdateTimeouts(dispatchTimeout, runningTimeout time.Duratio
 	}
 }
 
-func (r *Reconciler) currentTimeouts() (time.Duration, time.Duration) {
+func (r *Reconciler) currentTimeouts() (time.Duration, time.Duration, time.Duration) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.dispatchTimeout, r.runningTimeout
+	return r.dispatchTimeout, r.runningTimeout, r.scheduledTimeout
 }
 
 func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff time.Time, timeout ...time.Duration) {

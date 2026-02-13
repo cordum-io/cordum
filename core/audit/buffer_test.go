@@ -102,12 +102,12 @@ func TestBufferedExporter_DrainOnClose(t *testing.T) {
 
 func TestBufferedExporter_RetryOnFailure(t *testing.T) {
 	mock := &mockExporter{failNext: 2} // fail twice, succeed on third
-	buf := NewBufferedExporter(mock, WithBatchSize(1), WithFlushInterval(10*time.Second))
+	buf := NewBufferedExporter(mock, WithBatchSize(1), WithFlushInterval(10*time.Second), WithRetryBackoff(10*time.Millisecond))
 
 	buf.Send(SIEMEvent{Action: "retry-test"})
 
-	// Wait for retries (1s + 2s backoff in production, but test should complete)
-	time.Sleep(5 * time.Second)
+	// Wait for retries (10ms + 20ms backoff with test-speed backoff)
+	time.Sleep(200 * time.Millisecond)
 
 	if got := mock.totalEvents(); got != 1 {
 		t.Errorf("total events = %d, want 1 (after retries)", got)
@@ -141,7 +141,7 @@ func TestBufferedExporter_DropWhenFull(t *testing.T) {
 
 func TestBufferedExporter_ExportWithRetryCancels(t *testing.T) {
 	called := make(chan struct{}, 1)
-	mock := &mockExporter{failNext: maxRetries, exportCalled: called}
+	mock := &mockExporter{failNext: defaultMaxRetries, exportCalled: called}
 	buf := &BufferedExporter{exporter: mock}
 
 	ctx, cancel := context.WithCancel(context.Background())

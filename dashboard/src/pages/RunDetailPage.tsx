@@ -1,10 +1,11 @@
 import { useState, useCallback } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Loader,
   RefreshCw,
   XCircle,
+  Trash2,
   Clock,
   ChevronDown,
   ChevronUp,
@@ -17,7 +18,7 @@ import { Badge } from "../components/ui/Badge";
 import { RunStatusBadge } from "../components/StatusBadge";
 import { GanttTimeline } from "../components/workflow/GanttTimeline";
 import { RunVisualization } from "../components/workflow/RunVisualization";
-import { useRun, useRerunRun, useCancelRun } from "../hooks/useWorkflows";
+import { useRun, useRerunRun, useCancelRun, useDeleteRun } from "../hooks/useWorkflows";
 import type { WorkflowStep } from "../api/types";
 import { usePageTitle } from "../hooks/usePageTitle";
 
@@ -184,11 +185,14 @@ export default function RunDetailPage() {
   usePageTitle(runId ? `Run ${runId.slice(0, 8)}` : "Run");
   const { data: run, isLoading, isError } = useRun(runId);
 
+  const navigate = useNavigate();
   const rerunRun = useRerunRun();
   const cancelRun = useCancelRun();
+  const deleteRun = useDeleteRun();
 
   const [showRerunConfirm, setShowRerunConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleRerun = useCallback(() => {
     if (!runId) return;
@@ -202,6 +206,14 @@ export default function RunDetailPage() {
       { onSuccess: () => setShowCancelConfirm(false) },
     );
   }, [workflowId, runId, cancelRun]);
+
+  const handleDelete = useCallback(() => {
+    if (!workflowId || !runId) return;
+    deleteRun.mutate(
+      { workflowId, runId },
+      { onSuccess: () => navigate(`/workflows/${workflowId}`) },
+    );
+  }, [workflowId, runId, deleteRun, navigate]);
 
   if (isLoading) {
     return (
@@ -222,6 +234,7 @@ export default function RunDetailPage() {
 
   const duration = run.duration ?? computeDuration(run);
   const isRunning = run.status === "running" || run.status === "waiting" || run.status === "pending";
+  const isTerminal = ["succeeded", "completed", "failed", "cancelled", "timed_out"].includes(run.status);
 
   return (
     <div className="space-y-6">
@@ -284,6 +297,19 @@ export default function RunDetailPage() {
             >
               <XCircle className="h-3.5 w-3.5" />
               Cancel
+            </Button>
+          )}
+          {isTerminal && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-danger hover:bg-danger/10"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={deleteRun.isPending}
+              title="Permanently removes this run and its data. Only completed/failed/cancelled runs can be deleted."
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
             </Button>
           )}
         </div>
@@ -349,6 +375,17 @@ export default function RunDetailPage() {
           isPending={cancelRun.isPending}
           onConfirm={handleCancel}
           onCancel={() => setShowCancelConfirm(false)}
+          variant="danger"
+        />
+      )}
+      {showDeleteConfirm && (
+        <ConfirmDialog
+          title={`Delete run ${run.id.slice(0, 8)}?`}
+          message="This permanently removes the run and its timeline data. This cannot be undone."
+          confirmLabel="Delete"
+          isPending={deleteRun.isPending}
+          onConfirm={handleDelete}
+          onCancel={() => setShowDeleteConfirm(false)}
           variant="danger"
         />
       )}

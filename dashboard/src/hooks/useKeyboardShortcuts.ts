@@ -105,3 +105,9 @@ export function useKeyboardShortcuts() {
     };
   }, [navigate]);
 }
+
+/** @internal exported for unit tests */
+export const __keyboardShortcutsInternal = {
+  isEditableTarget,
+  NAV_MAP,
+};

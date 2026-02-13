@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { usePolicyBundleContext } from "../components/policy/PolicyBundleContext";
-import { PolicyYamlEditor } from "../components/policy/PolicyYamlEditor";
+import { PolicyBundleEditor } from "../components/policy/PolicyBundleEditor";
 import { VisualRuleBuilder } from "../components/policy/VisualRuleBuilder";
 import { cn } from "../lib/utils";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { usePolicyBundle } from "../hooks/usePolicies";
 
 type BuilderTab = "visual" | "yaml";
 
 export default function PoliciesBuilderPage() {
   usePageTitle("Policies - Builder");
   const { bundleId } = usePolicyBundleContext();
+  const { data: bundle } = usePolicyBundle(bundleId);
   const [tab, setTab] = useState<BuilderTab>("visual");
 
   if (!bundleId) {
@@ -43,9 +45,13 @@ export default function PoliciesBuilderPage() {
 
       {/* Tab content */}
       {tab === "visual" ? (
-        <VisualRuleBuilder bundleId={bundleId} />
+        <VisualRuleBuilder bundleId={bundleId} onEditYaml={() => setTab("yaml")} />
       ) : (
-        <PolicyYamlEditor bundleId={bundleId} />
+        <PolicyBundleEditor
+          bundleId={bundleId}
+          currentContent={bundle?.content ?? ""}
+          onClose={() => setTab("visual")}
+        />
       )}
     </div>
   );

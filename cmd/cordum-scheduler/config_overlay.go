@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sort"
 	"time"
@@ -33,7 +34,7 @@ func bootstrapConfig(ctx context.Context, svc *configsvc.Service, pools *config.
 	doc, err := svc.Get(ctx, configsvc.ScopeSystem, "default")
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			return err
+			return fmt.Errorf("bootstrap config: %w", err)
 		}
 		doc = &configsvc.Document{
 			Scope:   configsvc.ScopeSystem,
@@ -48,11 +49,11 @@ func bootstrapConfig(ctx context.Context, svc *configsvc.Service, pools *config.
 	if pools != nil {
 		encoded, err := toMap(pools)
 		if err != nil {
-			return err
+			return fmt.Errorf("bootstrap config: %w", err)
 		}
 		fileHash, err := hashAny(encoded)
 		if err != nil {
-			return err
+			return fmt.Errorf("bootstrap config: %w", err)
 		}
 		if _, ok := doc.Data["pools"]; !ok {
 			doc.Data["pools"] = encoded
@@ -71,11 +72,11 @@ func bootstrapConfig(ctx context.Context, svc *configsvc.Service, pools *config.
 	if timeouts != nil {
 		encoded, err := toMap(timeouts)
 		if err != nil {
-			return err
+			return fmt.Errorf("bootstrap config: %w", err)
 		}
 		fileHash, err := hashAny(encoded)
 		if err != nil {
-			return err
+			return fmt.Errorf("bootstrap config: %w", err)
 		}
 		if _, ok := doc.Data["timeouts"]; !ok {
 			doc.Data["timeouts"] = encoded
@@ -431,7 +432,7 @@ func appendCanonical(buf *bytes.Buffer, value any) error {
 	default:
 		encoded, err := json.Marshal(v)
 		if err != nil {
-			return err
+			return fmt.Errorf("canonical encode: %w", err)
 		}
 		buf.Write(encoded)
 		return nil
@@ -453,7 +454,7 @@ func appendCanonicalMap(buf *bytes.Buffer, m map[string]any) error {
 		buf.Write(keyBytes)
 		buf.WriteByte(':')
 		if err := appendCanonical(buf, m[k]); err != nil {
-			return err
+			return fmt.Errorf("canonical encode: %w", err)
 		}
 	}
 	buf.WriteByte('}')
@@ -467,7 +468,7 @@ func appendCanonicalSlice(buf *bytes.Buffer, items []any) error {
 			buf.WriteByte(',')
 		}
 		if err := appendCanonical(buf, item); err != nil {
-			return err
+			return fmt.Errorf("canonical encode: %w", err)
 		}
 	}
 	buf.WriteByte(']')

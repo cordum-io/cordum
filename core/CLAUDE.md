@@ -37,6 +37,22 @@ const (
 )
 ```
 
+### Output Policy Service
+Cordum now defines a local output-policy gRPC contract in
+`core/protocol/proto/v1/output_policy.proto`:
+
+- `OutputPolicyService.CheckOutput(OutputCheckRequest) -> OutputCheckResponse`
+- Decisions: `OUTPUT_DECISION_ALLOW`, `OUTPUT_DECISION_QUARANTINE`, `OUTPUT_DECISION_REDACT`
+- Findings include typed output issues (for example `secret_leak`, `pii`, `injection`)
+- `OutputCheckRequest` carries output metadata + original request context:
+  - `capabilities`, `risk_tags`
+  - `principal_id`, `pack_id`
+  - `content_type`, `original_labels`
+
+This is designed for a two-phase model:
+1. Fast sync metadata checks on scheduler hot path
+2. Deeper async content checks over dereferenced result payloads
+
 ### Policy Structure
 ```yaml
 version: "1"
@@ -50,6 +66,17 @@ rules:
     decision: allow|deny|require_approval|throttle
     reason: "Human-readable reason"
     throttle_duration: 5m  # if decision is throttle
+output_rules:
+  - id: out-rule-id
+    match:
+      topics: ["job.*"]
+      capabilities: ["code.write"]
+      risk_tags: ["secrets"]
+      content_patterns: ["AKIA[0-9A-Z]{16}"]
+      detectors: ["secret_leak"]
+      max_output_bytes: 1048576
+    decision: allow|deny|quarantine|redact
+    reason: "Output policy reason"
 ```
 
 ### Key Interfaces
@@ -166,9 +193,12 @@ const (
     JobRunning    JobStatus = "running"
     JobSucceeded  JobStatus = "succeeded"
     JobFailed     JobStatus = "failed"
+    JobQuarantined JobStatus = "output_quarantined"
     JobCancelled  JobStatus = "cancelled"
 )
 ```
+
+`output_quarantined` is a terminal state used by output policy enforcement.
 
 ### Routing Logic
 ```go

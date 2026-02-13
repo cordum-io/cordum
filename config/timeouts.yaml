@@ -2,5 +2,5 @@ workflows: {}
 topics: {}
 reconciler:
   dispatch_timeout_seconds: 300
-  running_timeout_seconds: 9000
+  running_timeout_seconds: 240
   scan_interval_seconds: 30

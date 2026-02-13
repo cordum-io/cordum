@@ -6,9 +6,21 @@
   "properties": {
     "version": {"type": "string"},
     "default_tenant": {"type": "string"},
+    "default_decision": {
+      "type": "string",
+      "enum": ["allow", "deny"],
+      "description": "Default decision when no rule matches (default: deny = fail-closed)"
+    },
     "rules": {
       "type": "array",
       "items": {"$ref": "#/definitions/rule"}
+    },
+    "output_rules": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/outputRule"}
+    },
+    "output_policy": {
+      "$ref": "#/definitions/outputPolicy"
     },
     "tenants": {
       "type": "object",
@@ -32,6 +44,54 @@
           "type": "array",
           "items": {"$ref": "#/definitions/remediation"}
         }
+      }
+    },
+    "outputRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "enabled": {"type": "boolean"},
+        "severity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"]
+        },
+        "description": {"type": "string"},
+        "match": {"$ref": "#/definitions/outputMatch"},
+        "decision": {
+          "type": "string",
+          "enum": ["allow", "deny", "quarantine", "redact"]
+        },
+        "reason": {"type": "string"}
+      }
+    },
+    "outputPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "fail_mode": {
+          "type": "string",
+          "enum": ["open", "closed"]
+        }
+      }
+    },
+    "outputMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tenants": {"type": "array", "items": {"type": "string"}},
+        "topics": {"type": "array", "items": {"type": "string"}},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "risk_tags": {"type": "array", "items": {"type": "string"}},
+        "scanners": {"type": "array", "items": {"type": "string"}},
+        "content_patterns": {"type": "array", "items": {"type": "string"}},
+        "keywords": {"type": "array", "items": {"type": "string"}},
+        "content_types": {"type": "array", "items": {"type": "string"}},
+        "detectors": {"type": "array", "items": {"type": "string"}},
+        "output_size_gt": {"type": "integer", "minimum": 0},
+        "max_output_bytes": {"type": "integer", "minimum": 0},
+        "has_error": {"type": "boolean"}
       }
     },
     "policyMatch": {

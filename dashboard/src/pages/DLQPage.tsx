@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
 import { useDLQ, useRetryDLQ, useDeleteDLQ } from "../hooks/useDLQ";
+import { useJob } from "../hooks/useJobs";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Input } from "../components/ui/Input";
@@ -47,6 +48,13 @@ const SINCE_MS: Record<string, number> = {
   "30d": 30 * 24 * 60 * 60 * 1000,
 };
 
+const RESULT_FILTERS = [
+  { label: "All", value: "" },
+  { label: "Denied", value: "denied" },
+  { label: "Failed", value: "failed" },
+  { label: "Quarantined", value: "output_quarantined" },
+] as const;
+
 // ---------------------------------------------------------------------------
 // Relative time
 // ---------------------------------------------------------------------------
@@ -61,6 +69,36 @@ function timeAgo(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
+}
+
+function normalizeEntrySignal(entry: DLQEntry): string {
+  return [entry.status, entry.lastState, entry.reasonCode]
+    .map((value) => (value || "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function isOutputQuarantinedEntry(entry: DLQEntry): boolean {
+  const signal = normalizeEntrySignal(entry);
+  if (signal.includes("output_quarantined")) return true;
+  if (signal.includes("output_quarantine")) return true;
+  if (signal.includes("quarantin")) return true;
+  return false;
+}
+
+function matchesResultFilter(entry: DLQEntry, filterValue: string): boolean {
+  if (!filterValue) return true;
+  const signal = normalizeEntrySignal(entry);
+  switch (filterValue) {
+    case "output_quarantined":
+      return isOutputQuarantinedEntry(entry);
+    case "denied":
+      return signal.includes("denied");
+    case "failed":
+      return !isOutputQuarantinedEntry(entry) && (signal.includes("failed") || signal.includes("error"));
+    default:
+      return true;
+  }
 }
 
 
@@ -249,6 +287,7 @@ export default function DLQPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlQ = searchParams.get("q") ?? "";
   const timeRange = searchParams.get("timeRange") ?? "";
+  const resultType = searchParams.get("resultType") ?? "";
 
   const [topicInput, setTopicInput] = useState(urlQ);
   const debouncedTopic = useDebouncedValue(topicInput, 400);
@@ -269,6 +308,18 @@ export default function DLQPage() {
         const next = new URLSearchParams(prev);
         if (value) next.set("timeRange", value);
         else next.delete("timeRange");
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
+
+  const setResultType = useCallback(
+    (value: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set("resultType", value);
+        else next.delete("resultType");
         return next;
       }, { replace: true });
     },
@@ -323,9 +374,14 @@ export default function DLQPage() {
   const entries = data?.items ?? [];
   const nextCursor = data?.next_cursor ?? null;
 
+  const resultFilteredEntries = useMemo(
+    () => entries.filter((entry) => matchesResultFilter(entry, resultType)),
+    [entries, resultType],
+  );
+
   // Client-side sort
   const sortedEntries = useMemo(() => {
-    const sorted = [...entries];
+    const sorted = [...resultFilteredEntries];
     sorted.sort((a, b) => {
       let aVal: string | number = "";
       let bVal: string | number = "";
@@ -354,12 +410,12 @@ export default function DLQPage() {
       return 0;
     });
     return sorted;
-  }, [entries, sortCol, sortDir]);
+  }, [resultFilteredEntries, sortCol, sortDir]);
 
   // Active filter count (non-default sort counts as a filter)
   const isNonDefaultSort = sortCol !== "failedAt" || sortDir !== "desc";
   const activeFilterCount =
-    (debouncedTopic ? 1 : 0) + (timeRange ? 1 : 0) + (isNonDefaultSort ? 1 : 0);
+    (debouncedTopic ? 1 : 0) + (timeRange ? 1 : 0) + (resultType ? 1 : 0) + (isNonDefaultSort ? 1 : 0);
 
   // Reset pagination when filters change
   const resetPagination = useCallback(() => {
@@ -369,7 +425,7 @@ export default function DLQPage() {
 
   useEffect(() => {
     resetPagination();
-  }, [debouncedTopic, sinceISO, resetPagination]);
+  }, [debouncedTopic, sinceISO, resultType, resetPagination]);
 
   const clearFilters = useCallback(() => {
     setTopicInput("");
@@ -377,6 +433,7 @@ export default function DLQPage() {
       const next = new URLSearchParams(prev);
       next.delete("q");
       next.delete("timeRange");
+      next.delete("resultType");
       next.delete("sort");
       next.delete("dir");
       return next;
@@ -416,12 +473,22 @@ export default function DLQPage() {
   }, []);
 
   const toggleSelectAll = useCallback(() => {
-    if (selectedIds.size === entries.length && entries.length > 0) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(entries.map((e) => e.id)));
-    }
-  }, [selectedIds.size, entries]);
+    const visibleIDs = sortedEntries.map((entry) => entry.id);
+    const allVisibleSelected = visibleIDs.length > 0 && visibleIDs.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleIDs) {
+          next.delete(id);
+        }
+      } else {
+        for (const id of visibleIDs) {
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  }, [selectedIds, sortedEntries]);
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
@@ -440,7 +507,9 @@ export default function DLQPage() {
     clearSelection();
   }, [selectedIds, deleteDLQ, clearSelection]);
 
-  const allChecked = entries.length > 0 && selectedIds.size === entries.length;
+  const allChecked =
+    sortedEntries.length > 0 &&
+    sortedEntries.every((entry) => selectedIds.has(entry.id));
 
   return (
     <div className="space-y-4">
@@ -485,6 +554,28 @@ export default function DLQPage() {
                 )}
               >
                 {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+            Result Type
+          </label>
+          <div className="flex gap-1">
+            {RESULT_FILTERS.map((option) => (
+              <button
+                key={option.value || "all"}
+                type="button"
+                onClick={() => setResultType(option.value)}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-xs font-semibold transition",
+                  resultType === option.value
+                    ? "bg-accent/15 text-accent"
+                    : "text-muted hover:bg-surface2",
+                )}
+              >
+                {option.label}
               </button>
             ))}
           </div>
@@ -546,7 +637,7 @@ export default function DLQPage() {
                 </tr>
               )}
 
-              {!isLoading && !isError && entries.length === 0 && (
+              {!isLoading && !isError && sortedEntries.length === 0 && (
                 <TableEmptyState
                   colSpan={7}
                   icon={AlertTriangle}
@@ -568,6 +659,8 @@ export default function DLQPage() {
                         setExpandedId(isExpanded ? null : entry.id)
                       }
                       onToggleSelect={() => toggleSelect(entry.id)}
+                      onRelease={() => retryDLQ.mutate({ id: entry.id })}
+                      isReleasePending={retryDLQ.isPending}
                     />
                   );
                 })}
@@ -611,13 +704,22 @@ function DLQRow({
   isSelected,
   onToggleExpand,
   onToggleSelect,
+  onRelease,
+  isReleasePending,
 }: {
   entry: DLQEntry;
   isExpanded: boolean;
   isSelected: boolean;
   onToggleExpand: () => void;
   onToggleSelect: () => void;
+  onRelease: () => void;
+  isReleasePending: boolean;
 }) {
+  const isQuarantined = isOutputQuarantinedEntry(entry);
+  const { data: jobDetails, isLoading: isJobLoading } = useJob(
+    isExpanded && isQuarantined ? entry.jobId : "",
+  );
+  const outputSafety = jobDetails?.output_safety;
   const [showFullError, setShowFullError] = useState(false);
   const errorText = entry.error || entry.reason || entry.reasonCode || "\u2014";
   const errorTruncated = errorText.length > 120;
@@ -654,8 +756,17 @@ function DLQRow({
           </span>
         </td>
         <td className="px-4 py-3 max-w-md">
+          {isQuarantined && (
+            <span className="mb-1 inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold text-warning">
+              <ShieldAlert className="h-3 w-3" />
+              Quarantined
+            </span>
+          )}
           <span
-            className="text-danger font-medium text-sm break-words"
+            className={cn(
+              "font-medium text-sm break-words",
+              isQuarantined ? "text-warning" : "text-danger",
+            )}
             title={errorText}
           >
             {displayError}
@@ -689,6 +800,61 @@ function DLQRow({
       {isExpanded && (
         <tr>
           <td colSpan={7} className="bg-surface2/20 border-b border-border">
+            {isQuarantined && (
+              <div className="space-y-2 border-b border-border px-4 py-3">
+                <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                  Output Quarantine Details
+                </h4>
+                {isJobLoading && (
+                  <p className="text-xs text-muted">Loading quarantine findings…</p>
+                )}
+
+                {!isJobLoading && outputSafety && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-muted">
+                      <span className="font-semibold text-ink">Matched Rule:</span>{" "}
+                      {outputSafety.rule_id || "\u2014"}
+                    </p>
+                    <p className="text-xs text-muted">
+                      <span className="font-semibold text-ink">Original Output Ptr:</span>{" "}
+                      <span className="font-mono text-[11px] text-ink">
+                        {outputSafety.original_ptr || "\u2014"}
+                      </span>
+                    </p>
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-ink">Findings</p>
+                      {(outputSafety.findings ?? []).length === 0 && (
+                        <p className="text-xs text-muted">No finding details attached.</p>
+                      )}
+                      {(outputSafety.findings ?? []).map((finding, idx) => (
+                        <p key={`${entry.id}-finding-${idx}`} className="text-xs text-ink">
+                          <span className="font-semibold">{finding.type || "finding"}</span>:{" "}
+                          {finding.detail || "\u2014"}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!isJobLoading && !outputSafety && (
+                  <p className="text-xs text-muted">
+                    Quarantine details unavailable for this entry.
+                  </p>
+                )}
+
+                <RequireRole roles={["admin"]}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onRelease}
+                    disabled={isReleasePending}
+                  >
+                    <ShieldAlert className="h-3.5 w-3.5 text-warning" />
+                    Release Output
+                  </Button>
+                </RequireRole>
+              </div>
+            )}
             <RetryAttemptsPanel attempts={entry.retryAttempts ?? []} />
           </td>
         </tr>
@@ -696,3 +862,10 @@ function DLQRow({
     </>
   );
 }
+
+/** @internal exported for unit tests */
+export const __dlqPageInternal = {
+  isOutputQuarantinedEntry,
+  matchesResultFilter,
+};
+

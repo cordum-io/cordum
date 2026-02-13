@@ -148,3 +148,161 @@ func TestParseSafetyPolicyInvalidDecision(t *testing.T) {
 		t.Fatalf("expected schema validation error")
 	}
 }
+
+func TestParseSafetyPolicyOutputRules(t *testing.T) {
+	policyYAML := []byte(`
+version: "1"
+output_policy:
+  enabled: true
+  fail_mode: open
+output_rules:
+  - id: out-1
+    enabled: true
+    severity: high
+    description: test output rule
+    decision: redact
+    reason: remove secret
+    match:
+      tenants: ["default"]
+      topics: ["job.demo.*"]
+      capabilities: ["code.write"]
+      risk_tags: ["secrets"]
+      scanners: ["secret"]
+      content_patterns: ["AKIA[0-9A-Z]{16}"]
+      detectors: ["secret_leak"]
+      output_size_gt: 2048
+      has_error: false
+      max_output_bytes: 1024
+`)
+	policy, err := ParseSafetyPolicy(policyYAML)
+	if err != nil {
+		t.Fatalf("expected output rules to parse: %v", err)
+	}
+	if policy == nil || len(policy.OutputRules) != 1 {
+		t.Fatalf("expected one output rule, got %#v", policy)
+	}
+	if !policy.OutputPolicy.Enabled || policy.OutputPolicy.FailMode != "open" {
+		t.Fatalf("unexpected output policy config: %#v", policy.OutputPolicy)
+	}
+	if policy.OutputRules[0].Decision != "redact" || policy.OutputRules[0].Match.MaxOutputBytes != 1024 {
+		t.Fatalf("unexpected output rule parse: %#v", policy.OutputRules[0])
+	}
+	if policy.OutputRules[0].Severity != "high" || policy.OutputRules[0].Desc != "test output rule" {
+		t.Fatalf("unexpected output rule metadata parse: %#v", policy.OutputRules[0])
+	}
+	if policy.OutputRules[0].Match.OutputSizeGt != 2048 {
+		t.Fatalf("unexpected output_size_gt parse: %#v", policy.OutputRules[0].Match)
+	}
+	if policy.OutputRules[0].Match.HasError == nil || *policy.OutputRules[0].Match.HasError {
+		t.Fatalf("unexpected has_error parse: %#v", policy.OutputRules[0].Match)
+	}
+	if len(policy.OutputRules[0].Match.Scanners) != 1 || policy.OutputRules[0].Match.Scanners[0] != "secret" {
+		t.Fatalf("unexpected scanners parse: %#v", policy.OutputRules[0].Match)
+	}
+}
+
+func TestParseSafetyPolicyOutputRuleInvalidDecision(t *testing.T) {
+	_, err := ParseSafetyPolicy([]byte(`
+output_rules:
+  - id: out-1
+    decision: maybe
+    match:
+      detectors: ["secret_leak"]
+`))
+	if err == nil {
+		t.Fatalf("expected schema validation error for invalid output rule decision")
+	}
+}
+
+func TestEvaluateDefaultDecisionDeny(t *testing.T) {
+	policy := &SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []PolicyRule{
+			{ID: "rule1", Decision: "allow", Match: PolicyMatch{Topics: []string{"job.allowed"}}},
+		},
+	}
+	// No matching rule → should use default deny
+	dec := policy.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.unmatched"})
+	if dec.Decision != "deny" {
+		t.Fatalf("expected deny default, got %q", dec.Decision)
+	}
+	if dec.Reason != "no matching rule — default policy: deny" {
+		t.Fatalf("unexpected reason: %q", dec.Reason)
+	}
+}
+
+func TestEvaluateDefaultDecisionAllow(t *testing.T) {
+	policy := &SafetyPolicy{
+		DefaultDecision: "allow",
+		Rules: []PolicyRule{
+			{ID: "rule1", Decision: "deny", Match: PolicyMatch{Topics: []string{"job.blocked"}}},
+		},
+	}
+	// No matching rule → should use default allow
+	dec := policy.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.unmatched"})
+	if dec.Decision != "allow" {
+		t.Fatalf("expected allow default, got %q", dec.Decision)
+	}
+}
+
+func TestEvaluateDefaultDecisionEmpty(t *testing.T) {
+	policy := &SafetyPolicy{
+		// DefaultDecision empty → should be deny (fail-closed)
+		Rules: []PolicyRule{
+			{ID: "rule1", Decision: "allow", Match: PolicyMatch{Topics: []string{"job.allowed"}}},
+		},
+	}
+	dec := policy.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.unmatched"})
+	if dec.Decision != "deny" {
+		t.Fatalf("expected deny for empty default_decision, got %q", dec.Decision)
+	}
+}
+
+func TestEvaluateDefaultDecisionIrrelevantOnMatch(t *testing.T) {
+	policy := &SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []PolicyRule{
+			{ID: "rule1", Decision: "allow", Match: PolicyMatch{Topics: []string{"job.ok"}}},
+		},
+	}
+	// Rule matches → default is irrelevant
+	dec := policy.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.ok"})
+	if dec.Decision != "allow" {
+		t.Fatalf("expected allow from matching rule, got %q", dec.Decision)
+	}
+}
+
+func TestParseSafetyPolicyDefaultDecision(t *testing.T) {
+	policy, err := ParseSafetyPolicy([]byte(`
+default_decision: deny
+rules:
+  - id: rule1
+    decision: allow
+    match:
+      topics: ["job.test"]
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if policy.DefaultDecision != "deny" {
+		t.Fatalf("expected default_decision deny, got %q", policy.DefaultDecision)
+	}
+}
+
+func TestParseSafetyPolicyInvalidDefaultDecision(t *testing.T) {
+	_, err := ParseSafetyPolicy([]byte(`default_decision: maybe`))
+	if err == nil {
+		t.Fatalf("expected schema validation error for invalid default_decision")
+	}
+}
+
+func TestParseSafetyPolicyInvalidOutputFailMode(t *testing.T) {
+	_, err := ParseSafetyPolicy([]byte(`
+output_policy:
+  enabled: true
+  fail_mode: maybe
+`))
+	if err == nil {
+		t.Fatalf("expected schema validation error for invalid output fail mode")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -73,16 +74,29 @@ type ddLogEntry struct {
 
 // Export sends a batch of events to the Datadog Log Intake API.
 func (d *DatadogExporter) Export(ctx context.Context, events []SIEMEvent) error {
-	entries := make([]ddLogEntry, len(events))
-	for i, ev := range events {
-		msg, _ := json.Marshal(ev)
-		entries[i] = ddLogEntry{
+	if len(events) == 0 {
+		return nil
+	}
+	entries := make([]ddLogEntry, 0, len(events))
+	for _, ev := range events {
+		msg, err := json.Marshal(ev)
+		if err != nil {
+			slog.Error("audit datadog: skipping event with marshal failure",
+				"event_type", ev.EventType,
+				"error", err,
+			)
+			continue
+		}
+		entries = append(entries, ddLogEntry{
 			DDSource: "cordum",
 			DDTags:   d.tags,
 			Hostname: d.hostname,
 			Service:  "cordum",
 			Message:  string(msg),
-		}
+		})
+	}
+	if len(entries) == 0 {
+		return nil
 	}
 
 	body, err := json.Marshal(entries)

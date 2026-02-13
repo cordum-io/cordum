@@ -180,3 +180,9 @@ export function useAuditExport(
     staleTime: 0,
   });
 }
+
+/** @internal exported for unit tests */
+export const __auditInternal = {
+  applyFilters,
+  applySort,
+};

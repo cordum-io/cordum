@@ -20,6 +20,7 @@ const JOB_STATUSES: JobStatus[] = [
   "approval_required",
   "denied",
   "timeout",
+  "output_quarantined",
 ];
 
 const DECISION_TYPES = [

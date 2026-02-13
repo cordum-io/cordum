@@ -186,6 +186,85 @@ func TestRedisJobStoreTransitionGuard(t *testing.T) {
 	if err := store.SetState(ctx, jobScheduledTimeout, scheduler.JobStateTimeout); err != nil {
 		t.Fatalf("scheduled -> timeout should be ok: %v", err)
 	}
+
+	jobRunningQuarantined := "job-456-running-quarantined"
+	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStateScheduled); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStateRunning); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStateQuarantined); err != nil {
+		t.Fatalf("running -> output_quarantined should be ok: %v", err)
+	}
+	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStateRunning); err == nil {
+		t.Fatalf("expected invalid transition from output_quarantined")
+	}
+}
+
+func TestRedisJobStoreOutputSafetyRoundTrip(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-output-safety"
+	record := scheduler.OutputSafetyRecord{
+		Decision:       scheduler.OutputQuarantine,
+		Reason:         "secret detected in output",
+		RuleID:         "out-001",
+		PolicySnapshot: "snapshot-abc",
+		Findings: []scheduler.OutputFinding{{
+			Type:           "secret_leak",
+			Severity:       "critical",
+			Detail:         "aws_access_key_id",
+			Scanner:        "regex",
+			Confidence:     0.98,
+			MatchedPattern: "AKIA[0-9A-Z]{16}",
+		}},
+		RedactedPtr: "redis://res:job-output-safety:redacted",
+		OriginalPtr: "redis://res:job-output-safety:original",
+		Phase:       "sync",
+	}
+
+	if err := store.SetOutputSafety(ctx, jobID, record); err != nil {
+		t.Fatalf("set output safety: %v", err)
+	}
+	if raw, err := store.client.Get(ctx, outputDecisionKey(jobID)).Result(); err != nil || raw == "" {
+		t.Fatalf("expected output decision key to be stored, err=%v raw=%q", err, raw)
+	}
+	got, err := store.GetOutputSafety(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get output safety: %v", err)
+	}
+	if got.Decision != scheduler.OutputQuarantine {
+		t.Fatalf("expected decision %q got %q", scheduler.OutputQuarantine, got.Decision)
+	}
+	if got.RedactedPtr != record.RedactedPtr || got.OriginalPtr != record.OriginalPtr {
+		t.Fatalf("unexpected pointers: %#v", got)
+	}
+	if len(got.Findings) != 1 || got.Findings[0].Scanner != "regex" {
+		t.Fatalf("unexpected findings: %#v", got.Findings)
+	}
+	if got.CheckedAt == 0 {
+		t.Fatalf("expected checked_at timestamp to be set")
+	}
+	gotDecision, err := store.GetOutputDecision(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get output decision: %v", err)
+	}
+	if gotDecision.Decision != scheduler.OutputQuarantine {
+		t.Fatalf("expected output decision via key, got %#v", gotDecision)
+	}
 }
 
 func TestRedisJobStoreListRecentJobs(t *testing.T) {

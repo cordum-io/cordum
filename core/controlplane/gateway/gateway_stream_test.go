@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 )
 
@@ -75,6 +76,76 @@ func TestApiKeyFromWebSocketProtocols(t *testing.T) {
 	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+", "+token)
 	if got := apiKeyFromWebSocket(req); got != "secret" {
 		t.Fatalf("expected secret got %q", got)
+	}
+}
+
+// ---- negotiateSubprotocol unit tests ----
+
+func TestNegotiateSubprotocol_ValidProtocol(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	token := base64.RawURLEncoding.EncodeToString([]byte("my-key"))
+	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+"."+token)
+	h := negotiateSubprotocol(req)
+	if h == nil {
+		t.Fatal("expected non-nil header for valid subprotocol")
+	}
+	got := h.Get("Sec-Websocket-Protocol")
+	if !strings.HasPrefix(strings.ToLower(got), strings.ToLower(wsAPIKeyProtocol)) {
+		t.Fatalf("expected protocol starting with %s, got %q", wsAPIKeyProtocol, got)
+	}
+}
+
+func TestNegotiateSubprotocol_NoMatchingProtocol(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Sec-WebSocket-Protocol", "graphql-ws, some-other")
+	h := negotiateSubprotocol(req)
+	if h != nil {
+		t.Fatalf("expected nil for non-matching subprotocols, got %v", h)
+	}
+}
+
+func TestNegotiateSubprotocol_EmptyProtocols(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	h := negotiateSubprotocol(req)
+	if h != nil {
+		t.Fatalf("expected nil for empty subprotocols, got %v", h)
+	}
+}
+
+// ---- apiKeyFromWebSocket unit tests ----
+
+func TestApiKeyFromWebSocket_DotFormat(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	token := base64.RawURLEncoding.EncodeToString([]byte("secret-key"))
+	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+"."+token)
+	got := apiKeyFromWebSocket(req)
+	if got != "secret-key" {
+		t.Fatalf("expected secret-key, got %q", got)
+	}
+}
+
+func TestApiKeyFromWebSocket_NilRequest(t *testing.T) {
+	got := apiKeyFromWebSocket(nil)
+	if got != "" {
+		t.Fatalf("expected empty for nil request, got %q", got)
+	}
+}
+
+func TestApiKeyFromWebSocket_NoSubprotocol(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	got := apiKeyFromWebSocket(req)
+	if got != "" {
+		t.Fatalf("expected empty for no subprotocol, got %q", got)
+	}
+}
+
+func TestApiKeyFromWebSocket_MalformedBase64FallsBack(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	// Non-base64 token — decodeWSAPIKey returns raw string as fallback
+	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+".not-base64!!!")
+	got := apiKeyFromWebSocket(req)
+	if got == "" {
+		t.Fatal("expected non-empty fallback for malformed base64")
 	}
 }
 
@@ -280,6 +351,72 @@ func TestSplitWorkflowJobID(t *testing.T) {
 	run, step = splitWorkflowJobID("bad")
 	if run != "" || step != "" {
 		t.Fatalf("expected empty split for invalid id")
+	}
+}
+
+func TestFilterQuarantinedPacketStripsDenied(t *testing.T) {
+	pkt := &pb.BusPacket{
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:        "job-1",
+				Status:       pb.JobStatus_JOB_STATUS_DENIED,
+				ResultPtr:    "redis://res:job-1",
+				ErrorMessage: "output quarantined",
+				ArtifactPtrs: []string{"art-1", "art-2"},
+			},
+		},
+	}
+	filtered := filterQuarantinedPacket(pkt)
+	jr := filtered.GetJobResult()
+	if jr == nil {
+		t.Fatal("expected job result in filtered packet")
+	}
+	if jr.Status != pb.JobStatus_JOB_STATUS_DENIED {
+		t.Fatalf("expected denied status preserved, got %v", jr.Status)
+	}
+	if jr.ResultPtr != "" {
+		t.Fatalf("expected result_ptr stripped, got %q", jr.ResultPtr)
+	}
+	if len(jr.ArtifactPtrs) != 0 {
+		t.Fatalf("expected artifact_ptrs stripped, got %v", jr.ArtifactPtrs)
+	}
+	if jr.ErrorMessage != "output quarantined" {
+		t.Fatalf("expected error_message preserved, got %q", jr.ErrorMessage)
+	}
+	if jr.JobId != "job-1" {
+		t.Fatalf("expected job_id preserved, got %q", jr.JobId)
+	}
+}
+
+func TestFilterQuarantinedPacketPassesNonDenied(t *testing.T) {
+	pkt := &pb.BusPacket{
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:     "job-2",
+				Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
+				ResultPtr: "redis://res:job-2",
+			},
+		},
+	}
+	filtered := filterQuarantinedPacket(pkt)
+	if filtered != pkt {
+		t.Fatal("expected non-denied packet returned unchanged")
+	}
+	jr := filtered.GetJobResult()
+	if jr.ResultPtr != "redis://res:job-2" {
+		t.Fatalf("expected result_ptr preserved, got %q", jr.ResultPtr)
+	}
+}
+
+func TestFilterQuarantinedPacketPassesHeartbeat(t *testing.T) {
+	pkt := &pb.BusPacket{
+		Payload: &pb.BusPacket_Heartbeat{
+			Heartbeat: &pb.Heartbeat{WorkerId: "w-1"},
+		},
+	}
+	filtered := filterQuarantinedPacket(pkt)
+	if filtered != pkt {
+		t.Fatal("expected heartbeat packet returned unchanged")
 	}
 }
 

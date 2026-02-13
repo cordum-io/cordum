@@ -297,3 +297,43 @@ func TestValidateKey_NotFound(t *testing.T) {
 		t.Fatalf("expected key not found error")
 	}
 }
+
+func TestRecordUsageConcurrentNoLostIncrements(t *testing.T) {
+	store, _ := newTestKeyStore(t)
+	ctx := context.Background()
+
+	keyID := "key-concurrent"
+	seedManagedKey(ctx, t, store, "tenant-a", keyID)
+
+	const goroutines = 10
+	const increments = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < increments; j++ {
+				if err := store.RecordUsage(ctx, keyID); err != nil {
+					t.Errorf("record usage: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Read back and verify usage_count == goroutines * increments.
+	raw, err := store.client.Get(ctx, keyRecordKey(keyID)).Result()
+	if err != nil {
+		t.Fatalf("get key: %v", err)
+	}
+	var mk ManagedKey
+	if err := json.Unmarshal([]byte(raw), &mk); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	expected := int64(goroutines * increments)
+	if mk.UsageCount != expected {
+		t.Fatalf("expected usage_count=%d, got %d (lost %d increments)",
+			expected, mk.UsageCount, expected-mk.UsageCount)
+	}
+}

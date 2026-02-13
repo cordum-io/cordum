@@ -200,6 +200,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		jobStore:       jobStore,
 		bus:            bus,
 		workers:        make(map[string]*pb.Heartbeat),
+		workerSeen:     make(map[string]time.Time),
 		clients:        make(map[*websocket.Conn]*wsClient),
 		eventsCh:       make(chan wsEvent, 8),
 		workflowStore:  workflowStore,

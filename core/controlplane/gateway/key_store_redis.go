@@ -51,7 +51,7 @@ func keyPrefixIndexKey(prefix string) string { return apiKeyPrefixIndexPrefix + 
 
 const apiKeyPrefixLen = 11 // "ck_" + 8 hex chars
 
-var errKeyNotFound = errors.New("key not found")
+var ErrKeyNotFound = errors.New("key not found")
 
 // GenerateRawKey creates a cryptographically random API key with the ck_ prefix.
 func GenerateRawKey() (string, error) {
@@ -131,7 +131,7 @@ func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret s
 		return fmt.Errorf("key prefix too short")
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(rawSecret), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(rawSecret), bcryptCostFromEnv())
 	if err != nil {
 		return fmt.Errorf("hash key: %w", err)
 	}
@@ -158,7 +158,7 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 	txFunc := func(tx *redis.Tx) error {
 		raw, err := tx.Get(ctx, keyRecordKey(id)).Result()
 		if err == redis.Nil {
-			return errKeyNotFound
+			return ErrKeyNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("get key: %w", err)
@@ -169,7 +169,7 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 			return fmt.Errorf("unmarshal key: %w", err)
 		}
 		if mk.Tenant != tenant {
-			return errKeyNotFound
+			return ErrKeyNotFound
 		}
 		mk.Revoked = true
 
@@ -190,7 +190,7 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 
 	for i := 0; i < 3; i++ {
 		if err := s.client.Watch(ctx, txFunc, keyRecordKey(id)); err != nil {
-			if errors.Is(err, errKeyNotFound) {
+			if errors.Is(err, ErrKeyNotFound) {
 				return err
 			}
 			if errors.Is(err, redis.TxFailedErr) {
@@ -258,29 +258,26 @@ func (s *RedisKeyStore) ValidateKey(ctx context.Context, rawKey string) (*Manage
 	return nil, fmt.Errorf("key not found")
 }
 
-// RecordUsage increments the usage counter and updates the last-used timestamp.
+// recordUsageLua atomically increments usage_count and updates last_used
+// inside the JSON blob, preventing lost updates under concurrent access.
+var recordUsageLua = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return redis.error_reply('key not found') end
+local obj = cjson.decode(raw)
+obj.usage_count = (obj.usage_count or 0) + 1
+obj.last_used = ARGV[1]
+redis.call('SET', KEYS[1], cjson.encode(obj))
+return obj.usage_count
+`)
+
+// RecordUsage atomically increments the usage counter and updates the
+// last-used timestamp using a Lua script to prevent lost updates.
 func (s *RedisKeyStore) RecordUsage(ctx context.Context, id string) error {
-	raw, err := s.client.Get(ctx, keyRecordKey(id)).Result()
+	now := time.Now().UTC().Format(time.RFC3339)
+	err := recordUsageLua.Run(ctx, s.client, []string{keyRecordKey(id)}, now).Err()
 	if err != nil {
-		return fmt.Errorf("get key: %w", err)
-	}
-
-	var mk ManagedKey
-	if err := json.Unmarshal([]byte(raw), &mk); err != nil {
-		return fmt.Errorf("unmarshal key: %w", err)
-	}
-
-	mk.UsageCount++
-	mk.LastUsed = time.Now().UTC()
-
-	data, err := json.Marshal(&mk)
-	if err != nil {
-		return fmt.Errorf("marshal key: %w", err)
-	}
-
-	if err := s.client.Set(ctx, keyRecordKey(id), data, 0).Err(); err != nil {
 		slog.Warn("failed to record key usage", "key_id", id, "error", err)
-		return err
+		return fmt.Errorf("record usage: %w", err)
 	}
 	return nil
 }

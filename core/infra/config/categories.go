@@ -104,38 +104,6 @@ type ContextConfig struct {
 	MaxRetrievedChunks int               `json:"max_retrieved_chunks"`
 	CrossTenantAccess  bool              `json:"cross_tenant_access"` // should usually be false
 	AllowedConnectors  []string          `json:"allowed_connectors"`  // "github", "slack", "jira"
-	RedactionPolicies  map[string]string `json:"redaction_policies"`  // memory_id -> "full|pii_only|none"
-}
-
-// ExperimentConfig - Controls A/B testing for ML persona
-type ExperimentConfig struct {
-	Enabled bool               `json:"enabled"`
-	Name    string             `json:"name"`
-	Buckets []ExperimentBucket `json:"buckets"` // A/B/C
-}
-
-type ExperimentBucket struct {
-	Name        string         `json:"name"`   // "control", "variant-llama3"
-	Weight      int            `json:"weight"` // 0–100
-	Model       string         `json:"model"`  // overrides DefaultModel
-	ExtraConfig map[string]any `json:"extra_config"`
-}
-
-// IntegrationConfig - Defines policies for external integrations
-type IntegrationConfig struct {
-	GitHub IntegrationStatus `json:"github"`
-	GitLab IntegrationStatus `json:"gitlab"`
-	Slack  IntegrationStatus `json:"slack"`
-	Jira   IntegrationStatus `json:"jira"`
-	// ...
-}
-
-type IntegrationStatus struct {
-	Enabled       bool     `json:"enabled"`
-	ConnectionID  string   `json:"connection_id"` // references stored secrets in Vault/KMS
-	AllowedTeams  []string `json:"allowed_teams"`
-	AllowedScopes []string `json:"allowed_scopes"` // "repos:read", "issues:write"
-	SecretValue   string   `json:"-"`              // Resolved secret value (for demonstration only)
 }
 
 // SLOConfig - Service Level Objectives per workflow

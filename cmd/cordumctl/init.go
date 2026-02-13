@@ -29,7 +29,7 @@ services:
     depends_on:
       - redis
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - CONTEXT_ENGINE_ADDR=:50070
     ports:
       - "50070:50070"
@@ -58,7 +58,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
       - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
       - TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml
@@ -77,7 +77,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
       - CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
       - TENANT_ID=default
@@ -99,7 +99,7 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - WORKFLOW_ENGINE_HTTP_ADDR=:9093
       - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
       - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200

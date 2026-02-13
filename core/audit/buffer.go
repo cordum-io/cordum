@@ -3,17 +3,46 @@ package audit
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 const (
-	defaultBatchSize    = 100
+	defaultBatchSize     = 100
 	defaultFlushInterval = 5 * time.Second
-	defaultChanSize     = 1000
+	defaultChanSize      = 1000
 	defaultExportTimeout = 10 * time.Second
-	maxRetries          = 3
+	defaultMaxRetries    = 3
 )
+
+var auditBatchDrops = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "cordum_audit_batch_drops_total",
+	Help: "Total audit batches permanently dropped after exhausting retries.",
+})
+
+func auditMaxRetries() int {
+	if raw := strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_MAX_RETRIES")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultMaxRetries
+}
+
+func auditBufferSize() int {
+	if raw := strings.TrimSpace(os.Getenv("CORDUM_AUDIT_BUFFER_SIZE")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultChanSize
+}
 
 // BufferedExporter wraps an Exporter with async batching and retry.
 type BufferedExporter struct {
@@ -24,6 +53,7 @@ type BufferedExporter struct {
 
 	batchSize     int
 	flushInterval time.Duration
+	retryBackoff  time.Duration
 }
 
 // BufferOption configures a BufferedExporter.
@@ -39,14 +69,20 @@ func WithFlushInterval(d time.Duration) BufferOption {
 	return func(b *BufferedExporter) { b.flushInterval = d }
 }
 
+// WithRetryBackoff sets the initial backoff duration between export retries.
+func WithRetryBackoff(d time.Duration) BufferOption {
+	return func(b *BufferedExporter) { b.retryBackoff = d }
+}
+
 // NewBufferedExporter wraps an Exporter with async batching.
 func NewBufferedExporter(exp Exporter, opts ...BufferOption) *BufferedExporter {
 	b := &BufferedExporter{
 		exporter:      exp,
-		ch:            make(chan SIEMEvent, defaultChanSize),
+		ch:            make(chan SIEMEvent, auditBufferSize()),
 		done:          make(chan struct{}),
 		batchSize:     defaultBatchSize,
 		flushInterval: defaultFlushInterval,
+		retryBackoff:  time.Second,
 	}
 	for _, o := range opts {
 		o(b)
@@ -131,9 +167,13 @@ func (b *BufferedExporter) loop() {
 }
 
 func (b *BufferedExporter) exportWithRetry(ctx context.Context, events []SIEMEvent) {
-	backoff := time.Second
+	backoff := b.retryBackoff
+	if backoff <= 0 {
+		backoff = time.Second
+	}
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	retries := auditMaxRetries()
+	for attempt := 0; attempt < retries; attempt++ {
 		exportCtx, cancel := context.WithTimeout(ctx, defaultExportTimeout)
 		err := b.exporter.Export(exportCtx, events)
 		cancel()
@@ -143,7 +183,7 @@ func (b *BufferedExporter) exportWithRetry(ctx context.Context, events []SIEMEve
 				"events", len(events),
 				"error", err,
 			)
-			if attempt < maxRetries-1 {
+			if attempt < retries-1 {
 				select {
 				case <-ctx.Done():
 					slog.Warn("audit export cancelled during retry",
@@ -159,7 +199,9 @@ func (b *BufferedExporter) exportWithRetry(ctx context.Context, events []SIEMEve
 		}
 		return
 	}
-	slog.Error("audit export failed after all retries, dropping batch",
+	slog.Error("audit batch permanently dropped after retries",
 		"events", len(events),
+		"max_retries", retries,
 	)
+	auditBatchDrops.Inc()
 }

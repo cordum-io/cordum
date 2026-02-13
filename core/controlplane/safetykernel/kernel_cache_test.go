@@ -1,6 +1,7 @@
 package safetykernel
 
 import (
+	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -128,5 +129,103 @@ func TestMergeMCPPolicy(t *testing.T) {
 	}
 	if len(merged.AllowActions) != 1 || merged.AllowActions[0] != "read" {
 		t.Fatalf("unexpected merged allow actions")
+	}
+}
+
+func TestDecisionCacheEvictsWhenFull(t *testing.T) {
+	srv := &server{
+		cacheTTL:     time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 3,
+	}
+	for i := 0; i < 4; i++ {
+		key := fmt.Sprintf("key-%d", i)
+		resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: key}
+		srv.setCachedDecision(key, resp)
+		// Small sleep ensures distinct expires timestamps for deterministic eviction order.
+		time.Sleep(time.Millisecond)
+	}
+	srv.cacheMu.Lock()
+	size := len(srv.cache)
+	srv.cacheMu.Unlock()
+	if size != 3 {
+		t.Fatalf("expected cache size 3, got %d", size)
+	}
+	// Newest entry must be present.
+	if got := srv.getCachedDecision("key-3"); got == nil {
+		t.Fatalf("expected newest entry key-3 to be present")
+	}
+	// Oldest entry (key-0) should have been evicted (earliest expires).
+	if got := srv.getCachedDecision("key-0"); got != nil {
+		t.Fatalf("expected oldest entry key-0 to be evicted")
+	}
+}
+
+func TestDecisionCacheEvictsExpiredFirst(t *testing.T) {
+	srv := &server{
+		cacheTTL:     25 * time.Millisecond,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 2,
+	}
+	resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}
+	srv.setCachedDecision("old-1", resp)
+	srv.setCachedDecision("old-2", resp)
+
+	// Wait for TTL to expire.
+	time.Sleep(50 * time.Millisecond)
+
+	// Insert a new entry — expired entries should be swept first.
+	srv.setCachedDecision("new-1", resp)
+
+	srv.cacheMu.Lock()
+	size := len(srv.cache)
+	srv.cacheMu.Unlock()
+	if size > 2 {
+		t.Fatalf("expected cache size <= 2, got %d", size)
+	}
+	if got := srv.getCachedDecision("new-1"); got == nil {
+		t.Fatalf("expected new entry to be retrievable")
+	}
+}
+
+func TestDecisionCacheMaxSizeEnvParsing(t *testing.T) {
+	t.Setenv(envDecisionCacheMaxSize, "500")
+	if got := parseIntEnv(envDecisionCacheMaxSize, defaultDecisionCacheMaxSize); got != 500 {
+		t.Fatalf("expected 500, got %d", got)
+	}
+
+	t.Setenv(envDecisionCacheMaxSize, "not-a-number")
+	if got := parseIntEnv(envDecisionCacheMaxSize, defaultDecisionCacheMaxSize); got != defaultDecisionCacheMaxSize {
+		t.Fatalf("expected default %d for invalid input, got %d", defaultDecisionCacheMaxSize, got)
+	}
+
+	t.Setenv(envDecisionCacheMaxSize, "")
+	if got := parseIntEnv(envDecisionCacheMaxSize, defaultDecisionCacheMaxSize); got != defaultDecisionCacheMaxSize {
+		t.Fatalf("expected default %d for empty input, got %d", defaultDecisionCacheMaxSize, got)
+	}
+}
+
+func TestDecisionCacheTTLPreservedWithBound(t *testing.T) {
+	srv := &server{
+		cacheTTL:     25 * time.Millisecond,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	key := "bounded-ttl-key"
+	resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}
+	srv.setCachedDecision(key, resp)
+	if got := srv.getCachedDecision(key); got == nil {
+		t.Fatalf("expected cached decision")
+	}
+	// Poll until TTL expires.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srv.getCachedDecision(key) == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := srv.getCachedDecision(key); got != nil {
+		t.Fatalf("expected cached decision to expire with bounded cache")
 	}
 }

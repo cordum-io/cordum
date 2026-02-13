@@ -150,6 +150,59 @@ function parseDurationSeconds(value: unknown): number | undefined {
   return Math.round(seconds);
 }
 
+function toPositiveInt(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function parseSwitchCaseEntry(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const matchValue = record.match ?? record.when ?? record.value ?? record.matchValue;
+  const stepRaw = record.next ?? record.step ?? record.target ?? record.step_id ?? record.goto ?? record.stepId;
+  const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
+  if (!stepId) return null;
+  return {
+    match: matchValue == null ? "" : matchValue,
+    next: stepId,
+  };
+}
+
+function parseSwitchCasesInput(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => parseSwitchCaseEntry(entry))
+      .filter((entry): entry is Record<string, unknown> => entry !== null);
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([match, stepRaw]) => {
+        const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
+        if (!stepId) return null;
+        return { match, next: stepId } as Record<string, unknown>;
+      })
+      .filter((entry): entry is Record<string, unknown> => entry !== null);
+  }
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return parseSwitchCasesInput(parsed);
+    } catch {
+      logger.debug("workflows", "JSON parse failed for switch cases input");
+      return [];
+    }
+  }
+  return [];
+}
+
 function parseDateToISO(value: string): string | undefined {
   const ms = Date.parse(value);
   if (Number.isNaN(ms)) return undefined;
@@ -157,19 +210,43 @@ function parseDateToISO(value: string): string | undefined {
   return iso;
 }
 
+function parseMappingValue(value: unknown): Record<string, unknown> | string | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      logger.debug("workflows", "JSON parse failed in parseMappingValue, treating as string");
+      return trimmed;
+    }
+    return trimmed;
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
 function buildStepPayload(step: Workflow["steps"][number]): Record<string, unknown> {
   const config = (step.config ?? {}) as Record<string, unknown>;
   const JOB_SUBTYPES = new Set(["agent-task", "pack-action", "tool-call", "job"]);
   const frontendType = step.type || "job";
+  const backendType = typeof config.backendType === "string" && config.backendType.trim()
+    ? config.backendType.trim()
+    : JOB_SUBTYPES.has(frontendType)
+      ? "job"
+      : frontendType === "sub-workflow"
+        ? "subworkflow"
+        : frontendType;
   const payload: Record<string, unknown> = {
     id: step.id,
     name: step.name,
-    type:
-      typeof config.backendType === "string" && config.backendType.trim()
-        ? config.backendType.trim()
-        : JOB_SUBTYPES.has(frontendType)
-          ? "job"
-          : frontendType,
+    type: backendType,
   };
 
   // Prefer direct backend fields, fall back to legacy config bag
@@ -233,6 +310,69 @@ function buildStepPayload(step: Workflow["steps"][number]): Record<string, unkno
   const input: Record<string, unknown> = {};
   const stepInput = step.input ?? (config.input as Record<string, unknown> | undefined);
   if (stepInput && typeof stepInput === "object") Object.assign(input, stepInput);
+  if (frontendType === "parallel" || payload.type === "parallel") {
+    const parallelSteps = toStringArray(
+      (stepInput as Record<string, unknown> | undefined)?.steps ?? config.parallelSteps ?? config.steps,
+    );
+    if (parallelSteps.length > 0) {
+      input.steps = parallelSteps;
+    }
+    const strategy =
+      typeof (stepInput as Record<string, unknown> | undefined)?.strategy === "string"
+        ? ((stepInput as Record<string, unknown>).strategy as string).trim()
+        : typeof config.completionStrategy === "string"
+          ? config.completionStrategy.trim()
+          : "";
+    if (strategy) {
+      input.strategy = strategy;
+    }
+    const required = toPositiveInt(
+      (stepInput as Record<string, unknown> | undefined)?.required ?? config.requiredCount,
+    );
+    if ((strategy || input.strategy) === "n_of_m" && required !== undefined) {
+      input.required = required;
+    }
+  }
+  if (frontendType === "sub-workflow" || payload.type === "subworkflow") {
+    const workflowId =
+      typeof (stepInput as Record<string, unknown> | undefined)?.workflow_id === "string"
+        ? ((stepInput as Record<string, unknown>).workflow_id as string).trim()
+        : typeof config.workflowId === "string"
+          ? config.workflowId.trim()
+          : "";
+    if (workflowId) input.workflow_id = workflowId;
+
+    const inputMapping = parseMappingValue(
+      (stepInput as Record<string, unknown> | undefined)?.input_mapping ?? config.inputMapping,
+    );
+    if (inputMapping !== undefined) input.input_mapping = inputMapping;
+
+    const outputMapping = parseMappingValue(
+      (stepInput as Record<string, unknown> | undefined)?.output_mapping ?? config.outputMapping,
+    );
+    if (outputMapping !== undefined) input.output_mapping = outputMapping;
+  }
+  if (frontendType === "switch" || payload.type === "switch") {
+    const switchCases = parseSwitchCasesInput(
+      (stepInput as Record<string, unknown> | undefined)?.cases ??
+        config.switchCases ??
+        config.cases,
+    );
+    if (switchCases.length > 0) {
+      input.cases = switchCases;
+    }
+    const defaultBranch =
+      (typeof (stepInput as Record<string, unknown> | undefined)?.default === "string"
+        ? ((stepInput as Record<string, unknown>).default as string).trim()
+        : typeof (stepInput as Record<string, unknown> | undefined)?.default_step === "string"
+          ? ((stepInput as Record<string, unknown>).default_step as string).trim()
+          : typeof config.defaultBranch === "string"
+            ? config.defaultBranch.trim()
+            : "");
+    if (defaultBranch) {
+      input.default = defaultBranch;
+    }
+  }
   if (typeof config.messageTemplate === "string" && config.messageTemplate.trim()) input.message = config.messageTemplate.trim();
   if (typeof config.channel === "string" && config.channel.trim()) input.component = config.channel.trim();
   if (typeof config.prompt === "string" && config.prompt.trim()) input.prompt = config.prompt.trim();
@@ -715,6 +855,68 @@ export function useCancelRun() {
 }
 
 // ---------------------------------------------------------------------------
+// Delete run
+// ---------------------------------------------------------------------------
+
+export interface DeleteRunInput {
+  workflowId: string;
+  runId: string;
+}
+
+export function useDeleteRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DeleteRunInput) => {
+      if (!input?.workflowId || !input?.runId) {
+        throw new Error("workflow id and run id are required");
+      }
+      logger.info("workflows", "Deleting run", { workflowId: input.workflowId, runId: input.runId });
+      return del<void>(`/workflows/${input.workflowId}/runs/${input.runId}`);
+    },
+    onSuccess: (_data, variables) => {
+      logger.info("workflows", "Run deleted", { workflowId: variables?.workflowId, runId: variables?.runId });
+      useToastStore.getState().addToast({ type: "success", title: "Run deleted" });
+      queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+      if (variables?.workflowId) {
+        queryClient.invalidateQueries({ queryKey: ["workflow-runs", variables.workflowId] });
+      }
+    },
+    onError: (err, variables) => {
+      logger.error("workflows", "Delete run failed", { runId: variables?.runId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to delete run", description: err.message });
+    },
+  });
+}
+
+export function useDeleteRuns() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (inputs: DeleteRunInput[]) => {
+      if (!inputs?.length) {
+        throw new Error("at least one run is required");
+      }
+      logger.info("workflows", "Deleting runs", { count: inputs.length });
+      return Promise.all(
+        inputs.map((input) => del<void>(`/workflows/${input.workflowId}/runs/${input.runId}`)),
+      );
+    },
+    onSuccess: (_data, variables) => {
+      logger.info("workflows", "Runs deleted", { count: variables?.length });
+      useToastStore.getState().addToast({ type: "success", title: `${variables?.length ?? 0} run(s) deleted` });
+      queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+      const workflowIds = new Set(variables?.map((v) => v.workflowId));
+      for (const wid of workflowIds) {
+        queryClient.invalidateQueries({ queryKey: ["workflow-runs", wid] });
+      }
+    },
+    onError: (err) => {
+      logger.error("workflows", "Bulk delete runs failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to delete runs", description: err.message });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Dry-run simulation
 // ---------------------------------------------------------------------------
 
@@ -749,3 +951,16 @@ export function useDryRun() {
     },
   });
 }
+
+/** @internal exported for unit tests */
+export const __workflowsInternal = {
+  buildQuery,
+  toStringArray,
+  parseDurationSeconds,
+  parseDateToISO,
+  buildStepPayload,
+  toWorkflowUpsertPayload,
+  getAttentionPriority,
+  sortByAttention,
+  computeWorkflowStats,
+};

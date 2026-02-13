@@ -17,6 +17,18 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// NaiveStrategy forwards jobs directly to the requested topic (test-only).
+type NaiveStrategy struct{}
+
+func NewNaiveStrategy() *NaiveStrategy { return &NaiveStrategy{} }
+
+func (s *NaiveStrategy) PickSubject(req *pb.JobRequest, _ map[string]*pb.Heartbeat) (string, error) {
+	if req == nil || req.Topic == "" {
+		return "", fmt.Errorf("missing topic")
+	}
+	return req.Topic, nil
+}
+
 type publishedMsg struct {
 	subject string
 	packet  *pb.BusPacket
@@ -44,12 +56,14 @@ func (s *errStrategy) PickSubject(_ *pb.JobRequest, _ map[string]*pb.Heartbeat) 
 }
 
 type fakeJobStore struct {
+	mu             sync.RWMutex
 	states         map[string]JobState
 	ptrs           map[string]string
 	topics         map[string]string
 	tenants        map[string]string
 	teams          map[string]string
 	safety         map[string]SafetyDecisionRecord
+	output         map[string]OutputSafetyRecord
 	attempts       map[string]int
 	locks          map[string]time.Time
 	failureReasons map[string]string
@@ -79,6 +93,7 @@ func newFakeJobStore() *fakeJobStore {
 		tenants:        make(map[string]string),
 		teams:          make(map[string]string),
 		safety:         make(map[string]SafetyDecisionRecord),
+		output:         make(map[string]OutputSafetyRecord),
 		attempts:       make(map[string]int),
 		locks:          make(map[string]time.Time),
 		failureReasons: make(map[string]string),
@@ -86,6 +101,8 @@ func newFakeJobStore() *fakeJobStore {
 }
 
 func (s *fakeJobStore) SetState(_ context.Context, jobID string, state JobState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.states[jobID] = state
 	if state == JobStateScheduled {
 		s.attempts[jobID]++
@@ -94,15 +111,21 @@ func (s *fakeJobStore) SetState(_ context.Context, jobID string, state JobState)
 }
 
 func (s *fakeJobStore) GetState(_ context.Context, jobID string) (JobState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.states[jobID], nil
 }
 
 func (s *fakeJobStore) SetResultPtr(_ context.Context, jobID, resultPtr string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.ptrs[jobID] = resultPtr
 	return nil
 }
 
 func (s *fakeJobStore) GetResultPtr(_ context.Context, jobID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.ptrs[jobID], nil
 }
 
@@ -137,42 +160,60 @@ func (s *fakeJobStore) GetTraceJobs(_ context.Context, traceID string) ([]JobRec
 }
 
 func (s *fakeJobStore) SetTopic(_ context.Context, jobID, topic string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.topics[jobID] = topic
 	return nil
 }
 
 func (s *fakeJobStore) GetTopic(_ context.Context, jobID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.topics[jobID], nil
 }
 
 func (s *fakeJobStore) SetTenant(_ context.Context, jobID, tenant string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.tenants[jobID] = tenant
 	return nil
 }
 
 func (s *fakeJobStore) GetTenant(_ context.Context, jobID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.tenants[jobID], nil
 }
 
 func (s *fakeJobStore) SetTeam(_ context.Context, jobID, team string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.teams[jobID] = team
 	return nil
 }
 
 func (s *fakeJobStore) GetTeam(_ context.Context, jobID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.teams[jobID], nil
 }
 
 func (s *fakeJobStore) SetSafetyDecision(_ context.Context, jobID string, record SafetyDecisionRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.safety[jobID] = record
 	return nil
 }
 
 func (s *fakeJobStore) GetSafetyDecision(_ context.Context, jobID string) (SafetyDecisionRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.safety[jobID], nil
 }
 
 func (s *fakeJobStore) GetAttempts(_ context.Context, jobID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.attempts[jobID], nil
 }
 
@@ -181,6 +222,8 @@ func (s *fakeJobStore) CountActiveByTenant(_ context.Context, _ string) (int, er
 }
 
 func (s *fakeJobStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if until, ok := s.locks[key]; ok && until.After(time.Now()) {
 		return "", nil
 	}
@@ -189,25 +232,48 @@ func (s *fakeJobStore) TryAcquireLock(_ context.Context, key string, ttl time.Du
 }
 
 func (s *fakeJobStore) ReleaseLock(_ context.Context, key string, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.locks, key)
 	return nil
 }
 
 func (s *fakeJobStore) SetFailureReason(_ context.Context, jobID, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.failureReasons[jobID] = reason
 	return nil
 }
 
 func (s *fakeJobStore) GetFailureReason(_ context.Context, jobID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.failureReasons[jobID], nil
 }
 
+func (s *fakeJobStore) SetOutputDecision(_ context.Context, jobID string, record OutputSafetyRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.output[jobID] = record
+	return nil
+}
+
+func (s *fakeJobStore) GetOutputDecision(_ context.Context, jobID string) (OutputSafetyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.output[jobID], nil
+}
+
 func (s *fakeJobStore) IncrAttempts(_ context.Context, jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.attempts[jobID]++
 	return nil
 }
 
 func (s *fakeJobStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	state := s.states[jobID]
 	if terminalStates[state] {
 		return state, nil
@@ -783,5 +849,105 @@ func TestProcessJobIncrAttemptsNotCalledOnSuccess(t *testing.T) {
 	// IncrAttempts should NOT have been called (no scheduling error).
 	if jobStore.attempts["job-ok"] != 1 {
 		t.Fatalf("expected attempts=1 (from SetState SCHEDULED only), got %d", jobStore.attempts["job-ok"])
+	}
+}
+
+// failCancelJobStore wraps fakeJobStore but forces CancelJob to return an error.
+type failCancelJobStore struct {
+	*fakeJobStore
+	cancelErr error
+}
+
+func (s *failCancelJobStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
+	return "", s.cancelErr
+}
+
+// cancelMetricsSpy implements Metrics to track IncJobCancelFailures calls.
+type cancelMetricsSpy struct {
+	cancelFailures int
+}
+
+func (m *cancelMetricsSpy) IncJobsReceived(string)                            {}
+func (m *cancelMetricsSpy) IncJobsDispatched(string)                          {}
+func (m *cancelMetricsSpy) IncJobsCompleted(string, string)                   {}
+func (m *cancelMetricsSpy) IncSafetyDenied(string)                            {}
+func (m *cancelMetricsSpy) IncSafetyUnavailable(string)                       {}
+func (m *cancelMetricsSpy) IncOutputPolicyChecked(string)                     {}
+func (m *cancelMetricsSpy) IncOutputPolicyQuarantined(string)                 {}
+func (m *cancelMetricsSpy) IncOutputPolicySkipped(string)                     {}
+func (m *cancelMetricsSpy) IncAsyncOutputTimeout(string)                      {}
+func (m *cancelMetricsSpy) IncOutputEvaluations(string)                       {}
+func (m *cancelMetricsSpy) IncOutputDenials(string)                           {}
+func (m *cancelMetricsSpy) IncOutputRedactions(string)                        {}
+func (m *cancelMetricsSpy) IncOrphanReplayed(string)                          {}
+func (m *cancelMetricsSpy) ObserveJobLockWait(float64)                        {}
+func (m *cancelMetricsSpy) ObserveDispatchLatency(string, float64)            {}
+func (m *cancelMetricsSpy) ObserveOutputCheckLatency(string, string, float64) {}
+func (m *cancelMetricsSpy) ObserveOutputEvalDuration(string, float64)         {}
+func (m *cancelMetricsSpy) SetActiveGoroutines(int)                           {}
+func (m *cancelMetricsSpy) SetStaleJobs(string, int)                          {}
+func (m *cancelMetricsSpy) IncDLQEmitFailure(string)                          {}
+func (m *cancelMetricsSpy) IncJobCancelFailures()                             { m.cancelFailures++ }
+
+func TestHandlePacket_CancelJob_ErrorPropagates(t *testing.T) {
+	store := &failCancelJobStore{
+		fakeJobStore: newFakeJobStore(),
+		cancelErr:    fmt.Errorf("redis connection lost"),
+	}
+	spy := &cancelMetricsSpy{}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, spy)
+
+	packet := &pb.BusPacket{
+		TraceId:         "trace-cancel-err",
+		SenderId:        "test",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_JobCancel{
+			JobCancel: &pb.JobCancel{
+				JobId:  "job-cancel-fail",
+				Reason: "user requested",
+			},
+		},
+	}
+
+	err := engine.HandlePacket(packet)
+	if err == nil {
+		t.Fatal("expected error from HandlePacket when CancelJob fails")
+	}
+	if !strings.Contains(err.Error(), "redis connection lost") {
+		t.Fatalf("expected redis error, got: %v", err)
+	}
+	if spy.cancelFailures != 1 {
+		t.Fatalf("expected cancel failures metric=1, got %d", spy.cancelFailures)
+	}
+}
+
+func TestHandlePacket_CancelJob_SuccessReturnsNil(t *testing.T) {
+	store := newFakeJobStore()
+	store.states["job-ok"] = JobStateRunning
+	spy := &cancelMetricsSpy{}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, spy)
+
+	packet := &pb.BusPacket{
+		TraceId:         "trace-cancel-ok",
+		SenderId:        "test",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_JobCancel{
+			JobCancel: &pb.JobCancel{
+				JobId:  "job-ok",
+				Reason: "all done",
+			},
+		},
+	}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("expected nil error on successful cancel, got: %v", err)
+	}
+	if spy.cancelFailures != 0 {
+		t.Fatalf("expected no cancel failure metrics, got %d", spy.cancelFailures)
+	}
+	if store.states["job-ok"] != JobStateCancelled {
+		t.Fatalf("expected CANCELLED state, got %s", store.states["job-ok"])
 	}
 }

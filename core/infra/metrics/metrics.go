@@ -18,11 +18,21 @@ type Metrics interface {
 	IncJobsCompleted(topic, status string)
 	IncSafetyDenied(topic string)
 	IncSafetyUnavailable(topic string)
+	IncOutputPolicyChecked(topic string)
+	IncOutputPolicyQuarantined(topic string)
+	IncOutputPolicySkipped(topic string)
+	IncAsyncOutputTimeout(topic string)
+	IncOutputEvaluations(topic string)
+	IncOutputDenials(topic string)
+	IncOutputRedactions(topic string)
 	IncOrphanReplayed(topic string)
 	ObserveJobLockWait(seconds float64)
 	ObserveDispatchLatency(topic string, seconds float64)
+	ObserveOutputCheckLatency(topic, phase string, seconds float64)
+	ObserveOutputEvalDuration(topic string, seconds float64)
 	SetActiveGoroutines(count int)
 	SetStaleJobs(state string, count int)
+	IncDLQEmitFailure(topic string)
 	IncSagaRecorded()
 	IncSagaRollbackTriggered()
 	IncSagaCompensationDispatched()
@@ -31,6 +41,7 @@ type Metrics interface {
 	IncSagaActive()
 	DecSagaActive()
 	IncSagaUnmarshalError()
+	IncJobCancelFailures()
 }
 
 // GatewayMetrics captures request metrics for the API gateway.
@@ -48,45 +59,67 @@ type WorkflowMetrics interface {
 // Noop implements Metrics without emitting anything.
 type Noop struct{}
 
-func (Noop) IncJobsReceived(string)                {}
-func (Noop) IncJobsDispatched(string)              {}
-func (Noop) IncJobsCompleted(string, string)       {}
-func (Noop) IncSafetyDenied(string)                {}
-func (Noop) IncSafetyUnavailable(string)           {}
-func (Noop) IncOrphanReplayed(string)              {}
-func (Noop) ObserveJobLockWait(float64)            {}
-func (Noop) ObserveDispatchLatency(string, float64) {}
-func (Noop) SetActiveGoroutines(int)               {}
-func (Noop) SetStaleJobs(string, int)              {}
-func (Noop) IncSagaRecorded()                      {}
-func (Noop) IncSagaRollbackTriggered()       {}
-func (Noop) IncSagaCompensationDispatched()  {}
-func (Noop) IncSagaCompensationFailed()      {}
-func (Noop) ObserveSagaRollback(float64)     {}
-func (Noop) IncSagaActive()                  {}
-func (Noop) DecSagaActive()                  {}
-func (Noop) IncSagaUnmarshalError()          {}
+func (Noop) IncJobsReceived(string)                            {}
+func (Noop) IncJobsDispatched(string)                          {}
+func (Noop) IncJobsCompleted(string, string)                   {}
+func (Noop) IncSafetyDenied(string)                            {}
+func (Noop) IncSafetyUnavailable(string)                       {}
+func (Noop) IncOutputPolicyChecked(string)                     {}
+func (Noop) IncOutputPolicyQuarantined(string)                 {}
+func (Noop) IncOutputPolicySkipped(string)                     {}
+func (Noop) IncAsyncOutputTimeout(string)                      {}
+func (Noop) IncOutputEvaluations(string)                       {}
+func (Noop) IncOutputDenials(string)                           {}
+func (Noop) IncOutputRedactions(string)                        {}
+func (Noop) IncOrphanReplayed(string)                          {}
+func (Noop) ObserveJobLockWait(float64)                        {}
+func (Noop) ObserveDispatchLatency(string, float64)            {}
+func (Noop) ObserveOutputCheckLatency(string, string, float64) {}
+func (Noop) ObserveOutputEvalDuration(string, float64)         {}
+func (Noop) SetActiveGoroutines(int)                           {}
+func (Noop) SetStaleJobs(string, int)                          {}
+func (Noop) IncDLQEmitFailure(string)                          {}
+func (Noop) IncSagaRecorded()                                  {}
+func (Noop) IncSagaRollbackTriggered()                         {}
+func (Noop) IncSagaCompensationDispatched()                    {}
+func (Noop) IncSagaCompensationFailed()                        {}
+func (Noop) ObserveSagaRollback(float64)                       {}
+func (Noop) IncSagaActive()                                    {}
+func (Noop) DecSagaActive()                                    {}
+func (Noop) IncSagaUnmarshalError()                            {}
+func (Noop) IncJobCancelFailures()                             {}
 
 // Prom implements Metrics backed by Prometheus counters.
 type Prom struct {
-	jobsReceived       *prometheus.CounterVec
-	jobsDispatched     *prometheus.CounterVec
-	jobsCompleted      *prometheus.CounterVec
-	safetyDenied       *prometheus.CounterVec
-	safetyUnavailable  *prometheus.CounterVec
-	orphanReplayed     *prometheus.CounterVec
-	jobLockWait        prometheus.Histogram
-	dispatchLatency    *prometheus.HistogramVec
-	activeGoroutines   prometheus.Gauge
-	staleJobs          *prometheus.GaugeVec
-	sagaRecorded       prometheus.Counter
-	sagaRollbacks      prometheus.Counter
-	sagaDispatched     prometheus.Counter
-	sagaFailed         prometheus.Counter
-	sagaActive         prometheus.Gauge
-	sagaDuration       prometheus.Histogram
-	sagaUnmarshalErrors prometheus.Counter
-	once               sync.Once
+	jobsReceived            *prometheus.CounterVec
+	jobsDispatched          *prometheus.CounterVec
+	jobsCompleted           *prometheus.CounterVec
+	safetyDenied            *prometheus.CounterVec
+	safetyUnavailable       *prometheus.CounterVec
+	outputPolicyChecked     *prometheus.CounterVec
+	outputPolicyQuarantined *prometheus.CounterVec
+	outputPolicySkipped     *prometheus.CounterVec
+	asyncOutputTimeout      *prometheus.CounterVec
+	outputEvaluations       *prometheus.CounterVec
+	outputDenials           *prometheus.CounterVec
+	outputRedactions        *prometheus.CounterVec
+	orphanReplayed          *prometheus.CounterVec
+	jobLockWait             prometheus.Histogram
+	dispatchLatency         *prometheus.HistogramVec
+	outputCheckLatency      *prometheus.HistogramVec
+	outputEvalDuration      *prometheus.HistogramVec
+	activeGoroutines        prometheus.Gauge
+	staleJobs               *prometheus.GaugeVec
+	dlqEmitFailures         *prometheus.CounterVec
+	sagaRecorded            prometheus.Counter
+	sagaRollbacks           prometheus.Counter
+	sagaDispatched          prometheus.Counter
+	sagaFailed              prometheus.Counter
+	sagaActive              prometheus.Gauge
+	sagaDuration            prometheus.Histogram
+	sagaUnmarshalErrors     prometheus.Counter
+	jobCancelFailures       prometheus.Counter
+	once                    sync.Once
 }
 
 func NewProm(namespace string) *Prom {
@@ -116,6 +149,41 @@ func NewProm(namespace string) *Prom {
 			Name:      "safety_unavailable_total",
 			Help:      "Jobs deferred due to safety kernel unavailability per topic",
 		}, []string{"topic"}),
+		outputPolicyChecked: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "output_policy_checked_total",
+			Help:      "Output policy checks executed per topic",
+		}, []string{"topic"}),
+		outputPolicyQuarantined: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "output_policy_quarantined_total",
+			Help:      "Output policy checks that quarantined a result per topic",
+		}, []string{"topic"}),
+		outputPolicySkipped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "output_policy_skipped_total",
+			Help:      "Output policy checks skipped (for example fail-open) per topic",
+		}, []string{"topic"}),
+		asyncOutputTimeout: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "output_policy_async_timeout_total",
+			Help:      "Async output policy checks that timed out or errored per topic",
+		}, []string{"topic"}),
+		outputEvaluations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "output_evaluations_total",
+			Help:      "Total output policy evaluations executed per topic",
+		}, []string{"topic"}),
+		outputDenials: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "output_denials_total",
+			Help:      "Output policy evaluations that denied or quarantined a result per topic",
+		}, []string{"topic"}),
+		outputRedactions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "output_redactions_total",
+			Help:      "Output policy evaluations that required redaction per topic",
+		}, []string{"topic"}),
 		orphanReplayed: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "scheduler_orphan_replayed_total",
@@ -133,6 +201,18 @@ func NewProm(namespace string) *Prom {
 			Help:      "Latency from receive to dispatch per topic",
 			Buckets:   prometheus.DefBuckets,
 		}, []string{"topic"}),
+		outputCheckLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "output_check_latency_seconds",
+			Help:      "Latency of output policy checks by topic and phase",
+			Buckets:   prometheus.DefBuckets,
+		}, []string{"topic", "phase"}),
+		outputEvalDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "output_eval_duration_seconds",
+			Help:      "Duration of output policy evaluation per topic",
+			Buckets:   []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1},
+		}, []string{"topic"}),
 		activeGoroutines: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "scheduler_active_goroutines",
@@ -143,6 +223,11 @@ func NewProm(namespace string) *Prom {
 			Name:      "scheduler_stale_jobs",
 			Help:      "Number of stale jobs detected by reconciler per state",
 		}, []string{"state"}),
+		dlqEmitFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "dlq_emit_failures_total",
+			Help:      "DLQ emit failures after retry exhaustion",
+		}, []string{"topic"}),
 		sagaRecorded: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "saga_recorded_total",
@@ -179,6 +264,11 @@ func NewProm(namespace string) *Prom {
 			Name:      "saga_unmarshal_errors_total",
 			Help:      "Saga compensation entries that failed protobuf unmarshal",
 		}),
+		jobCancelFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "job_cancel_failures_total",
+			Help:      "Job cancel operations that failed",
+		}),
 	}
 	p.register()
 	return p
@@ -192,11 +282,21 @@ func (p *Prom) register() {
 			p.jobsCompleted,
 			p.safetyDenied,
 			p.safetyUnavailable,
+			p.outputPolicyChecked,
+			p.outputPolicyQuarantined,
+			p.outputPolicySkipped,
+			p.asyncOutputTimeout,
+			p.outputEvaluations,
+			p.outputDenials,
+			p.outputRedactions,
 			p.orphanReplayed,
 			p.jobLockWait,
 			p.dispatchLatency,
+			p.outputCheckLatency,
+			p.outputEvalDuration,
 			p.activeGoroutines,
 			p.staleJobs,
+			p.dlqEmitFailures,
 			p.sagaRecorded,
 			p.sagaRollbacks,
 			p.sagaDispatched,
@@ -204,6 +304,7 @@ func (p *Prom) register() {
 			p.sagaActive,
 			p.sagaDuration,
 			p.sagaUnmarshalErrors,
+			p.jobCancelFailures,
 		)
 	})
 }
@@ -228,6 +329,34 @@ func (p *Prom) IncSafetyUnavailable(topic string) {
 	p.safetyUnavailable.WithLabelValues(topic).Inc()
 }
 
+func (p *Prom) IncOutputPolicyChecked(topic string) {
+	p.outputPolicyChecked.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncOutputPolicyQuarantined(topic string) {
+	p.outputPolicyQuarantined.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncOutputPolicySkipped(topic string) {
+	p.outputPolicySkipped.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncAsyncOutputTimeout(topic string) {
+	p.asyncOutputTimeout.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncOutputEvaluations(topic string) {
+	p.outputEvaluations.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncOutputDenials(topic string) {
+	p.outputDenials.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncOutputRedactions(topic string) {
+	p.outputRedactions.WithLabelValues(topic).Inc()
+}
+
 func (p *Prom) IncOrphanReplayed(topic string) {
 	p.orphanReplayed.WithLabelValues(topic).Inc()
 }
@@ -244,12 +373,28 @@ func (p *Prom) ObserveDispatchLatency(topic string, seconds float64) {
 	}
 }
 
+func (p *Prom) ObserveOutputCheckLatency(topic, phase string, seconds float64) {
+	if seconds >= 0 {
+		p.outputCheckLatency.WithLabelValues(topic, phase).Observe(seconds)
+	}
+}
+
+func (p *Prom) ObserveOutputEvalDuration(topic string, seconds float64) {
+	if seconds >= 0 {
+		p.outputEvalDuration.WithLabelValues(topic).Observe(seconds)
+	}
+}
+
 func (p *Prom) SetActiveGoroutines(count int) {
 	p.activeGoroutines.Set(float64(count))
 }
 
 func (p *Prom) SetStaleJobs(state string, count int) {
 	p.staleJobs.WithLabelValues(state).Set(float64(count))
+}
+
+func (p *Prom) IncDLQEmitFailure(topic string) {
+	p.dlqEmitFailures.WithLabelValues(topic).Inc()
 }
 
 func (p *Prom) IncSagaRecorded() {
@@ -284,6 +429,10 @@ func (p *Prom) DecSagaActive() {
 
 func (p *Prom) IncSagaUnmarshalError() {
 	p.sagaUnmarshalErrors.Inc()
+}
+
+func (p *Prom) IncJobCancelFailures() {
+	p.jobCancelFailures.Inc()
 }
 
 // Handler returns an HTTP handler for /metrics.

@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	defaultNatsURL  = "nats://127.0.0.1:4222"
-	defaultRedisURL = "redis://127.0.0.1:6379/0"
+	defaultNatsURL = "nats://127.0.0.1:4222"
+	// Default includes auth for password-protected Redis (docker-compose default).
+	defaultRedisURL = "redis://:cordum-dev@127.0.0.1:6379/0"
 )
 
 type echoInput struct {

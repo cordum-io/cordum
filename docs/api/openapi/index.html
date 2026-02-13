@@ -15,6 +15,16 @@
       .header {
         padding: 20px 24px 0;
         font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .header select {
+        font-size: 14px;
+        padding: 4px 8px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #fff;
       }
       #swagger-ui {
         max-width: 1200px;
@@ -24,12 +34,18 @@
     </style>
   </head>
   <body>
-    <div class="header">Cordum OpenAPI</div>
+    <div class="header">
+      <span>Cordum OpenAPI</span>
+      <select id="spec-select">
+        <option value="cordum-rest.yaml">REST API (HTTP)</option>
+        <option value="cordum.swagger.json">gRPC Gateway (Protobuf)</option>
+      </select>
+    </div>
     <div id="swagger-ui"></div>
     <script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin></script>
     <script>
-      window.addEventListener("load", () => {
-        const specUrl = new URL("cordum.swagger.json", window.location.href).toString();
+      function loadSpec(file) {
+        const specUrl = new URL(file, window.location.href).toString();
         window.ui = SwaggerUIBundle({
           url: specUrl,
           dom_id: "#swagger-ui",
@@ -39,6 +55,12 @@
           layout: "BaseLayout",
           validatorUrl: null,
         });
+      }
+
+      window.addEventListener("load", () => {
+        const select = document.getElementById("spec-select");
+        loadSpec(select.value);
+        select.addEventListener("change", () => loadSpec(select.value));
       });
     </script>
   </body>

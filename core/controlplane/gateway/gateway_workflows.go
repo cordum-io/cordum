@@ -102,6 +102,10 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateDAG(req.Steps); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	wfDef := &wf.Workflow{
 		ID:          req.ID,
@@ -355,17 +359,26 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Kick off execution
 	if s.workflowEng != nil {
-		if s.jobStore != nil {
-			lockKey := "cordum:wf:run:lock:" + runID
-			token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
-			if err != nil {
-				_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
-			} else if token != "" {
-				_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
-				_ = s.jobStore.ReleaseLock(r.Context(), lockKey, token)
+		startErr := func() error {
+			if s.jobStore != nil {
+				lockKey := "cordum:wf:run:lock:" + runID
+				token, lockErr := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+				if lockErr != nil {
+					return s.workflowEng.StartRun(r.Context(), wfID, runID)
+				} else if token != "" {
+					defer func() {
+						if err := s.jobStore.ReleaseLock(r.Context(), lockKey, token); err != nil {
+							logging.Error("api-gateway", "release run lock failed", "run_id", runID, "error", err)
+						}
+					}()
+					return s.workflowEng.StartRun(r.Context(), wfID, runID)
+				}
+				return nil
 			}
-		} else {
-			_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
+			return s.workflowEng.StartRun(r.Context(), wfID, runID)
+		}()
+		if startErr != nil {
+			logging.Error("api-gateway", "start workflow run failed", "workflow_id", wfID, "run_id", runID, "error", startErr)
 		}
 	}
 	startWfName := ""
@@ -432,17 +445,26 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wfID := newRun.WorkflowID
-	if s.jobStore != nil {
-		lockKey := "cordum:wf:run:lock:" + newID
-		token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
-		if err != nil {
-			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
-		} else if token != "" {
-			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
-			_ = s.jobStore.ReleaseLock(r.Context(), lockKey, token)
+	startErr := func() error {
+		if s.jobStore != nil {
+			lockKey := "cordum:wf:run:lock:" + newID
+			token, lockErr := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+			if lockErr != nil {
+				return s.workflowEng.StartRun(r.Context(), wfID, newID)
+			} else if token != "" {
+				defer func() {
+					if err := s.jobStore.ReleaseLock(r.Context(), lockKey, token); err != nil {
+						logging.Error("api-gateway", "release rerun lock failed", "run_id", newID, "error", err)
+					}
+				}()
+				return s.workflowEng.StartRun(r.Context(), wfID, newID)
+			}
+			return nil
 		}
-	} else {
-		_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
+		return s.workflowEng.StartRun(r.Context(), wfID, newID)
+	}()
+	if startErr != nil {
+		logging.Error("api-gateway", "start rerun failed", "workflow_id", wfID, "run_id", newID, "error", startErr)
 	}
 	rerunWfName := ""
 	if s.workflowStore != nil {

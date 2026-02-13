@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -101,7 +102,7 @@ func (s *SyslogExporter) Close() error {
 func (s *SyslogExporter) connect() error {
 	if s.conn != nil {
 		if err := s.conn.Close(); err != nil {
-			return err
+			slog.Warn("syslog: close failed during reconnect", "error", err)
 		}
 		s.conn = nil
 	}

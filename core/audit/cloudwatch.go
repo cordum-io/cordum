@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -99,13 +100,23 @@ func (c *CloudWatchExporter) Export(ctx context.Context, events []SIEMEvent) err
 }
 
 func (c *CloudWatchExporter) exportWithSequence(ctx context.Context, events []SIEMEvent, allowRetry bool) error {
-	logEvents := make([]cwInputLogEvent, len(events))
-	for i, ev := range events {
-		msg, _ := json.Marshal(ev)
-		logEvents[i] = cwInputLogEvent{
+	logEvents := make([]cwInputLogEvent, 0, len(events))
+	for _, ev := range events {
+		msg, err := json.Marshal(ev)
+		if err != nil {
+			slog.Error("audit cloudwatch: skipping event with marshal failure",
+				"event_type", ev.EventType,
+				"error", err,
+			)
+			continue
+		}
+		logEvents = append(logEvents, cwInputLogEvent{
 			Timestamp: ev.Timestamp.UnixMilli(),
 			Message:   string(msg),
-		}
+		})
+	}
+	if len(logEvents) == 0 {
+		return nil
 	}
 	// CloudWatch requires events sorted by timestamp.
 	sort.Slice(logEvents, func(i, j int) bool {

@@ -164,6 +164,34 @@ export function useRunStream(runId: string | null | undefined): void {
         return;
       }
 
+      // Job result — map back to step via jobId match
+      if (jobId && latest.type.startsWith("job.result") && newStatus) {
+        patchRunInCache(queryClient, eventRunId, (run) => ({
+          ...run,
+          updatedAt: latest.timestamp,
+          steps: run.steps.map((s) => {
+            const sJobId =
+              (s.config?.jobId as string) ??
+              (s.output?.jobId as string) ??
+              (s.output?.job_id as string);
+            if (sJobId !== jobId) return s;
+            return {
+              ...s,
+              status: newStatus,
+              completedAt:
+                newStatus === "succeeded" || newStatus === "failed"
+                  ? latest.timestamp
+                  : s.completedAt,
+              error:
+                newStatus === "failed"
+                  ? ((latest.payload?.errorMessage as string) ?? s.error)
+                  : s.error,
+            };
+          }),
+        }));
+        return;
+      }
+
       // Run-level status change
       if (newStatus && !stepId) {
         patchRunInCache(queryClient, eventRunId, (run) => ({
@@ -177,38 +205,18 @@ export function useRunStream(runId: string | null | undefined): void {
         }));
         return;
       }
-
-      // Job result — map back to step via jobId match
-      if (jobId && latest.type.startsWith("job.result")) {
-        const jobStatus = extractStatus(latest);
-        if (jobStatus) {
-          patchRunInCache(queryClient, eventRunId, (run) => ({
-            ...run,
-            updatedAt: latest.timestamp,
-            steps: run.steps.map((s) => {
-              const sJobId =
-                (s.config?.jobId as string) ??
-                (s.output?.jobId as string) ??
-                (s.output?.job_id as string);
-              if (sJobId !== jobId) return s;
-              return {
-                ...s,
-                status: jobStatus,
-                completedAt:
-                  jobStatus === "succeeded" || jobStatus === "failed"
-                    ? latest.timestamp
-                    : s.completedAt,
-                error:
-                  jobStatus === "failed"
-                    ? ((latest.payload?.errorMessage as string) ?? s.error)
-                    : s.error,
-              };
-            }),
-          }));
-        }
-      }
     });
 
     return unsub;
   }, [runId, queryClient]);
 }
+
+/** @internal exported for unit tests */
+export const __runStreamInternal = {
+  isRunEvent,
+  extractRunId,
+  extractStepId,
+  extractStatus,
+  extractJobId,
+  patchRunInCache,
+};

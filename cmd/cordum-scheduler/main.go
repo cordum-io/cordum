@@ -25,6 +25,43 @@ import (
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
 )
 
+type redisDLQSink struct {
+	store    *memory.DLQStore
+	jobStore scheduler.JobStore
+}
+
+func (s *redisDLQSink) Add(ctx context.Context, entry scheduler.DLQEntry) error {
+	if s == nil || s.store == nil || strings.TrimSpace(entry.JobID) == "" {
+		return nil
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now().UTC()
+	}
+	if s.jobStore != nil {
+		if strings.TrimSpace(entry.Topic) == "" {
+			if topic, err := s.jobStore.GetTopic(ctx, entry.JobID); err == nil {
+				entry.Topic = topic
+			}
+		}
+		if state, err := s.jobStore.GetState(ctx, entry.JobID); err == nil {
+			entry.LastState = string(state)
+		}
+		if attempts, err := s.jobStore.GetAttempts(ctx, entry.JobID); err == nil {
+			entry.Attempts = attempts
+		}
+	}
+	return s.store.Add(ctx, memory.DLQEntry{
+		JobID:      entry.JobID,
+		Topic:      entry.Topic,
+		Status:     entry.Status,
+		Reason:     entry.Reason,
+		ReasonCode: entry.ReasonCode,
+		LastState:  entry.LastState,
+		Attempts:   entry.Attempts,
+		CreatedAt:  entry.CreatedAt,
+	})
+}
+
 func main() {
 	log.Println("cordum scheduler starting...")
 	buildinfo.Log("cordum-scheduler")
@@ -49,20 +86,20 @@ func main() {
 			log.Fatalf("metrics bind rejected: %v", err)
 		}
 	}
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsSrv := &http.Server{
+		Addr:              metricsAddr,
+		Handler:           metricsMux,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	go func() {
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
-		srv := &http.Server{
-			Addr:              metricsAddr,
-			Handler:           mux,
-			ReadTimeout:       5 * time.Second,
-			ReadHeaderTimeout: 5 * time.Second,
-			WriteTimeout:      5 * time.Second,
-			IdleTimeout:       60 * time.Second,
-			MaxHeaderBytes:    1 << 20,
-		}
 		log.Printf("scheduler metrics on %s/metrics", metricsAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("metrics server error: %v", err)
 		}
 	}()
@@ -72,6 +109,14 @@ func main() {
 		log.Fatalf("failed to connect to Redis for job store: %v", err)
 	}
 	defer jobStore.Close()
+
+	var dlqStore *memory.DLQStore
+	dlqStore, err = memory.NewDLQStore(cfg.RedisURL, 0)
+	if err != nil {
+		log.Printf("scheduler dlq sink disabled: %v", err)
+	} else {
+		defer dlqStore.Close()
+	}
 
 	natsBus, err := bus.NewNatsBus(cfg.NatsURL)
 	if err != nil {
@@ -100,6 +145,15 @@ func main() {
 	}
 	defer safetyClient.Close()
 	sagaManager.WithSafety(safetyClient)
+
+	var outputSafetyClient *scheduler.OutputSafetyClient
+	if cfg.OutputPolicyEnabled {
+		outputSafetyClient, err = scheduler.NewOutputSafetyClientWithRedis(cfg.SafetyKernelAddr, cfg.RedisURL)
+		if err != nil {
+			log.Fatalf("failed to connect output policy client: %v", err)
+		}
+		defer outputSafetyClient.Close()
+	}
 
 	poolCfg, err := config.LoadPoolConfig(cfg.PoolConfigPath)
 	if err != nil {
@@ -151,6 +205,18 @@ func main() {
 		jobStore,
 		metrics,
 	).WithConfig(configSvc).WithSaga(sagaManager)
+	if dlqStore != nil {
+		engine.WithDLQSink(&redisDLQSink{
+			store:    dlqStore,
+			jobStore: jobStore,
+		})
+	}
+	if outputSafetyClient != nil {
+		engine.WithOutputChecker(outputSafetyClient).WithOutputSafetyEnabled(true)
+		if fm := strings.TrimSpace(os.Getenv("OUTPUT_POLICY_FAIL_MODE")); fm != "" {
+			engine.WithAsyncFailMode(fm)
+		}
+	}
 
 	if err := engine.Start(); err != nil {
 		log.Fatalf("failed to start scheduler engine: %v", err)
@@ -205,6 +271,11 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	log.Println("scheduler shutting down")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("metrics server shutdown error: %v", err)
+	}
 	engine.Stop()
 	cancel()
 }

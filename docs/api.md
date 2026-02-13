@@ -2,6 +2,9 @@
 
 Cordum exposes a REST API and a gRPC service.
 
+For the full gateway REST reference (all registered HTTP routes, request/response
+schemas, auth requirements, and error behaviors), see `docs/api-reference.md`.
+
 ## REST API
 
 Base URL (local compose): `http://localhost:8081`

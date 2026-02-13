@@ -25,16 +25,16 @@ import (
 func loadPackBundleFromReader(src io.Reader) (string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "cordum-pack-*")
 	if err != nil {
-		return "", func() {}, err
+		return "", func() {}, fmt.Errorf("create temp dir: %w", err)
 	}
 	if err := extractTarGzReader(src, tmpDir); err != nil {
 		_ = os.RemoveAll(tmpDir)
-		return "", func() {}, err
+		return "", func() {}, fmt.Errorf("extract tar.gz: %w", err)
 	}
 	root, err := findPackRoot(tmpDir)
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
-		return "", func() {}, err
+		return "", func() {}, fmt.Errorf("find pack root: %w", err)
 	}
 	return root, func() { _ = os.RemoveAll(tmpDir) }, nil
 }
@@ -296,11 +296,11 @@ func validateTimeoutsPatch(patch map[string]any, packID string) error {
 func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
 	path, err := safeJoin(dir, relPath)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load schema file %s: %w", relPath, err)
 	}
 	payload, err := loadDataFile(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load schema file %s: %w", relPath, err)
 	}
 	schemaMap, ok := payload.(map[string]any)
 	if !ok {
@@ -308,7 +308,7 @@ func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
 	}
 	digest, err := hashValue(schemaMap)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("hash schema file %s: %w", relPath, err)
 	}
 	return schemaMap, digest, nil
 }
@@ -316,11 +316,11 @@ func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
 func loadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
 	path, err := safeJoin(dir, relPath)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load workflow file %s: %w", relPath, err)
 	}
 	payload, err := loadDataFile(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("load workflow file %s: %w", relPath, err)
 	}
 	workflowMap, ok := payload.(map[string]any)
 	if !ok {
@@ -335,13 +335,13 @@ func loadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
 			return nil, "", errors.New("workflow steps must be an object")
 		}
 		if err := validateWorkflowStepMap(steps); err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("validate workflow steps in %s: %w", relPath, err)
 		}
 	}
 	normalized := normalizeWorkflowMap(workflowMap)
 	digest, err := hashValue(normalized)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("hash workflow file %s: %w", relPath, err)
 	}
 	return workflowMap, digest, nil
 }
@@ -382,14 +382,14 @@ func loadDataFile(path string) (any, error) {
 	// #nosec G304 -- path is validated by safeJoin at call sites.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read data file: %w", err)
 	}
 	var payload any
 	if json.Unmarshal(data, &payload) == nil {
 		return normalizeJSON(payload), nil
 	}
 	if err := yaml.Unmarshal(data, &payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse data file as yaml: %w", err)
 	}
 	return normalizeJSON(payload), nil
 }
@@ -397,9 +397,13 @@ func loadDataFile(path string) (any, error) {
 func loadPatchFile(dir, relPath string) (any, error) {
 	path, err := safeJoin(dir, relPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load patch file %s: %w", relPath, err)
 	}
-	return loadDataFile(path)
+	payload, err := loadDataFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("load patch file %s: %w", relPath, err)
+	}
+	return payload, nil
 }
 
 func normalizeJSON(value any) any {
@@ -485,7 +489,7 @@ func buildDeletePatch(patch map[string]any) map[string]any {
 func hashValue(value any) (string, error) {
 	encoded, err := canonicalJSON(value)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("encode canonical json: %w", err)
 	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:]), nil
@@ -494,7 +498,7 @@ func hashValue(value any) (string, error) {
 func canonicalJSON(value any) ([]byte, error) {
 	buf := &strings.Builder{}
 	if err := appendCanonical(buf, value); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build canonical json: %w", err)
 	}
 	return []byte(buf.String()), nil
 }
@@ -511,7 +515,7 @@ func appendCanonical(buf *strings.Builder, value any) error {
 	default:
 		encoded, err := json.Marshal(v)
 		if err != nil {
-			return err
+			return fmt.Errorf("marshal json value: %w", err)
 		}
 		buf.Write(encoded)
 		return nil
@@ -533,7 +537,7 @@ func appendCanonicalMap(buf *strings.Builder, m map[string]any) error {
 		buf.Write(keyBytes)
 		buf.WriteByte(':')
 		if err := appendCanonical(buf, m[k]); err != nil {
-			return err
+			return fmt.Errorf("append canonical map value for key %s: %w", k, err)
 		}
 	}
 	buf.WriteByte('}')
@@ -547,7 +551,7 @@ func appendCanonicalSlice(buf *strings.Builder, items []any) error {
 			buf.WriteByte(',')
 		}
 		if err := appendCanonical(buf, item); err != nil {
-			return err
+			return fmt.Errorf("append canonical slice item at index %d: %w", i, err)
 		}
 	}
 	buf.WriteByte(']')
@@ -570,7 +574,7 @@ func findPackRoot(dir string) (string, error) {
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read pack directory: %w", err)
 	}
 	if len(entries) != 1 {
 		return "", errors.New("pack.yaml not found in archive root")
@@ -588,7 +592,7 @@ func findPackRoot(dir string) (string, error) {
 func extractTarGzReader(src io.Reader, dest string) error {
 	gz, err := gzip.NewReader(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("create gzip reader: %w", err)
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
@@ -602,16 +606,16 @@ func extractTarGzReader(src io.Reader, dest string) error {
 			return nil
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("read tar header: %w", err)
 		}
 		target, err := safeJoin(dest, hdr.Name)
 		if err != nil {
-			return err
+			return fmt.Errorf("validate tar entry path %s: %w", hdr.Name, err)
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
-				return err
+				return fmt.Errorf("extract tar.gz mkdir: %w", err)
 			}
 		case tar.TypeReg:
 			files++
@@ -626,18 +630,18 @@ func extractTarGzReader(src io.Reader, dest string) error {
 				return fmt.Errorf("pack archive exceeds max size (%d bytes)", maxPackUncompressedBytes)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
-				return err
+				return fmt.Errorf("extract tar.gz mkdir: %w", err)
 			}
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec -- target path is validated by safeJoin.
 			if err != nil {
-				return err
+				return fmt.Errorf("extract tar.gz create file: %w", err)
 			}
 			if _, err := io.CopyN(out, tr, hdr.Size); err != nil && !errors.Is(err, io.EOF) {
 				_ = out.Close()
-				return err
+				return fmt.Errorf("extract tar.gz copy: %w", err)
 			}
 			if err := out.Close(); err != nil {
-				return err
+				return fmt.Errorf("extract tar.gz close: %w", err)
 			}
 		}
 	}
