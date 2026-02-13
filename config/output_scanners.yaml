@@ -1,0 +1,83 @@
+version: v1
+
+scanners:
+  secret:
+    finding_type: secret_leak
+    description: "Detect credentials, tokens, keys, and likely secret material in output."
+    patterns:
+      - name: aws_access_key
+        regex: "AKIA[0-9A-Z]{16}"
+        severity: critical
+        confidence: 0.99
+      - name: aws_secret_key
+        regex: "(?i)aws(.{0,24})?(secret|access)[^\\n]{0,24}[=:]\\s*['\\\"]?[A-Za-z0-9/+=]{40}"
+        severity: critical
+        confidence: 0.96
+      - name: github_token
+        regex: "gh[pousr]_[A-Za-z0-9]{20,}"
+        severity: critical
+        confidence: 0.98
+      - name: slack_token
+        regex: "xox[baprs]-[A-Za-z0-9-]{10,80}"
+        severity: high
+        confidence: 0.96
+      - name: openai_key
+        regex: "sk-[A-Za-z0-9]{20,}"
+        severity: critical
+        confidence: 0.97
+      - name: generic_api_key
+        regex: "(?i)(api[_-]?key|token|secret|password)\\s*[:=]\\s*['\\\"][^'\\\"]{8,}['\\\"]"
+        severity: high
+        confidence: 0.9
+      - name: private_key_header
+        regex: "-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+        severity: critical
+        confidence: 0.99
+      - name: jwt_token
+        regex: "eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9._-]{20,}\\.[A-Za-z0-9._-]{20,}"
+        severity: high
+        confidence: 0.92
+      - name: db_connection_string_password
+        regex: "(?i)(postgres(?:ql)?|mysql|mariadb|mongodb|sqlserver):\\/\\/[^\\s:@]{1,64}:[^\\s@]{4,}@[^\\s]+"
+        severity: critical
+        confidence: 0.95
+      - name: base64_high_entropy_secret
+        regex: "(?i)(secret|token|password|private)[^\\n]{0,32}[=:][^\\n]{0,16}[A-Za-z0-9+/]{64,}={0,2}"
+        severity: high
+        confidence: 0.82
+        context_required: true
+
+  pii:
+    finding_type: pii
+    description: "Detect common personal data and payment card artifacts."
+    patterns:
+      - name: email_address
+        regex: "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b"
+        severity: high
+        confidence: 0.9
+      - name: ssn
+        regex: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+        severity: high
+        confidence: 0.95
+      - name: credit_card
+        regex: "\\b(?:\\d[ -]*?){13,19}\\b"
+        severity: high
+        confidence: 0.88
+        context_required: true
+
+  injection:
+    finding_type: code_injection
+    description: "Detect SQL, shell, and prompt-injection-style payload fragments."
+    patterns:
+      - name: shell_command
+        regex: "(?i)(\\brm\\s+-rf\\b|\\bcurl\\b[^\\n]{0,80}\\|\\s*(sh|bash)\\b|\\bwget\\b[^\\n]{0,80}\\|\\s*(sh|bash)\\b)"
+        severity: high
+        confidence: 0.92
+      - name: sql_injection
+        regex: "(?i)(union\\s+select|drop\\s+table|delete\\s+from|insert\\s+into|or\\s+1=1)"
+        severity: high
+        confidence: 0.9
+      - name: prompt_injection
+        regex: "(?i)(ignore\\s+previous\\s+instructions|reveal\\s+system\\s+prompt|jailbreak)"
+        severity: medium
+        confidence: 0.8
