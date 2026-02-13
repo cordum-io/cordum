@@ -783,16 +783,3 @@ func cloneScanners(in map[string]OutputScanner) map[string]OutputScanner {
 	}
 	return out
 }
-
-func normalizePolicyFailMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "closed":
-		return "closed"
-	default:
-		return "open"
-	}
-}
-
-func outputCheckTimestampMicros() int64 {
-	return time.Now().UTC().UnixNano() / int64(time.Microsecond)
-}

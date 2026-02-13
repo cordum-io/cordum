@@ -61,7 +61,8 @@ func TestHandleJobResultOutputAllowed(t *testing.T) {
 
 	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
-		WithOutputSafetyEnabled(true)
+		WithOutputSafetyEnabled(true).
+		WithAsyncFailMode("open")
 
 	err := engine.handleJobResult(&pb.JobResult{
 		JobId:     "job-out-allow",
@@ -71,17 +72,26 @@ func TestHandleJobResultOutputAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handle result: %v", err)
 	}
-	if store.states["job-out-allow"] != JobStateSucceeded {
-		t.Fatalf("expected state succeeded, got %s", store.states["job-out-allow"])
+	state, err := store.GetState(context.Background(), "job-out-allow")
+	if err != nil {
+		t.Fatalf("get state: %v", err)
 	}
-	if store.output["job-out-allow"].Decision != OutputAllow {
-		t.Fatalf("expected output decision allow, got %#v", store.output["job-out-allow"])
+	if state != JobStateSucceeded {
+		t.Fatalf("expected state succeeded, got %s", state)
+	}
+	decision, err := store.GetOutputDecision(context.Background(), "job-out-allow")
+	if err != nil {
+		t.Fatalf("get output decision: %v", err)
+	}
+	if decision.Decision != OutputAllow {
+		t.Fatalf("expected output decision allow, got %#v", decision)
 	}
 	if checker.metaCalls.Load() != 1 {
 		t.Fatalf("expected meta check called once, got %d", checker.metaCalls.Load())
 	}
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no DLQ publish, got %d", len(bus.published))
+	published := bus.snapshotPublished()
+	if len(published) != 0 {
+		t.Fatalf("expected no DLQ publish, got %d", len(published))
 	}
 }
 
@@ -101,15 +111,24 @@ func TestHandleJobResultOutputQuarantined(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handle result: %v", err)
 	}
-	if store.states["job-out-quarantine"] != JobStateQuarantined {
-		t.Fatalf("expected state output_quarantined, got %s", store.states["job-out-quarantine"])
+	state, err := store.GetState(context.Background(), "job-out-quarantine")
+	if err != nil {
+		t.Fatalf("get state: %v", err)
 	}
-	if store.output["job-out-quarantine"].Decision != OutputQuarantine {
-		t.Fatalf("expected output decision quarantine, got %#v", store.output["job-out-quarantine"])
+	if state != JobStateQuarantined {
+		t.Fatalf("expected state output_quarantined, got %s", state)
+	}
+	decision, err := store.GetOutputDecision(context.Background(), "job-out-quarantine")
+	if err != nil {
+		t.Fatalf("get output decision: %v", err)
+	}
+	if decision.Decision != OutputQuarantine {
+		t.Fatalf("expected output decision quarantine, got %#v", decision)
 	}
 	foundDLQ := false
 	foundAudit := false
-	for _, msg := range bus.published {
+	published := bus.snapshotPublished()
+	for _, msg := range published {
 		switch msg.subject {
 		case capsdk.SubjectDLQ:
 			jr := msg.packet.GetJobResult()
@@ -124,10 +143,10 @@ func TestHandleJobResultOutputQuarantined(t *testing.T) {
 		}
 	}
 	if !foundDLQ {
-		t.Fatalf("expected quarantine DLQ publish, got %#v", bus.published)
+		t.Fatalf("expected quarantine DLQ publish, got %#v", published)
 	}
 	if !foundAudit {
-		t.Fatalf("expected quarantine audit event, got %#v", bus.published)
+		t.Fatalf("expected quarantine audit event, got %#v", published)
 	}
 }
 
@@ -147,8 +166,12 @@ func TestHandleJobResultOutputCheckDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handle result: %v", err)
 	}
-	if store.states["job-out-disabled"] != JobStateSucceeded {
-		t.Fatalf("expected state succeeded, got %s", store.states["job-out-disabled"])
+	state, err := store.GetState(context.Background(), "job-out-disabled")
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state != JobStateSucceeded {
+		t.Fatalf("expected state succeeded, got %s", state)
 	}
 	if checker.metaCalls.Load() != 0 {
 		t.Fatalf("expected no output checks when disabled, got meta calls=%d", checker.metaCalls.Load())
@@ -168,17 +191,26 @@ func TestHandleJobResultOutputCheckFailOpen(t *testing.T) {
 
 	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
-		WithOutputSafetyEnabled(true)
+		WithOutputSafetyEnabled(true).
+		WithAsyncFailMode("open")
 
 	err := engine.handleJobResult(&pb.JobResult{JobId: "job-out-failopen", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ResultPtr: "redis://res:job-out-failopen"})
 	if err != nil {
 		t.Fatalf("handle result: %v", err)
 	}
-	if store.states["job-out-failopen"] != JobStateSucceeded {
-		t.Fatalf("expected fail-open succeeded state, got %s", store.states["job-out-failopen"])
+	state, err := store.GetState(context.Background(), "job-out-failopen")
+	if err != nil {
+		t.Fatalf("get state: %v", err)
 	}
-	if store.output["job-out-failopen"].Decision != "" {
-		t.Fatalf("expected no persisted output decision on meta error, got %#v", store.output["job-out-failopen"])
+	if state != JobStateSucceeded {
+		t.Fatalf("expected fail-open succeeded state, got %s", state)
+	}
+	decision, err := store.GetOutputDecision(context.Background(), "job-out-failopen")
+	if err != nil {
+		t.Fatalf("get output decision: %v", err)
+	}
+	if decision.Decision != "" {
+		t.Fatalf("expected no persisted output decision on meta error, got %#v", decision)
 	}
 }
 
@@ -200,8 +232,12 @@ func TestHandleJobResultFailedJobSkipsOutputCheck(t *testing.T) {
 	if checker.metaCalls.Load() != 0 || checker.contentCalls.Load() != 0 {
 		t.Fatalf("expected no output checks for failed result, got meta=%d content=%d", checker.metaCalls.Load(), checker.contentCalls.Load())
 	}
-	if store.states["job-out-failed"] != JobStateFailed {
-		t.Fatalf("expected failed state, got %s", store.states["job-out-failed"])
+	state, err := store.GetState(context.Background(), "job-out-failed")
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state != JobStateFailed {
+		t.Fatalf("expected failed state, got %s", state)
 	}
 }
 
@@ -248,7 +284,8 @@ func TestHandleJobResultAsyncQuarantine(t *testing.T) {
 	}
 
 	foundAsyncDLQ := false
-	for _, msg := range bus.published {
+	published := bus.snapshotPublished()
+	for _, msg := range published {
 		jr := msg.packet.GetJobResult()
 		if msg.subject == capsdk.SubjectDLQ && jr != nil && jr.GetErrorCode() == outputPolicyAsync {
 			foundAsyncDLQ = true
@@ -256,10 +293,10 @@ func TestHandleJobResultAsyncQuarantine(t *testing.T) {
 		}
 	}
 	if !foundAsyncDLQ {
-		t.Fatalf("expected async quarantine DLQ event, got %#v", bus.published)
+		t.Fatalf("expected async quarantine DLQ event, got %#v", published)
 	}
 	foundAsyncAudit := false
-	for _, msg := range bus.published {
+	for _, msg := range published {
 		jp := msg.packet.GetJobProgress()
 		if msg.subject == outputPolicyAudit && jp != nil && jp.GetJobId() == jobID {
 			foundAsyncAudit = true
@@ -267,7 +304,7 @@ func TestHandleJobResultAsyncQuarantine(t *testing.T) {
 		}
 	}
 	if !foundAsyncAudit {
-		t.Fatalf("expected async quarantine audit event, got %#v", bus.published)
+		t.Fatalf("expected async quarantine audit event, got %#v", published)
 	}
 }
 
@@ -393,12 +430,13 @@ func TestHandleJobResultCleanContentRemainsAllowed(t *testing.T) {
 		t.Fatalf("handle result: %v", err)
 	}
 
-	time.Sleep(250 * time.Millisecond)
+	engine.wg.Wait()
 	state, _ := store.GetState(context.Background(), jobID)
 	if state != JobStateSucceeded {
 		t.Fatalf("expected clean output to remain succeeded, got %s", state)
 	}
-	for _, msg := range bus.published {
+	published := bus.snapshotPublished()
+	for _, msg := range published {
 		if msg.subject == capsdk.SubjectDLQ {
 			t.Fatalf("expected no DLQ message for clean output, got %#v", msg.packet.GetJobResult())
 		}
@@ -474,15 +512,15 @@ func TestAsyncOutputCheckFailOpenAllowsOnError(t *testing.T) {
 		t.Fatalf("handle result: %v", err)
 	}
 
-	// Wait for async goroutine to complete.
-	time.Sleep(300 * time.Millisecond)
+	engine.wg.Wait()
 
 	state, _ := store.GetState(context.Background(), jobID)
 	if state != JobStateSucceeded {
 		t.Fatalf("expected fail-open to keep succeeded on async error, got %s", state)
 	}
 	// Should NOT have quarantine DLQ events.
-	for _, msg := range bus.published {
+	published := bus.snapshotPublished()
+	for _, msg := range published {
 		if msg.subject == capsdk.SubjectDLQ {
 			t.Fatalf("expected no DLQ on fail-open, got %#v", msg.packet.GetJobResult())
 		}

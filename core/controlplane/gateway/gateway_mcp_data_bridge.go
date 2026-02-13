@@ -163,13 +163,11 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			items := mcpGatewayToMapSlice(bundlesPayload["items"])
 
 			currentSnapshot := ""
-			if status, snapshotsPayload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/policy/snapshots", nil, nil, nil, s.handlePolicySnapshots); err == nil {
+			if status, snapshotsPayload, _, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/policy/snapshots", nil, nil, nil, s.handlePolicySnapshots); err == nil {
 				if status >= 200 && status < 300 {
 					if snapshots, ok := snapshotsPayload["snapshots"].([]any); ok && len(snapshots) > 0 {
 						currentSnapshot = strings.TrimSpace(mcpBridgeString(snapshots[0]))
 					}
-				} else if status >= 400 && len(raw) > 0 {
-					// Ignore snapshot lookup failures for summary generation.
 				}
 			}
 
@@ -225,18 +223,13 @@ func mcpGatewayInferSafetyStance(items []map[string]any) string {
 		return "permissive"
 	}
 	enabled := 0
-	totalRules := 0
+	var totalRules int64
 	for _, item := range items {
 		if v, ok := item["enabled"].(bool); ok && v {
 			enabled++
 		}
-		switch rc := item["rule_count"].(type) {
-		case float64:
-			totalRules += int(rc)
-		case int:
+		if rc, ok := mcpGatewayToInt64(item["rule_count"]); ok {
 			totalRules += rc
-		case int64:
-			totalRules += int(rc)
 		}
 	}
 	if enabled == 0 || totalRules == 0 {

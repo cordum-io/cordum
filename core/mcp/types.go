@@ -27,8 +27,7 @@ type JSONRPCMessage struct {
 	Error   *JSONRPCError   `json:"error,omitempty"`
 
 	// Transport metadata (not serialized on wire).
-	sessionID  string
-	responseCh chan *JSONRPCMessage
+	sessionID string
 }
 
 // JSONRPCRequest is a standard JSON-RPC 2.0 request object.

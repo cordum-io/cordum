@@ -18,9 +18,9 @@ import (
 // security tests, even if another test set the bypass.
 func ensureSSRFProtection(t *testing.T) {
 	t.Helper()
-	old := skipPrivateIPCheck
-	skipPrivateIPCheck = false
-	t.Cleanup(func() { skipPrivateIPCheck = old })
+	old := skipPrivateIPCheck.Load()
+	skipPrivateIPCheck.Store(false)
+	t.Cleanup(func() { skipPrivateIPCheck.Store(old) })
 }
 
 func withLookupHostIPs(t *testing.T, fn func(context.Context, string) ([]net.IP, error)) {

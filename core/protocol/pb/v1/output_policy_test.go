@@ -41,19 +41,19 @@ func TestOutputCheckRequestRoundTripAllFields(t *testing.T) {
 	}
 
 	if got.GetJobId() != req.GetJobId() || got.GetTopic() != req.GetTopic() || got.GetTenant() != req.GetTenant() {
-		t.Fatalf("unexpected identity fields: %#v", got)
+		t.Fatalf("unexpected identity fields: %#v", &got)
 	}
 	if got.GetResultPtr() != req.GetResultPtr() || got.GetWorkerId() != req.GetWorkerId() {
-		t.Fatalf("unexpected pointer/worker fields: %#v", got)
+		t.Fatalf("unexpected pointer/worker fields: %#v", &got)
 	}
 	if got.GetExecutionMs() != req.GetExecutionMs() || got.GetOutputSizeBytes() != req.GetOutputSizeBytes() {
-		t.Fatalf("unexpected timing/size fields: %#v", got)
+		t.Fatalf("unexpected timing/size fields: %#v", &got)
 	}
 	if got.GetPrincipalId() != req.GetPrincipalId() || got.GetPackId() != req.GetPackId() || got.GetContentType() != req.GetContentType() {
-		t.Fatalf("unexpected context fields: %#v", got)
+		t.Fatalf("unexpected context fields: %#v", &got)
 	}
 	if len(got.GetCapabilities()) != 2 || len(got.GetRiskTags()) != 2 {
-		t.Fatalf("expected capabilities and risk tags to round-trip: %#v", got)
+		t.Fatalf("expected capabilities and risk tags to round-trip: %#v", &got)
 	}
 	if len(got.GetOriginalLabels()) != 1 || got.GetOriginalLabels()["mcp.server"] != "github" {
 		t.Fatalf("expected original_labels to round-trip: %#v", got.GetOriginalLabels())

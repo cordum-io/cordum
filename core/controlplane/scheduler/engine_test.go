@@ -289,6 +289,14 @@ func (b *fakeBus) Publish(subject string, packet *pb.BusPacket) error {
 	return nil
 }
 
+func (b *fakeBus) snapshotPublished() []publishedMsg {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]publishedMsg, len(b.published))
+	copy(out, b.published)
+	return out
+}
+
 func (b *fakeBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
 	// Tests call handlers directly, so no-op is fine here.
 	return nil

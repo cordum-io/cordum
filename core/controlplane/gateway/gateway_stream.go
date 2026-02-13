@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // stopBusTaps shuts down the broadcast goroutine by closing eventsCh.
@@ -233,14 +234,18 @@ func filterQuarantinedPacket(p *pb.BusPacket) *pb.BusPacket {
 	if jr.Status != pb.JobStatus_JOB_STATUS_DENIED {
 		return p
 	}
-	// Return a copy with result_ptr and artifact_ptrs stripped.
-	sanitized := *jr
+	// Clone packet/proto messages to avoid copying embedded mutex fields.
+	out, ok := proto.Clone(p).(*pb.BusPacket)
+	if !ok || out == nil {
+		return p
+	}
+	sanitized := out.GetJobResult()
+	if sanitized == nil {
+		return p
+	}
 	sanitized.ResultPtr = ""
 	sanitized.ArtifactPtrs = nil
-
-	out := *p
-	out.Payload = &pb.BusPacket_JobResult{JobResult: &sanitized}
-	return &out
+	return out
 }
 
 func (s *server) enqueueWSEvent(data []byte, tenant string, jobID string) {

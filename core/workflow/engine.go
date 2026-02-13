@@ -2801,7 +2801,12 @@ func (e *Engine) buildJobPayload(run *WorkflowRun, step *Step, item any) (map[st
 	} else if run != nil && len(run.Input) > 0 {
 		base = run.Input
 	}
-	out := make(map[string]any, len(base)+1)
+	// Avoid overflow in capacity arithmetic on extreme map sizes.
+	capHint := len(base)
+	if capHint < int(^uint(0)>>1) {
+		capHint++
+	}
+	out := make(map[string]any, capHint)
 	for k, v := range base {
 		out[k] = v
 	}
@@ -3205,7 +3210,11 @@ func (e *Engine) buildLoopPayload(run *WorkflowRun, step *Step, scope map[string
 	} else if run != nil && len(run.Input) > 0 {
 		base = run.Input
 	}
-	out := make(map[string]any, len(base)+1)
+	capHint := len(base)
+	if capHint < int(^uint(0)>>1) {
+		capHint++
+	}
+	out := make(map[string]any, capHint)
 	for k, v := range base {
 		out[k] = v
 	}
@@ -3451,7 +3460,7 @@ func resolveParallelConfig(step *Step, scope map[string]any) ([]string, string, 
 		}
 	}
 
-	required := len(childStepIDs)
+	required := 0
 	switch strategy {
 	case "all":
 		required = len(childStepIDs)
