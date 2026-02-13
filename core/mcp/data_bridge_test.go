@@ -52,8 +52,9 @@ func TestHTTPDataBridge(t *testing.T) {
 	defer srv.Close()
 
 	bridge := NewHTTPDataBridge(HTTPDataBridgeConfig{
-		BaseURL:  srv.URL,
-		TenantID: "tenant-a",
+		BaseURL:           srv.URL,
+		TenantID:          "tenant-a",
+		AllowPrivateHosts: true,
 	})
 
 	job, err := bridge.GetJob(context.Background(), "job-1")
@@ -134,8 +135,9 @@ func TestHTTPDataBridgeErrorMapping(t *testing.T) {
 	defer srv.Close()
 
 	bridge := NewHTTPDataBridge(HTTPDataBridgeConfig{
-		BaseURL:  srv.URL,
-		TenantID: "default",
+		BaseURL:           srv.URL,
+		TenantID:          "default",
+		AllowPrivateHosts: true,
 	})
 
 	_, err := bridge.GetJob(context.Background(), "missing")
@@ -143,6 +145,23 @@ func TestHTTPDataBridgeErrorMapping(t *testing.T) {
 
 	_, err = bridge.GetSystemHealth(context.Background())
 	assertDataBridgeStatus(t, err, http.StatusBadGateway)
+}
+
+func TestHTTPDataBridgeRejectsPrivateTargetByDefault(t *testing.T) {
+	t.Parallel()
+
+	bridge := NewHTTPDataBridge(HTTPDataBridgeConfig{
+		BaseURL:  "http://127.0.0.1:8081",
+		TenantID: "default",
+	})
+	_, err := bridge.GetSystemHealth(context.Background())
+	if err == nil {
+		t.Fatal("expected private target rejection")
+	}
+	var be *BridgeError
+	if errors.As(err, &be) {
+		t.Fatalf("expected transport-level validation error, got bridge error: %+v", be)
+	}
 }
 
 func TestDirectDataBridge(t *testing.T) {

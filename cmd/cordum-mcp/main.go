@@ -23,6 +23,8 @@ func main() {
 
 	gatewayAddr := flag.String("addr", envOrDefault("CORDUM_GATEWAY_ADDR", defaultGatewayAddr), "Cordum API gateway address")
 	apiKey := flag.String("api-key", strings.TrimSpace(os.Getenv("CORDUM_API_KEY")), "Cordum API key for gateway-backed handlers")
+	gatewayAllowlist := flag.String("gateway-allowlist", strings.TrimSpace(os.Getenv("CORDUM_MCP_GATEWAY_ALLOWLIST")), "Comma-separated host/domain allowlist for outbound gateway calls")
+	allowPrivateGateway := flag.Bool("allow-private-gateway", envBoolOrDefault("CORDUM_MCP_ALLOW_PRIVATE_GATEWAY", false), "Allow private/loopback gateway hosts (disabled by default)")
 	requestTimeout := flag.Duration("request-timeout", 30*time.Second, "per-request MCP handler timeout")
 	flag.Parse()
 
@@ -37,10 +39,17 @@ func main() {
 	resourceRegistry := mcp.NewResourceRegistry()
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
-	if err := mcptools.Register(toolRegistry, mcptools.NewGatewayClient(*gatewayAddr, *apiKey, httpClient)); err != nil {
+	allowedHosts := splitCSV(*gatewayAllowlist)
+	toolClient := mcptools.NewGatewayClient(*gatewayAddr, *apiKey, httpClient).
+		WithAllowedHosts(allowedHosts).
+		WithAllowPrivateHosts(*allowPrivateGateway)
+	if err := mcptools.Register(toolRegistry, toolClient); err != nil {
 		log.Fatalf("register mcp tools: %v", err)
 	}
-	if err := mcpresources.Register(resourceRegistry, mcpresources.NewGatewayClient(*gatewayAddr, *apiKey, httpClient)); err != nil {
+	resourceClient := mcpresources.NewGatewayClient(*gatewayAddr, *apiKey, httpClient).
+		WithAllowedHosts(allowedHosts).
+		WithAllowPrivateHosts(*allowPrivateGateway)
+	if err := mcpresources.Register(resourceRegistry, resourceClient); err != nil {
 		log.Fatalf("register mcp resources: %v", err)
 	}
 
@@ -61,4 +70,36 @@ func envOrDefault(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func envBoolOrDefault(key string, fallback bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if raw == "" {
+		return fallback
+	}
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if entry := strings.TrimSpace(part); entry != "" {
+			out = append(out, entry)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

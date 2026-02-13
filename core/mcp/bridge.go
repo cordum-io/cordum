@@ -104,17 +104,30 @@ func NewBridgeErrorFromHTTP(status int, body []byte) *BridgeError {
 // HTTPServiceBridgeConfig configures the HTTP-backed bridge.
 type HTTPServiceBridgeConfig struct {
 	BaseURL    string
-	APIKey     string
 	TenantID   string
 	HTTPClient *http.Client
+	// AllowedHosts is an optional host/domain allowlist for outbound gateway calls.
+	AllowedHosts []string
+	// AllowPrivateHosts permits loopback/private/link-local hosts when true.
+	// Keep false unless private routing is explicitly required.
+	AllowPrivateHosts bool
+	apiKey            string
+}
+
+// WithAuthToken sets the bearer/API token used for outbound gateway calls.
+func (c HTTPServiceBridgeConfig) WithAuthToken(token string) HTTPServiceBridgeConfig {
+	c.apiKey = strings.TrimSpace(token)
+	return c
 }
 
 // HTTPServiceBridge maps ServiceBridge methods to gateway HTTP APIs.
 type HTTPServiceBridge struct {
-	baseURL    string
-	apiKey     string
-	tenantID   string
-	httpClient *http.Client
+	baseURL           string
+	apiKey            string
+	tenantID          string
+	allowedHosts      []string
+	allowPrivateHosts bool
+	httpClient        *http.Client
 }
 
 // NewHTTPServiceBridge creates an HTTP bridge with secure defaults.
@@ -135,10 +148,12 @@ func NewHTTPServiceBridge(cfg HTTPServiceBridgeConfig) *HTTPServiceBridge {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &HTTPServiceBridge{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiKey:     strings.TrimSpace(cfg.APIKey),
-		tenantID:   tenantID,
-		httpClient: httpClient,
+		baseURL:           strings.TrimRight(baseURL, "/"),
+		apiKey:            strings.TrimSpace(cfg.apiKey),
+		tenantID:          tenantID,
+		allowedHosts:      normalizeAllowedHosts(cfg.AllowedHosts),
+		allowPrivateHosts: cfg.AllowPrivateHosts,
+		httpClient:        httpClient,
 	}
 }
 
@@ -344,6 +359,9 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 	if err != nil {
 		return 0, nil, fmt.Errorf("create request: %w", err)
 	}
+	if err := validateOutboundTargetURL(req.Context(), req.URL, b.allowedHosts, b.allowPrivateHosts); err != nil {
+		return 0, nil, fmt.Errorf("validate request target: %w", err)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -366,7 +384,7 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	resp, err := client.Do(req) // #nosec G107 -- URL is operator-provided gateway address.
+	resp, err := client.Do(req) // #nosec G107 -- URL is validated via validateOutboundTargetURL above.
 	if err != nil {
 		return 0, nil, fmt.Errorf("request failed: %w", err)
 	}

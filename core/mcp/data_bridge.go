@@ -17,17 +17,30 @@ import (
 // HTTPDataBridgeConfig configures the HTTP-backed resource bridge.
 type HTTPDataBridgeConfig struct {
 	BaseURL    string
-	APIKey     string
 	TenantID   string
 	HTTPClient *http.Client
+	// AllowedHosts is an optional host/domain allowlist for outbound gateway calls.
+	AllowedHosts []string
+	// AllowPrivateHosts permits loopback/private/link-local hosts when true.
+	// Keep false unless private routing is explicitly required.
+	AllowPrivateHosts bool
+	apiKey            string
+}
+
+// WithAuthToken sets the bearer/API token used for outbound gateway calls.
+func (c HTTPDataBridgeConfig) WithAuthToken(token string) HTTPDataBridgeConfig {
+	c.apiKey = strings.TrimSpace(token)
+	return c
 }
 
 // HTTPDataBridge maps DataBridge methods to gateway HTTP APIs.
 type HTTPDataBridge struct {
-	baseURL    string
-	apiKey     string
-	tenantID   string
-	httpClient *http.Client
+	baseURL           string
+	apiKey            string
+	tenantID          string
+	allowedHosts      []string
+	allowPrivateHosts bool
+	httpClient        *http.Client
 }
 
 // NewHTTPDataBridge creates an HTTP DataBridge with secure defaults.
@@ -48,10 +61,12 @@ func NewHTTPDataBridge(cfg HTTPDataBridgeConfig) *HTTPDataBridge {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &HTTPDataBridge{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiKey:     strings.TrimSpace(cfg.APIKey),
-		tenantID:   tenantID,
-		httpClient: httpClient,
+		baseURL:           strings.TrimRight(baseURL, "/"),
+		apiKey:            strings.TrimSpace(cfg.apiKey),
+		tenantID:          tenantID,
+		allowedHosts:      normalizeAllowedHosts(cfg.AllowedHosts),
+		allowPrivateHosts: cfg.AllowPrivateHosts,
+		httpClient:        httpClient,
 	}
 }
 
@@ -259,6 +274,9 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 	if err != nil {
 		return 0, nil, fmt.Errorf("create request: %w", err)
 	}
+	if err := validateOutboundTargetURL(req.Context(), req.URL, b.allowedHosts, b.allowPrivateHosts); err != nil {
+		return 0, nil, fmt.Errorf("validate request target: %w", err)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -281,7 +299,7 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	resp, err := client.Do(req) // #nosec G107 -- URL comes from operator configuration.
+	resp, err := client.Do(req) // #nosec G107 -- URL is validated via validateOutboundTargetURL above.
 	if err != nil {
 		return 0, nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -414,13 +432,13 @@ func inferSafetyStance(items []map[string]any) string {
 		return "permissive"
 	}
 	enabledCount := 0
-	totalRules := 0
+	var totalRules int64
 	for _, item := range items {
 		if enabled, ok := item["enabled"].(bool); ok && enabled {
 			enabledCount++
 		}
 		if ruleCount, ok := toInt64(item["rule_count"]); ok {
-			totalRules += int(ruleCount)
+			totalRules += ruleCount
 		}
 	}
 	if enabledCount == 0 || totalRules == 0 {

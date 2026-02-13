@@ -11,9 +11,11 @@ import (
 
 // GatewayClient provides a future extension point for resource handlers backed by gateway APIs.
 type GatewayClient struct {
-	Addr       string
-	APIKey     string
-	HTTPClient *http.Client
+	Addr              string
+	HTTPClient        *http.Client
+	allowedHosts      []string
+	allowPrivateHosts bool
+	apiKey            string
 }
 
 // NewGatewayClient creates a gateway API client used by MCP resource handlers.
@@ -27,9 +29,34 @@ func NewGatewayClient(addr, apiKey string, httpClient *http.Client) *GatewayClie
 	}
 	return &GatewayClient{
 		Addr:       addr,
-		APIKey:     strings.TrimSpace(apiKey),
+		apiKey:     strings.TrimSpace(apiKey),
 		HTTPClient: httpClient,
 	}
+}
+
+// WithAllowedHosts sets an optional host/domain allowlist for gateway calls.
+func (c *GatewayClient) WithAllowedHosts(hosts []string) *GatewayClient {
+	if c == nil {
+		return nil
+	}
+	c.allowedHosts = append([]string{}, hosts...)
+	return c
+}
+
+// WithAllowPrivateHosts enables loopback/private/link-local gateway hosts.
+func (c *GatewayClient) WithAllowPrivateHosts(allow bool) *GatewayClient {
+	if c == nil {
+		return nil
+	}
+	c.allowPrivateHosts = allow
+	return c
+}
+
+func (c *GatewayClient) authTokenValue() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.apiKey)
 }
 
 // Register wires MCP resource handlers into the registry with an HTTP data bridge.
@@ -41,11 +68,12 @@ func Register(registry *mcp.ResourceRegistry, client *GatewayClient) error {
 		return nil
 	}
 	bridge := mcp.NewHTTPDataBridge(mcp.HTTPDataBridgeConfig{
-		BaseURL:    client.Addr,
-		APIKey:     client.APIKey,
-		TenantID:   strings.TrimSpace(os.Getenv("CORDUM_TENANT_ID")),
-		HTTPClient: client.HTTPClient,
-	})
+		BaseURL:           client.Addr,
+		TenantID:          strings.TrimSpace(os.Getenv("CORDUM_TENANT_ID")),
+		HTTPClient:        client.HTTPClient,
+		AllowedHosts:      append([]string{}, client.allowedHosts...),
+		AllowPrivateHosts: client.allowPrivateHosts,
+	}.WithAuthToken(client.authTokenValue()))
 	return mcp.RegisterAllResources(registry, bridge)
 }
 

@@ -42,10 +42,10 @@ func TestHTTPBridgeSubmitJob(t *testing.T) {
 	defer srv.Close()
 
 	bridge := NewHTTPServiceBridge(HTTPServiceBridgeConfig{
-		BaseURL:  srv.URL,
-		APIKey:   "test-key",
-		TenantID: "tenant-a",
-	})
+		BaseURL:           srv.URL,
+		TenantID:          "tenant-a",
+		AllowPrivateHosts: true,
+	}.WithAuthToken("test-key"))
 	out, err := bridge.SubmitJob(context.Background(), SubmitJobInput{
 		Prompt:   "hello",
 		Topic:    "job.default",
@@ -92,8 +92,9 @@ func TestHTTPBridgeErrorMapping(t *testing.T) {
 	defer srv.Close()
 
 	bridge := NewHTTPServiceBridge(HTTPServiceBridgeConfig{
-		BaseURL:  srv.URL,
-		TenantID: "default",
+		BaseURL:           srv.URL,
+		TenantID:          "default",
+		AllowPrivateHosts: true,
 	})
 
 	_, err := bridge.SubmitJob(context.Background(), SubmitJobInput{Prompt: "hello", Topic: "job.default"})
@@ -125,8 +126,9 @@ func TestHTTPBridgeMapsTerminalCancelStateToConflict(t *testing.T) {
 	defer srv.Close()
 
 	bridge := NewHTTPServiceBridge(HTTPServiceBridgeConfig{
-		BaseURL:  srv.URL,
-		TenantID: "default",
+		BaseURL:           srv.URL,
+		TenantID:          "default",
+		AllowPrivateHosts: true,
 	})
 	err := bridge.CancelJob(context.Background(), "job-1", "")
 	var be *BridgeError
@@ -138,6 +140,25 @@ func TestHTTPBridgeMapsTerminalCancelStateToConflict(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(be.Message), "already") {
 		t.Fatalf("expected terminal conflict message, got %q", be.Message)
+	}
+}
+
+func TestHTTPBridgeRejectsPrivateTargetByDefault(t *testing.T) {
+	t.Parallel()
+
+	bridge := NewHTTPServiceBridge(HTTPServiceBridgeConfig{
+		BaseURL:  "http://127.0.0.1:8081",
+		TenantID: "default",
+	})
+	_, err := bridge.SubmitJob(context.Background(), SubmitJobInput{
+		Prompt: "hello",
+		Topic:  "job.default",
+	})
+	if err == nil {
+		t.Fatal("expected private target rejection")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "private") {
+		t.Fatalf("expected private-target error, got %v", err)
 	}
 }
 
