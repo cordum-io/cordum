@@ -17,7 +17,7 @@ import (
 // Client is a minimal HTTP client for the API gateway.
 type Client struct {
 	BaseURL string
-	// #nosec G101 -- API keys are provided at runtime, not hardcoded.
+	// #nosec G117 -- API keys are provided at runtime, not hardcoded.
 	APIKey     string
 	TenantID   string
 	HTTPClient *http.Client
