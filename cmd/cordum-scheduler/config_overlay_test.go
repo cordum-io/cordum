@@ -148,6 +148,82 @@ func TestBootstrapConfigWritesDefaults(t *testing.T) {
 	}
 }
 
+func TestBootstrapConfigUpdatesOnHashChange(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	svc, err := configsvc.New("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	defer svc.Close()
+
+	ctx := context.Background()
+	poolsV1 := &config.PoolsConfig{Topics: map[string][]string{"job.test": {"pool-a"}}}
+
+	// Initial bootstrap
+	if err := bootstrapConfig(ctx, svc, poolsV1, nil); err != nil {
+		t.Fatalf("bootstrap v1: %v", err)
+	}
+	doc, _ := svc.Get(ctx, configsvc.ScopeSystem, "default")
+	rev1 := doc.Revision
+
+	// Same config → should NOT update (revision unchanged)
+	if err := bootstrapConfig(ctx, svc, poolsV1, nil); err != nil {
+		t.Fatalf("bootstrap same: %v", err)
+	}
+	doc, _ = svc.Get(ctx, configsvc.ScopeSystem, "default")
+	if doc.Revision != rev1 {
+		t.Fatalf("expected no update for same config, revision changed from %d to %d", rev1, doc.Revision)
+	}
+
+	// Different config → SHOULD update
+	poolsV2 := &config.PoolsConfig{Topics: map[string][]string{"job.test": {"pool-a"}, "job.bank": {"pool-b"}}}
+	if err := bootstrapConfig(ctx, svc, poolsV2, nil); err != nil {
+		t.Fatalf("bootstrap v2: %v", err)
+	}
+	doc, _ = svc.Get(ctx, configsvc.ScopeSystem, "default")
+	if doc.Revision == rev1 {
+		t.Fatalf("expected config update for changed pools, revision still %d", rev1)
+	}
+}
+
+func TestBootstrapConfigStoresFileHash(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	svc, err := configsvc.New("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	defer svc.Close()
+
+	ctx := context.Background()
+	pools := &config.PoolsConfig{Topics: map[string][]string{"job.test": {"pool-a"}}}
+	timeouts := &config.TimeoutsConfig{Reconciler: config.ReconcilerTimeout{DispatchTimeoutSeconds: 10}}
+
+	if err := bootstrapConfig(ctx, svc, pools, timeouts); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	doc, err := svc.Get(ctx, configsvc.ScopeSystem, "default")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if _, ok := doc.Data["_poolsFileHash"]; !ok {
+		t.Fatal("expected _poolsFileHash in stored document")
+	}
+	if _, ok := doc.Data["_timeoutsFileHash"]; !ok {
+		t.Fatal("expected _timeoutsFileHash in stored document")
+	}
+}
+
 func TestLoadConfigSnapshot(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {

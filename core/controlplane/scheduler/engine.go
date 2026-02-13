@@ -32,18 +32,23 @@ const (
 	retryDelayPublish   = 2 * time.Second
 	retryDelayNoWorkers = 2 * time.Second
 	safetyThrottleDelay = 5 * time.Second
+
+	// maxSchedulingRetries caps the number of scheduling attempts before
+	// a job is moved to FAILED + DLQ. With exponential backoff (1s→30s max)
+	// this allows ~25 minutes of retries before giving up.
+	maxSchedulingRetries = 50
 )
 
 // Engine wires together bus interactions, safety checks, and scheduling decisions.
 type Engine struct {
-	bus      Bus
-	safety   SafetyChecker
-	registry WorkerRegistry
-	strategy SchedulingStrategy
-	jobStore JobStore
-	metrics  Metrics
-	config   ConfigProvider
-	saga     *SagaManager
+	bus            Bus
+	safety         SafetyChecker
+	registry       WorkerRegistry
+	strategy       SchedulingStrategy
+	jobStore       JobStore
+	metrics        Metrics
+	config         ConfigProvider
+	saga           *SagaManager
 	stopped        atomic.Bool
 	activeHandlers atomic.Int64
 	wg             sync.WaitGroup
@@ -71,15 +76,19 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func() error) e
 	key := jobLockKey(jobID)
 	lockStart := time.Now()
 	deadline := lockStart.Add(storeOpTimeout)
+	var (
+		token string
+		err   error
+	)
 	for {
 		ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
-		ok, err := e.jobStore.TryAcquireLock(ctx, key, ttl)
+		token, err = e.jobStore.TryAcquireLock(ctx, key, ttl)
 		cancel()
 		if err != nil {
 			logging.Error("scheduler", "job lock acquisition failed", "job_id", jobID, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
-		if ok {
+		if token != "" {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -93,7 +102,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func() error) e
 	defer func() {
 		ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
 		defer cancel()
-		_ = e.jobStore.ReleaseLock(ctx, key)
+		_ = e.jobStore.ReleaseLock(ctx, key, token)
 	}()
 	return fn()
 }
@@ -140,6 +149,30 @@ func (e *Engine) Start() error {
 	if err := e.bus.Subscribe(capsdk.SubjectCancel, schedulerQueue, e.HandlePacket); err != nil {
 		return fmt.Errorf("subscribe cancel: %w", err)
 	}
+
+	// Periodic registry stats logging for diagnostics
+	type registryStatter interface {
+		Stats() (int, map[string]int)
+	}
+	if statter, ok := e.registry.(registryStatter); ok {
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-e.ctx.Done():
+					return
+				case <-ticker.C:
+					total, byPool := statter.Stats()
+					logging.Info("scheduler", "registry stats",
+						"total_workers", total,
+						"pools", fmt.Sprintf("%v", byPool),
+					)
+				}
+			}
+		}()
+	}
+
 	return nil
 }
 
@@ -316,7 +349,13 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			}
 		}
 
-		return e.processJob(req, traceID)
+		if err := e.processJob(req, traceID); err != nil {
+			if isRetryableSchedulingError(err) {
+				return nil
+			}
+			return err
+		}
+		return nil
 	})
 }
 
@@ -347,6 +386,21 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) error {
 		if err == nil {
 			attempts = a
 		}
+	}
+
+	// Give up after maxSchedulingRetries to prevent infinite NAK loops
+	// (e.g. job.default with no workers). Job goes to DLQ for investigation.
+	if attempts >= maxSchedulingRetries {
+		reason := fmt.Sprintf("max scheduling retries exceeded (attempts=%d)", attempts)
+		logging.Warn("scheduler", "giving up on job", "job_id", jobID, "topic", topic, "attempts", attempts)
+		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+			logging.Error("scheduler", "state transition failed", "job_id", jobID, "target_state", JobStateFailed, "error", err)
+		}
+		if err := e.emitDLQ(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, "max_scheduling_retries"); err != nil {
+			logging.Error("scheduler", "dlq emit failed", "job_id", jobID, "error", err)
+		}
+		e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
+		return nil
 	}
 
 	e.attachEffectiveConfig(req)
@@ -475,6 +529,12 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) error {
 	}
 
 	workers := e.registry.Snapshot()
+	if len(workers) == 0 {
+		logging.Warn("scheduler", "no workers in registry",
+			"topic", topic,
+			"job_id", jobID,
+		)
+	}
 	subject, err := e.strategy.PickSubject(req, workers)
 	if err != nil {
 		if errors.Is(err, ErrNoPoolMapping) {
@@ -491,6 +551,13 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) error {
 			)
 		}
 		if isRetryableSchedulingError(err) {
+			if inc, ok := e.jobStore.(interface {
+				IncrAttempts(context.Context, string) error
+			}); ok {
+				ctx2, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+				_ = inc.IncrAttempts(ctx2, jobID)
+				cancel()
+			}
 			return RetryAfter(err, backoffDelay(attempts, backoffBase, backoffMax))
 		}
 		if err := e.setJobState(jobID, JobStateFailed); err != nil {

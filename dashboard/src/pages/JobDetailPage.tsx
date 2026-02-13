@@ -10,6 +10,7 @@ import { JobStatusBadge } from "../components/StatusBadge";
 import { JobStateMachine } from "../components/jobs/JobStateMachine";
 import { SafetyExplainCard } from "../components/jobs/SafetyExplainCard";
 import { JobActions } from "../components/jobs/JobActions";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Memory payload hook
@@ -135,6 +136,7 @@ function PayloadSection({
 
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
+  usePageTitle(id ? `Job ${id.slice(0, 8)}` : "Job");
   const { data: job, isLoading, isError } = useJob(id ?? "");
   const { data: decisions } = useJobDecisions(id ?? "");
 
@@ -261,15 +263,26 @@ export default function JobDetailPage() {
       )}
 
       {/* Workflow context link */}
-      {job.workflowRunId && (
+      {(job.workflowRunId || job.workflowId) && (
         <Card>
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-ink">Part of Workflow Run</h3>
-              <p className="mt-0.5 text-xs text-muted font-mono">{job.workflowRunId}</p>
+              <h3 className="text-sm font-semibold text-ink">Part of Workflow</h3>
+              {job.workflowId && (
+                <p className="mt-0.5 text-xs text-muted font-mono">Workflow: {job.workflowId}</p>
+              )}
+              {job.workflowRunId && (
+                <p className="mt-0.5 text-xs text-muted font-mono">Run: {job.workflowRunId}</p>
+              )}
             </div>
             <Link
-              to="/workflows"
+              to={
+                job.workflowId && job.workflowRunId
+                  ? `/workflows/${job.workflowId}/runs/${job.workflowRunId}`
+                  : job.workflowId
+                    ? `/workflows/${job.workflowId}`
+                    : "/workflows"
+              }
               className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-ink hover:border-accent hover:text-accent transition-colors"
             >
               <ExternalLink className="h-3.5 w-3.5" />

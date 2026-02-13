@@ -3,6 +3,7 @@ package gateway
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -47,6 +48,19 @@ func TestWorkflowToMap(t *testing.T) {
 	out := workflowToMap(workflow)
 	if out["id"] != "wf-2" {
 		t.Fatalf("expected workflow id in map: %#v", out)
+	}
+}
+
+func TestLoadWorkflowFileRejectsInvalidStepID(t *testing.T) {
+	dir := t.TempDir()
+	payload := `{"id":"wf-1","steps":{"bad/step":{"type":"approval"}}}`
+	path := filepath.Join(dir, "workflow.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	_, _, err := loadWorkflowFile(dir, "workflow.json", "pack.wf")
+	if err == nil || !strings.Contains(err.Error(), "workflow step id") {
+		t.Fatalf("expected invalid step id error, got %v", err)
 	}
 }
 

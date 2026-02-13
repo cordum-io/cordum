@@ -27,6 +27,7 @@ import { cn } from "../lib/utils";
 import { exportPdf, type PdfSection } from "../lib/pdfExport";
 import { useAuth } from "../hooks/useAuth";
 import type { PolicyRule } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -277,6 +278,7 @@ function RollbackDialog({
 // ---------------------------------------------------------------------------
 
 export default function PoliciesHistoryPage() {
+  usePageTitle("Policies - History");
   const { bundleId, bundles } = usePolicyBundleContext();
   const ruleCount = bundles.find((b) => b.id === bundleId)?.rules.length ?? 0;
   const { tenantId } = useAuth();

@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -73,6 +74,22 @@ func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
 		}
 	}
 	if val := os.Getenv("API_RATE_LIMIT_BURST"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			burst = parsed
+		}
+	}
+	return newKeyedRateLimiter(rps, burst)
+}
+
+func newPublicRateLimiterFromEnv() *keyedRateLimiter {
+	rps := defaultPublicRateLimitRPS
+	burst := defaultPublicRateLimitBurst
+	if val := os.Getenv("API_PUBLIC_RATE_LIMIT_RPS"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			rps = parsed
+		}
+	}
+	if val := os.Getenv("API_PUBLIC_RATE_LIMIT_BURST"); val != "" {
 		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
 			burst = parsed
 		}
@@ -124,6 +141,7 @@ func (rl *keyedRateLimiter) Allow(key string) bool {
 }
 
 var apiLimiter = newKeyedRateLimiterFromEnv()
+var publicLimiter = newPublicRateLimiterFromEnv()
 
 type submitJobRequest struct {
 	Prompt             string            `json:"prompt"`
@@ -494,6 +512,68 @@ func apiKeyUnaryInterceptor(auth AuthProvider) grpc.UnaryServerInterceptor {
 	}
 }
 
+var grpcPublicMethods = map[string]bool{
+	"/grpc.health.v1.Health/Check": true,
+	"/grpc.health.v1.Health/Watch": true,
+}
+
+func rateLimitUnaryInterceptor(auth AuthProvider) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if apiLimiter == nil && publicLimiter == nil {
+			return handler(ctx, req)
+		}
+		if info == nil {
+			return handler(ctx, req)
+		}
+		if grpcPublicMethods[info.FullMethod] {
+			if publicLimiter != nil && !publicLimiter.Allow(grpcPublicRateLimitKey(ctx)) {
+				return nil, status.Error(codes.ResourceExhausted, "rate limited")
+			}
+			return handler(ctx, req)
+		}
+		if apiLimiter != nil && !apiLimiter.Allow(grpcRateLimitKey(ctx)) {
+			return nil, status.Error(codes.ResourceExhausted, "rate limited")
+		}
+		return handler(ctx, req)
+	}
+}
+
+func grpcRateLimitKey(ctx context.Context) string {
+	// SECURITY: The rate limiter runs after auth, so prefer the authenticated
+	// tenant. Fall back to client IP if auth context is missing.
+	if authCtx := authFromContext(ctx); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
+		return "tenant:" + strings.TrimSpace(authCtx.Tenant)
+	}
+	if ip := grpcClientIP(ctx); ip != "" {
+		return "ip:" + ip
+	}
+	return "ip:unknown"
+}
+
+func grpcPublicRateLimitKey(ctx context.Context) string {
+	if ip := grpcClientIP(ctx); ip != "" {
+		return "ip:" + ip
+	}
+	return "ip:unknown"
+}
+
+func grpcClientIP(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	peerInfo, ok := peer.FromContext(ctx)
+	if !ok || peerInfo == nil || peerInfo.Addr == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(peerInfo.Addr.String())); err == nil && host != "" {
+		return host
+	}
+	if tcpAddr, ok := peerInfo.Addr.(*net.TCPAddr); ok && tcpAddr.IP != nil {
+		return tcpAddr.IP.String()
+	}
+	return strings.TrimSpace(peerInfo.Addr.String())
+}
+
 func addrFromEnv(key, fallback string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
@@ -547,20 +627,36 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	return credentials.NewTLS(cfg), nil
 }
 
-func rateLimitMiddleware(next http.Handler) http.Handler {
-	if apiLimiter == nil {
+func rateLimitMiddleware(auth AuthProvider, next http.Handler) http.Handler {
+	if apiLimiter == nil && publicLimiter == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || !strings.HasPrefix(r.URL.Path, "/api/") {
-			next.ServeHTTP(w, r)
-			return
-		}
 		if r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !apiLimiter.Allow(rateLimitKey(r)) {
+		if r.URL.Path == "/health" {
+			if publicLimiter != nil && !publicLimiter.Allow(publicRateLimitKey(r)) {
+				writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if isAllowedPublicPath(auth, r.URL.Path) {
+			if publicLimiter != nil && !publicLimiter.Allow(publicRateLimitKey(r)) {
+				writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if apiLimiter != nil && !apiLimiter.Allow(rateLimitKey(r)) {
 			writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
@@ -569,13 +665,22 @@ func rateLimitMiddleware(next http.Handler) http.Handler {
 }
 
 func rateLimitKey(r *http.Request) string {
-	if tenant := strings.TrimSpace(tenantFromRequest(r)); tenant != "" {
-		return "tenant:" + tenant
+	// SECURITY: The rate limiter runs after auth, so prefer the authenticated
+	// tenant. Fall back to client IP if auth context is missing.
+	if authCtx := authFromRequest(r); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
+		return "tenant:" + strings.TrimSpace(authCtx.Tenant)
 	}
 	if ip := clientIP(r); ip != "" {
 		return "ip:" + ip
 	}
-	return "unknown"
+	return "ip:unknown"
+}
+
+func publicRateLimitKey(r *http.Request) string {
+	if ip := clientIP(r); ip != "" {
+		return "ip:" + ip
+	}
+	return "ip:unknown"
 }
 
 func clientIP(r *http.Request) string {
@@ -588,6 +693,27 @@ func clientIP(r *http.Request) string {
 	return strings.TrimSpace(r.RemoteAddr)
 }
 
+// maxPublicPaths is the hardcoded ceiling of paths that may be public.
+// Even if a PublicPathProvider claims a path is public, it must be in this
+// set. This prevents a buggy or malicious provider from bypassing auth on
+// sensitive endpoints.
+var maxPublicPaths = map[string]bool{
+	"/api/v1/auth/config": true,
+	"/api/v1/auth/login":  true,
+}
+
+// isAllowedPublicPath returns true only when BOTH the provider AND the
+// hardcoded ceiling agree the path is public.
+func isAllowedPublicPath(auth AuthProvider, path string) bool {
+	if !maxPublicPaths[path] {
+		return false
+	}
+	if pp, ok := auth.(PublicPathProvider); ok {
+		return pp.IsPublicPath(path)
+	}
+	return false
+}
+
 // apiKeyMiddleware enforces API key auth and injects auth context.
 func apiKeyMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 	if auth == nil {
@@ -598,7 +724,7 @@ func apiKeyMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if publicPaths, ok := auth.(PublicPathProvider); ok && publicPaths.IsPublicPath(r.URL.Path) {
+		if isAllowedPublicPath(auth, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -623,7 +749,7 @@ func tenantMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if publicPaths, ok := auth.(PublicPathProvider); ok && publicPaths.IsPublicPath(r.URL.Path) {
+		if isAllowedPublicPath(auth, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

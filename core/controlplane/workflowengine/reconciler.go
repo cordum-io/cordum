@@ -55,16 +55,16 @@ func (r *reconciler) Start(ctx context.Context) {
 			if r.jobStore == nil || r.workflowStore == nil || r.engine == nil {
 				continue
 			}
-			ok, err := r.jobStore.TryAcquireLock(ctx, reconcilerLockKey, r.lockTTL)
+			token, err := r.jobStore.TryAcquireLock(ctx, reconcilerLockKey, r.lockTTL)
 			if err != nil {
 				logging.Error("workflow-engine", "reconciler lock acquisition failed", "error", err)
 				continue
 			}
-			if !ok {
+			if token == "" {
 				continue
 			}
 			r.tick(ctx)
-			_ = r.jobStore.ReleaseLock(ctx, reconcilerLockKey)
+			_ = r.jobStore.ReleaseLock(ctx, reconcilerLockKey, token)
 		}
 	}
 }
@@ -79,14 +79,14 @@ func (r *reconciler) HandleJobResult(ctx context.Context, jr *pb.JobResult) erro
 	}
 	if r.jobStore != nil {
 		lockKey := runLockKey(runID)
-		ok, err := r.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
+		token, err := r.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
 		if err != nil {
 			return bus.RetryAfter(err, 1*time.Second)
 		}
-		if !ok {
+		if token == "" {
 			return bus.RetryAfter(fmt.Errorf("run lock busy"), 500*time.Millisecond)
 		}
-		defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey) }()
+		defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
 	}
 	if r.engine != nil {
 		r.engine.HandleJobResult(ctx, jr)
@@ -113,11 +113,11 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 		return
 	}
 	lockKey := runLockKey(runID)
-	ok, err := r.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
-	if err != nil || !ok {
+	token, err := r.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
+	if err != nil || token == "" {
 		return
 	}
-	defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey) }()
+	defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
 
 	run, err := r.workflowStore.GetRun(ctx, runID)
 	if err != nil || run == nil {
@@ -141,15 +141,20 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 			continue
 		}
 		resultPtr, _ := r.jobStore.GetResultPtr(ctx, sr.JobID)
+		failureReason := ""
+		if status != pb.JobStatus_JOB_STATUS_SUCCEEDED {
+			failureReason, _ = r.jobStore.GetFailureReason(ctx, sr.JobID)
+		}
 		jr := &pb.JobResult{
 			JobId:       sr.JobID,
 			Status:      status,
 			ResultPtr:   resultPtr,
+			ErrorMessage: failureReason,
 			WorkerId:    "",
 			ExecutionMs: 0,
 		}
 		if status != pb.JobStatus_JOB_STATUS_SUCCEEDED && jr.ErrorMessage == "" {
-			jr.ErrorMessage = "job state: " + string(state)
+			jr.ErrorMessage = fmt.Sprintf("job %s terminated with state %s (no error details available)", sr.JobID, state)
 		}
 		r.engine.HandleJobResult(ctx, jr)
 	}
@@ -179,11 +184,14 @@ func runLockKey(runID string) string {
 }
 
 func splitJobID(jobID string) (runID, stepID string) {
-	parts := strings.Split(jobID, ":")
-	if len(parts) < 2 {
+	parts := strings.SplitN(jobID, ":", 2)
+	if len(parts) != 2 {
 		return "", ""
 	}
-	runID = strings.Join(parts[:len(parts)-1], ":")
-	stepID = parts[len(parts)-1]
+	runID = parts[0]
+	stepID = parts[1]
+	if at := strings.LastIndex(stepID, "@"); at > 0 {
+		stepID = stepID[:at]
+	}
 	return
 }

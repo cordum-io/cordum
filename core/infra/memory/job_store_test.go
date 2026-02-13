@@ -65,6 +65,37 @@ func TestRedisJobStoreStateAndResultPtr(t *testing.T) {
 	}
 }
 
+func TestRedisJobStoreResultPtrTTL(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-ttl"
+	if err := store.SetResultPtr(ctx, jobID, "redis://res:job-ttl"); err != nil {
+		t.Fatalf("set result ptr: %v", err)
+	}
+	if store.metaTTL <= 0 {
+		t.Fatalf("expected meta TTL configured")
+	}
+	ttl, err := store.client.TTL(ctx, jobResultPtrKey(jobID)).Result()
+	if err != nil {
+		t.Fatalf("ttl: %v", err)
+	}
+	if ttl <= 0 {
+		t.Fatalf("expected ttl to be set, got %v", ttl)
+	}
+	if ttl > store.metaTTL {
+		t.Fatalf("expected ttl <= metaTTL (%s), got %s", store.metaTTL, ttl)
+	}
+}
+
 func TestRedisJobStoreTransitionGuard(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -546,11 +577,106 @@ func TestRedisJobStoreIdempotencyAndLocks(t *testing.T) {
 		t.Fatalf("unexpected idempotency lookup: %s err=%v", jobID, err)
 	}
 
-	ok, err := store.TryAcquireLock(ctx, "lock-1", time.Second)
-	if err != nil || !ok {
+	token, err := store.TryAcquireLock(ctx, "lock-1", time.Second)
+	if err != nil || token == "" {
 		t.Fatalf("expected lock acquired")
 	}
-	if err := store.ReleaseLock(ctx, "lock-1"); err != nil {
+	if err := store.ReleaseLock(ctx, "lock-1", token); err != nil {
+		t.Fatalf("release lock: %v", err)
+	}
+}
+
+func TestRedisJobStoreLockConcurrentSafety(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	token1, err := store.TryAcquireLock(ctx, "lock-1", time.Second)
+	if err != nil || token1 == "" {
+		t.Fatalf("expected lock acquired")
+	}
+	token2, err := store.TryAcquireLock(ctx, "lock-1", time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error on second acquire: %v", err)
+	}
+	if token2 != "" {
+		t.Fatalf("expected lock contention, got token=%q", token2)
+	}
+	if err := store.ReleaseLock(ctx, "lock-1", token1); err != nil {
+		t.Fatalf("release lock: %v", err)
+	}
+}
+
+func TestRedisJobStoreLockReacquireAfterExpiry(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	token1, err := store.TryAcquireLock(ctx, "lock-1", 100*time.Millisecond)
+	if err != nil || token1 == "" {
+		t.Fatalf("expected lock acquired")
+	}
+	srv.FastForward(200 * time.Millisecond)
+
+	token2, err := store.TryAcquireLock(ctx, "lock-1", time.Second)
+	if err != nil || token2 == "" {
+		t.Fatalf("expected lock reacquired after expiry")
+	}
+	if token2 == token1 {
+		t.Fatalf("expected new token after expiry")
+	}
+	if err := store.ReleaseLock(ctx, "lock-1", token2); err != nil {
+		t.Fatalf("release lock: %v", err)
+	}
+}
+
+func TestRedisJobStoreLockRejectsWrongOwner(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	token1, err := store.TryAcquireLock(ctx, "lock-1", 100*time.Millisecond)
+	if err != nil || token1 == "" {
+		t.Fatalf("expected lock acquired")
+	}
+	srv.FastForward(200 * time.Millisecond)
+
+	token2, err := store.TryAcquireLock(ctx, "lock-1", time.Second)
+	if err != nil || token2 == "" {
+		t.Fatalf("expected lock reacquired after expiry")
+	}
+	if err := store.ReleaseLock(ctx, "lock-1", token1); err == nil {
+		t.Fatalf("expected wrong-owner release to fail")
+	}
+	token3, err := store.TryAcquireLock(ctx, "lock-1", time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token3 != "" {
+		t.Fatalf("expected lock still held by new owner, got token=%q", token3)
+	}
+	if err := store.ReleaseLock(ctx, "lock-1", token2); err != nil {
 		t.Fatalf("release lock: %v", err)
 	}
 }
@@ -833,6 +959,51 @@ func TestRedisJobStoreIdempotencyKeyScopedConcurrent(t *testing.T) {
 	}
 	if winCount != 1 {
 		t.Fatalf("expected exactly 1 winner, got %d", winCount)
+	}
+}
+
+func TestRedisJobStoreIncrAttempts(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-incr"
+
+	// Increment from 0 to 3.
+	for i := 1; i <= 3; i++ {
+		if err := store.IncrAttempts(ctx, jobID); err != nil {
+			t.Fatalf("incr attempts #%d: %v", i, err)
+		}
+		got, err := store.GetAttempts(ctx, jobID)
+		if err != nil {
+			t.Fatalf("get attempts after incr #%d: %v", i, err)
+		}
+		if got != i {
+			t.Fatalf("expected %d attempts after incr #%d, got %d", i, i, got)
+		}
+	}
+}
+
+func TestRedisJobStoreIncrAttemptsEmptyID(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.IncrAttempts(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty jobID")
 	}
 }
 

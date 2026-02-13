@@ -3,9 +3,11 @@ import { ArrowLeft, Loader } from "lucide-react";
 import { Button } from "../components/ui/Button";
 import { SchemaViewer } from "../components/schemas/SchemaViewer";
 import { useSchema } from "../hooks/useSchemas";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 export default function SchemaDetailPage() {
   const { id } = useParams<{ id: string }>();
+  usePageTitle(id ? `Schema ${id.slice(0, 8)}` : "Schema");
   const navigate = useNavigate();
   const { data: schema, isLoading, isError } = useSchema(id ?? "");
 

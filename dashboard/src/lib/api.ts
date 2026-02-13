@@ -8,6 +8,7 @@ interface SessionResponse {
 
 interface ApprovalsResponse {
   items: Approval[];
+  next_cursor?: number | null;
 }
 
 interface DLQResponse {
@@ -24,10 +25,11 @@ export const api = {
   },
 
   listApprovals(limit: number): Promise<ApprovalsResponse> {
-    return get<{ items: BackendApprovalItem[] }>(`/approvals?limit=${limit}`).then((res) => ({
+    return get<{ items: BackendApprovalItem[]; next_cursor?: number | null }>(`/approvals?limit=${limit}`).then((res) => ({
       items: (res.items ?? [])
         .map(mapApprovalItem)
         .filter((v): v is Approval => !!v),
+      next_cursor: res.next_cursor,
     }));
   },
 

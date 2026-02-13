@@ -16,6 +16,7 @@ import { AuditTimeline } from "../components/audit/AuditTimeline";
 import { AuditIntegrityPanel } from "../components/audit/AuditIntegrityPanel";
 import { useEventStore } from "../state/events";
 import { cn } from "../lib/utils";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -52,6 +53,7 @@ function formatGap(ms: number): string {
 // ---------------------------------------------------------------------------
 
 export default function AuditLogPage() {
+  usePageTitle("Audit Log");
   // Pagination state
   const [page, setPage] = useState(0);
   const [perPage, setPerPage] = useState<number>(25);

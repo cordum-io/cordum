@@ -18,8 +18,10 @@ ENV GONOPROXY=${GONOPROXY}
 RUN if [ "${USE_LOCAL_CAP}" != "1" ]; then \
       go mod edit -dropreplace github.com/cordum-io/cap/v2; \
     fi
+# Note: Only /go/pkg/mod cache mount is used. The go-build cache mount
+# was removed because BuildKit persists stale .a files across builds,
+# causing source changes to not be reflected in the compiled binary.
 RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
     GOFLAGS=-mod=mod go mod download
 
 COPY . .
@@ -27,7 +29,6 @@ RUN if [ "${USE_LOCAL_CAP}" != "1" ]; then \
       go mod edit -dropreplace github.com/cordum-io/cap/v2; \
     fi
 RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
     go mod download
 
 # SERVICE must match a directory under cmd/ (e.g. cordum-scheduler).
@@ -42,7 +43,6 @@ RUN TARGET="${SERVICE}" ; \
     else echo "Service dir ./cmd/${TARGET} not found for SERVICE=${SERVICE}" && false; fi
 
 RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
     GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
       -ldflags "-s -w -X github.com/cordum/cordum/core/infra/buildinfo.Version=${VERSION} -X github.com/cordum/cordum/core/infra/buildinfo.Commit=${COMMIT} -X github.com/cordum/cordum/core/infra/buildinfo.Date=${BUILD_DATE}" \
       -o /out/${SERVICE} ./cmd/${SERVICE}

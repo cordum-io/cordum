@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,12 +13,6 @@ import (
 )
 
 // Config handlers
-type configUpsertRequest struct {
-	Scope   string            `json:"scope"`
-	ScopeID string            `json:"scope_id"`
-	Data    map[string]any    `json:"data"`
-	Meta    map[string]string `json:"meta,omitempty"`
-}
 
 func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
@@ -28,12 +23,43 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusForbidden, err.Error())
 		return
 	}
-	var req configUpsertRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+
+	// Decode raw JSON to detect wrapped vs flat format.
+	var raw map[string]any
+	if err := decodeJSONBody(w, r, &raw); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
-	scope := configsvc.Scope(req.Scope)
+
+	var scopeStr, scopeID string
+	var data map[string]any
+	var meta map[string]string
+
+	// If body has "scope" as a string, treat as wrapped Document request (backward compat).
+	if sc, ok := raw["scope"].(string); ok && sc != "" {
+		scopeStr = sc
+		if sid, ok := raw["scope_id"].(string); ok {
+			scopeID = sid
+		}
+		if d, ok := raw["data"].(map[string]any); ok {
+			data = d
+		}
+		if m, ok := raw["meta"].(map[string]any); ok {
+			meta = make(map[string]string, len(m))
+			for k, v := range m {
+				if vs, ok := v.(string); ok {
+					meta[k] = vs
+				}
+			}
+		}
+	} else {
+		// Flat config patch from dashboard — auto-wrap as system/default.
+		scopeStr = string(configsvc.ScopeSystem)
+		scopeID = "default"
+		data = raw
+	}
+
+	scope := configsvc.Scope(scopeStr)
 	if scope == configsvc.ScopeSystem {
 		if err := s.requireRole(r, "admin"); err != nil {
 			writeErrorJSON(w, http.StatusForbidden, err.Error())
@@ -41,24 +67,25 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if scope == configsvc.ScopeOrg {
-		tenant, err := s.resolveTenant(r, req.ScopeID)
+		tenant, err := s.resolveTenant(r, scopeID)
 		if err != nil {
 			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 			return
 		}
-		req.ScopeID = tenant
+		scopeID = tenant
 	}
 	doc := &configsvc.Document{
 		Scope:   scope,
-		ScopeID: req.ScopeID,
-		Data:    req.Data,
-		Meta:    req.Meta,
+		ScopeID: scopeID,
+		Data:    data,
+		Meta:    meta,
 	}
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		slog.Error("config set failed", "error", err, "scope", scopeStr, "scope_id", scopeID) // #nosec -- values are validated and used for diagnostics.
+		writeErrorJSON(w, http.StatusBadRequest, "config update failed")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "set", "config", req.Scope+"/"+req.ScopeID, policyActorID(r), policyRole(r), "set config "+req.Scope+"/"+req.ScopeID)
+	s.appendAuditEntryNamed(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policyActorID(r), policyRole(r), "set config "+scopeStr+"/"+scopeID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -95,11 +122,22 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "config not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("config get failed", "error", err, "scope", scope, "scope_id", scopeID) // #nosec -- values are validated and used for diagnostics.
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, doc)
+	// Return full Document envelope if explicitly requested (backward compat).
+	if r.URL.Query().Get("envelope") == "true" {
+		writeJSON(w, doc)
+		return
+	}
+	// Default: return flat data for dashboard compatibility.
+	data := doc.Data
+	if data == nil {
+		data = map[string]any{}
+	}
+	writeJSON(w, data)
 }
 
 func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +156,8 @@ func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request
 
 	snap, err := s.configSvc.EffectiveSnapshot(r.Context(), orgID, teamID, wfID, stepID)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("effective config snapshot failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -145,8 +184,8 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req schemaRegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	data, err := json.Marshal(req.Schema)
@@ -158,7 +197,7 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "register", "schema", req.ID, policyActorID(r), policyRole(r), "register schema "+req.ID)
+	s.appendAuditEntryNamed(r.Context(), "register", "schema", req.ID, req.ID, policyActorID(r), policyRole(r), "register schema "+req.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -175,7 +214,8 @@ func (s *server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
 	}
 	ids, err := s.schemaRegistry.List(r.Context(), limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("schema list failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -198,7 +238,8 @@ func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "schema not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("schema get failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	var payload any
@@ -215,16 +256,21 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "schema registry unavailable")
 		return
 	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "schema id required")
 		return
 	}
 	if err := s.schemaRegistry.Delete(r.Context(), id); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("schema delete failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "delete", "schema", id, policyActorID(r), policyRole(r), "delete schema "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "schema", id, id, policyActorID(r), policyRole(r), "delete schema "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

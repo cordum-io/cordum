@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"os"
 	"os/signal"
 	"strconv"
@@ -18,8 +19,10 @@ import (
 )
 
 const (
-	defaultNatsURL  = "nats://127.0.0.1:4222"
-	defaultRedisURL = "redis://127.0.0.1:6379/0"
+	defaultNatsURL = "nats://127.0.0.1:4222"
+	// Default includes auth for password-protected Redis (docker-compose default).
+	// Override REDIS_URL env to connect to a different instance.
+	defaultRedisURL = "redis://:cordum-dev@127.0.0.1:6379/0"
 )
 
 // ---------------------------------------------------------------------------
@@ -117,6 +120,14 @@ func main() {
 	natsURL := envOr("NATS_URL", defaultNatsURL)
 	redisURL := envOr("REDIS_URL", defaultRedisURL)
 
+	if !runtime.ValidateRedisURL(redisURL) {
+		log.Println("[mock-bank] WARNING: REDIS_URL has no '@' — may be missing auth credentials")
+	}
+	if err := runtime.PingRedis(redisURL); err != nil {
+		log.Fatalf("[mock-bank] Redis connection failed (check REDIS_URL and password): %v", err)
+	}
+	log.Println("[mock-bank] Redis connection verified")
+
 	log.Println("[mock-bank] connecting to NATS...")
 	nc, err := nats.Connect(natsURL, nats.Name("mock-bank-fleet"), nats.Timeout(5*time.Second))
 	if err != nil {
@@ -152,8 +163,8 @@ func main() {
 		// Heartbeat goroutine
 		go func() {
 			heartbeatFn := func() ([]byte, error) {
-				active := rand.Intn(max(worker.Capacity/4, 1))
-				return runtime.HeartbeatPayload(worker.ID, worker.Pool, active, worker.Capacity, rand.Float32()*0.3)
+				active := randInt(max(worker.Capacity/4, 1))
+				return runtime.HeartbeatPayload(worker.ID, worker.Pool, active, worker.Capacity, randFloat32()*0.3)
 			}
 			if payload, err := heartbeatFn(); err == nil {
 				_ = runtime.EmitHeartbeat(nc, payload)
@@ -187,7 +198,7 @@ func makeHandler(workerID, pool string) func(runtime.Context, bankPayload) (bank
 		log.Printf("[%s] processing job=%s topic=%s", workerID, jobID, topic)
 
 		// Simulate processing time (200ms - 2s)
-		time.Sleep(time.Duration(200+rand.Intn(1800)) * time.Millisecond)
+		time.Sleep(time.Duration(200+randInt(1800)) * time.Millisecond)
 
 		amount := parseAmount(payload.Amount)
 		message := payload.Message
@@ -272,4 +283,23 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func randInt(max int) int {
+	if max <= 0 {
+		return 0
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0
+	}
+	return int(n.Int64())
+}
+
+func randFloat32() float32 {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		return 0
+	}
+	return float32(n.Int64()) / 1_000_000
 }

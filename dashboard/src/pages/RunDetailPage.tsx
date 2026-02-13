@@ -19,6 +19,7 @@ import { GanttTimeline } from "../components/workflow/GanttTimeline";
 import { RunVisualization } from "../components/workflow/RunVisualization";
 import { useRun, useRerunRun, useCancelRun } from "../hooks/useWorkflows";
 import type { WorkflowStep } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -180,6 +181,7 @@ function StepItem({ step }: { step: WorkflowStep }) {
 
 export default function RunDetailPage() {
   const { id: workflowId, runId } = useParams<{ id: string; runId: string }>();
+  usePageTitle(runId ? `Run ${runId.slice(0, 8)}` : "Run");
   const { data: run, isLoading, isError } = useRun(runId);
 
   const rerunRun = useRerunRun();

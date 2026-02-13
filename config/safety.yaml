@@ -1,3 +1,54 @@
+rules:
+  # Fraud detection jobs require human approval before execution
+  - id: fraud-review-required
+    match:
+      topics:
+        - job.fraud-detection.process
+    decision: require_approval
+    reason: "Fraud detection results must be reviewed by a human before action."
+
+  # Risk assessment agents require approval — high-impact decisions
+  - id: risk-assessment-approval
+    match:
+      topics:
+        - job.risk-agents.process
+    decision: require_approval
+    reason: "Risk assessment outcomes require human sign-off."
+
+  # Compliance jobs require approval — regulatory oversight
+  - id: compliance-approval
+    match:
+      topics:
+        - job.compliance-agents.process
+    decision: require_approval
+    reason: "Compliance checks require human verification before proceeding."
+
+  # Bank executors (wire transfers, account changes) — always require approval
+  - id: bank-executor-approval
+    match:
+      topics:
+        - job.bank-executors.process
+    decision: require_approval
+    reason: "Financial execution actions require explicit human authorization."
+
+  # Underwriting requires approval — loan decisions are high-stakes
+  - id: underwriting-approval
+    match:
+      topics:
+        - job.underwriting-agents.process
+    decision: require_approval
+    reason: "Underwriting decisions require human review before commitment."
+
+  # Low-risk topics are auto-allowed
+  - id: validators-auto-allow
+    match:
+      topics:
+        - job.bank-validators.process
+        - job.notification-service.process
+        - job.valuation-agents.process
+    decision: allow
+    reason: "Read-only validation and notification jobs are auto-approved."
+
 default_tenant: default
 tenants:
   default:

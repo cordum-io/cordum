@@ -108,6 +108,28 @@ func (r *MemoryRegistry) expire() {
 	}
 }
 
+// Stats returns worker counts: total active workers and a breakdown by pool.
+// It only counts non-expired workers. This is an extra method on the concrete
+// type (not part of the WorkerRegistry interface).
+func (r *MemoryRegistry) Stats() (total int, byPool map[string]int) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	now := time.Now()
+	byPool = make(map[string]int)
+	for _, entry := range r.workers {
+		if now.Sub(entry.lastSeen) > r.ttl {
+			continue
+		}
+		total++
+		pool := entry.hb.GetPool()
+		if pool == "" {
+			pool = "(none)"
+		}
+		byPool[pool]++
+	}
+	return total, byPool
+}
+
 // Close stops background expiry loop. It is safe to call multiple times.
 func (r *MemoryRegistry) Close() {
 	r.closeOnce.Do(func() { close(r.stopCh) })

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, put, del } from "../api/client";
 import { logger } from "../lib/logger";
+import { useToastStore } from "../state/toast";
 import type {
   PolicyBundle,
   PolicyRule,
@@ -34,6 +35,17 @@ export function encodePolicyBundleId(id: string): string {
   return id.replaceAll("/", "~");
 }
 
+function readPolicyBundleContent(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "object" && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.content === "string" && obj.content) return obj.content;
+    if (typeof obj.policy === "string" && obj.policy) return obj.policy;
+    if (typeof obj.data === "string" && obj.data) return obj.data;
+  }
+  return "";
+}
+
 function policyBundlePath(id: string): string {
   return `/policy/bundles/${encodePolicyBundleId(id)}`;
 }
@@ -54,10 +66,17 @@ export function usePolicyBundles() {
   return useQuery<ApiResponse<PolicyBundle[]>>({
     queryKey: ["policy-bundles"],
     queryFn: async () => {
-      const res = await get<{ items: BackendPolicyBundleSummary[] }>(
-        "/policy/bundles",
-      );
-      return { items: (res.items ?? []).map(mapPolicyBundleSummary) };
+      const res = await get<{
+        items: BackendPolicyBundleSummary[];
+        bundles?: Record<string, { content?: string } | string>;
+      }>("/policy/bundles");
+      const bundlesMap = res.bundles ?? {};
+      return {
+        items: (res.items ?? []).map((summary) => {
+          const content = readPolicyBundleContent(bundlesMap[summary.id]);
+          return mapPolicyBundleSummary(summary, content);
+        }),
+      };
     },
     staleTime: 30_000,
   });
@@ -112,11 +131,15 @@ export function usePublishPolicy() {
     },
     onSuccess: (_, { bundleId }) => {
       logger.info("policies", "Policy published", { bundleId });
+      useToastStore.getState().addToast({ type: "success", title: "Policy published" });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
       queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
+      queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
       queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
     },
     onError: (err, { bundleId }) => {
       logger.error("policies", "Publish failed", { bundleId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to publish", description: err.message });
     },
   });
 }
@@ -130,12 +153,15 @@ export function useRollbackPolicy() {
     },
     onSuccess: (_, { snapshotId }) => {
       logger.info("policies", "Policy rolled back", { snapshotId });
+      useToastStore.getState().addToast({ type: "success", title: "Policy rolled back" });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
       queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
       queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
       queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
     },
     onError: (err, { snapshotId }) => {
       logger.error("policies", "Rollback failed", { snapshotId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Rollback failed", description: err.message });
     },
   });
 }
@@ -149,12 +175,14 @@ export function useToggleRule() {
     },
     onSuccess: (_, { bundleId, ruleId, enabled }) => {
       logger.info("policies", "Rule toggled", { bundleId, ruleId, enabled });
+      useToastStore.getState().addToast({ type: "success", title: "Rule updated" });
       queryClient.invalidateQueries({ queryKey: ["policy-bundle", bundleId] });
       queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
       queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
     },
     onError: (err, { bundleId, ruleId }) => {
       logger.error("policies", "Toggle rule failed", { bundleId, ruleId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to update rule", description: err.message });
     },
   });
 }
@@ -167,6 +195,7 @@ export interface PolicyAuditEntry {
   id: string;
   action: string;
   bundleId: string;
+  resourceName?: string;
   actor: string;
   timestamp: string;
   details?: Record<string, unknown>;
@@ -181,6 +210,7 @@ export function usePolicyAudit() {
         id: entry.id,
         action: entry.action ?? "",
         bundleId: entry.resource_id ?? "",
+        resourceName: entry.resource_name || undefined,
         actor: entry.actor_id ?? entry.role ?? "",
         timestamp: entry.created_at ?? "",
         details: {
@@ -302,10 +332,12 @@ export function useUpdatePolicyConfig() {
     },
     onSuccess: () => {
       logger.info("policies", "Policy config updated");
+      useToastStore.getState().addToast({ type: "success", title: "Policy config saved" });
       queryClient.invalidateQueries({ queryKey: ["policy-config"] });
     },
     onError: (err) => {
       logger.error("policies", "Policy config update failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to save config", description: err.message });
     },
   });
 }
@@ -322,10 +354,12 @@ export function useActivateLockdown() {
     },
     onSuccess: () => {
       logger.warn("policies", "Lockdown activated");
+      useToastStore.getState().addToast({ type: "warning", title: "Lockdown activated" });
       queryClient.invalidateQueries({ queryKey: ["policy-config"] });
     },
     onError: (err) => {
       logger.error("policies", "Lockdown activation failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to activate lockdown", description: err.message });
     },
   });
 }
@@ -342,10 +376,12 @@ export function useDeactivateLockdown() {
     },
     onSuccess: () => {
       logger.info("policies", "Lockdown deactivated");
+      useToastStore.getState().addToast({ type: "success", title: "Lockdown deactivated" });
       queryClient.invalidateQueries({ queryKey: ["policy-config"] });
     },
     onError: (err) => {
       logger.error("policies", "Lockdown deactivation failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to deactivate lockdown", description: err.message });
     },
   });
 }

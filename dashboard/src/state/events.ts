@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { create } from "zustand";
 import { logger } from "../lib/logger";
 import type { StreamEvent } from "../api/types";
@@ -117,21 +118,26 @@ export const useEventStore = create<EventState>((set, get) => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Presence cleanup interval — expire entries older than 60s
+// Presence cleanup hook — expire entries older than 60s
 // ---------------------------------------------------------------------------
 
-setInterval(() => {
-  const state = useEventStore.getState();
-  const now = Date.now();
-  let changed = false;
-  const next = new Map(state.approvalPresence);
-  for (const [id, entry] of next) {
-    if (now - entry.since > PRESENCE_EXPIRE_MS) {
-      next.delete(id);
-      changed = true;
-    }
-  }
-  if (changed) {
-    useEventStore.setState({ approvalPresence: next });
-  }
-}, 15_000);
+export function usePresenceCleanup(): void {
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const state = useEventStore.getState();
+      const now = Date.now();
+      let changed = false;
+      const next = new Map(state.approvalPresence);
+      for (const [entryId, entry] of next) {
+        if (now - entry.since > PRESENCE_EXPIRE_MS) {
+          next.delete(entryId);
+          changed = true;
+        }
+      }
+      if (changed) {
+        useEventStore.setState({ approvalPresence: next });
+      }
+    }, 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+}

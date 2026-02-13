@@ -213,8 +213,8 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body chatSendRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid body")
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSONDecodeError(w, err, "invalid body")
 		return
 	}
 	content := strings.TrimSpace(body.Content)

@@ -1,0 +1,117 @@
+# Local development overlay for Docker Desktop / kind / minikube K8s.
+# Usage: kubectl kustomize deploy/k8s/local | kubectl apply -f -
+#   or:  kustomize build --load-restrictor LoadRestrictionsNone deploy/k8s/local | kubectl apply -f -
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base.yaml
+
+patches:
+  # --- imagePullPolicy: Never for all cordum services (locally built images) ---
+  - target:
+      kind: Deployment
+      name: cordum-context-engine
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cordum-context-engine
+      spec:
+        template:
+          spec:
+            containers:
+            - name: context-engine
+              imagePullPolicy: Never
+
+  - target:
+      kind: Deployment
+      name: cordum-safety-kernel
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cordum-safety-kernel
+      spec:
+        template:
+          spec:
+            containers:
+            - name: safety
+              imagePullPolicy: Never
+
+  - target:
+      kind: Deployment
+      name: cordum-scheduler
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cordum-scheduler
+      spec:
+        template:
+          spec:
+            containers:
+            - name: scheduler
+              imagePullPolicy: Never
+
+  - target:
+      kind: Deployment
+      name: cordum-workflow-engine
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cordum-workflow-engine
+      spec:
+        template:
+          spec:
+            containers:
+            - name: workflow-engine
+              imagePullPolicy: Never
+
+  # Gateway: imagePullPolicy + dev rate limits + Recreate strategy + user auth
+  - target:
+      kind: Deployment
+      name: cordum-api-gateway
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cordum-api-gateway
+      spec:
+        strategy:
+          type: Recreate
+        template:
+          spec:
+            containers:
+            - name: gateway
+              imagePullPolicy: Never
+              env:
+              - name: API_RATE_LIMIT_RPS
+                value: "2000"
+              - name: API_RATE_LIMIT_BURST
+                value: "4000"
+              - name: CORDUM_USER_AUTH_ENABLED
+                value: "true"
+
+  # Dashboard: imagePullPolicy + readOnlyRootFilesystem: false fallback
+  - target:
+      kind: Deployment
+      name: cordum-dashboard
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cordum-dashboard
+      spec:
+        template:
+          spec:
+            initContainers:
+            - name: copy-static
+              imagePullPolicy: Never
+            containers:
+            - name: dashboard
+              imagePullPolicy: Never
+              securityContext:
+                readOnlyRootFilesystem: false
+                allowPrivilegeEscalation: false

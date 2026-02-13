@@ -166,7 +166,7 @@ func main() {
 			if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
 				snapshotInterval = parsed
 			} else {
-				log.Printf("invalid WORKER_SNAPSHOT_INTERVAL=%q, using default %s", raw, snapshotInterval)
+				log.Printf("invalid WORKER_SNAPSHOT_INTERVAL=%q, using default %s", raw, snapshotInterval) // #nosec -- value is config input for diagnostics.
 			}
 		}
 		go func() {

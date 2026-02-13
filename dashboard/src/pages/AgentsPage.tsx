@@ -8,6 +8,8 @@ import { PoolGroupedView } from "../components/agents/PoolGroupedView";
 import { WorkerDetailDrawer } from "../components/agents/WorkerDetailDrawer";
 import { cn } from "../lib/utils";
 import type { Worker } from "../api/types";
+import { DataFreshness } from "../components/ui/DataFreshness";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -137,7 +139,8 @@ function SortHeader({
 // ---------------------------------------------------------------------------
 
 export default function AgentsPage() {
-  const { data: workers = [], isLoading, error } = useWorkers();
+  usePageTitle("Agent Fleet");
+  const { data: workers = [], isLoading, error, dataUpdatedAt, refetch, isRefetching } = useWorkers();
   const agentsView = useUiStore((s) => s.agentsView);
   const setAgentsView = useUiStore((s) => s.setAgentsView);
 
@@ -184,7 +187,10 @@ export default function AgentsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="font-display text-2xl font-bold text-ink">Agents</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="font-display text-2xl font-bold text-ink">Agents</h1>
+          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
+        </div>
         <div className="flex rounded-lg border border-border">
           <button
             type="button"

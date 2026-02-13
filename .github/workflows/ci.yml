@@ -44,7 +44,12 @@ jobs:
         name: codecov-umbrella
 
     - name: Run benchmarks
-      run: go test -run=^$ -bench=. -benchmem ./... | tee benchmark.txt
+      run: |
+        go test -run=^$ -bench=. -benchmem ./... > benchmark_raw.txt
+        # Keep only valid Go benchmark output lines (results + header).
+        # This avoids log interleaving that can corrupt benchmark-action parsing.
+        grep -E '^(Benchmark[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[0-9.]+[[:space:]]+ns/op|goos:|goarch:|pkg:|cpu:)' benchmark_raw.txt > benchmark.txt || true
+        cat benchmark.txt
 
     - name: Check benchmark output
       id: benchmark_check
@@ -110,10 +115,14 @@ jobs:
         go install github.com/securego/gosec/v2/cmd/gosec@latest
         gosec -no-fail -fmt sarif -out results.sarif ./...
 
+    - name: Sanitize SARIF
+      run: |
+        jq '(.runs[].tool.driver.rules[] |= del(.relationships))' results.sarif > results.cleaned.sarif
+
     - name: Upload SARIF file
       uses: github/codeql-action/upload-sarif@v4
       with:
-        sarif_file: results.sarif
+        sarif_file: results.cleaned.sarif
 
   build:
     name: Build

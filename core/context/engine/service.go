@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,13 +19,18 @@ import (
 const (
 	defaultMaxHistory     = 20
 	defaultMaxInputTokens = 8000
+	defaultMaxEntryBytes  = 64 * 1024
+	defaultMaxChunkScan   = 1000
+	defaultRedisOpTimeout = 2 * time.Second
 )
 
 // Service implements the ContextEngine RPC service.
 type Service struct {
 	pb.UnimplementedContextEngineServer
-	redis      redis.UniversalClient
-	maxHistory int64
+	redis         redis.UniversalClient
+	maxHistory    int64
+	maxEntryBytes int
+	maxChunkScan  int64
 }
 
 // NewService constructs a context engine backed by Redis.
@@ -40,9 +47,23 @@ func NewService(redisURL string) (*Service, error) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("connect redis: %w", err)
 	}
+	maxEntryBytes := defaultMaxEntryBytes
+	if raw := strings.TrimSpace(os.Getenv("CONTEXT_ENGINE_MAX_ENTRY_BYTES")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			maxEntryBytes = n
+		}
+	}
+	maxChunkScan := int64(defaultMaxChunkScan)
+	if raw := strings.TrimSpace(os.Getenv("CONTEXT_ENGINE_MAX_CHUNK_SCAN")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			maxChunkScan = int64(n)
+		}
+	}
 	return &Service{
-		redis:      client,
-		maxHistory: defaultMaxHistory,
+		redis:         client,
+		maxHistory:    defaultMaxHistory,
+		maxEntryBytes: maxEntryBytes,
+		maxChunkScan:  maxChunkScan,
 	}, nil
 }
 
@@ -65,7 +86,9 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 
 	// Pull recent history for CHAT/RAG.
 	if memoryID != "" && (mode == pb.ContextMode_CONTEXT_MODE_CHAT || mode == pb.ContextMode_CONTEXT_MODE_RAG) {
-		events, _ := s.redis.LRange(ctx, s.historyKey(memoryID), -s.maxHistory, -1).Result()
+		redisCtx, cancel := redisOpContext(ctx)
+		events, _ := s.redis.LRange(redisCtx, s.historyKey(memoryID), -s.maxHistory, -1).Result()
+		cancel()
 		for _, raw := range events {
 			var ev historyEvent
 			if err := json.Unmarshal([]byte(raw), &ev); err != nil {
@@ -127,6 +150,7 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 	if inputTokens > math.MaxInt32 {
 		inputTokens32 = math.MaxInt32
 	} else {
+		// #nosec G115 -- bounded above by MaxInt32.
 		inputTokens32 = int32(inputTokens)
 	}
 
@@ -153,27 +177,37 @@ func (s *Service) UpdateMemory(ctx context.Context, req *pb.UpdateMemoryRequest)
 
 	userMsg := s.extractUserMessage(req.GetLogicalPayload())
 	assistantMsg := strings.TrimSpace(string(req.GetModelResponse()))
+	if s.maxEntryBytes > 0 {
+		if len(userMsg) > s.maxEntryBytes {
+			return nil, fmt.Errorf("user message exceeds max size (%d bytes)", s.maxEntryBytes)
+		}
+		if len(assistantMsg) > s.maxEntryBytes {
+			return nil, fmt.Errorf("assistant message exceeds max size (%d bytes)", s.maxEntryBytes)
+		}
+	}
 
+	redisCtx, cancel := redisOpContext(ctx)
+	defer cancel()
 	pipe := s.redis.Pipeline()
 	pushed := false
 	if userMsg != "" {
 		ev := historyEvent{Role: "user", Content: userMsg, Timestamp: time.Now().Unix()}
 		if data, err := json.Marshal(ev); err == nil {
-			pipe.RPush(ctx, s.historyKey(memoryID), data)
+			pipe.RPush(redisCtx, s.historyKey(memoryID), data)
 			pushed = true
 		}
 	}
 	if assistantMsg != "" {
 		ev := historyEvent{Role: "assistant", Content: assistantMsg, Timestamp: time.Now().Unix()}
 		if data, err := json.Marshal(ev); err == nil {
-			pipe.RPush(ctx, s.historyKey(memoryID), data)
+			pipe.RPush(redisCtx, s.historyKey(memoryID), data)
 			pushed = true
 		}
 	}
 	if pushed && s.maxHistory > 0 {
-		pipe.LTrim(ctx, s.historyKey(memoryID), -s.maxHistory, -1)
+		pipe.LTrim(redisCtx, s.historyKey(memoryID), -s.maxHistory, -1)
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
+	if _, err := pipe.Exec(redisCtx); err != nil {
 		return nil, fmt.Errorf("update memory pipeline: %w", err)
 	}
 	return &pb.UpdateMemoryResponse{}, nil
@@ -207,22 +241,43 @@ func (s *Service) loadChunks(ctx context.Context, memoryID string) []chunkRecord
 	if memoryID == "" {
 		return nil
 	}
-	keys, err := s.redis.SMembers(ctx, s.chunkIndexKey(memoryID)).Result()
-	if err != nil || len(keys) == 0 {
-		return nil
-	}
+	redisCtx, cancel := redisOpContext(ctx)
+	defer cancel()
+	limit := s.maxChunkScan
 	var out []chunkRecord
-	for _, k := range keys {
-		val, err := s.redis.Get(ctx, k).Bytes()
+	var cursor uint64
+	for {
+		remaining := limit - int64(len(out))
+		if remaining <= 0 {
+			break
+		}
+		scanCount := remaining
+		if scanCount > 200 {
+			scanCount = 200
+		}
+		keys, next, err := s.redis.SScan(redisCtx, s.chunkIndexKey(memoryID), cursor, "", scanCount).Result()
 		if err != nil {
-			continue
+			return nil
 		}
-		var rec chunkRecord
-		if err := json.Unmarshal(val, &rec); err != nil {
-			slog.Warn("context-engine: corrupt chunk record skipped", "key", k, "error", err)
-			continue
+		cursor = next
+		for _, k := range keys {
+			val, err := s.redis.Get(redisCtx, k).Bytes()
+			if err != nil {
+				continue
+			}
+			var rec chunkRecord
+			if err := json.Unmarshal(val, &rec); err != nil {
+				slog.Warn("context-engine: corrupt chunk record skipped", "key", k, "error", err)
+				continue
+			}
+			out = append(out, rec)
+			if int64(len(out)) >= limit {
+				break
+			}
 		}
-		out = append(out, rec)
+		if cursor == 0 {
+			break
+		}
 	}
 	return out
 }
@@ -231,11 +286,23 @@ func (s *Service) loadSummary(ctx context.Context, memoryID string) string {
 	if memoryID == "" {
 		return ""
 	}
-	val, err := s.redis.Get(ctx, s.summaryKey(memoryID)).Result()
+	redisCtx, cancel := redisOpContext(ctx)
+	defer cancel()
+	val, err := s.redis.Get(redisCtx, s.summaryKey(memoryID)).Result()
 	if err != nil {
 		return ""
 	}
 	return val
+}
+
+func redisOpContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		return context.WithTimeout(context.Background(), defaultRedisOpTimeout)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, defaultRedisOpTimeout)
 }
 
 func (s *Service) extractUserMessage(payload []byte) string {

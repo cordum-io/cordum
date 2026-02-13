@@ -9,6 +9,7 @@ import { MarketplaceBrowser } from "../components/packs/MarketplaceBrowser";
 import { usePacks, useUninstallPack } from "../hooks/usePacks";
 import { cn } from "../lib/utils";
 import type { Pack } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 type PacksTab = "installed" | "marketplace";
 
@@ -132,6 +133,7 @@ function ConfirmDialog({
 }
 
 export default function PacksPage() {
+  usePageTitle("Packs");
   const { data, isLoading, error } = usePacks();
   const uninstall = useUninstallPack();
   const [confirmPack, setConfirmPack] = useState<Pack | null>(null);

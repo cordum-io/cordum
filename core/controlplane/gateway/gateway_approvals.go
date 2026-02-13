@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -47,26 +46,32 @@ func (s *server) handleApproveStep(w http.ResponseWriter, r *http.Request) {
 	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
 	if s.jobStore != nil {
 		lockKey := "cordum:wf:run:lock:" + runID
-		ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
-		if err != nil || !ok {
+		token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+		if err != nil || token == "" {
 			writeErrorJSON(w, http.StatusConflict, "workflow run is busy, retry")
 			return
 		}
-		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey) }()
+		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
 	}
 
 	var body struct {
 		Approved bool `json:"approved"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid body")
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSONDecodeError(w, err, "invalid body")
 		return
 	}
 	if err := s.workflowEng.ApproveStep(r.Context(), runID, stepID, body.Approved); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "approve_step", "run", runID, policyActorID(r), policyRole(r), "approve step in run "+runID)
+	stepApproveWfName := ""
+	if s.workflowStore != nil {
+		if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
+			stepApproveWfName = wfDef.Name
+		}
+	}
+	s.appendAuditEntryNamed(r.Context(), "approve_step", "run", runID, stepApproveWfName, policyActorID(r), policyRole(r), "approve step in run "+runID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -96,19 +101,27 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
 	if s.jobStore != nil {
 		lockKey := "cordum:wf:run:lock:" + runID
-		ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
-		if err != nil || !ok {
+		token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+		if err != nil || token == "" {
 			writeErrorJSON(w, http.StatusConflict, "workflow run is busy, retry")
 			return
 		}
-		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey) }()
+		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
 	}
 
 	if err := s.workflowEng.CancelRun(r.Context(), runID); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "cancel", "run", runID, policyActorID(r), policyRole(r), "cancel run "+runID)
+	cancelRunWfName := ""
+	if s.workflowStore != nil {
+		if run, err := s.workflowStore.GetRun(r.Context(), runID); err == nil && run != nil {
+			if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), run.WorkflowID); err == nil && wfDef != nil {
+				cancelRunWfName = wfDef.Name
+			}
+		}
+	}
+	s.appendAuditEntryNamed(r.Context(), "cancel", "run", runID, cancelRunWfName, policyActorID(r), policyRole(r), "cancel run "+runID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -127,6 +140,7 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	cursor := time.Now().UnixNano() / int64(time.Microsecond)
 	if q := r.URL.Query().Get("cursor"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
@@ -181,9 +195,11 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		Reason string `json:"reason"`
 		Note   string `json:"note"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid body")
-		return
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			writeJSONDecodeError(w, err, "invalid body")
+			return
+		}
 	}
 	jobID := r.PathValue("job_id")
 	if jobID == "" {
@@ -276,7 +292,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	}
 	approvedBy := strings.TrimSpace(policyActorID(r))
 	if approvedBy == "" {
-		approvedBy = strings.TrimSpace(req.PrincipalId)
+		approvedBy = "system/unknown"
 	}
 	approvalRole := strings.TrimSpace(policyRole(r))
 	if err := s.jobStore.SetApprovalRecord(r.Context(), jobID, memory.ApprovalRecord{
@@ -313,7 +329,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "approve", "job", jobID, policyActorID(r), policyRole(r), "approve job "+jobID)
+	s.appendAuditEntryNamed(r.Context(), "approve", "job", jobID, req.GetTopic(), policyActorID(r), policyRole(r), "approve job "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": jobID, "trace_id": traceID})
 }
@@ -331,9 +347,11 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		Reason string `json:"reason"`
 		Note   string `json:"note"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid body")
-		return
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			writeJSONDecodeError(w, err, "invalid body")
+			return
+		}
 	}
 	jobID := r.PathValue("job_id")
 	if jobID == "" {
@@ -355,16 +373,12 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var principalID string
-	if req, err := s.jobStore.GetJobRequest(r.Context(), jobID); err == nil && req != nil {
-		principalID = strings.TrimSpace(req.PrincipalId)
-	}
 	safetyRecord, _ := s.jobStore.GetSafetyDecision(r.Context(), jobID)
 	reason := strings.TrimSpace(body.Reason)
 	note := strings.TrimSpace(body.Note)
 	approvedBy := strings.TrimSpace(policyActorID(r))
 	if approvedBy == "" {
-		approvedBy = principalID
+		approvedBy = "system/unknown"
 	}
 	approvalRole := strings.TrimSpace(policyRole(r))
 	if err := s.jobStore.SetApprovalRecord(r.Context(), jobID, memory.ApprovalRecord{
@@ -403,9 +417,8 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	_ = s.bus.Publish(capsdk.SubjectDLQ, packet)
-	s.appendAuditEntry(r.Context(), "reject", "job", jobID, policyActorID(r), policyRole(r), "reject job "+jobID)
+	rejectTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	s.appendAuditEntryNamed(r.Context(), "reject", "job", jobID, rejectTopic, policyActorID(r), policyRole(r), "reject job "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": jobID})
 }
-
-

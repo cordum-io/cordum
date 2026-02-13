@@ -1,0 +1,55 @@
+import { useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { cn } from "../../lib/utils";
+
+interface DataFreshnessProps {
+  dataUpdatedAt: number;
+  onRefresh: () => void;
+  isRefetching: boolean;
+  className?: string;
+}
+
+function formatRelative(ts: number): string {
+  const diff = Math.max(0, Date.now() - ts);
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return "Updated just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `Updated ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `Updated ${hours}h ago`;
+}
+
+export function DataFreshness({
+  dataUpdatedAt,
+  onRefresh,
+  isRefetching,
+  className,
+}: DataFreshnessProps) {
+  const [label, setLabel] = useState(() => formatRelative(dataUpdatedAt));
+
+  useEffect(() => {
+    setLabel(formatRelative(dataUpdatedAt));
+    const id = setInterval(() => setLabel(formatRelative(dataUpdatedAt)), 10_000);
+    return () => clearInterval(id);
+  }, [dataUpdatedAt]);
+
+  if (!dataUpdatedAt) return null;
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "inline-flex items-center gap-1.5 text-xs text-muted hover:text-accent transition-colors",
+        className,
+      )}
+      onClick={onRefresh}
+      aria-label="Refresh data"
+      title={new Date(dataUpdatedAt).toLocaleString()}
+    >
+      <RefreshCw
+        className={cn("h-3 w-3", isRefetching && "animate-spin")}
+      />
+      {label}
+    </button>
+  );
+}

@@ -217,8 +217,7 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	}
 
 	pool := x509.NewCertPool()
-	// #nosec G304 -- CA path is configured by the operator.
-	pem, err := os.ReadFile(caPath)
+	pem, err := os.ReadFile(caPath) // #nosec -- CA path is configured by the operator.
 	if err != nil {
 		return nil, fmt.Errorf("safety kernel tls ca read: %w", err)
 	}

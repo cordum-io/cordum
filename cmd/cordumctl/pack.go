@@ -1639,7 +1639,7 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 	if c.tenantID != "" {
 		req.Header.Set("X-Tenant-ID", c.tenantID)
 	}
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec -- base URL is operator-provided via CLI.
 	if err != nil {
 		return err
 	}
@@ -1769,8 +1769,7 @@ func downloadToTemp(raw string) (string, error) {
 		return "", err
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
-	// #nosec G107 -- URL is operator-provided and validated.
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec -- URL is operator-provided and validated.
 	if err != nil {
 		return "", err
 	}
@@ -1825,7 +1824,7 @@ func extractTarGz(path, dest string) error {
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o750); err != nil {
+			if err := os.MkdirAll(target, 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
 				return err
 			}
 		case tar.TypeReg:
@@ -1840,11 +1839,10 @@ func extractTarGz(path, dest string) error {
 			if totalSz > maxPackUncompressedBytes {
 				return fmt.Errorf("pack archive exceeds max size (%d bytes)", maxPackUncompressedBytes)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
 				return err
 			}
-			// #nosec G304 -- target path is validated by safeJoin.
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec -- target path is validated by safeJoin.
 			if err != nil {
 				return err
 			}

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { del, get, post } from "../api/client";
 import { logger } from "../lib/logger";
+import { useToastStore } from "../state/toast";
 import type { RunStatus, Workflow, WorkflowRun } from "../api/types";
 import {
   mapWorkflow,
@@ -125,7 +126,7 @@ function parseDurationSeconds(value: unknown): number | undefined {
   const amount = Number.parseFloat(match[1]);
   if (!Number.isFinite(amount)) return undefined;
   const unit = (match[2] || "s").toLowerCase();
-  let seconds = amount;
+  let seconds: number;
   switch (unit) {
     case "ms":
       seconds = amount / 1000;
@@ -361,6 +362,7 @@ export function useCreateWorkflow() {
     },
     onSuccess: (data) => {
       logger.info("workflows", "Workflow created", { id: data?.id });
+      useToastStore.getState().addToast({ type: "success", title: "Workflow created" });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       if (data?.id) {
         queryClient.invalidateQueries({ queryKey: ["workflow", data.id] });
@@ -368,6 +370,7 @@ export function useCreateWorkflow() {
     },
     onError: (err) => {
       logger.error("workflows", "Create workflow failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to create workflow", description: err.message });
     },
   });
 }
@@ -384,6 +387,7 @@ export function useUpdateWorkflow() {
     },
     onSuccess: (data, variables) => {
       logger.info("workflows", "Workflow updated", { id: data?.id || variables?.id });
+      useToastStore.getState().addToast({ type: "success", title: "Workflow saved" });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       const workflowId = data?.id || variables?.id;
       if (workflowId) {
@@ -392,6 +396,7 @@ export function useUpdateWorkflow() {
     },
     onError: (err, variables) => {
       logger.error("workflows", "Update workflow failed", { id: variables?.id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to save workflow", description: err.message });
     },
   });
 }
@@ -408,6 +413,7 @@ export function useDeleteWorkflow() {
     },
     onSuccess: (_data, workflowId) => {
       logger.info("workflows", "Workflow deleted", { id: workflowId });
+      useToastStore.getState().addToast({ type: "success", title: "Workflow deleted" });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       if (workflowId) {
         queryClient.invalidateQueries({ queryKey: ["workflow", workflowId] });
@@ -415,6 +421,7 @@ export function useDeleteWorkflow() {
     },
     onError: (err, workflowId) => {
       logger.error("workflows", "Delete workflow failed", { id: workflowId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to delete workflow", description: err.message });
     },
   });
 }
@@ -522,6 +529,9 @@ export function useStartRun() {
     },
     onSuccess: (data, variables) => {
       logger.info("workflows", "Run started", { workflowId: variables?.workflowId, runId: data?.run_id });
+      if (!variables?.dryRun) {
+        useToastStore.getState().addToast({ type: "success", title: "Run started" });
+      }
       queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
       if (variables?.workflowId) {
         queryClient.invalidateQueries({ queryKey: ["workflow-runs", variables.workflowId] });
@@ -532,6 +542,7 @@ export function useStartRun() {
     },
     onError: (err, variables) => {
       logger.error("workflows", "Start run failed", { workflowId: variables?.workflowId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to start run", description: err.message });
     },
   });
 }
@@ -550,6 +561,9 @@ export function useRerunRun() {
       return post<RunIdResponse>(`/workflow-runs/${input.runId}/rerun`, payload);
     },
     onSuccess: (data, variables) => {
+      if (!variables?.dryRun) {
+        useToastStore.getState().addToast({ type: "success", title: "Run restarted" });
+      }
       queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
       if (variables?.runId) {
         queryClient.invalidateQueries({ queryKey: ["workflow-run", variables.runId] });
@@ -557,6 +571,9 @@ export function useRerunRun() {
       if (data?.run_id) {
         queryClient.invalidateQueries({ queryKey: ["workflow-run", data.run_id] });
       }
+    },
+    onError: (err) => {
+      useToastStore.getState().addToast({ type: "error", title: "Failed to rerun", description: err.message });
     },
   });
 }
@@ -681,6 +698,7 @@ export function useCancelRun() {
     },
     onSuccess: (_data, variables) => {
       logger.info("workflows", "Run cancelled", { workflowId: variables?.workflowId, runId: variables?.runId });
+      useToastStore.getState().addToast({ type: "success", title: "Run cancelled" });
       queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
       if (variables?.workflowId) {
         queryClient.invalidateQueries({ queryKey: ["workflow-runs", variables.workflowId] });
@@ -691,6 +709,7 @@ export function useCancelRun() {
     },
     onError: (err, variables) => {
       logger.error("workflows", "Cancel run failed", { runId: variables?.runId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to cancel run", description: err.message });
     },
   });
 }

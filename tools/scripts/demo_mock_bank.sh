@@ -40,7 +40,7 @@ export CORDUM_GATEWAY=${CORDUM_GATEWAY:-${API_BASE}}
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 NATS_URL=${NATS_URL:-nats://localhost:4222}
-REDIS_URL=${REDIS_URL:-redis://localhost:6379}
+REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379}
 PORT=${MOCK_BANK_PORT:-8099}
 
 cleanup() {

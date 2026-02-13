@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,10 +66,57 @@ func TestReadPolicySourceHTTP(t *testing.T) {
 	}
 }
 
+func TestReadPolicySourceHTTPMaxSize(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_MAX_BYTES", "16")
+	t.Setenv("SAFETY_POLICY_URL_ALLOW_PRIVATE", "1")
+	oversized := strings.Repeat("a", 32)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(oversized))
+	}))
+	defer srv.Close()
+
+	_, err := readPolicySource(srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "max size") {
+		t.Fatalf("expected max size error, got %v", err)
+	}
+}
+
 func TestReadPolicySourceHTTPBlocksPrivate(t *testing.T) {
 	_, err := readPolicySource("http://127.0.0.1:1/policy.yaml")
 	if err == nil {
 		t.Fatalf("expected private policy url to be blocked")
+	}
+}
+
+func TestFetchPolicyURLRejectsDNSRebinding(t *testing.T) {
+	originalLookup := policyLookupIP
+	t.Cleanup(func() { policyLookupIP = originalLookup })
+
+	call := 0
+	policyLookupIP = func(host string) ([]net.IP, error) {
+		call++
+		if call == 1 {
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		}
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+
+	_, err := fetchPolicyURL("http://example.com/policy.yaml")
+	if err == nil || !strings.Contains(err.Error(), "host not allowed") {
+		t.Fatalf("expected rebinding rejection, got %v", err)
+	}
+}
+
+func TestReadPolicySourceFileMaxSize(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_MAX_BYTES", "16")
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(path, []byte(strings.Repeat("a", 32)), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	_, err := readPolicySource(path)
+	if err == nil || !strings.Contains(err.Error(), "max size") {
+		t.Fatalf("expected max size error, got %v", err)
 	}
 }
 

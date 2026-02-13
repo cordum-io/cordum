@@ -178,20 +178,20 @@ func (s *fakeReconcileStore) CountActiveByTenant(_ context.Context, _ string) (i
 	return 0, nil
 }
 
-func (s *fakeReconcileStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (bool, error) {
+func (s *fakeReconcileStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.locks == nil {
 		s.locks = make(map[string]time.Time)
 	}
 	if until, ok := s.locks[key]; ok && until.After(time.Now()) {
-		return false, nil
+		return "", nil
 	}
 	s.locks[key] = time.Now().Add(ttl)
-	return true, nil
+	return fmt.Sprintf("token-%s", key), nil
 }
 
-func (s *fakeReconcileStore) ReleaseLock(_ context.Context, key string) error {
+func (s *fakeReconcileStore) ReleaseLock(_ context.Context, key string, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.locks, key)
@@ -355,6 +355,7 @@ func TestReconcilerSetsFailureReasonOnDeadlineExpiry(t *testing.T) {
 // BenchmarkReconcilerTick benchmarks a single reconciler tick with 500 DISPATCHED
 // jobs that have old timestamps, triggering the timeout path.
 func BenchmarkReconcilerTick(b *testing.B) {
+	silenceLogs(b)
 	const jobCount = 500
 	oldTs := toUnixMicros(time.Now().Add(-10 * time.Minute))
 

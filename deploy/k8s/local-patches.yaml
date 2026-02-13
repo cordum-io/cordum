@@ -1,0 +1,58 @@
+# Local development patches for Docker Desktop K8s.
+# Apply AFTER base.yaml: kubectl apply -f base.yaml && kubectl apply -f local-patches.yaml
+---
+# Set API key secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cordum-api-key
+  namespace: cordum
+type: Opaque
+stringData:
+  API_KEY: "17852da6e8545660dc45cfd37992308cc59ac0917066b7615b8075ad6d5d52b8"
+---
+# Patch dashboard: remove readOnlyRootFilesystem, add tmp volumes for nginx
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-dashboard
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: dashboard
+        image: cordum-dashboard
+        imagePullPolicy: Never
+        securityContext:
+          readOnlyRootFilesystem: false
+          allowPrivilegeEscalation: false
+        env:
+        - name: CORDUM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-api-key
+              key: API_KEY
+        - name: CORDUM_TENANT_ID
+          value: default
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

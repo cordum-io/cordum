@@ -8,6 +8,7 @@ import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { useAuthConfigAdmin } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // CollapsibleSection
@@ -128,6 +129,7 @@ function SsoSection() {
 // ---------------------------------------------------------------------------
 
 export default function SettingsUsersPage() {
+  usePageTitle("Settings - Users");
   return (
     <div className="space-y-6">
       <UsersTab />

@@ -1,8 +1,13 @@
 package gateway
 
 import (
-	"encoding/json"
+	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -45,8 +50,8 @@ const defaultSessionTTL = 24 * time.Hour
 // 2. API key: For programmatic access (scripts, CI/CD), the password field accepts API keys
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req AuthLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 
@@ -78,9 +83,24 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			// Brute-force protection: check throttle before password validation.
+			if redisStore, ok := userStore.(*RedisUserStore); ok {
+				if err := redisStore.CheckLoginThrottle(r.Context(), username); err != nil {
+					writeErrorJSON(w, http.StatusTooManyRequests, err.Error())
+					return
+				}
+			}
+
 			if userStore.ValidatePassword(r.Context(), user, password) {
-				// User/password authentication successful
-				resp := buildUserLoginResponse(user)
+				// User/password authentication successful — clear failed counter.
+				if redisStore, ok := userStore.(*RedisUserStore); ok {
+					redisStore.ClearFailedLogins(r.Context(), username)
+				}
+				resp, err := buildUserLoginResponse(r.Context(), user)
+				if err != nil {
+					writeErrorJSON(w, http.StatusInternalServerError, "internal error")
+					return
+				}
 				// Store session token in Redis for subsequent request validation
 				if redisStore, ok := userStore.(*RedisUserStore); ok {
 					if err := redisStore.StoreSession(r.Context(), resp.Token, user, defaultSessionTTL); err != nil {
@@ -89,8 +109,13 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				w.Header().Set("Content-Type", "application/json")
-				writeJSON(w,resp)
+				writeJSON(w, resp)
 				return
+			}
+
+			// Password validation failed — record the attempt.
+			if redisStore, ok := userStore.(*RedisUserStore); ok {
+				redisStore.RecordFailedLogin(r.Context(), username)
 			}
 		}
 	}
@@ -120,7 +145,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	resp := buildLoginResponse(authCtx, apiKey)
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,resp)
+	writeJSON(w, resp)
 }
 
 // handleSession validates current session via X-API-Key header.
@@ -136,7 +161,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	resp := buildLoginResponse(authCtx, apiKey)
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,resp)
+	writeJSON(w, resp)
 }
 
 // handleLogout invalidates the current session token.
@@ -199,7 +224,7 @@ func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
 
 // buildUserLoginResponse creates the AuthLoginResponse for user/password auth.
 // For user auth, we generate a session token rather than exposing the password.
-func buildUserLoginResponse(user *User) AuthLoginResponse {
+func buildUserLoginResponse(ctx context.Context, user *User) (AuthLoginResponse, error) {
 	now := time.Now()
 	expiresAt := now.Add(defaultSessionTTL)
 
@@ -208,9 +233,13 @@ func buildUserLoginResponse(user *User) AuthLoginResponse {
 		roles = append(roles, user.Role)
 	}
 
-	// Generate a session token for user auth
-	// In a production system, this would be a JWT or opaque session token
-	sessionToken := "session-" + user.ID + "-" + safePrefix(now.Format(time.RFC3339Nano), 16)
+	// Generate a cryptographically random session token (256 bits entropy).
+	var tokenBytes [32]byte
+	if _, err := io.ReadFull(rand.Reader, tokenBytes[:]); err != nil {
+		slog.ErrorContext(ctx, "crypto/rand failed", "error", err)
+		return AuthLoginResponse{}, fmt.Errorf("crypto/rand: %w", err)
+	}
+	sessionToken := "session-" + base64.RawURLEncoding.EncodeToString(tokenBytes[:])
 
 	return AuthLoginResponse{
 		Token:     sessionToken,
@@ -226,7 +255,7 @@ func buildUserLoginResponse(user *User) AuthLoginResponse {
 			UpdatedAt:   user.UpdatedAt.Format(time.RFC3339),
 			LastLoginAt: now.Format(time.RFC3339),
 		},
-	}
+	}, nil
 }
 
 // maskToken returns a masked version of the token.
@@ -268,8 +297,8 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChangePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 
@@ -303,7 +332,7 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "change_password", "user", authCtx.PrincipalID, authCtx.PrincipalID, authCtx.Role, "change password")
+	s.appendAuditEntryNamed(r.Context(), "change_password", "user", authCtx.PrincipalID, user.Username, authCtx.PrincipalID, authCtx.Role, "change password")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -313,6 +342,10 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	authCtx := authFromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if authCtx.Tenant == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
 
@@ -329,8 +362,8 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req CreateUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 
@@ -370,10 +403,10 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "create", "user", user.ID, authCtx.PrincipalID, authCtx.Role, "create user "+user.Username)
+	s.appendAuditEntryNamed(r.Context(), "create", "user", user.ID, user.Username, authCtx.PrincipalID, authCtx.Role, "create user "+user.Username)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	writeJSON(w,AuthUser{
+	writeJSON(w, AuthUser{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,

@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -38,17 +40,19 @@ import (
 )
 
 const (
-	defaultGrpcAddr         = ":8080"
-	defaultHttpAddr         = ":8081"
-	defaultMetricsAddr      = ":9092"
-	maxJobPayloadBytes      = 2 << 20  // 2 MiB limit for incoming job payloads
-	defaultArtifactMaxBytes = 10 << 20 // 10 MiB default artifact size limit
-	maxPromptChars          = 100000
-	defaultRateLimitRPS     = 2000
-	defaultRateLimitBurst   = 4000
-	defaultMaxHeaderBytes   = 1 << 20
-	maxLabelKeyLen          = 256  // Max length for label keys
-	maxLabelValueLen        = 4096 // Max length for label values (4KB)
+	defaultGrpcAddr             = ":8080"
+	defaultHttpAddr             = ":8081"
+	defaultMetricsAddr          = ":9092"
+	maxJobPayloadBytes          = 2 << 20  // 2 MiB limit for incoming job payloads
+	defaultArtifactMaxBytes     = 10 << 20 // 10 MiB default artifact size limit
+	maxPromptChars              = 100000
+	defaultRateLimitRPS         = 2000
+	defaultRateLimitBurst       = 4000
+	defaultPublicRateLimitRPS   = 20
+	defaultPublicRateLimitBurst = 40
+	defaultMaxHeaderBytes       = 1 << 20
+	maxLabelKeyLen              = 256  // Max length for label keys
+	maxLabelValueLen            = 4096 // Max length for label values (4KB)
 	// #nosec G101 -- protocol label, not a credential.
 	wsAPIKeyProtocol = "cordum-api-key"
 	shutdownTimeout  = 15 * time.Second
@@ -105,6 +109,9 @@ type server struct {
 	safetyConn     *grpc.ClientConn
 	safetyClient   pb.SafetyKernelClient
 	userStore      UserStore
+	keyStore       KeyStore
+
+	auditExporter *audit.BufferedExporter
 
 	marketplaceMu    sync.Mutex
 	marketplaceCache marketplaceCache
@@ -116,8 +123,22 @@ type server struct {
 // Close releases resources owned by the server, notably the user store
 // connection. It is safe to call with a nil userStore.
 func (s *server) Close() {
+	if s.auditExporter != nil {
+		if err := s.auditExporter.Close(); err != nil {
+			logging.Error("api-gateway", "audit exporter close failed", "error", err)
+		}
+	}
 	if s.userStore != nil {
-		s.userStore.Close()
+		if err := s.userStore.Close(); err != nil {
+			logging.Error("api-gateway", "user store close failed", "error", err)
+		}
+	}
+	if s.keyStore != nil {
+		if ks, ok := s.keyStore.(*RedisKeyStore); ok {
+			if err := ks.Close(); err != nil {
+				logging.Error("api-gateway", "key store close failed", "error", err)
+			}
+		}
 	}
 }
 
@@ -142,6 +163,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 
 	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
 	var userStore UserStore
+	var keyStore KeyStore
 	if provider == nil {
 		basic, err := newBasicAuthProvider(tenantID)
 		if err != nil {
@@ -158,6 +180,14 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 			userStore = us
 			basic.SetUserStore(us)
 
+			// Initialize managed API key store
+			ks, err := NewRedisKeyStore(cfg.RedisURL)
+			if err != nil {
+				return fmt.Errorf("init key store: %w", err)
+			}
+			keyStore = ks
+			basic.SetKeyStore(ks)
+
 			if strings.TrimSpace(os.Getenv("CORDUM_ADMIN_PASSWORD")) == "" {
 				return fmt.Errorf("CORDUM_USER_AUTH_ENABLED is set but CORDUM_ADMIN_PASSWORD is empty; set CORDUM_ADMIN_PASSWORD to configure the admin account")
 			}
@@ -166,6 +196,25 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 			if err := seedDefaultAdminUser(context.Background(), userStore, tenantID); err != nil {
 				logging.Error("api-gateway", "seed admin user failed", "error", err)
 			}
+		}
+
+		// Initialize OIDC provider if enabled — wraps basic + OIDC in composite
+		oidcProvider, err := NewOIDCProviderFromEnv()
+		if err != nil {
+			return fmt.Errorf("init oidc: %w", err)
+		}
+		if oidcProvider != nil {
+			defer oidcProvider.Close()
+			oidcAdapter := NewOIDCAuthAdapter(oidcProvider, tenantID)
+			composite, err := NewCompositeAuthProvider(basic, oidcAdapter)
+			if err != nil {
+				return fmt.Errorf("init composite auth: %w", err)
+			}
+			provider = composite
+			logging.Info("api-gateway", "[OIDC] enabled",
+				"issuer", oidcProvider.cfg.IssuerURL,
+				"audience", oidcProvider.cfg.Audience,
+			)
 		}
 	}
 
@@ -212,8 +261,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	}
 	defer schemaRegistry.Close()
 	workflowEng = workflowEng.WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	if raw := strings.TrimSpace(os.Getenv("WORKFLOW_FOREACH_MAX_ITEMS")); raw != "" {
+		if limit, err := strconv.Atoi(raw); err == nil && limit > 0 {
+			workflowEng = workflowEng.WithMaxForEachItems(limit)
+		}
+	}
 
-	dlqStore, err := memory.NewDLQStore(cfg.RedisURL)
+	dlqStore, err := memory.NewDLQStore(cfg.RedisURL, 0)
 	if err != nil {
 		return fmt.Errorf("connect redis dlq store: %w", err)
 	}
@@ -247,6 +301,11 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		}
 	}
 
+	auditExporter, err := audit.NewExporterFromEnv()
+	if err != nil {
+		return fmt.Errorf("init audit exporter: %w", err)
+	}
+
 	s := &server{
 		memStore:       memStore,
 		jobStore:       jobStore,
@@ -268,6 +327,8 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		safetyConn:     safetyConn,
 		safetyClient:   safetyClient,
 		userStore:      userStore,
+		keyStore:       keyStore,
+		auditExporter:  auditExporter,
 		shutdownCh:     make(chan struct{}),
 	}
 	defer s.Close()
@@ -308,7 +369,10 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(grpcCreds),
-		grpc.UnaryInterceptor(apiKeyUnaryInterceptor(s.auth)),
+		grpc.ChainUnaryInterceptor(
+			apiKeyUnaryInterceptor(s.auth),
+			rateLimitUnaryInterceptor(s.auth),
+		),
 	)
 	pb.RegisterCordumApiServer(grpcServer, s)
 	if env.Bool(env.EnvGRPCReflection) {
@@ -367,6 +431,15 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 1.7 User management (admin only)
 	mux.HandleFunc("POST /api/v1/users", s.instrumented("/api/v1/users", s.handleCreateUser))
+	mux.HandleFunc("GET /api/v1/users", s.instrumented("/api/v1/users", s.handleListUsers))
+	mux.HandleFunc("PUT /api/v1/users/{id}", s.instrumented("/api/v1/users/{id}", s.handleUpdateUser))
+	mux.HandleFunc("DELETE /api/v1/users/{id}", s.instrumented("/api/v1/users/{id}", s.handleDeleteUser))
+	mux.HandleFunc("POST /api/v1/users/{id}/password", s.instrumented("/api/v1/users/{id}/password", s.handleChangeUserPassword))
+
+	// 1.8 API Key management (admin only)
+	mux.HandleFunc("GET /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleListKeys))
+	mux.HandleFunc("POST /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleCreateKey))
+	mux.HandleFunc("DELETE /api/v1/auth/keys/{id}", s.instrumented("/api/v1/auth/keys/{id}", s.handleRevokeKey))
 
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
@@ -478,8 +551,8 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		registrar.RegisterRoutes(mux, s.instrumented)
 	}
 
-	// CORS Middleware
-	handler := corsMiddleware(rateLimitMiddleware(apiKeyMiddleware(s.auth, tenantMiddleware(s.auth, mux))))
+	// Middleware chain: CORS → auth → rate limit → tenant → body limit → mux
+	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))
@@ -512,6 +585,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// Graceful shutdown: on SIGINT/SIGTERM, drain all servers and goroutines.
 	sigCtx, sigStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer sigStop()
+	if basic := basicAuthProvider(s.auth); basic != nil {
+		basic.SetUsageContext(sigCtx)
+	}
 
 	go func() {
 		<-sigCtx.Done()
@@ -533,6 +609,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		// Drain gRPC server (waits for in-flight RPCs to finish).
 		if grpcServer != nil {
 			grpcServer.GracefulStop()
+		}
+
+		if basic := basicAuthProvider(s.auth); basic != nil {
+			basic.DrainUsage()
 		}
 
 		// Shut down metrics server.
@@ -585,6 +665,7 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 				event.Tenant = authCtx.Tenant
 				event.Principal = authCtx.PrincipalID
 				event.Role = authCtx.Role
+				event.AuthSource = authCtx.AuthSource
 			}
 			if err := exporter.ExportAudit(r.Context(), event); err != nil {
 				logging.Error("api-gateway", "audit export failed", "error", err)

@@ -1,12 +1,15 @@
-import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
-import { Plus, Search, Loader } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Plus, Search, Loader, Workflow } from "lucide-react";
 import { useWorkflows, useStartRun } from "../hooks/useWorkflows";
 import { ActiveRunsStrip } from "../components/workflows/ActiveRunsStrip";
 import { WorkflowTemplateCard } from "../components/workflows/WorkflowTemplateCard";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
+import { EmptyState } from "../components/ui/EmptyState";
+import { DataFreshness } from "../components/ui/DataFreshness";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Skeleton cards
@@ -37,17 +40,35 @@ function SkeletonCards({ count = 6 }: { count?: number }) {
 // ---------------------------------------------------------------------------
 
 export default function WorkflowsPage() {
+  usePageTitle("Workflows");
   const navigate = useNavigate();
-  const { data: workflows, isLoading, isError } = useWorkflows();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { data: workflows, isLoading, isError, dataUpdatedAt, refetch, isRefetching } = useWorkflows();
   const startRun = useStartRun();
-  const [search, setSearch] = useState("");
+
+  // URL-persisted search
+  const urlSearch = searchParams.get("q") ?? "";
+  const [searchInput, setSearchInput] = useState(urlSearch);
+
+  // Debounce write-back to URL (300ms)
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (searchInput.trim()) next.set("q", searchInput.trim());
+        else next.delete("q");
+        return next;
+      }, { replace: true });
+    }, 300);
+    return () => clearTimeout(id);
+  }, [searchInput, setSearchParams]);
 
   const filtered = useMemo(() => {
     if (!workflows) return [];
-    if (!search.trim()) return workflows;
-    const q = search.toLowerCase();
+    if (!urlSearch.trim()) return workflows;
+    const q = urlSearch.toLowerCase();
     return workflows.filter((wf) => wf.name.toLowerCase().includes(q));
-  }, [workflows, search]);
+  }, [workflows, urlSearch]);
 
   const handleRunNow = (workflowId: string) => {
     startRun.mutate({ workflowId });
@@ -57,7 +78,10 @@ export default function WorkflowsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="font-display text-2xl font-bold text-ink">Workflows</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="font-display text-2xl font-bold text-ink">Workflows</h1>
+          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
+        </div>
         <Button onClick={() => navigate("/workflows/new")}>
           <Plus className="h-4 w-4" />
           Create Workflow
@@ -77,8 +101,8 @@ export default function WorkflowsPage() {
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
             <Input
               placeholder="Search workflows..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               className="pl-8 text-sm"
             />
           </div>
@@ -112,24 +136,26 @@ export default function WorkflowsPage() {
 
         {!isLoading && !isError && workflows && workflows.length > 0 && filtered.length === 0 && (
           <Card>
-            <p className="py-8 text-center text-sm text-muted">
-              No workflows matching &ldquo;{search}&rdquo;
-            </p>
+            <EmptyState
+              icon={Workflow}
+              title={`No workflows matching "${urlSearch}"`}
+              description="Try a different search term."
+            />
           </Card>
         )}
 
         {!isLoading && !isError && (!workflows || workflows.length === 0) && (
           <Card>
-            <div className="py-12 text-center">
-              <p className="text-muted">No workflows yet.</p>
-              <Button
-                variant="outline"
-                className="mt-4"
-                onClick={() => navigate("/workflows/new")}
-              >
-                Create your first workflow
-              </Button>
-            </div>
+            <EmptyState
+              icon={Workflow}
+              title="No workflows yet"
+              description="Create your first workflow to automate agent orchestration."
+              action={
+                <Button variant="outline" onClick={() => navigate("/workflows/new")}>
+                  Create your first workflow
+                </Button>
+              }
+            />
           </Card>
         )}
       </section>

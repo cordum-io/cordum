@@ -49,17 +49,17 @@ func (r *Reconciler) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if r.lockKey != "" && r.store != nil && r.lockTTL > 0 {
-				ok, err := r.store.TryAcquireLock(ctx, r.lockKey, r.lockTTL)
+				token, err := r.store.TryAcquireLock(ctx, r.lockKey, r.lockTTL)
 				if err != nil {
 					logging.Error("reconciler", "lock acquisition failed", "error", err)
 					continue
 				}
-				if !ok {
+				if token == "" {
 					// Another reconciler is active.
 					continue
 				}
 				r.tick(ctx)
-				if err := r.store.ReleaseLock(ctx, r.lockKey); err != nil {
+				if err := r.store.ReleaseLock(ctx, r.lockKey, token); err != nil {
 					logging.Warn("reconciler", "failed to release lock", "key", r.lockKey, "error", err)
 				}
 			} else {

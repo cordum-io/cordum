@@ -35,7 +35,7 @@ export default function SettingsLayout() {
   return (
     <div className="flex min-h-0 gap-0">
       {/* Sidebar — desktop */}
-      <nav className="hidden md:flex w-56 shrink-0 flex-col border-r border-border pr-4">
+      <nav className="hidden md:flex w-56 shrink-0 flex-col border-r border-border pr-4 sticky top-0 self-start">
         <h1 className="mb-4 font-display text-2xl font-bold text-ink">Settings</h1>
         <ul className="space-y-0.5">
           {NAV_ITEMS.map((item) => {

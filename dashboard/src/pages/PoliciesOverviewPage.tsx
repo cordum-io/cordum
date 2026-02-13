@@ -13,6 +13,7 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { cn } from "../lib/utils";
 import type { PolicyBundle } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -538,6 +539,7 @@ function PendingPolicyChanges({
 // ---------------------------------------------------------------------------
 
 export default function PoliciesOverviewPage() {
+  usePageTitle("Policies");
   const navigate = useNavigate();
   const { bundles, isLoading, isError } = usePolicyBundleContext();
   const { data: snapshotsData } = usePolicySnapshots();

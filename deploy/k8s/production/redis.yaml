@@ -33,6 +33,9 @@ spec:
   - name: redis
     port: 6379
     targetPort: 6379
+  - name: cluster-bus
+    port: 16379
+    targetPort: 16379
   - name: metrics
     port: 9121
     targetPort: 9121
@@ -70,6 +73,8 @@ spec:
         ports:
         - name: redis
           containerPort: 6379
+        - name: cluster-bus
+          containerPort: 16379
         startupProbe:
           tcpSocket:
             port: 6379

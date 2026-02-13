@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, del, put } from "../api/client";
 import { logger } from "../lib/logger";
+import { useToastStore } from "../state/toast";
 import type {
   ApiKey,
   User,
@@ -41,10 +42,12 @@ export function useSetConfig() {
     },
     onSuccess: () => {
       logger.info("settings", "System config updated");
+      useToastStore.getState().addToast({ type: "success", title: "Settings saved" });
       queryClient.invalidateQueries({ queryKey: ["config"] });
     },
     onError: (err) => {
       logger.error("settings", "System config update failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to save settings", description: err.message });
     },
   });
 }
@@ -138,10 +141,12 @@ export function useCreateApiKey() {
     },
     onSuccess: () => {
       logger.info("settings", "API key created");
+      useToastStore.getState().addToast({ type: "success", title: "API key created" });
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     },
     onError: (err) => {
       logger.error("settings", "API key creation failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to create API key", description: err.message });
     },
   });
 }
@@ -155,10 +160,12 @@ export function useRevokeApiKey() {
     },
     onSuccess: (_, id) => {
       logger.info("settings", "API key revoked", { id });
+      useToastStore.getState().addToast({ type: "success", title: "API key revoked" });
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     },
     onError: (err, id) => {
       logger.error("settings", "API key revocation failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to revoke key", description: err.message });
     },
   });
 }
@@ -190,10 +197,12 @@ export function useCreateUser() {
     },
     onSuccess: () => {
       logger.info("settings", "User created");
+      useToastStore.getState().addToast({ type: "success", title: "User created" });
       queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: (err) => {
       logger.error("settings", "User creation failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to create user", description: err.message });
     },
   });
 }
@@ -212,10 +221,12 @@ export function useUpdateUser() {
     },
     onSuccess: (_, { id }) => {
       logger.info("settings", "User updated", { id });
+      useToastStore.getState().addToast({ type: "success", title: "User updated" });
       queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: (err, { id }) => {
       logger.error("settings", "User update failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to update user", description: err.message });
     },
   });
 }
@@ -229,10 +240,12 @@ export function useDeleteUser() {
     },
     onSuccess: (_, id) => {
       logger.info("settings", "User deleted", { id });
+      useToastStore.getState().addToast({ type: "success", title: "User deleted" });
       queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: (err, id) => {
       logger.error("settings", "User delete failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to delete user", description: err.message });
     },
   });
 }
@@ -304,19 +317,31 @@ export function useSaveNotificationChannel() {
   const setConfig = useSetConfig();
   const queryClient = useQueryClient();
   const { data: channels } = useNotificationChannels();
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
 
-  return useMutation<void, Error, NotificationChannel>({
-    mutationFn: (channel) => {
-      const existing = channels ?? [];
+  return useMutation<NotificationChannel[], Error, NotificationChannel>({
+    mutationFn: async (channel) => {
+      const existing = channelsRef.current ?? [];
       const idx = existing.findIndex((c) => c.id === channel.id);
       const updated = idx >= 0
         ? existing.map((c, i) => (i === idx ? channel : c))
         : [...existing, channel];
       logger.info("settings", "Saving notification channel", { id: channel.id });
-      writeLocalStorage(LS_CHANNELS_KEY, updated);
-      return setConfig.mutateAsync({ notifications: { channels: updated } });
+      await setConfig.mutateAsync({ notifications: { channels: updated } });
+      return updated;
     },
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      writeLocalStorage(LS_CHANNELS_KEY, updated);
+      queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (err) => {
+      logger.error("settings", "Failed to save notification channel", { error: err.message });
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Failed to save channel",
+        description: err.message,
+      });
       queryClient.invalidateQueries({ queryKey: ["config"] });
     },
   });
@@ -326,15 +351,27 @@ export function useDeleteNotificationChannel() {
   const setConfig = useSetConfig();
   const queryClient = useQueryClient();
   const { data: channels } = useNotificationChannels();
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
 
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => {
-      const updated = (channels ?? []).filter((c) => c.id !== id);
+  return useMutation<NotificationChannel[], Error, string>({
+    mutationFn: async (id) => {
+      const updated = (channelsRef.current ?? []).filter((c) => c.id !== id);
       logger.info("settings", "Deleting notification channel", { id });
-      writeLocalStorage(LS_CHANNELS_KEY, updated);
-      return setConfig.mutateAsync({ notifications: { channels: updated } });
+      await setConfig.mutateAsync({ notifications: { channels: updated } });
+      return updated;
     },
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      writeLocalStorage(LS_CHANNELS_KEY, updated);
+      queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (err) => {
+      logger.error("settings", "Failed to delete notification channel", { error: err.message });
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Failed to delete channel",
+        description: err.message,
+      });
       queryClient.invalidateQueries({ queryKey: ["config"] });
     },
   });

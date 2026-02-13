@@ -50,6 +50,7 @@ export interface Job {
   contextPtr?: string;
   resultPtr?: string;
   workflowRunId?: string;
+  workflowId?: string;
   createdAt: string;
   updatedAt: string;
   duration?: number;
@@ -261,6 +262,7 @@ export interface AuditActor {
 export interface AuditResource {
   type: string;
   id: string;
+  name?: string;
   link: string;
 }
 
@@ -271,6 +273,7 @@ export interface AuditEntry {
   actor: string;
   resourceType: string;
   resourceId: string;
+  resourceName?: string;
   action: string;
   message: string;
   payload?: Record<string, unknown>;
@@ -350,6 +353,7 @@ export interface Approval {
   approvalRef?: string;
   tenant?: string;
   contextPtr?: string;
+  constraints?: Record<string, unknown>;
 }
 
 export interface ApprovalHistoryEntry {

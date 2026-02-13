@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -261,5 +263,110 @@ tenants:
 	bundles, _ := policyDoc.Data["bundles"].(map[string]any)
 	if bundles == nil || bundles["demo-pack/safety"] == nil {
 		t.Fatalf("policy bundle not installed")
+	}
+}
+
+func TestValidateMarketplaceURLRejectsPrivateResolution(t *testing.T) {
+	prevLookup := lookupHostIPs
+	prevSkip := skipPrivateIPCheck
+	t.Cleanup(func() {
+		lookupHostIPs = prevLookup
+		skipPrivateIPCheck = prevSkip
+	})
+
+	skipPrivateIPCheck = false
+	lookupHostIPs = func(ctx context.Context, host string) ([]net.IP, error) {
+		if host == "example.com" {
+			return []net.IP{net.ParseIP("10.0.0.1")}, nil
+		}
+		return nil, errors.New("unexpected host")
+	}
+
+	allowed := map[string]struct{}{"example.com": {}}
+	if _, err := validateMarketplaceURL("https://example.com/catalog.json", allowed); err == nil {
+		t.Fatalf("expected private resolution to be rejected")
+	}
+}
+
+func TestValidateMarketplaceURLAllowsPublicResolution(t *testing.T) {
+	prevLookup := lookupHostIPs
+	prevSkip := skipPrivateIPCheck
+	t.Cleanup(func() {
+		lookupHostIPs = prevLookup
+		skipPrivateIPCheck = prevSkip
+	})
+
+	skipPrivateIPCheck = false
+	lookupHostIPs = func(ctx context.Context, host string) ([]net.IP, error) {
+		if host == "example.com" {
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		}
+		return nil, errors.New("unexpected host")
+	}
+
+	allowed := map[string]struct{}{"example.com": {}}
+	if _, err := validateMarketplaceURL("https://example.com/catalog.json", allowed); err != nil {
+		t.Fatalf("expected public resolution to pass: %v", err)
+	}
+}
+
+func TestMarketplaceRedirectValidationBlocksCrossHostAndPrivate(t *testing.T) {
+	prevLookup := lookupHostIPs
+	prevSkip := skipPrivateIPCheck
+	t.Cleanup(func() {
+		lookupHostIPs = prevLookup
+		skipPrivateIPCheck = prevSkip
+	})
+
+	skipPrivateIPCheck = false
+	lookupHostIPs = func(ctx context.Context, host string) ([]net.IP, error) {
+		switch host {
+		case "example.com", "evil.example":
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		case "private.example":
+			return []net.IP{net.ParseIP("10.0.0.2")}, nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	}
+
+	allowed := map[string]struct{}{
+		"example.com":     {},
+		"private.example": {},
+	}
+	client := marketplaceHTTPClient(allowed, "example.com")
+	baseReq, _ := http.NewRequest(http.MethodGet, "https://example.com/start", nil)
+
+	evilReq, _ := http.NewRequest(http.MethodGet, "https://evil.example/next", nil)
+	if err := client.CheckRedirect(evilReq, []*http.Request{baseReq}); err == nil {
+		t.Fatalf("expected cross-host redirect to be blocked")
+	}
+
+	privateReq, _ := http.NewRequest(http.MethodGet, "https://private.example/next", nil)
+	if err := client.CheckRedirect(privateReq, []*http.Request{baseReq}); err == nil {
+		t.Fatalf("expected private redirect to be blocked")
+	}
+}
+
+func TestMarketplaceDialContextRejectsPrivateIP(t *testing.T) {
+	prevLookup := lookupHostIPs
+	prevSkip := skipPrivateIPCheck
+	t.Cleanup(func() {
+		lookupHostIPs = prevLookup
+		skipPrivateIPCheck = prevSkip
+	})
+
+	skipPrivateIPCheck = false
+	lookupHostIPs = func(ctx context.Context, host string) ([]net.IP, error) {
+		if host == "private.example" {
+			return []net.IP{net.ParseIP("10.0.0.3")}, nil
+		}
+		return nil, errors.New("unexpected host")
+	}
+
+	allowed := map[string]struct{}{"private.example": {}}
+	dial := marketplaceDialContext(allowed)
+	if _, err := dial(context.Background(), "tcp", "private.example:443"); err == nil {
+		t.Fatalf("expected dial to reject private IP")
 	}
 }

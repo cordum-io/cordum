@@ -1,0 +1,10 @@
+# LangChain + LangGraph
+langchain>=0.3.0
+langgraph>=0.2.0
+langchain-openai>=0.2.0
+
+# Cordum safety SDK (with LangChain integration)
+cordum-guard[langchain]
+
+# For the demo agent's mock tools
+httpx>=0.27.0

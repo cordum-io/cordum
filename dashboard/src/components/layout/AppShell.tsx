@@ -1,4 +1,5 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Breadcrumbs } from "./Breadcrumbs";
 import {
   AlertTriangle,
   Boxes,
@@ -7,6 +8,7 @@ import {
   LayoutGrid,
   ListChecks,
   LogOut,
+  Monitor,
   Moon,
   Network,
   Settings,
@@ -24,10 +26,12 @@ import { api } from "../../lib/api";
 import { formatCount } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { useUiStore } from "../../state/ui";
+import { usePresenceCleanup } from "../../state/events";
 import { ConnectionIndicator } from "../ConnectionIndicator";
 import { useConfigStore } from "../../state/config";
 import { useAuthConfig } from "../../hooks/useAuthConfig";
 import { MaintenanceBanner } from "./MaintenanceBanner";
+import { EnvironmentBorder, EnvironmentBadge } from "./EnvironmentBanner";
 import { logger } from "../../lib/logger";
 
 const navItems = [
@@ -51,12 +55,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   const setGlobalSearch = useUiStore((state) => state.setGlobalSearch);
   const setCommandOpen = useUiStore((state) => state.setCommandOpen);
   const theme = useUiStore((state) => state.theme);
+  const resolvedTheme = useUiStore((state) => state.resolvedTheme);
   const toggleTheme = useUiStore((state) => state.toggleTheme);
+  const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
   const apiBaseUrl = useConfigStore((state) => state.apiBaseUrl);
   const apiKey = useConfigStore((state) => state.apiKey);
   const logout = useConfigStore((state) => state.logout);
   const { data: authConfig } = useAuthConfig();
   const [loggingOut, setLoggingOut] = useState(false);
+
+  usePresenceCleanup();
   const requiresAuth = !!authConfig && (
     authConfig.password_enabled ||
     authConfig.user_auth_enabled ||
@@ -88,13 +96,24 @@ export function AppShell({ children }: { children: ReactNode }) {
     "/dlq": { count: dlqCount, variant: "danger" },
   };
 
+  // Apply resolved theme (always 'light' or 'dark') to document
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("cordum-theme", theme);
-    }
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
+  }, [resolvedTheme]);
+
+  // Persist theme preference (may be 'system')
+  useEffect(() => {
+    window.localStorage.setItem("cordum-theme", theme);
   }, [theme]);
+
+  // Listen for OS color scheme changes when theme is 'system'
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = () => syncSystemTheme();
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [syncSystemTheme]);
 
   const displayName = user?.display_name || user?.email || user?.username || "Signed in";
   const roleLabel = user?.roles?.length ? user.roles.join(", ") : "";
@@ -196,13 +215,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </aside>
         <div className="flex flex-1 flex-col">
+          <EnvironmentBorder />
           <header className="sticky top-0 z-10 border-b border-border bg-[color:var(--surface-glass)] px-4 py-4 backdrop-blur-xl lg:px-10">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-muted">{location.pathname}</p>
+                <Breadcrumbs />
                 <div className="flex items-center gap-2">
                   <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-6 w-auto object-contain dark:brightness-0 dark:invert" />
                   <h2 className="font-display text-xl font-semibold text-ink">Cordum Console</h2>
+                  <EnvironmentBadge />
                 </div>
               </div>
               <div className="flex flex-1 flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
@@ -220,8 +241,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                   />
                 </div>
                 <Button variant="outline" size="sm" type="button" onClick={toggleTheme}>
-                  {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                  {theme === "dark" ? "Light" : "Dark"}
+                  {theme === "light" && <Sun className="h-4 w-4" />}
+                  {theme === "dark" && <Moon className="h-4 w-4" />}
+                  {theme === "system" && <Monitor className="h-4 w-4" />}
+                  {theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System"}
                 </Button>
                 <button
                   onClick={() => setCommandOpen(true)}

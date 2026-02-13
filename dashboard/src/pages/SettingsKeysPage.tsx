@@ -27,6 +27,7 @@ import { Input } from "../components/ui/Input";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { cn } from "../lib/utils";
 import type { ApiKey } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -428,6 +429,7 @@ function RotateKeyCard({
 // ---------------------------------------------------------------------------
 
 export default function SettingsKeysPage() {
+  usePageTitle("Settings - API Keys");
   const { data, isLoading } = useApiKeys();
   const revokeKey = useRevokeApiKey();
   const [showCreateForm, setShowCreateForm] = useState(false);

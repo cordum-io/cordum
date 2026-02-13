@@ -6,6 +6,7 @@ import { SchemaRegisterForm } from "../components/schemas/SchemaRegisterForm";
 import { SchemaViewer } from "../components/schemas/SchemaViewer";
 import { useSchemas, useSchema, useDeleteSchema } from "../hooks/useSchemas";
 import type { Schema } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Confirm dialog
@@ -70,6 +71,7 @@ function ConfirmDialog({
 // ---------------------------------------------------------------------------
 
 export default function SchemasPage() {
+  usePageTitle("Schemas");
   const { data, isLoading, error } = useSchemas();
   const deleteMutation = useDeleteSchema();
   const [confirmSchemaId, setConfirmSchemaId] = useState<string | null>(null);

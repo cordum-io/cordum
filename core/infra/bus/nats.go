@@ -45,6 +45,11 @@ const (
 
 	// LabelBusMsgID overrides JetStream msg-id for explicit resubmits.
 	LabelBusMsgID = "cordum.bus_msg_id"
+
+	// maxJSRedeliveries caps how many times NATS redelivers a failing message.
+	// Without this, a poison message (e.g. proto unmarshal failure) blocks the
+	// MaxAckPending budget indefinitely, preventing new messages from being delivered.
+	maxJSRedeliveries = 100
 )
 
 var (
@@ -146,6 +151,10 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	}
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		cb := func(msg *nats.Msg) {
+			// Log warning when a message is approaching max redelivery
+			if meta, err := msg.Metadata(); err == nil && meta.NumDelivered > 50 {
+				log.Printf("nats bus: message on %s redelivered %d times (max=%d)", subject, meta.NumDelivered, maxJSRedeliveries)
+			}
 			action, delay := processBusMsg(msg.Data, handler)
 			switch action {
 			case msgActionNakDelay:
@@ -169,6 +178,7 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 			nats.AckExplicit(),
 			nats.AckWait(b.ackWait),
 			nats.MaxAckPending(2048),
+			nats.MaxDeliver(maxJSRedeliveries),
 		}
 		if durable := durableName(subject, queue); durable != "" {
 			opts = append(opts, nats.Durable(durable))
@@ -299,8 +309,7 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 		cfg.InsecureSkipVerify = true
 	}
 	if caPath != "" {
-		// #nosec G304 -- CA path is configured by the operator.
-		pem, err := os.ReadFile(caPath)
+		pem, err := os.ReadFile(caPath) // #nosec -- CA path is configured by the operator.
 		if err != nil {
 			return nil, fmt.Errorf("nats tls ca read: %w", err)
 		}
@@ -399,7 +408,7 @@ func (b *NatsBus) initJetStreamFromEnv() {
 	b.js = js
 	b.jsEnabled = true
 	b.ackWait = ackWait
-	log.Printf("[BUS] jetstream enabled ack_wait=%s replicas=%d", ackWait, replicas)
+	log.Printf("[BUS] jetstream enabled ack_wait=%s replicas=%d", ackWait, replicas) // #nosec -- values are derived from configuration.
 }
 
 func isDurableSubject(subject string) bool {

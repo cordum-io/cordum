@@ -71,3 +71,175 @@ spec:
     ports:
     - protocol: TCP
       port: 6379
+    # Redis cluster bus (gossip/replication)
+    - protocol: TCP
+      port: 16379
+---
+# Egress policies — restrict outbound traffic per service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-api-gateway
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: cordum-api-gateway
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: nats
+    ports:
+    - protocol: TCP
+      port: 4222
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: cordum-safety-kernel
+    ports:
+    - protocol: TCP
+      port: 50051
+  # DNS for service discovery
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-scheduler
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: cordum-scheduler
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: nats
+    ports:
+    - protocol: TCP
+      port: 4222
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: cordum-safety-kernel
+    ports:
+    - protocol: TCP
+      port: 50051
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-workflow-engine
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: cordum-workflow-engine
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: nats
+    ports:
+    - protocol: TCP
+      port: 4222
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-dashboard
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: cordum-dashboard
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: cordum-api-gateway
+    ports:
+    - protocol: TCP
+      port: 8081
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-safety-kernel
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: cordum-safety-kernel
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: nats
+    ports:
+    - protocol: TCP
+      port: 4222
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

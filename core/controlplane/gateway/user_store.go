@@ -11,6 +11,7 @@ type User struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
 	Email        string    `json:"email,omitempty"`
+	DisplayName  string    `json:"display_name,omitempty"`
 	PasswordHash string    `json:"-"` // Never exposed in JSON
 	Tenant       string    `json:"tenant"`
 	Role         string    `json:"role"`
@@ -32,6 +33,15 @@ type UserStore interface {
 
 	// Create creates a new user with the given password.
 	Create(ctx context.Context, user *User, password string) error
+
+	// List returns all users for a tenant.
+	List(ctx context.Context, tenant string) ([]*User, error)
+
+	// Update updates a user's mutable fields (email, display name, role).
+	Update(ctx context.Context, user *User) error
+
+	// Delete soft-deletes a user by setting Disabled=true.
+	Delete(ctx context.Context, id string) error
 
 	// UpdatePassword updates a user's password.
 	UpdatePassword(ctx context.Context, userID, newPassword string) error
@@ -55,6 +65,7 @@ var (
 type CreateUserRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email,omitempty"`
+	// #nosec G117 -- password is required in request payloads.
 	Password string `json:"password"`
 	Tenant   string `json:"tenant,omitempty"`
 	Role     string `json:"role,omitempty"`
@@ -62,6 +73,8 @@ type CreateUserRequest struct {
 
 // ChangePasswordRequest is the request body for changing a password.
 type ChangePasswordRequest struct {
+	// #nosec G117 -- password fields are required in request payloads.
 	CurrentPassword string `json:"current_password"`
-	NewPassword     string `json:"new_password"`
+	// #nosec G117 -- password fields are required in request payloads.
+	NewPassword string `json:"new_password"`
 }

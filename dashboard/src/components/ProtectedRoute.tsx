@@ -4,10 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useConfigStore } from "../state/config";
 import { AppShell } from "./layout/AppShell";
 import { CommandPalette } from "./CommandPalette";
+import { ToastContainer } from "./ui/Toast";
 import { get } from "../api/client";
 import { ApiError } from "../api/client";
 import { useEventStream } from "../hooks/useEventStream";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useAuthConfig } from "../hooks/useAuthConfig";
+import { useCrossTabSync } from "../hooks/useCrossTabSync";
+import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
+import { SessionTimeoutWarning } from "./SessionTimeoutWarning";
 import type { User } from "../api/types";
 
 interface SessionResponse {
@@ -55,14 +60,23 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // Connect WebSocket when authenticated (disconnects on unmount / logout)
   useEventStream();
 
+  // Register global keyboard shortcuts
+  useKeyboardShortcuts();
+
+  // Sync auth & theme across browser tabs
+  useCrossTabSync();
+
   if (!isAuthorized) {
     return null;
   }
 
   return (
     <>
+      <SessionTimeoutWarning />
       <AppShell>{children}</AppShell>
       <CommandPalette />
+      <ToastContainer />
+      <KeyboardShortcutsHelp />
     </>
   );
 }

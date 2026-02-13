@@ -46,23 +46,49 @@ func bootstrapConfig(ctx context.Context, svc *configsvc.Service, pools *config.
 	}
 	changed := false
 	if pools != nil {
+		encoded, err := toMap(pools)
+		if err != nil {
+			return err
+		}
+		fileHash, err := hashAny(encoded)
+		if err != nil {
+			return err
+		}
 		if _, ok := doc.Data["pools"]; !ok {
-			encoded, err := toMap(pools)
-			if err != nil {
-				return err
-			}
 			doc.Data["pools"] = encoded
+			doc.Data["_poolsFileHash"] = fileHash
 			changed = true
+		} else {
+			storedHash, _ := doc.Data["_poolsFileHash"].(string)
+			if storedHash != fileHash {
+				doc.Data["pools"] = encoded
+				doc.Data["_poolsFileHash"] = fileHash
+				changed = true
+				log.Printf("scheduler: pool config updated in Redis (hash changed)")
+			}
 		}
 	}
 	if timeouts != nil {
+		encoded, err := toMap(timeouts)
+		if err != nil {
+			return err
+		}
+		fileHash, err := hashAny(encoded)
+		if err != nil {
+			return err
+		}
 		if _, ok := doc.Data["timeouts"]; !ok {
-			encoded, err := toMap(timeouts)
-			if err != nil {
-				return err
-			}
 			doc.Data["timeouts"] = encoded
+			doc.Data["_timeoutsFileHash"] = fileHash
 			changed = true
+		} else {
+			storedHash, _ := doc.Data["_timeoutsFileHash"].(string)
+			if storedHash != fileHash {
+				doc.Data["timeouts"] = encoded
+				doc.Data["_timeoutsFileHash"] = fileHash
+				changed = true
+				log.Printf("scheduler: timeouts config updated in Redis (hash changed)")
+			}
 		}
 	}
 	if !changed {
@@ -120,7 +146,7 @@ func watchConfigChanges(ctx context.Context, svc *configsvc.Service, fallbackPoo
 		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
 			interval = parsed
 		} else {
-			log.Printf("scheduler: invalid SCHEDULER_CONFIG_RELOAD_INTERVAL=%q, using default %s", raw, interval)
+			log.Printf("scheduler: invalid SCHEDULER_CONFIG_RELOAD_INTERVAL=%q, using default %s", raw, interval) // #nosec -- value is config input for diagnostics.
 		}
 	}
 	ticker := time.NewTicker(interval)

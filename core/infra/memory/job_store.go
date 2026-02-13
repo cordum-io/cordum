@@ -13,6 +13,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -84,6 +85,13 @@ var (
 )
 
 var defaultJobMetaTTL = 7 * 24 * time.Hour
+
+var releaseLockScript = redis.NewScript(`
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+end
+return 0
+`)
 
 const (
 	microsPerSecond      = int64(1_000_000)
@@ -200,21 +208,40 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 	return resultState, err
 }
 
-// TryAcquireLock attempts to acquire a distributed lock with TTL; returns true if acquired.
-func (s *RedisJobStore) TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+// TryAcquireLock attempts to acquire a distributed lock with TTL; returns token if acquired.
+func (s *RedisJobStore) TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}
-	return s.client.SetNX(ctx, key, time.Now().Unix(), ttl).Result()
+	token := uuid.NewString()
+	acquired, err := s.client.SetNX(ctx, key, token, ttl).Result()
+	if err != nil {
+		return "", err
+	}
+	if !acquired {
+		return "", nil
+	}
+	return token, nil
 }
 
 // ReleaseLock releases a distributed lock.
-func (s *RedisJobStore) ReleaseLock(ctx context.Context, key string) error {
+func (s *RedisJobStore) ReleaseLock(ctx context.Context, key, token string) error {
 	if key == "" {
 		return nil
 	}
-	_, err := s.client.Del(ctx, key).Result()
-	return err
+	if token == "" {
+		slog.Warn("lock release skipped: missing token", "key", key)
+		return fmt.Errorf("lock token required")
+	}
+	result, err := releaseLockScript.Run(ctx, s.client, []string{key}, token).Int()
+	if err != nil {
+		return err
+	}
+	if result == 0 {
+		slog.Warn("lock release skipped: token mismatch", "key", key)
+		return fmt.Errorf("lock not owned")
+	}
+	return nil
 }
 
 // NewRedisJobStore constructs a Redis-backed JobStore using a redis:// URL.
@@ -459,7 +486,7 @@ func (s *RedisJobStore) GetState(ctx context.Context, jobID string) (scheduler.J
 
 func (s *RedisJobStore) SetResultPtr(ctx context.Context, jobID, resultPtr string) error {
 	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, jobResultPtrKey(jobID), resultPtr, 0)
+	pipe.Set(ctx, jobResultPtrKey(jobID), resultPtr, s.metaTTL)
 	pipe.HSet(ctx, jobMetaKey(jobID), "result_ptr", resultPtr)
 	_, err := pipe.Exec(ctx)
 	return err
@@ -911,6 +938,15 @@ func (s *RedisJobStore) GetAttempts(ctx context.Context, jobID string) (int, err
 		return 0, err
 	}
 	return parseInt(raw), nil
+}
+
+// IncrAttempts atomically increments the attempt counter for a job.
+// This is used by the scheduler to escalate backoff for retryable scheduling failures.
+func (s *RedisJobStore) IncrAttempts(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	return s.client.HIncrBy(ctx, jobMetaKey(jobID), metaFieldAttempts, 1).Err()
 }
 
 func (s *RedisJobStore) CountActiveByTenant(ctx context.Context, tenant string) (int, error) {

@@ -149,6 +149,10 @@ func (c *stubSafetyClient) response() *pb.PolicyCheckResponse {
 func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	t.Helper()
 
+	// Allow loopback in tests (httptest.NewServer binds to 127.0.0.1).
+	skipPrivateIPCheck = true
+	t.Cleanup(func() { skipPrivateIPCheck = false })
+
 	srv, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
@@ -176,7 +180,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	if err != nil {
 		t.Fatalf("schema registry: %v", err)
 	}
-	dlqStore, err := memory.NewDLQStore(redisURL)
+	dlqStore, err := memory.NewDLQStore(redisURL, 0)
 	if err != nil {
 		t.Fatalf("dlq store: %v", err)
 	}

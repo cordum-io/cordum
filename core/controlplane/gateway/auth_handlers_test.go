@@ -3,9 +3,12 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -207,5 +210,62 @@ func TestBasicAuthProvidesAuthConfig_NoKeys(t *testing.T) {
 	cfg := provider.AuthConfig()
 	if cfg.PasswordEnabled {
 		t.Fatal("expected password_enabled to be false when no keys")
+	}
+}
+
+func TestSessionTokenCryptoRandom(t *testing.T) {
+	user := &User{
+		ID:       "user-1",
+		Username: "test",
+		Tenant:   "default",
+	}
+
+	resp1, err := buildUserLoginResponse(context.Background(), user)
+	if err != nil {
+		t.Fatalf("buildUserLoginResponse: %v", err)
+	}
+	resp2, err := buildUserLoginResponse(context.Background(), user)
+	if err != nil {
+		t.Fatalf("buildUserLoginResponse: %v", err)
+	}
+
+	// Tokens must differ even for the same user at the same instant.
+	if resp1.Token == resp2.Token {
+		t.Fatal("expected different session tokens, got identical")
+	}
+
+	// Tokens must start with session- prefix.
+	if !strings.HasPrefix(resp1.Token, "session-") {
+		t.Fatalf("token missing session- prefix: %s", resp1.Token)
+	}
+	if !strings.HasPrefix(resp2.Token, "session-") {
+		t.Fatalf("token missing session- prefix: %s", resp2.Token)
+	}
+
+	// Token length: "session-" (8) + base64url(32 bytes) = 8 + 43 = 51 chars.
+	const expectedLen = 8 + 43
+	if len(resp1.Token) != expectedLen {
+		t.Fatalf("expected token length %d, got %d (%s)", expectedLen, len(resp1.Token), resp1.Token)
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("entropy exhausted")
+}
+
+func TestBuildUserLoginResponseRandFailure(t *testing.T) {
+	user := &User{
+		ID:       "user-1",
+		Username: "test",
+		Tenant:   "default",
+	}
+	original := rand.Reader
+	rand.Reader = failingReader{}
+	t.Cleanup(func() { rand.Reader = original })
+
+	if _, err := buildUserLoginResponse(context.Background(), user); err == nil {
+		t.Fatal("expected error on rand failure")
 	}
 }

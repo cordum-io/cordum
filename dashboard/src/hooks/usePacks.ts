@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post } from "../api/client";
 import { logger } from "../lib/logger";
+import { useToastStore } from "../state/toast";
 import type { Pack, ApiResponse, MarketplaceResponse } from "../api/types";
 import {
   mapPackRecord,
@@ -86,11 +87,13 @@ export function useInstallPack() {
     },
     onSuccess: (_, input) => {
       logger.info("packs", "Pack installed", { packId: input.packId });
+      useToastStore.getState().addToast({ type: "success", title: "Pack installed" });
       queryClient.invalidateQueries({ queryKey: ["packs"] });
       queryClient.invalidateQueries({ queryKey: ["marketplace-packs"] });
     },
     onError: (err, input) => {
       logger.error("packs", "Pack install failed", { packId: input.packId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Installation failed", description: err.message });
     },
   });
 }
@@ -104,12 +107,14 @@ export function useUninstallPack() {
     },
     onSuccess: (_data, id) => {
       logger.info("packs", "Pack uninstalled", { id });
+      useToastStore.getState().addToast({ type: "success", title: "Pack uninstalled" });
       queryClient.invalidateQueries({ queryKey: ["packs"] });
       queryClient.invalidateQueries({ queryKey: ["pack", id] });
       queryClient.invalidateQueries({ queryKey: ["marketplace-packs"] });
     },
     onError: (err, id) => {
       logger.error("packs", "Pack uninstall failed", { id, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Failed to uninstall", description: err.message });
     },
   });
 }

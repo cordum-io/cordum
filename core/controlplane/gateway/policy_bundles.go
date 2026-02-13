@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -55,6 +56,7 @@ type policyBundleSummary struct {
 	Version     string `json:"version,omitempty"`
 	InstalledAt string `json:"installed_at,omitempty"`
 	Sha256      string `json:"sha256,omitempty"`
+	RuleCount   int    `json:"rule_count"`
 }
 
 type policyBundleDetail struct {
@@ -98,8 +100,10 @@ type policyAuditEntry struct {
 	Action         string   `json:"action"`
 	ResourceType   string   `json:"resource_type,omitempty"`
 	ResourceID     string   `json:"resource_id,omitempty"`
+	ResourceName   string   `json:"resource_name,omitempty"`
 	ActorID        string   `json:"actor_id,omitempty"`
 	Role           string   `json:"role,omitempty"`
+	AuthSource     string   `json:"auth_source,omitempty"`
 	BundleIDs      []string `json:"bundle_ids,omitempty"`
 	Message        string   `json:"message,omitempty"`
 	SnapshotBefore string   `json:"snapshot_before,omitempty"`
@@ -137,7 +141,7 @@ func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 	}
 	items := bundleSummaryList(bundles)
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,map[string]any{
+	writeJSON(w, map[string]any{
 		"bundles":    bundles,
 		"items":      items,
 		"updated_at": updatedAt,
@@ -170,17 +174,30 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	for _, fragmentID := range fragmentIDs {
 		rawBundle := bundles[fragmentID]
 		bundle, _ := rawBundle.(map[string]any)
-		if bundle == nil {
+		if bundle != nil && !includeDisabled && !bundleEnabled(bundle) {
 			continue
 		}
-		if !includeDisabled && !bundleEnabled(bundle) {
-			continue
+		content := ""
+		switch v := rawBundle.(type) {
+		case string:
+			content = strings.TrimSpace(v)
+		case map[string]any:
+			content = strings.TrimSpace(stringFromAny(v["content"]))
+			if content == "" {
+				content = strings.TrimSpace(stringFromAny(v["policy"]))
+			}
+			if content == "" {
+				content = strings.TrimSpace(stringFromAny(v["data"]))
+			}
 		}
-		content := strings.TrimSpace(stringFromAny(bundle["content"]))
 		if content == "" {
 			continue
 		}
-		rules, err := rulesFromPolicyContent(fragmentID, bundle, content)
+		bundleMeta := bundle
+		if bundleMeta == nil {
+			bundleMeta = map[string]any{}
+		}
+		rules, err := rulesFromPolicyContent(fragmentID, bundleMeta, content)
 		if err != nil {
 			parseErrors = append(parseErrors, policyRuleParseError{
 				FragmentID: fragmentID,
@@ -196,7 +213,7 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	if len(parseErrors) > 0 {
 		resp["errors"] = parseErrors
 	}
-	writeJSON(w,resp)
+	writeJSON(w, resp)
 }
 
 func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +256,7 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: strings.TrimSpace(stringFromAny(bundle["updated_at"])),
 	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,resp)
+	writeJSON(w, resp)
 }
 
 func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
@@ -314,9 +331,9 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.appendAuditEntry(r.Context(), "edit", "policy", bundleID, policyActorID(r), policyRole(r), "edit policy bundle "+bundleID)
+	s.appendAuditEntryNamed(r.Context(), "edit", "policy", bundleID, bundleID, policyActorID(r), policyRole(r), "edit policy bundle "+bundleID)
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,map[string]any{
+	writeJSON(w, map[string]any{
 		"id":         bundleID,
 		"updated_at": now,
 	})
@@ -325,6 +342,10 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "config service unavailable")
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -337,6 +358,23 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	tenant, err := s.resolveTenant(r, body.Request.Tenant)
+	if err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
+	}
+	body.Request.Tenant = tenant
+	body.Request.OrgId = tenant
+	principalID, err := s.resolvePrincipal(r, body.Request.PrincipalId)
+	if err != nil {
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
+	body.Request.PrincipalId = principalID
+	if body.Request.Meta == nil {
+		body.Request.Meta = &policyMetaRequest{}
+	}
+	body.Request.Meta.TenantId = tenant
 	checkReq, err := buildPolicyCheckRequest(r.Context(), &body.Request, s.configSvc, s.tenant)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
@@ -367,6 +405,8 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// #nosec -- JSON response; content-type is set to application/json.
 	_, _ = w.Write(data)
 }
 
@@ -448,7 +488,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		CreatedAt:      now,
 	})
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,map[string]any{
+	writeJSON(w, map[string]any{
 		"snapshot_before": beforeSnapshot,
 		"snapshot_after":  afterSnapshot,
 		"published":       targets,
@@ -521,7 +561,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	})
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,map[string]any{
+	writeJSON(w, map[string]any{
 		"snapshot_before": beforeSnapshot,
 		"snapshot_after":  afterSnapshot,
 		"rollback_to":     snapshotID,
@@ -543,7 +583,7 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,map[string]any{"items": entries})
+	writeJSON(w, map[string]any{"items": entries})
 }
 
 func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.Request) {
@@ -570,7 +610,7 @@ func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt > items[j].CreatedAt })
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,map[string]any{"items": items})
+	writeJSON(w, map[string]any{"items": items})
 }
 
 func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -620,9 +660,9 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 		return
 	}
 
-	s.appendAuditEntry(r.Context(), "snapshot", "policy", snapshot.ID, policyActorID(r), policyRole(r), "capture policy snapshot "+snapshot.ID)
+	s.appendAuditEntryNamed(r.Context(), "snapshot", "policy", snapshot.ID, snapshot.ID, policyActorID(r), policyRole(r), "capture policy snapshot "+snapshot.ID)
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,snapshot)
+	writeJSON(w, snapshot)
 }
 
 func (s *server) handleGetPolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -647,7 +687,7 @@ func (s *server) handleGetPolicyBundleSnapshot(w http.ResponseWriter, r *http.Re
 	for _, snap := range snapshots {
 		if snap.ID == snapshotID {
 			w.Header().Set("Content-Type", "application/json")
-			writeJSON(w,snap)
+			writeJSON(w, snap)
 			return
 		}
 	}
@@ -882,6 +922,15 @@ func bundleSummaryList(bundles map[string]any) []policyBundleSummary {
 			sum := sha256.Sum256([]byte(content))
 			sha = hex.EncodeToString(sum[:])
 		}
+		ruleCount := 0
+		if content != "" {
+			var parsed struct {
+				Rules []any `yaml:"rules"`
+			}
+			if yaml.Unmarshal([]byte(content), &parsed) == nil {
+				ruleCount = len(parsed.Rules)
+			}
+		}
 		source := "core"
 		if strings.HasPrefix(key, policyStudioPrefix) {
 			source = "secops"
@@ -913,6 +962,7 @@ func bundleSummaryList(bundles map[string]any) []policyBundleSummary {
 			Version:     version,
 			InstalledAt: installedAt,
 			Sha256:      sha,
+			RuleCount:   ruleCount,
 		})
 	}
 	return out
@@ -1498,20 +1548,88 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policyAuditEntry) 
 		return err
 	}
 	doc.Data[policyAuditKey] = data
-	return s.configSvc.Set(ctx, doc)
+	if err := s.configSvc.Set(ctx, doc); err != nil {
+		return err
+	}
+
+	// Fan-out to SIEM exporter (non-blocking) after persistence.
+	if s.auditExporter != nil {
+		s.auditExporter.Send(auditEntryToSIEM(entry, s.tenant))
+	}
+
+	return nil
 }
 
-// appendAuditEntry is a convenience wrapper for appendPolicyAudit that takes
-// individual fields instead of requiring callers to construct policyAuditEntry.
-func (s *server) appendAuditEntry(ctx context.Context, action, resourceType, resourceID, actorID, role, message string) {
+func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message string) {
 	_ = s.appendPolicyAudit(ctx, policyAuditEntry{
 		Action:       action,
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
+		ResourceName: resourceName,
 		ActorID:      actorID,
 		Role:         role,
 		Message:      message,
 	})
+}
+
+// auditEntryToSIEM converts a policyAuditEntry to a SIEM-compatible event.
+func auditEntryToSIEM(entry policyAuditEntry, tenantID string) audit.SIEMEvent {
+	ts, _ := time.Parse(time.RFC3339, entry.CreatedAt)
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	return audit.SIEMEvent{
+		Timestamp: ts,
+		EventType: classifyAuditAction(entry.Action),
+		Severity:  classifyAuditSeverity(entry.Action),
+		TenantID:  tenantID,
+		Action:    entry.Action,
+		Identity:  entry.ActorID,
+		Reason:    entry.Message,
+		Extra: map[string]string{
+			"resource_type": entry.ResourceType,
+			"resource_id":   entry.ResourceID,
+			"role":          entry.Role,
+			"auth_source":   entry.AuthSource,
+		},
+	}
+}
+
+// classifyAuditAction maps a policyAuditEntry.Action to a SIEM event type.
+func classifyAuditAction(action string) string {
+	a := strings.ToLower(action)
+	switch {
+	case strings.Contains(a, "deny") || strings.Contains(a, "block"):
+		return audit.EventSafetyViolation
+	case strings.Contains(a, "approve") || strings.Contains(a, "reject"):
+		return audit.EventSafetyApproval
+	case strings.Contains(a, "publish") || strings.Contains(a, "edit") ||
+		strings.Contains(a, "delete") || strings.Contains(a, "rollback") ||
+		strings.Contains(a, "snapshot"):
+		return audit.EventPolicyChange
+	case strings.Contains(a, "login") || strings.Contains(a, "key") ||
+		strings.Contains(a, "user") || strings.Contains(a, "auth"):
+		return audit.EventSystemAuth
+	default:
+		return audit.EventSafetyDecision
+	}
+}
+
+// classifyAuditSeverity maps action to a SIEM severity level.
+func classifyAuditSeverity(action string) string {
+	a := strings.ToLower(action)
+	switch {
+	case strings.Contains(a, "deny") || strings.Contains(a, "block"):
+		return audit.SeverityHigh
+	case strings.Contains(a, "delete") || strings.Contains(a, "rollback"):
+		return audit.SeverityMedium
+	case strings.Contains(a, "approve") || strings.Contains(a, "reject"):
+		return audit.SeverityMedium
+	case strings.Contains(a, "publish") || strings.Contains(a, "edit"):
+		return audit.SeverityLow
+	default:
+		return audit.SeverityInfo
+	}
 }
 
 func policyActorID(r *http.Request) string {
@@ -1521,7 +1639,7 @@ func policyActorID(r *http.Request) string {
 	if auth := authFromRequest(r); auth != nil && auth.PrincipalID != "" {
 		return auth.PrincipalID
 	}
-	return strings.TrimSpace(r.Header.Get("X-Principal-Id"))
+	return ""
 }
 
 func policyRole(r *http.Request) string {
@@ -1531,5 +1649,5 @@ func policyRole(r *http.Request) string {
 	if auth := authFromRequest(r); auth != nil && auth.Role != "" {
 		return normalizeRole(auth.Role)
 	}
-	return normalizeRole(strings.TrimSpace(r.Header.Get("X-Principal-Role")))
+	return ""
 }

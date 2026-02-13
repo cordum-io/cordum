@@ -53,6 +53,9 @@ export interface BackendJobDetail extends BackendJobRecord {
   error_status?: string;
   error_code?: string;
   last_state?: string;
+  workflow_id?: string;
+  run_id?: string;
+  step_id?: string;
 }
 
 export interface BackendWorkflowStep {
@@ -165,6 +168,7 @@ export interface BackendApprovalItem {
   resolved_at?: number;
   resolved_by?: string;
   resolved_comment?: string;
+  constraints?: Record<string, unknown>;
   workflow_id?: string;
   workflow_run_id?: string;
   step_index?: number;
@@ -194,6 +198,7 @@ export interface BackendPolicyBundleSummary {
   version?: string;
   installed_at?: string;
   sha256?: string;
+  rule_count?: number;
 }
 
 export interface BackendPolicyBundleDetail {
@@ -211,6 +216,7 @@ export interface BackendPolicyAuditEntry {
   action?: string;
   resource_type?: string;
   resource_id?: string;
+  resource_name?: string;
   actor_id?: string;
   role?: string;
   bundle_ids?: string[];
@@ -314,15 +320,27 @@ export interface BackendHeartbeat {
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function microsToISO(raw?: number): string {
-  if (!raw || raw <= 0) return "";
+function logInvalidDateInput(fn: string, raw: unknown): void {
+  if (import.meta.env.DEV && raw != null) {
+    console.warn(`[transform] ${fn} received invalid value`, raw);
+  }
+}
+
+export function microsToISO(raw: unknown): string {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    logInvalidDateInput("microsToISO", raw);
+    return "";
+  }
   const ms = Math.floor(raw / 1000);
   const d = new Date(ms);
   return isNaN(d.getTime()) ? "" : d.toISOString();
 }
 
-export function secondsToISO(raw?: number): string {
-  if (!raw || raw <= 0) return "";
+export function secondsToISO(raw: unknown): string {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    logInvalidDateInput("secondsToISO", raw);
+    return "";
+  }
   const d = new Date(raw * 1000);
   return isNaN(d.getTime()) ? "" : d.toISOString();
 }
@@ -446,6 +464,8 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
     errorStatus: detail.error_status,
     errorCode: detail.error_code,
     lastState: detail.last_state,
+    workflowRunId: detail.run_id || base.workflowRunId,
+    workflowId: detail.workflow_id,
   };
 }
 
@@ -801,6 +821,7 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     approvalRef: item.approval_ref,
     tenant: job.tenant,
     contextPtr: item.context_ptr,
+    constraints: item.constraints,
   };
 }
 
@@ -867,12 +888,22 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
   };
 }
 
-export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary): PolicyBundle {
+export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, content?: string): PolicyBundle {
   const versionNum = Number.parseInt(summary.version ?? "", 10);
+  let rules: PolicyRule[] = [];
+  if (content) {
+    try {
+      const parsed = YAML.parse(content) as Record<string, unknown> | null;
+      const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
+      rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
+    } catch {
+      // YAML parse error — fall back to empty rules
+    }
+  }
   return {
     id: summary.id,
     name: summary.id,
-    rules: [],
+    rules,
     version: Number.isFinite(versionNum) ? versionNum : undefined,
     enabled: summary.enabled ?? true,
     publishedAt: summary.updated_at || summary.created_at,
@@ -889,7 +920,16 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary): Pol
 
 export function mapPolicyBundleDetail(detail: BackendPolicyBundleDetail): PolicyBundle {
   let rules: PolicyRule[] = [];
-  const content = detail.content ?? "";
+  if (!detail || typeof detail !== "object") {
+    return {
+      id: "",
+      name: "",
+      rules,
+      enabled: true,
+      content: "",
+    };
+  }
+  const content = typeof detail.content === "string" ? detail.content : "";
   if (content) {
     try {
       const parsed = YAML.parse(content) as Record<string, unknown> | null;
@@ -989,6 +1029,7 @@ export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): AuditEntry 
   const actorId = entry.actor_id || "unknown";
   const resourceType = entry.resource_type || "policy";
   const resourceId = entry.resource_id || "";
+  const resourceName = entry.resource_name || undefined;
   const action = entry.action || "";
 
   return {
@@ -998,6 +1039,7 @@ export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): AuditEntry 
     actor: actorId || entry.role || "unknown",
     resourceType,
     resourceId,
+    resourceName,
     action,
     message: entry.message || "",
     payload: {
@@ -1011,6 +1053,7 @@ export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): AuditEntry 
     resourceInfo: {
       type: resourceType,
       id: resourceId,
+      name: resourceName,
       link: auditResourceLink(resourceType, resourceId),
     },
     snapshotBefore: tryParseJson(entry.snapshot_before),
@@ -1137,8 +1180,8 @@ export function mapMarketplaceItem(item: BackendMarketplaceItem): MarketplacePac
 
 export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
   if (!hb || !hb.worker_id) return null;
-  const activeJobs = hb.active_jobs ?? 0;
-  const capacity = hb.max_parallel_jobs ?? 0;
+  const activeJobs = Number(hb.active_jobs) || 0;
+  const capacity = Math.max(0, Number(hb.max_parallel_jobs) || 0);
   const name =
     (hb.labels && (hb.labels.name || hb.labels.worker_name || hb.labels.worker)) ||
     hb.worker_id;
@@ -1150,6 +1193,7 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
     capabilities: hb.capabilities ?? [],
     status,
     activeJobs,
+    // capacity fallback: if backend reports 0 max_parallel_jobs, use at least 1
     capacity: capacity > 0 ? capacity : Math.max(1, activeJobs),
     region: hb.region,
     type: hb.type,

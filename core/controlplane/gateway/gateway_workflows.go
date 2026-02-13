@@ -22,7 +22,6 @@ import (
 
 // ---- Workflow REST Handlers ----
 
-
 type createWorkflowRequest struct {
 	ID          string             `json:"id"`
 	OrgID       string             `json:"org_id"`
@@ -99,6 +98,10 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 			req.Config = existing.Config
 		}
 	}
+	if err := validateWorkflowSteps(req.Steps); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	wfDef := &wf.Workflow{
 		ID:          req.ID,
@@ -120,10 +123,11 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		wfDef.Steps[id] = &s
 	}
 	if err := s.workflowStore.SaveWorkflow(r.Context(), wfDef); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "workflow save failed", "error", err, "id", wfDef.ID)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to save workflow")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "create", "workflow", wfDef.ID, policyActorID(r), policyRole(r), "create workflow "+wfDef.ID)
+	s.appendAuditEntryNamed(r.Context(), "create", "workflow", wfDef.ID, wfDef.Name, policyActorID(r), policyRole(r), "create workflow "+wfDef.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]string{"id": wfDef.ID})
@@ -166,7 +170,9 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing id")
 		return
 	}
+	delWfName := ""
 	if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), id); err == nil && wfDef != nil {
+		delWfName = wfDef.Name
 		if err := s.requireTenantAccess(r, wfDef.OrgID); err != nil {
 			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 			return
@@ -177,10 +183,11 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "workflow delete failed", "error", err, "id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete workflow")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "delete", "workflow", id, policyActorID(r), policyRole(r), "delete workflow "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "workflow", id, delWfName, policyActorID(r), policyRole(r), "delete workflow "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -196,7 +203,8 @@ func (s *server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.workflowStore.ListWorkflows(r.Context(), orgID, 100)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "workflow list failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list workflows")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -231,7 +239,8 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "workflow not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "workflow get failed", "error", err, "id", wfID)
+		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if wfDef != nil {
@@ -340,25 +349,30 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		if reservedKey && idempotencyKey != "" {
 			_ = s.workflowStore.DeleteRunIdempotencyKey(r.Context(), idempotencyKey)
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run create failed", "error", err, "run_id", runID)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to create run")
 		return
 	}
 	// Kick off execution
 	if s.workflowEng != nil {
 		if s.jobStore != nil {
 			lockKey := "cordum:wf:run:lock:" + runID
-			ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+			token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
 			if err != nil {
 				_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
-			} else if ok {
+			} else if token != "" {
 				_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
-				_ = s.jobStore.ReleaseLock(r.Context(), lockKey)
+				_ = s.jobStore.ReleaseLock(r.Context(), lockKey, token)
 			}
 		} else {
 			_ = s.workflowEng.StartRun(r.Context(), wfID, runID)
 		}
 	}
-	s.appendAuditEntry(r.Context(), "start", "run", runID, policyActorID(r), policyRole(r), "start run "+runID)
+	startWfName := ""
+	if wfDef != nil {
+		startWfName = wfDef.Name
+	}
+	s.appendAuditEntryNamed(r.Context(), "start", "run", runID, startWfName, policyActorID(r), policyRole(r), "start run "+runID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"run_id": runID})
 }
@@ -408,7 +422,8 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	}
 	newID, err := s.workflowEng.RerunFrom(r.Context(), runID, strings.TrimSpace(req.FromStep), req.DryRun)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		logging.Error("api-gateway", "run rerun failed", "error", err, "run_id", runID)
+		writeErrorJSON(w, http.StatusBadRequest, "rerun failed")
 		return
 	}
 	newRun, err := s.workflowStore.GetRun(r.Context(), newID)
@@ -419,21 +434,26 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	wfID := newRun.WorkflowID
 	if s.jobStore != nil {
 		lockKey := "cordum:wf:run:lock:" + newID
-		ok, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
+		token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
 		if err != nil {
 			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
-		} else if ok {
+		} else if token != "" {
 			_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
-			_ = s.jobStore.ReleaseLock(r.Context(), lockKey)
+			_ = s.jobStore.ReleaseLock(r.Context(), lockKey, token)
 		}
 	} else {
 		_ = s.workflowEng.StartRun(r.Context(), wfID, newID)
 	}
-	s.appendAuditEntry(r.Context(), "rerun", "run", newID, policyActorID(r), policyRole(r), "rerun run "+newID)
+	rerunWfName := ""
+	if s.workflowStore != nil {
+		if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
+			rerunWfName = wfDef.Name
+		}
+	}
+	s.appendAuditEntryNamed(r.Context(), "rerun", "run", newID, rerunWfName, policyActorID(r), policyRole(r), "rerun run "+newID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"run_id": newID})
 }
-
 
 func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {
@@ -453,7 +473,8 @@ func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	runs, err := s.workflowStore.ListRunsByWorkflow(r.Context(), wfID, 100)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run list failed", "error", err, "workflow_id", wfID)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list runs")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -507,7 +528,8 @@ func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
 
 	runs, err := s.workflowStore.ListRuns(r.Context(), cursor, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run list all failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list runs")
 		return
 	}
 	filtered := make([]*wf.WorkflowRun, 0, len(runs))
@@ -607,7 +629,8 @@ func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	events, err := s.workflowStore.ListTimelineEvents(r.Context(), id, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run timeline failed", "error", err, "run_id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to load timeline")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -628,10 +651,14 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing id")
 		return
 	}
+	delRunWfName := ""
 	if run, err := s.workflowStore.GetRun(r.Context(), id); err == nil && run != nil {
 		if err := s.requireTenantAccess(r, run.OrgID); err != nil {
 			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 			return
+		}
+		if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), run.WorkflowID); err == nil && wfDef != nil {
+			delRunWfName = wfDef.Name
 		}
 	}
 	if err := s.workflowStore.DeleteRun(r.Context(), id); err != nil {
@@ -639,10 +666,11 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		logging.Error("api-gateway", "run delete failed", "error", err, "run_id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete run")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "delete", "run", id, policyActorID(r), policyRole(r), "delete run "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "run", id, delRunWfName, policyActorID(r), policyRole(r), "delete run "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

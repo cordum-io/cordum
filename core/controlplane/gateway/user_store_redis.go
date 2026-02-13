@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -23,6 +25,9 @@ const (
 
 	// userEmailIndexPrefix is the Redis key prefix for email lookups.
 	userEmailIndexPrefix = "user:email:"
+
+	// userTenantIndexPrefix is the Redis key prefix for the tenant user set.
+	userTenantIndexPrefix = "user:tenant:"
 )
 
 // userRecord is the internal Redis storage representation that includes the password hash.
@@ -32,6 +37,7 @@ type userRecord struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
 	Email        string    `json:"email,omitempty"`
+	DisplayName  string    `json:"display_name,omitempty"`
 	PasswordHash string    `json:"password_hash"`
 	Tenant       string    `json:"tenant"`
 	Role         string    `json:"role"`
@@ -45,6 +51,7 @@ func toUserRecord(u *User) *userRecord {
 		ID:           u.ID,
 		Username:     u.Username,
 		Email:        u.Email,
+		DisplayName:  u.DisplayName,
 		PasswordHash: u.PasswordHash,
 		Tenant:       u.Tenant,
 		Role:         u.Role,
@@ -59,6 +66,7 @@ func (r *userRecord) toUser() *User {
 		ID:           r.ID,
 		Username:     r.Username,
 		Email:        r.Email,
+		DisplayName:  r.DisplayName,
 		PasswordHash: r.PasswordHash,
 		Tenant:       r.Tenant,
 		Role:         r.Role,
@@ -85,7 +93,16 @@ func NewRedisUserStore(redisURL string) (*RedisUserStore, error) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("redis ping: %w", err)
 	}
-	return &RedisUserStore{client: client}, nil
+	store := &RedisUserStore{client: client}
+
+	// Backfill tenant index for users created before the index was introduced.
+	bgCtx, bgCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer bgCancel()
+	if err := store.backfillTenantIndex(bgCtx); err != nil {
+		slog.Warn("user store: tenant index backfill failed", "error", err)
+	}
+
+	return store, nil
 }
 
 // userKey returns the Redis key for a user record.
@@ -165,6 +182,39 @@ func (s *RedisUserStore) GetByID(ctx context.Context, id string) (*User, error) 
 	return s.GetByUsername(ctx, parts[1], parts[0])
 }
 
+// validatePassword checks that a password meets complexity requirements:
+// at least 12 characters, 1 uppercase letter, 1 digit, and 1 special character.
+func validatePassword(password string) error {
+	if len(password) < 12 {
+		return fmt.Errorf("password must be at least 12 characters")
+	}
+	var hasUpper, hasDigit, hasSpecial bool
+	for _, r := range password {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		case !unicode.IsLetter(r) && !unicode.IsDigit(r):
+			hasSpecial = true
+		}
+	}
+	var missing []string
+	if !hasUpper {
+		missing = append(missing, "uppercase letter")
+	}
+	if !hasDigit {
+		missing = append(missing, "digit")
+	}
+	if !hasSpecial {
+		missing = append(missing, "special character")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("password must include at least one %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
 // Create creates a new user with the given password.
 func (s *RedisUserStore) Create(ctx context.Context, user *User, password string) error {
 	if user == nil {
@@ -176,8 +226,8 @@ func (s *RedisUserStore) Create(ctx context.Context, user *User, password string
 	if password == "" {
 		return fmt.Errorf("password required")
 	}
-	if len(password) < 8 {
-		return fmt.Errorf("password must be at least 8 characters")
+	if err := validatePassword(password); err != nil {
+		return err
 	}
 
 	if user.Tenant == "" {
@@ -235,6 +285,7 @@ func (s *RedisUserStore) Create(ctx context.Context, user *User, password string
 	if user.Email != "" {
 		pipe.Set(ctx, userEmailKey(user.Tenant, user.Email), user.Username, 0)
 	}
+	pipe.SAdd(ctx, userTenantIndexPrefix+user.Tenant, user.ID)
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis set user: %w", err)
@@ -250,8 +301,8 @@ func (s *RedisUserStore) UpdatePassword(ctx context.Context, userID, newPassword
 	if newPassword == "" {
 		return fmt.Errorf("new password required")
 	}
-	if len(newPassword) < 8 {
-		return fmt.Errorf("password must be at least 8 characters")
+	if err := validatePassword(newPassword); err != nil {
+		return err
 	}
 
 	user, err := s.GetByID(ctx, userID)
@@ -288,10 +339,236 @@ func (s *RedisUserStore) ValidatePassword(_ context.Context, user *User, passwor
 	return err == nil
 }
 
+// List returns all non-disabled users for a tenant.
+func (s *RedisUserStore) List(ctx context.Context, tenant string) ([]*User, error) {
+	if tenant == "" {
+		tenant = "default"
+	}
+
+	ids, err := s.client.SMembers(ctx, userTenantIndexPrefix+tenant).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis smembers tenant index: %w", err)
+	}
+	if len(ids) == 0 {
+		return []*User{}, nil
+	}
+
+	// Pipeline GET for each user ID ref
+	pipe := s.client.Pipeline()
+	refCmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		refCmds[i] = pipe.Get(ctx, userIDKey(id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("redis pipeline id refs: %w", err)
+	}
+
+	// Pipeline GET for each user record
+	pipe2 := s.client.Pipeline()
+	type refEntry struct {
+		cmd *redis.StringCmd
+	}
+	var entries []refEntry
+	for _, cmd := range refCmds {
+		ref, err := cmd.Result()
+		if err != nil {
+			continue // skip missing
+		}
+		parts := strings.SplitN(ref, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		entries = append(entries, refEntry{cmd: pipe2.Get(ctx, userKey(parts[0], parts[1]))})
+	}
+	if len(entries) == 0 {
+		return []*User{}, nil
+	}
+	if _, err := pipe2.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("redis pipeline user records: %w", err)
+	}
+
+	var users []*User
+	for _, e := range entries {
+		data, err := e.cmd.Bytes()
+		if err != nil {
+			continue
+		}
+		var rec userRecord
+		if err := json.Unmarshal(data, &rec); err != nil {
+			continue
+		}
+		u := rec.toUser()
+		if !u.Disabled {
+			users = append(users, u)
+		}
+	}
+	return users, nil
+}
+
+// Update updates mutable fields of an existing user (email, display name, role).
+func (s *RedisUserStore) Update(ctx context.Context, user *User) error {
+	if user == nil || user.ID == "" {
+		return fmt.Errorf("user with ID required")
+	}
+
+	existing, err := s.GetByID(ctx, user.ID)
+	if err != nil {
+		return err
+	}
+
+	oldEmail := existing.Email
+
+	// Merge fields
+	if user.Email != "" {
+		existing.Email = user.Email
+	}
+	if user.DisplayName != "" {
+		existing.DisplayName = user.DisplayName
+	}
+	if user.Role != "" {
+		existing.Role = user.Role
+	}
+	existing.UpdatedAt = time.Now().UTC()
+
+	data, err := json.Marshal(toUserRecord(existing))
+	if err != nil {
+		return fmt.Errorf("marshal user: %w", err)
+	}
+
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, userKey(existing.Tenant, existing.Username), data, 0)
+
+	// Update email index if changed
+	if existing.Email != oldEmail {
+		if oldEmail != "" {
+			pipe.Del(ctx, userEmailKey(existing.Tenant, oldEmail))
+		}
+		if existing.Email != "" {
+			pipe.Set(ctx, userEmailKey(existing.Tenant, existing.Email), existing.Username, 0)
+		}
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis update user: %w", err)
+	}
+	return nil
+}
+
+// Delete soft-deletes a user by setting Disabled=true.
+func (s *RedisUserStore) Delete(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("user id required")
+	}
+
+	user, err := s.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	user.Disabled = true
+	user.UpdatedAt = time.Now().UTC()
+
+	data, err := json.Marshal(toUserRecord(user))
+	if err != nil {
+		return fmt.Errorf("marshal user: %w", err)
+	}
+
+	if err := s.client.Set(ctx, userKey(user.Tenant, user.Username), data, 0).Err(); err != nil {
+		return fmt.Errorf("redis soft-delete user: %w", err)
+	}
+	return nil
+}
+
+// Login throttle constants.
+const (
+	loginFailedPrefix  = "login:failed:"
+	maxLoginAttempts   = 5
+	loginLockoutPeriod = 15 * time.Minute
+)
+
+// ErrLoginThrottled is returned when too many failed login attempts are detected.
+var ErrLoginThrottled = errors.New("too many failed login attempts, try again later")
+
+// loginThrottleKey returns the Redis key for tracking failed login attempts.
+func loginThrottleKey(username string) string {
+	return loginFailedPrefix + strings.ToLower(strings.TrimSpace(username))
+}
+
+// CheckLoginThrottle returns ErrLoginThrottled if the username has exceeded
+// the maximum number of failed login attempts within the lockout period.
+func (s *RedisUserStore) CheckLoginThrottle(ctx context.Context, username string) error {
+	count, err := s.client.Get(ctx, loginThrottleKey(username)).Int()
+	if err == redis.Nil {
+		return nil
+	}
+	if err != nil {
+		return nil // fail open — don't block logins if Redis has issues
+	}
+	if count >= maxLoginAttempts {
+		return ErrLoginThrottled
+	}
+	return nil
+}
+
+// RecordFailedLogin increments the failed login counter for a username.
+// Sets a TTL of loginLockoutPeriod on the key.
+func (s *RedisUserStore) RecordFailedLogin(ctx context.Context, username string) {
+	key := loginThrottleKey(username)
+	pipe := s.client.Pipeline()
+	pipe.Incr(ctx, key)
+	pipe.Expire(ctx, key, loginLockoutPeriod)
+	if _, err := pipe.Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "failed to record login attempt", "username", username, "error", err)
+	}
+}
+
+// ClearFailedLogins removes the failed login counter on successful auth.
+func (s *RedisUserStore) ClearFailedLogins(ctx context.Context, username string) {
+	if err := s.client.Del(ctx, loginThrottleKey(username)).Err(); err != nil {
+		slog.WarnContext(ctx, "failed to clear login attempts", "username", username, "error", err)
+	}
+}
+
 // Close closes the Redis client connection.
 func (s *RedisUserStore) Close() error {
 	if s.client != nil {
 		return s.client.Close()
+	}
+	return nil
+}
+
+// backfillTenantIndex scans for existing user:id:* keys and adds their IDs
+// to the tenant user set. This is idempotent (SADD ignores duplicates).
+func (s *RedisUserStore) backfillTenantIndex(ctx context.Context) error {
+	var cursor uint64
+	var count int
+	for {
+		keys, next, err := s.client.Scan(ctx, cursor, "user:id:*", 100).Result()
+		if err != nil {
+			return fmt.Errorf("redis scan: %w", err)
+		}
+		for _, key := range keys {
+			ref, err := s.client.Get(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			// ref is "tenant:username", key is "user:id:<uuid>"
+			parts := strings.SplitN(ref, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			tenant := parts[0]
+			userID := strings.TrimPrefix(key, "user:id:")
+			s.client.SAdd(ctx, userTenantIndexPrefix+tenant, userID)
+			count++
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	if count > 0 {
+		slog.Info("user store: backfilled tenant index", "users", count)
 	}
 	return nil
 }

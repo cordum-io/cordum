@@ -118,6 +118,85 @@ func TestSubmitJobGRPCRespectsConcurrentJobsLimit(t *testing.T) {
 	}
 }
 
+func TestSubmitJobGRPCTenantMismatchDenied(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Tenant:           "tenant-a",
+		AllowCrossTenant: false,
+	})
+
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "tenant-b",
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected permission denied, got %v", err)
+	}
+}
+
+func TestSubmitJobGRPCTenantCrossTenantAllowed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Tenant:           "tenant-a",
+		AllowCrossTenant: true,
+	})
+
+	resp, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "tenant-b",
+	})
+	if err != nil {
+		t.Fatalf("submit job: %v", err)
+	}
+	tenant, err := s.jobStore.GetTenant(context.Background(), resp.JobId)
+	if err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	if tenant != "tenant-b" {
+		t.Fatalf("expected tenant-b, got %q", tenant)
+	}
+}
+
+func TestSubmitJobGRPCDefaultsTenantFromAuthOrServer(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "server-tenant"
+
+	ctxAuth := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Tenant: "tenant-a",
+	})
+	resp, err := s.SubmitJob(ctxAuth, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+	})
+	if err != nil {
+		t.Fatalf("submit job with auth tenant: %v", err)
+	}
+	tenant, err := s.jobStore.GetTenant(context.Background(), resp.JobId)
+	if err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	if tenant != "tenant-a" {
+		t.Fatalf("expected tenant-a, got %q", tenant)
+	}
+
+	resp, err = s.SubmitJob(context.Background(), &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+	})
+	if err != nil {
+		t.Fatalf("submit job with server tenant: %v", err)
+	}
+	tenant, err = s.jobStore.GetTenant(context.Background(), resp.JobId)
+	if err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	if tenant != "server-tenant" {
+		t.Fatalf("expected server-tenant, got %q", tenant)
+	}
+}
+
 func TestDialSafetyKernelTLSRequired(t *testing.T) {
 	t.Setenv("SAFETY_KERNEL_TLS_REQUIRED", "true")
 	t.Setenv("SAFETY_KERNEL_TLS_CA", "")

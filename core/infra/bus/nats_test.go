@@ -231,6 +231,12 @@ func TestProcessBusMsgNonRetryableError(t *testing.T) {
 	}
 }
 
+func TestMaxJSRedeliveriesConstant(t *testing.T) {
+	if maxJSRedeliveries != 100 {
+		t.Fatalf("expected maxJSRedeliveries=100, got %d", maxJSRedeliveries)
+	}
+}
+
 func TestNatsTLSConfigFromEnv(t *testing.T) {
 	t.Setenv(envNATSTLSCA, "")
 	t.Setenv(envNATSTLSCert, "")

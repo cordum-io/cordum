@@ -12,18 +12,23 @@ import {
   useDeleteNotificationChannel,
   useSaveNotificationRules,
 } from "../hooks/useSettings";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { logger } from "../lib/logger";
 import type { NotificationChannel, NotificationRule } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // SettingsNotificationsPage
 // ---------------------------------------------------------------------------
 
 export default function SettingsNotificationsPage() {
+  usePageTitle("Settings - Notifications");
   const { data: channels, isLoading: channelsLoading } = useNotificationChannels();
   const { data: rules, isLoading: rulesLoading } = useNotificationRules();
   const deleteChannel = useDeleteNotificationChannel();
   const saveRules = useSaveNotificationRules();
+
+  const [deleteChannelId, setDeleteChannelId] = useState<string | null>(null);
 
   // Modal state
   const [channelModal, setChannelModal] = useState<{
@@ -126,7 +131,7 @@ export default function SettingsNotificationsPage() {
                 channel={ch}
                 onEdit={(c) => setChannelModal({ open: true, channel: c })}
                 onTest={handleTestChannel}
-                onDelete={(id) => deleteChannel.mutate(id)}
+                onDelete={(id) => setDeleteChannelId(id)}
                 isDeleting={deleteChannel.isPending}
               />
             ))}
@@ -160,6 +165,23 @@ export default function SettingsNotificationsPage() {
           onClose={() => setRuleModal({ open: false })}
         />
       )}
+
+      <ConfirmDialog
+        open={deleteChannelId !== null}
+        title="Delete Channel?"
+        message="This notification channel will be permanently removed. Any routing rules using it will stop delivering."
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        isPending={deleteChannel.isPending}
+        onConfirm={() => {
+          if (deleteChannelId) {
+            deleteChannel.mutate(deleteChannelId, {
+              onSuccess: () => setDeleteChannelId(null),
+            });
+          }
+        }}
+        onCancel={() => setDeleteChannelId(null)}
+      />
     </div>
   );
 }

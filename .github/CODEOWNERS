@@ -1,1 +1,18 @@
+# Default — catch-all
 * @yaront1111
+
+# Safety Kernel — critical policy evaluation
+core/safety/ @yaront1111
+
+# CAP Protocol — wire format stability
+core/protocol/ @yaront1111
+
+# API Gateway — auth, routing, REST/gRPC
+core/controlplane/gateway/ @yaront1111
+
+# Scheduler — job routing and reconciliation
+core/controlplane/scheduler/ @yaront1111
+
+# Governance and security docs
+GOVERNANCE.md @yaront1111
+SECURITY.md @yaront1111

@@ -232,23 +232,26 @@ func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) 
 
 	if s.jobStore != nil {
 		lockKey := "cordum:wf:run:lock:" + runID
-		ok, err := s.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
-		if err != nil || !ok {
+		token, err := s.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
+		if err != nil || token == "" {
 			return
 		}
-		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey) }()
+		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
 	}
 
 	s.workflowEng.HandleJobResult(ctx, jr)
 }
 
 func splitWorkflowJobID(jobID string) (runID, stepID string) {
-	parts := strings.Split(jobID, ":")
-	if len(parts) < 2 {
+	parts := strings.SplitN(jobID, ":", 2)
+	if len(parts) != 2 {
 		return "", ""
 	}
-	runID = strings.Join(parts[:len(parts)-1], ":")
-	stepID = parts[len(parts)-1]
+	runID = parts[0]
+	stepID = parts[1]
+	if at := strings.LastIndex(stepID, "@"); at > 0 {
+		stepID = stepID[:at]
+	}
 	return runID, stepID
 }
 

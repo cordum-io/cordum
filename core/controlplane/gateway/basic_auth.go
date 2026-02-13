@@ -47,6 +47,9 @@ type BasicAuthProvider struct {
 	jwt                  *jwtValidator
 	jwtRequired          bool
 	userStore            UserStore
+	keyStore             KeyStore
+	usageWG              sync.WaitGroup
+	usageCtx             context.Context
 }
 
 func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
@@ -84,6 +87,7 @@ func newBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 		keysModTime:          keysModTime,
 		jwt:                  jwtValidator,
 		jwtRequired:          jwtRequired,
+		usageCtx:             context.Background(),
 	}, nil
 }
 
@@ -97,6 +101,61 @@ func (b *BasicAuthProvider) UserStore() UserStore {
 	return b.userStore
 }
 
+// SetKeyStore sets the managed key store for runtime API key authentication.
+func (b *BasicAuthProvider) SetKeyStore(ks KeyStore) {
+	b.keyStore = ks
+}
+
+// SetUsageContext sets the base context for usage recording goroutines.
+// When nil, it falls back to a background context.
+func (b *BasicAuthProvider) SetUsageContext(ctx context.Context) {
+	if b == nil {
+		return
+	}
+	if ctx == nil {
+		b.usageCtx = context.Background()
+		return
+	}
+	b.usageCtx = ctx
+}
+
+func (b *BasicAuthProvider) usageContext() context.Context {
+	if b == nil || b.usageCtx == nil {
+		return context.Background()
+	}
+	return b.usageCtx
+}
+
+// DrainUsage waits for all pending API key usage recordings to complete.
+func (b *BasicAuthProvider) DrainUsage() {
+	if b == nil {
+		return
+	}
+	b.usageWG.Wait()
+}
+
+func basicAuthProvider(auth AuthProvider) *BasicAuthProvider {
+	if auth == nil {
+		return nil
+	}
+	switch provider := auth.(type) {
+	case *BasicAuthProvider:
+		return provider
+	case *CompositeAuthProvider:
+		for _, candidate := range provider.providers {
+			if basic, ok := candidate.(*BasicAuthProvider); ok {
+				return basic
+			}
+		}
+	}
+	return nil
+}
+
+// ManagedKeyStore returns the key store if configured.
+func (b *BasicAuthProvider) ManagedKeyStore() KeyStore {
+	return b.keyStore
+}
+
 func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
 	if r == nil {
 		return nil, errors.New("request required")
@@ -108,6 +167,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 			if redisStore, ok := b.userStore.(*RedisUserStore); ok {
 				authCtx, err := redisStore.ValidateSession(r.Context(), token)
 				if err == nil {
+					authCtx.AuthSource = "session"
 					return authCtx, nil
 				}
 			}
@@ -122,6 +182,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 		if ctx.Tenant == "" {
 			ctx.Tenant = b.defaultTenant
 		}
+		ctx.AuthSource = "jwt"
 		return ctx, nil
 	}
 	if b.jwtRequired {
@@ -171,6 +232,7 @@ func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext,
 		if authCtx.Tenant == "" {
 			authCtx.Tenant = b.defaultTenant
 		}
+		authCtx.AuthSource = "jwt"
 		return authCtx, nil
 	}
 	if b.jwtRequired {
@@ -201,6 +263,7 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 		if redisStore, ok := b.userStore.(*RedisUserStore); ok {
 			authCtx, err := redisStore.ValidateSession(ctx, key)
 			if err == nil {
+				authCtx.AuthSource = "session"
 				return authCtx, nil
 			}
 			// Session not found or invalid — fall through to API key check
@@ -208,6 +271,39 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 	}
 	meta, ok := b.lookupKey(key)
 	if !ok {
+		// Fall back to managed key store (runtime-created keys in Redis)
+		if b.keyStore != nil {
+			mk, err := b.keyStore.ValidateKey(ctx, key)
+			if err == nil {
+				role := "user"
+				for _, scope := range mk.Scopes {
+					if scope == "admin" {
+						role = "admin"
+						break
+					}
+				}
+				tenant := strings.TrimSpace(mk.Tenant)
+				if tenant == "" {
+					tenant = b.defaultTenant
+				}
+				b.usageWG.Add(1)
+				go func(keyID string) {
+					defer b.usageWG.Done()
+					bgCtx, cancel := context.WithTimeout(b.usageContext(), 2*time.Second)
+					defer cancel()
+					if err := b.keyStore.RecordUsage(bgCtx, keyID); err != nil {
+						slog.Warn("failed to record api key usage", "key_id", keyID, "error", err) // #nosec -- key id is validated and safe for logs.
+					}
+				}(mk.ID)
+				return &AuthContext{
+					APIKey:      key,
+					Tenant:      tenant,
+					PrincipalID: strings.TrimSpace(principalID),
+					Role:        role,
+					AuthSource:  "api_key",
+				}, nil
+			}
+		}
 		return nil, errors.New("invalid api key")
 	}
 	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
@@ -232,6 +328,7 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 		PrincipalID:      strings.TrimSpace(principalID),
 		Role:             role,
 		AllowCrossTenant: meta.AllowCrossTenant,
+		AuthSource:       "api_key",
 	}, nil
 }
 
@@ -300,6 +397,8 @@ func (b *BasicAuthProvider) ResolveTenant(r *http.Request, requested, fallback s
 		}
 		return strings.TrimSpace(fallback), nil
 	}
+	// SECURITY: At this point, either requested==authTenant (checked at line 290)
+	// or AllowCrossTenant is true. Safe to return the requested tenant.
 	if authTenant != "" {
 		return requested, nil
 	}
@@ -384,13 +483,12 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 	}
 
 	if keysPath != "" {
-		info, err := os.Stat(keysPath)
+		info, err := os.Stat(keysPath) // #nosec -- API keys path is configured by the operator.
 		if err != nil {
 			return nil, false, "", time.Time{}, allowHeaderPrincipal, fmt.Errorf("read api keys path: %w", err)
 		}
 		keysModTime = info.ModTime()
-		// #nosec G304 -- API keys path is configured by the operator.
-		rawFile, err := os.ReadFile(keysPath)
+		rawFile, err := os.ReadFile(keysPath) // #nosec -- API keys path is configured by the operator.
 		if err != nil {
 			return nil, false, "", time.Time{}, allowHeaderPrincipal, fmt.Errorf("read api keys: %w", err)
 		}

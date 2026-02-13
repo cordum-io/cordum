@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, RefreshCw, Trash2, X } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, RefreshCw, Trash2, X } from "lucide-react";
 import { useDLQ, useRetryDLQ, useDeleteDLQ } from "../hooks/useDLQ";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Input } from "../components/ui/Input";
 import { cn } from "../lib/utils";
+import { TableEmptyState } from "../components/ui/EmptyState";
+import { SkeletonRow } from "../components/ui/Skeleton";
 import { DLQRowActions } from "../components/dlq/DLQActions";
 import type { DLQEntry, RetryAttempt } from "../api/types";
+import { DataFreshness } from "../components/ui/DataFreshness";
+import { RequireRole } from "../components/RequireRole";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
 // Debounce hook
@@ -56,25 +63,6 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-// ---------------------------------------------------------------------------
-// Skeleton rows
-// ---------------------------------------------------------------------------
-
-function SkeletonRows({ count = 8 }: { count?: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <tr key={i} className="animate-pulse">
-          {Array.from({ length: 7 }, (_, j) => (
-            <td key={j} className="px-4 py-3">
-              <div className="h-4 rounded bg-surface2 w-3/4" />
-            </td>
-          ))}
-        </tr>
-      ))}
-    </>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Pagination
@@ -207,18 +195,107 @@ function BatchToolbar({
 }
 
 // ---------------------------------------------------------------------------
+// Sortable table header
+// ---------------------------------------------------------------------------
+
+function SortableHeader({
+  col,
+  label,
+  sortCol,
+  sortDir,
+  onSort,
+}: {
+  col: string;
+  label: string;
+  sortCol: string;
+  sortDir: "asc" | "desc";
+  onSort: (col: string) => void;
+}) {
+  const isActive = sortCol === col;
+  return (
+    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+      <button
+        type="button"
+        onClick={() => onSort(col)}
+        className={cn(
+          "inline-flex items-center gap-1 transition hover:text-ink",
+          isActive && "text-ink",
+        )}
+      >
+        {label}
+        {isActive ? (
+          sortDir === "asc" ? (
+            <ChevronUp className="h-3 w-3" />
+          ) : (
+            <ChevronDown className="h-3 w-3" />
+          )
+        ) : null}
+      </button>
+    </th>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // DLQPage
 // ---------------------------------------------------------------------------
 
 export default function DLQPage() {
+  usePageTitle("Dead Letters");
   const [limit, setLimit] = useState(25);
   const [cursor, setCursor] = useState<number | undefined>(undefined);
   const [cursorStack, setCursorStack] = useState<number[]>([]);
 
-  // Filter state
-  const [topicInput, setTopicInput] = useState("");
-  const [timeRange, setTimeRange] = useState("");
+  // URL-persisted filter state
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlQ = searchParams.get("q") ?? "";
+  const timeRange = searchParams.get("timeRange") ?? "";
+
+  const [topicInput, setTopicInput] = useState(urlQ);
   const debouncedTopic = useDebouncedValue(topicInput, 400);
+
+  // Sync debounced topic → URL
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (debouncedTopic) next.set("q", debouncedTopic);
+      else next.delete("q");
+      return next;
+    }, { replace: true });
+  }, [debouncedTopic, setSearchParams]);
+
+  const setTimeRange = useCallback(
+    (value: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set("timeRange", value);
+        else next.delete("timeRange");
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
+
+  // Sort state from URL
+  const sortCol = searchParams.get("sort") ?? "failedAt";
+  const sortDir = (searchParams.get("dir") ?? "desc") as "asc" | "desc";
+
+  const setSortParam = useCallback(
+    (col: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        const currentCol = prev.get("sort") ?? "failedAt";
+        const currentDir = prev.get("dir") ?? "desc";
+        if (col === currentCol) {
+          next.set("dir", currentDir === "asc" ? "desc" : "asc");
+        } else {
+          next.set("sort", col);
+          next.set("dir", "desc");
+        }
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
 
   // Expand + select state
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -228,6 +305,7 @@ export default function DLQPage() {
   const retryDLQ = useRetryDLQ();
   const deleteDLQ = useDeleteDLQ();
   const batchPending = retryDLQ.isPending || deleteDLQ.isPending;
+  const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
 
   // Compute since ISO from time range preset
   const sinceISO = useMemo(() => {
@@ -235,7 +313,7 @@ export default function DLQPage() {
     return new Date(Date.now() - SINCE_MS[timeRange]).toISOString();
   }, [timeRange]);
 
-  const { data, isLoading, isError } = useDLQ({
+  const { data, isLoading, isError, dataUpdatedAt, refetch, isRefetching } = useDLQ({
     limit,
     cursor,
     topic: debouncedTopic || undefined,
@@ -245,9 +323,43 @@ export default function DLQPage() {
   const entries = data?.items ?? [];
   const nextCursor = data?.next_cursor ?? null;
 
-  // Active filter count
+  // Client-side sort
+  const sortedEntries = useMemo(() => {
+    const sorted = [...entries];
+    sorted.sort((a, b) => {
+      let aVal: string | number = "";
+      let bVal: string | number = "";
+      switch (sortCol) {
+        case "failedAt":
+          aVal = a.failedAt ?? "";
+          bVal = b.failedAt ?? "";
+          break;
+        case "topic":
+          aVal = (a.originalTopic ?? "").toLowerCase();
+          bVal = (b.originalTopic ?? "").toLowerCase();
+          break;
+        case "attempts":
+          aVal = a.retryCount ?? a.attempts ?? 0;
+          bVal = b.retryCount ?? b.attempts ?? 0;
+          break;
+        case "reason":
+          aVal = (a.error || a.reason || a.reasonCode || "").toLowerCase();
+          bVal = (b.error || b.reason || b.reasonCode || "").toLowerCase();
+          break;
+        default:
+          return 0;
+      }
+      if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
+      if (aVal > bVal) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [entries, sortCol, sortDir]);
+
+  // Active filter count (non-default sort counts as a filter)
+  const isNonDefaultSort = sortCol !== "failedAt" || sortDir !== "desc";
   const activeFilterCount =
-    (debouncedTopic ? 1 : 0) + (timeRange ? 1 : 0);
+    (debouncedTopic ? 1 : 0) + (timeRange ? 1 : 0) + (isNonDefaultSort ? 1 : 0);
 
   // Reset pagination when filters change
   const resetPagination = useCallback(() => {
@@ -261,8 +373,15 @@ export default function DLQPage() {
 
   const clearFilters = useCallback(() => {
     setTopicInput("");
-    setTimeRange("");
-  }, []);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("q");
+      next.delete("timeRange");
+      next.delete("sort");
+      next.delete("dir");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   const handleNext = useCallback(() => {
     if (!nextCursor) return;
@@ -317,6 +436,7 @@ export default function DLQPage() {
     for (const id of selectedIds) {
       deleteDLQ.mutate(id);
     }
+    setConfirmBatchDelete(false);
     clearSelection();
   }, [selectedIds, deleteDLQ, clearSelection]);
 
@@ -327,6 +447,7 @@ export default function DLQPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="font-display text-2xl font-bold text-ink">Dead Letter Queue</h1>
+          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
           {activeFilterCount > 0 && (
             <Badge variant="info">{activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}</Badge>
           )}
@@ -377,15 +498,17 @@ export default function DLQPage() {
       </div>
 
       {/* Batch toolbar */}
-      {selectedIds.size > 0 && (
-        <BatchToolbar
-          count={selectedIds.size}
-          onRetryAll={handleBatchRetry}
-          onDeleteAll={handleBatchDelete}
-          onClear={clearSelection}
-          isPending={batchPending}
-        />
-      )}
+      <RequireRole roles={["admin", "operator"]}>
+        {selectedIds.size > 0 && (
+          <BatchToolbar
+            count={selectedIds.size}
+            onRetryAll={handleBatchRetry}
+            onDeleteAll={() => setConfirmBatchDelete(true)}
+            onClear={clearSelection}
+            isPending={batchPending}
+          />
+        )}
+      </RequireRole>
 
       <div className="surface-card overflow-hidden rounded-2xl">
         <div className="overflow-x-auto">
@@ -403,25 +526,17 @@ export default function DLQPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Job ID
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-                  Reason
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-                  Attempts
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-                  Topic
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-                  Failed At
-                </th>
+                <SortableHeader col="reason" label="Reason" sortCol={sortCol} sortDir={sortDir} onSort={setSortParam} />
+                <SortableHeader col="attempts" label="Attempts" sortCol={sortCol} sortDir={sortDir} onSort={setSortParam} />
+                <SortableHeader col="topic" label="Topic" sortCol={sortCol} sortDir={sortDir} onSort={setSortParam} />
+                <SortableHeader col="failedAt" label="Failed At" sortCol={sortCol} sortDir={sortDir} onSort={setSortParam} />
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Actions
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {isLoading && <SkeletonRows />}
+              {isLoading && Array.from({ length: 8 }, (_, i) => <SkeletonRow key={i} columns={7} />)}
 
               {!isLoading && isError && (
                 <tr>
@@ -432,15 +547,16 @@ export default function DLQPage() {
               )}
 
               {!isLoading && !isError && entries.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-muted">
-                    Dead letter queue is empty &mdash; no failed jobs
-                  </td>
-                </tr>
+                <TableEmptyState
+                  colSpan={7}
+                  icon={AlertTriangle}
+                  title="Dead letter queue is empty"
+                  description="No failed jobs — all systems running normally."
+                />
               )}
 
               {!isLoading &&
-                entries.map((entry: DLQEntry) => {
+                sortedEntries.map((entry: DLQEntry) => {
                   const isExpanded = expandedId === entry.id;
                   return (
                     <DLQRow
@@ -470,6 +586,17 @@ export default function DLQPage() {
           />
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmBatchDelete}
+        title="Delete Selected Entries?"
+        message={`This will permanently remove ${selectedIds.size} dead letter ${selectedIds.size === 1 ? "entry" : "entries"}. This action cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        isPending={deleteDLQ.isPending}
+        onConfirm={handleBatchDelete}
+        onCancel={() => setConfirmBatchDelete(false)}
+      />
     </div>
   );
 }

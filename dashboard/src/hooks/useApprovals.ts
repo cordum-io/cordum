@@ -1,8 +1,11 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { get, post, ApiError } from "../api/client";
 import { logger } from "../lib/logger";
+import { useToastStore } from "../state/toast";
 import type { Approval, ApprovalHistoryEntry, ApiResponse } from "../api/types";
 import { mapApprovalItem, type BackendApprovalItem, type BackendPolicyAuditEntry } from "../api/transform";
+
+type ApprovalsSnapshot = { previous: [QueryKey, ApiResponse<Approval[]> | undefined][] };
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -139,21 +142,41 @@ interface ApproveInput {
 
 export function useApproveJob() {
   const queryClient = useQueryClient();
-  return useMutation<void, Error, ApproveInput>({
+  return useMutation<void, Error, ApproveInput, ApprovalsSnapshot>({
     mutationFn: ({ id, comment }) => {
       logger.info("approvals", "Approving job", { id });
       return post<void>(`/approvals/${id}/approve`, comment ? { note: comment } : undefined);
     },
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: ["approvals"] });
+      const previous = queryClient.getQueriesData<ApiResponse<Approval[]>>({ queryKey: ["approvals"] });
+      queryClient.setQueriesData<ApiResponse<Approval[]>>(
+        { queryKey: ["approvals"] },
+        (old) => {
+          if (!old?.items) return old;
+          return { ...old, items: old.items.filter((a) => a.id !== id) };
+        },
+      );
+      return { previous };
+    },
     onSuccess: (_, { id }) => {
       logger.info("approvals", "Job approved", { id });
-      invalidateApprovals(queryClient);
+      useToastStore.getState().addToast({ type: "success", title: "Approved" });
     },
-    onError: (err, { id }) => {
-      logger.error("approvals", "Approve failed", { id, error: err.message });
-      // 409 = job state already changed — refresh list to remove stale card
-      if (err instanceof ApiError && err.status === 409) {
-        invalidateApprovals(queryClient);
+    onError: (err, { id }, context) => {
+      if (context?.previous) {
+        for (const [key, data] of context.previous) {
+          queryClient.setQueryData(key, data);
+        }
       }
+      logger.error("approvals", "Approve failed", { id, error: err.message });
+      const desc = err instanceof ApiError && err.status === 409
+        ? "Approval state changed \u2014 refresh and try again"
+        : err.message;
+      useToastStore.getState().addToast({ type: "error", title: "Approval failed", description: desc });
+    },
+    onSettled: () => {
+      invalidateApprovals(queryClient);
     },
   });
 }
@@ -170,21 +193,41 @@ interface RejectInput {
 
 export function useRejectJob() {
   const queryClient = useQueryClient();
-  return useMutation<void, Error, RejectInput>({
+  return useMutation<void, Error, RejectInput, ApprovalsSnapshot>({
     mutationFn: ({ id, reason, comment }) => {
       logger.info("approvals", "Rejecting job", { id, reason });
       return post<void>(`/approvals/${id}/reject`, { reason, note: comment });
     },
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: ["approvals"] });
+      const previous = queryClient.getQueriesData<ApiResponse<Approval[]>>({ queryKey: ["approvals"] });
+      queryClient.setQueriesData<ApiResponse<Approval[]>>(
+        { queryKey: ["approvals"] },
+        (old) => {
+          if (!old?.items) return old;
+          return { ...old, items: old.items.filter((a) => a.id !== id) };
+        },
+      );
+      return { previous };
+    },
     onSuccess: (_, { id }) => {
       logger.info("approvals", "Job rejected", { id });
-      invalidateApprovals(queryClient);
+      useToastStore.getState().addToast({ type: "success", title: "Rejected" });
     },
-    onError: (err, { id }) => {
-      logger.error("approvals", "Reject failed", { id, error: err.message });
-      // 409 = job state already changed — refresh list to remove stale card
-      if (err instanceof ApiError && err.status === 409) {
-        invalidateApprovals(queryClient);
+    onError: (err, { id }, context) => {
+      if (context?.previous) {
+        for (const [key, data] of context.previous) {
+          queryClient.setQueryData(key, data);
+        }
       }
+      logger.error("approvals", "Reject failed", { id, error: err.message });
+      const desc = err instanceof ApiError && err.status === 409
+        ? "Approval state changed \u2014 refresh and try again"
+        : err.message;
+      useToastStore.getState().addToast({ type: "error", title: "Rejection failed", description: desc });
+    },
+    onSettled: () => {
+      invalidateApprovals(queryClient);
     },
   });
 }
@@ -215,10 +258,12 @@ export function useApproveStep() {
     },
     onSuccess: (_, { stepId }) => {
       logger.info("approvals", "Step approved", { stepId });
+      useToastStore.getState().addToast({ type: "success", title: "Step approved" });
       invalidateApprovals(queryClient);
     },
     onError: (err, { stepId }) => {
       logger.error("approvals", "Step approve failed", { stepId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Step approval failed", description: err.message });
       if (err instanceof ApiError && err.status === 409) {
         invalidateApprovals(queryClient);
       }

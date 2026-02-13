@@ -1,7 +1,7 @@
 package gateway
 
 import (
-	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -29,9 +29,11 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	entries, err := s.dlqStore.List(r.Context(), limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("dlq list failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list dlq entries")
 		return
 	}
 	if s.jobStore != nil {
@@ -64,6 +66,7 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	cursor := int64(0)
 	if q := r.URL.Query().Get("cursor"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
@@ -72,7 +75,8 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.dlqStore.ListByScore(r.Context(), cursor, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("dlq list by score failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list dlq entries")
 		return
 	}
 	if s.jobStore != nil {
@@ -124,10 +128,12 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.dlqStore.Delete(r.Context(), jobID); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		slog.Error("dlq delete failed", "error", err, "job_id", jobID) // #nosec -- job id is validated and used for diagnostics.
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete dlq entry")
 		return
 	}
-	s.appendAuditEntry(r.Context(), "delete", "dlq", jobID, policyActorID(r), policyRole(r), "delete dlq entry "+jobID)
+	dlqDeleteTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	s.appendAuditEntryNamed(r.Context(), "delete", "dlq", jobID, dlqDeleteTopic, policyActorID(r), policyRole(r), "delete dlq entry "+jobID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -150,6 +156,11 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 			return
 		}
+	}
+	origReq, origReqErr := s.jobStore.GetJobRequest(r.Context(), jobID)
+	if origReqErr != nil {
+		slog.Warn("dlq retry missing original job request", "job_id", jobID, "error", origReqErr) // #nosec -- job id is validated and used for diagnostics.
+		origReq = nil
 	}
 	entry, err := s.dlqStore.Get(r.Context(), jobID)
 	if err != nil {
@@ -181,22 +192,34 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	team, _ := s.jobStore.GetTeam(r.Context(), jobID)
 	principal, _ := s.jobStore.GetPrincipal(r.Context(), jobID)
 
+	envOverrides := map[string]string{
+		"tenant_id":    tenant,
+		"team_id":      team,
+		"retry_of_job": jobID,
+	}
+	labelOverrides := map[string]string{
+		"retry":        "true",
+		"dlq_entry":    jobID,
+		"retry_of_job": jobID,
+	}
+	var baseEnv map[string]string
+	var baseLabels map[string]string
+	if origReq != nil {
+		baseEnv = origReq.GetEnv()
+		baseLabels = origReq.GetLabels()
+	}
+
 	jobReq := &pb.JobRequest{
 		JobId:       newJobID,
 		Topic:       topic,
 		ContextPtr:  ctxPtr,
 		TenantId:    tenant,
 		PrincipalId: principal,
-		Env: map[string]string{
-			"tenant_id":    tenant,
-			"team_id":      team,
-			"retry_of_job": jobID,
-		},
-		Labels: map[string]string{
-			"retry":        "true",
-			"dlq_entry":    jobID,
-			"retry_of_job": jobID,
-		},
+		Env:         mergeStringMap(baseEnv, envOverrides),
+		Labels:      mergeStringMap(baseLabels, labelOverrides),
+	}
+	if origReq != nil {
+		jobReq.Meta = origReq.GetMeta()
 	}
 
 	packet := &pb.BusPacket{
@@ -223,13 +246,28 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, fmt.Sprintf("publish failed: %v", err))
+		slog.Error("dlq retry publish failed", "error", err, "job_id", newJobID) // #nosec -- job id is generated and safe for logs.
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to retry dlq entry")
 		return
 	}
 
 	_ = s.dlqStore.Delete(r.Context(), jobID)
-	s.appendAuditEntry(r.Context(), "retry", "dlq", jobID, policyActorID(r), policyRole(r), "retry dlq entry "+jobID)
+	dlqRetryTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	s.appendAuditEntryNamed(r.Context(), "retry", "dlq", jobID, dlqRetryTopic, policyActorID(r), policyRole(r), "retry dlq entry "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": newJobID})
 }
 
+func mergeStringMap(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range override {
+		out[k] = v
+	}
+	return out
+}

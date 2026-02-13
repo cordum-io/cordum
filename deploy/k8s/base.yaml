@@ -80,6 +80,19 @@ stringData:
   # REQUIRED: set to a strong API key before applying.
   API_KEY: ""
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cordum-admin-creds
+  namespace: cordum
+type: Opaque
+stringData:
+  # Admin credentials for user authentication.
+  # Set these before applying if CORDUM_USER_AUTH_ENABLED=true.
+  CORDUM_ADMIN_USERNAME: "admin"
+  CORDUM_ADMIN_PASSWORD: ""
+  CORDUM_ADMIN_EMAIL: ""
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -473,6 +486,26 @@ spec:
             secretKeyRef:
               name: cordum-api-key
               key: API_KEY
+        - name: CORDUM_USER_AUTH_ENABLED
+          value: "false"
+        - name: CORDUM_ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: cordum-admin-creds
+              key: CORDUM_ADMIN_USERNAME
+              optional: true
+        - name: CORDUM_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-admin-creds
+              key: CORDUM_ADMIN_PASSWORD
+              optional: true
+        - name: CORDUM_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: cordum-admin-creds
+              key: CORDUM_ADMIN_EMAIL
+              optional: true
         ports:
         - containerPort: 8080
         - containerPort: 8081
@@ -609,6 +642,13 @@ spec:
         fsGroup: 101
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: copy-static
+        image: cordum-dashboard
+        command: ["sh", "-c", "cp -r /usr/share/nginx/html/. /html/"]
+        volumeMounts:
+        - name: html
+          mountPath: /html
       containers:
       - name: dashboard
         image: cordum-dashboard
@@ -626,6 +666,15 @@ spec:
           value: default
         ports:
         - containerPort: 8080
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+        - name: tmp
+          mountPath: /tmp
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-run
+          mountPath: /var/run
         livenessProbe:
           httpGet:
             path: /
@@ -645,6 +694,15 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+      volumes:
+      - name: html
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: nginx-cache
+        emptyDir: {}
+      - name: nginx-run
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

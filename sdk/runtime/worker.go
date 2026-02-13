@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -202,21 +203,34 @@ func (w *Worker) dispatch(ctx context.Context, msg *nats.Msg, handler func(conte
 		}
 
 		start := time.Now()
-		res, err := handler(ctx, req)
+		panicRecovered := false
+		res, err := func() (result *agentv1.JobResult, err error) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					panicRecovered = true
+					w.logger.Printf("worker: handler panic: %v", rec)
+					w.logger.Printf("worker: handler panic stack: %s", debug.Stack())
+					err = fmt.Errorf("handler panic: %v", rec)
+				}
+			}()
+			return handler(ctx, req)
+		}()
 		execMs := time.Since(start).Milliseconds()
 
 		if res == nil {
 			res = &agentv1.JobResult{
 				JobId:        req.GetJobId(),
 				Status:       agentv1.JobStatus_JOB_STATUS_FAILED,
-				ErrorMessage: "handler returned nil",
+			}
+			if !panicRecovered && err == nil {
+				res.ErrorMessage = "handler returned nil"
 			}
 		}
 		if err != nil {
 			if res.Status == agentv1.JobStatus_JOB_STATUS_UNSPECIFIED {
 				res.Status = agentv1.JobStatus_JOB_STATUS_FAILED
 			}
-			if strings.TrimSpace(res.ErrorMessage) == "" {
+			if panicRecovered || strings.TrimSpace(res.ErrorMessage) == "" {
 				res.ErrorMessage = err.Error()
 			}
 		}

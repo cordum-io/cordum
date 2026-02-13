@@ -12,6 +12,7 @@ type AuthContext struct {
 	PrincipalID      string
 	Role             string
 	AllowCrossTenant bool
+	AuthSource       string // "api_key", "jwt", "oidc", "session", or ""
 }
 
 type authContextKey struct{}

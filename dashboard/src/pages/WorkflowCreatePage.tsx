@@ -8,6 +8,7 @@ import { WorkflowBuilder } from "../components/workflow/WorkflowBuilder";
 import { useCreateWorkflow } from "../hooks/useWorkflows";
 import { cn } from "../lib/utils";
 import type { Workflow } from "../api/types";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 type CreateMode = "visual" | "import";
 
@@ -108,6 +109,7 @@ function ImportPanel() {
 }
 
 export default function WorkflowCreatePage() {
+  usePageTitle("New Workflow");
   const [mode, setMode] = useState<CreateMode>("visual");
 
   return (

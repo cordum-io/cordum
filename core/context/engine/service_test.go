@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -83,6 +85,60 @@ func TestUpdateMemoryChat(t *testing.T) {
 	}
 }
 
+func TestUpdateMemoryRejectsOversize(t *testing.T) {
+	svc, srv := newTestService(t)
+	defer srv.Close()
+
+	svc.maxEntryBytes = 5
+	ctx := context.Background()
+
+	_, err := svc.UpdateMemory(ctx, &pb.UpdateMemoryRequest{
+		MemoryId:       "mem-limit",
+		Mode:           pb.ContextMode_CONTEXT_MODE_CHAT,
+		LogicalPayload: []byte(`{"prompt":"toolong"}`),
+	})
+	if err == nil {
+		t.Fatalf("expected error for oversized user message")
+	}
+	if count, err := svc.redis.LLen(ctx, svc.historyKey("mem-limit")).Result(); err != nil || count != 0 {
+		t.Fatalf("expected no history entries, got %d err=%v", count, err)
+	}
+
+	_, err = svc.UpdateMemory(ctx, &pb.UpdateMemoryRequest{
+		MemoryId:       "mem-limit-2",
+		Mode:           pb.ContextMode_CONTEXT_MODE_CHAT,
+		LogicalPayload: []byte(`{"prompt":"ok"}`),
+		ModelResponse:  []byte("toolong"),
+	})
+	if err == nil {
+		t.Fatalf("expected error for oversized assistant message")
+	}
+	if count, err := svc.redis.LLen(ctx, svc.historyKey("mem-limit-2")).Result(); err != nil || count != 0 {
+		t.Fatalf("expected no history entries, got %d err=%v", count, err)
+	}
+}
+
+func TestUpdateMemoryAcceptsWithinLimit(t *testing.T) {
+	svc, srv := newTestService(t)
+	defer srv.Close()
+
+	svc.maxEntryBytes = 100
+	ctx := context.Background()
+
+	_, err := svc.UpdateMemory(ctx, &pb.UpdateMemoryRequest{
+		MemoryId:       "mem-ok",
+		Mode:           pb.ContextMode_CONTEXT_MODE_CHAT,
+		LogicalPayload: []byte(`{"prompt":"hi"}`),
+		ModelResponse:  []byte("ok"),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count, err := svc.redis.LLen(ctx, svc.historyKey("mem-ok")).Result(); err != nil || count != 2 {
+		t.Fatalf("expected 2 history entries, got %d err=%v", count, err)
+	}
+}
+
 func TestBuildWindowRAGSummary(t *testing.T) {
 	svc, srv := newTestService(t)
 	defer srv.Close()
@@ -141,6 +197,49 @@ func TestBuildWindowRAGFilePath(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected system context message")
+	}
+}
+
+func TestBuildWindowRAGChunkLimit(t *testing.T) {
+	svc, srv := newTestService(t)
+	defer srv.Close()
+
+	svc.maxChunkScan = 1
+	ctx := context.Background()
+	memID := "mem-chunk-limit"
+	for i := 0; i < 3; i++ {
+		rec := chunkRecord{Path: fmt.Sprintf("/app/file%d.go", i), Content: fmt.Sprintf("line %d", i)}
+		payload, _ := json.Marshal(rec)
+		chunkKey := svc.chunkKey(memID, i)
+		if err := svc.redis.SAdd(ctx, svc.chunkIndexKey(memID), chunkKey).Err(); err != nil {
+			t.Fatalf("set chunk index: %v", err)
+		}
+		if err := svc.redis.Set(ctx, chunkKey, payload, 0).Err(); err != nil {
+			t.Fatalf("set chunk: %v", err)
+		}
+	}
+
+	chunks := svc.loadChunks(ctx, memID)
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk loaded, got %d", len(chunks))
+	}
+
+	resp, err := svc.BuildWindow(ctx, &pb.BuildWindowRequest{
+		MemoryId:       memID,
+		Mode:           pb.ContextMode_CONTEXT_MODE_RAG,
+		LogicalPayload: []byte(`{"file_path":"/app","prompt":"hi"}`),
+	})
+	if err != nil {
+		t.Fatalf("build window: %v", err)
+	}
+	count := 0
+	for _, msg := range resp.Messages {
+		if msg.GetRole() == "system" && strings.HasPrefix(msg.GetContent(), "Context from") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 context message, got %d", count)
 	}
 }
 
@@ -203,5 +302,40 @@ func TestTrimToBudget(t *testing.T) {
 	trimmed := trimToBudget(msgs, 1)
 	if len(trimmed) < 1 {
 		t.Fatalf("expected at least one message")
+	}
+}
+
+func TestRedisOpContextAddsDeadline(t *testing.T) {
+	ctx := context.Background()
+	redisCtx, cancel := redisOpContext(ctx)
+	defer cancel()
+	deadline, ok := redisCtx.Deadline()
+	if !ok {
+		t.Fatalf("expected redis context to have deadline")
+	}
+	if time.Until(deadline) <= 0 {
+		t.Fatalf("expected deadline in the future")
+	}
+	if time.Until(deadline) > defaultRedisOpTimeout+time.Second {
+		t.Fatalf("expected deadline within default timeout")
+	}
+}
+
+func TestRedisOpContextPreservesDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	redisCtx, redisCancel := redisOpContext(ctx)
+	defer redisCancel()
+
+	orig, ok := ctx.Deadline()
+	if !ok {
+		t.Fatalf("expected original deadline")
+	}
+	next, ok := redisCtx.Deadline()
+	if !ok {
+		t.Fatalf("expected redis context deadline")
+	}
+	if !orig.Equal(next) {
+		t.Fatalf("expected deadline preserved, got %v want %v", next, orig)
 	}
 }

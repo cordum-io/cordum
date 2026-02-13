@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,6 +53,12 @@ func Run(cfg *config.Config) error {
 			runScanLimit = n
 		}
 	}
+	maxForEachItems := 0
+	if v := strings.TrimSpace(os.Getenv("WORKFLOW_FOREACH_MAX_ITEMS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxForEachItems = n
+		}
+	}
 
 	memStore, err := memory.NewRedisStore(cfg.RedisURL)
 	if err != nil {
@@ -90,6 +97,9 @@ func Run(cfg *config.Config) error {
 	defer natsBus.Close()
 
 	engine := wf.NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	if maxForEachItems > 0 {
+		engine = engine.WithMaxForEachItems(maxForEachItems)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -61,7 +61,12 @@ function timeAgo(iso?: string): string {
 
 const createUserSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z
+    .string()
+    .min(12, "Password must be at least 12 characters")
+    .regex(/[A-Z]/, "Must include an uppercase letter")
+    .regex(/[0-9]/, "Must include a digit")
+    .regex(/[^a-zA-Z0-9]/, "Must include a special character"),
   role: z.string().min(1, "Role is required"),
 });
 
@@ -73,7 +78,12 @@ type CreateUserForm = z.infer<typeof createUserSchema>;
 
 const changePasswordSchema = z
   .object({
-    password: z.string().min(8, "Password must be at least 8 characters"),
+    password: z
+      .string()
+      .min(12, "Password must be at least 12 characters")
+      .regex(/[A-Z]/, "Must include an uppercase letter")
+      .regex(/[0-9]/, "Must include a digit")
+      .regex(/[^a-zA-Z0-9]/, "Must include a special character"),
     confirm: z.string(),
   })
   .refine((d) => d.password === d.confirm, {
@@ -134,7 +144,8 @@ function CreateUserModal({
             <label className="mb-1 block text-xs font-semibold text-muted">
               Password
             </label>
-            <Input type="password" placeholder="Min 8 characters" {...register("password")} />
+            <Input type="password" placeholder="Min 12 characters" {...register("password")} />
+            <p className="mt-1 text-xs text-muted">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
             {errors.password && (
               <p className="mt-1 text-xs text-danger">{errors.password.message}</p>
             )}
@@ -183,6 +194,13 @@ function ChangePasswordModal({
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const {
     register,
@@ -193,16 +211,30 @@ function ChangePasswordModal({
     defaultValues: { password: "", confirm: "" },
   });
 
+  const handleClose = () => {
+    abortRef.current?.abort();
+    onClose();
+  };
+
   async function onSubmit(data: ChangePasswordForm) {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setSubmitting(true);
     setError("");
     try {
-      await post(`/users/${user.id}/password`, { password: data.password });
-      onClose();
+      await post(`/users/${user.id}/password`, { password: data.password }, { signal: controller.signal });
+      if (!controller.signal.aborted) {
+        onClose();
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change password");
+      if (!controller.signal.aborted) {
+        setError(err instanceof Error ? err.message : "Failed to change password");
+      }
     } finally {
-      setSubmitting(false);
+      if (!controller.signal.aborted) {
+        setSubmitting(false);
+      }
     }
   }
 
@@ -213,7 +245,7 @@ function ChangePasswordModal({
           <h3 className="font-display text-lg font-semibold text-ink">
             Change Password for {user.username}
           </h3>
-          <button onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
+          <button onClick={handleClose} className="rounded-full p-1 hover:bg-surface2">
             <X className="h-4 w-4 text-muted" />
           </button>
         </div>
@@ -229,7 +261,8 @@ function ChangePasswordModal({
             <label className="mb-1 block text-xs font-semibold text-muted">
               New Password
             </label>
-            <Input type="password" placeholder="Min 8 characters" {...register("password")} />
+            <Input type="password" placeholder="Min 12 characters" {...register("password")} />
+            <p className="mt-1 text-xs text-muted">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
             {errors.password && (
               <p className="mt-1 text-xs text-danger">{errors.password.message}</p>
             )}
@@ -246,7 +279,7 @@ function ChangePasswordModal({
           </div>
 
           <div className="flex justify-end gap-3">
-            <Button variant="ghost" size="sm" type="button" onClick={onClose}>
+            <Button variant="ghost" size="sm" type="button" onClick={handleClose}>
               Cancel
             </Button>
             <Button type="submit" size="sm" disabled={submitting}>
