@@ -71,7 +71,7 @@ func logJSON(level, component, msg string, kv ...interface{}) {
 			if key == "" {
 				continue
 			}
-			extra[key] = kv[i+1]
+			extra[key] = redactValue(key, kv[i+1])
 		}
 		if len(extra) > 0 {
 			fields["fields"] = extra
@@ -79,7 +79,7 @@ func logJSON(level, component, msg string, kv ...interface{}) {
 	}
 	data, err := json.Marshal(fields)
 	if err != nil {
-		log.Printf("[%s] ERROR %s%s", strings.ToUpper(component), msg, formatFields(kv...))
+		log.Printf("[%s] ERROR marshal failed", strings.ToUpper(component))
 		return
 	}
 	log.Print(string(data))
@@ -98,13 +98,31 @@ func formatFields(kv ...interface{}) string {
 		if i > 0 {
 			b.WriteString(" ")
 		}
-		key := kv[i]
-		val := kv[i+1]
-		b.WriteString(strings.TrimSpace(toString(key)))
+		key := strings.TrimSpace(toString(kv[i]))
+		b.WriteString(key)
 		b.WriteString("=")
-		b.WriteString(toString(val))
+		b.WriteString(toString(redactValue(key, kv[i+1])))
 	}
 	return b.String()
+}
+
+// sensitiveKey returns true if the key name suggests a secret or credential.
+func sensitiveKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, s := range []string{"password", "passwd", "secret", "token", "api_key", "apikey", "credential", "auth"} {
+		if strings.Contains(k, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactValue replaces the value with [REDACTED] if the key is sensitive.
+func redactValue(key string, val interface{}) interface{} {
+	if sensitiveKey(key) {
+		return "[REDACTED]"
+	}
+	return val
 }
 
 func toString(v interface{}) string {
