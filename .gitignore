@@ -54,6 +54,7 @@ tools/private/
 /cordum-mcp
 /cordumctl
 /Screenshot*.png
+/demo/mock-bank/worker/mock-bank-worker
 
 # Build artifacts and temp files
 .tmp-bin/
