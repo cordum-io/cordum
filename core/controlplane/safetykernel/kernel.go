@@ -717,9 +717,7 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 		}
 		policy, err := config.ParseSafetyPolicy([]byte(content))
 		if err != nil {
-			// Keep reloading base/other valid fragments when one bundle is malformed.
-			log.Printf("safety-kernel: skipping invalid policy fragment %q: %v", key, err)
-			continue
+			return nil, "", fmt.Errorf("parse policy fragment %q: %w", key, err)
 		}
 		hasher.Write([]byte(key))
 		hasher.Write([]byte{0})

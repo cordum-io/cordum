@@ -52,6 +52,26 @@ function hasPipeline(status?: GatewayStatus): status is GatewayStatus & { pipeli
   return !!status?.pipeline && typeof status.pipeline === "object";
 }
 
+function pipelineMetric(value?: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  return value;
+}
+
+function pipelineTotal(pipeline?: PipelineMetrics): number {
+  if (!pipeline) {
+    return 0;
+  }
+  return (
+    pipelineMetric(pipeline.pending) +
+    pipelineMetric(pipeline.dispatched) +
+    pipelineMetric(pipeline.running) +
+    pipelineMetric(pipeline.succeeded) +
+    pipelineMetric(pipeline.failed)
+  );
+}
+
 function pipelineFromJobs(records: BackendJobRecord[]): PipelineMetrics {
   const out: PipelineMetrics = {
     pending: 0,
@@ -105,10 +125,12 @@ export function useStatus() {
 export function usePipelineMetrics() {
   const statusQuery = useStatus();
   const statusPipeline = hasPipeline(statusQuery.data) ? statusQuery.data.pipeline : undefined;
+  const statusTotal = pipelineTotal(statusPipeline);
+  const shouldProbeFallback = !statusQuery.isLoading && (!statusPipeline || statusTotal === 0);
 
   const fallbackQuery = useQuery<PipelineMetrics>({
     queryKey: ["status", "pipeline-fallback", PIPELINE_FALLBACK_LIMIT],
-    enabled: !statusQuery.isLoading && !statusPipeline,
+    enabled: shouldProbeFallback,
     queryFn: async () => {
       const res = await get<{ items: BackendJobRecord[] }>(`/jobs?limit=${PIPELINE_FALLBACK_LIMIT}`);
       return pipelineFromJobs(res.items ?? []);
@@ -117,15 +139,18 @@ export function usePipelineMetrics() {
     staleTime: 8_000,
   });
 
-  const data = statusPipeline ?? fallbackQuery.data;
-  const source = statusPipeline ? "gateway" : fallbackQuery.data ? "jobs_fallback" : "unavailable";
+  const fallbackTotal = pipelineTotal(fallbackQuery.data);
+  const preferFallback = statusTotal === 0 && fallbackTotal > 0;
+
+  const data = preferFallback ? fallbackQuery.data : statusPipeline ?? fallbackQuery.data;
+  const source = preferFallback ? "jobs_fallback" : statusPipeline ? "gateway" : fallbackQuery.data ? "jobs_fallback" : "unavailable";
 
   return {
     data,
     source,
-    isLoading: statusQuery.isLoading || (!statusPipeline && fallbackQuery.isLoading),
+    isLoading: statusQuery.isLoading || (shouldProbeFallback && fallbackQuery.isLoading),
     isError: !statusPipeline && fallbackQuery.isError,
-    refetch: statusPipeline ? statusQuery.refetch : fallbackQuery.refetch,
+    refetch: preferFallback || !statusPipeline ? fallbackQuery.refetch : statusQuery.refetch,
   };
 }
 
@@ -181,5 +206,7 @@ export function useRecentRuns(limit = 10) {
 export const __statusInternal = {
   PIPELINE_FALLBACK_LIMIT,
   hasPipeline,
+  pipelineMetric,
+  pipelineTotal,
   pipelineFromJobs,
 };

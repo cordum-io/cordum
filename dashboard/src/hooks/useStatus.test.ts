@@ -188,6 +188,45 @@ describe("useStatus hooks", () => {
     hook.unmount();
   });
 
+  it("usePipelineMetrics uses /jobs fallback when gateway pipeline is zeroed", async () => {
+    mockFetch([
+      {
+        match: "/status",
+        method: "GET",
+        body: {
+          pipeline: {
+            pending: 0,
+            dispatched: 0,
+            running: 0,
+            succeeded: 0,
+            failed: 0,
+          },
+        },
+      },
+      {
+        match: "/jobs?limit=300",
+        method: "GET",
+        body: {
+          items: [
+            { id: "j1", state: "PENDING" },
+            { id: "j2", state: "RUNNING" },
+          ],
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => usePipelineMetrics());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.source).toBe("jobs_fallback");
+    });
+
+    expect(hook.result.current?.data).toMatchObject({
+      pending: 1,
+      running: 1,
+    });
+    hook.unmount();
+  });
+
   it("useWorkersSummary maps worker heartbeats and filters invalid rows", async () => {
     mockFetch([
       {
@@ -301,5 +340,17 @@ describe("useStatus hooks", () => {
       { id: "c", state: "CANCELLED" },
     ]);
     expect(pipeline.failed).toBe(3);
+  });
+
+  it("pipelineTotal sums all pipeline counters", () => {
+    expect(
+      __statusInternal.pipelineTotal({
+        pending: 1,
+        dispatched: 2,
+        running: 3,
+        succeeded: 4,
+        failed: 5,
+      }),
+    ).toBe(15);
   });
 });

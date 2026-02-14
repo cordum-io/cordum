@@ -224,7 +224,7 @@ rules:
 	}
 }
 
-func TestPolicyLoaderSkipsInvalidFragments(t *testing.T) {
+func TestPolicyLoaderRejectsInvalidFragments(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
@@ -268,18 +268,14 @@ default_decision: maybe
 		configKey:   "bundles",
 	}
 	policy, snapshot, err := loader.loadFragments(context.Background())
-	if err != nil {
-		t.Fatalf("load fragments: %v", err)
+	if err == nil {
+		t.Fatalf("expected parse error for invalid fragment")
 	}
-	if policy == nil {
-		t.Fatalf("expected policy from valid fragment")
+	if policy != nil {
+		t.Fatalf("expected nil policy on invalid fragment")
 	}
-	if snapshot == "" {
-		t.Fatalf("expected snapshot hash for valid fragments")
-	}
-	resp := policy.Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.ops.check"})
-	if resp.Decision != "require_approval" {
-		t.Fatalf("expected valid fragment to be applied, got %q", resp.Decision)
+	if snapshot != "" {
+		t.Fatalf("expected empty snapshot on invalid fragment")
 	}
 }
 
