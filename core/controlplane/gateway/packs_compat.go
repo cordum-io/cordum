@@ -12,15 +12,9 @@ import (
 // ---------- type aliases ----------
 
 type packManifest = packs.PackManifest
-type packMetadata = packs.PackMetadata
-type packCompatibility = packs.PackCompatibility
-type packTopic = packs.PackTopic
-type packResources = packs.PackResources
-type packResource = packs.PackResource
 type packOverlays = packs.PackOverlays
 type packConfigOverlay = packs.PackConfigOverlay
 type packPolicyOverlay = packs.PackPolicyOverlay
-type packTests = packs.PackTests
 type packPolicySimulation = packs.PackPolicySimulation
 type packPolicySimulationRequest = packs.PackPolicySimulationRequest
 type packRecord = packs.PackRecord
@@ -97,27 +91,20 @@ var (
 	shouldSkipConfigOverlay     = packs.ShouldSkipConfigOverlay
 	hasPoolOverlay              = packs.HasPoolOverlay
 	validateConfigPatch         = packs.ValidateConfigPatch
-	validatePoolsPatch          = packs.ValidatePoolsPatch
-	extractPools                = packs.ExtractPools
 	validateTimeoutsPatch       = packs.ValidateTimeoutsPatch
 	loadSchemaFile              = packs.LoadSchemaFile
 	loadWorkflowFile            = packs.LoadWorkflowFile
 	normalizeWorkflowMap        = packs.NormalizeWorkflowMap
 	hashWorkflow                = packs.HashWorkflow
 	workflowToMap               = packs.WorkflowToMap
-	loadDataFile                = packs.LoadDataFile
 	loadPatchFile               = packs.LoadPatchFile
 	normalizeJSON               = packs.NormalizeJSON
 	deepCopy                    = packs.DeepCopy
 	mergePatch                  = packs.MergePatch
 	buildDeletePatch            = packs.BuildDeletePatch
 	hashValue                   = packs.HashValue
-	canonicalJSON               = packs.CanonicalJSON
-	appendCanonical             = packs.AppendCanonical
 	isTarGz                     = packs.IsTarGz
-	exists                      = packs.Exists
 	findPackRoot                = packs.FindPackRoot
-	extractTarGzReader          = packs.ExtractTarGzReader
 	safeJoin                    = packs.SafeJoin
 )
 
@@ -126,7 +113,6 @@ var (
 var (
 	seedDefaultPackCatalogs = packs.SeedDefaultPackCatalogs
 	compareVersions         = packs.CompareVersions
-	normalizeVersion        = packs.NormalizeVersion
 	parseVersion            = packs.ParseVersion
 	resolvePackURL          = packs.ResolvePackURL
 	hostFromURL             = packs.HostFromURL
@@ -139,6 +125,5 @@ var (
 var (
 	errMarketplaceNotFound         = packs.ErrMarketplaceNotFound
 	marketplaceCatalogFetchTimeout = packs.MarketplaceCatalogFetchTimeout
-	privateIPNets                  = packs.PrivateIPNets
 	privateHostnames               = packs.PrivateHostnames
 )

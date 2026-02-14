@@ -292,7 +292,7 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 		return nil, fmt.Errorf("safety kernel tls required")
 	}
 
-	// #nosec G304 -- CA path is configured by the operator.
+	// #nosec G304,G703 -- CA path is configured by the operator (TLS cert path from env config).
 	pem, err := os.ReadFile(caPath)
 	if err != nil {
 		return nil, fmt.Errorf("safety kernel tls ca read: %w", err)

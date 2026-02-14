@@ -1096,7 +1096,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		writeErrorJSON(w, http.StatusBadRequest, "sha256 mismatch")
 		return
 	}
-	// #nosec G304 -- packFile is a temp file path created by this process.
+	// #nosec G304,G703 -- packFile is a temp file path created by this process.
 	fp, err := os.Open(packFile)
 	if err != nil {
 		slog.Error("pack file open failed", "error", err)
@@ -1257,7 +1257,7 @@ func fetchMarketplaceCatalog(ctx context.Context, catalogURL string, allowedHost
 		return nil, err
 	}
 	client := marketplaceHTTPClient(allowedHosts, parsed.Hostname())
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- URL validated by validateMarketplaceURL
 	if err != nil {
 		return nil, err
 	}
@@ -1407,7 +1407,7 @@ func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[s
 		return "", "", func() {}, err
 	}
 	client := marketplaceHTTPClient(allowedHosts, "")
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- URL validated by validateMarketplaceURL
 	if err != nil {
 		return "", "", func() {}, err
 	}
@@ -1420,7 +1420,7 @@ func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[s
 	if err != nil {
 		return "", "", func() {}, err
 	}
-	cleanup := func() { _ = os.Remove(tmpFile.Name()) }
+	cleanup := func() { _ = os.Remove(tmpFile.Name()) } // #nosec G703 -- temp file path created by os.CreateTemp
 	hasher := sha256.New()
 	limit := int64(maxPackUploadBytes) + 1
 	limited := &io.LimitedReader{R: resp.Body, N: limit}

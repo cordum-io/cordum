@@ -12,14 +12,12 @@ import (
 
 type policyBundleSnapshot = policybundles.PolicyBundleSnapshot
 type policyBundleSnapshotSummary = policybundles.PolicyBundleSnapshotSummary
-type policyBundleSummary = policybundles.PolicyBundleSummary
 type policyBundleDetail = policybundles.PolicyBundleDetail
 type policyBundleUpsertRequest = policybundles.PolicyBundleUpsertRequest
 type policyPublishRequest = policybundles.PolicyPublishRequest
 type policyRollbackRequest = policybundles.PolicyRollbackRequest
 type outputRuleToggleRequest = policybundles.OutputRuleToggleRequest
 type policyAuditEntry = policybundles.PolicyAuditEntry
-type policyRuleSource = policybundles.PolicyRuleSource
 type policyRuleParseError = policybundles.PolicyRuleParseError
 
 // ---------- constant aliases ----------
@@ -39,8 +37,6 @@ const (
 var (
 	rulesFromPolicyContent       = policybundles.RulesFromPolicyContent
 	outputRulesFromPolicyContent = policybundles.OutputRulesFromPolicyContent
-	normalizeOutputRule          = policybundles.NormalizeOutputRule
-	normalizePolicyRules         = policybundles.NormalizePolicyRules
 	legacyPolicyRules            = policybundles.LegacyPolicyRules
 )
 
@@ -48,7 +44,6 @@ var (
 
 var (
 	stringSliceFromAny = policybundles.StringSliceFromAny
-	mergeUniqueStrings = policybundles.MergeUniqueStrings
 	stringFromAny      = policybundles.StringFromAny
 )
 

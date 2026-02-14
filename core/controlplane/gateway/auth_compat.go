@@ -69,12 +69,10 @@ var (
 	basicAuthProvider  = auth.ExtractBasicAuth
 	normalizeAPIKey    = auth.NormalizeAPIKey
 	apiKeyFromWebSocket = auth.APIKeyFromWebSocket
-	decodeWSAPIKey     = auth.DecodeWSAPIKey
 	bearerToken        = auth.BearerToken
 	headerValue        = auth.HeaderValue
 	normalizeRole      = auth.NormalizeRole
 	parseAPIKeys       = auth.ParseAPIKeys
-	mergeAPIKeyEntries = auth.MergeAPIKeyEntries
 )
 
 // ─── Error re-exports ───────────────────────────────────────────────────────

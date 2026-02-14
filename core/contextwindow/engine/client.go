@@ -81,7 +81,7 @@ func contextEngineTransportCredentials() (credentials.TransportCredentials, erro
 		return nil, fmt.Errorf("context engine tls required")
 	}
 
-	// #nosec G304 -- CA path is configured by the operator.
+	// #nosec G304,G703 -- CA path is configured by the operator (TLS cert path from env config).
 	pem, err := os.ReadFile(caPath)
 	if err != nil {
 		return nil, fmt.Errorf("context engine tls ca read: %w", err)

@@ -126,7 +126,7 @@ type AuthUser struct {
 // AuthLoginRequest is the request body for login.
 type AuthLoginRequest struct {
 	Username string `json:"username"`
-	Password string `json:"password"` // API key is passed as password
+	Password string `json:"password"` // #nosec G117 -- field name, not a credential
 	Tenant   string `json:"tenant,omitempty"`
 }
 
