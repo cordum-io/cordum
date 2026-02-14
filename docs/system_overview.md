@@ -69,7 +69,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Validates workflow input and step input/output schemas.
   - Subscribes to `sys.job.result` to advance runs; reconciler retries stuck runs.
 
-- Context Engine (`core/context/engine`, `cmd/cordum-context-engine`; binary `cordum-context-engine`)
+- Context Engine (`core/contextwindow/engine`, `cmd/cordum-context-engine`; binary `cordum-context-engine`)
   - gRPC service for `BuildWindow` and `UpdateMemory`.
   - Maintains chat history and generic memory under `mem:<memory_id>:*`.
 

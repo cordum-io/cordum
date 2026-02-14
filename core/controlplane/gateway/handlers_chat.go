@@ -18,7 +18,7 @@ import (
 
 const (
 	chatDefaultLimit = 100
-	// Keep in sync with core/context/engine defaultMaxHistory.
+	// Keep in sync with core/contextwindow/engine defaultMaxHistory.
 	chatMaxHistory = 20
 )
 
