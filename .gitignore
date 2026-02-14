@@ -38,14 +38,22 @@ AGENTS.md
 CLAUDE*.md
 docs/private/
 tools/private/
-enterprise/
-licenses/
-keys/
-secrets/
+/enterprise/
+/licenses/
+/keys/
+/secrets/
 .home
 .moe/
 *.exe
 *.tgz
+/cordum-api-gateway
+/cordum-context-engine
+/cordum-safety-kernel
+/cordum-scheduler
+/cordum-workflow-engine
+/cordum-mcp
+/cordumctl
+/Screenshot*.png
 
 # Build artifacts and temp files
 .tmp-bin/
