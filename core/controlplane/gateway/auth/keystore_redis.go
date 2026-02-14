@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -14,6 +15,22 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// unmarshalManagedKey unmarshals a ManagedKey from JSON, fixing data corrupted
+// by Lua cjson.encode which turns empty Go slices ("scopes":[]) into objects
+// ("scopes":{}). This is a self-healing read: it tolerates the corrupt form.
+func unmarshalManagedKey(raw []byte) (ManagedKey, error) {
+	var mk ManagedKey
+	if err := json.Unmarshal(raw, &mk); err != nil {
+		// Attempt recovery: replace "scopes":{} with "scopes":[] and retry.
+		fixed := bytes.Replace(raw, []byte(`"scopes":{}`), []byte(`"scopes":[]`), 1)
+		if err2 := json.Unmarshal(fixed, &mk); err2 != nil {
+			return mk, fmt.Errorf("unmarshal key: %w", err)
+		}
+		slog.Warn("self-healed corrupted scopes field in managed key", "key_id", mk.ID)
+	}
+	return mk, nil
+}
 
 // RedisKeyStore implements KeyStore using Redis for persistence.
 type RedisKeyStore struct {
@@ -100,8 +117,8 @@ func (s *RedisKeyStore) List(ctx context.Context, tenant string) ([]*ManagedKey,
 			errs = append(errs, err)
 			continue
 		}
-		var mk ManagedKey
-		if err := json.Unmarshal([]byte(raw), &mk); err != nil {
+		mk, err := unmarshalManagedKey([]byte(raw))
+		if err != nil {
 			slog.WarnContext(ctx, "list keys: unmarshal failed", "key_id", ids[i], "error", err)
 			continue
 		}
@@ -165,9 +182,9 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 			return fmt.Errorf("get key: %w", err)
 		}
 
-		var mk ManagedKey
-		if err := json.Unmarshal([]byte(raw), &mk); err != nil {
-			return fmt.Errorf("unmarshal key: %w", err)
+		mk, err := unmarshalManagedKey([]byte(raw))
+		if err != nil {
+			return err
 		}
 		if mk.Tenant != tenant {
 			return ErrKeyNotFound
@@ -237,8 +254,8 @@ func (s *RedisKeyStore) ValidateKey(ctx context.Context, rawKey string) (*Manage
 		if err != nil {
 			return nil, fmt.Errorf("lookup key record: %w", err)
 		}
-		var mk ManagedKey
-		if err := json.Unmarshal([]byte(raw), &mk); err != nil {
+		mk, err := unmarshalManagedKey([]byte(raw))
+		if err != nil {
 			slog.WarnContext(ctx, "validate key: unmarshal failed", "key_id", ids[i], "error", err)
 			continue
 		}
@@ -261,13 +278,20 @@ func (s *RedisKeyStore) ValidateKey(ctx context.Context, rawKey string) (*Manage
 
 // recordUsageLua atomically increments usage_count and updates last_used
 // inside the JSON blob, preventing lost updates under concurrent access.
+// NOTE: Lua cjson.encode turns empty tables into "{}" (object) instead of
+// "[]" (array). We must preserve the scopes field as an array so Go can
+// unmarshal it back into []string. If scopes is nil or an empty table we
+// explicitly encode it as a JSON array literal.
 var recordUsageLua = redis.NewScript(`
 local raw = redis.call('GET', KEYS[1])
 if not raw then return redis.error_reply('key not found') end
 local obj = cjson.decode(raw)
 obj.usage_count = (obj.usage_count or 0) + 1
 obj.last_used = ARGV[1]
-redis.call('SET', KEYS[1], cjson.encode(obj))
+local encoded = cjson.encode(obj)
+-- Fix: cjson.encode turns empty arrays into "{}". Replace "scopes":{} with "scopes":[].
+encoded = string.gsub(encoded, '"scopes":{}', '"scopes":[]')
+redis.call('SET', KEYS[1], encoded)
 return obj.usage_count
 `)
 

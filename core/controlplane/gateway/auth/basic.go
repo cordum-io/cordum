@@ -355,7 +355,7 @@ func (b *BasicAuthProvider) RequireRole(r *http.Request, roles ...string) error 
 	}
 	auth := FromRequest(r)
 	if auth == nil {
-		return nil
+		return errors.New("authentication required")
 	}
 	role := NormalizeRole(auth.Role)
 	if role == "" {
