@@ -2,6 +2,10 @@
 
 This document describes how the scheduler routes jobs to pools, tracks state, and enforces policy/limits.
 
+> **See also**: [Scheduler Internals](scheduler-internals.md) for the full job
+> state machine, output policy integration, reconciler, saga/compensation, and
+> circuit breaker details.
+
 ## Subjects and subscriptions
 
 Scheduler subscribes to:

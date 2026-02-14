@@ -103,7 +103,7 @@ export function useSetupStatus(): SetupStatus {
         id: "sso",
         label: "Configure SSO (optional)",
         route: "/settings/users",
-        completed: !!(authConfig?.saml_enabled || authConfig?.oauth_enabled),
+        completed: !!(authConfig?.saml_enabled || authConfig?.oidc_enabled),
         optional: true,
       },
       {

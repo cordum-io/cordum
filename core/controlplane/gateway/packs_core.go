@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/locks"
+	"github.com/cordum/cordum/core/infra/logging"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
@@ -393,17 +394,29 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 
 	rollback := func() {
+		var rollbackErrs []string
 		for i := len(appliedConfigChanges) - 1; i >= 0; i-- {
-			_ = s.restoreConfigOverlay(ctx, appliedConfigChanges[i])
+			if err := s.restoreConfigOverlay(ctx, appliedConfigChanges[i]); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Sprintf("config overlay %d: %v", i, err))
+			}
 		}
 		for i := len(appliedPolicyChanges) - 1; i >= 0; i-- {
-			_ = s.restorePolicyOverlay(ctx, appliedPolicyChanges[i])
+			if err := s.restorePolicyOverlay(ctx, appliedPolicyChanges[i]); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Sprintf("policy overlay %d: %v", i, err))
+			}
 		}
 		for i := len(appliedWorkflows) - 1; i >= 0; i-- {
-			_ = s.rollbackWorkflow(ctx, appliedWorkflows[i])
+			if err := s.rollbackWorkflow(ctx, appliedWorkflows[i]); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Sprintf("workflow %d: %v", i, err))
+			}
 		}
 		for i := len(appliedSchemas) - 1; i >= 0; i-- {
-			_ = s.rollbackSchema(ctx, appliedSchemas[i])
+			if err := s.rollbackSchema(ctx, appliedSchemas[i]); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Sprintf("schema %d: %v", i, err))
+			}
+		}
+		if len(rollbackErrs) > 0 {
+			logging.Warn("api-gateway", "pack install rollback had errors", "errors", strings.Join(rollbackErrs, "; "))
 		}
 	}
 
@@ -679,9 +692,12 @@ func (s *server) registerSchema(ctx context.Context, id string, schemaMap map[st
 	}
 	payload, err := json.Marshal(schemaMap)
 	if err != nil {
-		return err
+		return fmt.Errorf("register schema %s: marshal: %w", id, err)
 	}
-	return s.schemaRegistry.Register(ctx, id, payload)
+	if err := s.schemaRegistry.Register(ctx, id, payload); err != nil {
+		return fmt.Errorf("register schema %s: %w", id, err)
+	}
+	return nil
 }
 
 func (s *server) registerWorkflow(ctx context.Context, workflowMap map[string]any) error {
@@ -690,13 +706,16 @@ func (s *server) registerWorkflow(ctx context.Context, workflowMap map[string]an
 	}
 	data, err := json.Marshal(workflowMap)
 	if err != nil {
-		return err
+		return fmt.Errorf("register workflow: marshal: %w", err)
 	}
 	var req createWorkflowRequest
 	if err := json.Unmarshal(data, &req); err != nil {
-		return err
+		return fmt.Errorf("register workflow: unmarshal: %w", err)
 	}
-	return s.saveWorkflowRequest(ctx, &req)
+	if err := s.saveWorkflowRequest(ctx, &req); err != nil {
+		return fmt.Errorf("register workflow %s: %w", req.ID, err)
+	}
+	return nil
 }
 
 func (s *server) saveWorkflowRequest(ctx context.Context, req *createWorkflowRequest) error {
@@ -737,6 +756,9 @@ func (s *server) saveWorkflowRequest(ctx context.Context, req *createWorkflowReq
 		if req.Config == nil && existing.Config != nil {
 			req.Config = existing.Config
 		}
+	}
+	if err := validateDAG(req.Steps); err != nil {
+		return fmt.Errorf("save workflow request %s: validate dag: %w", req.ID, err)
 	}
 	wfDef := &wf.Workflow{
 		ID:          req.ID,
@@ -834,7 +856,7 @@ func (s *server) removeConfigOverlay(ctx context.Context, overlay packAppliedCon
 		if errors.Is(err, redis.Nil) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("remove config overlay %s: %w", overlay.Name, err)
 	}
 	if doc.Data == nil {
 		return nil
@@ -854,7 +876,7 @@ func (s *server) restoreConfigOverlay(ctx context.Context, change appliedConfigC
 	doc, err := getConfigDoc(ctx, s.configSvc, overlay.Scope, overlay.ScopeID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			return err
+			return fmt.Errorf("restore config overlay %s: %w", overlay.Name, err)
 		}
 		doc = &configsvc.Document{Scope: configsvc.Scope(overlay.Scope), ScopeID: overlay.ScopeID, Data: map[string]any{}}
 	}
@@ -928,7 +950,7 @@ func (s *server) removePolicyOverlay(ctx context.Context, overlay packAppliedPol
 		if errors.Is(err, redis.Nil) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("remove policy overlay %s: %w", overlay.Name, err)
 	}
 	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
 	bundles, ok := rawBundles.(map[string]any)
@@ -944,7 +966,7 @@ func (s *server) restorePolicyOverlay(ctx context.Context, change appliedPolicyC
 	doc, err := getConfigDoc(ctx, s.configSvc, policyConfigScope, policyConfigID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			return err
+			return fmt.Errorf("restore policy overlay %s: %w", change.Overlay.Name, err)
 		}
 		doc = &configsvc.Document{Scope: configsvc.Scope(policyConfigScope), ScopeID: policyConfigID, Data: map[string]any{}}
 	}
@@ -1057,10 +1079,13 @@ func (s *server) loadPackRegistry(ctx context.Context) (map[string]packRecord, *
 func (s *server) updatePackRegistry(ctx context.Context, record packRecord) error {
 	records, doc, err := s.loadPackRegistry(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("update pack registry: load: %w", err)
 	}
 	records[record.ID] = record
-	return s.savePackRegistry(ctx, records, doc)
+	if err := s.savePackRegistry(ctx, records, doc); err != nil {
+		return fmt.Errorf("update pack registry: save: %w", err)
+	}
+	return nil
 }
 
 func (s *server) savePackRegistry(ctx context.Context, records map[string]packRecord, doc *configsvc.Document) error {

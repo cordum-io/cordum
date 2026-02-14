@@ -44,9 +44,8 @@ const navItems = [
   { path: "/packs", label: "Packs", icon: Boxes },
   { path: "/dlq", label: "Dead Letters", icon: AlertTriangle },
   { path: "/audit", label: "Audit Log", icon: FileText },
+  { path: "/settings", label: "Settings", icon: Settings },
 ];
-
-const settingsItem = { path: "/settings", label: "Settings", icon: Settings };
 
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -138,7 +137,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
       <div className="flex min-h-screen">
-        <aside className="hidden w-64 flex-col gap-6 border-r border-border bg-[color:var(--surface-glass)] px-6 py-8 backdrop-blur-xl lg:flex">
+        <aside className="hidden h-screen w-64 shrink-0 flex-col gap-6 border-r border-border bg-[color:var(--surface-glass)] px-6 py-8 backdrop-blur-xl lg:sticky lg:top-0 lg:flex">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-9 w-auto object-contain dark:brightness-0 dark:invert" />
@@ -149,8 +148,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
             <p className="text-xs text-muted">AI orchestration, safety, and runtime clarity.</p>
           </div>
-          <nav className="mt-6 flex flex-1 flex-col gap-1">
-            <div className="flex flex-1 flex-col gap-1 overflow-y-auto">
+          <nav className="mt-6 flex min-h-0 flex-1 flex-col gap-1 overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const badge = navBadges[item.path];
@@ -186,24 +185,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 );
               })}
             </div>
-            <div className="mt-auto border-t border-border pt-3">
-              <NavLink
-                to={settingsItem.path}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition",
-                    isActive
-                      ? "bg-[color:rgba(15,127,122,0.16)] text-accent"
-                      : "text-ink hover:bg-[color:rgba(15,127,122,0.08)]"
-                  )
-                }
-              >
-                <Settings className="h-4 w-4" />
-                {settingsItem.label}
-              </NavLink>
-            </div>
           </nav>
-          <div className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
+          <div className="mt-auto rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-semibold text-ink">Bus stream</span>
               <ConnectionIndicator />
@@ -274,7 +257,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
             </div>
             <nav className="mt-4 flex gap-2 overflow-x-auto pb-2 lg:hidden">
-              {[...navItems, settingsItem].map((item) => {
+              {navItems.map((item) => {
                 const Icon = item.icon;
                 const badge = navBadges[item.path];
                 const badgeText = badge && badge.count > 0 ? formatCount(badge.count) : "";

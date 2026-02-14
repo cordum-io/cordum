@@ -27,6 +27,7 @@ import { DelayNode } from "./nodes/DelayNode";
 import { ConditionNode } from "./nodes/ConditionNode";
 import { NotifyNode } from "./nodes/NotifyNode";
 import { FanOutNode } from "./nodes/FanOutNode";
+import { ParallelNode } from "./nodes/ParallelNode";
 import { HttpNode } from "./nodes/HttpNode";
 import { TransformNode } from "./nodes/TransformNode";
 import { SwitchNode } from "./nodes/SwitchNode";
@@ -48,6 +49,7 @@ const nodeTypes: NodeTypes = {
   condition: ConditionNode,
   notify: NotifyNode,
   "fan-out": FanOutNode,
+  parallel: ParallelNode,
   http: HttpNode,
   transform: TransformNode,
   switch: SwitchNode,
@@ -72,9 +74,27 @@ export function definitionToGraph(workflow: Workflow): GraphData {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const idxMap = new Map<string, number>();
+  const parallelLayout = new Map<string, { parentId: string; index: number; total: number }>();
 
   workflow.steps.forEach((step, i) => {
     idxMap.set(step.id, i);
+  });
+  workflow.steps.forEach((step) => {
+    if (step.type !== "parallel") return;
+    const input = (step.input ?? {}) as Record<string, unknown>;
+    const configuredChildren = Array.isArray(input.steps)
+      ? (input.steps as unknown[]).map((entry) => String(entry).trim()).filter(Boolean)
+      : Array.isArray((step.config as Record<string, unknown> | undefined)?.parallelSteps)
+        ? (((step.config as Record<string, unknown>).parallelSteps as unknown[]).map((entry) => String(entry).trim()).filter(Boolean))
+        : [];
+    configuredChildren.forEach((childID, index) => {
+      if (!childID || childID === step.id) return;
+      parallelLayout.set(childID, {
+        parentId: step.id,
+        index,
+        total: configuredChildren.length,
+      });
+    });
   });
 
   workflow.steps.forEach((step, i) => {
@@ -82,6 +102,16 @@ export function definitionToGraph(workflow: Workflow): GraphData {
     const deps = step.depends_on ?? step.dependsOn ?? [];
     let x = 300;
     let y = i * Y_STEP + 40;
+    const parallelPlacement = parallelLayout.get(step.id);
+    if (parallelPlacement) {
+      const parentIdx = idxMap.get(parallelPlacement.parentId);
+      if (parentIdx !== undefined) {
+        const center = (parallelPlacement.total - 1) / 2;
+        const offset = parallelPlacement.index - center;
+        x = 300 + offset * GRID;
+        y = parentIdx * Y_STEP + Y_STEP + 40;
+      }
+    }
 
     if (deps.length > 0) {
       // Position below the first dependency
@@ -171,6 +201,28 @@ export function definitionToGraph(workflow: Workflow): GraphData {
             existing.sourceHandle = handleId;
             existing.id = edgeId;
           }
+        }
+      }
+    }
+
+    if (step.type === "parallel") {
+      const input = (step.input ?? {}) as Record<string, unknown>;
+      const configuredChildren = Array.isArray(input.steps)
+        ? (input.steps as unknown[]).map((entry) => String(entry).trim()).filter(Boolean)
+        : Array.isArray((step.config as Record<string, unknown> | undefined)?.parallelSteps)
+          ? (((step.config as Record<string, unknown>).parallelSteps as unknown[]).map((entry) => String(entry).trim()).filter(Boolean))
+          : [];
+      for (const childID of configuredChildren) {
+        if (!childID || childID === step.id) continue;
+        if (!edges.some((edge) => edge.source === step.id && edge.target === childID)) {
+          edges.push({
+            id: `e-parallel-${step.id}-${childID}`,
+            source: step.id,
+            target: childID,
+            type: "smoothstep",
+            animated: false,
+            style: { strokeDasharray: "4 3" },
+          });
         }
       }
     }

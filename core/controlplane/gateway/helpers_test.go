@@ -150,8 +150,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	t.Helper()
 
 	// Allow loopback in tests (httptest.NewServer binds to 127.0.0.1).
-	skipPrivateIPCheck = true
-	t.Cleanup(func() { skipPrivateIPCheck = false })
+	skipPrivateIPCheck.Store(true)
 
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -200,6 +199,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		jobStore:       jobStore,
 		bus:            bus,
 		workers:        make(map[string]*pb.Heartbeat),
+		workerSeen:     make(map[string]time.Time),
 		clients:        make(map[*websocket.Conn]*wsClient),
 		eventsCh:       make(chan wsEvent, 8),
 		workflowStore:  workflowStore,

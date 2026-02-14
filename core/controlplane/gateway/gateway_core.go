@@ -64,6 +64,7 @@ const (
 // Blocks: empty segments (job..), special chars, control chars
 var validTopicRegex = regexp.MustCompile(`^job\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?)*$`)
 
+// #nosec G101 -- environment variable names are identifiers, not credential material.
 const (
 	envGatewayGrpcAddr      = "GATEWAY_GRPC_ADDR"
 	envGatewayHTTPAddr      = "GATEWAY_HTTP_ADDR"
@@ -72,6 +73,9 @@ const (
 	envGatewayHTTPTLSCert   = "GATEWAY_HTTP_TLS_CERT"
 	envGatewayHTTPTLSKey    = "GATEWAY_HTTP_TLS_KEY"
 	envArtifactMaxBytes     = "ARTIFACT_MAX_BYTES"
+	envHTTPReadTimeout      = "GATEWAY_HTTP_READ_TIMEOUT"
+	envHTTPWriteTimeout     = "GATEWAY_HTTP_WRITE_TIMEOUT"
+	envHTTPIdleTimeout      = "GATEWAY_HTTP_IDLE_TIMEOUT"
 )
 
 const (
@@ -84,11 +88,12 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
-	memStore memory.Store
-	jobStore *memory.RedisJobStore // Typed for ListRecentJobs
-	bus      scheduler.Bus
-	workers  map[string]*pb.Heartbeat
-	workerMu sync.RWMutex
+	memStore   memory.Store
+	jobStore   *memory.RedisJobStore // Typed for ListRecentJobs
+	bus        scheduler.Bus
+	workers    map[string]*pb.Heartbeat
+	workerSeen map[string]time.Time
+	workerMu   sync.RWMutex
 
 	clients   map[*websocket.Conn]*wsClient
 	clientsMu sync.RWMutex
@@ -189,7 +194,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 			basic.SetKeyStore(ks)
 
 			if strings.TrimSpace(os.Getenv("CORDUM_ADMIN_PASSWORD")) == "" {
-				return fmt.Errorf("CORDUM_USER_AUTH_ENABLED is set but CORDUM_ADMIN_PASSWORD is empty; set CORDUM_ADMIN_PASSWORD to configure the admin account")
+				return fmt.Errorf("cordum_user_auth_enabled is set but cordum_admin_password is empty; set cordum_admin_password to configure the admin account")
 			}
 
 			// Seed default admin user if configured
@@ -311,6 +316,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		jobStore:       jobStore,
 		bus:            natsBus,
 		workers:        make(map[string]*pb.Heartbeat),
+		workerSeen:     make(map[string]time.Time),
 		clients:        make(map[*websocket.Conn]*wsClient),
 		eventsCh:       make(chan wsEvent, 512),
 		metrics:        gwMetrics,
@@ -488,6 +494,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// 9. Config
 	mux.HandleFunc("GET /api/v1/config", s.instrumented("/api/v1/config", s.handleGetConfig))
 	mux.HandleFunc("GET /api/v1/config/effective", s.instrumented("/api/v1/config/effective", s.handleGetEffectiveConfig))
+	mux.HandleFunc("PUT /api/v1/config", s.instrumented("/api/v1/config", s.handleSetConfig))
 	mux.HandleFunc("POST /api/v1/config", s.instrumented("/api/v1/config", s.handleSetConfig))
 
 	// 9.25 Packs
@@ -532,6 +539,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/policy/explain", s.instrumented("/api/v1/policy/explain", s.handlePolicyExplain))
 	mux.HandleFunc("GET /api/v1/policy/snapshots", s.instrumented("/api/v1/policy/snapshots", s.handlePolicySnapshots))
 	mux.HandleFunc("GET /api/v1/policy/rules", s.instrumented("/api/v1/policy/rules", s.handlePolicyRules))
+	mux.HandleFunc("GET /api/v1/policy/output/rules", s.instrumented("/api/v1/policy/output/rules", s.handlePolicyOutputRules))
+	mux.HandleFunc("GET /api/v1/policy/output/stats", s.instrumented("/api/v1/policy/output/stats", s.handlePolicyOutputStats))
+	mux.HandleFunc("PUT /api/v1/policy/output/rules/{id}", s.instrumented("/api/v1/policy/output/rules/{id}", s.handlePutPolicyOutputRule))
 	mux.HandleFunc("GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
 	mux.HandleFunc("GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
 	mux.HandleFunc("PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
@@ -542,6 +552,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/policy/publish", s.instrumented("/api/v1/policy/publish", s.handlePublishPolicyBundles))
 	mux.HandleFunc("POST /api/v1/policy/rollback", s.instrumented("/api/v1/policy/rollback", s.handleRollbackPolicyBundles))
 	mux.HandleFunc("GET /api/v1/policy/audit", s.instrumented("/api/v1/policy/audit", s.handleListPolicyAudit))
+
+	// 12.5 MCP (HTTP/SSE) routes
+	if err := s.registerMCPRoutes(mux); err != nil {
+		return fmt.Errorf("register mcp routes: %w", err)
+	}
 
 	// 7. Stream (WebSocket)
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
@@ -569,10 +584,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	srv := &http.Server{
 		Addr:              httpAddr,
 		Handler:           handler,
-		ReadTimeout:       15 * time.Second,
+		ReadTimeout:       durationFromEnv(envHTTPReadTimeout, 15*time.Second),
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		WriteTimeout:      durationFromEnv(envHTTPWriteTimeout, 30*time.Second),
+		IdleTimeout:       durationFromEnv(envHTTPIdleTimeout, 60*time.Second),
 		MaxHeaderBytes:    defaultMaxHeaderBytes,
 	}
 	if httpTLSCert != "" {

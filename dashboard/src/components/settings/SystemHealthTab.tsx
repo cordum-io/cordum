@@ -5,10 +5,6 @@ import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { ProgressBar } from "../ProgressBar";
 import { cn } from "../../lib/utils";
-import { DependencyGraph } from "./DependencyGraph";
-import { DiagnosticsPanel } from "./DiagnosticsPanel";
-import { SystemInfoSection } from "./SystemInfoSection";
-import { DownloadDiagnosticsButton } from "./DownloadDiagnosticsButton";
 import {
   Loader,
   CheckCircle,
@@ -32,13 +28,14 @@ export interface ComponentHealth {
   details?: Record<string, unknown>;
 }
 
-interface GatewayStatus {
+export interface GatewayStatus {
   time?: string;
   uptime_seconds?: number;
   build?: { version?: string; commit?: string; date?: string };
   nats?: { connected?: boolean; status?: string; url?: string; latency_ms?: number };
   redis?: { ok?: boolean; error?: string; latency_ms?: number };
   workers?: { count?: number };
+  output_policy?: { enabled?: boolean; fail_mode?: string };
 }
 
 export interface SystemHealth {
@@ -55,8 +52,10 @@ function useSystemHealth() {
   return useQuery<SystemHealth>({
     queryKey: ["system-health"],
     queryFn: async () => {
-      const status = await get<GatewayStatus>("/status");
-      return mapGatewayStatus(status);
+      const statusPromise = get<GatewayStatus>("/status");
+      const configPromise = get<Record<string, unknown>>("/config").catch(() => undefined);
+      const [status, cfg] = await Promise.all([statusPromise, configPromise]);
+      return mapGatewayStatus(status, cfg);
     },
     refetchInterval: 30_000,
     staleTime: 25_000,
@@ -67,7 +66,7 @@ function useSystemHealth() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatUptime(seconds?: number): string {
+export function formatUptime(seconds?: number): string {
   if (seconds == null) return "\u2014";
   if (seconds < 60) return `${seconds}s`;
   const mins = Math.floor(seconds / 60);
@@ -101,7 +100,7 @@ function statusIcon(status: string) {
   }
 }
 
-function statusVariant(
+export function statusVariant(
   status: string,
 ): "success" | "warning" | "danger" {
   switch (status) {
@@ -120,7 +119,61 @@ const BORDER_COLOR: Record<string, string> = {
   down: "border-danger/30 animate-pulse",
 };
 
-function mapGatewayStatus(status: GatewayStatus): SystemHealth {
+export function parseMaybeBool(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return undefined;
+  switch (value.trim().toLowerCase()) {
+    case "true":
+    case "1":
+    case "yes":
+    case "on":
+      return true;
+    case "false":
+    case "0":
+    case "no":
+    case "off":
+      return false;
+    default:
+      return undefined;
+  }
+}
+
+export function parseOutputPolicy(
+  status: GatewayStatus,
+  cfg?: Record<string, unknown>,
+): { enabled?: boolean; failMode?: string } {
+  const fromStatus = status.output_policy;
+  if (fromStatus && typeof fromStatus === "object") {
+    return {
+      enabled: parseMaybeBool(fromStatus.enabled),
+      failMode: typeof fromStatus.fail_mode === "string" ? fromStatus.fail_mode : undefined,
+    };
+  }
+
+  if (!cfg || typeof cfg !== "object") {
+    return {};
+  }
+
+  const fromNested = cfg.output_policy as Record<string, unknown> | undefined;
+  if (fromNested && typeof fromNested === "object") {
+    return {
+      enabled: parseMaybeBool(fromNested.enabled),
+      failMode: typeof fromNested.fail_mode === "string" ? fromNested.fail_mode : undefined,
+    };
+  }
+
+  return {
+    enabled: parseMaybeBool(cfg.output_policy_enabled ?? cfg.outputPolicyEnabled),
+    failMode:
+      typeof cfg.output_policy_fail_mode === "string"
+        ? cfg.output_policy_fail_mode
+        : typeof cfg.outputPolicyFailMode === "string"
+          ? cfg.outputPolicyFailMode
+          : undefined,
+  };
+}
+
+export function mapGatewayStatus(status: GatewayStatus, cfg?: Record<string, unknown>): SystemHealth {
   const components: ComponentHealth[] = [];
 
   const redisOk = status.redis?.ok ?? false;
@@ -151,6 +204,16 @@ function mapGatewayStatus(status: GatewayStatus): SystemHealth {
     version: status.build?.version,
     uptime: status.uptime_seconds,
     details: { commit: status.build?.commit, date: status.build?.date },
+  });
+
+  const outputPolicy = parseOutputPolicy(status, cfg);
+  components.push({
+    name: "Output Policy",
+    status: outputPolicy.enabled === true ? "healthy" : "degraded",
+    details: {
+      enabled: outputPolicy.enabled,
+      fail_mode: outputPolicy.failMode,
+    },
   });
 
   const down = components.filter((c) => c.status === "down").length;
@@ -258,6 +321,8 @@ function ComponentCard({
 }) {
   const address = component.details?.address as string | undefined;
   const port = component.details?.port as number | undefined;
+  const outputEnabled = component.details?.enabled as boolean | undefined;
+  const outputFailMode = component.details?.fail_mode as string | undefined;
 
   return (
     <Card className={cn(component.status === "down" && "animate-pulse")}>
@@ -298,6 +363,20 @@ function ComponentCard({
               {port ? `:${port}` : ""}
             </span>
           </div>
+        )}
+        {component.name === "Output Policy" && (
+          <>
+            <div className="flex justify-between">
+              <span>Enabled</span>
+              <span className="text-ink">
+                {outputEnabled === undefined ? "Unknown" : outputEnabled ? "Yes" : "No"}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>Fail mode</span>
+              <span className="text-ink">{outputFailMode || "open"}</span>
+            </div>
+          </>
         )}
       </div>
     </Card>
@@ -432,22 +511,9 @@ export function SystemHealthTab() {
         ))}
       </div>
 
-      <DependencyGraph components={data.components} />
-
-      <CollapsibleSection title="Diagnostics">
-        <DiagnosticsPanel />
-      </CollapsibleSection>
-
-      <CollapsibleSection title="System Information">
-        <SystemInfoSection />
-      </CollapsibleSection>
-
-      <div className="flex items-center justify-between">
-        <p className="text-[11px] text-muted">
-          Auto-refreshes every 30 seconds.
-        </p>
-        <DownloadDiagnosticsButton />
-      </div>
+      <p className="text-[11px] text-muted">
+        Auto-refreshes every 30 seconds.
+      </p>
     </div>
   );
 }

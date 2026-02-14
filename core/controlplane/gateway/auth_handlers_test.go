@@ -10,6 +10,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestHandleLogin_ValidAPIKey(t *testing.T) {
@@ -267,5 +270,220 @@ func TestBuildUserLoginResponseRandFailure(t *testing.T) {
 
 	if _, err := buildUserLoginResponse(context.Background(), user); err == nil {
 		t.Fatal("expected error on rand failure")
+	}
+}
+
+// timingUserStore returns a user with a bcrypt hash for "exists" and
+// ErrUserNotFound for anything else, so we can measure bcrypt timing.
+type timingUserStore struct {
+	user *User
+}
+
+func (s *timingUserStore) GetByUsername(_ context.Context, username, _ string) (*User, error) {
+	if username == "exists" {
+		return s.user, nil
+	}
+	return nil, ErrUserNotFound
+}
+func (s *timingUserStore) GetByEmail(_ context.Context, _, _ string) (*User, error) {
+	return nil, ErrUserNotFound
+}
+func (s *timingUserStore) GetByID(_ context.Context, _ string) (*User, error) {
+	return nil, ErrUserNotFound
+}
+func (s *timingUserStore) Create(_ context.Context, _ *User, _ string) error   { return nil }
+func (s *timingUserStore) List(_ context.Context, _ string) ([]*User, error)   { return nil, nil }
+func (s *timingUserStore) Update(_ context.Context, _ *User) error             { return nil }
+func (s *timingUserStore) Delete(_ context.Context, _ string) error            { return nil }
+func (s *timingUserStore) UpdatePassword(_ context.Context, _, _ string) error { return nil }
+func (s *timingUserStore) ValidatePassword(_ context.Context, u *User, password string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) == nil
+}
+func (s *timingUserStore) Close() error { return nil }
+
+func TestLoginTimingEqualization(t *testing.T) {
+	// Create a user with a bcrypt hash.
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct-password"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("generate hash: %v", err)
+	}
+	us := &timingUserStore{
+		user: &User{
+			ID:           "u-timing",
+			Username:     "exists",
+			Tenant:       "default",
+			PasswordHash: string(hash),
+		},
+	}
+
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"fallback-key"}]`,
+	})
+	provider.SetUserStore(us)
+	s := &server{auth: provider, tenant: "default"}
+
+	// Measure: existing user + wrong password (bcrypt in ValidatePassword).
+	existsBody := `{"username":"exists","password":"wrong-password"}`
+	start := time.Now()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(existsBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleLogin(rec, req)
+	existsDuration := time.Since(start)
+
+	// Measure: non-existent user (should now do dummy bcrypt for timing equalization).
+	missingBody := `{"username":"missing","password":"wrong-password"}`
+	start = time.Now()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(missingBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	s.handleLogin(rec, req)
+	missingDuration := time.Since(start)
+
+	// Both paths should take roughly the same time (bcrypt dominates).
+	// Allow up to 3x difference to account for system load variance.
+	ratio := float64(existsDuration) / float64(missingDuration)
+	if ratio > 3.0 || ratio < 0.33 {
+		t.Fatalf("timing oracle detected: exists=%v missing=%v ratio=%.2f (want 0.33-3.0)",
+			existsDuration, missingDuration, ratio)
+	}
+
+	// Both should take at least 30ms (bcrypt default cost is ~100ms).
+	if missingDuration < 30*time.Millisecond {
+		t.Fatalf("missing-user path too fast (%v) — timing equalization may not be working", missingDuration)
+	}
+}
+
+// ---- Login integration tests with RedisUserStore ----
+
+func setupLoginIntegration(t *testing.T) (*server, *RedisUserStore) {
+	t.Helper()
+	store, _ := newTestUserStore(t)
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"fallback-api-key","role":"admin","principal_id":"api-admin","tenant":"default"}]`,
+	})
+	provider.SetUserStore(store)
+	s := &server{auth: provider, tenant: "default"}
+	return s, store
+}
+
+func TestLoginHandler_BruteForce429(t *testing.T) {
+	s, store := setupLoginIntegration(t)
+	ctx := context.Background()
+
+	// Create a user to trigger the user-auth path.
+	user := &User{Username: "bruteforce-target", Tenant: "default", Role: "user"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	// Send maxLoginAttempts() failed logins to trigger throttle.
+	for i := 0; i < maxLoginAttempts(); i++ {
+		body := `{"username":"bruteforce-target","password":"wrong-password"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		s.handleLogin(rec, req)
+		// These should either succeed (wrong password → falls to API key path → 401)
+		// or fail, but NOT be 429 yet.
+	}
+
+	// Next attempt should be throttled → 429.
+	body := `{"username":"bruteforce-target","password":"wrong-password"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleLogin(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLoginHandler_DisabledUser403(t *testing.T) {
+	s, store := setupLoginIntegration(t)
+	ctx := context.Background()
+
+	// Create a disabled user.
+	user := &User{Username: "disabled-user", Tenant: "default", Role: "user", Disabled: true}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	body := `{"username":"disabled-user","password":"SecurePass1!xy"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleLogin(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLoginHandler_SessionTokenCreated(t *testing.T) {
+	s, store := setupLoginIntegration(t)
+	ctx := context.Background()
+
+	// Create a user.
+	user := &User{Username: "session-user", Tenant: "default", Role: "admin"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	body := `{"username":"session-user","password":"SecurePass1!xy"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleLogin(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp AuthLoginResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Session token should start with "session-" prefix.
+	if !strings.HasPrefix(resp.Token, "session-") {
+		t.Fatalf("expected session- token prefix, got %q", resp.Token)
+	}
+	if resp.User.Source != "user" {
+		t.Fatalf("expected source=user, got %q", resp.User.Source)
+	}
+	if resp.User.Username != "session-user" {
+		t.Fatalf("expected username=session-user, got %q", resp.User.Username)
+	}
+}
+
+func TestLoginHandler_APIKeyFallback(t *testing.T) {
+	s, store := setupLoginIntegration(t)
+	ctx := context.Background()
+
+	// Create a user (different password) so the user-auth path runs but fails.
+	user := &User{Username: "some-user", Tenant: "default", Role: "user"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	// Login with wrong user password but pass the API key as password — should fall through.
+	body := `{"username":"unknown-user","password":"fallback-api-key"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleLogin(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 via API key fallback, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp AuthLoginResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.User.Source != "api_key" {
+		t.Fatalf("expected source=api_key, got %q", resp.User.Source)
 	}
 }

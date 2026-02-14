@@ -71,12 +71,12 @@ func TestStartStopWithRegistryStats(t *testing.T) {
 func TestReconcilerUpdateTimeouts(t *testing.T) {
 	rec := NewReconciler(newFakeReconcileStore(), 10*time.Second, 20*time.Second, time.Second)
 	rec.UpdateTimeouts(0, 0)
-	d1, r1 := rec.currentTimeouts()
+	d1, r1, _ := rec.currentTimeouts()
 	if d1 != 10*time.Second || r1 != 20*time.Second {
 		t.Fatalf("expected timeouts unchanged")
 	}
 	rec.UpdateTimeouts(5*time.Second, 15*time.Second)
-	d2, r2 := rec.currentTimeouts()
+	d2, r2, _ := rec.currentTimeouts()
 	if d2 != 5*time.Second || r2 != 15*time.Second {
 		t.Fatalf("expected timeouts updated")
 	}

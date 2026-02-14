@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
@@ -799,7 +800,7 @@ var privateHostnames = map[string]bool{
 }
 
 // skipPrivateIPCheck disables SSRF protection. Only set in tests.
-var skipPrivateIPCheck bool
+var skipPrivateIPCheck atomic.Bool
 
 // lookupHostIPs resolves hostnames for SSRF checks. Overridden in tests.
 var lookupHostIPs = func(ctx context.Context, host string) ([]net.IP, error) {
@@ -822,7 +823,7 @@ var lookupHostIPs = func(ctx context.Context, host string) ([]net.IP, error) {
 // isPrivateIP returns true if host is a private/loopback/link-local IP address
 // or a well-known hostname that resolves to one.
 func isPrivateIP(host string) bool {
-	if skipPrivateIPCheck {
+	if skipPrivateIPCheck.Load() {
 		return false
 	}
 	host = strings.ToLower(strings.TrimSpace(host))
@@ -886,7 +887,7 @@ func validateMarketplaceHost(ctx context.Context, host string, allowedHosts map[
 			return nil, errors.New("invalid pack url")
 		}
 	}
-	if skipPrivateIPCheck {
+	if skipPrivateIPCheck.Load() {
 		return resolveMarketplaceIPs(ctx, host)
 	}
 	if privateHostnames[host] {

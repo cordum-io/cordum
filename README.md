@@ -109,6 +109,7 @@ Client ──▶ API ──▶ Scheduler ──▶ Safety Kernel ──▶ NATS 
 | Feature | Description |
 |---------|-------------|
 | **Safety Policies** | Define rules for what agents can/can't do. Enforce before execution. |
+| **Output Safety** | Evaluate completed job outputs and allow, redact, or quarantine unsafe results. |
 | **Human Approval** | Flag sensitive jobs for manual review before they run. |
 | **Workflows** | Multi-step DAGs with fan-out, retries, delays, and conditions. |
 | **Pool Routing** | Route jobs by capability, region, or custom tags. |
@@ -149,6 +150,7 @@ cordum/
 | [Core Reference](docs/CORE.MD) | Deep technical details |
 | [Docker Guide](docs/DOCKER.md) | Running with Compose |
 | [Agent Protocol](docs/AGENT_PROTOCOL.md) | CAP bus + pointer semantics |
+| [MCP Server](docs/mcp-server.md) | MCP stdio + HTTP/SSE integration |
 | [Pack Format](docs/pack.md) | How to package agent capabilities |
 | [Local E2E](docs/LOCAL_E2E.md) | Full local walkthrough |
 
@@ -163,6 +165,15 @@ Cordum implements [CAP (Cordum Agent Protocol)](https://github.com/cordum-io/cap
 They're complementary. Use CAP for orchestration, MCP inside your agents for tools.
 
 Read more: [MCP vs CAP: Why Your AI Agents Need Both Protocols](https://dev.to/yaron_torgeman_104570d968/-mcp-vs-cap-why-your-ai-agents-need-both-protocols-3g4l)
+
+## MCP Server
+
+Cordum includes an MCP server framework with:
+
+- **Standalone stdio mode** via `cmd/cordum-mcp` (for Claude Desktop/Code local integration)
+- **Gateway HTTP/SSE mode** via `/mcp/message` and `/mcp/sse` (when `mcp.enabled=true`)
+
+See [docs/mcp-server.md](docs/mcp-server.md) for setup, auth headers, and client configuration examples.
 
 ## SDK
 
@@ -224,6 +235,14 @@ Cordum follows a transparent governance model with a protocol stability pledge, 
 - **Protocol Stability**: CAP v2 wire format frozen until February 2027
 - **Security**: [SECURITY.md](SECURITY.md) for vulnerability reporting
 - **Versioning**: Semantic versioning with deprecation policy
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the full feature roadmap, completed milestones, and planned work.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed log of all changes by version.
 
 ## Contributing
 

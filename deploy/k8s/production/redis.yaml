@@ -69,7 +69,13 @@ spec:
       containers:
       - name: redis
         image: redis:7
-        args: ["redis-server", "/etc/redis/redis.conf"]
+        command: ["sh", "-c", "redis-server /etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\""]
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         ports:
         - name: redis
           containerPort: 6379
@@ -123,6 +129,11 @@ spec:
           value: "/etc/redis/tls/ca.crt"
         - name: REDIS_EXPORTER_SKIP_TLS_VERIFICATION
           value: "false"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         resources:
           requests:
             cpu: 50m

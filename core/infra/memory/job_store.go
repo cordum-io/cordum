@@ -24,6 +24,7 @@ const (
 	jobMetaKeyPrefix            = "job:meta:"
 	jobRequestKeyPrefix         = "job:req:"
 	jobEventsKeyPrefix          = "job:events:"
+	jobOutputDecisionKeySuffix  = ":output_decision"
 	metaFieldTopic              = "topic"
 	metaFieldTenant             = "tenant"
 	metaFieldPrincipal          = "principal"
@@ -47,6 +48,7 @@ const (
 	metaFieldSafetyChecked      = "safety_checked_at"
 	metaFieldSafetyConstraints  = "safety_constraints"
 	metaFieldSafetyRemediations = "safety_remediations"
+	metaFieldOutputSafety       = "output_safety"
 	metaFieldApprovalRequired   = "safety_approval_required"
 	metaFieldApprovalRef        = "safety_approval_ref"
 	metaFieldSafetyJobHash      = "safety_job_hash"
@@ -63,24 +65,26 @@ const (
 
 var (
 	terminalStates = map[scheduler.JobState]bool{
-		scheduler.JobStateSucceeded: true,
-		scheduler.JobStateFailed:    true,
-		scheduler.JobStateCancelled: true,
-		scheduler.JobStateTimeout:   true,
-		scheduler.JobStateDenied:    true,
+		scheduler.JobStateSucceeded:   true,
+		scheduler.JobStateFailed:      true,
+		scheduler.JobStateCancelled:   true,
+		scheduler.JobStateTimeout:     true,
+		scheduler.JobStateDenied:      true,
+		scheduler.JobStateQuarantined: true,
 	}
 	allowedTransitions = map[scheduler.JobState][]scheduler.JobState{
-		"":                           {scheduler.JobStatePending, scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateFailed},
-		scheduler.JobStatePending:    {scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
-		scheduler.JobStateApproval:   {scheduler.JobStatePending, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
-		scheduler.JobStateScheduled:  {scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout, scheduler.JobStateSucceeded, scheduler.JobStateCancelled},
-		scheduler.JobStateDispatched: {scheduler.JobStateRunning, scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout},
-		scheduler.JobStateRunning:    {scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout},
-		scheduler.JobStateSucceeded:  {},
-		scheduler.JobStateFailed:     {},
-		scheduler.JobStateCancelled:  {},
-		scheduler.JobStateTimeout:    {},
-		scheduler.JobStateDenied:     {},
+		"":                            {scheduler.JobStatePending, scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateFailed},
+		scheduler.JobStatePending:     {scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
+		scheduler.JobStateApproval:    {scheduler.JobStatePending, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
+		scheduler.JobStateScheduled:   {scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout, scheduler.JobStateSucceeded, scheduler.JobStateCancelled, scheduler.JobStateQuarantined},
+		scheduler.JobStateDispatched:  {scheduler.JobStateRunning, scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout, scheduler.JobStateQuarantined},
+		scheduler.JobStateRunning:     {scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout, scheduler.JobStateQuarantined},
+		scheduler.JobStateSucceeded:   {scheduler.JobStateQuarantined},
+		scheduler.JobStateFailed:      {},
+		scheduler.JobStateCancelled:   {},
+		scheduler.JobStateTimeout:     {},
+		scheduler.JobStateDenied:      {},
+		scheduler.JobStateQuarantined: {},
 	}
 )
 
@@ -158,11 +162,11 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 				return redis.Nil
 			}
 			if lerr != nil {
-				return lerr
+				return fmt.Errorf("job store get state %s: %w", jobID, lerr)
 			}
 			current = legacy
 		} else if err != nil {
-			return err
+			return fmt.Errorf("job store get state %s: %w", jobID, err)
 		}
 		currState := scheduler.JobState(current)
 		if terminalStates[currState] {
@@ -200,12 +204,15 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, scheduler.JobStateCancelled))
 
 		if _, err := pipe.Exec(ctx); err != nil {
-			return err
+			return fmt.Errorf("job store cancel %s: %w", jobID, err)
 		}
 		resultState = scheduler.JobStateCancelled
 		return nil
 	}, metaKey, jobStateKey(jobID))
-	return resultState, err
+	if err != nil {
+		return resultState, fmt.Errorf("job store cancel job %s: %w", jobID, err)
+	}
+	return resultState, nil
 }
 
 // TryAcquireLock attempts to acquire a distributed lock with TTL; returns token if acquired.
@@ -216,7 +223,7 @@ func (s *RedisJobStore) TryAcquireLock(ctx context.Context, key string, ttl time
 	token := uuid.NewString()
 	acquired, err := s.client.SetNX(ctx, key, token, ttl).Result()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("job store try acquire lock %s: %w", key, err)
 	}
 	if !acquired {
 		return "", nil
@@ -235,7 +242,7 @@ func (s *RedisJobStore) ReleaseLock(ctx context.Context, key, token string) erro
 	}
 	result, err := releaseLockScript.Run(ctx, s.client, []string{key}, token).Int()
 	if err != nil {
-		return err
+		return fmt.Errorf("job store release lock %s: %w", key, err)
 	}
 	if result == 0 {
 		slog.Warn("lock release skipped: token mismatch", "key", key)
@@ -285,7 +292,7 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 	return s.client.Watch(ctx, func(tx *redis.Tx) error {
 		prev, err := tx.HGet(ctx, metaKey, "state").Result()
 		if err != nil && err != redis.Nil {
-			return err
+			return fmt.Errorf("job store set state %s: %w", jobID, err)
 		}
 		prevState := scheduler.JobState(prev)
 		if !isAllowedTransition(prevState, state) {
@@ -363,7 +370,7 @@ func (s *RedisJobStore) ListRecentJobs(ctx context.Context, limit int64) ([]sche
 	}
 	members, err := s.client.ZRevRangeWithScores(ctx, "job:recent", 0, limit-1).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("job store list recent jobs: %w", err)
 	}
 	return s.buildJobRecords(ctx, members)
 }
@@ -384,7 +391,7 @@ func (s *RedisJobStore) ListRecentJobsByScore(ctx context.Context, cursor int64,
 		Count: limit,
 	}).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("job store list recent jobs by score: %w", err)
 	}
 	return s.buildJobRecords(ctx, members)
 }
@@ -479,7 +486,7 @@ func (s *RedisJobStore) GetState(ctx context.Context, jobID string) (scheduler.J
 	// fallback legacy key
 	val, err = s.client.Get(ctx, jobStateKey(jobID)).Result()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("job store get state %s: %w", jobID, err)
 	}
 	return scheduler.JobState(val), nil
 }
@@ -489,7 +496,10 @@ func (s *RedisJobStore) SetResultPtr(ctx context.Context, jobID, resultPtr strin
 	pipe.Set(ctx, jobResultPtrKey(jobID), resultPtr, s.metaTTL)
 	pipe.HSet(ctx, jobMetaKey(jobID), "result_ptr", resultPtr)
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("job store set result ptr %s: %w", jobID, err)
+	}
+	return nil
 }
 
 func (s *RedisJobStore) GetResultPtr(ctx context.Context, jobID string) (string, error) {
@@ -499,7 +509,7 @@ func (s *RedisJobStore) GetResultPtr(ctx context.Context, jobID string) (string,
 	}
 	val, err = s.client.Get(ctx, jobResultPtrKey(jobID)).Result()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("job store get result ptr %s: %w", jobID, err)
 	}
 	return val, nil
 }
@@ -592,7 +602,7 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		return err
+		return fmt.Errorf("job store set job meta %s: %w", req.GetJobId(), err)
 	}
 	if idempotencyKey != "" {
 		tenantID := scheduler.ExtractTenant(req)
@@ -624,7 +634,7 @@ func (s *RedisJobStore) GetJobRequest(ctx context.Context, jobID string) (*pb.Jo
 	}
 	data, err := s.client.Get(ctx, jobRequestKey(jobID)).Bytes()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("job store get job request %s: %w", jobID, err)
 	}
 	var req pb.JobRequest
 	if err := protojson.Unmarshal(data, &req); err != nil {
@@ -642,7 +652,10 @@ func (s *RedisJobStore) SetDeadline(ctx context.Context, jobID string, deadline 
 	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDeadline, deadline.Unix())
 	pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.Unix()), Member: jobID})
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("job store set deadline %s: %w", jobID, err)
+	}
+	return nil
 }
 
 // ListExpiredDeadlines returns jobs whose deadline has passed.
@@ -657,7 +670,7 @@ func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64,
 		Count:  limit,
 	}).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("job store list expired deadlines: %w", err)
 	}
 
 	out := make([]scheduler.JobRecord, 0, len(members))
@@ -719,7 +732,7 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.Job
 		Count:  limit,
 	}).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("job store list jobs by state %s: %w", state, err)
 	}
 	out := make([]scheduler.JobRecord, 0, len(members))
 	for _, m := range members {
@@ -796,6 +809,13 @@ func jobEventsKey(jobID string) string {
 	return jobEventsKeyPrefix + jobID
 }
 
+func outputDecisionKey(jobID string) string {
+	if jobID == "" {
+		return ""
+	}
+	return "job:" + jobID + jobOutputDecisionKeySuffix
+}
+
 func jobDecisionKey(jobID string) string {
 	return "job:decisions:" + jobID
 }
@@ -840,7 +860,10 @@ func (s *RedisJobStore) AddJobToTrace(ctx context.Context, traceID, jobID string
 		pipe.Expire(ctx, metaKey, s.metaTTL)
 	}
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("job store add job to trace %s: %w", jobID, err)
+	}
+	return nil
 }
 
 // GetTraceID returns the stored trace id for a job, if available.
@@ -940,6 +963,19 @@ func (s *RedisJobStore) GetAttempts(ctx context.Context, jobID string) (int, err
 	return parseInt(raw), nil
 }
 
+// GetAllMeta returns all hash fields for a job in a single HGETALL call.
+// Callers can extract individual fields from the returned map.
+func (s *RedisJobStore) GetAllMeta(ctx context.Context, jobID string) (map[string]string, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("jobID required")
+	}
+	data, err := s.client.HGetAll(ctx, jobMetaKey(jobID)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("job store get all meta %s: %w", jobID, err)
+	}
+	return data, nil
+}
+
 // IncrAttempts atomically increments the attempt counter for a job.
 // This is used by the scheduler to escalate backoff for retryable scheduling failures.
 func (s *RedisJobStore) IncrAttempts(ctx context.Context, jobID string) error {
@@ -955,7 +991,7 @@ func (s *RedisJobStore) CountActiveByTenant(ctx context.Context, tenant string) 
 	}
 	count, err := s.client.SCard(ctx, tenantActiveKey(tenant)).Result()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("job store count active by tenant %s: %w", tenant, err)
 	}
 	return int(count), nil
 }
@@ -975,7 +1011,10 @@ func (s *RedisJobStore) GetFailureReason(ctx context.Context, jobID string) (str
 	if err == redis.Nil {
 		return "", nil
 	}
-	return val, err
+	if err != nil {
+		return val, fmt.Errorf("job store get failure reason %s: %w", jobID, err)
+	}
+	return val, nil
 }
 
 // idempotencyScopedScript atomically checks the legacy key and performs
@@ -1016,14 +1055,14 @@ func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, 
 		}
 		ok, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
 		if err != nil {
-			return false, "", err
+			return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
 		}
 		if ok {
 			return true, jobID, nil
 		}
 		existing, err := s.client.Get(ctx, idKey).Result()
 		if err != nil && err != redis.Nil {
-			return false, "", err
+			return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
 		}
 		return false, existing, nil
 	}
@@ -1039,7 +1078,7 @@ func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, 
 		jobID, ttlMs, tenant, jobMetaKeyPrefix,
 	).Text()
 	if err != nil {
-		return false, "", err
+		return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
 	}
 	if strings.HasPrefix(result, "OK:") {
 		return true, result[3:], nil
@@ -1059,7 +1098,10 @@ func (s *RedisJobStore) SetIdempotencyKeyScoped(ctx context.Context, tenant, key
 		return fmt.Errorf("idempotency key required")
 	}
 	_, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
-	return err
+	if err != nil {
+		return fmt.Errorf("job store set idempotency key scoped %s: %w", jobID, err)
+	}
+	return nil
 }
 
 func (s *RedisJobStore) GetJobByIdempotencyKeyScoped(ctx context.Context, tenant, key string) (string, error) {
@@ -1078,19 +1120,19 @@ func (s *RedisJobStore) GetJobByIdempotencyKeyScoped(ctx context.Context, tenant
 	if val, err := s.client.Get(ctx, idKey).Result(); err == nil {
 		return val, nil
 	} else if err != redis.Nil {
-		return "", err
+		return "", fmt.Errorf("job store get job by idempotency key scoped: %w", err)
 	}
 
 	legacyID, err := s.client.Get(ctx, jobIdempotencyKey(key)).Result()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("job store get job by idempotency key scoped: %w", err)
 	}
 	if legacyID == "" {
 		return "", redis.Nil
 	}
 	legacyTenant, terr := s.GetTenant(ctx, legacyID)
 	if terr != nil && terr != redis.Nil {
-		return "", terr
+		return "", fmt.Errorf("job store get job by idempotency key scoped: %w", terr)
 	}
 	if legacyTenant != "" && legacyTenant != tenant {
 		return "", redis.Nil
@@ -1175,7 +1217,68 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 		pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
 	}
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("job store set safety decision %s: %w", jobID, err)
+	}
+	return nil
+}
+
+// SetOutputSafety stores output policy evaluation data on the job metadata hash.
+func (s *RedisJobStore) SetOutputSafety(ctx context.Context, jobID string, record scheduler.OutputSafetyRecord) error {
+	return s.SetOutputDecision(ctx, jobID, record)
+}
+
+// SetOutputDecision stores output policy evaluation data in a dedicated key and metadata hash.
+func (s *RedisJobStore) SetOutputDecision(ctx context.Context, jobID string, record scheduler.OutputSafetyRecord) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	if record.CheckedAt == 0 {
+		record.CheckedAt = nowUnixMicros()
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal output safety record: %w", err)
+	}
+	pipe := s.client.TxPipeline()
+	ttl := time.Duration(0)
+	if s.metaTTL > 0 {
+		ttl = s.metaTTL
+	}
+	pipe.Set(ctx, outputDecisionKey(jobID), string(encoded), ttl)
+	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldOutputSafety, string(encoded))
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+		pipe.Expire(ctx, outputDecisionKey(jobID), s.metaTTL)
+	}
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("job store set output decision %s: %w", jobID, err)
+	}
+	return nil
+}
+
+// GetOutputSafety loads output policy evaluation data from job metadata.
+func (s *RedisJobStore) GetOutputSafety(ctx context.Context, jobID string) (scheduler.OutputSafetyRecord, error) {
+	return s.GetOutputDecision(ctx, jobID)
+}
+
+// GetOutputDecision loads output policy data, preferring dedicated key and falling back to metadata hash.
+func (s *RedisJobStore) GetOutputDecision(ctx context.Context, jobID string) (scheduler.OutputSafetyRecord, error) {
+	if jobID == "" {
+		return scheduler.OutputSafetyRecord{}, fmt.Errorf("jobID required")
+	}
+	raw, err := s.client.Get(ctx, outputDecisionKey(jobID)).Result()
+	if err == redis.Nil || raw == "" {
+		raw, err = s.client.HGet(ctx, jobMetaKey(jobID), metaFieldOutputSafety).Result()
+	}
+	if err == redis.Nil || raw == "" {
+		return scheduler.OutputSafetyRecord{}, nil
+	}
+	if err != nil {
+		return scheduler.OutputSafetyRecord{}, fmt.Errorf("job store get output decision %s: %w", jobID, err)
+	}
+	return parseOutputSafetyRecord(raw, jobID), nil
 }
 
 // SetApprovalRecord stores approval audit metadata on the job.
@@ -1201,7 +1304,10 @@ func (s *RedisJobStore) SetApprovalRecord(ctx context.Context, jobID string, rec
 		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
 	}
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("job store set approval record %s: %w", jobID, err)
+	}
+	return nil
 }
 
 // GetApprovalRecord loads approval audit metadata from the job.
@@ -1212,7 +1318,7 @@ func (s *RedisJobStore) GetApprovalRecord(ctx context.Context, jobID string) (Ap
 	meta := jobMetaKey(jobID)
 	data, err := s.client.HGetAll(ctx, meta).Result()
 	if err != nil && err != redis.Nil {
-		return ApprovalRecord{}, err
+		return ApprovalRecord{}, fmt.Errorf("job store get approval record %s: %w", jobID, err)
 	}
 	record := ApprovalRecord{
 		ApprovedBy:     data[metaFieldApprovalBy],
@@ -1234,7 +1340,7 @@ func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (sc
 	meta := jobMetaKey(jobID)
 	data, err := s.client.HGetAll(ctx, meta).Result()
 	if err != nil && err != redis.Nil {
-		return scheduler.SafetyDecisionRecord{}, err
+		return scheduler.SafetyDecisionRecord{}, fmt.Errorf("job store get safety decision %s: %w", jobID, err)
 	}
 	record := scheduler.SafetyDecisionRecord{
 		Decision:       scheduler.SafetyDecision(data[metaFieldSafetyDecision]),
@@ -1277,7 +1383,7 @@ func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, l
 	}
 	raw, err := s.client.LRange(ctx, jobDecisionKey(jobID), -limit, -1).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("job store list safety decisions %s: %w", jobID, err)
 	}
 	out := make([]scheduler.SafetyDecisionRecord, 0, len(raw))
 	for i := len(raw) - 1; i >= 0; i-- {
@@ -1324,7 +1430,7 @@ func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, l
 func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]scheduler.JobRecord, error) {
 	jobIDs, err := s.client.SMembers(ctx, "trace:"+traceID).Result()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("job store get trace jobs %s: %w", traceID, err)
 	}
 	if len(jobIDs) == 0 {
 		return []scheduler.JobRecord{}, nil
@@ -1379,7 +1485,7 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 func (s *RedisJobStore) getDeadline(ctx context.Context, jobID string) (int64, error) {
 	val, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldDeadline).Int64()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("job store get deadline %s: %w", jobID, err)
 	}
 	return val, nil
 }
@@ -1416,6 +1522,18 @@ func parseJSONStringSlice(raw string) []string {
 		return nil
 	}
 	return out
+}
+
+func parseOutputSafetyRecord(raw string, jobID string) scheduler.OutputSafetyRecord {
+	if raw == "" {
+		return scheduler.OutputSafetyRecord{}
+	}
+	var record scheduler.OutputSafetyRecord
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		slog.Warn("job-store: corrupt output safety record", "job_id", jobID, "error", err)
+		return scheduler.OutputSafetyRecord{}
+	}
+	return record
 }
 
 func parseInt(raw string) int {

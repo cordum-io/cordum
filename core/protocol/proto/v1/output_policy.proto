@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package cordum.v1;
+option go_package = "github.com/cordum/cordum/sdk/gen/go/cordum/v1";
+
+// OutputPolicyService evaluates job outputs in two phases:
+// 1) fast synchronous metadata checks on the scheduler hot path
+// 2) deeper asynchronous content scanning on dereferenced output payloads
+service OutputPolicyService {
+  rpc CheckOutput(OutputCheckRequest) returns (OutputCheckResponse);
+}
+
+message OutputCheckRequest {
+  string job_id = 1;
+  string topic = 2;
+  string tenant = 3;
+  map<string, string> labels = 4;
+  string result_ptr = 5;
+  repeated string artifact_ptrs = 6;
+  string error_message = 7;
+  string error_code = 8;
+  string worker_id = 9;
+  int64 execution_ms = 10;
+  int64 output_size_bytes = 11;
+  string content_hash = 12;
+  string workflow_id = 13;
+  string step_id = 14;
+  bytes output_content = 15;
+  repeated string capabilities = 16;
+  repeated string risk_tags = 17;
+  string principal_id = 18;
+  string pack_id = 19;
+  string content_type = 20;
+  map<string, string> original_labels = 21;
+}
+
+message OutputCheckResponse {
+  OutputDecision decision = 1;
+  string reason = 2;
+  string rule_id = 3;
+  string policy_snapshot = 4;
+  repeated OutputFinding findings = 5;
+  string redacted_ptr = 6;
+}
+
+enum OutputDecision {
+  OUTPUT_DECISION_ALLOW = 0;
+  OUTPUT_DECISION_QUARANTINE = 1;
+  OUTPUT_DECISION_REDACT = 2;
+}
+
+message OutputFinding {
+  string type = 1;
+  string severity = 2;
+  string detail = 3;
+  int64 offset = 4;
+  int64 length = 5;
+  string scanner = 6;
+  float confidence = 7;
+  string matched_pattern = 8;
+}

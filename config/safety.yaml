@@ -1,3 +1,6 @@
+# Default decision when no rule matches. Set to "deny" for fail-closed (recommended for production).
+default_decision: allow
+
 rules:
   # Fraud detection jobs require human approval before execution
   - id: fraud-review-required
@@ -48,6 +51,67 @@ rules:
         - job.valuation-agents.process
     decision: allow
     reason: "Read-only validation and notification jobs are auto-approved."
+
+output_policy:
+  enabled: true
+  fail_mode: open
+
+output_rules:
+  - id: output-secret-leak
+    description: "Quarantine outputs that contain likely credential or key material."
+    match:
+      topics:
+        - "job.*"
+      scanners:
+        - "secret"
+    decision: quarantine
+    severity: critical
+    reason: "Potential secret material detected in output."
+
+  - id: output-pii-leak
+    description: "PII detection rule (disabled by default to avoid false positives)."
+    enabled: true
+    match:
+      topics:
+        - "job.*"
+      scanners:
+        - "pii"
+    decision: quarantine
+    severity: high
+    reason: "Potential PII detected in output."
+
+  - id: output-injection-detected
+    description: "Quarantine outputs containing likely injection payload fragments."
+    match:
+      topics:
+        - "job.*"
+      scanners:
+        - "injection"
+    decision: quarantine
+    severity: high
+    reason: "Potential injection payload detected in output."
+
+  - id: output-size-limit
+    description: "Quarantine oversized outputs beyond the default 10 MiB threshold."
+    match:
+      topics:
+        - "job.*"
+      output_size_gt: 10485760
+    decision: quarantine
+    severity: medium
+    reason: "Output exceeds configured size threshold."
+
+  - id: output-error-secret-leak
+    description: "Quarantine failed job outputs when secret indicators are present."
+    match:
+      topics:
+        - "job.*"
+      has_error: true
+      scanners:
+        - "secret"
+    decision: quarantine
+    severity: high
+    reason: "Secrets detected in failed job output context."
 
 default_tenant: default
 tenants:

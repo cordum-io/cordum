@@ -10,6 +10,10 @@ venv/
 .venv/
 __pycache__/
 dist/
+tmp/
+temp/
+*.tmp
+*.temp
 build/
 out/
 .idea/
@@ -40,3 +44,11 @@ keys/
 secrets/
 .home
 .moe/
+*.exe
+*.tgz
+
+# Build artifacts and temp files
+.tmp-bin/
+.tmp-go/
+production_gate_results.json
+*.go.[0-9]*

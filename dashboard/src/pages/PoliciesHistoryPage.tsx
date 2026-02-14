@@ -7,6 +7,7 @@ import {
   Filter,
   X,
   Download,
+  Camera,
 } from "lucide-react";
 import { usePolicyBundleContext } from "../components/policy/PolicyBundleContext";
 import { PublishControls } from "../components/policy/PublishControls";
@@ -14,6 +15,7 @@ import {
   usePolicySnapshots,
   usePolicySnapshot,
   useRollbackPolicy,
+  useCaptureSnapshot,
   usePolicyAudit,
   type PolicySnapshotSummary,
 } from "../hooks/usePolicies";
@@ -21,6 +23,7 @@ import { PolicyTimeline } from "../components/policy/PolicyTimeline";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { Input } from "../components/ui/Input";
 import { Textarea } from "../components/ui/Textarea";
 import { Select } from "../components/ui/Select";
 import { cn } from "../lib/utils";
@@ -274,6 +277,69 @@ function RollbackDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Capture Snapshot dialog
+// ---------------------------------------------------------------------------
+
+function CaptureSnapshotDialog({
+  isPending,
+  onConfirm,
+  onCancel,
+}: {
+  isPending: boolean;
+  onConfirm: (name: string, note: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [note, setNote] = useState("");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <Card className="relative z-10 w-full max-w-md">
+        <div className="space-y-4">
+          <h3 className="font-display text-lg font-semibold text-ink">
+            Capture Snapshot
+          </h3>
+          <p className="text-sm text-muted">
+            Saves the current state of all policy bundles. Useful before making changes.
+          </p>
+          <div>
+            <label htmlFor="capture-name" className="mb-1 block text-xs font-semibold text-muted">
+              Name (optional)
+            </label>
+            <Input
+              id="capture-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Auto-generated if blank"
+            />
+          </div>
+          <div>
+            <label htmlFor="capture-note" className="mb-1 block text-xs font-semibold text-muted">
+              Note (optional)
+            </label>
+            <Textarea
+              id="capture-note"
+              rows={2}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Why are you capturing this snapshot?"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => onConfirm(name, note)} disabled={isPending}>
+              {isPending ? "Capturing\u2026" : "Capture"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 
@@ -341,6 +407,20 @@ export default function PoliciesHistoryPage() {
       );
     },
     [rollbackTarget, rollbackPolicy],
+  );
+
+  // Capture snapshot
+  const [showCapture, setShowCapture] = useState(false);
+  const captureSnapshot = useCaptureSnapshot();
+
+  const handleCapture = useCallback(
+    (name: string, note: string) => {
+      captureSnapshot.mutate(
+        { name: name || undefined, note: note || undefined },
+        { onSuccess: () => setShowCapture(false) },
+      );
+    },
+    [captureSnapshot],
   );
 
   // PDF export
@@ -438,6 +518,14 @@ export default function PoliciesHistoryPage() {
         <span className="ml-auto text-xs text-muted">
           Showing {filtered.length} of {snapshots.length} snapshots
         </span>
+        <Button
+          size="sm"
+          onClick={() => setShowCapture(true)}
+          title="Saves the current state of all policy bundles. Useful before making changes."
+        >
+          <Camera className="h-3.5 w-3.5" />
+          Capture Snapshot
+        </Button>
         <Button variant="ghost" size="sm" onClick={handleExportPdf} disabled={pdfExporting}>
           <Download className="h-3.5 w-3.5" />
           {pdfExporting ? "Exporting…" : "Export PDF"}
@@ -555,6 +643,15 @@ export default function PoliciesHistoryPage() {
           isPending={rollbackPolicy.isPending}
           onConfirm={handleRollback}
           onCancel={() => setRollbackTarget(null)}
+        />
+      )}
+
+      {/* Capture snapshot dialog */}
+      {showCapture && (
+        <CaptureSnapshotDialog
+          isPending={captureSnapshot.isPending}
+          onConfirm={handleCapture}
+          onCancel={() => setShowCapture(false)}
         />
       )}
     </div>

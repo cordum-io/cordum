@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -o /out/${SERVICE} ./cmd/${SERVICE}
 
 FROM alpine:3.19
-RUN apk add --no-cache ca-certificates git
+RUN apk add --no-cache ca-certificates
 RUN adduser -D -u 65532 cordum
 USER cordum
 WORKDIR /home/cordum
@@ -56,8 +56,10 @@ WORKDIR /home/cordum
 ARG SERVICE
 COPY --from=builder /out/${SERVICE} /usr/local/bin/app
 
+# Default includes Redis auth to match local docker-compose Redis
+# (`--requirepass cordum-dev`) and avoid NOAUTH startup failures.
 ENV NATS_URL=nats://nats:4222 \
-    REDIS_URL=redis://redis:6379 \
+    REDIS_URL=redis://:cordum-dev@redis:6379 \
     SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
 
 ENTRYPOINT ["/usr/local/bin/app"]

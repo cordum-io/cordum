@@ -2,7 +2,16 @@ import { useQuery, useMutation, useQueryClient, type QueryKey } from "@tanstack/
 import { get, post } from "../api/client";
 import { logger } from "../lib/logger";
 import { useToastStore } from "../state/toast";
-import type { Job, JobStatus, SafetyDecision, ApiResponse } from "../api/types";
+import type {
+  Job,
+  JobStatus,
+  SafetyDecision,
+  ApiResponse,
+  RemediateJobInput,
+  RemediateJobResponse,
+  SubmitJobInput,
+  SubmitJobResponse,
+} from "../api/types";
 import {
   mapJobDetail,
   mapJobRecord,
@@ -51,6 +60,8 @@ function stateToBackend(state: JobStatus): string {
       return "DENIED";
     case "timeout":
       return "TIMEOUT";
+    case "output_quarantined":
+      return "OUTPUT_QUARANTINED";
     default:
       return (state as string).toUpperCase();
   }
@@ -172,6 +183,32 @@ export function useJobDecisions(id: string) {
 // Mutations
 // ---------------------------------------------------------------------------
 
+export function useSubmitJob() {
+  const queryClient = useQueryClient();
+  return useMutation<SubmitJobResponse, Error, SubmitJobInput>({
+    mutationFn: (input) => {
+      logger.info("jobs", "Submitting job", {
+        topic: input.topic,
+        priority: input.priority ?? "normal",
+      });
+      return post<SubmitJobResponse>("/jobs", input);
+    },
+    onSuccess: (result) => {
+      logger.info("jobs", "Job submitted", {
+        job_id: result.job_id,
+        trace_id: result.trace_id,
+      });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (err, input) => {
+      logger.error("jobs", "Job submission failed", {
+        topic: input.topic,
+        error: err.message,
+      });
+    },
+  });
+}
+
 export function useCancelJob() {
   const queryClient = useQueryClient();
   type CancelSnapshot = { previousList: [QueryKey, ApiResponse<Job[]> | undefined][]; previousDetail: Job | undefined; id: string };
@@ -239,3 +276,40 @@ export function useRetryJob() {
     },
   });
 }
+
+export function useRemediateJob() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    RemediateJobResponse,
+    Error,
+    { jobId: string; input: RemediateJobInput }
+  >({
+    mutationFn: ({ jobId, input }) => {
+      const trimmedJobID = jobId.trim();
+      if (!trimmedJobID) {
+        throw new Error("job id is required");
+      }
+      logger.info("jobs", "Remediating job", {
+        jobId: trimmedJobID,
+      });
+      return post<RemediateJobResponse>(`/jobs/${encodeURIComponent(trimmedJobID)}/remediate`, input);
+    },
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
+    },
+    onError: (err, variables) => {
+      logger.error("jobs", "Remediate job failed", {
+        jobId: variables.jobId,
+        error: err.message,
+      });
+    },
+  });
+}
+
+/** @internal exported for unit tests */
+export const __jobsInternal = {
+  stateToBackend,
+  rangeToMicros,
+  buildParams,
+};

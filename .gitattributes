@@ -1,0 +1,20 @@
+# Ensure shell scripts always use LF line endings
+*.sh text eol=lf
+
+# Ensure batch files use CRLF (Windows)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Proto files
+*.proto text eol=lf
+
+# Go source
+*.go text eol=lf
+
+# YAML/JSON config
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+
+# Dockerfile
+Dockerfile text eol=lf

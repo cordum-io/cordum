@@ -31,7 +31,7 @@ docker compose up -d
 
 ```bash
 cd examples/demo-guardrails/worker
-REDIS_URL=${REDIS_URL:-redis://localhost:6379} \
+REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379} \
 NATS_URL=${NATS_URL:-nats://localhost:4222} \
 go run .
 ```
@@ -78,7 +78,9 @@ One-command runner (starts the worker + demo):
 ```
 
 Note: the first run may take a bit while Go downloads modules and the worker
-registers a heartbeat.
+registers a heartbeat. The runner waits for a worker in the `demo-guardrails`
+pool specifically, so unrelated worker heartbeats do not trigger a false ready
+state.
 
 ## Record a GIF
 

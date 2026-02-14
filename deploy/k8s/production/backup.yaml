@@ -114,3 +114,45 @@ spec:
           - name: client-tls
             secret:
               secretName: cordum-client-tls
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cordum-backup-retention
+  namespace: cordum
+spec:
+  schedule: "30 3 * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: cleanup
+            image: busybox:1.36
+            command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Cleaning Redis backups older than 7 days..."
+              find /backup -name '*.rdb' -mtime +7 -delete -print
+              echo "Cleaning NATS snapshot dirs older than 7 days..."
+              find /backup -maxdepth 1 -name 'nats-*' -type d -mtime +7 -exec rm -rf {} + -print
+              echo "Retention cleanup complete."
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+              limits:
+                cpu: 100m
+                memory: 128Mi
+            volumeMounts:
+            - name: backup
+              mountPath: /backup
+          volumes:
+          - name: backup
+            persistentVolumeClaim:
+              claimName: cordum-backups

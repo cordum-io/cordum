@@ -21,7 +21,7 @@ fi
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 NATS_URL=${NATS_URL:-nats://localhost:4222}
-REDIS_URL=${REDIS_URL:-redis://localhost:6379}
+REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379}
 
 cleanup() {
   if [[ -n "${WORKER_PID:-}" ]]; then
@@ -40,8 +40,10 @@ WORKER_PID=$!
 echo "[guardrails] waiting for worker heartbeat"
 worker_ready=0
 for _ in {1..120}; do
-  count=$(curl -sS "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" | jq -r '.workers.count // 0')
-  if [[ "${count}" =~ ^[0-9]+$ ]] && [[ "${count}" -gt 0 ]]; then
+  # Check for the demo worker pool specifically to avoid false positives.
+  if curl -fsS --max-time 2 "${API_BASE}/api/v1/workers" \
+    -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" 2>/dev/null \
+    | jq -e '[.[] | select(.pool == "demo-guardrails")] | length > 0' >/dev/null 2>&1; then
     worker_ready=1
     break
   fi

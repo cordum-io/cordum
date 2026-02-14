@@ -59,6 +59,8 @@ type Worker struct {
 	cancelMu sync.Mutex
 	cancel   context.CancelFunc
 	logger   *log.Logger
+
+	consecutiveHBFailures int32 // tracks consecutive heartbeat publish failures
 }
 
 // NewWorker builds a worker with a NATS connection.
@@ -306,9 +308,37 @@ func (w *Worker) startHeartbeat(ctx context.Context) {
 		return capsdk.MarshalDeterministic(packet)
 	}
 
-	if payload, err := payloadFn(); err == nil {
-		_ = w.conn.Publish(capsdk.SubjectHeartbeat, payload)
+	// publishHeartbeat sends a heartbeat and handles errors with retry logic.
+	publishHeartbeat := func() {
+		payload, err := payloadFn()
+		if err != nil {
+			w.logger.Printf("worker: heartbeat payload build failed: %v", err)
+			return
+		}
+		if err := w.conn.Publish(capsdk.SubjectHeartbeat, payload); err != nil {
+			failures := atomic.AddInt32(&w.consecutiveHBFailures, 1)
+			w.logger.Printf("worker: heartbeat publish failed (consecutive=%d): %v", failures, err)
+
+			// Retry once after 500ms
+			time.Sleep(500 * time.Millisecond)
+			payload2, err2 := payloadFn()
+			if err2 == nil {
+				if err3 := w.conn.Publish(capsdk.SubjectHeartbeat, payload2); err3 == nil {
+					atomic.StoreInt32(&w.consecutiveHBFailures, 0)
+					return
+				}
+				failures = atomic.AddInt32(&w.consecutiveHBFailures, 1)
+			}
+
+			if failures >= 3 {
+				w.logger.Printf("worker: ERROR heartbeat publish failing consistently — worker may appear dead to scheduler (consecutive=%d)", failures)
+			}
+			return
+		}
+		atomic.StoreInt32(&w.consecutiveHBFailures, 0)
 	}
+
+	publishHeartbeat()
 
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -318,10 +348,7 @@ func (w *Worker) startHeartbeat(ctx context.Context) {
 			case <-hbCtx.Done():
 				return
 			case <-ticker.C:
-				payload, err := payloadFn()
-				if err == nil {
-					_ = w.conn.Publish(capsdk.SubjectHeartbeat, payload)
-				}
+				publishHeartbeat()
 			}
 		}
 	}()

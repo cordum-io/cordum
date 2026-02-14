@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
@@ -95,6 +97,10 @@ type policyRollbackRequest struct {
 	Note       string `json:"note"`
 }
 
+type outputRuleToggleRequest struct {
+	Enabled *bool `json:"enabled"`
+}
+
 type policyAuditEntry struct {
 	ID             string   `json:"id"`
 	Action         string   `json:"action"`
@@ -103,7 +109,7 @@ type policyAuditEntry struct {
 	ResourceName   string   `json:"resource_name,omitempty"`
 	ActorID        string   `json:"actor_id,omitempty"`
 	Role           string   `json:"role,omitempty"`
-	AuthSource     string   `json:"auth_source,omitempty"`
+	AuthSource     AuthSource `json:"auth_source,omitempty"`
 	BundleIDs      []string `json:"bundle_ids,omitempty"`
 	Message        string   `json:"message,omitempty"`
 	SnapshotBefore string   `json:"snapshot_before,omitempty"`
@@ -214,6 +220,273 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		resp["errors"] = parseErrors
 	}
 	writeJSON(w, resp)
+}
+
+func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request) {
+	if s.configSvc == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "config service unavailable")
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
+	bundles, _, err := s.loadPolicyBundles(r.Context())
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	includeDisabled := parseBool(r.URL.Query().Get("include_disabled"))
+	fragmentIDs := make([]string, 0, len(bundles))
+	for fragmentID := range bundles {
+		fragmentIDs = append(fragmentIDs, fragmentID)
+	}
+	sort.Strings(fragmentIDs)
+
+	items := make([]map[string]any, 0)
+	parseErrors := make([]policyRuleParseError, 0)
+	for _, fragmentID := range fragmentIDs {
+		rawBundle := bundles[fragmentID]
+		bundle, _ := rawBundle.(map[string]any)
+		if bundle != nil && !includeDisabled && !bundleEnabled(bundle) {
+			continue
+		}
+		content := ""
+		switch v := rawBundle.(type) {
+		case string:
+			content = strings.TrimSpace(v)
+		case map[string]any:
+			content = strings.TrimSpace(stringFromAny(v["content"]))
+			if content == "" {
+				content = strings.TrimSpace(stringFromAny(v["policy"]))
+			}
+			if content == "" {
+				content = strings.TrimSpace(stringFromAny(v["data"]))
+			}
+		}
+		if content == "" {
+			continue
+		}
+		bundleMeta := bundle
+		if bundleMeta == nil {
+			bundleMeta = map[string]any{}
+		}
+		rules, err := outputRulesFromPolicyContent(fragmentID, bundleMeta, content)
+		if err != nil {
+			parseErrors = append(parseErrors, policyRuleParseError{
+				FragmentID: fragmentID,
+				Error:      err.Error(),
+			})
+			continue
+		}
+		items = append(items, rules...)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]any{"items": items}
+	if len(parseErrors) > 0 {
+		resp["errors"] = parseErrors
+	}
+	writeJSON(w, resp)
+}
+
+func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	resp := map[string]any{
+		"total_checks_24h": 0,
+		"quarantined_24h":  0,
+		"avg_latency_ms":   0,
+		"last_check_at":    "",
+	}
+	if s.jobStore == nil {
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(w, resp)
+		return
+	}
+
+	limit := int64(500)
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	limit = clampListLimit(limit)
+	if limit <= 0 {
+		limit = 500
+	}
+
+	jobs, err := s.jobStore.ListRecentJobs(r.Context(), limit)
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	cutoffMicros := time.Now().UTC().Add(-24 * time.Hour).UnixMicro()
+	var totalChecks int64
+	var quarantined int64
+	var latencySumMs int64
+	var latencySamples int64
+	var lastCheckMicros int64
+
+	for _, job := range jobs {
+		if tenant := strings.TrimSpace(job.Tenant); tenant != "" {
+			if err := s.requireTenantAccess(r, tenant); err != nil {
+				continue
+			}
+		}
+		record, err := s.jobStore.GetOutputDecision(r.Context(), job.ID)
+		if err != nil || record.Decision == "" {
+			continue
+		}
+		checkedAt := record.CheckedAt
+		if checkedAt <= 0 {
+			checkedAt = job.UpdatedAt
+		}
+		if checkedAt <= 0 || checkedAt < cutoffMicros {
+			continue
+		}
+
+		totalChecks++
+		if record.Decision == scheduler.OutputQuarantine || record.Decision == scheduler.OutputDeny {
+			quarantined++
+		}
+		if record.CheckDurationMs > 0 {
+			latencySumMs += record.CheckDurationMs
+			latencySamples++
+		}
+		if checkedAt > lastCheckMicros {
+			lastCheckMicros = checkedAt
+		}
+	}
+
+	avgLatencyMs := int64(0)
+	if latencySamples > 0 {
+		avgLatencyMs = latencySumMs / latencySamples
+	}
+
+	resp["total_checks_24h"] = totalChecks
+	resp["quarantined_24h"] = quarantined
+	resp["avg_latency_ms"] = avgLatencyMs
+	resp["last_check_at"] = timestampFromMicros(lastCheckMicros)
+	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, resp)
+}
+
+func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Request) {
+	if s.configSvc == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "config service unavailable")
+		return
+	}
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
+	ruleID := strings.TrimSpace(r.PathValue("id"))
+	if ruleID == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "rule id required")
+		return
+	}
+	var body outputRuleToggleRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if body.Enabled == nil {
+		writeErrorJSON(w, http.StatusBadRequest, "enabled is required")
+		return
+	}
+
+	bundles, doc, err := s.loadPolicyBundlesWithDoc(r.Context())
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	updatedBundleID := ""
+	updated := false
+
+	keys := make([]string, 0, len(bundles))
+	for key := range bundles {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		rawBundle := bundles[key]
+		content, ok := policyBundleContent(rawBundle)
+		if !ok || strings.TrimSpace(content) == "" {
+			continue
+		}
+		policy, err := config.ParseSafetyPolicy([]byte(content))
+		if err != nil || policy == nil || len(policy.OutputRules) == 0 {
+			continue
+		}
+		foundInBundle := false
+		for idx := range policy.OutputRules {
+			if strings.TrimSpace(policy.OutputRules[idx].ID) != ruleID {
+				continue
+			}
+			enabledVal := *body.Enabled
+			policy.OutputRules[idx].Enabled = &enabledVal
+			foundInBundle = true
+			break
+		}
+		if !foundInBundle {
+			continue
+		}
+		payload, err := yaml.Marshal(policy)
+		if err != nil {
+			writeErrorJSON(w, http.StatusInternalServerError, "failed to encode policy bundle")
+			return
+		}
+		bundle, _ := rawBundle.(map[string]any)
+		if bundle == nil {
+			bundle = map[string]any{}
+		}
+		bundle["content"] = string(payload)
+		bundle["updated_at"] = now
+		bundles[key] = bundle
+		updatedBundleID = key
+		updated = true
+		break
+	}
+
+	if !updated {
+		writeErrorJSON(w, http.StatusNotFound, "output rule not found")
+		return
+	}
+
+	if doc == nil {
+		doc = &configsvc.Document{
+			Scope:   configsvc.Scope(policyConfigScope),
+			ScopeID: policyConfigID,
+			Data:    map[string]any{},
+		}
+	}
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
+	}
+	doc.Data[policyConfigKey] = bundles
+	if err := s.configSvc.Set(r.Context(), doc); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	message := fmt.Sprintf("set output rule %s enabled=%t", ruleID, *body.Enabled)
+	s.appendAuditEntryNamed(r.Context(), "edit", "output_rule", ruleID, updatedBundleID, policyActorID(r), policyRole(r), message)
+
+	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, map[string]any{
+		"id":         ruleID,
+		"enabled":    *body.Enabled,
+		"bundle_id":  updatedBundleID,
+		"updated_at": now,
+	})
 }
 
 func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
@@ -577,13 +850,149 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusForbidden, err.Error())
 		return
 	}
+	limit := parseAuditLimit(r.URL.Query().Get("limit"))
+	ruleID := strings.TrimSpace(r.URL.Query().Get("rule_id"))
+	auditType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+
+	if auditType == "output" {
+		items, err := s.listOutputPolicyAudit(r, ruleID, limit)
+		if err != nil {
+			writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(w, map[string]any{"items": items})
+		return
+	}
+
 	entries, err := s.loadPolicyAudit(r.Context())
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	filtered := make([]policyAuditEntry, 0, len(entries))
+	for _, entry := range entries {
+		if ruleID != "" && !strings.EqualFold(strings.TrimSpace(entry.ResourceID), ruleID) {
+			continue
+		}
+		if auditType != "" && !strings.EqualFold(strings.TrimSpace(entry.ResourceType), auditType) {
+			continue
+		}
+		filtered = append(filtered, entry)
+		if int64(len(filtered)) >= limit {
+			break
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]any{"items": entries})
+	writeJSON(w, map[string]any{"items": filtered})
+}
+
+func parseAuditLimit(raw string) int64 {
+	limit := int64(100)
+	if parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64); err == nil && parsed > 0 {
+		limit = parsed
+	}
+	return clampListLimit(limit)
+}
+
+func (s *server) listOutputPolicyAudit(r *http.Request, ruleID string, limit int64) ([]map[string]any, error) {
+	if s.jobStore == nil || limit <= 0 {
+		return []map[string]any{}, nil
+	}
+	fetchLimit := limit * 8
+	if fetchLimit < 64 {
+		fetchLimit = 64
+	}
+	if fetchLimit > 1000 {
+		fetchLimit = 1000
+	}
+	jobs, err := s.jobStore.ListRecentJobs(r.Context(), fetchLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]map[string]any, 0, limit)
+	for _, job := range jobs {
+		if int64(len(items)) >= limit {
+			break
+		}
+		if job.State != scheduler.JobStateQuarantined {
+			continue
+		}
+		if tenant := strings.TrimSpace(job.Tenant); tenant != "" {
+			if err := s.requireTenantAccess(r, tenant); err != nil {
+				continue
+			}
+		}
+		record, err := s.jobStore.GetOutputDecision(r.Context(), job.ID)
+		if err != nil || record.Decision == "" {
+			continue
+		}
+		matchedRule := strings.TrimSpace(record.RuleID)
+		if ruleID != "" && !strings.EqualFold(matchedRule, ruleID) {
+			continue
+		}
+		createdAt := timestampFromMicros(record.CheckedAt)
+		if createdAt == "" {
+			createdAt = timestampFromMicros(job.UpdatedAt)
+		}
+		findingRows := make([]map[string]any, 0, len(record.Findings))
+		for _, finding := range record.Findings {
+			row := map[string]any{
+				"type":     strings.TrimSpace(finding.Type),
+				"severity": strings.TrimSpace(finding.Severity),
+				"detail":   strings.TrimSpace(finding.Detail),
+			}
+			if scanner := strings.TrimSpace(finding.Scanner); scanner != "" {
+				row["scanner"] = scanner
+			}
+			if finding.Confidence > 0 {
+				row["confidence"] = finding.Confidence
+			}
+			if matchedPattern := strings.TrimSpace(finding.MatchedPattern); matchedPattern != "" {
+				row["matched_pattern"] = matchedPattern
+			}
+			if finding.Offset > 0 {
+				row["offset"] = finding.Offset
+			}
+			if finding.Length > 0 {
+				row["length"] = finding.Length
+			}
+			findingRows = append(findingRows, row)
+		}
+		entry := map[string]any{
+			"id":            fmt.Sprintf("output:%s:%d", job.ID, len(items)+1),
+			"action":        "output_quarantine",
+			"resource_type": "output",
+			"resource_id":   matchedRule,
+			"resource_name": job.ID,
+			"job_id":        job.ID,
+			"rule_id":       matchedRule,
+			"decision":      strings.ToLower(strings.TrimSpace(string(record.Decision))),
+			"reason":        strings.TrimSpace(record.Reason),
+			"phase":         strings.TrimSpace(record.Phase),
+			"created_at":    createdAt,
+			"findings":      findingRows,
+		}
+		if ptr := strings.TrimSpace(record.OriginalPtr); ptr != "" {
+			entry["original_ptr"] = ptr
+		}
+		if ptr := strings.TrimSpace(record.RedactedPtr); ptr != "" {
+			entry["redacted_ptr"] = ptr
+		}
+		items = append(items, entry)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return stringFromAny(items[i]["created_at"]) > stringFromAny(items[j]["created_at"])
+	})
+	return items, nil
+}
+
+func timestampFromMicros(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	return time.UnixMicro(value).UTC().Format(time.RFC3339)
 }
 
 func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.Request) {
@@ -757,6 +1166,88 @@ func rulesFromPolicyContent(fragmentID string, bundle map[string]any, content st
 	return rules, nil
 }
 
+func outputRulesFromPolicyContent(fragmentID string, bundle map[string]any, content string) ([]map[string]any, error) {
+	var payload any
+	if err := yaml.Unmarshal([]byte(content), &payload); err != nil {
+		return nil, err
+	}
+	root, _ := normalizeJSON(payload).(map[string]any)
+	if root == nil {
+		return nil, nil
+	}
+	rules := normalizePolicyRules(root["output_rules"])
+	source := policyRuleSourceFromBundle(fragmentID, bundle)
+	out := make([]map[string]any, 0, len(rules))
+	for _, rule := range rules {
+		normalized := normalizeOutputRule(rule)
+		normalized["source"] = source
+		out = append(out, normalized)
+	}
+	return out, nil
+}
+
+func normalizeOutputRule(rule map[string]any) map[string]any {
+	match, _ := rule["match"].(map[string]any)
+	if match == nil {
+		match = map[string]any{}
+	}
+	id := strings.TrimSpace(stringFromAny(rule["id"]))
+	if id == "" {
+		id = "output-rule"
+	}
+	description := strings.TrimSpace(stringFromAny(rule["description"]))
+	decision := strings.ToLower(strings.TrimSpace(stringFromAny(rule["decision"])))
+	if decision == "" {
+		decision = "allow"
+	}
+	severity := strings.ToLower(strings.TrimSpace(stringFromAny(rule["severity"])))
+	if severity == "" {
+		severity = "medium"
+	}
+	enabled := true
+	if raw, ok := rule["enabled"]; ok {
+		switch v := raw.(type) {
+		case bool:
+			enabled = v
+		default:
+			enabled = parseBool(fmt.Sprint(v))
+		}
+	}
+	topics := stringSliceFromAny(match["topics"])
+	scanners := mergeUniqueStrings(
+		stringSliceFromAny(match["scanners"]),
+		stringSliceFromAny(match["detectors"]),
+	)
+	patterns := stringSliceFromAny(match["content_patterns"])
+	patternPreview := ""
+	if len(patterns) > 0 {
+		patternPreview = strings.TrimSpace(patterns[0])
+		if len(patternPreview) > 100 {
+			patternPreview = patternPreview[:100] + "..."
+		}
+	}
+	normalized := map[string]any{
+		"id":              id,
+		"description":     description,
+		"topics":          topics,
+		"scanners":        scanners,
+		"patterns":        patterns,
+		"pattern_preview": patternPreview,
+		"decision":        decision,
+		"severity":        severity,
+		"reason":          strings.TrimSpace(stringFromAny(rule["reason"])),
+		"enabled":         enabled,
+		"match":           match,
+	}
+	if raw, ok := rule["last_triggered"]; ok {
+		normalized["last_triggered"] = strings.TrimSpace(stringFromAny(raw))
+	}
+	if raw, ok := rule["trigger_count_24h"]; ok {
+		normalized["trigger_count_24h"] = raw
+	}
+	return normalized
+}
+
 func normalizePolicyRules(value any) []map[string]any {
 	list, ok := value.([]any)
 	if !ok {
@@ -838,6 +1329,28 @@ func stringSliceFromAny(value any) []string {
 	}
 }
 
+func mergeUniqueStrings(values ...[]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, list := range values {
+		for _, raw := range list {
+			item := strings.TrimSpace(raw)
+			if item == "" {
+				continue
+			}
+			if _, ok := seen[item]; ok {
+				continue
+			}
+			seen[item] = struct{}{}
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 func policyRuleSourceFromBundle(fragmentID string, bundle map[string]any) policyRuleSource {
 	source := policyRuleSource{
 		FragmentID: fragmentID,
@@ -874,11 +1387,11 @@ func (s *server) savePolicySnapshots(ctx context.Context, snapshots []policyBund
 	}
 	payload, err := json.Marshal(snapshots)
 	if err != nil {
-		return err
+		return fmt.Errorf("policy bundle save snapshots marshal: %w", err)
 	}
 	var data any
 	if err := json.Unmarshal(payload, &data); err != nil {
-		return err
+		return fmt.Errorf("policy bundle save snapshots unmarshal: %w", err)
 	}
 	doc.Data[policySnapshotsKey] = data
 	return s.configSvc.Set(ctx, doc)
@@ -1513,7 +2026,7 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policyAuditEntry) 
 	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policyAuditScope), policyAuditID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			return err
+			return fmt.Errorf("policy bundle append audit get document: %w", err)
 		}
 		doc = &configsvc.Document{Scope: configsvc.Scope(policyAuditScope), ScopeID: policyAuditID, Data: map[string]any{}}
 	}
@@ -1541,15 +2054,15 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policyAuditEntry) 
 	}
 	payload, err := json.Marshal(entries)
 	if err != nil {
-		return err
+		return fmt.Errorf("policy bundle append audit marshal entries: %w", err)
 	}
 	var data any
 	if err := json.Unmarshal(payload, &data); err != nil {
-		return err
+		return fmt.Errorf("policy bundle append audit unmarshal entries: %w", err)
 	}
 	doc.Data[policyAuditKey] = data
 	if err := s.configSvc.Set(ctx, doc); err != nil {
-		return err
+		return fmt.Errorf("policy bundle append audit save document: %w", err)
 	}
 
 	// Fan-out to SIEM exporter (non-blocking) after persistence.
@@ -1590,7 +2103,7 @@ func auditEntryToSIEM(entry policyAuditEntry, tenantID string) audit.SIEMEvent {
 			"resource_type": entry.ResourceType,
 			"resource_id":   entry.ResourceID,
 			"role":          entry.Role,
-			"auth_source":   entry.AuthSource,
+			"auth_source":   string(entry.AuthSource),
 		},
 	}
 }

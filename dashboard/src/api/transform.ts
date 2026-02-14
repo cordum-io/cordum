@@ -1,7 +1,11 @@
 import YAML from "yaml";
+import { logger } from "../lib/logger";
 import type {
   Job,
   JobStatus,
+  OutputDecision,
+  OutputFinding,
+  OutputSafetyRecord,
   SafetyDecision,
   Approval,
   UrgencyLevel,
@@ -44,6 +48,30 @@ export interface BackendJobRecord {
   safety_decision?: string;
   safety_reason?: string;
   safety_rule_id?: string;
+  output_decision?: string;
+  output_safety?: BackendOutputSafetyRecord;
+}
+
+export interface BackendOutputFinding {
+  type?: string;
+  severity?: string;
+  detail?: string;
+  scanner?: string;
+  confidence?: number;
+  matched_pattern?: string;
+  offset?: number;
+  length?: number;
+}
+
+export interface BackendOutputSafetyRecord {
+  decision?: string;
+  reason?: string;
+  rule_id?: string;
+  findings?: BackendOutputFinding[];
+  phase?: string;
+  policy_snapshot?: string;
+  redacted_ptr?: string;
+  original_ptr?: string;
 }
 
 export interface BackendJobDetail extends BackendJobRecord {
@@ -322,7 +350,7 @@ export interface BackendHeartbeat {
 
 function logInvalidDateInput(fn: string, raw: unknown): void {
   if (import.meta.env.DEV && raw != null) {
-    console.warn(`[transform] ${fn} received invalid value`, raw);
+    logger.warn("transform", `${fn} received invalid value`, { raw });
   }
 }
 
@@ -333,15 +361,6 @@ export function microsToISO(raw: unknown): string {
   }
   const ms = Math.floor(raw / 1000);
   const d = new Date(ms);
-  return isNaN(d.getTime()) ? "" : d.toISOString();
-}
-
-export function secondsToISO(raw: unknown): string {
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
-    logInvalidDateInput("secondsToISO", raw);
-    return "";
-  }
-  const d = new Date(raw * 1000);
   return isNaN(d.getTime()) ? "" : d.toISOString();
 }
 
@@ -369,6 +388,8 @@ export function normalizeJobStatus(raw?: string): JobStatus {
       return "denied";
     case "TIMEOUT":
       return "timeout";
+    case "OUTPUT_QUARANTINED":
+      return "output_quarantined";
     default:
       return "pending";
   }
@@ -410,12 +431,58 @@ export function mapSafetyDecision(
   };
 }
 
+function normalizeOutputDecision(raw?: string): OutputDecision {
+  switch ((raw || "").toUpperCase()) {
+    case "ALLOW":
+      return "ALLOW";
+    case "QUARANTINE":
+      return "QUARANTINE";
+    case "REDACT":
+      return "REDACT";
+    default:
+      return "ALLOW";
+  }
+}
+
+function mapOutputFinding(raw: BackendOutputFinding): OutputFinding {
+  return {
+    type: raw.type || "",
+    severity: raw.severity || "",
+    detail: raw.detail || "",
+    scanner: raw.scanner,
+    confidence: raw.confidence,
+    matched_pattern: raw.matched_pattern,
+    offset: raw.offset,
+    length: raw.length,
+  };
+}
+
+export function mapOutputSafetyRecord(
+  raw?: BackendOutputSafetyRecord,
+): OutputSafetyRecord | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  return {
+    decision: normalizeOutputDecision(raw.decision),
+    reason: raw.reason ?? undefined,
+    rule_id: raw.rule_id ?? undefined,
+    findings: Array.isArray(raw.findings) ? raw.findings.map(mapOutputFinding) : [],
+    phase: raw.phase ?? undefined,
+    policy_snapshot: raw.policy_snapshot ?? undefined,
+    redacted_ptr: raw.redacted_ptr ?? undefined,
+    original_ptr: raw.original_ptr ?? undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Mappers
 // ---------------------------------------------------------------------------
 
 export function mapJobRecord(record: BackendJobRecord): Job {
   const updatedAt = microsToISO(record.updated_at);
+  const outputSafetyFromDecision =
+    record.output_decision
+      ? { decision: normalizeOutputDecision(record.output_decision) as OutputDecision }
+      : undefined;
   const capabilities = Array.from(
     new Set(
       [
@@ -451,6 +518,7 @@ export function mapJobRecord(record: BackendJobRecord): Job {
     capability: record.capability,
     requires: record.requires,
     attempts: record.attempts,
+    output_safety: mapOutputSafetyRecord(record.output_safety) ?? outputSafetyFromDecision,
   };
 }
 
@@ -479,11 +547,13 @@ const WORKFLOW_NODE_TYPES = new Set([
   "condition",
   "notify",
   "fan-out",
+  "parallel",
   "http",
   "transform",
   "switch",
   "loop",
   "sub-workflow",
+  "subworkflow",
   "error-trigger",
 ]);
 
@@ -494,6 +564,9 @@ function normalizeWorkflowNodeType(
   const trimmed = (raw || "").trim().toLowerCase();
   if (!trimmed) {
     return { uiType: "agent-task" };
+  }
+  if (trimmed === "subworkflow") {
+    return { uiType: "sub-workflow" };
   }
   if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job") {
     return { uiType: trimmed };
@@ -511,6 +584,35 @@ function normalizeWorkflowNodeType(
     return { uiType: "agent-task" };
   }
   return { uiType: "agent-task", backendType: trimmed };
+}
+
+function normalizeSwitchCases(value: unknown): Array<{ matchValue: string; stepId: string }> {
+  const fromRecord = (record: Record<string, unknown>) => {
+    const matchRaw = record.match ?? record.when ?? record.value ?? record.matchValue;
+    const stepRaw = record.next ?? record.step ?? record.target ?? record.step_id ?? record.goto ?? record.stepId;
+    const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
+    if (!stepId) return null;
+    return {
+      matchValue: matchRaw == null ? "" : String(matchRaw),
+      stepId,
+    };
+  };
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (entry && typeof entry === "object" ? fromRecord(entry as Record<string, unknown>) : null))
+      .filter((entry): entry is { matchValue: string; stepId: string } => entry !== null);
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([matchValue, stepRaw]) => {
+        const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
+        if (!stepId) return null;
+        return { matchValue, stepId };
+      })
+      .filter((entry): entry is { matchValue: string; stepId: string } => entry !== null);
+  }
+  return [];
 }
 
 function buildWorkflowStepConfig(step: BackendWorkflowStep): Record<string, unknown> {
@@ -537,6 +639,60 @@ function buildWorkflowStepConfig(step: BackendWorkflowStep): Record<string, unkn
   if (step.input && typeof step.input === "object") {
     config.input = step.input;
     const input = step.input as Record<string, unknown>;
+    if (step.type === "parallel") {
+      if (Array.isArray(input.steps)) {
+        config.parallelSteps = input.steps.map((entry) => String(entry).trim()).filter(Boolean);
+      }
+      if (typeof input.strategy === "string" && input.strategy.trim()) {
+        config.completionStrategy = input.strategy.trim();
+      }
+      if (typeof input.required === "number" && Number.isFinite(input.required)) {
+        config.requiredCount = Math.floor(input.required);
+      }
+    }
+    if (step.type === "loop") {
+      if (typeof input.body_step === "string" && input.body_step.trim()) {
+        config.bodyStep = input.body_step.trim();
+      } else if (typeof input.body === "string" && input.body.trim()) {
+        config.bodyStep = input.body.trim();
+      }
+      if (typeof input.max_iterations === "number" && Number.isFinite(input.max_iterations)) {
+        config.maxIterations = Math.floor(input.max_iterations);
+      } else if (typeof input.maxIterations === "number" && Number.isFinite(input.maxIterations)) {
+        config.maxIterations = Math.floor(input.maxIterations);
+      }
+      if (typeof input.condition === "string" && input.condition.trim()) {
+        config.condition = input.condition.trim();
+      } else if (typeof input.while === "string" && input.while.trim()) {
+        config.condition = input.while.trim();
+      }
+      if (typeof input.until === "string" && input.until.trim()) {
+        config.until = input.until.trim();
+      }
+    }
+    if (step.type === "subworkflow" || step.type === "sub-workflow") {
+      if (typeof input.workflow_id === "string" && input.workflow_id.trim()) {
+        config.workflowId = input.workflow_id.trim();
+      }
+      if (input.input_mapping !== undefined) {
+        config.inputMapping = input.input_mapping;
+      }
+      if (input.output_mapping !== undefined) {
+        config.outputMapping = input.output_mapping;
+      }
+    }
+    if (step.type === "switch") {
+      const switchCases = normalizeSwitchCases(input.cases);
+      if (switchCases.length > 0) {
+        config.switchCases = switchCases;
+        config.cases = switchCases;
+      }
+      if (typeof input.default === "string" && input.default.trim()) {
+        config.defaultBranch = input.default.trim();
+      } else if (typeof input.default_step === "string" && input.default_step.trim()) {
+        config.defaultBranch = input.default_step.trim();
+      }
+    }
     if (typeof input.message === "string" && input.message.trim()) {
       config.messageTemplate = input.message;
     }
@@ -897,7 +1053,7 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
       const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
       rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
     } catch {
-      // YAML parse error — fall back to empty rules
+      logger.debug("transform", "YAML parse error in policy bundle summary, falling back to empty rules");
     }
   }
   return {
@@ -936,7 +1092,7 @@ export function mapPolicyBundleDetail(detail: BackendPolicyBundleDetail): Policy
       const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
       rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
     } catch {
-      // YAML parse error — fall back to empty rules
+      logger.debug("transform", "YAML parse error in policy bundle detail, falling back to empty rules");
     }
   }
   return {
@@ -1021,6 +1177,7 @@ function tryParseJson(raw?: string): Record<string, unknown> | undefined {
     const parsed = JSON.parse(raw);
     return typeof parsed === "object" && parsed !== null ? parsed : undefined;
   } catch {
+    logger.debug("transform", "JSON parse failed in tryParseJson");
     return undefined;
   }
 }

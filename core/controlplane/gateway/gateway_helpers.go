@@ -362,7 +362,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		if r.TLS != nil && env.IsProduction() {
-			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+			w.Header().Set("Strict-Transport-Security", fmt.Sprintf("max-age=%d; includeSubDomains", hstsMaxAge()))
 		}
 
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
@@ -581,6 +581,24 @@ func addrFromEnv(key, fallback string) string {
 	return fallback
 }
 
+func durationFromEnv(key string, fallback time.Duration) time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
+}
+
+func intFromEnv(key string, fallback int) int {
+	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			return v
+		}
+	}
+	return fallback
+}
+
 func dialSafetyKernel(addr string) (*grpc.ClientConn, pb.SafetyKernelClient, error) {
 	creds, err := safetyTransportCredentials()
 	if err != nil {
@@ -600,7 +618,7 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 
 	if caPath == "" {
 		if requireTLS {
-			return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CA required")
+			return nil, fmt.Errorf("safety_kernel_tls_ca required")
 		}
 		if insecureAllowed || !env.IsProduction() {
 			return insecure.NewCredentials(), nil
@@ -828,6 +846,16 @@ func tenantFromRequest(r *http.Request) string {
 		return authCtx.Tenant
 	}
 	return ""
+}
+
+func hstsMaxAge() int64 {
+	const defaultHSTSMaxAge int64 = 63072000
+	if raw := strings.TrimSpace(os.Getenv("CORDUM_HSTS_MAX_AGE")); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v >= 0 {
+			return v
+		}
+	}
+	return defaultHSTSMaxAge
 }
 
 func artifactMaxBytes() int64 {

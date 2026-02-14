@@ -156,7 +156,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
 // ---------------------------------------------------------------------------
 
 const INVALIDATION_MAP: Record<string, string[][]> = {
-  "job.": [["jobs"]],
+  "job.": [["jobs"], ["dlq"], ["dlq", "nav"]],
   "workflow.": [["workflows"]],
   "approval.": [["approvals"], ["approvals", "nav"]],
   "worker.": [["workers"]],

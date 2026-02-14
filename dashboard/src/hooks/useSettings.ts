@@ -1,16 +1,22 @@
 import { useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post, del, put } from "../api/client";
+import { ApiError, get, post, del, put } from "../api/client";
 import { logger } from "../lib/logger";
 import { useToastStore } from "../state/toast";
 import type {
   ApiKey,
   User,
   ApiResponse,
+  ChangePasswordPayload,
+  ResetUserPasswordPayload,
   AuthConfig,
   NotificationChannel,
   NotificationRule,
   Environment,
+  McpConfig,
+  McpResource,
+  McpStatus,
+  McpTool,
   GeneralConfig,
   MaintenanceWindow,
   MaintenanceSchedule,
@@ -30,6 +36,31 @@ export function useConfig() {
     queryKey: ["config"],
     queryFn: () => get<SystemConfig>("/config"),
     staleTime: 60_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Effective (merged) config
+// ---------------------------------------------------------------------------
+
+export interface EffectiveConfigParams {
+  orgId?: string;
+  teamId?: string;
+  workflowId?: string;
+  stepId?: string;
+}
+
+export function useEffectiveConfig(params?: EffectiveConfigParams) {
+  const qs = new URLSearchParams();
+  if (params?.orgId) qs.set("org_id", params.orgId);
+  if (params?.teamId) qs.set("team_id", params.teamId);
+  if (params?.workflowId) qs.set("workflow_id", params.workflowId);
+  if (params?.stepId) qs.set("step_id", params.stepId);
+  const query = qs.toString();
+  return useQuery<Record<string, unknown>>({
+    queryKey: ["effective-config", params ?? {}],
+    queryFn: () => get<Record<string, unknown>>(`/config/effective${query ? "?" + query : ""}`),
+    staleTime: 10_000,
   });
 }
 
@@ -250,6 +281,28 @@ export function useDeleteUser() {
   });
 }
 
+interface ResetUserPasswordInput extends ResetUserPasswordPayload {
+  userId: string;
+}
+
+export function useChangePassword() {
+  return useMutation<void, ApiError, ChangePasswordPayload>({
+    mutationFn: (input) => {
+      logger.info("settings", "Changing current user password");
+      return post<void>("/auth/password", input);
+    },
+  });
+}
+
+export function useResetUserPassword() {
+  return useMutation<void, ApiError, ResetUserPasswordInput>({
+    mutationFn: ({ userId, password }) => {
+      logger.info("settings", "Resetting user password", { userId });
+      return post<void>(`/users/${encodeURIComponent(userId)}/password`, { password });
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Notification localStorage keys (fallback when backend has no notification data)
 // ---------------------------------------------------------------------------
@@ -263,6 +316,7 @@ function readLocalStorage<T>(key: string, fallback: T): T {
     if (!raw) return fallback;
     return JSON.parse(raw) as T;
   } catch {
+    logger.debug("settings", "localStorage JSON parse failed, using fallback");
     return fallback;
   }
 }
@@ -271,7 +325,7 @@ function writeLocalStorage<T>(key: string, value: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // localStorage quota exceeded — silently ignore
+    logger.debug("settings", "localStorage write failed, quota may be exceeded");
   }
 }
 
@@ -435,6 +489,337 @@ export function useSaveEnvironment() {
 }
 
 // ---------------------------------------------------------------------------
+// MCP config + catalog
+// ---------------------------------------------------------------------------
+
+const DEFAULT_MCP_CONFIG: McpConfig = {
+  enabled: false,
+  transport: "http",
+  port: 3001,
+  requireAuth: true,
+  allowedOrigins: [], // Empty by default — operator must configure allowed origins explicitly
+  tools: {},
+  resources: {},
+};
+
+const MCP_TOOL_CATALOG: Array<Omit<McpTool, "enabled">> = [
+  {
+    name: "cordum_submit_job",
+    description: "Submit a new Cordum job",
+    inputSchema: {
+      type: "object",
+      required: ["topic", "prompt"],
+      properties: {
+        topic: { type: "string" },
+        prompt: { type: "string" },
+        priority: { type: "string", enum: ["low", "normal", "high", "critical"] },
+        risk_tags: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
+    name: "cordum_cancel_job",
+    description: "Cancel an in-progress job",
+    inputSchema: {
+      type: "object",
+      required: ["job_id"],
+      properties: {
+        job_id: { type: "string" },
+        reason: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "cordum_trigger_workflow",
+    description: "Start a workflow run",
+    inputSchema: {
+      type: "object",
+      required: ["workflow_id"],
+      properties: {
+        workflow_id: { type: "string" },
+        input: { type: "object" },
+      },
+    },
+  },
+  {
+    name: "cordum_approve_job",
+    description: "Approve a pending job",
+    inputSchema: {
+      type: "object",
+      required: ["job_id"],
+      properties: {
+        job_id: { type: "string" },
+        reason: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "cordum_reject_job",
+    description: "Reject a pending job",
+    inputSchema: {
+      type: "object",
+      required: ["job_id"],
+      properties: {
+        job_id: { type: "string" },
+        reason: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "cordum_query_policy",
+    description: "Simulate policy evaluation for request metadata",
+    inputSchema: {
+      type: "object",
+      required: ["topic"],
+      properties: {
+        topic: { type: "string" },
+        capability: { type: "string" },
+        risk_tags: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+];
+
+type McpResourceCatalogEntry = Omit<McpResource, "enabled"> & { key: string };
+
+const MCP_RESOURCE_CATALOG: McpResourceCatalogEntry[] = [
+  {
+    key: "jobs",
+    uri: "cordum://jobs/{id}",
+    name: "Jobs",
+    description: "Fetch job details and status",
+    mimeType: "application/json",
+  },
+  {
+    key: "workflows",
+    uri: "cordum://workflows/{id}/runs",
+    name: "Workflow Runs",
+    description: "List workflow run status and recent history",
+    mimeType: "application/json",
+  },
+  {
+    key: "audit",
+    uri: "cordum://audit?limit={n}",
+    name: "Audit Log",
+    description: "Read recent audit entries",
+    mimeType: "application/json",
+  },
+  {
+    key: "health",
+    uri: "cordum://health",
+    name: "Health",
+    description: "Read control-plane health status",
+    mimeType: "application/json",
+  },
+  {
+    key: "policies",
+    uri: "cordum://policies",
+    name: "Policies",
+    description: "List active safety policy bundles",
+    mimeType: "application/json",
+  },
+];
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function asBool(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+function asNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+}
+
+function normalizeMcpTransport(value: unknown): McpConfig["transport"] {
+  const normalized = asString(value).toLowerCase();
+  if (normalized === "stdio" || normalized === "both") return normalized;
+  return "http";
+}
+
+function readMcpValue(config: Record<string, unknown>, key: string): unknown {
+  const mcp = asRecord(config.mcp);
+  if (mcp && key in mcp) return mcp[key];
+  return config[`mcp.${key}`];
+}
+
+function parseToggleMap(value: unknown): Record<string, { enabled: boolean }> {
+  const record = asRecord(value);
+  if (!record) return {};
+  const parsed: Record<string, { enabled: boolean }> = {};
+  for (const [key, rawValue] of Object.entries(record)) {
+    const valueObj = asRecord(rawValue);
+    parsed[key] = { enabled: asBool(valueObj?.enabled, true) };
+  }
+  return parsed;
+}
+
+function resolveMcpConfig(config: SystemConfig | undefined): McpConfig {
+  const raw = (config ?? {}) as Record<string, unknown>;
+  const allowedOriginsRaw =
+    readMcpValue(raw, "allowedOrigins") ??
+    readMcpValue(raw, "allowed_origins");
+  const allowedOrigins = asStringArray(allowedOriginsRaw);
+  return {
+    enabled: asBool(readMcpValue(raw, "enabled"), DEFAULT_MCP_CONFIG.enabled),
+    transport: normalizeMcpTransport(readMcpValue(raw, "transport")),
+    port: asNumber(readMcpValue(raw, "port"), DEFAULT_MCP_CONFIG.port),
+    requireAuth: asBool(
+      readMcpValue(raw, "requireAuth") ?? readMcpValue(raw, "require_auth"),
+      DEFAULT_MCP_CONFIG.requireAuth,
+    ),
+    allowedOrigins: allowedOrigins.length > 0 ? allowedOrigins : DEFAULT_MCP_CONFIG.allowedOrigins,
+    apiKeyMasked:
+      asString(readMcpValue(raw, "apiKeyMasked") ?? readMcpValue(raw, "api_key_masked")) || undefined,
+    tools: parseToggleMap(readMcpValue(raw, "tools")),
+    resources: parseToggleMap(readMcpValue(raw, "resources")),
+  };
+}
+
+function mergeMcpConfig(base: McpConfig, patch: Partial<McpConfig>): McpConfig {
+  return {
+    ...base,
+    ...patch,
+    tools: patch.tools ?? base.tools,
+    resources: patch.resources ?? base.resources,
+    allowedOrigins: patch.allowedOrigins ?? base.allowedOrigins,
+  };
+}
+
+function toMcpPayload(config: McpConfig): Record<string, unknown> {
+  return {
+    mcp: {
+      enabled: config.enabled,
+      transport: config.transport,
+      port: config.port,
+      requireAuth: config.requireAuth,
+      allowedOrigins: config.allowedOrigins,
+      tools: config.tools,
+      resources: config.resources,
+    },
+  };
+}
+
+export function useMcpConfig() {
+  const { data: config, isLoading } = useConfig();
+  const mcpConfig = useMemo(() => resolveMcpConfig(config), [config]);
+  return { data: mcpConfig, isLoading };
+}
+
+export function useSetMcpConfig() {
+  const setConfig = useSetConfig();
+  const { data: currentMcp } = useMcpConfig();
+
+  return useMutation<void, Error, Partial<McpConfig>>({
+    mutationFn: (patch) => {
+      const merged = mergeMcpConfig(currentMcp ?? DEFAULT_MCP_CONFIG, patch);
+      logger.info("settings", "Updating MCP config", {
+        enabled: merged.enabled,
+        transport: merged.transport,
+      });
+      return setConfig.mutateAsync(toMcpPayload(merged));
+    },
+  });
+}
+
+export function useMcpStatus() {
+  const { data: mcpConfig, isLoading: mcpConfigLoading } = useMcpConfig();
+  const mcpEnabled = Boolean(mcpConfig?.enabled);
+
+  return useQuery<McpStatus>({
+    queryKey: ["mcp-status", mcpEnabled],
+    enabled: !mcpConfigLoading && mcpEnabled,
+    initialData: {
+      running: false,
+      connectedClients: 0,
+      uptime: 0,
+    },
+    initialDataUpdatedAt: 0,
+    queryFn: async () => {
+      try {
+        const response = await get<{
+          running?: boolean;
+          connected_clients?: number;
+          uptime_seconds?: number;
+          transport?: string;
+          enabled_tools?: number;
+          enabled_resources?: number;
+        }>("/mcp/status");
+        return {
+          running: !!response.running,
+          connectedClients: Number(response.connected_clients ?? 0),
+          uptime: Number(response.uptime_seconds ?? 0),
+          transport: response.transport,
+          enabledTools: Number(response.enabled_tools ?? 0),
+          enabledResources: Number(response.enabled_resources ?? 0),
+        };
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) {
+          return {
+            running: false,
+            connectedClients: 0,
+            uptime: 0,
+          };
+        }
+        throw error;
+      }
+    },
+    staleTime: 10_000,
+  });
+}
+
+export function useMcpTools() {
+  const { data: mcpConfig, isLoading } = useMcpConfig();
+  const items = useMemo<McpTool[]>(() => {
+    const tools = mcpConfig?.tools ?? {};
+    return MCP_TOOL_CATALOG.map((tool) => ({
+      ...tool,
+      enabled: tools[tool.name]?.enabled ?? true,
+    }));
+  }, [mcpConfig]);
+  return { data: items, isLoading };
+}
+
+export function useMcpResources() {
+  const { data: mcpConfig, isLoading } = useMcpConfig();
+  const items = useMemo<McpResource[]>(() => {
+    const resources = mcpConfig?.resources ?? {};
+    return MCP_RESOURCE_CATALOG.map((resource) => ({
+      uri: resource.uri,
+      name: resource.name,
+      description: resource.description,
+      mimeType: resource.mimeType,
+      enabled: resources[resource.key]?.enabled ?? true,
+    }));
+  }, [mcpConfig]);
+  return { data: items, isLoading };
+}
+
+// ---------------------------------------------------------------------------
 // General config (derived from config — maps to top-level config fields)
 // ---------------------------------------------------------------------------
 
@@ -488,3 +873,17 @@ export function useSetGeneralConfig() {
     },
   });
 }
+
+/** @internal exported for unit tests */
+export const __settingsInternal = {
+  readLocalStorage,
+  writeLocalStorage,
+  DEFAULT_ENVIRONMENT,
+  GENERAL_CONFIG_DEFAULTS,
+  DEFAULT_MCP_CONFIG,
+  MCP_TOOL_CATALOG,
+  MCP_RESOURCE_CATALOG,
+  resolveMcpConfig,
+  mergeMcpConfig,
+  toMcpPayload,
+};

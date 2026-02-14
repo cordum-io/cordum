@@ -377,6 +377,24 @@ go test -bench=. ./core/safety/...
 go test -fuzz=FuzzPolicyParse ./core/safety/...
 ```
 
+### Production Gate
+
+Run the full release gate suite (deploy, auth/tenant, workflow matrix, policy, reliability, performance, security):
+
+```bash
+CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
+./tools/scripts/production_gate.sh
+```
+
+Run a single gate for debugging:
+
+```bash
+CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
+./tools/scripts/production_gate.sh --gate 3
+```
+
+The script writes `production_gate_results.json`, which can be consumed by CI artifacts and future dashboard System Health visualizations.
+
 ### CI Pipeline Tests
 
 ```yaml

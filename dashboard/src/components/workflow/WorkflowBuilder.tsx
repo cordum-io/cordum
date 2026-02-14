@@ -159,6 +159,7 @@ export function WorkflowBuilder() {
             onSave={handleNodeConfigSave}
             onClose={() => setSelectedNode(null)}
             onDelete={handleDeleteNode}
+            allNodes={graphRef.current?.nodes ?? []}
           />
         )}
       </div>

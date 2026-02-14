@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Activity, Key, Users, Bell, Layers, Settings, Rocket } from "lucide-react";
+import { Activity, Key, Users, Bell, Layers, Settings, Rocket, ShieldAlert, Plug2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useSetupStatus } from "../../hooks/useSetupStatus";
 import { SetupChecklist } from "./SetupChecklist";
@@ -11,7 +11,9 @@ const NAV_ITEMS = [
   { path: "users", label: "Users & Access", icon: Users },
   { path: "notifications", label: "Notifications", icon: Bell },
   { path: "environments", label: "Environments", icon: Layers },
+  { path: "mcp", label: "MCP Server", icon: Plug2 },
   { path: "config", label: "Configuration", icon: Settings },
+  { path: "output-safety", label: "Output Safety", icon: ShieldAlert },
 ] as const;
 
 const SS_AUTO_SHOWN_KEY = "cordum-setup-auto-shown";

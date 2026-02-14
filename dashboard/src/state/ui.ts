@@ -7,10 +7,10 @@ export type AgentsView = "table" | "cards";
 
 function resolveTheme(pref: Theme): ResolvedTheme {
   if (pref === "system") {
-    return typeof window !== "undefined" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return "light";
+    }
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
   return pref;
 }

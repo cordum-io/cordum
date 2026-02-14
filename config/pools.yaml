@@ -1,5 +1,11 @@
 topics:
   job.default: default
+  job.demo-mock-bank.transfer.auto: demo-mock-bank
+  job.demo-mock-bank.transfer.review: demo-mock-bank
+  job.demo-mock-bank.transfer.blocked: demo-mock-bank
+  job.demo-guardrails.write: demo-guardrails
+  job.demo-guardrails.safe: demo-guardrails
+  job.demo-guardrails.dangerous: demo-guardrails
   job.bank-validators.process: bank-validators
   job.compliance-agents.process: compliance-agents
   job.loan-agents.process: loan-agents
@@ -12,6 +18,10 @@ topics:
   job.underwriting-agents.process: underwriting-agents
 pools:
   default:
+    requires: []
+  demo-mock-bank:
+    requires: []
+  demo-guardrails:
     requires: []
   bank-validators:
     requires: []

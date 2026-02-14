@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Plus, Loader, Upload } from "lucide-react";
+import { Plus, Loader, Upload, FileCode } from "lucide-react";
 import { put, post, del } from "../../api/client";
 import type { PolicyBundle, PolicyRule } from "../../api/types";
 import { usePolicyBundle, useToggleRule, encodePolicyBundleId } from "../../hooks/usePolicies";
@@ -50,9 +50,10 @@ function detectConflicts(rules: PolicyRule[]): Map<string, string> {
 
 interface VisualRuleBuilderProps {
   bundleId: string;
+  onEditYaml?: () => void;
 }
 
-export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
+export function VisualRuleBuilder({ bundleId, onEditYaml }: VisualRuleBuilderProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const toggleRule = useToggleRule();
@@ -175,6 +176,17 @@ export function VisualRuleBuilder({ bundleId }: VisualRuleBuilderProps) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {onEditYaml && (
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              onClick={onEditYaml}
+            >
+              <FileCode className="h-4 w-4" />
+              Edit YAML
+            </Button>
+          )}
           <Button
             size="sm"
             type="button"

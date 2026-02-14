@@ -25,7 +25,9 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -38,10 +40,14 @@ import (
 
 type server struct {
 	pb.UnimplementedSafetyKernelServer
+	pb.UnimplementedOutputPolicyServiceServer
 	mu           sync.RWMutex
 	policy       *config.SafetyPolicy
+	outputRules  []compiledOutputRule
+	scanners     map[string]OutputScanner
 	snapshot     string
 	snapshots    []string
+	resultClient redis.UniversalClient
 	cacheMu      sync.Mutex
 	cacheTTL     time.Duration
 	cache        map[string]cacheEntry
@@ -65,6 +71,15 @@ type cacheEntry struct {
 
 // policyLookupIP allows tests to override DNS resolution for policy URL validation.
 var policyLookupIP = net.LookupIP
+
+var defaultDecisionTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "cordum_safety_default_decision_total",
+	Help: "Total policy evaluations that fell through to the default decision",
+}, []string{"decision"})
+
+func init() {
+	prometheus.MustRegister(defaultDecisionTotal)
+}
 
 // Run starts the Safety Kernel gRPC server and blocks until it exits.
 func Run(cfg *config.Config) error {
@@ -113,10 +128,16 @@ func Run(cfg *config.Config) error {
 	if cacheMax <= 0 {
 		cacheMax = defaultDecisionCacheMaxSize
 	}
+	resultClient, err := redisutil.NewClient(cfg.RedisURL)
+	if err != nil {
+		log.Printf("safety-kernel: output result redis client disabled: %v", err)
+	}
 	srv := &server{
 		cacheTTL:     parseDurationEnv(envDecisionCacheTTL),
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: cacheMax,
+		scanners:     loadOutputScanners(),
+		resultClient: resultClient,
 	}
 	srv.setPolicy(policy, snapshot)
 	if loader.ShouldWatch() {
@@ -125,6 +146,7 @@ func Run(cfg *config.Config) error {
 
 	grpcServer := grpc.NewServer(serverCreds)
 	pb.RegisterSafetyKernelServer(grpcServer, srv)
+	pb.RegisterOutputPolicyServiceServer(grpcServer, srv)
 	healthSrv := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSrv)
 	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
@@ -229,6 +251,9 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 				policyDecision.Reason = mcpReason
 			}
 		}
+	}
+	if strings.HasPrefix(policyDecision.Reason, "no matching rule") {
+		defaultDecisionTotal.WithLabelValues(policyDecision.Decision).Inc()
 	}
 
 	constraints := toProtoConstraints(policyDecision.Constraints)
@@ -583,6 +608,7 @@ func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.policy = policy
+	s.outputRules = compileOutputRules(policy)
 	s.snapshot = snapshot
 	if snapshot != "" {
 		s.snapshots = append([]string{snapshot}, s.snapshots...)
@@ -778,6 +804,7 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 		out.DefaultTenant = extra.DefaultTenant
 	}
 	out.Rules = append(out.Rules, extra.Rules...)
+	out.OutputRules = append(out.OutputRules, extra.OutputRules...)
 	out.Tenants = mergeTenantPolicies(out.Tenants, extra.Tenants)
 	return out
 }
@@ -790,6 +817,7 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 		Version:       policy.Version,
 		DefaultTenant: policy.DefaultTenant,
 		Rules:         append([]config.PolicyRule{}, policy.Rules...),
+		OutputRules:   append([]config.OutputPolicyRule{}, policy.OutputRules...),
 		Tenants:       map[string]config.TenantPolicy{},
 	}
 	if policy.Tenants != nil {

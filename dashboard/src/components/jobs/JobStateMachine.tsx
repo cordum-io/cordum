@@ -25,6 +25,7 @@ const STATUS_INDEX: Record<string, number> = {
   cancelled: 4,
   denied: 4,
   timeout: 4,
+  output_quarantined: 4,
 };
 
 const TERMINAL_LABELS: Record<string, string> = {
@@ -33,6 +34,7 @@ const TERMINAL_LABELS: Record<string, string> = {
   cancelled: "Cancelled",
   denied: "Denied",
   timeout: "Timed Out",
+  output_quarantined: "Quarantined",
 };
 
 // ---------------------------------------------------------------------------

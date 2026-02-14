@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/memory"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -416,7 +417,9 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
-	_ = s.bus.Publish(capsdk.SubjectDLQ, packet)
+	if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
+		logging.Error("api-gateway", "publish dlq on approval reject failed", "job_id", jobID, "error", err)
+	}
 	rejectTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
 	s.appendAuditEntryNamed(r.Context(), "reject", "job", jobID, rejectTopic, policyActorID(r), policyRole(r), "reject job "+jobID)
 	w.Header().Set("Content-Type", "application/json")

@@ -39,6 +39,22 @@ red()   { printf "\033[31m%s\033[0m\n" "$1"; }
 yellow(){ printf "\033[33m%s\033[0m\n" "$1"; }
 bold()  { printf "\033[1m%s\033[0m\n" "$1"; }
 
+# ---------------------------------------------------------------------------
+# Start hello-worker for Phase 4 job dispatch (topic=job.hello-pack.echo)
+# ---------------------------------------------------------------------------
+bold "[setup] Starting hello-worker for job.hello-pack.echo"
+(cd examples/hello-worker-go && \
+  NATS_URL="${NATS_URL:-nats://localhost:4222}" \
+  REDIS_URL="redis://:${REDIS_PASSWORD}@localhost:6379/0" \
+  go run . >/dev/null 2>&1) &
+HELLO_PID=$!
+
+cleanup() {
+  [[ -n "${HELLO_PID:-}" ]] && kill "${HELLO_PID}" 2>/dev/null || true
+  wait "${HELLO_PID}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 check() {
   local name="$1" expected="$2" actual="$3"
   if [ "$actual" = "$expected" ]; then
@@ -263,6 +279,25 @@ bold "3.12 Config / system"
 code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "$BASE/config")
 check "GET /config" "200" "$code"
 
+# ---------------------------------------------------------------------------
+# Wait for hello-worker to register (pool=hello-pack) before job submission
+# ---------------------------------------------------------------------------
+bold "[setup] Waiting for hello-worker heartbeat"
+WORKER_READY=false
+for _ in $(seq 1 60); do
+  if curl -s "$GW/workers" -H "X-API-Key: $API_KEY" -H "X-Tenant-ID: ${TENANT_ID}" 2>/dev/null \
+    | jq -e '[.[] | select(.pool == "hello-pack")] | length > 0' >/dev/null 2>&1; then
+    WORKER_READY=true
+    break
+  fi
+  sleep 0.5
+done
+if [ "$WORKER_READY" = "true" ]; then
+  green "  hello-worker registered (pool=hello-pack)"
+else
+  yellow "  WARNING: hello-worker not detected after 30s — Phase 4 may fail"
+fi
+
 # =============================================================================
 bold ""
 bold "=== PHASE 4: Job Submission Flow ==="
@@ -321,6 +356,29 @@ if [ -n "$JOB_ID" ]; then
     PASS=$((PASS+1))
   else
     yellow "  SKIP: Job not in listing (may have moved to DLQ)"
+    SKIP=$((SKIP+1))
+  fi
+else
+  yellow "  SKIP: No job ID"
+  SKIP=$((SKIP+1))
+fi
+
+bold "4.4 Job reaches SUCCEEDED state"
+if [ -n "$JOB_ID" ]; then
+  JOB_DONE=false
+  for _ in $(seq 1 30); do
+    state=$(curl -s "$BASE/jobs/$JOB_ID" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" | jq -r '.status // .state // ""')
+    if [[ "$state" == "SUCCEEDED" || "$state" == "succeeded" ]]; then
+      JOB_DONE=true
+      break
+    fi
+    sleep 0.5
+  done
+  if [ "$JOB_DONE" = "true" ]; then
+    green "  PASS: Job $JOB_ID reached SUCCEEDED"
+    PASS=$((PASS+1))
+  else
+    yellow "  SKIP: Job $JOB_ID in state '$state' after 15s"
     SKIP=$((SKIP+1))
   fi
 else
@@ -419,25 +477,25 @@ bold ""
 bold "=== PHASE 7: Safety Kernel ==="
 # =============================================================================
 
-bold "7.1 Safety evaluate via gateway"
-SAFETY_BODY='{"capabilities":["shell.exec"],"risk_tags":["dangerous"],"metadata":{}}'
-body=$(curl -s -X POST "$BASE/safety/evaluate" \
+bold "7.1 Policy evaluate via gateway"
+SAFETY_BODY='{"topic":"job.default","capabilities":["shell.exec"],"risk_tags":["dangerous"],"metadata":{}}'
+body=$(curl -s -X POST "$BASE/policy/evaluate" \
   -H "$AUTH_HEADER" \
   -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d "$SAFETY_BODY")
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/safety/evaluate" \
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/policy/evaluate" \
   -H "$AUTH_HEADER" \
   -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
   -d "$SAFETY_BODY")
 
 if [ "$code" = "200" ] || [ "$code" = "201" ]; then
-  green "  PASS: POST /safety/evaluate (HTTP $code)"
+  green "  PASS: POST /policy/evaluate (HTTP $code)"
   PASS=$((PASS+1))
   check_body "Safety decision returned" "decision" "$body"
 else
-  yellow "  SKIP: POST /safety/evaluate ($code) — endpoint may not exist via HTTP"
+  yellow "  SKIP: POST /policy/evaluate ($code) — endpoint may not exist via HTTP"
   SKIP=$((SKIP+1))
 fi
 

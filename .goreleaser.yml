@@ -1,0 +1,199 @@
+version: 2
+
+project_name: cordum
+
+builds:
+  - id: cordum-api-gateway
+    main: ./cmd/cordum-api-gateway
+    binary: cordum-api-gateway
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/cordum/cordum/core/infra/buildinfo.Version={{ .Version }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Commit={{ .Commit }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Date={{ .Date }}
+
+  - id: cordum-context-engine
+    main: ./cmd/cordum-context-engine
+    binary: cordum-context-engine
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/cordum/cordum/core/infra/buildinfo.Version={{ .Version }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Commit={{ .Commit }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Date={{ .Date }}
+
+  - id: cordum-safety-kernel
+    main: ./cmd/cordum-safety-kernel
+    binary: cordum-safety-kernel
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/cordum/cordum/core/infra/buildinfo.Version={{ .Version }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Commit={{ .Commit }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Date={{ .Date }}
+
+  - id: cordum-scheduler
+    main: ./cmd/cordum-scheduler
+    binary: cordum-scheduler
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/cordum/cordum/core/infra/buildinfo.Version={{ .Version }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Commit={{ .Commit }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Date={{ .Date }}
+
+  - id: cordum-workflow-engine
+    main: ./cmd/cordum-workflow-engine
+    binary: cordum-workflow-engine
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/cordum/cordum/core/infra/buildinfo.Version={{ .Version }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Commit={{ .Commit }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Date={{ .Date }}
+
+  - id: cordum-mcp
+    main: ./cmd/cordum-mcp
+    binary: cordum-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/cordum/cordum/core/infra/buildinfo.Version={{ .Version }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Commit={{ .Commit }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Date={{ .Date }}
+
+  - id: cordumctl
+    main: ./cmd/cordumctl
+    binary: cordumctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/cordum/cordum/core/infra/buildinfo.Version={{ .Version }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Commit={{ .Commit }}
+        -X github.com/cordum/cordum/core/infra/buildinfo.Date={{ .Date }}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs(\\(.+\\))?:"
+      - "^test(\\(.+\\))?:"
+      - "^chore(\\(.+\\))?:"
+  groups:
+    - title: Features
+      regexp: "^feat(\\(.+\\))?:"
+      order: 0
+    - title: Fixes
+      regexp: "^fix(\\(.+\\))?:"
+      order: 1
+    - title: Other
+      order: 999
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+release:
+  draft: false
+  prerelease: auto

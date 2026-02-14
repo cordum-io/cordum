@@ -815,3 +815,75 @@ func TestWorker_HeartbeatEmission(t *testing.T) {
 		t.Errorf("expected max parallel 3, got %d", lastHeartbeat.GetMaxParallelJobs())
 	}
 }
+
+func TestWorker_HeartbeatFailureTracking(t *testing.T) {
+	_, natsURL := startTestNATS(t)
+
+	w, err := NewWorker(Config{
+		Type:           "hb-fail-test",
+		NatsURL:        natsURL,
+		WorkerID:       "hb-fail-worker",
+		HeartbeatEvery: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewWorker failed: %v", err)
+	}
+	defer w.Close()
+
+	// Verify initial consecutiveHBFailures is 0
+	if atomic.LoadInt32(&w.consecutiveHBFailures) != 0 {
+		t.Fatalf("expected 0 initial heartbeat failures, got %d", w.consecutiveHBFailures)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = w.Run(ctx, func(ctx context.Context, req *agentv1.JobRequest) (*agentv1.JobResult, error) {
+			return &agentv1.JobResult{JobId: req.GetJobId(), Status: agentv1.JobStatus_JOB_STATUS_SUCCEEDED}, nil
+		})
+	}()
+
+	// Let a few heartbeats succeed
+	time.Sleep(200 * time.Millisecond)
+
+	// After successful heartbeats, counter should be 0
+	if failures := atomic.LoadInt32(&w.consecutiveHBFailures); failures != 0 {
+		t.Errorf("expected 0 heartbeat failures after successful beats, got %d", failures)
+	}
+}
+
+func TestWorker_HeartbeatFailureCounter_ResetOnSuccess(t *testing.T) {
+	// Directly test that the consecutiveHBFailures field resets
+	_, natsURL := startTestNATS(t)
+
+	w, err := NewWorker(Config{
+		Type:           "hb-reset-test",
+		NatsURL:        natsURL,
+		WorkerID:       "hb-reset-worker",
+		HeartbeatEvery: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewWorker failed: %v", err)
+	}
+	defer w.Close()
+
+	// Simulate previous failures
+	atomic.StoreInt32(&w.consecutiveHBFailures, 5)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = w.Run(ctx, func(ctx context.Context, req *agentv1.JobRequest) (*agentv1.JobResult, error) {
+			return &agentv1.JobResult{JobId: req.GetJobId(), Status: agentv1.JobStatus_JOB_STATUS_SUCCEEDED}, nil
+		})
+	}()
+
+	// Wait for heartbeat to succeed and reset counter
+	time.Sleep(200 * time.Millisecond)
+
+	if failures := atomic.LoadInt32(&w.consecutiveHBFailures); failures != 0 {
+		t.Errorf("expected heartbeat failures to reset to 0 after successful publish, got %d", failures)
+	}
+}

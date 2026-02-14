@@ -27,7 +27,40 @@ export type JobStatus =
   | "cancelled"
   | "approval_required"
   | "denied"
-  | "timeout";
+  | "timeout"
+  | "output_quarantined";
+
+export type OutputDecision = "ALLOW" | "QUARANTINE" | "REDACT";
+
+export interface OutputFinding {
+  type: string;
+  severity: string;
+  detail: string;
+  scanner?: string;
+  confidence?: number;
+  matched_pattern?: string;
+  offset?: number;
+  length?: number;
+}
+
+export interface OutputSafetyRecord {
+  decision: OutputDecision;
+  reason?: string;
+  rule_id?: string;
+  findings?: OutputFinding[];
+  phase?: string;
+  policy_snapshot?: string;
+  redacted_ptr?: string;
+  original_ptr?: string;
+}
+
+export interface OutputPolicyRule {
+  id: string;
+  match: Record<string, unknown>;
+  decision: OutputDecision;
+  reason?: string;
+  enabled?: boolean;
+}
 
 export interface SafetyDecision {
   type: "allow" | "deny" | "require_approval" | "throttle";
@@ -66,6 +99,99 @@ export interface Job {
   errorStatus?: string;
   errorCode?: string;
   lastState?: string;
+  output_safety?: OutputSafetyRecord;
+}
+
+export type JobPriority = "low" | "normal" | "high" | "critical";
+
+export interface RemediateJobInput {
+  topic?: string;
+  prompt?: string;
+  priority?: JobPriority;
+  capability?: string;
+  requires?: string[];
+  risk_tags?: string[];
+  labels?: Record<string, string>;
+  reason: string;
+}
+
+export interface RemediateJobResponse {
+  job_id: string;
+  trace_id: string;
+}
+
+export interface SubmitJobInput {
+  topic: string;
+  prompt: string;
+  priority?: JobPriority;
+  capability?: string;
+  requires?: string[];
+  risk_tags?: string[];
+  labels?: Record<string, string>;
+  adapter_id?: string;
+  memory_id?: string;
+  pack_id?: string;
+  idempotency_key?: string;
+  max_total_tokens?: number;
+  tags?: string[];
+  context?: Record<string, unknown>;
+}
+
+export interface SubmitJobResponse {
+  job_id: string;
+  trace_id: string;
+}
+
+// ---------------------------------------------------------------------------
+// Memory + Artifacts
+// ---------------------------------------------------------------------------
+
+export type MemoryEntryRole =
+  | "system"
+  | "user"
+  | "assistant"
+  | "agent"
+  | "tool"
+  | "unknown";
+
+export interface MemoryEntry {
+  id: string;
+  role: MemoryEntryRole;
+  content: string;
+  timestamp?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryPayload {
+  pointer: string;
+  key: string;
+  kind: "context" | "result" | "memory" | string;
+  size_bytes: number;
+  base64: string;
+  text?: string;
+  json?: unknown;
+  entries?: MemoryEntry[];
+}
+
+export interface ArtifactMetadata {
+  content_type?: string;
+  size_bytes?: number;
+  retention?: string;
+  labels?: Record<string, string>;
+}
+
+export interface ArtifactPayload {
+  artifact_ptr: string;
+  content_base64: string;
+  metadata: ArtifactMetadata;
+}
+
+export interface JobArtifactRef {
+  ptr: string;
+  contentType?: string;
+  sizeBytes?: number;
+  timestamp?: string;
+  source?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +613,17 @@ export interface AuthConfig {
   require_rbac?: boolean;
   require_principal?: boolean;
   default_tenant: string;
-  oauth_enabled?: boolean;
+  oidc_enabled?: boolean;
+  oidc_issuer?: string;
+}
+
+export interface ChangePasswordPayload {
+  current_password: string;
+  new_password: string;
+}
+
+export interface ResetUserPasswordPayload {
+  password: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -527,6 +663,47 @@ export interface Environment {
   config: Record<string, unknown>;
   lastPromotedAt?: string;
   lastDeployedAt?: string;
+}
+
+// ---------------------------------------------------------------------------
+// MCP
+// ---------------------------------------------------------------------------
+
+export type McpTransport = "http" | "stdio" | "both";
+
+export interface McpConfig {
+  enabled: boolean;
+  transport: McpTransport;
+  port: number;
+  requireAuth: boolean;
+  allowedOrigins: string[];
+  apiKeyMasked?: string;
+  tools: Record<string, { enabled: boolean }>;
+  resources: Record<string, { enabled: boolean }>;
+}
+
+export interface McpTool {
+  name: string;
+  description: string;
+  enabled: boolean;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface McpResource {
+  uri: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  mimeType: string;
+}
+
+export interface McpStatus {
+  running: boolean;
+  connectedClients: number;
+  uptime: number;
+  transport?: string;
+  enabledTools?: number;
+  enabledResources?: number;
 }
 
 // ---------------------------------------------------------------------------

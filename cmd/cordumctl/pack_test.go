@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -247,5 +248,84 @@ func TestBuildDeletePatch(t *testing.T) {
 	topics, ok := out["topics"].(map[string]any)
 	if !ok || topics["job.pack1.ok"] == nil {
 		t.Fatalf("expected delete patch for topics")
+	}
+}
+
+func TestLoadPackRegistryInitializesNilDataMap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/config" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"scope":"system","scope_id":"packs","data":null}`))
+	}))
+	defer srv.Close()
+
+	client := &restClient{baseURL: srv.URL, httpClient: srv.Client()}
+	records, doc, err := loadPackRegistry(context.Background(), client)
+	if err != nil {
+		t.Fatalf("loadPackRegistry returned error: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("expected empty records map, got %d entries", len(records))
+	}
+	if doc == nil {
+		t.Fatalf("expected config doc")
+	}
+	if doc.Data == nil {
+		t.Fatalf("expected doc.Data to be initialized, got nil")
+	}
+}
+
+func TestUpdatePackRegistryHandlesNilConfigData(t *testing.T) {
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"scope":"system","scope_id":"packs","data":null}`))
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted config: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer srv.Close()
+
+	client := &restClient{baseURL: srv.URL, httpClient: srv.Client()}
+	err := updatePackRegistry(context.Background(), client, packRecord{
+		ID:      "pack.demo",
+		Version: "1.0.0",
+		Status:  "ACTIVE",
+	})
+	if err != nil {
+		t.Fatalf("updatePackRegistry returned error: %v", err)
+	}
+
+	if posted == nil {
+		t.Fatalf("expected setConfig POST body")
+	}
+	data, ok := posted["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data map in POST body, got %T", posted["data"])
+	}
+	installed, ok := data["installed"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected installed map in data, got %T", data["installed"])
+	}
+	record, ok := installed["pack.demo"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected posted record for pack.demo, got %T", installed["pack.demo"])
+	}
+	if got := record["id"]; got != "pack.demo" {
+		t.Fatalf("expected posted id pack.demo, got %v", got)
 	}
 }

@@ -52,6 +52,16 @@ const (
 	maxJSRedeliveries = 100
 )
 
+func natsMaxAckPending() int {
+	const defaultMaxAckPending = 2048
+	if raw := strings.TrimSpace(os.Getenv("NATS_MAX_ACK_PENDING")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultMaxAckPending
+}
+
 var (
 	errNilBus     = errors.New("nats bus not initialized")
 	errNilPacket  = errors.New("nil bus packet")
@@ -177,7 +187,7 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 			nats.ManualAck(),
 			nats.AckExplicit(),
 			nats.AckWait(b.ackWait),
-			nats.MaxAckPending(2048),
+			nats.MaxAckPending(natsMaxAckPending()),
 			nats.MaxDeliver(maxJSRedeliveries),
 		}
 		if durable := durableName(subject, queue); durable != "" {

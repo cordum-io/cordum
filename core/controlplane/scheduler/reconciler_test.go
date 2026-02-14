@@ -19,6 +19,7 @@ type fakeReconcileStore struct {
 	tenants        map[string]string
 	teams          map[string]string
 	safety         map[string]SafetyDecisionRecord
+	output         map[string]OutputSafetyRecord
 	dead           map[string]int64
 	attempts       map[string]int
 	locks          map[string]time.Time
@@ -33,6 +34,7 @@ func newFakeReconcileStore() *fakeReconcileStore {
 		tenants:        make(map[string]string),
 		teams:          make(map[string]string),
 		safety:         make(map[string]SafetyDecisionRecord),
+		output:         make(map[string]OutputSafetyRecord),
 		dead:           make(map[string]int64),
 		attempts:       make(map[string]int),
 		locks:          make(map[string]time.Time),
@@ -209,6 +211,19 @@ func (s *fakeReconcileStore) GetFailureReason(_ context.Context, jobID string) (
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.failureReasons[jobID], nil
+}
+
+func (s *fakeReconcileStore) SetOutputDecision(_ context.Context, jobID string, record OutputSafetyRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.output[jobID] = record
+	return nil
+}
+
+func (s *fakeReconcileStore) GetOutputDecision(_ context.Context, jobID string) (OutputSafetyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.output[jobID], nil
 }
 
 func (s *fakeReconcileStore) CancelJob(_ context.Context, jobID string) (JobState, error) {

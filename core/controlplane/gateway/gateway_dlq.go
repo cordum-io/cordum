@@ -251,7 +251,9 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = s.dlqStore.Delete(r.Context(), jobID)
+	if err := s.dlqStore.Delete(r.Context(), jobID); err != nil {
+		slog.Error("dlq delete after retry failed", "job_id", jobID, "error", err) // #nosec -- job id is validated and used for diagnostics.
+	}
 	dlqRetryTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
 	s.appendAuditEntryNamed(r.Context(), "retry", "dlq", jobID, dlqRetryTopic, policyActorID(r), policyRole(r), "retry dlq entry "+jobID)
 	w.Header().Set("Content-Type", "application/json")

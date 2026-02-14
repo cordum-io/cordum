@@ -5,7 +5,8 @@ import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
-import { useSimulatePolicy, type SimulateResult } from "../../hooks/usePolicies";
+import { useSimulatePolicy, useExplainPolicy, type SimulateResult } from "../../hooks/usePolicies";
+import { ExplainResultPanel } from "./ExplainResult";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../hooks/useAuth";
 
@@ -406,13 +407,16 @@ function ResultSummary({
 // PolicySimulator
 // ---------------------------------------------------------------------------
 
+export type SimulatorMode = "simulate" | "explain";
+
 interface PolicySimulatorProps {
   bundleId: string;
+  mode?: SimulatorMode;
   initialCapabilities?: string[];
   initialRiskTags?: string[];
 }
 
-export function PolicySimulator({ bundleId, initialCapabilities, initialRiskTags }: PolicySimulatorProps) {
+export function PolicySimulator({ bundleId, mode = "simulate", initialCapabilities, initialRiskTags }: PolicySimulatorProps) {
   const { tenantId, user, principalId: storedPrincipalId } = useAuth();
   const principalId =
     storedPrincipalId?.trim() || user?.id?.trim() || undefined;
@@ -424,6 +428,7 @@ export function PolicySimulator({ bundleId, initialCapabilities, initialRiskTags
   const [formError, setFormError] = useState("");
 
   const simulate = useSimulatePolicy();
+  const explain = useExplainPolicy();
 
   // What-if state
   const [disabledRuleIds, setDisabledRuleIds] = useState<string[]>([]);
@@ -448,23 +453,26 @@ export function PolicySimulator({ bundleId, initialCapabilities, initialRiskTags
       }
     }
 
-    simulate.mutate({
-      bundleId,
-      request: {
-        topic: trimmedTopic,
-        tenant: tenantId || undefined,
-        principal_id: principalId,
+    const requestBody = {
+      topic: trimmedTopic,
+      tenant: tenantId || undefined,
+      principal_id: principalId,
+      labels: meta,
+      meta: {
+        actor_id: principalId,
+        capability: capability.trim() || undefined,
+        risk_tags: riskTags,
+        requires,
         labels: meta,
-        meta: {
-          actor_id: principalId,
-          capability: capability.trim() || undefined,
-          risk_tags: riskTags,
-          requires,
-          labels: meta,
-        },
       },
-    });
-  }, [bundleId, topic, tenantId, principalId, capability, requires, riskTags, metadata, simulate]);
+    };
+
+    if (mode === "explain") {
+      explain.mutate({ request: requestBody });
+    } else {
+      simulate.mutate({ bundleId, request: requestBody });
+    }
+  }, [bundleId, topic, tenantId, principalId, capability, requires, riskTags, metadata, simulate, explain, mode]);
 
   const result = simulate.data;
 
@@ -541,6 +549,7 @@ export function PolicySimulator({ bundleId, initialCapabilities, initialRiskTags
     return () => {
       if (whatIfDebounceRef.current) clearTimeout(whatIfDebounceRef.current);
     };
+    // Intentionally omit disabledRuleIds from deps — ref pattern avoids re-triggering simulation
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabledRuleIds]);
 
@@ -561,10 +570,12 @@ export function PolicySimulator({ bundleId, initialCapabilities, initialRiskTags
       <Card>
         <div className="space-y-4">
           <h3 className="font-display text-lg font-semibold text-ink">
-            Simulate Policy Evaluation
+            {mode === "explain" ? "Explain Policy Decision" : "Simulate Policy Evaluation"}
           </h3>
           <p className="text-xs text-muted">
-            Test how a job with the given attributes would be evaluated.
+            {mode === "explain"
+              ? "Shows the full decision reasoning chain \u2014 which rules were evaluated, in what order, and why each passed or failed."
+              : "Test how a job with the given attributes would be evaluated."}
           </p>
 
           <div>
@@ -608,25 +619,37 @@ export function PolicySimulator({ bundleId, initialCapabilities, initialRiskTags
           <div className="flex items-center gap-3">
             <Button
               onClick={handleTest}
-              disabled={simulate.isPending}
+              disabled={mode === "explain" ? explain.isPending : simulate.isPending}
             >
               <Zap className="h-4 w-4" />
-              {simulate.isPending ? "Evaluating..." : "Test"}
+              {mode === "explain"
+                ? explain.isPending ? "Explaining..." : "Explain"
+                : simulate.isPending ? "Evaluating..." : "Test"}
             </Button>
             {formError && (
               <span className="text-xs text-danger">{formError}</span>
             )}
-            {simulate.isError && (
+            {simulate.isError && mode === "simulate" && (
               <span className="text-xs text-danger">
                 {simulate.error.message}
+              </span>
+            )}
+            {explain.isError && mode === "explain" && (
+              <span className="text-xs text-danger">
+                {explain.error.message}
               </span>
             )}
           </div>
         </div>
       </Card>
 
-      {/* Results */}
-      {result && (
+      {/* Explain results */}
+      {mode === "explain" && explain.data && (
+        <ExplainResultPanel result={explain.data} />
+      )}
+
+      {/* Simulate results */}
+      {mode === "simulate" && result && (
         <>
           <ResultSummary
             result={result}

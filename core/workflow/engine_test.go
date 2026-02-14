@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -861,5 +862,353 @@ func TestScheduleAfterZeroDelayIgnored(t *testing.T) {
 	engine.scheduleAfter(-1*time.Second, "wf", "run")
 	if n := engine.PendingTimers(); n != 0 {
 		t.Fatalf("expected 0 timers for zero/negative delay, got %d", n)
+	}
+}
+
+// --- on_error handler tests ---
+
+func TestOnError_RedirectsToHandlerOnFailure(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wfDef := &Workflow{
+		ID:    "wf-onerr",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"main": {
+				ID:      "main",
+				Type:    StepTypeWorker,
+				Topic:   "job.default",
+				OnError: "handler",
+			},
+			"handler": {
+				ID:    "handler",
+				Type:  StepTypeWorker,
+				Topic: "job.default",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-onerr",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// Fail the main step.
+	engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:        "run-onerr:main@1",
+		Status:       pb.JobStatus_JOB_STATUS_FAILED,
+		ErrorMessage: "something broke",
+	})
+
+	// Run should NOT be failed yet — on_error handler should be dispatched.
+	mid, _ := store.GetRun(context.Background(), run.ID)
+	if mid.Status == RunStatusFailed {
+		t.Fatal("run should not be FAILED while on_error handler is active")
+	}
+	if mid.Status != RunStatusRunning {
+		t.Fatalf("expected run RUNNING, got %s", mid.Status)
+	}
+	// Handler step should be dispatched (RUNNING) — scheduleReady fires within HandleJobResult.
+	if mid.Steps["handler"] == nil {
+		t.Fatal("expected handler step to exist")
+	}
+	handlerStatus := mid.Steps["handler"].Status
+	if handlerStatus != StepStatusPending && handlerStatus != StepStatusRunning {
+		t.Fatalf("expected handler step PENDING or RUNNING, got %s", handlerStatus)
+	}
+
+	// Check timeline for redirect event.
+	events, _ := store.ListTimelineEvents(context.Background(), run.ID, 50)
+	if !hasTimelineEvent(events, "step_error_redirect") {
+		t.Fatal("expected step_error_redirect timeline event")
+	}
+
+	// Let the handler succeed.
+	engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:  "run-onerr:handler@1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	})
+
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusSucceeded {
+		t.Fatalf("expected run SUCCEEDED after on_error handler, got %s", final.Status)
+	}
+}
+
+func TestOnError_NotTriggeredOnSuccess(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wfDef := &Workflow{
+		ID:    "wf-onerr-ok",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"main": {
+				ID:      "main",
+				Type:    StepTypeWorker,
+				Topic:   "job.default",
+				OnError: "handler",
+			},
+			"handler": {
+				ID:    "handler",
+				Type:  StepTypeWorker,
+				Topic: "job.default",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-onerr-ok",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// Main step succeeds — handler should NOT be activated.
+	engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:  "run-onerr-ok:main@1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	})
+
+	final, _ := store.GetRun(context.Background(), run.ID)
+	// Handler should not have been activated — run should still resolve.
+	// Since handler has no deps and main succeeded, handler might get dispatched normally.
+	// But the key test: no step_error_redirect event.
+	events, _ := store.ListTimelineEvents(context.Background(), run.ID, 50)
+	if hasTimelineEvent(events, "step_error_redirect") {
+		t.Fatal("step_error_redirect should NOT fire when main step succeeds")
+	}
+	_ = final
+}
+
+func TestOnError_HandlerFailsCausesRunFailure(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wfDef := &Workflow{
+		ID:    "wf-onerr-fail",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"main": {
+				ID:      "main",
+				Type:    StepTypeWorker,
+				Topic:   "job.default",
+				OnError: "handler",
+			},
+			"handler": {
+				ID:    "handler",
+				Type:  StepTypeWorker,
+				Topic: "job.default",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-onerr-fail",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// Fail the main step.
+	engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:        "run-onerr-fail:main@1",
+		Status:       pb.JobStatus_JOB_STATUS_FAILED,
+		ErrorMessage: "main broke",
+	})
+
+	// Now fail the handler too.
+	engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:        "run-onerr-fail:handler@1",
+		Status:       pb.JobStatus_JOB_STATUS_FAILED,
+		ErrorMessage: "handler also broke",
+	})
+
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusFailed {
+		t.Fatalf("expected run FAILED when on_error handler itself fails, got %s", final.Status)
+	}
+}
+
+// --- Crash-recovery / persist-before-dispatch tests ---
+
+// failingBus always returns an error on Publish.
+type failingBus struct {
+	err error
+}
+
+func (b *failingBus) Publish(string, *pb.BusPacket) error { return b.err }
+func (b *failingBus) Subscribe(string, string, func(*pb.BusPacket) error) error {
+	return nil
+}
+
+func TestCrashRecovery_DispatchFailRevertsStepToPending(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &failingBus{err: fmt.Errorf("NATS down")}
+	engine := NewEngine(store, bus)
+
+	wfDef := &Workflow{
+		ID:    "wf-crash",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step1": {
+				ID:    "step1",
+				Type:  StepTypeWorker,
+				Topic: "job.default",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-crash",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// StartRun calls scheduleReady which will try to publish and fail.
+	_ = engine.StartRun(context.Background(), wfDef.ID, run.ID)
+
+	// Step should be reverted to PENDING (not stuck as RUNNING or FAILED).
+	final, _ := store.GetRun(context.Background(), run.ID)
+	sr := final.Steps["step1"]
+	if sr != nil && sr.Status == StepStatusRunning {
+		t.Fatal("step should NOT be stuck as RUNNING after dispatch failure")
+	}
+	// Step may be nil (never set) or PENDING.
+	if sr != nil && sr.Status != StepStatusPending && sr.Status != "" {
+		t.Fatalf("expected step PENDING or unset after dispatch failure, got %s", sr.Status)
+	}
+}
+
+func TestCrashRecovery_SuccessfulDispatchPersistsRunningState(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wfDef := &Workflow{
+		ID:    "wf-persist",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step1": {
+				ID:    "step1",
+				Type:  StepTypeWorker,
+				Topic: "job.default",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-persist",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// Step should be persisted as RUNNING with a JobID.
+	final, _ := store.GetRun(context.Background(), run.ID)
+	sr := final.Steps["step1"]
+	if sr == nil {
+		t.Fatal("expected step1 to be present in run")
+	}
+	if sr.Status != StepStatusRunning {
+		t.Fatalf("expected step RUNNING, got %s", sr.Status)
+	}
+	if sr.JobID == "" {
+		t.Fatal("expected step to have a JobID assigned")
+	}
+
+	// Verify the dispatched job has an idempotency key.
+	msgs := bus.Snapshot()
+	if len(msgs) == 0 {
+		t.Fatal("expected at least one published message")
+	}
+	req := msgs[0].packet.GetJobRequest()
+	if req == nil {
+		t.Fatal("expected job request in published packet")
+	}
+	if req.Meta == nil || req.Meta.IdempotencyKey == "" {
+		t.Fatal("expected idempotency key on dispatched job request")
+	}
+	expected := fmt.Sprintf("wf:%s:step1:1", run.ID)
+	if req.Meta.IdempotencyKey != expected {
+		t.Fatalf("expected idempotency key %q, got %q", expected, req.Meta.IdempotencyKey)
 	}
 }

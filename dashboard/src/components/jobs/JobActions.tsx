@@ -17,6 +17,7 @@ const TERMINAL_STATES: Set<JobStatus> = new Set([
   "cancelled",
   "denied",
   "timeout",
+  "output_quarantined",
 ]);
 
 const RETRYABLE_STATES: Set<JobStatus> = new Set([
@@ -27,7 +28,6 @@ const RETRYABLE_STATES: Set<JobStatus> = new Set([
 
 const REMEDIABLE_STATES: Set<JobStatus> = new Set([
   "approval_required",
-  "denied",
 ]);
 
 type DialogAction = "cancel" | "retry" | "remediate" | null;

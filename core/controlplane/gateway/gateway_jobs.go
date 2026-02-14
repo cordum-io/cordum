@@ -28,6 +28,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const workerHeartbeatTTL = 30 * time.Second
+
+// statusPipelineSampleLimit bounds the status pipeline aggregation scan cost.
+const statusPipelineSampleLimit = int64(500)
+
 // --- Handlers ---
 
 func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
@@ -35,14 +40,40 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusForbidden, err.Error())
 		return
 	}
-	s.workerMu.RLock()
-	out := make([]*pb.Heartbeat, 0, len(s.workers))
-	for _, hb := range s.workers {
-		out = append(out, hb)
-	}
-	s.workerMu.RUnlock()
+	out := s.activeWorkersSnapshot(time.Now().UTC())
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, out)
+}
+
+func (s *server) activeWorkersSnapshot(now time.Time) []*pb.Heartbeat {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	staleBefore := now.Add(-workerHeartbeatTTL)
+
+	s.workerMu.Lock()
+	defer s.workerMu.Unlock()
+
+	out := make([]*pb.Heartbeat, 0, len(s.workers))
+	for id, hb := range s.workers {
+		if hb == nil {
+			delete(s.workers, id)
+			if s.workerSeen != nil {
+				delete(s.workerSeen, id)
+			}
+			continue
+		}
+		// Backward compatibility: if last-seen is absent, retain the worker.
+		if s.workerSeen != nil {
+			if seen, ok := s.workerSeen[id]; ok && !seen.IsZero() && seen.Before(staleBefore) {
+				delete(s.workers, id)
+				delete(s.workerSeen, id)
+				continue
+			}
+		}
+		out = append(out, hb)
+	}
+	return out
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -52,9 +83,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		uptimeSeconds = int64(now.Sub(s.started).Seconds())
 	}
 
-	s.workerMu.RLock()
-	workersCount := len(s.workers)
-	s.workerMu.RUnlock()
+	workersCount := len(s.activeWorkersSnapshot(now))
 
 	natsConnected := false
 	natsStatus := "UNKNOWN"
@@ -97,6 +126,11 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		redisInfo["error"] = redisErr
 	}
 
+	tenantID := tenantFromRequest(r)
+	if resolvedTenant, err := s.resolveTenant(r, ""); err == nil {
+		tenantID = resolvedTenant
+	}
+
 	resp := map[string]any{
 		"time":           now.Format(time.RFC3339),
 		"uptime_seconds": uptimeSeconds,
@@ -105,11 +139,12 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"commit":  buildinfo.Commit,
 			"date":    buildinfo.Date,
 		},
-		"nats":    natsInfo,
-		"redis":   redisInfo,
+		"nats":  natsInfo,
+		"redis": redisInfo,
 		"workers": map[string]any{
 			"count": workersCount,
 		},
+		"pipeline": s.statusPipeline(r.Context(), tenantID),
 	}
 	if provider, ok := s.auth.(LicenseInfoProvider); ok {
 		if info := provider.LicenseInfo(); info != nil {
@@ -119,6 +154,54 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, resp)
+}
+
+func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string]any {
+	pipeline := map[string]any{
+		"pending":    int64(0),
+		"dispatched": int64(0),
+		"running":    int64(0),
+		"succeeded":  int64(0),
+		"failed":     int64(0),
+	}
+	if s == nil || s.jobStore == nil {
+		return pipeline
+	}
+
+	listCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	jobs, err := s.jobStore.ListRecentJobs(listCtx, statusPipelineSampleLimit)
+	if err != nil {
+		logging.Warn("api-gateway", "status pipeline list failed", "error", err)
+		return pipeline
+	}
+
+	tenantID = strings.TrimSpace(tenantID)
+	var pending, dispatched, running, succeeded, failed int64
+	for _, job := range jobs {
+		if tenantID != "" && strings.TrimSpace(job.Tenant) != tenantID {
+			continue
+		}
+		switch job.State {
+		case scheduler.JobStatePending, scheduler.JobStateApproval, scheduler.JobStateScheduled:
+			pending++
+		case scheduler.JobStateDispatched:
+			dispatched++
+		case scheduler.JobStateRunning:
+			running++
+		case scheduler.JobStateSucceeded:
+			succeeded++
+		case scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout, scheduler.JobStateDenied, scheduler.JobStateQuarantined:
+			failed++
+		}
+	}
+
+	pipeline["pending"] = pending
+	pipeline["dispatched"] = dispatched
+	pipeline["running"] = running
+	pipeline["succeeded"] = succeeded
+	pipeline["failed"] = failed
+	return pipeline
 }
 
 func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
@@ -223,31 +306,75 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, err := s.jobStore.GetState(r.Context(), id)
-	if err != nil {
+	// Single HGETALL replaces 15+ individual Redis calls.
+	meta, err := s.jobStore.GetAllMeta(r.Context(), id)
+	if err != nil || len(meta) == 0 {
 		writeErrorJSON(w, http.StatusNotFound, "job not found")
 		return
 	}
-	safetyRecord, _ := s.jobStore.GetSafetyDecision(r.Context(), id)
-	approvalRecord, _ := s.jobStore.GetApprovalRecord(r.Context(), id)
-	topic, _ := s.jobStore.GetTopic(r.Context(), id)
-	tenant, _ := s.jobStore.GetTenant(r.Context(), id)
+	state := scheduler.JobState(meta["state"])
+	if state == "" {
+		writeErrorJSON(w, http.StatusNotFound, "job not found")
+		return
+	}
+
+	topic := meta["topic"]
+	tenant := meta["tenant"]
 	if err := s.requireTenantAccess(r, tenant); err != nil {
 		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 		return
 	}
-	actorID, _ := s.jobStore.GetActorID(r.Context(), id)
-	actorType, _ := s.jobStore.GetActorType(r.Context(), id)
-	idempotencyKey, _ := s.jobStore.GetIdempotencyKey(r.Context(), id)
-	capability, _ := s.jobStore.GetCapability(r.Context(), id)
-	packID, _ := s.jobStore.GetPackID(r.Context(), id)
-	riskTags, _ := s.jobStore.GetRiskTags(r.Context(), id)
-	requires, _ := s.jobStore.GetRequires(r.Context(), id)
-	attempts, _ := s.jobStore.GetAttempts(r.Context(), id)
+	actorID := meta["actor_id"]
+	actorType := meta["actor_type"]
+	idempotencyKey := meta["idempotency_key"]
+	capability := meta["capability"]
+	packID := meta["pack_id"]
+	attemptVal, _ := strconv.Atoi(meta["attempts"])
+	attempts := attemptVal
+
+	var riskTags []string
+	if raw := meta["risk_tags"]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &riskTags)
+	}
+	var requires []string
+	if raw := meta["requires"]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &requires)
+	}
+
+	// Build safety record from hash fields.
+	safetyRecord := scheduler.SafetyDecisionRecord{
+		Decision:         scheduler.SafetyDecision(meta["safety_decision"]),
+		Reason:           meta["safety_reason"],
+		RuleID:           meta["safety_rule_id"],
+		PolicySnapshot:   meta["safety_snapshot"],
+		ApprovalRequired: meta["safety_approval_required"] == "true",
+		ApprovalRef:      meta["safety_approval_ref"],
+		JobHash:          meta["safety_job_hash"],
+	}
+	if raw := meta["safety_remediations"]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &safetyRecord.Remediations)
+	}
+
+	// Build approval record from hash fields.
+	approvalRecord := memory.ApprovalRecord{
+		ApprovedBy:     meta["approval_by"],
+		ApprovedRole:   meta["approval_role"],
+		Reason:         meta["approval_reason"],
+		Note:           meta["approval_note"],
+		PolicySnapshot: meta["approval_policy_snapshot"],
+		JobHash:        meta["approval_job_hash"],
+	}
+	if raw := meta["approval_at"]; raw != "" {
+		if parsed, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil {
+			approvalRecord.ApprovedAt = parsed
+		}
+	}
+
+	// Output safety uses a dedicated key — separate call.
+	outputSafety, _ := s.jobStore.GetOutputSafety(r.Context(), id)
 
 	ctxPtr := memory.PointerForKey(memory.MakeContextKey(id))
-
-	resPtr, _ := s.jobStore.GetResultPtr(r.Context(), id)
+	resPtr := meta["result_ptr"]
 
 	var resultData any
 	if resPtr != "" {
@@ -266,12 +393,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	traceID := ""
-	if s.jobStore != nil {
-		if val, err := s.jobStore.GetTraceID(r.Context(), id); err == nil {
-			traceID = val
-		}
-	}
+	traceID := meta["trace_id"]
 	labels := map[string]string{}
 	workflowID := ""
 	runID := ""
@@ -340,6 +462,12 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		"workflow_id":         workflowID,
 		"run_id":              runID,
 		"step_id":             stepID,
+	}
+	if outputSafety.Decision != "" {
+		resp["output_decision"] = string(outputSafety.Decision)
+	}
+	if outputSafety.Decision != "" || outputSafety.RedactedPtr != "" || outputSafety.OriginalPtr != "" || len(outputSafety.Findings) > 0 {
+		resp["output_safety"] = outputSafety
 	}
 	if errorMessage != "" {
 		resp["error_message"] = errorMessage
@@ -830,10 +958,14 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	s.enqueueBusPacket(cancelPacket)
-	// Best-effort publish so scheduler/system listeners can observe the cancel.
-	_ = s.bus.Publish(capsdk.SubjectResult, cancelPacket)
+	// Publish cancel result so scheduler/system listeners can observe the cancel.
+	if err := s.bus.Publish(capsdk.SubjectResult, cancelPacket); err != nil {
+		logging.Error("api-gateway", "publish cancel result failed", "job_id", id, "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to publish cancel")
+		return
+	}
 
-	// Best-effort cancel broadcast to workers.
+	// Cancel broadcast to workers.
 	cancelReq := &pb.JobCancel{
 		JobId:       id,
 		Reason:      "cancelled via api",
@@ -846,7 +978,9 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
-	_ = s.bus.Publish(capsdk.SubjectCancel, cancelBusPacket)
+	if err := s.bus.Publish(capsdk.SubjectCancel, cancelBusPacket); err != nil {
+		logging.Error("api-gateway", "publish cancel broadcast failed", "job_id", id, "error", err)
+	}
 
 	cancelTopic, _ := s.jobStore.GetTopic(r.Context(), id)
 	s.appendAuditEntryNamed(r.Context(), "cancel", "job", id, cancelTopic, policyActorID(r), policyRole(r), "cancel job "+id)

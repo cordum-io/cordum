@@ -14,6 +14,7 @@ import {
   useRuns,
   useStartRun,
   useDeleteWorkflow,
+  useDeleteRuns,
 } from "../hooks/useWorkflows";
 import { RequireRole } from "../components/RequireRole";
 import { useRunStream } from "../hooks/useRunStream";
@@ -104,6 +105,8 @@ function StepsMiniBar({ steps }: { steps: WorkflowStep[] }) {
 // WorkflowDetailPage
 // ---------------------------------------------------------------------------
 
+const TERMINAL_STATUSES = new Set(["succeeded", "completed", "failed", "cancelled", "timed_out"]);
+
 export default function WorkflowDetailPage() {
   const { id, runId: urlRunId } = useParams<{ id: string; runId?: string }>();
   usePageTitle(id ? `Workflow ${id.slice(0, 8)}` : "Workflow");
@@ -114,12 +117,15 @@ export default function WorkflowDetailPage() {
   const { data: runs } = useRuns(id, { limit: 50 });
   const startRun = useStartRun();
   const deleteWorkflow = useDeleteWorkflow();
+  const deleteRuns = useDeleteRuns();
 
   // UI state
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [showDefinition, setShowDefinition] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [checkedRunIds, setCheckedRunIds] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
 
   // Live WebSocket updates for selected run's DAG
@@ -177,6 +183,38 @@ export default function WorkflowDetailPage() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [workflow]);
+
+  const toggleRunCheck = useCallback((runId: string) => {
+    setCheckedRunIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
+
+  const terminalRuns = useMemo(
+    () => runs?.filter((r) => TERMINAL_STATUSES.has(r.status)) ?? [],
+    [runs],
+  );
+
+  const toggleAllTerminal = useCallback(() => {
+    setCheckedRunIds((prev) => {
+      if (prev.size === terminalRuns.length && terminalRuns.length > 0) return new Set();
+      return new Set(terminalRuns.map((r) => r.id));
+    });
+  }, [terminalRuns]);
+
+  const handleBulkDelete = useCallback(() => {
+    if (!id || checkedRunIds.size === 0) return;
+    const inputs = Array.from(checkedRunIds).map((runId) => ({ workflowId: id, runId }));
+    deleteRuns.mutate(inputs, {
+      onSuccess: () => {
+        setCheckedRunIds(new Set());
+        setShowBulkDeleteConfirm(false);
+      },
+    });
+  }, [id, checkedRunIds, deleteRuns]);
 
   // Loading / error states
   if (isLoading) {
@@ -265,9 +303,22 @@ export default function WorkflowDetailPage() {
       {/* Section A — Run History                                           */}
       {/* ================================================================= */}
       <div>
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
-          Run History
-        </h3>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">
+            Run History
+          </h3>
+          {checkedRunIds.size > 0 && (
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => setShowBulkDeleteConfirm(true)}
+              disabled={deleteRuns.isPending}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete Selected ({checkedRunIds.size})
+            </Button>
+          )}
+        </div>
         {!runs || runs.length === 0 ? (
           <Card>
             <p className="py-4 text-center text-sm text-muted">
@@ -279,6 +330,17 @@ export default function WorkflowDetailPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-surface2/60 text-left text-xs uppercase tracking-wider text-muted">
+                  <th className="w-8 px-2 py-3">
+                    {terminalRuns.length > 0 && (
+                      <input
+                        type="checkbox"
+                        checked={checkedRunIds.size === terminalRuns.length && terminalRuns.length > 0}
+                        onChange={toggleAllTerminal}
+                        className="rounded border-border"
+                        title="Select all deletable runs"
+                      />
+                    )}
+                  </th>
                   <th className="px-4 py-3">Run ID</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Started</th>
@@ -300,6 +362,16 @@ export default function WorkflowDetailPage() {
                           : "hover:bg-surface2/40",
                       )}
                     >
+                      <td className="w-8 px-2 py-3" onClick={(e) => e.stopPropagation()}>
+                        {TERMINAL_STATUSES.has(run.status) && (
+                          <input
+                            type="checkbox"
+                            checked={checkedRunIds.has(run.id)}
+                            onChange={() => toggleRunCheck(run.id)}
+                            className="rounded border-border"
+                          />
+                        )}
+                      </td>
                       <td className="px-4 py-3 font-mono text-xs text-ink">
                         {run.id.slice(0, 8)}
                       </td>
@@ -401,6 +473,16 @@ export default function WorkflowDetailPage() {
         isPending={deleteWorkflow.isPending}
         onConfirm={handleDelete}
         onCancel={() => setShowDeleteConfirm(false)}
+      />
+      <ConfirmDialog
+        open={showBulkDeleteConfirm}
+        title={`Delete ${checkedRunIds.size} run(s)?`}
+        message="This permanently removes the selected runs and their timeline data. This cannot be undone."
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        isPending={deleteRuns.isPending}
+        onConfirm={handleBulkDelete}
+        onCancel={() => setShowBulkDeleteConfirm(false)}
       />
     </div>
   );

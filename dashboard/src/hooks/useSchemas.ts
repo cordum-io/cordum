@@ -113,3 +113,8 @@ function parseJsonSchemaFields(schema: Record<string, unknown>): SchemaField[] {
     return field;
   });
 }
+
+/** @internal exported for unit tests */
+export const __schemasInternal = {
+  parseJsonSchemaFields,
+};

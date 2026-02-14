@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronDown, ChevronUp, ListChecks } from "lucide-react";
+import { ChevronDown, ChevronUp, ListChecks, Plus } from "lucide-react";
 import { useJobs, type JobFilters } from "../hooks/useJobs";
 import { JobStatusBadge } from "../components/StatusBadge";
 import { JobFiltersBar } from "../components/jobs/JobFiltersBar";
+import { JobSubmitDrawer } from "../components/jobs/JobSubmitDrawer";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { cn } from "../lib/utils";
@@ -12,6 +13,7 @@ import { SkeletonRow } from "../components/ui/Skeleton";
 import type { Job, SafetyDecision } from "../api/types";
 import { DataFreshness } from "../components/ui/DataFreshness";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { useToastStore } from "../state/toast";
 
 // ---------------------------------------------------------------------------
 // Safety decision badge
@@ -203,10 +205,12 @@ function Pagination({
 export default function JobsPage() {
   usePageTitle("Jobs");
   const navigate = useNavigate();
+  const addToast = useToastStore((s) => s.addToast);
   const [limit, setLimit] = useState(25);
   const [cursor, setCursor] = useState<number | undefined>(undefined);
   const [cursorStack, setCursorStack] = useState<number[]>([]);
   const [filters, setFilters] = useState<JobFilters>({ limit });
+  const [showSubmitDrawer, setShowSubmitDrawer] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey>("updatedAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -250,11 +254,27 @@ export default function JobsPage() {
     setCursorStack([]);
   }, []);
 
+  const handleSubmitSuccess = useCallback((result: { job_id: string }) => {
+    addToast({
+      type: "success",
+      title: "Job submitted",
+      description: result.job_id,
+    });
+    setShowSubmitDrawer(false);
+    navigate(`/jobs/${result.job_id}`);
+  }, [addToast, navigate]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="font-display text-2xl font-bold text-ink">Jobs</h1>
-        <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
+        <div className="flex items-center gap-2">
+          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
+          <Button size="sm" onClick={() => setShowSubmitDrawer(true)}>
+            <Plus className="h-3.5 w-3.5" />
+            New Job
+          </Button>
+        </div>
       </div>
 
       <JobFiltersBar
@@ -356,6 +376,12 @@ export default function JobsPage() {
           />
         )}
       </div>
+
+      <JobSubmitDrawer
+        open={showSubmitDrawer}
+        onClose={() => setShowSubmitDrawer(false)}
+        onSuccess={handleSubmitSuccess}
+      />
     </div>
   );
 }

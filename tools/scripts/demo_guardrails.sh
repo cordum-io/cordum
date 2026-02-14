@@ -61,7 +61,14 @@ if [[ -z "${approval_job}" ]]; then
   exit 1
 fi
 
-"${CTL_BIN}" approval job --approve "${approval_job}"
+if ! approval_out=$("${CTL_BIN}" approval job --approve "${approval_job}" 2>&1); then
+  if grep -qi "job not awaiting approval" <<<"${approval_out}"; then
+    echo "[demo] approval already satisfied for ${approval_job}"
+  else
+    echo "${approval_out}" >&2
+    exit 1
+  fi
+fi
 
 status=""
 for _ in {1..25}; do
@@ -79,7 +86,7 @@ if [[ "${status}" != "succeeded" ]]; then
 fi
 
 echo "[demo] submitting dangerous job"
-danger_job=$(${CTL_BIN} job submit --topic job.demo-guardrails.dangerous --input '{"message":"rm -rf /","actor":"demo"}' --json | jq -r '.job_id')
+danger_job=$(${CTL_BIN} job submit --topic job.demo-guardrails.dangerous --prompt "rm -rf /" --json | jq -r '.job_id')
 if [[ -z "${danger_job}" || "${danger_job}" == "null" ]]; then
   echo "failed to submit dangerous job" >&2
   exit 1

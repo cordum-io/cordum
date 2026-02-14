@@ -14,6 +14,23 @@ type Bus interface {
 	Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error
 }
 
+// DLQEntry captures a scheduler-side dead-letter record.
+type DLQEntry struct {
+	JobID      string
+	Topic      string
+	Status     string
+	Reason     string
+	ReasonCode string
+	LastState  string
+	Attempts   int
+	CreatedAt  time.Time
+}
+
+// DLQSink persists dead-letter entries to durable storage.
+type DLQSink interface {
+	Add(ctx context.Context, entry DLQEntry) error
+}
+
 // SafetyDecision indicates whether a job is allowed to proceed.
 type SafetyDecision string
 
@@ -29,6 +46,76 @@ const (
 // SafetyChecker determines if a job request may proceed.
 type SafetyChecker interface {
 	Check(req *pb.JobRequest) (SafetyDecisionRecord, error)
+}
+
+// OutputDecision indicates the result of an output policy check.
+type OutputDecision string
+
+const (
+	OutputAllow      OutputDecision = "ALLOW"
+	OutputDeny       OutputDecision = "DENY"
+	OutputQuarantine OutputDecision = "QUARANTINE"
+	OutputRedact     OutputDecision = "REDACT"
+)
+
+// OutputEvaluateRequest captures output content and original job context for policy checks.
+type OutputEvaluateRequest struct {
+	JobID           string
+	Topic           string
+	Tenant          string
+	Labels          map[string]string
+	ResultPtr       string
+	ArtifactPtrs    []string
+	ErrorMessage    string
+	ErrorCode       string
+	WorkerID        string
+	ExecutionMs     int64
+	OutputSizeBytes int64
+	ContentHash     string
+	WorkflowID      string
+	StepID          string
+	OutputContent   []byte
+	Capabilities    []string
+	RiskTags        []string
+	PrincipalID     string
+	PackID          string
+	ContentType     string
+	OriginalLabels  map[string]string
+}
+
+type OutputFinding struct {
+	Type           string  `json:"type"`
+	Severity       string  `json:"severity"`
+	Detail         string  `json:"detail"`
+	Scanner        string  `json:"scanner,omitempty"`
+	Confidence     float64 `json:"confidence,omitempty"`
+	MatchedPattern string  `json:"matched_pattern,omitempty"`
+	Offset         int64   `json:"offset,omitempty"`
+	Length         int64   `json:"length,omitempty"`
+}
+
+// OutputSafetyRecord captures the output policy evaluation result.
+type OutputSafetyRecord struct {
+	Decision        OutputDecision  `json:"decision"`
+	Reason          string          `json:"reason,omitempty"`
+	RuleID          string          `json:"rule_id,omitempty"`
+	PolicySnapshot  string          `json:"policy_snapshot,omitempty"`
+	Findings        []OutputFinding `json:"findings,omitempty"`
+	RedactedPtr     string          `json:"redacted_ptr,omitempty"`
+	OriginalPtr     string          `json:"original_ptr,omitempty"`
+	CheckedAt       int64           `json:"checked_at,omitempty"`
+	CheckDurationMs int64           `json:"check_duration_ms,omitempty"`
+	Phase           string          `json:"phase,omitempty"` // "sync" or "async"
+}
+
+// OutputSafetyChecker evaluates job outputs against policy rules.
+type OutputSafetyChecker interface {
+	// EvaluateOutput runs output policy checks using dereferenced content and original request context.
+	EvaluateOutput(ctx context.Context, req *OutputEvaluateRequest) (OutputSafetyRecord, error)
+	// CheckOutputMeta runs fast sync checks on metadata only (~1ms).
+	CheckOutputMeta(res *pb.JobResult, req *pb.JobRequest) (OutputSafetyRecord, error)
+	// CheckOutputContent runs deep async checks on actual content.
+	CheckOutputContent(ctx context.Context, res *pb.JobResult, req *pb.JobRequest) (OutputSafetyRecord, error)
 }
 
 // WorkerRegistry tracks worker heartbeats.
@@ -54,11 +141,22 @@ type Metrics interface {
 	IncJobsCompleted(topic, status string)
 	IncSafetyDenied(topic string)
 	IncSafetyUnavailable(topic string)
+	IncOutputPolicyChecked(topic string)
+	IncOutputPolicyQuarantined(topic string)
+	IncOutputPolicySkipped(topic string)
+	IncAsyncOutputTimeout(topic string)
+	IncOutputEvaluations(topic string)
+	IncOutputDenials(topic string)
+	IncOutputRedactions(topic string)
 	IncOrphanReplayed(topic string)
 	ObserveJobLockWait(seconds float64)
 	ObserveDispatchLatency(topic string, seconds float64)
+	ObserveOutputCheckLatency(topic, phase string, seconds float64)
+	ObserveOutputEvalDuration(topic string, seconds float64)
 	SetActiveGoroutines(count int)
 	SetStaleJobs(state string, count int)
+	IncDLQEmitFailure(topic string)
+	IncJobCancelFailures()
 }
 
 // SagaMetrics captures metrics for saga rollbacks and compensation handling.
@@ -77,24 +175,26 @@ type SagaMetrics interface {
 type JobState string
 
 const (
-	JobStatePending    JobState = "PENDING"
-	JobStateApproval   JobState = "APPROVAL_REQUIRED"
-	JobStateScheduled  JobState = "SCHEDULED"
-	JobStateDispatched JobState = "DISPATCHED"
-	JobStateRunning    JobState = "RUNNING"
-	JobStateSucceeded  JobState = "SUCCEEDED"
-	JobStateFailed     JobState = "FAILED"
-	JobStateCancelled  JobState = "CANCELLED"
-	JobStateTimeout    JobState = "TIMEOUT"
-	JobStateDenied     JobState = "DENIED"
+	JobStatePending     JobState = "PENDING"
+	JobStateApproval    JobState = "APPROVAL_REQUIRED"
+	JobStateScheduled   JobState = "SCHEDULED"
+	JobStateDispatched  JobState = "DISPATCHED"
+	JobStateRunning     JobState = "RUNNING"
+	JobStateSucceeded   JobState = "SUCCEEDED"
+	JobStateFailed      JobState = "FAILED"
+	JobStateCancelled   JobState = "CANCELLED"
+	JobStateTimeout     JobState = "TIMEOUT"
+	JobStateDenied      JobState = "DENIED"
+	JobStateQuarantined JobState = "OUTPUT_QUARANTINED"
 )
 
 var terminalStates = map[JobState]bool{
-	JobStateSucceeded: true,
-	JobStateFailed:    true,
-	JobStateCancelled: true,
-	JobStateTimeout:   true,
-	JobStateDenied:    true,
+	JobStateSucceeded:   true,
+	JobStateFailed:      true,
+	JobStateCancelled:   true,
+	JobStateTimeout:     true,
+	JobStateDenied:      true,
+	JobStateQuarantined: true,
 }
 
 // JobRecord captures a lightweight view of job state for reconciliation.
@@ -152,6 +252,8 @@ type JobStore interface {
 	CancelJob(ctx context.Context, jobID string) (JobState, error)
 	SetFailureReason(ctx context.Context, jobID, reason string) error
 	GetFailureReason(ctx context.Context, jobID string) (string, error)
+	SetOutputDecision(ctx context.Context, jobID string, record OutputSafetyRecord) error
+	GetOutputDecision(ctx context.Context, jobID string) (OutputSafetyRecord, error)
 }
 
 // SafetyDecisionRecord captures a policy decision and constraints for auditing.

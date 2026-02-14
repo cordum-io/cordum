@@ -1,13 +1,4 @@
 import { useNavigate } from "react-router-dom";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
 import { useStatus } from "../../hooks/useStatus";
 import { Card } from "../ui/Card";
 
@@ -24,27 +15,17 @@ interface Stage {
 }
 
 const STAGES: Stage[] = [
-  { key: "pending", label: "Submitted", color: "#8b8fa3", stateParam: "pending" },
-  { key: "safety", label: "Safety Check", color: "#f59e0b", stateParam: "pending" },
-  { key: "dispatched", label: "Dispatched", color: "#6366f1", stateParam: "dispatched" },
-  { key: "running", label: "Running", color: "#3b82f6", stateParam: "running" },
-  { key: "succeeded", label: "Succeeded", color: "#10b981", stateParam: "succeeded" },
-  { key: "failed", label: "Failed", color: "#ef4444", stateParam: "failed" },
+  { key: "pending", label: "Submitted", color: "#7b8794", stateParam: "pending" },
+  { key: "safety", label: "Safety Check", color: "#d97706", stateParam: "pending" },
+  { key: "dispatched", label: "Dispatched", color: "#4f46e5", stateParam: "dispatched" },
+  { key: "running", label: "Running", color: "#2563eb", stateParam: "running" },
+  { key: "succeeded", label: "Succeeded", color: "#059669", stateParam: "succeeded" },
+  { key: "failed", label: "Failed", color: "#dc2626", stateParam: "failed" },
 ];
 
-// ---------------------------------------------------------------------------
-// Custom tooltip
-// ---------------------------------------------------------------------------
-
-function PipelineTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: { label: string; count: number } }> }) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-  return (
-    <div className="rounded-lg border border-border bg-surface px-3 py-2 shadow-lg">
-      <p className="text-xs font-medium text-ink">{d.label}</p>
-      <p className="text-sm font-bold text-ink">{d.count.toLocaleString()}</p>
-    </div>
-  );
+function pct(part: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.round((part / total) * 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -64,9 +45,9 @@ export function JobPipelineFunnel() {
 
   const data = pipeline
     ? STAGES.map((stage) => {
-        let count = 0;
-        switch (stage.key) {
-          case "pending":
+      let count = 0;
+      switch (stage.key) {
+        case "pending":
             // Total submitted ≈ sum of all stages
             count =
               (pipeline.pending ?? 0) +
@@ -94,10 +75,15 @@ export function JobPipelineFunnel() {
         return { key: stage.key, label: stage.label, count, color: stage.color, stateParam: stage.stateParam };
       })
     : [];
+  const submitted = data.find((d) => d.key === "pending")?.count ?? 0;
+  const inFlight = (pipeline?.pending ?? 0) + (pipeline?.dispatched ?? 0) + (pipeline?.running ?? 0);
+  const terminalTotal = (pipeline?.succeeded ?? 0) + (pipeline?.failed ?? 0);
+  const successRate = pct(pipeline?.succeeded ?? 0, terminalTotal);
+  const maxStageCount = Math.max(1, ...data.map((d) => d.count));
 
   if (isLoading) {
     return (
-      <Card>
+      <Card className="flex h-[430px] min-h-[430px] flex-col">
         <div className="space-y-3">
           <div className="h-4 w-1/3 rounded bg-surface2 animate-pulse" />
           <div className="h-48 rounded bg-surface2 animate-pulse" />
@@ -108,7 +94,7 @@ export function JobPipelineFunnel() {
 
   if (!pipeline) {
     return (
-      <Card>
+      <Card className="flex h-[430px] min-h-[430px] flex-col">
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-ink">Job Pipeline</h3>
           <p className="text-xs text-muted">
@@ -120,45 +106,67 @@ export function JobPipelineFunnel() {
   }
 
   return (
-    <Card>
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-ink">Job Pipeline</h3>
-        <div className="h-56">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={data}
-              layout="vertical"
-              margin={{ top: 0, right: 16, bottom: 0, left: 0 }}
-            >
-              <XAxis type="number" hide />
-              <YAxis
-                type="category"
-                dataKey="label"
-                width={100}
-                tick={{ fontSize: 12, fill: "var(--color-muted)" }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip
-                content={<PipelineTooltip />}
-                cursor={{ fill: "rgba(0,0,0,0.04)" }}
-              />
-              <Bar
-                dataKey="count"
-                radius={[0, 6, 6, 0]}
-                cursor="pointer"
-                onClick={(entry: { stateParam?: string }) => {
-                  if (entry?.stateParam) {
-                    navigate(`/jobs?state=${entry.stateParam}`);
-                  }
-                }}
+    <Card className="flex h-[430px] min-h-[430px] flex-col">
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-ink">Job Pipeline</h3>
+            <p className="text-[11px] text-muted">Live execution flow by stage</p>
+          </div>
+          <span className="rounded-full border border-border bg-surface2 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+            realtime
+          </span>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-xl border border-border/70 bg-surface2/40 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-muted">Submitted</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{submitted.toLocaleString()}</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-surface2/40 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-muted">In Flight</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{inFlight.toLocaleString()}</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-surface2/40 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-muted">Success Rate</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{successRate}%</p>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+          {data.map((stage) => {
+            const widthPct = pct(stage.count, maxStageCount);
+            const totalPct = pct(stage.count, submitted);
+            return (
+              <button
+                key={stage.key}
+                type="button"
+                className="w-full rounded-xl border border-border/80 bg-surface2/30 px-3 py-2 text-left transition-colors hover:bg-surface2/50"
+                onClick={() => navigate(`/jobs?state=${stage.stateParam}`)}
               >
-                {data.map((d) => (
-                  <Cell key={d.key} fill={d.color} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: stage.color }}
+                    />
+                    <span className="font-medium text-ink">{stage.label}</span>
+                  </div>
+                  <span className="font-mono text-muted">{stage.count.toLocaleString()}</span>
+                </div>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[color:rgba(90,106,112,0.15)]">
+                  <div
+                    className="h-full rounded-full transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                    style={{ width: `${widthPct}%`, backgroundColor: stage.color }}
+                  />
+                </div>
+                <div className="mt-1 flex items-center justify-between text-[10px] text-muted">
+                  <span>{totalPct}% of submitted</span>
+                  <span>{widthPct}% of peak</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </Card>

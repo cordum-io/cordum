@@ -53,6 +53,8 @@ export function jobStatusMeta(state?: string): StatusMeta {
       return { label: state, tone: "info", shape: "diamond", icon: Clock };
     case "approval_required":
       return { label: "approval", tone: "warning", shape: "shield", icon: Shield };
+    case "output_quarantined":
+      return { label: "quarantined", tone: "warning", shape: "shield", icon: AlertTriangle };
     case "failed":
     case "denied":
     case "timeout":

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Shield } from "lucide-react";
 import { UsersTab } from "../components/settings/UsersTab";
+import { ChangePasswordSection } from "../components/settings/ChangePasswordSection";
 import { SamlConfigPanel } from "../components/settings/SamlConfigPanel";
 import { OAuthConfigPanel } from "../components/settings/OAuthConfigPanel";
 import { SessionManagement } from "../components/settings/SessionManagement";
@@ -68,7 +69,7 @@ function SsoSection() {
   const [tab, setTab] = useState<SsoTab>("saml");
 
   const samlEnabled = !!authConfig?.saml_enabled;
-  const oauthEnabled = !!authConfig?.oauth_enabled;
+  const oauthEnabled = !!authConfig?.oidc_enabled;
   const anyEnabled = samlEnabled || oauthEnabled;
 
   return (
@@ -129,9 +130,12 @@ function SsoSection() {
 // ---------------------------------------------------------------------------
 
 export default function SettingsUsersPage() {
+  const { data: authConfig } = useAuthConfigAdmin();
+  const userAuthEnabled = !!authConfig?.user_auth_enabled;
   usePageTitle("Settings - Users");
   return (
     <div className="space-y-6">
+      {userAuthEnabled && <ChangePasswordSection />}
       <UsersTab />
 
       <CollapsibleSection

@@ -1,19 +1,26 @@
+import { useState } from "react";
 import {
   Package,
   X,
   ArrowLeft,
   Server,
   Shield,
+  ShieldCheck,
+  ShieldAlert,
   Settings,
   Activity,
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Loader2,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
-import { usePack } from "../../hooks/usePacks";
+import { usePack, useVerifyPack } from "../../hooks/usePacks";
 import type { Pack } from "../../api/types";
+import type { PackVerifyResult, PackVerifyCheck } from "../../hooks/usePacks";
 
 function statusVariant(
   status: string,
@@ -85,6 +92,79 @@ function KVRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function VerificationCheckItem({ check }: { check: PackVerifyCheck }) {
+  const [expanded, setExpanded] = useState(false);
+  const passed = check.status === "pass";
+  const hasDetails = !!(check.message || check.details);
+
+  return (
+    <div className="py-2">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 text-left text-sm"
+        onClick={() => hasDetails && setExpanded(!expanded)}
+        disabled={!hasDetails}
+      >
+        {passed ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+        ) : (
+          <XCircle className="h-4 w-4 shrink-0 text-danger" />
+        )}
+        <span className="flex-1 text-ink">{check.name}</span>
+        {hasDetails && (
+          expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 text-muted" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 text-muted" />
+          )
+        )}
+      </button>
+      {expanded && hasDetails && (
+        <div className="ml-6 mt-1 text-xs text-muted">
+          {check.message && <p>{check.message}</p>}
+          {check.details && (
+            <pre className="mt-1 whitespace-pre-wrap rounded bg-surface2 p-2 font-mono text-[11px]">
+              {check.details}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VerificationResults({ result }: { result: PackVerifyResult }) {
+  const verified = result.overall === "verified";
+  const passCount = result.checks.filter((c) => c.status === "pass").length;
+
+  return (
+    <Section title="Verification" icon={verified ? ShieldCheck : ShieldAlert}>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {verified ? (
+              <Badge variant="success">Verified</Badge>
+            ) : (
+              <Badge variant="danger">Failed</Badge>
+            )}
+            <span className="text-xs text-muted">
+              {passCount}/{result.checks.length} checks passed
+            </span>
+          </div>
+          <span className="text-xs text-muted">
+            {new Date(result.verified_at).toLocaleString()}
+          </span>
+        </div>
+        <div className="divide-y divide-border">
+          {result.checks.map((check, i) => (
+            <VerificationCheckItem key={`${check.name}-${i}`} check={check} />
+          ))}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 interface PackDetailProps {
   packId: string;
   pack?: Pack;
@@ -94,6 +174,8 @@ interface PackDetailProps {
 export default function PackDetail({ packId, pack: prefetched, onClose }: PackDetailProps) {
   const { data: fetched, isLoading, error } = usePack(packId);
   const pack = prefetched ?? fetched;
+  const verify = useVerifyPack();
+  const [verifyResult, setVerifyResult] = useState<PackVerifyResult | null>(null);
 
   if (isLoading && !pack) {
     return (
@@ -223,6 +305,36 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
           <span className="text-sm text-ink capitalize">{pack.status}</span>
         </div>
       </Section>
+
+      {/* Verify */}
+      <div className="flex items-center gap-3">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={verify.isPending}
+          title="Validates schema, file integrity, overlay compatibility, and resource declarations."
+          onClick={() => {
+            verify.mutate(packId, {
+              onSuccess: (result) => setVerifyResult(result),
+            });
+          }}
+        >
+          {verify.isPending ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+          )}
+          {verify.isPending ? "Verifying..." : "Verify Integrity"}
+        </Button>
+        {verifyResult && (
+          <span className="text-xs text-muted">
+            Last verified: {new Date(verifyResult.verified_at).toLocaleString()}
+          </span>
+        )}
+      </div>
+
+      {/* Verification Results */}
+      {verifyResult && <VerificationResults result={verifyResult} />}
 
       {/* Back to list */}
       <div className="border-t border-border pt-4">

@@ -9,9 +9,19 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
+
+// loginTimingDummyHash is a pre-computed bcrypt hash used to equalize
+// response time between user-exists and user-not-found login paths,
+// preventing username enumeration via timing side-channel.
+//
+//nolint:gosec // G101: this is not a credential, it's a timing-equalization dummy.
+var loginTimingDummyHash, _ = bcrypt.GenerateFromPassword([]byte("timing-pad"), bcrypt.DefaultCost)
 
 // AuthUser represents the authenticated user info returned to clients.
 type AuthUser struct {
@@ -42,7 +52,15 @@ type AuthLoginResponse struct {
 	User      AuthUser `json:"user"`
 }
 
-const defaultSessionTTL = 24 * time.Hour
+func sessionTTL() time.Duration {
+	const fallback = 24 * time.Hour
+	if raw := strings.TrimSpace(os.Getenv("CORDUM_SESSION_TTL")); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
+}
 
 // handleLogin authenticates using user/password or API key.
 // Supports two authentication methods:
@@ -103,7 +121,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				}
 				// Store session token in Redis for subsequent request validation
 				if redisStore, ok := userStore.(*RedisUserStore); ok {
-					if err := redisStore.StoreSession(r.Context(), resp.Token, user, defaultSessionTTL); err != nil {
+					if err := redisStore.StoreSession(r.Context(), resp.Token, user, sessionTTL()); err != nil {
 						writeErrorJSON(w, http.StatusInternalServerError, "failed to create session")
 						return
 					}
@@ -117,6 +135,10 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			if redisStore, ok := userStore.(*RedisUserStore); ok {
 				redisStore.RecordFailedLogin(r.Context(), username)
 			}
+		} else if username != "" {
+			// Timing equalization: spend bcrypt time even when user is not found,
+			// preventing username enumeration via response time side-channel.
+			_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
 		}
 	}
 
@@ -185,7 +207,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // SECURITY: Token is masked to prevent API key leakage in responses.
 func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
 	now := time.Now()
-	expiresAt := now.Add(defaultSessionTTL)
+	expiresAt := now.Add(sessionTTL())
 
 	// Use principal ID or generate from API key prefix
 	userID := authCtx.PrincipalID
@@ -226,7 +248,7 @@ func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
 // For user auth, we generate a session token rather than exposing the password.
 func buildUserLoginResponse(ctx context.Context, user *User) (AuthLoginResponse, error) {
 	now := time.Now()
-	expiresAt := now.Add(defaultSessionTTL)
+	expiresAt := now.Add(sessionTTL())
 
 	var roles []string
 	if user.Role != "" {

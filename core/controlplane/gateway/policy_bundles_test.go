@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -21,6 +23,31 @@ const policyContent = `rules:
       topics:
         - job.*
     decision: allow
+`
+
+const outputPolicyContent = `output_rules:
+  - id: out-secret
+    enabled: false
+    description: "Detect secret leaks"
+    severity: high
+    decision: quarantine
+    reason: "secret matched in output"
+    match:
+      topics:
+        - job.*
+      scanners:
+        - secret
+      content_patterns:
+        - AKIA[0-9A-Z]{16}
+  - id: out-pii
+    enabled: true
+    description: "Redact PII"
+    severity: medium
+    decision: redact
+    reason: "pii found"
+    match:
+      detectors:
+        - pii
 `
 
 type policySimAuth struct{}
@@ -384,5 +411,308 @@ func TestPolicyBundleSnapshotHandlers(t *testing.T) {
 	s.handleGetPolicyBundleSnapshot(missingRec, missingReq)
 	if missingRec.Code != http.StatusNotFound {
 		t.Fatalf("expected not found for missing snapshot")
+	}
+}
+
+func TestPolicyOutputRulesHandlers(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	seedBody, _ := json.Marshal(map[string]any{
+		"content": outputPolicyContent,
+		"enabled": true,
+		"author":  "tester",
+	})
+	putBundleReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/output", bytes.NewReader(seedBody))
+	putBundleReq.Header.Set("X-Tenant-ID", "default")
+	putBundleReq.Header.Set("X-Principal-Role", "admin")
+	putBundleReq.SetPathValue("id", "secops/output")
+	putBundleRec := httptest.NewRecorder()
+	s.handlePutPolicyBundle(putBundleRec, putBundleReq)
+	if putBundleRec.Code != http.StatusOK {
+		t.Fatalf("seed output policy bundle: %d %s", putBundleRec.Code, putBundleRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/output/rules", nil)
+	listReq.Header.Set("X-Tenant-ID", "default")
+	listReq.Header.Set("X-Principal-Role", "admin")
+	listRec := httptest.NewRecorder()
+	s.handlePolicyOutputRules(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list output policy rules: %d %s", listRec.Code, listRec.Body.String())
+	}
+
+	var listResp map[string]any
+	if err := json.NewDecoder(listRec.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode output rules: %v", err)
+	}
+	items, _ := listResp["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 output rules, got %d", len(items))
+	}
+
+	findRule := func(ruleID string) map[string]any {
+		for _, raw := range items {
+			item, _ := raw.(map[string]any)
+			if strings.TrimSpace(anyString(item["id"])) == ruleID {
+				return item
+			}
+		}
+		return nil
+	}
+	secretRule := findRule("out-secret")
+	if secretRule == nil {
+		t.Fatalf("expected out-secret rule in response")
+	}
+	if enabled, ok := secretRule["enabled"].(bool); !ok || enabled {
+		t.Fatalf("expected out-secret enabled=false, got %v", secretRule["enabled"])
+	}
+
+	toggleBody, _ := json.Marshal(map[string]any{"enabled": true})
+	toggleReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/output/rules/out-secret", bytes.NewReader(toggleBody))
+	toggleReq.Header.Set("X-Tenant-ID", "default")
+	toggleReq.Header.Set("X-Principal-Role", "admin")
+	toggleReq.SetPathValue("id", "out-secret")
+	toggleRec := httptest.NewRecorder()
+	s.handlePutPolicyOutputRule(toggleRec, toggleReq)
+	if toggleRec.Code != http.StatusOK {
+		t.Fatalf("toggle output rule: %d %s", toggleRec.Code, toggleRec.Body.String())
+	}
+	var toggleResp map[string]any
+	if err := json.NewDecoder(toggleRec.Body).Decode(&toggleResp); err != nil {
+		t.Fatalf("decode toggle response: %v", err)
+	}
+	if enabled, _ := toggleResp["enabled"].(bool); !enabled {
+		t.Fatalf("expected enabled=true in toggle response")
+	}
+	if strings.TrimSpace(anyString(toggleResp["bundle_id"])) != "secops/output" {
+		t.Fatalf("expected bundle_id secops/output, got %v", toggleResp["bundle_id"])
+	}
+
+	verifyReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/output/rules", nil)
+	verifyReq.Header.Set("X-Tenant-ID", "default")
+	verifyReq.Header.Set("X-Principal-Role", "admin")
+	verifyRec := httptest.NewRecorder()
+	s.handlePolicyOutputRules(verifyRec, verifyReq)
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("verify output rules: %d %s", verifyRec.Code, verifyRec.Body.String())
+	}
+	var verifyResp map[string]any
+	if err := json.NewDecoder(verifyRec.Body).Decode(&verifyResp); err != nil {
+		t.Fatalf("decode verify response: %v", err)
+	}
+	verifyItems, _ := verifyResp["items"].([]any)
+	verified := false
+	for _, raw := range verifyItems {
+		item, _ := raw.(map[string]any)
+		if strings.TrimSpace(anyString(item["id"])) == "out-secret" {
+			enabled, _ := item["enabled"].(bool)
+			if !enabled {
+				t.Fatalf("expected out-secret enabled after toggle")
+			}
+			verified = true
+		}
+	}
+	if !verified {
+		t.Fatalf("expected out-secret in verify response")
+	}
+}
+
+func TestPolicyOutputRuleToggleErrors(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	seedBody, _ := json.Marshal(map[string]any{
+		"content": outputPolicyContent,
+		"enabled": true,
+	})
+	putBundleReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/output", bytes.NewReader(seedBody))
+	putBundleReq.Header.Set("X-Tenant-ID", "default")
+	putBundleReq.Header.Set("X-Principal-Role", "admin")
+	putBundleReq.SetPathValue("id", "secops/output")
+	putBundleRec := httptest.NewRecorder()
+	s.handlePutPolicyBundle(putBundleRec, putBundleReq)
+	if putBundleRec.Code != http.StatusOK {
+		t.Fatalf("seed output policy bundle: %d %s", putBundleRec.Code, putBundleRec.Body.String())
+	}
+
+	noEnabledReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/output/rules/out-secret", bytes.NewReader([]byte(`{}`)))
+	noEnabledReq.Header.Set("X-Tenant-ID", "default")
+	noEnabledReq.Header.Set("X-Principal-Role", "admin")
+	noEnabledReq.SetPathValue("id", "out-secret")
+	noEnabledRec := httptest.NewRecorder()
+	s.handlePutPolicyOutputRule(noEnabledRec, noEnabledReq)
+	if noEnabledRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when enabled missing, got %d", noEnabledRec.Code)
+	}
+
+	notFoundReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/output/rules/does-not-exist", bytes.NewReader([]byte(`{"enabled":true}`)))
+	notFoundReq.Header.Set("X-Tenant-ID", "default")
+	notFoundReq.Header.Set("X-Principal-Role", "admin")
+	notFoundReq.SetPathValue("id", "does-not-exist")
+	notFoundRec := httptest.NewRecorder()
+	s.handlePutPolicyOutputRule(notFoundRec, notFoundReq)
+	if notFoundRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing rule, got %d", notFoundRec.Code)
+	}
+}
+
+func TestPolicyOutputStatsHandler(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	seed := func(jobID string, state scheduler.JobState, decision scheduler.OutputDecision, checkedAt int64, latencyMs int64) {
+		req := &pb.JobRequest{
+			JobId:    jobID,
+			Topic:    "job.test",
+			TenantId: "default",
+		}
+		if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+			t.Fatalf("set job meta %s: %v", jobID, err)
+		}
+		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+			t.Fatalf("set pending %s: %v", jobID, err)
+		}
+		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateScheduled); err != nil {
+			t.Fatalf("set scheduled %s: %v", jobID, err)
+		}
+		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+			t.Fatalf("set running %s: %v", jobID, err)
+		}
+		if err := s.jobStore.SetState(ctx, jobID, state); err != nil {
+			t.Fatalf("set state %s: %v", jobID, err)
+		}
+		record := scheduler.OutputSafetyRecord{
+			Decision:        decision,
+			RuleID:          "out-secret",
+			Reason:          "matched output policy rule",
+			CheckedAt:       checkedAt,
+			CheckDurationMs: latencyMs,
+			Phase:           "sync",
+		}
+		if err := s.jobStore.SetOutputDecision(ctx, jobID, record); err != nil {
+			t.Fatalf("set output decision %s: %v", jobID, err)
+		}
+	}
+
+	seed("job-stats-recent-quarantine", scheduler.JobStateQuarantined, scheduler.OutputQuarantine, now.Add(-10*time.Minute).UnixMicro(), 15)
+	seed("job-stats-recent-allow", scheduler.JobStateSucceeded, scheduler.OutputAllow, now.Add(-5*time.Minute).UnixMicro(), 5)
+	seed("job-stats-old", scheduler.JobStateQuarantined, scheduler.OutputQuarantine, now.Add(-26*time.Hour).UnixMicro(), 99)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/output/stats?limit=100", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handlePolicyOutputStats(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("output stats: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		TotalChecks24h int64  `json:"total_checks_24h"`
+		Quarantined24h int64  `json:"quarantined_24h"`
+		AvgLatencyMs   int64  `json:"avg_latency_ms"`
+		LastCheckAt    string `json:"last_check_at"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode output stats: %v", err)
+	}
+	if payload.TotalChecks24h != 2 {
+		t.Fatalf("expected total_checks_24h=2, got %d", payload.TotalChecks24h)
+	}
+	if payload.Quarantined24h != 1 {
+		t.Fatalf("expected quarantined_24h=1, got %d", payload.Quarantined24h)
+	}
+	if payload.AvgLatencyMs != 10 {
+		t.Fatalf("expected avg_latency_ms=10, got %d", payload.AvgLatencyMs)
+	}
+	if strings.TrimSpace(payload.LastCheckAt) == "" {
+		t.Fatalf("expected non-empty last_check_at")
+	}
+}
+
+func TestPolicyAuditOutputFilterByRuleID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	seedOutputJob := func(jobID, ruleID string) {
+		req := &pb.JobRequest{
+			JobId:    jobID,
+			Topic:    "job.test",
+			TenantId: "default",
+		}
+		if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+			t.Fatalf("set job meta: %v", err)
+		}
+		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+			t.Fatalf("set pending: %v", err)
+		}
+		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateScheduled); err != nil {
+			t.Fatalf("set scheduled: %v", err)
+		}
+		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+			t.Fatalf("set running: %v", err)
+		}
+		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateQuarantined); err != nil {
+			t.Fatalf("set quarantined: %v", err)
+		}
+		record := scheduler.OutputSafetyRecord{
+			Decision:        scheduler.OutputQuarantine,
+			RuleID:          ruleID,
+			Reason:          "matched output policy rule",
+			CheckedAt:       time.Now().UTC().UnixMicro(),
+			CheckDurationMs: 7,
+			Phase:           "sync",
+			OriginalPtr:     "redis://res:" + jobID,
+			Findings: []scheduler.OutputFinding{{
+				Type:           "secret_leak",
+				Severity:       "critical",
+				Detail:         "aws_access_key_id",
+				Scanner:        "regex",
+				Confidence:     0.99,
+				MatchedPattern: "AKIA[0-9A-Z]{16}",
+			}},
+		}
+		if err := s.jobStore.SetOutputDecision(ctx, jobID, record); err != nil {
+			t.Fatalf("set output decision: %v", err)
+		}
+	}
+
+	seedOutputJob("job-output-1", "out-secret")
+	seedOutputJob("job-output-2", "out-other")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit?type=output&rule_id=out-secret&limit=10", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-Principal-Role", "admin")
+	rec := httptest.NewRecorder()
+	s.handleListPolicyAudit(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("policy audit output filter: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode audit output filter response: %v", err)
+	}
+	items, _ := payload["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 output audit item for out-secret, got %d", len(items))
+	}
+	item, _ := items[0].(map[string]any)
+	if strings.TrimSpace(anyString(item["rule_id"])) != "out-secret" {
+		t.Fatalf("expected rule_id out-secret, got %v", item["rule_id"])
+	}
+	if strings.TrimSpace(anyString(item["job_id"])) != "job-output-1" {
+		t.Fatalf("expected job_id job-output-1, got %v", item["job_id"])
+	}
+	if strings.TrimSpace(anyString(item["decision"])) != "quarantine" {
+		t.Fatalf("expected decision quarantine, got %v", item["decision"])
+	}
+}
+
+func anyString(v any) string {
+	switch typed := v.(type) {
+	case string:
+		return typed
+	default:
+		return ""
 	}
 }

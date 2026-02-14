@@ -19,6 +19,7 @@ import {
   GitBranch,
   Bell,
   Split,
+  Layers,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -69,6 +70,7 @@ const typeIcons: Record<string, typeof Briefcase> = {
   condition: GitBranch,
   notify: Bell,
   "fan-out": Split,
+  parallel: Layers,
 };
 
 const typeColors: Record<string, string> = {
@@ -78,6 +80,7 @@ const typeColors: Record<string, string> = {
   condition: "text-teal-600",
   notify: "text-pink-600",
   "fan-out": "text-indigo-600",
+  parallel: "text-sky-600",
 };
 
 const typeAccents: Record<string, string> = {
@@ -87,6 +90,7 @@ const typeAccents: Record<string, string> = {
   condition: "bg-teal-50",
   notify: "bg-pink-50",
   "fan-out": "bg-indigo-50",
+  parallel: "bg-sky-50",
 };
 
 // ---------------------------------------------------------------------------
@@ -163,6 +167,7 @@ const runNodeTypes: NodeTypes = {
   condition: RunNode,
   notify: RunNode,
   "fan-out": RunNode,
+  parallel: RunNode,
 };
 
 // ---------------------------------------------------------------------------

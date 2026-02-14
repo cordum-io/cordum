@@ -85,6 +85,9 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "config update failed")
 		return
 	}
+	if mcpConfigTouched(data) {
+		s.reloadMCPConfig(r.Context())
+	}
 	s.appendAuditEntryNamed(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policyActorID(r), policyRole(r), "set config "+scopeStr+"/"+scopeID)
 	w.WriteHeader(http.StatusNoContent)
 }

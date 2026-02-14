@@ -1,23 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Trash2, KeyRound, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Trash2, KeyRound, X } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
-import { PermissionMatrix } from "./PermissionMatrix";
-import { UserDetailDrawer } from "./UserDetailDrawer";
 import {
   useUsers,
   useCreateUser,
   useUpdateUser,
   useDeleteUser,
+  useResetUserPassword,
 } from "../../hooks/useSettings";
-import { post } from "../../api/client";
+import {
+  PasswordStrengthIndicator,
+  PASSWORD_REQUIREMENTS_TEXT,
+} from "./ChangePasswordSection";
 import { useConfigStore } from "../../state/config";
+import { useToastStore } from "../../state/toast";
 import { cn } from "../../lib/utils";
 import type { User } from "../../api/types";
 
@@ -25,9 +28,9 @@ import type { User } from "../../api/types";
 // Constants
 // ---------------------------------------------------------------------------
 
-const ROLES = ["Admin", "Operator", "Viewer", "Approver"] as const;
+export const ROLES = ["Admin", "Operator", "Viewer", "Approver"] as const;
 
-function roleBadgeVariant(
+export function roleBadgeVariant(
   role: string,
 ): "success" | "warning" | "info" | "default" {
   switch (role) {
@@ -42,7 +45,7 @@ function roleBadgeVariant(
   }
 }
 
-function timeAgo(iso?: string): string {
+export function timeAgo(iso?: string): string {
   if (!iso) return "\u2014";
   const diff = Date.now() - new Date(iso).getTime();
   const secs = Math.floor(diff / 1_000);
@@ -59,7 +62,7 @@ function timeAgo(iso?: string): string {
 // Create user form
 // ---------------------------------------------------------------------------
 
-const createUserSchema = z.object({
+export const createUserSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters"),
   password: z
     .string()
@@ -81,8 +84,9 @@ const changePasswordSchema = z
     password: z
       .string()
       .min(12, "Password must be at least 12 characters")
+      .regex(/[a-z]/, "Must include a lowercase letter")
       .regex(/[A-Z]/, "Must include an uppercase letter")
-      .regex(/[0-9]/, "Must include a digit")
+      .regex(/[0-9]/, "Must include a number")
       .regex(/[^a-zA-Z0-9]/, "Must include a special character"),
     confirm: z.string(),
   })
@@ -192,49 +196,34 @@ function ChangePasswordModal({
   user: User;
   onClose: () => void;
 }) {
-  const [submitting, setSubmitting] = useState(false);
+  const resetUserPassword = useResetUserPassword();
   const [error, setError] = useState("");
-  const abortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, []);
 
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<ChangePasswordForm>({
     resolver: zodResolver(changePasswordSchema),
     defaultValues: { password: "", confirm: "" },
   });
-
-  const handleClose = () => {
-    abortRef.current?.abort();
-    onClose();
-  };
+  const password = watch("password");
 
   async function onSubmit(data: ChangePasswordForm) {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setSubmitting(true);
     setError("");
     try {
-      await post(`/users/${user.id}/password`, { password: data.password }, { signal: controller.signal });
-      if (!controller.signal.aborted) {
-        onClose();
-      }
+      await resetUserPassword.mutateAsync({
+        userId: user.id,
+        password: data.password,
+      });
+      useToastStore.getState().addToast({
+        type: "success",
+        title: `Password reset for ${user.username}`,
+      });
+      onClose();
     } catch (err) {
-      if (!controller.signal.aborted) {
-        setError(err instanceof Error ? err.message : "Failed to change password");
-      }
-    } finally {
-      if (!controller.signal.aborted) {
-        setSubmitting(false);
-      }
+      setError(err instanceof Error ? err.message : "Failed to reset password");
     }
   }
 
@@ -243,9 +232,9 @@ function ChangePasswordModal({
       <div className="surface-card w-full max-w-md rounded-3xl p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="font-display text-lg font-semibold text-ink">
-            Change Password for {user.username}
+            Reset Password for {user.username}
           </h3>
-          <button onClick={handleClose} className="rounded-full p-1 hover:bg-surface2">
+          <button onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
             <X className="h-4 w-4 text-muted" />
           </button>
         </div>
@@ -262,7 +251,10 @@ function ChangePasswordModal({
               New Password
             </label>
             <Input type="password" placeholder="Min 12 characters" {...register("password")} />
-            <p className="mt-1 text-xs text-muted">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
+            <p className="mt-1 text-xs text-muted">{PASSWORD_REQUIREMENTS_TEXT}</p>
+            <div className="mt-2">
+              <PasswordStrengthIndicator password={password ?? ""} />
+            </div>
             {errors.password && (
               <p className="mt-1 text-xs text-danger">{errors.password.message}</p>
             )}
@@ -279,11 +271,11 @@ function ChangePasswordModal({
           </div>
 
           <div className="flex justify-end gap-3">
-            <Button variant="ghost" size="sm" type="button" onClick={handleClose}>
+            <Button variant="ghost" size="sm" type="button" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" size="sm" disabled={submitting}>
-              {submitting ? "Changing..." : "Change Password"}
+            <Button type="submit" size="sm" disabled={resetUserPassword.isPending}>
+              {resetUserPassword.isPending ? "Resetting..." : "Reset Password"}
             </Button>
           </div>
         </form>
@@ -434,9 +426,7 @@ export function UsersTab() {
   const [showCreate, setShowCreate] = useState(false);
   const [passwordTarget, setPasswordTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
-  const [drawerUser, setDrawerUser] = useState<User | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [showMatrix, setShowMatrix] = useState(false);
 
   // Bulk action confirm state
   const [bulkConfirm, setBulkConfirm] = useState<{
@@ -591,10 +581,9 @@ export function UsersTab() {
                     <tr
                       key={user.id}
                       className={cn(
-                        "transition-colors hover:bg-surface2/60 cursor-pointer",
+                        "transition-colors hover:bg-surface2/60",
                         selectedIds.has(user.id) && "bg-accent/5",
                       )}
-                      onClick={() => setDrawerUser(user)}
                     >
                       <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                         {!self && (
@@ -644,9 +633,10 @@ export function UsersTab() {
                             variant="ghost"
                             size="sm"
                             onClick={() => setPasswordTarget(user)}
-                            title="Change password"
+                            title="Reset password"
                           >
                             <KeyRound className="h-3.5 w-3.5" />
+                            <span className="ml-1 hidden sm:inline">Reset Password</span>
                           </Button>
                           <Button
                             variant="ghost"
@@ -668,17 +658,6 @@ export function UsersTab() {
         </div>
       </div>
 
-      {/* Permission Matrix (collapsible) */}
-      <button
-        type="button"
-        className="flex items-center gap-2 text-xs font-semibold text-muted hover:text-ink transition-colors"
-        onClick={() => setShowMatrix((v) => !v)}
-      >
-        {showMatrix ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-        Permission Matrix
-      </button>
-      {showMatrix && <PermissionMatrix />}
-
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <BulkActionBar
@@ -688,17 +667,6 @@ export function UsersTab() {
           onClear={() => setSelectedIds(new Set())}
         />
       )}
-
-      {/* User detail drawer */}
-      <UserDetailDrawer
-        user={drawerUser}
-        open={!!drawerUser}
-        onClose={() => setDrawerUser(null)}
-        onChangePassword={(user) => {
-          setDrawerUser(null);
-          setPasswordTarget(user);
-        }}
-      />
 
       {/* Modals */}
       {showCreate && <CreateUserModal onClose={() => setShowCreate(false)} />}

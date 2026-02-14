@@ -69,7 +69,7 @@ export function OAuthConfigPanel() {
   function onSubmit(data: OAuthForm) {
     setConfig.mutate({
       auth: {
-        oauth_enabled: true,
+        oidc_enabled: true,
         oauth_provider: provider,
         oauth_client_id: data.clientId,
         oauth_client_secret: data.clientSecret,
@@ -95,7 +95,7 @@ export function OAuthConfigPanel() {
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-ink">OAuth Configuration</h3>
-          {authConfig?.oauth_enabled && <Badge variant="success">Enabled</Badge>}
+          {authConfig?.oidc_enabled && <Badge variant="success">Enabled</Badge>}
         </div>
 
         {/* Provider selector */}

@@ -55,13 +55,13 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	basicAuth, ok := s.auth.(*BasicAuthProvider)
-	if !ok || basicAuth.UserStore() == nil {
+	usp, ok := s.auth.(UserStoreProvider)
+	if !ok || usp.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
 	}
 
-	users, err := basicAuth.UserStore().List(r.Context(), authCtx.Tenant)
+	users, err := usp.UserStore().List(r.Context(), authCtx.Tenant)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to list users")
 		return
@@ -93,8 +93,8 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	basicAuth, ok := s.auth.(*BasicAuthProvider)
-	if !ok || basicAuth.UserStore() == nil {
+	usp, ok := s.auth.(UserStoreProvider)
+	if !ok || usp.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
 	}
@@ -105,7 +105,7 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userStore := basicAuth.UserStore()
+	userStore := usp.UserStore()
 
 	// Load existing user and verify tenant
 	existing, err := userStore.GetByID(r.Context(), userID)
@@ -174,8 +174,8 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	basicAuth, ok := s.auth.(*BasicAuthProvider)
-	if !ok || basicAuth.UserStore() == nil {
+	usp, ok := s.auth.(UserStoreProvider)
+	if !ok || usp.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
 	}
@@ -186,7 +186,7 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userStore := basicAuth.UserStore()
+	userStore := usp.UserStore()
 
 	// Load user and verify tenant
 	user, err := userStore.GetByID(r.Context(), userID)
@@ -235,8 +235,8 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	basicAuth, ok := s.auth.(*BasicAuthProvider)
-	if !ok || basicAuth.UserStore() == nil {
+	usp, ok := s.auth.(UserStoreProvider)
+	if !ok || usp.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
 	}
@@ -247,7 +247,7 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	userStore := basicAuth.UserStore()
+	userStore := usp.UserStore()
 
 	// Load user and verify tenant
 	user, err := userStore.GetByID(r.Context(), userID)

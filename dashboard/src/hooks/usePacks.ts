@@ -118,3 +118,39 @@ export function useUninstallPack() {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Pack verification
+// ---------------------------------------------------------------------------
+
+export interface PackVerifyCheck {
+  name: string;
+  status: "pass" | "fail";
+  message?: string;
+  details?: string;
+}
+
+export interface PackVerifyResult {
+  overall: "verified" | "failed";
+  checks: PackVerifyCheck[];
+  verified_at: string;
+}
+
+export function useVerifyPack() {
+  return useMutation<PackVerifyResult, Error, string>({
+    mutationFn: (packId) => {
+      logger.info("packs", "Verifying pack", { packId });
+      return post<PackVerifyResult>(`/packs/${packId}/verify`, {});
+    },
+    onSuccess: (result, packId) => {
+      const msg = result.overall === "verified" ? "Pack verified" : "Pack verification failed";
+      const type = result.overall === "verified" ? "success" as const : "warning" as const;
+      logger.info("packs", msg, { packId });
+      useToastStore.getState().addToast({ type, title: msg });
+    },
+    onError: (err, packId) => {
+      logger.error("packs", "Pack verification error", { packId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Verification failed", description: err.message });
+    },
+  });
+}

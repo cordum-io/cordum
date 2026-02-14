@@ -99,7 +99,7 @@ export function useApprovalHistory(filters: ApprovalHistoryFilters = {}) {
                 waitDurationMs = new Date(e.created_at).getTime() - new Date(snap.requested_at).getTime();
               }
             } catch {
-              // ignore parse errors
+              logger.debug("approvals", "Failed to parse approval snapshot JSON");
             }
           }
           return {
@@ -270,3 +270,8 @@ export function useApproveStep() {
     },
   });
 }
+
+/** @internal exported for unit tests */
+export const __approvalsInternal = {
+  buildHistoryParams,
+};

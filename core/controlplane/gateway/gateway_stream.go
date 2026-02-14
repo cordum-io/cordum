@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // stopBusTaps shuts down the broadcast goroutine by closing eventsCh.
@@ -64,6 +65,10 @@ func (s *server) startBusTaps() error {
 		if hb := p.GetHeartbeat(); hb != nil {
 			s.workerMu.Lock()
 			s.workers[hb.WorkerId] = hb
+			if s.workerSeen == nil {
+				s.workerSeen = make(map[string]time.Time)
+			}
+			s.workerSeen[hb.WorkerId] = time.Now().UTC()
 			s.workerMu.Unlock()
 			// Also stream heartbeats to WS listeners (best effort).
 			s.enqueueBusPacket(p)
@@ -81,18 +86,20 @@ func (s *server) startBusTaps() error {
 				topic := ""
 				lastState := ""
 				attempts := 0
+				dlqCtx, dlqCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer dlqCancel()
 				if s.jobStore != nil && jobID != "" {
-					if t, err := s.jobStore.GetTopic(context.Background(), jobID); err == nil {
+					if t, err := s.jobStore.GetTopic(dlqCtx, jobID); err == nil {
 						topic = t
 					}
-					if st, err := s.jobStore.GetState(context.Background(), jobID); err == nil {
+					if st, err := s.jobStore.GetState(dlqCtx, jobID); err == nil {
 						lastState = string(st)
 					}
-					if a, err := s.jobStore.GetAttempts(context.Background(), jobID); err == nil {
+					if a, err := s.jobStore.GetAttempts(dlqCtx, jobID); err == nil {
 						attempts = a
 					}
 				}
-				_ = s.dlqStore.Add(context.Background(), memory.DLQEntry{
+				if err := s.dlqStore.Add(dlqCtx, memory.DLQEntry{
 					JobID:      jobID,
 					Topic:      topic,
 					Status:     jr.Status.String(),
@@ -101,7 +108,9 @@ func (s *server) startBusTaps() error {
 					LastState:  lastState,
 					Attempts:   attempts,
 					CreatedAt:  time.Now().UTC(),
-				})
+				}); err != nil {
+					logging.Error("api-gateway", "dlq add failed", "job_id", jobID, "error", err)
+				}
 
 				// Best effort: ensure a result exists for failed-to-dispatch jobs so clients can inspect `res:<job_id>`.
 				if s.memStore != nil && s.jobStore != nil && jobID != "" {
@@ -115,10 +124,14 @@ func (s *server) startBusTaps() error {
 						"completed_at": time.Now().UTC().Format(time.RFC3339),
 					}
 					if data, err := json.Marshal(body); err == nil {
-						_ = s.memStore.PutResult(context.Background(), resKey, data)
+						if err := s.memStore.PutResult(dlqCtx, resKey, data); err != nil {
+							logging.Error("api-gateway", "store result failed", "job_id", jobID, "error", err)
+						}
 					}
-					if existing, err := s.jobStore.GetResultPtr(context.Background(), jobID); err != nil || strings.TrimSpace(existing) == "" {
-						_ = s.jobStore.SetResultPtr(context.Background(), jobID, resPtr)
+					if existing, err := s.jobStore.GetResultPtr(dlqCtx, jobID); err != nil || strings.TrimSpace(existing) == "" {
+						if err := s.jobStore.SetResultPtr(dlqCtx, jobID, resPtr); err != nil {
+							logging.Error("api-gateway", "set result pointer failed", "job_id", jobID, "error", err)
+						}
 					}
 				}
 			}
@@ -194,6 +207,10 @@ func (s *server) enqueueBusPacket(p *pb.BusPacket) {
 	if s == nil || p == nil {
 		return
 	}
+
+	// Filter quarantined/denied job results: strip sensitive content before broadcast.
+	p = filterQuarantinedPacket(p)
+
 	data, err := protojson.Marshal(p)
 	if err != nil {
 		logging.Error("api-gateway", "protojson marshal failed", "error", err)
@@ -204,6 +221,31 @@ func (s *server) enqueueBusPacket(p *pb.BusPacket) {
 	cancel()
 	jobID := jobIDForBusPacket(p)
 	s.enqueueWSEvent(data, tenant, jobID)
+}
+
+// filterQuarantinedPacket strips result payloads from quarantined/denied job results
+// so that sensitive content (secrets, PII) is not broadcast to WebSocket clients.
+// Status and metadata are preserved so the dashboard can show the state transition.
+func filterQuarantinedPacket(p *pb.BusPacket) *pb.BusPacket {
+	jr := p.GetJobResult()
+	if jr == nil {
+		return p
+	}
+	if jr.Status != pb.JobStatus_JOB_STATUS_DENIED {
+		return p
+	}
+	// Clone packet/proto messages to avoid copying embedded mutex fields.
+	out, ok := proto.Clone(p).(*pb.BusPacket)
+	if !ok || out == nil {
+		return p
+	}
+	sanitized := out.GetJobResult()
+	if sanitized == nil {
+		return p
+	}
+	sanitized.ResultPtr = ""
+	sanitized.ArtifactPtrs = nil
+	return out
 }
 
 func (s *server) enqueueWSEvent(data []byte, tenant string, jobID string) {

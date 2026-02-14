@@ -208,7 +208,7 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 
 	if caPath == "" {
 		if requireTLS {
-			return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CA required")
+			return nil, fmt.Errorf("safety_kernel_tls_ca required")
 		}
 		if insecureAllowed || !env.IsProduction() {
 			return insecure.NewCredentials(), nil

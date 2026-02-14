@@ -113,3 +113,8 @@ export function useDeleteDLQ() {
     },
   });
 }
+
+/** @internal exported for unit tests */
+export const __dlqInternal = {
+  buildParams,
+};

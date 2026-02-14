@@ -334,3 +334,440 @@ This maps directly to CAP `JobMetadata` during dispatch.
 - `minCoreVersion` is enforced when the gateway build version is a valid semver.
   Dev/unknown builds skip the check; `--force` always bypasses it.
 - Gateway build version is read from `GET /api/v1/status` (`build.version`); include `X-API-Key` and `X-Tenant-ID` when auth is enabled.
+
+---
+
+## Pack Development Workflow
+
+Full lifecycle for creating, testing, and publishing a pack:
+
+```
+create → develop → test → build → verify → publish
+```
+
+### 1. Scaffold
+
+```bash
+cordumctl pack create my-pack
+cd my-pack/
+```
+
+This generates a skeleton with `pack.yaml`, `workflows/`, `schemas/`, and `overlays/` directories.
+
+### 2. Develop
+
+Add your worker code, workflow definitions, schemas, and policy fragments. Follow the [naming rules](#naming-rules-enforced-by-installer) — topics must match `job.<pack_id>.*`.
+
+### 3. Test Locally
+
+Install the pack against a local Cordum stack:
+
+```bash
+# Start infrastructure
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+docker compose up -d
+
+# Install pack (dry run first)
+cordumctl pack install --dry-run ./my-pack
+cordumctl pack install ./my-pack
+
+# Verify pack is installed
+cordumctl pack list
+cordumctl pack show my-pack
+```
+
+### 4. Verify
+
+```bash
+cordumctl pack verify my-pack
+```
+
+### 5. Build Archive
+
+```bash
+tar -czf my-pack.tgz -C my-pack .
+sha256sum my-pack.tgz
+```
+
+### 6. Publish
+
+See [Marketplace Publishing](#marketplace-publishing) below.
+
+---
+
+## Pack Verification
+
+`cordumctl pack verify <id>` runs the policy simulation tests defined in the
+installed pack's `tests.policySimulations` section against the live safety kernel.
+
+How it works:
+
+1. Fetches the pack record from `cfg:system:packs`.
+2. For each `policySimulations` entry, sends a `POST /api/v1/policy/simulate` request with the test's topic, capability, risk tags, and other metadata.
+3. Compares the returned decision against `expectDecision` (normalized — e.g. `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `THROTTLE`, `ALLOW_WITH_CONSTRAINTS`).
+4. If `pack_id` is not set in the test request, it defaults to the pack's own ID.
+5. If `tenantId` is not set, it defaults to `default`.
+6. Exits with an error on the first failing simulation.
+
+Schema validation, naming rules, and compatibility checks are performed during
+`pack install`, not during `pack verify`.
+
+### Simulation request fields
+
+| Field | Description |
+|-------|-------------|
+| `tenantId` | Tenant to simulate against (default: `default`) |
+| `topic` | NATS topic (e.g. `job.my-pack.echo`) |
+| `capability` | Capability string (e.g. `my-pack.echo`) |
+| `riskTags` | Risk tag list (e.g. `["network", "write"]`) |
+| `requires` | Requirements list (e.g. `["kubectl"]`) |
+| `packId` | Pack ID override (defaults to the installed pack ID) |
+| `actorId` | Actor identifier for the simulation |
+| `actorType` | Actor type (`user`, `service`, etc.) |
+
+Example `pack.yaml` test block:
+
+```yaml
+tests:
+  policySimulations:
+    - name: allow_echo
+      request:
+        tenantId: default
+        topic: job.hello-pack.echo
+        capability: hello.echo
+      expectDecision: ALLOW
+    - name: deny_dangerous
+      request:
+        topic: job.hello-pack.exec
+        capability: exec.shell
+        riskTags: ["shell_exec"]
+      expectDecision: DENY
+```
+
+```bash
+$ cordumctl pack verify my-pack
+pack my-pack policy simulations passed
+```
+
+---
+
+## Testing Packs
+
+### Unit Testing Handlers
+
+Since pack handlers are typed Go functions (`func(runtime.Context, TIn) (TOut, error)`),
+you can test them directly without NATS or Redis:
+
+```go
+func TestEchoHandler(t *testing.T) {
+    input := echoInput{Message: "test", Author: "bot"}
+    output, err := handler(runtime.Context{}, input)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if output.Message != "test" {
+        t.Fatalf("expected 'test', got %q", output.Message)
+    }
+}
+```
+
+### Integration Testing with Docker Compose
+
+Add a `deploy/docker-compose.yaml` to your pack for local testing:
+
+```yaml
+services:
+  my-worker:
+    build: .
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_URL=redis://:cordum-dev@redis:6379
+      - WORKER_ID=my-worker
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - cordum_default
+
+networks:
+  cordum_default:
+    external: true
+```
+
+Run against the main Cordum stack:
+
+```bash
+# Start Cordum stack
+docker compose up -d
+
+# Start your pack worker (joins the Cordum network)
+docker compose -f my-pack/deploy/docker-compose.yaml up -d
+
+# Submit a test job
+curl -s -X POST http://localhost:8080/api/v1/jobs \
+  -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: default" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"hello","topic":"job.my-pack.echo"}'
+```
+
+### E2E Smoke Test Pattern
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Install pack
+cordumctl pack install ./my-pack
+
+# Submit job and capture ID
+JOB_ID=$(curl -s -X POST http://localhost:8080/api/v1/jobs \
+  -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: default" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"smoke test","topic":"job.my-pack.echo"}' | jq -r '.id')
+
+# Poll for completion (max 30s)
+for i in $(seq 1 30); do
+  STATUS=$(curl -s http://localhost:8080/api/v1/jobs/$JOB_ID \
+    -H "X-API-Key: $CORDUM_API_KEY" \
+    -H "X-Tenant-ID: default" | jq -r '.status')
+  [ "$STATUS" = "succeeded" ] && echo "PASS" && exit 0
+  [ "$STATUS" = "failed" ] && echo "FAIL" && exit 1
+  sleep 1
+done
+echo "TIMEOUT" && exit 1
+```
+
+### Policy Simulation Tests
+
+Built into `pack.yaml` under `tests.policySimulations`. Run them with:
+
+```bash
+cordumctl pack verify my-pack
+```
+
+This evaluates each simulation against the live safety kernel and reports pass/fail.
+
+---
+
+## Pack Configuration
+
+### Declaring Required Config
+
+Packs declare configuration requirements through config overlays. The `overlays.config` section in `pack.yaml` specifies patches applied to the config service:
+
+```yaml
+overlays:
+  config:
+    - name: pools
+      scope: system
+      key: pools
+      strategy: json_merge_patch
+      path: overlays/pools.patch.yaml
+```
+
+### Config Patch Format
+
+Pool mapping patch (`overlays/pools.patch.yaml`):
+
+```yaml
+topics:
+  job.my-pack.analyze: my-pack
+  job.my-pack.summarize: my-pack
+pools:
+  my-pack:
+    requires: ["network:egress"]
+```
+
+Timeout patch (`overlays/timeouts.patch.yaml`):
+
+```yaml
+topics:
+  job.my-pack.analyze:
+    dispatch_timeout: 30s
+    execution_timeout: 120s
+```
+
+### Default Values
+
+Config patches use JSON Merge Patch semantics — values are set if not already present, and `null` removes a key. The scheduler reloads config periodically (`SCHEDULER_CONFIG_RELOAD_INTERVAL`, default 30s).
+
+### Pool Config Caching
+
+The scheduler's `bootstrapConfig()` is write-once — it caches pool config in Redis key `cfg:system:default`. If your pack's pool mapping isn't picked up after install:
+
+```bash
+# Delete the cached config key
+docker compose exec redis redis-cli -a cordum-dev DEL cfg:system:default
+docker compose restart scheduler
+```
+
+See [DOCKER.md](DOCKER.md) for more on this caching behavior.
+
+---
+
+## Worker Registration
+
+Pack workers must register with the platform via heartbeats and topic subscriptions.
+
+### Runtime Lifecycle
+
+Using the Go SDK (`sdk/runtime`):
+
+```go
+import (
+    "github.com/cordum/cordum/sdk/runtime"
+    "github.com/nats-io/nats.go"
+)
+
+// 1. Create an agent
+agent := &runtime.Agent{
+    NATSURL:  "nats://nats:4222",
+    RedisURL: "redis://:cordum-dev@redis:6379",
+    SenderID: "my-worker",
+}
+
+// 2. Register handlers for pack topics
+runtime.Register(agent, "job.my-pack.analyze", analyzeHandler)
+runtime.Register(agent, "job.my-pack.summarize", summarizeHandler)
+// Direct-address handler (for targeted dispatch)
+runtime.Register(agent, runtime.DirectSubject("my-worker"), analyzeHandler)
+
+// 3. Start the agent (subscribes to NATS topics)
+agent.Start()
+defer agent.Close()
+
+// 4. Start heartbeat loop
+nc, _ := nats.Connect("nats://nats:4222")
+heartbeatFn := func() ([]byte, error) {
+    return runtime.HeartbeatPayload(
+        "my-worker",   // worker ID
+        "my-pack",     // pool name (must match pools.yaml mapping)
+        0,             // active jobs
+        4,             // max concurrent jobs
+        0,             // reserved
+    )
+}
+go runtime.HeartbeatLoop(ctx, nc, heartbeatFn)
+```
+
+### Heartbeat Protocol
+
+Workers emit heartbeats on `sys.heartbeat` every 5 seconds (default). The scheduler uses these to:
+
+1. **Track worker liveness** — workers missing 3+ heartbeats are marked offline
+2. **Route jobs** — only workers in the matching pool with available capacity receive jobs
+3. **Monitor capacity** — `active_jobs` / `max_concurrent` drives the dashboard's agent fleet view
+
+**Critical**: The pool name in `HeartbeatPayload` must match the pool that the pack's topic maps to in `config/pools.yaml` (or the pack's pool overlay).
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_URL` | `nats://127.0.0.1:4222` | NATS connection URL |
+| `REDIS_URL` | `redis://:cordum-dev@127.0.0.1:6379/0` | Redis connection URL |
+| `WORKER_ID` | *(required)* | Unique worker identifier |
+
+See [sdk-reference.md](sdk-reference.md) for the full SDK API reference.
+
+---
+
+## Marketplace Publishing
+
+### Publishing Flow
+
+1. **Prepare**: Ensure `pack.yaml` is complete with `metadata.image`, `compatibility`, and `tests`
+2. **Build**: Create a `.tgz` archive: `tar -czf my-pack-0.1.0.tgz -C my-pack .`
+3. **Compute digest**: `sha256sum my-pack-0.1.0.tgz`
+4. **Host**: Upload the `.tgz` to a publicly accessible URL
+5. **Register**: Add an entry to your catalog JSON:
+
+```json
+{
+  "id": "my-pack",
+  "title": "My Pack",
+  "description": "Does something useful",
+  "version": "0.1.0",
+  "url": "https://example.com/packs/my-pack-0.1.0.tgz",
+  "sha256": "<digest>",
+  "image": "https://example.com/my-pack-icon.svg",
+  "tags": ["sre", "monitoring"]
+}
+```
+
+### Official Catalog
+
+The official pack catalog lives at `https://github.com/cordum-io/cordum-packs` and is published to `https://packs.cordum.io/catalog.json`. To submit:
+
+1. Fork `cordum-packs`
+2. Add your pack under `packs/<pack-id>/`
+3. Update `catalog.json` with your entry
+4. Open a pull request
+
+### Version Management
+
+- Pack versions follow semver (`major.minor.patch`)
+- The marketplace shows the latest version per pack
+- Users can install specific versions via `"version": "0.3.1"` in the install payload
+- Old versions remain available at their URLs
+
+### Unpublishing
+
+Remove the entry from the catalog JSON and re-publish. Installed instances are not affected — unpublishing only prevents new installs.
+
+---
+
+## Examples
+
+### hello-worker-go
+
+Located at `examples/hello-worker-go/`. A minimal Go worker demonstrating:
+
+- SDK runtime agent setup
+- Topic subscription (`job.hello-pack.echo`)
+- Direct-address handler (`runtime.DirectSubject`)
+- Heartbeat loop with pool registration (`pool=hello-pack`)
+- Graceful shutdown with signal handling
+
+```bash
+# Run locally
+NATS_URL=nats://localhost:4222 \
+REDIS_URL=redis://:cordum-dev@localhost:6379 \
+go run ./examples/hello-worker-go
+
+# Or via Docker
+docker build -f examples/hello-worker-go/Dockerfile -t hello-worker .
+docker run --network cordum_default \
+  -e NATS_URL=nats://nats:4222 \
+  -e REDIS_URL=redis://:cordum-dev@redis:6379 \
+  hello-worker
+```
+
+### hello-pack
+
+Located at `examples/hello-pack/`. A minimal pack bundle with:
+
+- `pack.yaml` with topic declarations
+- Workflow definition
+- JSON schema
+- Pool and timeout overlays
+- Policy fragment
+
+### Additional Examples
+
+- `examples/python-worker/` — Python worker using NATS client
+- `examples/node-worker/` — Node.js worker example
+- `examples/demo-guardrails/` — Approval + remediation demo pack
+
+---
+
+## Related docs
+
+- [SDK Reference](sdk-reference.md) — Worker runtime, gateway client, heartbeats, blob store, testing patterns
+- [Safety Kernel](safety-kernel.md) — Policy evaluation, fragment merging, overlays, cache, signatures
+- [Configuration Reference](configuration-reference.md) — Config service, pools.yaml, env vars master table
+- [Dashboard Guide](dashboard-guide.md) — Packs page UI, marketplace browsing, install from UI
+- [API Reference](api-reference.md) — REST endpoints for packs, marketplace, policy simulation
+- [DOCKER.md](DOCKER.md) — Docker Compose setup, Redis caching, pool config troubleshooting
