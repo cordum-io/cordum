@@ -1,4 +1,4 @@
-package gateway
+package auth
 
 import (
 	"context"
@@ -645,12 +645,12 @@ func (s *RedisUserStore) ValidateSession(ctx context.Context, token string) (*Au
 
 // ---------------------------------------------------------------------------
 
-// seedDefaultAdminUser creates a default admin user from environment variables if configured.
+// SeedDefaultAdminUser creates a default admin user from environment variables if configured.
 // Environment variables:
 //   - CORDUM_ADMIN_USERNAME (default: "admin")
 //   - CORDUM_ADMIN_PASSWORD (required for user creation)
 //   - CORDUM_ADMIN_EMAIL (optional)
-func seedDefaultAdminUser(ctx context.Context, store UserStore, tenant string) error {
+func SeedDefaultAdminUser(ctx context.Context, store UserStore, tenant string) error {
 	username := strings.TrimSpace(os.Getenv("CORDUM_ADMIN_USERNAME"))
 	password := strings.TrimSpace(os.Getenv("CORDUM_ADMIN_PASSWORD"))
 	email := strings.TrimSpace(os.Getenv("CORDUM_ADMIN_EMAIL"))

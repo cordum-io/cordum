@@ -1,4 +1,4 @@
-package gateway
+package auth
 
 import (
 	"crypto/hmac"

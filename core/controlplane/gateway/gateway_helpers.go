@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -454,48 +453,6 @@ func requestHostname(hostport string) string {
 		return host
 	}
 	return hostport
-}
-
-func normalizeAPIKey(key string) string {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return ""
-	}
-	// Common .env mistake: quoting values (e.g. "example-key").
-	key = strings.Trim(key, "\"'")
-	return strings.TrimSpace(key)
-}
-
-func apiKeyFromWebSocket(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	protocols := websocket.Subprotocols(r)
-	for i, protocol := range protocols {
-		if strings.EqualFold(protocol, wsAPIKeyProtocol) && i+1 < len(protocols) {
-			return decodeWSAPIKey(protocols[i+1])
-		}
-		prefix := strings.ToLower(wsAPIKeyProtocol) + "."
-		if strings.HasPrefix(strings.ToLower(protocol), prefix) {
-			token := protocol[len(prefix):]
-			return decodeWSAPIKey(token)
-		}
-	}
-	return ""
-}
-
-func decodeWSAPIKey(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	if decoded, err := base64.RawURLEncoding.DecodeString(raw); err == nil {
-		return string(decoded)
-	}
-	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil {
-		return string(decoded)
-	}
-	return raw
 }
 
 func apiKeyUnaryInterceptor(auth AuthProvider) grpc.UnaryServerInterceptor {

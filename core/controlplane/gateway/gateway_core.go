@@ -19,7 +19,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
@@ -90,7 +90,7 @@ type server struct {
 	pb.UnimplementedCordumApiServer
 	memStore   memory.Store
 	jobStore   *memory.RedisJobStore // Typed for ListRecentJobs
-	bus        scheduler.Bus
+	bus        model.Bus
 	workers    map[string]*pb.Heartbeat
 	workerSeen map[string]time.Time
 	workerMu   sync.RWMutex
@@ -217,9 +217,10 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 				return fmt.Errorf("init composite auth: %w", err)
 			}
 			provider = composite
+			oidcCfg := oidcProvider.Config()
 			logging.Info("api-gateway", "[OIDC] enabled",
-				"issuer", oidcProvider.cfg.IssuerURL,
-				"audience", oidcProvider.cfg.Audience,
+				"issuer", oidcCfg.IssuerURL,
+				"audience", oidcCfg.Audience,
 			)
 		}
 	}

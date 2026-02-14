@@ -1,4 +1,4 @@
-package gateway
+package auth
 
 import (
 	"context"
@@ -51,6 +51,7 @@ func keyPrefixIndexKey(prefix string) string { return apiKeyPrefixIndexPrefix + 
 
 const apiKeyPrefixLen = 11 // "ck_" + 8 hex chars
 
+// ErrKeyNotFound is returned when a managed API key cannot be found.
 var ErrKeyNotFound = errors.New("key not found")
 
 // GenerateRawKey creates a cryptographically random API key with the ck_ prefix.
