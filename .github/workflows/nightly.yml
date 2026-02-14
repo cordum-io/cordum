@@ -1,0 +1,86 @@
+name: Nightly Integration
+
+on:
+  schedule:
+    # Run at 03:00 UTC every day
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  full-production-gate:
+    name: Full Production Gate (17 gates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Generate API key
+      run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
+    - name: Start services
+      run: |
+        docker compose up -d --build
+        echo "Waiting for services to become healthy..."
+        for i in $(seq 1 90); do
+          healthy=$(docker compose ps --format json | jq -r 'select(.Health == "healthy") | .Name' | wc -l)
+          total=$(docker compose ps --format json | jq -r '.Name' | wc -l)
+          echo "  Healthy: $healthy / $total"
+          if [ "$healthy" -ge "$total" ] && [ "$total" -gt 0 ]; then
+            echo "All services healthy"
+            break
+          fi
+          if [ "$i" -eq 90 ]; then
+            echo "Timed out waiting for services"
+            docker compose logs
+            exit 1
+          fi
+          sleep 5
+        done
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+
+    - name: Run all production gates (1-17)
+      run: |
+        for gate in $(seq 1 17); do
+          echo "=== Gate $gate ==="
+          bash tools/scripts/production_gate.sh --gate $gate --skip-rebuild
+        done
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+
+    - name: Upload gate results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: nightly-gate-results
+        path: production_gate_results.json
+
+    - name: Collect logs on failure
+      if: failure()
+      run: |
+        docker compose logs > docker-compose-logs.txt 2>&1
+
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-compose-logs
+        path: docker-compose-logs.txt
+
+    - name: Tear down services
+      if: always()
+      run: docker compose down -v
