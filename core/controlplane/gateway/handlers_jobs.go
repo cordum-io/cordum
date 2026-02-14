@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
@@ -183,15 +183,15 @@ func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string
 			continue
 		}
 		switch job.State {
-		case scheduler.JobStatePending, scheduler.JobStateApproval, scheduler.JobStateScheduled:
+		case model.JobStatePending, model.JobStateApproval, model.JobStateScheduled:
 			pending++
-		case scheduler.JobStateDispatched:
+		case model.JobStateDispatched:
 			dispatched++
-		case scheduler.JobStateRunning:
+		case model.JobStateRunning:
 			running++
-		case scheduler.JobStateSucceeded:
+		case model.JobStateSucceeded:
 			succeeded++
-		case scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout, scheduler.JobStateDenied, scheduler.JobStateQuarantined:
+		case model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateDenied, model.JobStateQuarantined:
 			failed++
 		}
 	}
@@ -251,7 +251,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantFilter = resolvedTenant
 
-	var jobs []scheduler.JobRecord
+	var jobs []model.JobRecord
 	if traceFilter != "" {
 		jobs, err = s.jobStore.GetTraceJobs(r.Context(), traceFilter)
 	} else if cursor > 0 {
@@ -265,7 +265,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// client-side filter to avoid changing store signature
-	filtered := make([]scheduler.JobRecord, 0, len(jobs))
+	filtered := make([]model.JobRecord, 0, len(jobs))
 	for _, j := range jobs {
 		if stateFilter != "" && strings.ToUpper(string(j.State)) != stateFilter {
 			continue
@@ -312,7 +312,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusNotFound, "job not found")
 		return
 	}
-	state := scheduler.JobState(meta["state"])
+	state := model.JobState(meta["state"])
 	if state == "" {
 		writeErrorJSON(w, http.StatusNotFound, "job not found")
 		return
@@ -342,8 +342,8 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build safety record from hash fields.
-	safetyRecord := scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyDecision(meta["safety_decision"]),
+	safetyRecord := model.SafetyDecisionRecord{
+		Decision:         model.SafetyDecision(meta["safety_decision"]),
 		Reason:           meta["safety_reason"],
 		RuleID:           meta["safety_rule_id"],
 		PolicySnapshot:   meta["safety_snapshot"],
@@ -932,9 +932,9 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state == "" {
-		state = scheduler.JobStateCancelled
+		state = model.JobStateCancelled
 	}
-	if state != scheduler.JobStateCancelled {
+	if state != model.JobStateCancelled {
 		w.Header().Set("Content-Type", "application/json")
 		writeJSON(w, map[string]any{
 			"id":     id,
@@ -987,7 +987,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
 		"id":    id,
-		"state": scheduler.JobStateCancelled,
+		"state": model.JobStateCancelled,
 	})
 }
 
@@ -1116,7 +1116,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		newReq.Meta.Labels = nil
 	}
 
-	if err := s.jobStore.SetState(r.Context(), newJobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(r.Context(), newJobID, model.JobStatePending); err != nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to initialize job state")
 		return
 	}
@@ -1338,7 +1338,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set initial state
-	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(r.Context(), jobID, model.JobStatePending); err != nil {
 		logging.Error("api-gateway", "failed to initialize job state", "job_id", jobID, "error", err)
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to initialize job state")
 		return
@@ -1410,7 +1410,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		logging.Error("api-gateway", "job publish failed", "job_id", jobID, "error", err)
-		_ = s.jobStore.SetState(r.Context(), jobID, scheduler.JobStateFailed)
+		_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to enqueue job")
 		return
 	}
@@ -1438,7 +1438,7 @@ func (s *server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to load trace")
 		return
 	}
-	filtered := make([]scheduler.JobRecord, 0, len(jobs))
+	filtered := make([]model.JobRecord, 0, len(jobs))
 	for _, job := range jobs {
 		if err := s.requireTenantAccess(r, job.Tenant); err != nil {
 			continue

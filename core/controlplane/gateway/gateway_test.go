@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -577,8 +577,8 @@ func TestAuthConfigReflectsUserStore(t *testing.T) {
 func TestHandleListJobDecisions(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	jobID := "job-decisions-1"
-	record := scheduler.SafetyDecisionRecord{
-		Decision:    scheduler.SafetyAllow,
+	record := model.SafetyDecisionRecord{
+		Decision:    model.SafetyAllow,
 		Reason:      "ok",
 		Constraints: &pb.PolicyConstraints{RedactionLevel: "low"},
 	}
@@ -594,11 +594,11 @@ func TestHandleListJobDecisions(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected ok response, got %d", rr.Code)
 	}
-	var out []scheduler.SafetyDecisionRecord
+	var out []model.SafetyDecisionRecord
 	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(out) != 1 || out[0].Decision != scheduler.SafetyAllow {
+	if len(out) != 1 || out[0].Decision != model.SafetyAllow {
 		t.Fatalf("unexpected decisions: %#v", out)
 	}
 }

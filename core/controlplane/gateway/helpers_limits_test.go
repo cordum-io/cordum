@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/memory"
 )
 
@@ -20,7 +20,7 @@ func TestListJobsAndApprovalsLimitClamped(t *testing.T) {
 
 	for i := 0; i < int(maxListLimit)+1; i++ {
 		jobID := fmt.Sprintf("job-%d", i)
-		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateApproval); err != nil {
+		if err := s.jobStore.SetState(ctx, jobID, model.JobStateApproval); err != nil {
 			t.Fatalf("set state: %v", err)
 		}
 		_ = s.jobStore.SetTenant(ctx, jobID, tenant)

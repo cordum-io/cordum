@@ -206,6 +206,17 @@ Use CAP worker helpers when you need heartbeats/progress/cancel handling.
 
 **Status:** Implemented in `cmd/cordum-api-gateway` (HTTP/WS + gRPC; binary `cordum-api-gateway`).
 
+**Package structure** (`core/controlplane/gateway/`):
+
+| Sub-package | Purpose |
+|-------------|---------|
+| `gateway/` (root) | HTTP/gRPC handlers, middleware chain, MCP bridge, server lifecycle (~20 source files) |
+| `gateway/auth/` | Auth providers (API key, basic, OIDC/JWT, composite), Redis-backed user and key stores |
+| `gateway/packs/` | Pack types, constants, manifest validation, marketplace utilities, tar extraction |
+| `gateway/policybundles/` | Policy bundle types, YAML rule parsing, policy merging, evaluation helpers, audit formatting |
+
+Dependency graph: `gateway → {auth, packs, policybundles}`, `policybundles → {auth, packs}`. No circular imports.
+
 At minimum:
 
 - Workflows: `create/list/get/delete`

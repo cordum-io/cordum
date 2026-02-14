@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/memory"
 )
 
@@ -72,7 +72,7 @@ func TestHandleGetTrace(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-trace"
 	traceID := "trace-1"
-	if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	if err := s.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {

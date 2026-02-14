@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/config"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -694,7 +694,7 @@ func TestPolicyOutputStatsHandler(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	seed := func(jobID string, state scheduler.JobState, decision scheduler.OutputDecision, checkedAt int64, latencyMs int64) {
+	seed := func(jobID string, state model.JobState, decision model.OutputDecision, checkedAt int64, latencyMs int64) {
 		req := &pb.JobRequest{
 			JobId:    jobID,
 			Topic:    "job.test",
@@ -703,19 +703,19 @@ func TestPolicyOutputStatsHandler(t *testing.T) {
 		if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
 			t.Fatalf("set job meta %s: %v", jobID, err)
 		}
-		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+		if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 			t.Fatalf("set pending %s: %v", jobID, err)
 		}
-		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateScheduled); err != nil {
+		if err := s.jobStore.SetState(ctx, jobID, model.JobStateScheduled); err != nil {
 			t.Fatalf("set scheduled %s: %v", jobID, err)
 		}
-		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+		if err := s.jobStore.SetState(ctx, jobID, model.JobStateRunning); err != nil {
 			t.Fatalf("set running %s: %v", jobID, err)
 		}
 		if err := s.jobStore.SetState(ctx, jobID, state); err != nil {
 			t.Fatalf("set state %s: %v", jobID, err)
 		}
-		record := scheduler.OutputSafetyRecord{
+		record := model.OutputSafetyRecord{
 			Decision:        decision,
 			RuleID:          "out-secret",
 			Reason:          "matched output policy rule",
@@ -728,9 +728,9 @@ func TestPolicyOutputStatsHandler(t *testing.T) {
 		}
 	}
 
-	seed("job-stats-recent-quarantine", scheduler.JobStateQuarantined, scheduler.OutputQuarantine, now.Add(-10*time.Minute).UnixMicro(), 15)
-	seed("job-stats-recent-allow", scheduler.JobStateSucceeded, scheduler.OutputAllow, now.Add(-5*time.Minute).UnixMicro(), 5)
-	seed("job-stats-old", scheduler.JobStateQuarantined, scheduler.OutputQuarantine, now.Add(-26*time.Hour).UnixMicro(), 99)
+	seed("job-stats-recent-quarantine", model.JobStateQuarantined, model.OutputQuarantine, now.Add(-10*time.Minute).UnixMicro(), 15)
+	seed("job-stats-recent-allow", model.JobStateSucceeded, model.OutputAllow, now.Add(-5*time.Minute).UnixMicro(), 5)
+	seed("job-stats-old", model.JobStateQuarantined, model.OutputQuarantine, now.Add(-26*time.Hour).UnixMicro(), 99)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/output/stats?limit=100", nil)
 	req.Header.Set("X-Tenant-ID", "default")
@@ -776,27 +776,27 @@ func TestPolicyAuditOutputFilterByRuleID(t *testing.T) {
 		if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
 			t.Fatalf("set job meta: %v", err)
 		}
-		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+		if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 			t.Fatalf("set pending: %v", err)
 		}
-		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateScheduled); err != nil {
+		if err := s.jobStore.SetState(ctx, jobID, model.JobStateScheduled); err != nil {
 			t.Fatalf("set scheduled: %v", err)
 		}
-		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+		if err := s.jobStore.SetState(ctx, jobID, model.JobStateRunning); err != nil {
 			t.Fatalf("set running: %v", err)
 		}
-		if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateQuarantined); err != nil {
+		if err := s.jobStore.SetState(ctx, jobID, model.JobStateQuarantined); err != nil {
 			t.Fatalf("set quarantined: %v", err)
 		}
-		record := scheduler.OutputSafetyRecord{
-			Decision:        scheduler.OutputQuarantine,
+		record := model.OutputSafetyRecord{
+			Decision:        model.OutputQuarantine,
 			RuleID:          ruleID,
 			Reason:          "matched output policy rule",
 			CheckedAt:       time.Now().UTC().UnixMicro(),
 			CheckDurationMs: 7,
 			Phase:           "sync",
 			OriginalPtr:     "redis://res:" + jobID,
-			Findings: []scheduler.OutputFinding{{
+			Findings: []model.OutputFinding{{
 				Type:           "secret_leak",
 				Severity:       "critical",
 				Detail:         "aws_access_key_id",

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/memory"
 	"github.com/cordum/cordum/core/infra/secrets"
@@ -155,7 +155,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 
 	// Set initial state
-	if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		logging.Error("api-gateway", "failed to initialize job state", "job_id", jobID, "error", err)
 		return nil, status.Error(codes.Unavailable, "failed to initialize job state")
 	}
@@ -270,7 +270,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
-		_ = s.jobStore.SetState(ctx, jobID, scheduler.JobStateFailed)
+		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)
 		logging.Error("api-gateway", "job publish failed", "job_id", jobID, "error", err)
 		return nil, status.Errorf(codes.Unavailable, "failed to enqueue job")
 	}

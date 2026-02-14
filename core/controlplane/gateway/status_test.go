@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -87,32 +87,32 @@ func TestHandleStatusPipelineAggregationByTenant(t *testing.T) {
 	type jobSeed struct {
 		id     string
 		tenant string
-		state  scheduler.JobState
+		state  model.JobState
 	}
 	seeds := []jobSeed{
-		{id: "job-pending", tenant: "default", state: scheduler.JobStatePending},
-		{id: "job-approval", tenant: "default", state: scheduler.JobStateApproval},
-		{id: "job-scheduled", tenant: "default", state: scheduler.JobStateScheduled},
-		{id: "job-dispatched", tenant: "default", state: scheduler.JobStateDispatched},
-		{id: "job-running", tenant: "default", state: scheduler.JobStateRunning},
-		{id: "job-succeeded", tenant: "default", state: scheduler.JobStateSucceeded},
-		{id: "job-failed", tenant: "default", state: scheduler.JobStateFailed},
-		{id: "job-denied", tenant: "default", state: scheduler.JobStateDenied},
-		{id: "job-other-tenant", tenant: "other", state: scheduler.JobStateRunning},
+		{id: "job-pending", tenant: "default", state: model.JobStatePending},
+		{id: "job-approval", tenant: "default", state: model.JobStateApproval},
+		{id: "job-scheduled", tenant: "default", state: model.JobStateScheduled},
+		{id: "job-dispatched", tenant: "default", state: model.JobStateDispatched},
+		{id: "job-running", tenant: "default", state: model.JobStateRunning},
+		{id: "job-succeeded", tenant: "default", state: model.JobStateSucceeded},
+		{id: "job-failed", tenant: "default", state: model.JobStateFailed},
+		{id: "job-denied", tenant: "default", state: model.JobStateDenied},
+		{id: "job-other-tenant", tenant: "other", state: model.JobStateRunning},
 	}
 
-	seedState := func(jobID string, target scheduler.JobState) error {
+	seedState := func(jobID string, target model.JobState) error {
 		switch target {
-		case scheduler.JobStateSucceeded:
-			if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+		case model.JobStateSucceeded:
+			if err := s.jobStore.SetState(ctx, jobID, model.JobStateRunning); err != nil {
 				return err
 			}
-			return s.jobStore.SetState(ctx, jobID, scheduler.JobStateSucceeded)
-		case scheduler.JobStateDenied:
-			if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+			return s.jobStore.SetState(ctx, jobID, model.JobStateSucceeded)
+		case model.JobStateDenied:
+			if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 				return err
 			}
-			return s.jobStore.SetState(ctx, jobID, scheduler.JobStateDenied)
+			return s.jobStore.SetState(ctx, jobID, model.JobStateDenied)
 		default:
 			return s.jobStore.SetState(ctx, jobID, target)
 		}

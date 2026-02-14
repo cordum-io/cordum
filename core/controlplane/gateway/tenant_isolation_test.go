@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/infra/memory"
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 )
 
 // tenantStrictAuth enforces tenant isolation — denies cross-tenant access.
@@ -59,7 +59,7 @@ func TestMemoryTenantIsolation_CrossTenantBlocked(t *testing.T) {
 
 	// Create a job owned by tenant-B.
 	jobID := "job-tenant-b"
-	if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	_ = s.jobStore.SetTenant(ctx, jobID, "tenant-b")
@@ -89,7 +89,7 @@ func TestMemoryTenantIsolation_OwnTenantAllowed(t *testing.T) {
 
 	// Create a job owned by tenant-a.
 	jobID := "job-tenant-a"
-	if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	_ = s.jobStore.SetTenant(ctx, jobID, "tenant-a")

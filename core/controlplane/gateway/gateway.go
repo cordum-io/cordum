@@ -691,3 +691,45 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 		}
 	}
 }
+
+// AuditEvent captures an HTTP request summary for audit export.
+type AuditEvent struct {
+	Time       time.Time  `json:"time"`
+	Method     string     `json:"method"`
+	Route      string     `json:"route"`
+	Path       string     `json:"path"`
+	Status     int        `json:"status"`
+	DurationMs int64      `json:"duration_ms"`
+	RemoteAddr string     `json:"remote_addr"`
+	UserAgent  string     `json:"user_agent"`
+	Tenant     string     `json:"tenant"`
+	Principal  string     `json:"principal"`
+	Role       string     `json:"role"`
+	AuthSource AuthSource `json:"auth_source,omitempty"`
+	RequestID  string     `json:"request_id"`
+}
+
+// AuditExporter allows auth providers to emit audit events.
+type AuditExporter interface {
+	ExportAudit(ctx context.Context, event AuditEvent) error
+}
+
+// LicenseInfo describes license metadata for the status endpoint.
+type LicenseInfo struct {
+	Mode           string           `json:"mode,omitempty"`
+	Status         string           `json:"status,omitempty"`
+	Plan           string           `json:"plan,omitempty"`
+	OrgID          string           `json:"org_id,omitempty"`
+	LicenseID      string           `json:"license_id,omitempty"`
+	DeploymentType string           `json:"deployment_type,omitempty"`
+	IssuedAt       string           `json:"issued_at,omitempty"`
+	NotBefore      string           `json:"not_before,omitempty"`
+	ExpiresAt      string           `json:"expires_at,omitempty"`
+	Features       []string         `json:"features,omitempty"`
+	Limits         map[string]int64 `json:"limits,omitempty"`
+}
+
+// LicenseInfoProvider optionally supplies license metadata for status responses.
+type LicenseInfoProvider interface {
+	LicenseInfo() *LicenseInfo
+}

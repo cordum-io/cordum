@@ -1,9 +1,13 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -343,4 +347,587 @@ func lookupAnyPath(data map[string]any, keys ...string) (any, bool) {
 		}
 	}
 	return cur, true
+}
+
+// ---------------------------------------------------------------------------
+// MCP service bridge — closure-based bridge from MCP tools to HTTP handlers
+// ---------------------------------------------------------------------------
+
+func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
+	if s == nil {
+		return mcp.NewDirectServiceBridge(mcp.DirectServiceBridgeConfig{})
+	}
+	return mcp.NewDirectServiceBridge(mcp.DirectServiceBridgeConfig{
+		SubmitJobFunc: func(ctx context.Context, req mcp.SubmitJobInput) (*mcp.SubmitJobOutput, error) {
+			body := map[string]any{
+				"prompt":   req.Prompt,
+				"topic":    req.Topic,
+				"priority": req.Priority,
+			}
+			if strings.TrimSpace(req.Capability) != "" {
+				body["capability"] = strings.TrimSpace(req.Capability)
+			}
+			if len(req.RiskTags) > 0 {
+				body["risk_tags"] = append([]string{}, req.RiskTags...)
+			}
+			if len(req.Labels) > 0 {
+				body["labels"] = req.Labels
+			}
+			if strings.TrimSpace(req.MemoryID) != "" {
+				body["memory_id"] = strings.TrimSpace(req.MemoryID)
+			}
+			if strings.TrimSpace(req.PackID) != "" {
+				body["pack_id"] = strings.TrimSpace(req.PackID)
+			}
+
+			status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodPost, "/api/v1/jobs", nil, nil, body, s.handleSubmitJobHTTP)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			jobID := strings.TrimSpace(mcpBridgeString(payload["job_id"]))
+			if jobID == "" {
+				return nil, mcp.NewBridgeError(http.StatusBadGateway, "invalid_response", "missing job_id in submit response", payload)
+			}
+			return &mcp.SubmitJobOutput{
+				JobID:   jobID,
+				TraceID: strings.TrimSpace(mcpBridgeString(payload["trace_id"])),
+			}, nil
+		},
+		CancelJobFunc: func(ctx context.Context, jobID string, reason string) error {
+			body := map[string]any{}
+			if strings.TrimSpace(reason) != "" {
+				body["reason"] = strings.TrimSpace(reason)
+			}
+			status, payload, raw, err := s.invokeMCPJSONHandler(
+				ctx,
+				http.MethodPost,
+				"/api/v1/jobs/"+jobID+"/cancel",
+				nil,
+				map[string]string{"id": jobID},
+				body,
+				s.handleCancelJob,
+			)
+			if err != nil {
+				return err
+			}
+			if status < 200 || status >= 300 {
+				return mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			if state := strings.TrimSpace(mcpBridgeString(payload["state"])); state != "" && !strings.EqualFold(state, "cancelled") {
+				return mcp.NewBridgeError(http.StatusConflict, "job_already_completed", "job already completed", payload)
+			}
+			return nil
+		},
+		TriggerWorkflowFunc: func(ctx context.Context, req mcp.TriggerWorkflowInput) (*mcp.TriggerOutput, error) {
+			target := "/api/v1/workflows/" + req.WorkflowID + "/runs"
+			if req.DryRun {
+				target += "?dry_run=true"
+			}
+			headers := map[string]string{}
+			if strings.TrimSpace(req.IdempotencyKey) != "" {
+				headers["Idempotency-Key"] = strings.TrimSpace(req.IdempotencyKey)
+			}
+			input := req.Input
+			if input == nil {
+				input = map[string]any{}
+			}
+			status, payload, raw, err := s.invokeMCPJSONHandler(
+				ctx,
+				http.MethodPost,
+				target,
+				headers,
+				map[string]string{"id": req.WorkflowID},
+				input,
+				s.handleStartRun,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				be := mcp.NewBridgeErrorFromHTTP(status, raw)
+				if status == http.StatusBadRequest && strings.Contains(strings.ToLower(be.Message), "input schema validation failed") {
+					return nil, mcp.NewBridgeError(http.StatusUnprocessableEntity, "input_validation_failed", be.Message, be.Details)
+				}
+				return nil, be
+			}
+			runID := strings.TrimSpace(mcpBridgeString(payload["run_id"]))
+			if runID == "" {
+				return nil, mcp.NewBridgeError(http.StatusBadGateway, "invalid_response", "missing run_id in workflow response", payload)
+			}
+			return &mcp.TriggerOutput{
+				RunID:      runID,
+				WorkflowID: strings.TrimSpace(req.WorkflowID),
+			}, nil
+		},
+		ApproveJobFunc: func(ctx context.Context, jobID string, note string) error {
+			body := map[string]any{}
+			if strings.TrimSpace(note) != "" {
+				body["note"] = strings.TrimSpace(note)
+			}
+			status, _, raw, err := s.invokeMCPJSONHandler(
+				ctx,
+				http.MethodPost,
+				"/api/v1/approvals/"+jobID+"/approve",
+				nil,
+				map[string]string{"job_id": jobID},
+				body,
+				s.handleApproveJob,
+			)
+			if err != nil {
+				return err
+			}
+			if status < 200 || status >= 300 {
+				return mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			return nil
+		},
+		RejectJobFunc: func(ctx context.Context, jobID string, reason string) error {
+			body := map[string]any{"reason": strings.TrimSpace(reason)}
+			status, _, raw, err := s.invokeMCPJSONHandler(
+				ctx,
+				http.MethodPost,
+				"/api/v1/approvals/"+jobID+"/reject",
+				nil,
+				map[string]string{"job_id": jobID},
+				body,
+				s.handleRejectJob,
+			)
+			if err != nil {
+				return err
+			}
+			if status < 200 || status >= 300 {
+				return mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			return nil
+		},
+		SimulatePolicyFunc: func(ctx context.Context, req mcp.PolicySimInput) (*mcp.PolicySimOutput, error) {
+			tenantID := s.mcpTenantFromContext(ctx)
+			body := map[string]any{
+				"topic":    req.Topic,
+				"tenant":   tenantID,
+				"org_id":   tenantID,
+				"priority": req.Priority,
+				"meta": map[string]any{
+					"tenant_id":  tenantID,
+					"capability": strings.TrimSpace(req.Capability),
+					"risk_tags":  append([]string{}, req.RiskTags...),
+					"labels":     req.Labels,
+				},
+			}
+			if len(req.Labels) > 0 {
+				body["labels"] = req.Labels
+			}
+			status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodPost, "/api/v1/policy/simulate", nil, nil, body, s.handlePolicySimulate)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			out := &mcp.PolicySimOutput{
+				Decision: strings.TrimSpace(mcpBridgeString(payload["decision"])),
+				Reason:   strings.TrimSpace(mcpBridgeString(payload["reason"])),
+				RuleID:   strings.TrimSpace(mcpBridgeFirstString(payload, "ruleId", "rule_id")),
+			}
+			if constraints, ok := payload["constraints"].(map[string]any); ok {
+				out.Constraints = constraints
+			} else {
+				out.Constraints = map[string]any{}
+			}
+			if rems, ok := payload["remediations"].([]any); ok {
+				out.Remediations = make([]map[string]any, 0, len(rems))
+				for _, item := range rems {
+					if m, ok := item.(map[string]any); ok {
+						out.Remediations = append(out.Remediations, m)
+					}
+				}
+			} else {
+				out.Remediations = []map[string]any{}
+			}
+			return out, nil
+		},
+	})
+}
+
+func (s *server) invokeMCPJSONHandler(
+	ctx context.Context,
+	method string,
+	target string,
+	headers map[string]string,
+	pathValues map[string]string,
+	body any,
+	handler http.HandlerFunc,
+) (int, map[string]any, []byte, error) {
+	if handler == nil {
+		return 0, nil, nil, fmt.Errorf("handler is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var payload []byte
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return 0, nil, nil, fmt.Errorf("encode body: %w", err)
+		}
+		payload = encoded
+	}
+
+	req := httptest.NewRequest(method, target, bytes.NewReader(payload))
+	req = req.WithContext(ctx)
+	if len(payload) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if req.Header.Get("X-Tenant-ID") == "" {
+		req.Header.Set("X-Tenant-ID", s.mcpTenantFromContext(ctx))
+	}
+	for key, value := range headers {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
+	for key, value := range pathValues {
+		req.SetPathValue(strings.TrimSpace(key), strings.TrimSpace(value))
+	}
+
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+
+	raw := rr.Body.Bytes()
+	decoded := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &decoded)
+	}
+	return rr.Code, decoded, raw, nil
+}
+
+func (s *server) invokeMCPAnyHandler(
+	ctx context.Context,
+	method string,
+	target string,
+	headers map[string]string,
+	pathValues map[string]string,
+	body any,
+	handler http.HandlerFunc,
+) (int, any, []byte, error) {
+	if handler == nil {
+		return 0, nil, nil, fmt.Errorf("handler is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var payload []byte
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return 0, nil, nil, fmt.Errorf("encode body: %w", err)
+		}
+		payload = encoded
+	}
+
+	req := httptest.NewRequest(method, target, bytes.NewReader(payload))
+	req = req.WithContext(ctx)
+	if len(payload) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if req.Header.Get("X-Tenant-ID") == "" {
+		req.Header.Set("X-Tenant-ID", s.mcpTenantFromContext(ctx))
+	}
+	for key, value := range headers {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
+	for key, value := range pathValues {
+		req.SetPathValue(strings.TrimSpace(key), strings.TrimSpace(value))
+	}
+
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+
+	raw := rr.Body.Bytes()
+	var decoded any
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &decoded)
+	}
+	return rr.Code, decoded, raw, nil
+}
+
+func (s *server) mcpTenantFromContext(ctx context.Context) string {
+	if auth := authFromContext(ctx); auth != nil {
+		if tenant := strings.TrimSpace(auth.Tenant); tenant != "" {
+			return tenant
+		}
+	}
+	if tenant := strings.TrimSpace(s.tenant); tenant != "" {
+		return tenant
+	}
+	return "default"
+}
+
+func mcpBridgeString(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch typed := v.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func mcpBridgeFirstString(data map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if val := strings.TrimSpace(mcpBridgeString(data[key])); val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------------------
+// MCP data bridge — closure-based bridge from MCP resources to HTTP handlers
+// ---------------------------------------------------------------------------
+
+func (s *server) newMCPDataBridge() mcp.DataBridge {
+	if s == nil {
+		return mcp.NewDirectDataBridge(mcp.DirectDataBridgeConfig{})
+	}
+	return mcp.NewDirectDataBridge(mcp.DirectDataBridgeConfig{
+		GetJobFunc: func(ctx context.Context, id string) (*mcp.JobDetail, error) {
+			status, payload, raw, err := s.invokeMCPJSONHandler(
+				ctx,
+				http.MethodGet,
+				"/api/v1/jobs/"+strings.TrimSpace(id),
+				nil,
+				map[string]string{"id": strings.TrimSpace(id)},
+				nil,
+				s.handleGetJob,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			out := mcp.JobDetail(payload)
+			return &out, nil
+		},
+		ListJobsFunc: func(ctx context.Context, opts mcp.JobListOpts) (*mcp.JobList, error) {
+			values := []string{}
+			if opts.Limit > 0 {
+				values = append(values, "limit="+strconv.Itoa(opts.Limit))
+			}
+			if status := strings.TrimSpace(opts.Status); status != "" {
+				values = append(values, "state="+status)
+			}
+			if opts.Cursor > 0 {
+				values = append(values, "cursor="+strconv.FormatInt(opts.Cursor, 10))
+			}
+			target := "/api/v1/jobs"
+			if len(values) > 0 {
+				target += "?" + strings.Join(values, "&")
+			}
+
+			status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, target, nil, nil, nil, s.handleListJobs)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			items := mcpGatewayToMapSlice(payload["items"])
+			out := &mcp.JobList{Items: items}
+			if next, ok := mcpGatewayToInt64(payload["next_cursor"]); ok {
+				out.NextCursor = &next
+			}
+			return out, nil
+		},
+		ListWorkflowRunsFunc: func(ctx context.Context, wfID string, limit int) (*mcp.RunList, error) {
+			target := "/api/v1/workflows/" + strings.TrimSpace(wfID) + "/runs"
+			if limit > 0 {
+				target += "?limit=" + strconv.Itoa(limit)
+			}
+			status, payload, raw, err := s.invokeMCPAnyHandler(
+				ctx,
+				http.MethodGet,
+				target,
+				nil,
+				map[string]string{"id": strings.TrimSpace(wfID)},
+				nil,
+				s.handleListRuns,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			items := []map[string]any{}
+			switch typed := payload.(type) {
+			case []any:
+				items = mcpGatewayToMapSlice(typed)
+			case map[string]any:
+				items = mcpGatewayToMapSlice(typed["items"])
+			}
+			return &mcp.RunList{
+				WorkflowID: strings.TrimSpace(wfID),
+				Items:      items,
+			}, nil
+		},
+		GetWorkflowRunFunc: func(ctx context.Context, wfID, runID string) (*mcp.RunDetail, error) {
+			status, payload, raw, err := s.invokeMCPJSONHandler(
+				ctx,
+				http.MethodGet,
+				"/api/v1/workflow-runs/"+strings.TrimSpace(runID),
+				nil,
+				map[string]string{"id": strings.TrimSpace(runID)},
+				nil,
+				s.handleGetRun,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			if expected := strings.TrimSpace(wfID); expected != "" {
+				if actual := strings.TrimSpace(mcpBridgeString(payload["workflow_id"])); actual != "" && actual != expected {
+					return nil, mcp.NewBridgeError(http.StatusNotFound, "not_found", "workflow run not found", nil)
+				}
+			}
+			out := mcp.RunDetail(payload)
+			return &out, nil
+		},
+		ListAuditEntriesFunc: func(ctx context.Context, limit int) ([]mcp.AuditEntry, error) {
+			status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/policy/audit", nil, nil, nil, s.handleListPolicyAudit)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			items := mcpGatewayToMapSlice(payload["items"])
+			if limit <= 0 {
+				limit = 50
+			}
+			if len(items) > limit {
+				items = items[:limit]
+			}
+			out := make([]mcp.AuditEntry, 0, len(items))
+			for _, item := range items {
+				out = append(out, mcp.AuditEntry(item))
+			}
+			return out, nil
+		},
+		GetSystemHealthFunc: func(ctx context.Context) (*mcp.HealthStatus, error) {
+			status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/status", nil, nil, nil, s.handleStatus)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			out := mcp.HealthStatus(payload)
+			return &out, nil
+		},
+		ListPoliciesSummaryFn: func(ctx context.Context) (*mcp.PolicySummary, error) {
+			status, bundlesPayload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/policy/bundles", nil, nil, nil, s.handlePolicyBundles)
+			if err != nil {
+				return nil, err
+			}
+			if status < 200 || status >= 300 {
+				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+			}
+			items := mcpGatewayToMapSlice(bundlesPayload["items"])
+
+			currentSnapshot := ""
+			if status, snapshotsPayload, _, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/policy/snapshots", nil, nil, nil, s.handlePolicySnapshots); err == nil {
+				if status >= 200 && status < 300 {
+					if snapshots, ok := snapshotsPayload["snapshots"].([]any); ok && len(snapshots) > 0 {
+						currentSnapshot = strings.TrimSpace(mcpBridgeString(snapshots[0]))
+					}
+				}
+			}
+
+			summary := mcp.PolicySummary{
+				"active_bundles":      items,
+				"current_snapshot_id": currentSnapshot,
+				"safety_stance":       mcpGatewayInferSafetyStance(items),
+			}
+			return &summary, nil
+		},
+	})
+}
+
+func mcpGatewayToMapSlice(raw any) []map[string]any {
+	if raw == nil {
+		return []map[string]any{}
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func mcpGatewayToInt64(raw any) (int64, bool) {
+	switch v := raw.(type) {
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	case float64:
+		return int64(v), true
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return n, true
+		}
+	case string:
+		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+func mcpGatewayInferSafetyStance(items []map[string]any) string {
+	if len(items) == 0 {
+		return "permissive"
+	}
+	enabled := 0
+	var totalRules int64
+	for _, item := range items {
+		if v, ok := item["enabled"].(bool); ok && v {
+			enabled++
+		}
+		if rc, ok := mcpGatewayToInt64(item["rule_count"]); ok {
+			totalRules += rc
+		}
+	}
+	if enabled == 0 || totalRules == 0 {
+		return "permissive"
+	}
+	if totalRules >= 20 {
+		return "strict"
+	}
+	return "balanced"
 }

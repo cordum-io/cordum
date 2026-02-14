@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/memory"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -44,7 +44,7 @@ func TestHandleSubmitJobHTTP(t *testing.T) {
 	}
 
 	state, err := s.jobStore.GetState(context.Background(), jobID)
-	if err != nil || state != scheduler.JobStatePending {
+	if err != nil || state != model.JobStatePending {
 		t.Fatalf("unexpected job state: %v %v", state, err)
 	}
 	topic, _ := s.jobStore.GetTopic(context.Background(), jobID)
@@ -118,7 +118,7 @@ func TestHandleSubmitJobHTTPRespectsConcurrentJobsLimit(t *testing.T) {
 	if err := s.jobStore.SetTenant(ctx, seedJobID, "default"); err != nil {
 		t.Fatalf("set tenant: %v", err)
 	}
-	if err := s.jobStore.SetState(ctx, seedJobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(ctx, seedJobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestHandleListJobsAndGetJob(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-1"
 
-	if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
@@ -208,7 +208,7 @@ func TestHandleCancelJob(t *testing.T) {
 	s, bus, _ := newTestGateway(t)
 	ctx := context.Background()
 	jobID := "job-cancel"
-	if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
@@ -249,8 +249,8 @@ func TestHandleRemediateJob(t *testing.T) {
 	if err := s.jobStore.SetJobMeta(ctx, orig); err != nil {
 		t.Fatalf("set job meta: %v", err)
 	}
-	record := scheduler.SafetyDecisionRecord{
-		Decision: scheduler.SafetyDeny,
+	record := model.SafetyDecisionRecord{
+		Decision: model.SafetyDeny,
 		Remediations: []*pb.PolicyRemediation{
 			{
 				Id:                    "archive",

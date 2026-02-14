@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/memory"
@@ -148,7 +149,7 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			cursor = v
 		}
 	}
-	jobs, err := s.jobStore.ListJobsByState(r.Context(), scheduler.JobStateApproval, cursor, limit)
+	jobs, err := s.jobStore.ListJobsByState(r.Context(), model.JobStateApproval, cursor, limit)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -212,7 +213,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusNotFound, "job not found")
 		return
 	}
-	if state != scheduler.JobStateApproval {
+	if state != model.JobStateApproval {
 		writeErrorJSON(w, http.StatusConflict, "job not awaiting approval")
 		return
 	}
@@ -232,7 +233,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "safety decision unavailable")
 		return
 	}
-	if !safetyRecord.ApprovalRequired && safetyRecord.Decision != scheduler.SafetyRequireApproval {
+	if !safetyRecord.ApprovalRequired && safetyRecord.Decision != model.SafetyRequireApproval {
 		writeErrorJSON(w, http.StatusConflict, "job not awaiting approval")
 		return
 	}
@@ -308,7 +309,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to persist approval record")
 		return
 	}
-	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(r.Context(), jobID, model.JobStatePending); err != nil {
 		if strings.Contains(err.Error(), "transaction failed") {
 			writeErrorJSON(w, http.StatusConflict, "concurrent approval conflict; retry")
 			return
@@ -364,7 +365,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusNotFound, "job not found")
 		return
 	}
-	if state != scheduler.JobStateApproval {
+	if state != model.JobStateApproval {
 		writeErrorJSON(w, http.StatusConflict, "job not awaiting approval")
 		return
 	}
@@ -394,7 +395,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to persist approval record")
 		return
 	}
-	if err := s.jobStore.SetState(r.Context(), jobID, scheduler.JobStateDenied); err != nil {
+	if err := s.jobStore.SetState(r.Context(), jobID, model.JobStateDenied); err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}

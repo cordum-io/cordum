@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/memory"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -240,7 +240,7 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist trace metadata")
 		return
 	}
-	if err := s.jobStore.SetState(r.Context(), newJobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(r.Context(), newJobID, model.JobStatePending); err != nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to initialize job state")
 		return
 	}

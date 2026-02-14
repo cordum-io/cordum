@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -55,7 +55,7 @@ func TestStartBusTaps(t *testing.T) {
 	if err := s.jobStore.SetTopic(ctx, jobID, "job.default"); err != nil {
 		t.Fatalf("set job topic: %v", err)
 	}
-	if err := s.jobStore.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateRunning); err != nil {
 		t.Fatalf("set job state: %v", err)
 	}
 
