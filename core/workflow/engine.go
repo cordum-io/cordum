@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/memory"
 	schemas "github.com/cordum/cordum/core/infra/schema"
@@ -24,7 +24,7 @@ import (
 // Engine coordinates workflow runs, dispatching steps as jobs and updating run state.
 type Engine struct {
 	store           *RedisStore
-	bus             scheduler.Bus
+	bus             model.Bus
 	mem             memory.Store
 	runLocks        sync.Map // per-run locks to avoid global serialization
 	maxForEachItems int
@@ -33,7 +33,7 @@ type Engine struct {
 	OnStepFinished   func(runID, stepID string, status StepStatus)
 	config           ConfigProvider
 	schemaRegistry   *schemas.Registry
-	outputSafety     scheduler.OutputSafetyChecker // optional output policy enforcement on step results
+	outputSafety     model.OutputSafetyChecker // optional output policy enforcement on step results
 
 	// timerMu guards pendingTimers. pendingTimers tracks cancellable delay
 	// timers so they can be stopped on engine shutdown without leaking goroutines.
@@ -61,7 +61,7 @@ type ConfigProvider interface {
 }
 
 // NewEngine creates a workflow engine bound to a Redis workflow store and bus.
-func NewEngine(store *RedisStore, bus scheduler.Bus) *Engine {
+func NewEngine(store *RedisStore, bus model.Bus) *Engine {
 	return &Engine{store: store, bus: bus, maxForEachItems: defaultMaxForEachItems}
 }
 
@@ -84,7 +84,7 @@ func (e *Engine) WithSchemaRegistry(registry *schemas.Registry) *Engine {
 }
 
 // WithOutputSafety sets an optional output safety checker for inter-step policy enforcement.
-func (e *Engine) WithOutputSafety(c scheduler.OutputSafetyChecker) *Engine {
+func (e *Engine) WithOutputSafety(c model.OutputSafetyChecker) *Engine {
 	e.outputSafety = c
 	return e
 }
@@ -430,7 +430,7 @@ func (e *Engine) checkStepOutputPolicy(ctx context.Context, run *WorkflowRun, st
 	}
 	now := time.Now().UTC()
 	switch record.Decision {
-	case scheduler.OutputQuarantine, scheduler.OutputDeny:
+	case model.OutputQuarantine, model.OutputDeny:
 		stepRun.Status = StepStatusFailed
 		stepRun.CompletedAt = &now
 		stepRun.Error = map[string]any{
@@ -439,7 +439,7 @@ func (e *Engine) checkStepOutputPolicy(ctx context.Context, run *WorkflowRun, st
 		}
 		e.appendTimeline(ctx, run, "step_output_quarantined", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, record.Reason, nil)
 		return true
-	case scheduler.OutputRedact:
+	case model.OutputRedact:
 		if record.RedactedPtr != "" {
 			res.ResultPtr = record.RedactedPtr
 		}

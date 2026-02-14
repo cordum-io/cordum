@@ -5,28 +5,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 type stubOutputSafety struct {
-	metaRecord scheduler.OutputSafetyRecord
+	metaRecord model.OutputSafetyRecord
 	metaErr    error
 }
 
-func (s *stubOutputSafety) EvaluateOutput(_ context.Context, _ *scheduler.OutputEvaluateRequest) (scheduler.OutputSafetyRecord, error) {
-	return scheduler.OutputSafetyRecord{}, nil
+func (s *stubOutputSafety) EvaluateOutput(_ context.Context, _ *model.OutputEvaluateRequest) (model.OutputSafetyRecord, error) {
+	return model.OutputSafetyRecord{}, nil
 }
 
-func (s *stubOutputSafety) CheckOutputMeta(_ *pb.JobResult, _ *pb.JobRequest) (scheduler.OutputSafetyRecord, error) {
+func (s *stubOutputSafety) CheckOutputMeta(_ *pb.JobResult, _ *pb.JobRequest) (model.OutputSafetyRecord, error) {
 	if s.metaErr != nil {
-		return scheduler.OutputSafetyRecord{}, s.metaErr
+		return model.OutputSafetyRecord{}, s.metaErr
 	}
 	return s.metaRecord, nil
 }
 
-func (s *stubOutputSafety) CheckOutputContent(_ context.Context, _ *pb.JobResult, _ *pb.JobRequest) (scheduler.OutputSafetyRecord, error) {
-	return scheduler.OutputSafetyRecord{}, nil
+func (s *stubOutputSafety) CheckOutputContent(_ context.Context, _ *pb.JobResult, _ *pb.JobRequest) (model.OutputSafetyRecord, error) {
+	return model.OutputSafetyRecord{}, nil
 }
 
 func TestStepOutputPolicyQuarantineBlocksPropagation(t *testing.T) {
@@ -35,8 +35,8 @@ func TestStepOutputPolicyQuarantineBlocksPropagation(t *testing.T) {
 	bus := &recordingBus{}
 
 	checker := &stubOutputSafety{
-		metaRecord: scheduler.OutputSafetyRecord{
-			Decision: scheduler.OutputQuarantine,
+		metaRecord: model.OutputSafetyRecord{
+			Decision: model.OutputQuarantine,
 			Reason:   "secret detected in step output",
 		},
 	}
@@ -102,7 +102,7 @@ func TestStepOutputPolicyAllowPassesThrough(t *testing.T) {
 	bus := &recordingBus{}
 
 	checker := &stubOutputSafety{
-		metaRecord: scheduler.OutputSafetyRecord{Decision: scheduler.OutputAllow, Reason: "ok"},
+		metaRecord: model.OutputSafetyRecord{Decision: model.OutputAllow, Reason: "ok"},
 	}
 
 	engine := NewEngine(store, bus).WithOutputSafety(checker)
@@ -219,8 +219,8 @@ func TestStepOutputPolicyRedactSubstitutesPtr(t *testing.T) {
 	bus := &recordingBus{}
 
 	checker := &stubOutputSafety{
-		metaRecord: scheduler.OutputSafetyRecord{
-			Decision:    scheduler.OutputRedact,
+		metaRecord: model.OutputSafetyRecord{
+			Decision:    model.OutputRedact,
 			Reason:      "PII found, redacting",
 			RedactedPtr: "redis://res:step-a-redacted",
 		},

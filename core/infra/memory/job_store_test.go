@@ -9,7 +9,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -27,7 +27,7 @@ func TestRedisJobStoreStateAndResultPtr(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-123"
 
-	if err := store.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
@@ -35,8 +35,8 @@ func TestRedisJobStoreStateAndResultPtr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get state: %v", err)
 	}
-	if state != scheduler.JobStatePending {
-		t.Fatalf("expected state %s, got %s", scheduler.JobStatePending, state)
+	if state != model.JobStatePending {
+		t.Fatalf("expected state %s, got %s", model.JobStatePending, state)
 	}
 
 	resultPtr := "redis://res:job-123"
@@ -53,10 +53,10 @@ func TestRedisJobStoreStateAndResultPtr(t *testing.T) {
 	}
 
 	// advance state and list by state
-	if err := store.SetState(ctx, jobID, scheduler.JobStateScheduled); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStateScheduled); err != nil {
 		t.Fatalf("advance state: %v", err)
 	}
-	records, err := store.ListJobsByState(ctx, scheduler.JobStateScheduled, time.Now().Unix(), 10)
+	records, err := store.ListJobsByState(ctx, model.JobStateScheduled, time.Now().Unix(), 10)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -110,97 +110,97 @@ func TestRedisJobStoreTransitionGuard(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-456"
 
-	if err := store.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	// invalid backwards transition
-	if err := store.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("same state should be ok: %v", err)
 	}
-	if err := store.SetState(ctx, jobID, scheduler.JobStateDispatched); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStateDispatched); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
-	if err := store.SetState(ctx, jobID, scheduler.JobStateScheduled); err == nil {
+	if err := store.SetState(ctx, jobID, model.JobStateScheduled); err == nil {
 		t.Fatalf("expected invalid backward transition")
 	}
 
 	jobPendingFail := "job-456-pending-fail"
-	if err := store.SetState(ctx, jobPendingFail, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobPendingFail, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := store.SetState(ctx, jobPendingFail, scheduler.JobStateFailed); err != nil {
+	if err := store.SetState(ctx, jobPendingFail, model.JobStateFailed); err != nil {
 		t.Fatalf("pending -> failed should be ok: %v", err)
 	}
-	if err := store.SetState(ctx, jobPendingFail, scheduler.JobStateFailed); err != nil {
+	if err := store.SetState(ctx, jobPendingFail, model.JobStateFailed); err != nil {
 		t.Fatalf("same terminal state should be ok: %v", err)
 	}
 
 	jobScheduledFail := "job-456-scheduled-fail"
-	if err := store.SetState(ctx, jobScheduledFail, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobScheduledFail, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := store.SetState(ctx, jobScheduledFail, scheduler.JobStateScheduled); err != nil {
+	if err := store.SetState(ctx, jobScheduledFail, model.JobStateScheduled); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
-	if err := store.SetState(ctx, jobScheduledFail, scheduler.JobStateFailed); err != nil {
+	if err := store.SetState(ctx, jobScheduledFail, model.JobStateFailed); err != nil {
 		t.Fatalf("scheduled -> failed should be ok: %v", err)
 	}
 
 	jobScheduledSuccess := "job-456-scheduled-success"
-	if err := store.SetState(ctx, jobScheduledSuccess, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobScheduledSuccess, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := store.SetState(ctx, jobScheduledSuccess, scheduler.JobStateScheduled); err != nil {
+	if err := store.SetState(ctx, jobScheduledSuccess, model.JobStateScheduled); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
-	if err := store.SetState(ctx, jobScheduledSuccess, scheduler.JobStateSucceeded); err != nil {
+	if err := store.SetState(ctx, jobScheduledSuccess, model.JobStateSucceeded); err != nil {
 		t.Fatalf("scheduled -> succeeded should be ok: %v", err)
 	}
 
 	jobScheduledCancel := "job-456-scheduled-cancel"
-	if err := store.SetState(ctx, jobScheduledCancel, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobScheduledCancel, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := store.SetState(ctx, jobScheduledCancel, scheduler.JobStateScheduled); err != nil {
+	if err := store.SetState(ctx, jobScheduledCancel, model.JobStateScheduled); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
-	if err := store.SetState(ctx, jobScheduledCancel, scheduler.JobStateCancelled); err != nil {
+	if err := store.SetState(ctx, jobScheduledCancel, model.JobStateCancelled); err != nil {
 		t.Fatalf("scheduled -> cancelled should be ok: %v", err)
 	}
 
 	jobPendingTimeout := "job-456-pending-timeout"
-	if err := store.SetState(ctx, jobPendingTimeout, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobPendingTimeout, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := store.SetState(ctx, jobPendingTimeout, scheduler.JobStateTimeout); err != nil {
+	if err := store.SetState(ctx, jobPendingTimeout, model.JobStateTimeout); err != nil {
 		t.Fatalf("pending -> timeout should be ok: %v", err)
 	}
 
 	jobScheduledTimeout := "job-456-scheduled-timeout"
-	if err := store.SetState(ctx, jobScheduledTimeout, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobScheduledTimeout, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := store.SetState(ctx, jobScheduledTimeout, scheduler.JobStateScheduled); err != nil {
+	if err := store.SetState(ctx, jobScheduledTimeout, model.JobStateScheduled); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
-	if err := store.SetState(ctx, jobScheduledTimeout, scheduler.JobStateTimeout); err != nil {
+	if err := store.SetState(ctx, jobScheduledTimeout, model.JobStateTimeout); err != nil {
 		t.Fatalf("scheduled -> timeout should be ok: %v", err)
 	}
 
 	jobRunningQuarantined := "job-456-running-quarantined"
-	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobRunningQuarantined, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStateScheduled); err != nil {
+	if err := store.SetState(ctx, jobRunningQuarantined, model.JobStateScheduled); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
-	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStateRunning); err != nil {
+	if err := store.SetState(ctx, jobRunningQuarantined, model.JobStateRunning); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
-	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStateQuarantined); err != nil {
+	if err := store.SetState(ctx, jobRunningQuarantined, model.JobStateQuarantined); err != nil {
 		t.Fatalf("running -> output_quarantined should be ok: %v", err)
 	}
-	if err := store.SetState(ctx, jobRunningQuarantined, scheduler.JobStateRunning); err == nil {
+	if err := store.SetState(ctx, jobRunningQuarantined, model.JobStateRunning); err == nil {
 		t.Fatalf("expected invalid transition from output_quarantined")
 	}
 }
@@ -218,12 +218,12 @@ func TestRedisJobStoreOutputSafetyRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	jobID := "job-output-safety"
-	record := scheduler.OutputSafetyRecord{
-		Decision:       scheduler.OutputQuarantine,
+	record := model.OutputSafetyRecord{
+		Decision:       model.OutputQuarantine,
 		Reason:         "secret detected in output",
 		RuleID:         "out-001",
 		PolicySnapshot: "snapshot-abc",
-		Findings: []scheduler.OutputFinding{{
+		Findings: []model.OutputFinding{{
 			Type:           "secret_leak",
 			Severity:       "critical",
 			Detail:         "aws_access_key_id",
@@ -246,8 +246,8 @@ func TestRedisJobStoreOutputSafetyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get output safety: %v", err)
 	}
-	if got.Decision != scheduler.OutputQuarantine {
-		t.Fatalf("expected decision %q got %q", scheduler.OutputQuarantine, got.Decision)
+	if got.Decision != model.OutputQuarantine {
+		t.Fatalf("expected decision %q got %q", model.OutputQuarantine, got.Decision)
 	}
 	if got.RedactedPtr != record.RedactedPtr || got.OriginalPtr != record.OriginalPtr {
 		t.Fatalf("unexpected pointers: %#v", got)
@@ -262,7 +262,7 @@ func TestRedisJobStoreOutputSafetyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get output decision: %v", err)
 	}
-	if gotDecision.Decision != scheduler.OutputQuarantine {
+	if gotDecision.Decision != model.OutputQuarantine {
 		t.Fatalf("expected output decision via key, got %#v", gotDecision)
 	}
 }
@@ -281,15 +281,15 @@ func TestRedisJobStoreListRecentJobs(t *testing.T) {
 	ctx := context.Background()
 
 	// Create three jobs with different timestamps
-	if err := store.SetState(ctx, "job-a", scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, "job-a", model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if err := store.SetState(ctx, "job-b", scheduler.JobStateDispatched); err != nil {
+	if err := store.SetState(ctx, "job-b", model.JobStateDispatched); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if err := store.SetState(ctx, "job-c", scheduler.JobStateRunning); err != nil {
+	if err := store.SetState(ctx, "job-c", model.JobStateRunning); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
@@ -303,7 +303,7 @@ func TestRedisJobStoreListRecentJobs(t *testing.T) {
 	if list[0].ID != "job-c" || list[1].ID != "job-b" {
 		t.Fatalf("unexpected order: %#v", list)
 	}
-	if list[0].State != scheduler.JobStateRunning {
+	if list[0].State != model.JobStateRunning {
 		t.Fatalf("expected state RUNNING, got %s", list[0].State)
 	}
 }
@@ -320,19 +320,19 @@ func TestRedisJobStoreListRecentJobsByScorePagination(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	if err := store.SetState(ctx, "job-1", scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, "job-1", model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	time.Sleep(5 * time.Millisecond)
-	if err := store.SetState(ctx, "job-2", scheduler.JobStateRunning); err != nil {
+	if err := store.SetState(ctx, "job-2", model.JobStateRunning); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	time.Sleep(5 * time.Millisecond)
-	if err := store.SetState(ctx, "job-3", scheduler.JobStateRunning); err != nil {
+	if err := store.SetState(ctx, "job-3", model.JobStateRunning); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	time.Sleep(5 * time.Millisecond)
-	if err := store.SetState(ctx, "job-3", scheduler.JobStateSucceeded); err != nil {
+	if err := store.SetState(ctx, "job-3", model.JobStateSucceeded); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
@@ -407,36 +407,36 @@ func TestRedisJobStoreCancelJob(t *testing.T) {
 
 	ctx := context.Background()
 	jobID := "job-cancel"
-	if err := store.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	state, err := store.CancelJob(ctx, jobID)
 	if err != nil {
 		t.Fatalf("cancel job: %v", err)
 	}
-	if state != scheduler.JobStateCancelled {
+	if state != model.JobStateCancelled {
 		t.Fatalf("expected cancelled state, got %s", state)
 	}
 	updated, err := store.GetState(ctx, jobID)
-	if err != nil || updated != scheduler.JobStateCancelled {
+	if err != nil || updated != model.JobStateCancelled {
 		t.Fatalf("expected cancelled state persisted, got %s err=%v", updated, err)
 	}
 
 	terminalID := "job-terminal"
-	if err := store.SetState(ctx, terminalID, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, terminalID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := store.SetState(ctx, terminalID, scheduler.JobStateScheduled); err != nil {
+	if err := store.SetState(ctx, terminalID, model.JobStateScheduled); err != nil {
 		t.Fatalf("set scheduled state: %v", err)
 	}
-	if err := store.SetState(ctx, terminalID, scheduler.JobStateSucceeded); err != nil {
+	if err := store.SetState(ctx, terminalID, model.JobStateSucceeded); err != nil {
 		t.Fatalf("set terminal state: %v", err)
 	}
 	state, err = store.CancelJob(ctx, terminalID)
 	if err != nil {
 		t.Fatalf("cancel job terminal: %v", err)
 	}
-	if state != scheduler.JobStateSucceeded {
+	if state != model.JobStateSucceeded {
 		t.Fatalf("expected terminal state unchanged, got %s", state)
 	}
 }
@@ -454,7 +454,7 @@ func TestRedisJobStoreTraceAndDeadlines(t *testing.T) {
 
 	ctx := context.Background()
 	jobID := "job-trace"
-	if err := store.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStateRunning); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	if err := store.SetTopic(ctx, jobID, "job.test"); err != nil {
@@ -507,7 +507,7 @@ func TestRedisJobStoreCountActiveByTenant(t *testing.T) {
 	if err := store.SetTenant(ctx, jobID, "tenant-2"); err != nil {
 		t.Fatalf("set tenant: %v", err)
 	}
-	if err := store.SetState(ctx, jobID, scheduler.JobStateRunning); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStateRunning); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	count, err := store.CountActiveByTenant(ctx, "tenant-2")
@@ -517,7 +517,7 @@ func TestRedisJobStoreCountActiveByTenant(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected 1 active job, got %d", count)
 	}
-	if err := store.SetState(ctx, jobID, scheduler.JobStateSucceeded); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStateSucceeded); err != nil {
 		t.Fatalf("set terminal state: %v", err)
 	}
 	count, err = store.CountActiveByTenant(ctx, "tenant-2")
@@ -603,8 +603,8 @@ func TestRedisJobStoreListSafetyDecisions(t *testing.T) {
 	defer store.Close()
 
 	jobID := "job-decisions"
-	first := scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyAllow,
+	first := model.SafetyDecisionRecord{
+		Decision:         model.SafetyAllow,
 		Reason:           "ok",
 		ApprovalRequired: true,
 		Constraints:      &pb.PolicyConstraints{RedactionLevel: "low"},
@@ -612,8 +612,8 @@ func TestRedisJobStoreListSafetyDecisions(t *testing.T) {
 	if err := store.SetSafetyDecision(context.Background(), jobID, first); err != nil {
 		t.Fatalf("set safety decision: %v", err)
 	}
-	second := scheduler.SafetyDecisionRecord{
-		Decision:    scheduler.SafetyDeny,
+	second := model.SafetyDecisionRecord{
+		Decision:    model.SafetyDeny,
 		Reason:      "blocked",
 		Constraints: &pb.PolicyConstraints{RedactionLevel: "high"},
 	}
@@ -628,7 +628,7 @@ func TestRedisJobStoreListSafetyDecisions(t *testing.T) {
 	if len(decisions) != 2 {
 		t.Fatalf("expected 2 decisions, got %d", len(decisions))
 	}
-	if decisions[0].Decision != scheduler.SafetyDeny {
+	if decisions[0].Decision != model.SafetyDeny {
 		t.Fatalf("expected most recent decision first")
 	}
 	if decisions[1].ApprovalRequired != true {
@@ -823,14 +823,14 @@ func TestRedisJobStoreTopicMetadata(t *testing.T) {
 		t.Fatalf("expected tenant tenant-a, got %s", tenant)
 	}
 
-	if err := store.SetSafetyDecision(ctx, jobID, scheduler.SafetyDecisionRecord{Decision: scheduler.SafetyDeny, Reason: "forbidden"}); err != nil {
+	if err := store.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{Decision: model.SafetyDeny, Reason: "forbidden"}); err != nil {
 		t.Fatalf("set safety decision: %v", err)
 	}
 	record, err := store.GetSafetyDecision(ctx, jobID)
 	if err != nil {
 		t.Fatalf("get safety decision: %v", err)
 	}
-	if record.Decision != scheduler.SafetyDeny || record.Reason != "forbidden" {
+	if record.Decision != model.SafetyDeny || record.Reason != "forbidden" {
 		t.Fatalf("unexpected safety decision %s reason %s", record.Decision, record.Reason)
 	}
 }
@@ -877,7 +877,7 @@ func TestRedisJobStoreDeadlinesAndTrace(t *testing.T) {
 
 	ctx := context.Background()
 	jobID := "job-deadline"
-	if err := store.SetState(ctx, jobID, scheduler.JobStatePending); err != nil {
+	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	_ = store.SetTopic(ctx, jobID, "job.test")
@@ -921,8 +921,8 @@ func TestRedisJobStoreSafetyDecisionRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	jobID := "job-safe"
-	record := scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyDeny,
+	record := model.SafetyDecisionRecord{
+		Decision:         model.SafetyDeny,
 		Reason:           "blocked",
 		RuleID:           "rule-1",
 		PolicySnapshot:   "snap",

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/memory"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -17,12 +17,12 @@ import (
 )
 
 func TestJobStatusFromState(t *testing.T) {
-	cases := map[scheduler.JobState]pb.JobStatus{
-		scheduler.JobStateSucceeded: pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		scheduler.JobStateFailed:    pb.JobStatus_JOB_STATUS_FAILED,
-		scheduler.JobStateTimeout:   pb.JobStatus_JOB_STATUS_TIMEOUT,
-		scheduler.JobStateDenied:    pb.JobStatus_JOB_STATUS_DENIED,
-		scheduler.JobStateCancelled: pb.JobStatus_JOB_STATUS_CANCELLED,
+	cases := map[model.JobState]pb.JobStatus{
+		model.JobStateSucceeded: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+		model.JobStateFailed:    pb.JobStatus_JOB_STATUS_FAILED,
+		model.JobStateTimeout:   pb.JobStatus_JOB_STATUS_TIMEOUT,
+		model.JobStateDenied:    pb.JobStatus_JOB_STATUS_DENIED,
+		model.JobStateCancelled: pb.JobStatus_JOB_STATUS_CANCELLED,
 		"unknown":                   pb.JobStatus_JOB_STATUS_UNSPECIFIED,
 	}
 	for state, expect := range cases {
@@ -131,7 +131,7 @@ func TestReconcilerFailureReasonPropagation(t *testing.T) {
 	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if err := jobStore.SetState(context.Background(), jobID, scheduler.JobStateFailed); err != nil {
+	if err := jobStore.SetState(context.Background(), jobID, model.JobStateFailed); err != nil {
 		t.Fatalf("set job state: %v", err)
 	}
 	if err := jobStore.SetFailureReason(context.Background(), jobID, "boom"); err != nil {
@@ -194,7 +194,7 @@ func TestReconcilerFallbackErrorMessage(t *testing.T) {
 	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if err := jobStore.SetState(context.Background(), jobID, scheduler.JobStateFailed); err != nil {
+	if err := jobStore.SetState(context.Background(), jobID, model.JobStateFailed); err != nil {
 		t.Fatalf("set job state: %v", err)
 	}
 

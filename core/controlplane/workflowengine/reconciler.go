@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -20,13 +20,13 @@ const (
 type reconciler struct {
 	workflowStore *wf.RedisStore
 	engine        *wf.Engine
-	jobStore      scheduler.JobStore
+	jobStore      model.JobStore
 	pollInterval  time.Duration
 	lockTTL       time.Duration
 	runScanLimit  int64
 }
 
-func newReconciler(workflowStore *wf.RedisStore, engine *wf.Engine, jobStore scheduler.JobStore, pollInterval time.Duration, runScanLimit int64) *reconciler {
+func newReconciler(workflowStore *wf.RedisStore, engine *wf.Engine, jobStore model.JobStore, pollInterval time.Duration, runScanLimit int64) *reconciler {
 	if pollInterval <= 0 {
 		pollInterval = 5 * time.Second
 	}
@@ -162,17 +162,17 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 	_ = r.engine.StartRun(ctx, run.WorkflowID, run.ID)
 }
 
-func jobStatusFromState(state scheduler.JobState) pb.JobStatus {
+func jobStatusFromState(state model.JobState) pb.JobStatus {
 	switch state {
-	case scheduler.JobStateSucceeded:
+	case model.JobStateSucceeded:
 		return pb.JobStatus_JOB_STATUS_SUCCEEDED
-	case scheduler.JobStateFailed:
+	case model.JobStateFailed:
 		return pb.JobStatus_JOB_STATUS_FAILED
-	case scheduler.JobStateTimeout:
+	case model.JobStateTimeout:
 		return pb.JobStatus_JOB_STATUS_TIMEOUT
-	case scheduler.JobStateDenied:
+	case model.JobStateDenied:
 		return pb.JobStatus_JOB_STATUS_DENIED
-	case scheduler.JobStateCancelled:
+	case model.JobStateCancelled:
 		return pb.JobStatus_JOB_STATUS_CANCELLED
 	default:
 		return pb.JobStatus_JOB_STATUS_UNSPECIFIED

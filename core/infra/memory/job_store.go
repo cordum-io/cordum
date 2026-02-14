@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -64,27 +64,27 @@ const (
 )
 
 var (
-	terminalStates = map[scheduler.JobState]bool{
-		scheduler.JobStateSucceeded:   true,
-		scheduler.JobStateFailed:      true,
-		scheduler.JobStateCancelled:   true,
-		scheduler.JobStateTimeout:     true,
-		scheduler.JobStateDenied:      true,
-		scheduler.JobStateQuarantined: true,
+	terminalStates = map[model.JobState]bool{
+		model.JobStateSucceeded:   true,
+		model.JobStateFailed:      true,
+		model.JobStateCancelled:   true,
+		model.JobStateTimeout:     true,
+		model.JobStateDenied:      true,
+		model.JobStateQuarantined: true,
 	}
-	allowedTransitions = map[scheduler.JobState][]scheduler.JobState{
-		"":                            {scheduler.JobStatePending, scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateFailed},
-		scheduler.JobStatePending:     {scheduler.JobStateApproval, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
-		scheduler.JobStateApproval:    {scheduler.JobStatePending, scheduler.JobStateScheduled, scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout},
-		scheduler.JobStateScheduled:   {scheduler.JobStateDispatched, scheduler.JobStateRunning, scheduler.JobStateDenied, scheduler.JobStateFailed, scheduler.JobStateTimeout, scheduler.JobStateSucceeded, scheduler.JobStateCancelled, scheduler.JobStateQuarantined},
-		scheduler.JobStateDispatched:  {scheduler.JobStateRunning, scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout, scheduler.JobStateQuarantined},
-		scheduler.JobStateRunning:     {scheduler.JobStateSucceeded, scheduler.JobStateFailed, scheduler.JobStateCancelled, scheduler.JobStateTimeout, scheduler.JobStateQuarantined},
-		scheduler.JobStateSucceeded:   {scheduler.JobStateQuarantined},
-		scheduler.JobStateFailed:      {},
-		scheduler.JobStateCancelled:   {},
-		scheduler.JobStateTimeout:     {},
-		scheduler.JobStateDenied:      {},
-		scheduler.JobStateQuarantined: {},
+	allowedTransitions = map[model.JobState][]model.JobState{
+		"":                            {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed},
+		model.JobStatePending:     {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
+		model.JobStateApproval:    {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
+		model.JobStateScheduled:   {model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
+		model.JobStateDispatched:  {model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
+		model.JobStateRunning:     {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
+		model.JobStateSucceeded:   {model.JobStateQuarantined},
+		model.JobStateFailed:      {},
+		model.JobStateCancelled:   {},
+		model.JobStateTimeout:     {},
+		model.JobStateDenied:      {},
+		model.JobStateQuarantined: {},
 	}
 )
 
@@ -129,7 +129,7 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 	}
 }
 
-// RedisJobStore implements scheduler.JobStore backed by Redis.
+// RedisJobStore implements model.JobStore backed by Redis.
 type RedisJobStore struct {
 	client  redis.UniversalClient
 	metaTTL time.Duration
@@ -147,13 +147,13 @@ type ApprovalRecord struct {
 }
 
 // CancelJob atomically cancels a job if it is not already terminal.
-func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.JobState, error) {
+func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobState, error) {
 	if jobID == "" {
 		return "", fmt.Errorf("jobID required")
 	}
 	metaKey := jobMetaKey(jobID)
 
-	var resultState scheduler.JobState
+	var resultState model.JobState
 	err := s.client.Watch(ctx, func(tx *redis.Tx) error {
 		current, err := tx.HGet(ctx, metaKey, "state").Result()
 		if err == redis.Nil {
@@ -168,7 +168,7 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 		} else if err != nil {
 			return fmt.Errorf("job store get state %s: %w", jobID, err)
 		}
-		currState := scheduler.JobState(current)
+		currState := model.JobState(current)
 		if terminalStates[currState] {
 			resultState = currState
 			return nil
@@ -177,15 +177,15 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 		now := nowUnixMicros()
 		pipe := tx.TxPipeline()
 		pipe.HSet(ctx, metaKey, map[string]any{
-			"state":      string(scheduler.JobStateCancelled),
+			"state":      string(model.JobStateCancelled),
 			"updated_at": now,
 		})
-		pipe.Set(ctx, jobStateKey(jobID), string(scheduler.JobStateCancelled), 0)
+		pipe.Set(ctx, jobStateKey(jobID), string(model.JobStateCancelled), 0)
 
 		if prevIdx := stateIndexKey(currState); prevIdx != "" {
 			pipe.ZRem(ctx, prevIdx, jobID)
 		}
-		if idx := stateIndexKey(scheduler.JobStateCancelled); idx != "" {
+		if idx := stateIndexKey(model.JobStateCancelled); idx != "" {
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
 		}
 
@@ -201,12 +201,12 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (scheduler.
 			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
 		}
 
-		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, scheduler.JobStateCancelled))
+		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, model.JobStateCancelled))
 
 		if _, err := pipe.Exec(ctx); err != nil {
 			return fmt.Errorf("job store cancel %s: %w", jobID, err)
 		}
-		resultState = scheduler.JobStateCancelled
+		resultState = model.JobStateCancelled
 		return nil
 	}, metaKey, jobStateKey(jobID))
 	if err != nil {
@@ -281,7 +281,7 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 	return &RedisJobStore{client: client, metaTTL: ttl}, nil
 }
 
-func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state scheduler.JobState) error {
+func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.JobState) error {
 	if jobID == "" || state == "" {
 		return fmt.Errorf("invalid jobID or state")
 	}
@@ -294,7 +294,7 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 		if err != nil && err != redis.Nil {
 			return fmt.Errorf("job store set state %s: %w", jobID, err)
 		}
-		prevState := scheduler.JobState(prev)
+		prevState := model.JobState(prev)
 		if !isAllowedTransition(prevState, state) {
 			return fmt.Errorf("invalid transition %s -> %s", prevState, state)
 		}
@@ -304,7 +304,7 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 				attempts = parsed
 			}
 		}
-		if state == scheduler.JobStateScheduled && prevState != scheduler.JobStateScheduled {
+		if state == model.JobStateScheduled && prevState != model.JobStateScheduled {
 			attempts++
 		}
 		tenant, _ := tx.HGet(ctx, metaKey, metaFieldTenant).Result()
@@ -364,7 +364,7 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state schedu
 }
 
 // ListRecentJobs returns the N most recently updated jobs.
-func (s *RedisJobStore) ListRecentJobs(ctx context.Context, limit int64) ([]scheduler.JobRecord, error) {
+func (s *RedisJobStore) ListRecentJobs(ctx context.Context, limit int64) ([]model.JobRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -376,7 +376,7 @@ func (s *RedisJobStore) ListRecentJobs(ctx context.Context, limit int64) ([]sche
 }
 
 // ListRecentJobsByScore returns jobs at or below the provided updated_at score (cursor) ordered desc.
-func (s *RedisJobStore) ListRecentJobsByScore(ctx context.Context, cursor int64, limit int64) ([]scheduler.JobRecord, error) {
+func (s *RedisJobStore) ListRecentJobsByScore(ctx context.Context, cursor int64, limit int64) ([]model.JobRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -396,8 +396,8 @@ func (s *RedisJobStore) ListRecentJobsByScore(ctx context.Context, cursor int64,
 	return s.buildJobRecords(ctx, members)
 }
 
-func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) ([]scheduler.JobRecord, error) {
-	out := make([]scheduler.JobRecord, 0, len(members))
+func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) ([]model.JobRecord, error) {
+	out := make([]model.JobRecord, 0, len(members))
 	if len(members) == 0 {
 		return out, nil
 	}
@@ -424,11 +424,11 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 			continue
 		}
 		meta, _ := metaCmds[jobID].Result()
-		state := scheduler.JobState(meta["state"])
+		state := model.JobState(meta["state"])
 		if state == "" {
 			if sCmd := stateCmds[jobID]; sCmd != nil {
 				if val, err := sCmd.Result(); err == nil {
-					state = scheduler.JobState(val)
+					state = model.JobState(val)
 				}
 			}
 		}
@@ -450,7 +450,7 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 		safetySnapshot := meta[metaFieldSafetySnapshot]
 		deadlineUnix, _ := strconv.ParseInt(meta[metaFieldDeadline], 10, 64)
 
-		out = append(out, scheduler.JobRecord{
+		out = append(out, model.JobRecord{
 			ID:             jobID,
 			TraceID:        meta[metaFieldTraceID],
 			UpdatedAt:      int64(m.Score),
@@ -477,18 +477,18 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 	return out, nil
 }
 
-func (s *RedisJobStore) GetState(ctx context.Context, jobID string) (scheduler.JobState, error) {
+func (s *RedisJobStore) GetState(ctx context.Context, jobID string) (model.JobState, error) {
 	metaKey := jobMetaKey(jobID)
 	val, err := s.client.HGet(ctx, metaKey, "state").Result()
 	if err == nil {
-		return scheduler.JobState(val), nil
+		return model.JobState(val), nil
 	}
 	// fallback legacy key
 	val, err = s.client.Get(ctx, jobStateKey(jobID)).Result()
 	if err != nil {
 		return "", fmt.Errorf("job store get state %s: %w", jobID, err)
 	}
-	return scheduler.JobState(val), nil
+	return model.JobState(val), nil
 }
 
 func (s *RedisJobStore) SetResultPtr(ctx context.Context, jobID, resultPtr string) error {
@@ -605,7 +605,7 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 		return fmt.Errorf("job store set job meta %s: %w", req.GetJobId(), err)
 	}
 	if idempotencyKey != "" {
-		tenantID := scheduler.ExtractTenant(req)
+		tenantID := model.ExtractTenant(req)
 		_ = s.SetIdempotencyKeyScoped(ctx, tenantID, idempotencyKey, req.GetJobId())
 	}
 	return nil
@@ -659,7 +659,7 @@ func (s *RedisJobStore) SetDeadline(ctx context.Context, jobID string, deadline 
 }
 
 // ListExpiredDeadlines returns jobs whose deadline has passed.
-func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64, limit int64) ([]scheduler.JobRecord, error) {
+func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64, limit int64) ([]model.JobRecord, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -673,7 +673,7 @@ func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64,
 		return nil, fmt.Errorf("job store list expired deadlines: %w", err)
 	}
 
-	out := make([]scheduler.JobRecord, 0, len(members))
+	out := make([]model.JobRecord, 0, len(members))
 	for _, m := range members {
 		jobID, ok := m.Member.(string)
 		if !ok {
@@ -691,7 +691,7 @@ func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64,
 		requires, _ := s.GetRequires(ctx, jobID)
 		attempts, _ := s.GetAttempts(ctx, jobID)
 		decision, _ := s.GetSafetyDecision(ctx, jobID)
-		out = append(out, scheduler.JobRecord{
+		out = append(out, model.JobRecord{
 			ID:             jobID,
 			UpdatedAt:      int64(m.Score),
 			Topic:          topic,
@@ -716,7 +716,7 @@ func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64,
 }
 
 // ListJobsByState returns jobs in the given state last updated at or before the given unix timestamp.
-func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.JobState, updatedBeforeUnix int64, limit int64) ([]scheduler.JobRecord, error) {
+func (s *RedisJobStore) ListJobsByState(ctx context.Context, state model.JobState, updatedBeforeUnix int64, limit int64) ([]model.JobRecord, error) {
 	key := stateIndexKey(state)
 	if key == "" {
 		return nil, fmt.Errorf("unknown state %s", state)
@@ -734,7 +734,7 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.Job
 	if err != nil {
 		return nil, fmt.Errorf("job store list jobs by state %s: %w", state, err)
 	}
-	out := make([]scheduler.JobRecord, 0, len(members))
+	out := make([]model.JobRecord, 0, len(members))
 	for _, m := range members {
 		jobID, ok := m.Member.(string)
 		if !ok {
@@ -753,7 +753,7 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state scheduler.Job
 		attempts, _ := s.GetAttempts(ctx, jobID)
 		safetyDecision, _ := s.GetSafetyDecision(ctx, jobID)
 		deadlineUnix, _ := s.getDeadline(ctx, jobID)
-		out = append(out, scheduler.JobRecord{
+		out = append(out, model.JobRecord{
 			ID:             jobID,
 			UpdatedAt:      int64(m.Score),
 			State:          state,
@@ -840,7 +840,7 @@ func tenantActiveKey(tenant string) string {
 	return "job:tenant:active:" + tenant
 }
 
-func stateIndexKey(state scheduler.JobState) string {
+func stateIndexKey(state model.JobState) string {
 	if state == "" {
 		return ""
 	}
@@ -1149,7 +1149,7 @@ func (s *RedisJobStore) GetJobByIdempotencyKey(ctx context.Context, key string) 
 	return s.GetJobByIdempotencyKeyScoped(ctx, "", key)
 }
 
-func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, record scheduler.SafetyDecisionRecord) error {
+func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, record model.SafetyDecisionRecord) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID required")
 	}
@@ -1224,12 +1224,12 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 }
 
 // SetOutputSafety stores output policy evaluation data on the job metadata hash.
-func (s *RedisJobStore) SetOutputSafety(ctx context.Context, jobID string, record scheduler.OutputSafetyRecord) error {
+func (s *RedisJobStore) SetOutputSafety(ctx context.Context, jobID string, record model.OutputSafetyRecord) error {
 	return s.SetOutputDecision(ctx, jobID, record)
 }
 
 // SetOutputDecision stores output policy evaluation data in a dedicated key and metadata hash.
-func (s *RedisJobStore) SetOutputDecision(ctx context.Context, jobID string, record scheduler.OutputSafetyRecord) error {
+func (s *RedisJobStore) SetOutputDecision(ctx context.Context, jobID string, record model.OutputSafetyRecord) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID required")
 	}
@@ -1259,24 +1259,24 @@ func (s *RedisJobStore) SetOutputDecision(ctx context.Context, jobID string, rec
 }
 
 // GetOutputSafety loads output policy evaluation data from job metadata.
-func (s *RedisJobStore) GetOutputSafety(ctx context.Context, jobID string) (scheduler.OutputSafetyRecord, error) {
+func (s *RedisJobStore) GetOutputSafety(ctx context.Context, jobID string) (model.OutputSafetyRecord, error) {
 	return s.GetOutputDecision(ctx, jobID)
 }
 
 // GetOutputDecision loads output policy data, preferring dedicated key and falling back to metadata hash.
-func (s *RedisJobStore) GetOutputDecision(ctx context.Context, jobID string) (scheduler.OutputSafetyRecord, error) {
+func (s *RedisJobStore) GetOutputDecision(ctx context.Context, jobID string) (model.OutputSafetyRecord, error) {
 	if jobID == "" {
-		return scheduler.OutputSafetyRecord{}, fmt.Errorf("jobID required")
+		return model.OutputSafetyRecord{}, fmt.Errorf("jobID required")
 	}
 	raw, err := s.client.Get(ctx, outputDecisionKey(jobID)).Result()
 	if err == redis.Nil || raw == "" {
 		raw, err = s.client.HGet(ctx, jobMetaKey(jobID), metaFieldOutputSafety).Result()
 	}
 	if err == redis.Nil || raw == "" {
-		return scheduler.OutputSafetyRecord{}, nil
+		return model.OutputSafetyRecord{}, nil
 	}
 	if err != nil {
-		return scheduler.OutputSafetyRecord{}, fmt.Errorf("job store get output decision %s: %w", jobID, err)
+		return model.OutputSafetyRecord{}, fmt.Errorf("job store get output decision %s: %w", jobID, err)
 	}
 	return parseOutputSafetyRecord(raw, jobID), nil
 }
@@ -1336,14 +1336,14 @@ func (s *RedisJobStore) GetApprovalRecord(ctx context.Context, jobID string) (Ap
 	return record, nil
 }
 
-func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (scheduler.SafetyDecisionRecord, error) {
+func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (model.SafetyDecisionRecord, error) {
 	meta := jobMetaKey(jobID)
 	data, err := s.client.HGetAll(ctx, meta).Result()
 	if err != nil && err != redis.Nil {
-		return scheduler.SafetyDecisionRecord{}, fmt.Errorf("job store get safety decision %s: %w", jobID, err)
+		return model.SafetyDecisionRecord{}, fmt.Errorf("job store get safety decision %s: %w", jobID, err)
 	}
-	record := scheduler.SafetyDecisionRecord{
-		Decision:       scheduler.SafetyDecision(data[metaFieldSafetyDecision]),
+	record := model.SafetyDecisionRecord{
+		Decision:       model.SafetyDecision(data[metaFieldSafetyDecision]),
 		Reason:         data[metaFieldSafetyReason],
 		RuleID:         data[metaFieldSafetyRuleID],
 		PolicySnapshot: data[metaFieldSafetySnapshot],
@@ -1374,7 +1374,7 @@ func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (sc
 }
 
 // ListSafetyDecisions returns recent safety decisions for a job (most recent first).
-func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, limit int64) ([]scheduler.SafetyDecisionRecord, error) {
+func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, limit int64) ([]model.SafetyDecisionRecord, error) {
 	if jobID == "" {
 		return nil, fmt.Errorf("jobID required")
 	}
@@ -1385,15 +1385,15 @@ func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, l
 	if err != nil {
 		return nil, fmt.Errorf("job store list safety decisions %s: %w", jobID, err)
 	}
-	out := make([]scheduler.SafetyDecisionRecord, 0, len(raw))
+	out := make([]model.SafetyDecisionRecord, 0, len(raw))
 	for i := len(raw) - 1; i >= 0; i-- {
 		var entry map[string]any
 		if err := json.Unmarshal([]byte(raw[i]), &entry); err != nil {
 			slog.Warn("job-store: corrupt safety decision skipped", "job_id", jobID, "error", err)
 			continue
 		}
-		record := scheduler.SafetyDecisionRecord{
-			Decision:       scheduler.SafetyDecision(stringFromEntry(entry, "decision")),
+		record := model.SafetyDecisionRecord{
+			Decision:       model.SafetyDecision(stringFromEntry(entry, "decision")),
 			Reason:         stringFromEntry(entry, "reason"),
 			RuleID:         stringFromEntry(entry, "rule_id"),
 			PolicySnapshot: stringFromEntry(entry, "policy_snapshot"),
@@ -1427,13 +1427,13 @@ func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, l
 	return out, nil
 }
 
-func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]scheduler.JobRecord, error) {
+func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]model.JobRecord, error) {
 	jobIDs, err := s.client.SMembers(ctx, "trace:"+traceID).Result()
 	if err != nil {
 		return nil, fmt.Errorf("job store get trace jobs %s: %w", traceID, err)
 	}
 	if len(jobIDs) == 0 {
-		return []scheduler.JobRecord{}, nil
+		return []model.JobRecord{}, nil
 	}
 
 	pipe := s.client.Pipeline()
@@ -1445,10 +1445,10 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 		slog.Warn("redis pipeline exec", "op", "get_trace_jobs", "error", err)
 	}
 
-	out := make([]scheduler.JobRecord, 0, len(jobIDs))
+	out := make([]model.JobRecord, 0, len(jobIDs))
 	for _, jobID := range jobIDs {
 		meta, _ := metaCmds[jobID].Result()
-		state := scheduler.JobState(meta["state"])
+		state := model.JobState(meta["state"])
 		if state == "" {
 			state, _ = s.GetState(ctx, jobID)
 		}
@@ -1456,7 +1456,7 @@ func (s *RedisJobStore) GetTraceJobs(ctx context.Context, traceID string) ([]sch
 		riskTags := parseJSONStringSlice(meta[metaFieldRiskTags])
 		requires := parseJSONStringSlice(meta[metaFieldRequires])
 		attempts := parseInt(meta[metaFieldAttempts])
-		out = append(out, scheduler.JobRecord{
+		out = append(out, model.JobRecord{
 			ID:             jobID,
 			TraceID:        traceID,
 			State:          state,
@@ -1490,7 +1490,7 @@ func (s *RedisJobStore) getDeadline(ctx context.Context, jobID string) (int64, e
 	return val, nil
 }
 
-func isAllowedTransition(from, to scheduler.JobState) bool {
+func isAllowedTransition(from, to model.JobState) bool {
 	if from == to {
 		return true
 	}
@@ -1506,7 +1506,7 @@ func isAllowedTransition(from, to scheduler.JobState) bool {
 	return false
 }
 
-func isActiveState(state scheduler.JobState) bool {
+func isActiveState(state model.JobState) bool {
 	if state == "" {
 		return false
 	}
@@ -1524,14 +1524,14 @@ func parseJSONStringSlice(raw string) []string {
 	return out
 }
 
-func parseOutputSafetyRecord(raw string, jobID string) scheduler.OutputSafetyRecord {
+func parseOutputSafetyRecord(raw string, jobID string) model.OutputSafetyRecord {
 	if raw == "" {
-		return scheduler.OutputSafetyRecord{}
+		return model.OutputSafetyRecord{}
 	}
-	var record scheduler.OutputSafetyRecord
+	var record model.OutputSafetyRecord
 	if err := json.Unmarshal([]byte(raw), &record); err != nil {
 		slog.Warn("job-store: corrupt output safety record", "job_id", jobID, "error", err)
-		return scheduler.OutputSafetyRecord{}
+		return model.OutputSafetyRecord{}
 	}
 	return record
 }

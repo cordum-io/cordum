@@ -7,7 +7,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/memory"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -77,13 +77,13 @@ func TestReconcilerReconcileRun(t *testing.T) {
 	}
 
 	jobID := "run-1:step@1"
-	if err := jobStore.SetState(context.Background(), jobID, scheduler.JobStatePending); err != nil {
+	if err := jobStore.SetState(context.Background(), jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set job state pending: %v", err)
 	}
-	if err := jobStore.SetState(context.Background(), jobID, scheduler.JobStateScheduled); err != nil {
+	if err := jobStore.SetState(context.Background(), jobID, model.JobStateScheduled); err != nil {
 		t.Fatalf("set job state scheduled: %v", err)
 	}
-	if err := jobStore.SetState(context.Background(), jobID, scheduler.JobStateSucceeded); err != nil {
+	if err := jobStore.SetState(context.Background(), jobID, model.JobStateSucceeded); err != nil {
 		t.Fatalf("set job state succeeded: %v", err)
 	}
 
