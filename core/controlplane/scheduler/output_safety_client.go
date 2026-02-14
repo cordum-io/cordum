@@ -19,16 +19,18 @@ import (
 )
 
 const (
-	outputMetaTimeout        = 100 * time.Millisecond
-	outputContentTimeout     = 30 * time.Second
-	outputContentMaxBytes    = 2 * 1024 * 1024
-	outputCircuitOpenFor     = 30 * time.Second
-	outputCircuitFailBudget  = 3
-	outputCircuitHalfOpenMax = 3
-	outputCircuitCloseAfter  = 2
-	outputPointerPrefix      = "redis://"
-	outputRedactedTTL        = 24 * time.Hour
-	outputRedactionMarker    = "[REDACTED]"
+	outputMetaTimeout         = 100 * time.Millisecond
+	outputContentTimeout      = 30 * time.Second
+	outputContentMaxBytes     = 2 * 1024 * 1024
+	outputContentFetchRetries = 6
+	outputContentFetchBackoff = 100 * time.Millisecond
+	outputCircuitOpenFor      = 30 * time.Second
+	outputCircuitFailBudget   = 3
+	outputCircuitHalfOpenMax  = 3
+	outputCircuitCloseAfter   = 2
+	outputPointerPrefix       = "redis://"
+	outputRedactedTTL         = 24 * time.Hour
+	outputRedactionMarker     = "[REDACTED]"
 )
 
 // OutputSafetyClient implements OutputSafetyChecker over OutputPolicyService gRPC.
@@ -265,12 +267,25 @@ func (c *OutputSafetyClient) loadOutputContent(ctx context.Context, resultPtr st
 	if err != nil {
 		return nil, err
 	}
-	content, err := c.resultClient.Get(ctx, key).Bytes()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
+	var content []byte
+	for attempt := 0; attempt < outputContentFetchRetries; attempt++ {
+		content, err = c.resultClient.Get(ctx, key).Bytes()
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		if attempt == outputContentFetchRetries-1 {
 			return nil, nil
 		}
-		return nil, err
+		timer := time.NewTimer(outputContentFetchBackoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	if len(content) > outputContentMaxBytes {
 		content = content[:outputContentMaxBytes]

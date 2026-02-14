@@ -715,13 +715,15 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
 		}
+		policy, err := config.ParseSafetyPolicy([]byte(content))
+		if err != nil {
+			// Keep reloading base/other valid fragments when one bundle is malformed.
+			log.Printf("safety-kernel: skipping invalid policy fragment %q: %v", key, err)
+			continue
+		}
 		hasher.Write([]byte(key))
 		hasher.Write([]byte{0})
 		hasher.Write([]byte(content))
-		policy, err := config.ParseSafetyPolicy([]byte(content))
-		if err != nil {
-			return nil, "", fmt.Errorf("parse policy fragment %q: %w", key, err)
-		}
 		merged = mergePolicies(merged, policy)
 	}
 	if merged == nil {

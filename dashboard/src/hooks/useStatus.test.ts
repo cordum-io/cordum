@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestQueryClient, mockFetch, renderWithQueryClient } from "./__tests__/test-utils";
-import { useRecentJobs, useRecentRuns, useStatus, useWorkersSummary } from "./useStatus";
+import { __statusInternal, usePipelineMetrics, useRecentJobs, useRecentRuns, useStatus, useWorkersSummary } from "./useStatus";
 
 const { loggerMock } = vi.hoisted(() => ({
   loggerMock: {
@@ -115,6 +115,79 @@ describe("useStatus hooks", () => {
     hook.unmount();
   });
 
+  it("usePipelineMetrics falls back to /jobs when status pipeline is missing", async () => {
+    mockFetch([
+      {
+        match: "/status",
+        method: "GET",
+        body: {
+          workers: { count: 2 },
+        },
+      },
+      {
+        match: "/jobs?limit=300",
+        method: "GET",
+        body: {
+          items: [
+            { id: "j1", state: "PENDING" },
+            { id: "j2", state: "APPROVAL_REQUIRED" },
+            { id: "j3", state: "RUNNING" },
+            { id: "j4", state: "SUCCEEDED" },
+            { id: "j5", state: "DENIED" },
+            { id: "j6", state: "OUTPUT_QUARANTINED" },
+          ],
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => usePipelineMetrics());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.source).toBe("jobs_fallback");
+    });
+
+    expect(hook.result.current?.data).toMatchObject({
+      pending: 2,
+      dispatched: 0,
+      running: 1,
+      succeeded: 1,
+      failed: 2,
+    });
+    hook.unmount();
+  });
+
+  it("usePipelineMetrics prefers gateway pipeline when available", async () => {
+    const fetchSpy = mockFetch([
+      {
+        match: "/status",
+        method: "GET",
+        body: {
+          pipeline: {
+            pending: 3,
+            dispatched: 1,
+            running: 2,
+            succeeded: 8,
+            failed: 5,
+          },
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => usePipelineMetrics());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.source).toBe("gateway");
+    });
+
+    expect(hook.result.current?.data).toMatchObject({
+      pending: 3,
+      dispatched: 1,
+      running: 2,
+      succeeded: 8,
+      failed: 5,
+    });
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes("/jobs?limit=300"))).toBe(false);
+    hook.unmount();
+  });
+
   it("useWorkersSummary maps worker heartbeats and filters invalid rows", async () => {
     mockFetch([
       {
@@ -220,5 +293,13 @@ describe("useStatus hooks", () => {
     expect(hook.result.current?.data?.items[0]).toMatchObject({ id: "run-1", workflowId: "wf-1" });
     hook.unmount();
   });
-});
 
+  it("pipelineFromJobs maps denied and quarantined states into failed bucket", () => {
+    const pipeline = __statusInternal.pipelineFromJobs([
+      { id: "a", state: "DENIED" },
+      { id: "b", state: "OUTPUT_QUARANTINED" },
+      { id: "c", state: "CANCELLED" },
+    ]);
+    expect(pipeline.failed).toBe(3);
+  });
+});

@@ -102,19 +102,19 @@ type outputRuleToggleRequest struct {
 }
 
 type policyAuditEntry struct {
-	ID             string   `json:"id"`
-	Action         string   `json:"action"`
-	ResourceType   string   `json:"resource_type,omitempty"`
-	ResourceID     string   `json:"resource_id,omitempty"`
-	ResourceName   string   `json:"resource_name,omitempty"`
-	ActorID        string   `json:"actor_id,omitempty"`
-	Role           string   `json:"role,omitempty"`
+	ID             string     `json:"id"`
+	Action         string     `json:"action"`
+	ResourceType   string     `json:"resource_type,omitempty"`
+	ResourceID     string     `json:"resource_id,omitempty"`
+	ResourceName   string     `json:"resource_name,omitempty"`
+	ActorID        string     `json:"actor_id,omitempty"`
+	Role           string     `json:"role,omitempty"`
 	AuthSource     AuthSource `json:"auth_source,omitempty"`
-	BundleIDs      []string `json:"bundle_ids,omitempty"`
-	Message        string   `json:"message,omitempty"`
-	SnapshotBefore string   `json:"snapshot_before,omitempty"`
-	SnapshotAfter  string   `json:"snapshot_after,omitempty"`
-	CreatedAt      string   `json:"created_at"`
+	BundleIDs      []string   `json:"bundle_ids,omitempty"`
+	Message        string     `json:"message,omitempty"`
+	SnapshotBefore string     `json:"snapshot_before,omitempty"`
+	SnapshotAfter  string     `json:"snapshot_after,omitempty"`
+	CreatedAt      string     `json:"created_at"`
 }
 
 type policyRuleSource struct {
@@ -422,7 +422,8 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
 		}
-		policy, err := config.ParseSafetyPolicy([]byte(content))
+		sanitizedContent := sanitizePolicyBundleYAML(content)
+		policy, err := config.ParseSafetyPolicy([]byte(sanitizedContent))
 		if err != nil || policy == nil || len(policy.OutputRules) == 0 {
 			continue
 		}
@@ -555,7 +556,7 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	content := strings.TrimSpace(body.Content)
+	content := sanitizePolicyBundleYAML(strings.TrimSpace(body.Content))
 	if content == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "content required")
 		return
@@ -1575,10 +1576,11 @@ func buildPolicyFromBundles(bundles map[string]any) (*config.SafetyPolicy, strin
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
 		}
+		sanitizedContent := sanitizePolicyBundleYAML(content)
 		hasher.Write([]byte(key))
 		hasher.Write([]byte{0})
-		hasher.Write([]byte(content))
-		policy, err := config.ParseSafetyPolicy([]byte(content))
+		hasher.Write([]byte(sanitizedContent))
+		policy, err := config.ParseSafetyPolicy([]byte(sanitizedContent))
 		if err != nil {
 			return nil, "", fmt.Errorf("parse policy bundle %q: %w", key, err)
 		}
@@ -1612,6 +1614,65 @@ func policyBundleContent(value any) (string, bool) {
 	return "", false
 }
 
+func sanitizePolicyBundleYAML(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	var payload any
+	if err := yaml.Unmarshal([]byte(content), &payload); err != nil {
+		return content
+	}
+	normalized := normalizeJSON(payload)
+	if normalized == nil {
+		return content
+	}
+	sanitized := sanitizePolicyBundleValue(normalized)
+	if sanitized == nil {
+		return content
+	}
+	encoded, err := yaml.Marshal(sanitized)
+	if err != nil {
+		return content
+	}
+	return string(encoded)
+}
+
+func sanitizePolicyBundleValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, raw := range typed {
+			sanitized := sanitizePolicyBundleValue(raw)
+			if sanitized == nil {
+				continue
+			}
+			if str, ok := sanitized.(string); ok {
+				if strings.TrimSpace(str) == "" {
+					switch key {
+					case "default_decision", "default_tenant", "fail_mode":
+						continue
+					}
+				}
+			}
+			out[key] = sanitized
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, raw := range typed {
+			sanitized := sanitizePolicyBundleValue(raw)
+			if sanitized == nil {
+				continue
+			}
+			out = append(out, sanitized)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
 func mergeSafetyPolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 	if base == nil {
 		return cloneSafetyPolicy(extra)
@@ -1626,7 +1687,17 @@ func mergeSafetyPolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy 
 	if out.DefaultTenant == "" {
 		out.DefaultTenant = extra.DefaultTenant
 	}
+	if strings.TrimSpace(out.DefaultDecision) == "" {
+		out.DefaultDecision = strings.TrimSpace(extra.DefaultDecision)
+	}
+	if !out.OutputPolicy.Enabled && extra.OutputPolicy.Enabled {
+		out.OutputPolicy.Enabled = true
+	}
+	if strings.TrimSpace(out.OutputPolicy.FailMode) == "" {
+		out.OutputPolicy.FailMode = strings.TrimSpace(extra.OutputPolicy.FailMode)
+	}
 	out.Rules = append(out.Rules, extra.Rules...)
+	out.OutputRules = append(out.OutputRules, cloneOutputPolicyRules(extra.OutputRules)...)
 	out.Tenants = mergeTenantPolicies(out.Tenants, extra.Tenants)
 	return out
 }
@@ -1636,15 +1707,57 @@ func cloneSafetyPolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 		return nil
 	}
 	out := &config.SafetyPolicy{
-		Version:       policy.Version,
-		DefaultTenant: policy.DefaultTenant,
-		Rules:         append([]config.PolicyRule{}, policy.Rules...),
-		Tenants:       map[string]config.TenantPolicy{},
+		Version:         policy.Version,
+		DefaultTenant:   policy.DefaultTenant,
+		DefaultDecision: policy.DefaultDecision,
+		Rules:           append([]config.PolicyRule{}, policy.Rules...),
+		OutputPolicy:    policy.OutputPolicy,
+		OutputRules:     cloneOutputPolicyRules(policy.OutputRules),
+		Tenants:         map[string]config.TenantPolicy{},
 	}
 	if policy.Tenants != nil {
 		for k, v := range policy.Tenants {
 			out.Tenants[k] = cloneTenantPolicy(v)
 		}
+	}
+	return out
+}
+
+func cloneOutputPolicyRules(rules []config.OutputPolicyRule) []config.OutputPolicyRule {
+	if len(rules) == 0 {
+		return nil
+	}
+	out := make([]config.OutputPolicyRule, 0, len(rules))
+	for _, rule := range rules {
+		cloned := config.OutputPolicyRule{
+			ID:       strings.TrimSpace(rule.ID),
+			Severity: strings.TrimSpace(rule.Severity),
+			Desc:     rule.Desc,
+			Decision: strings.TrimSpace(rule.Decision),
+			Reason:   rule.Reason,
+			Match: config.OutputPolicyMatch{
+				Tenants:         append([]string{}, rule.Match.Tenants...),
+				Topics:          append([]string{}, rule.Match.Topics...),
+				Capabilities:    append([]string{}, rule.Match.Capabilities...),
+				RiskTags:        append([]string{}, rule.Match.RiskTags...),
+				Scanners:        append([]string{}, rule.Match.Scanners...),
+				ContentPatterns: append([]string{}, rule.Match.ContentPatterns...),
+				Keywords:        append([]string{}, rule.Match.Keywords...),
+				ContentTypes:    append([]string{}, rule.Match.ContentTypes...),
+				Detectors:       append([]string{}, rule.Match.Detectors...),
+				OutputSizeGt:    rule.Match.OutputSizeGt,
+				MaxOutputBytes:  rule.Match.MaxOutputBytes,
+			},
+		}
+		if rule.Enabled != nil {
+			enabled := *rule.Enabled
+			cloned.Enabled = &enabled
+		}
+		if rule.Match.HasError != nil {
+			hasError := *rule.Match.HasError
+			cloned.Match.HasError = &hasError
+		}
+		out = append(out, cloned)
 	}
 	return out
 }
@@ -1960,7 +2073,8 @@ func validateBundles(bundles map[string]any) error {
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
 		}
-		if _, err := config.ParseSafetyPolicy([]byte(content)); err != nil {
+		sanitizedContent := sanitizePolicyBundleYAML(content)
+		if _, err := config.ParseSafetyPolicy([]byte(sanitizedContent)); err != nil {
 			return fmt.Errorf("invalid policy bundle %q: %w", key, err)
 		}
 	}

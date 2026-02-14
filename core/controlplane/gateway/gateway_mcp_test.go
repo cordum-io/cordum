@@ -222,6 +222,52 @@ func TestRegisterMCPRoutesStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestRegisterMCPRoutesStatusEndpointWhenMCPDisabled(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestGateway(t)
+	s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+	mux := http.NewServeMux()
+	if err := s.registerMCPRoutes(mux); err != nil {
+		t.Fatalf("register mcp routes: %v", err)
+	}
+
+	httpSrv := httptest.NewServer(mux)
+	defer httpSrv.Close()
+
+	statusReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/api/v1/mcp/status", nil)
+	statusReq.Header.Set("X-API-Key", "test-key")
+	statusReq.Header.Set("X-Tenant-ID", "default")
+	statusResp, err := http.DefaultClient.Do(statusReq)
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	defer statusResp.Body.Close()
+	if statusResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from status endpoint when disabled, got %d", statusResp.StatusCode)
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(statusResp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode status payload: %v", err)
+	}
+	if running, ok := payload["running"].(bool); !ok || running {
+		t.Fatalf("expected running=false in disabled status payload, got %#v", payload["running"])
+	}
+
+	messageReq, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/api/v1/mcp/message", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"ping"}`))
+	messageReq.Header.Set("Content-Type", "application/json")
+	messageReq.Header.Set("X-API-Key", "test-key")
+	messageReq.Header.Set("X-Tenant-ID", "default")
+	messageResp, err := http.DefaultClient.Do(messageReq)
+	if err != nil {
+		t.Fatalf("message request failed: %v", err)
+	}
+	defer messageResp.Body.Close()
+	if messageResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 from message endpoint when disabled, got %d", messageResp.StatusCode)
+	}
+}
+
 func TestHandleSetConfigReloadsMCPRuntimeConfig(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newTestGateway(t)

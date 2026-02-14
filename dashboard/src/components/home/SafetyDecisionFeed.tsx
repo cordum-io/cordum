@@ -5,6 +5,8 @@ import { Card } from "../ui/Card";
 import { useSafetyDecisions } from "../../hooks/useSafetyDecisions";
 import { useEventStore, type SafetyDecisionEvent } from "../../state/events";
 
+const FEED_LIMIT = 40;
+
 const decisionVariant: Record<string, "success" | "danger" | "warning" | "info"> = {
   allow: "success",
   deny: "danger",
@@ -117,7 +119,7 @@ function ErrorState() {
 
 export function SafetyDecisionFeed() {
   const wsStatus = useEventStore((s) => s.status);
-  const { decisions, isLoading, isError, isFetching } = useSafetyDecisions();
+  const { decisions, isLoading, isError, isFetching } = useSafetyDecisions(FEED_LIMIT);
   const listRef = useRef<HTMLDivElement>(null);
 
   const counts = useMemo(() => {
@@ -148,7 +150,7 @@ export function SafetyDecisionFeed() {
           <ShieldCheck className="mt-0.5 h-5 w-5 text-accent" />
           <div>
             <h2 className="font-display text-base font-semibold text-ink">Live Safety Decisions</h2>
-            <p className="text-[11px] text-muted">Recent decisions from stream and gateway history</p>
+            <p className="text-[11px] text-muted">Recent decisions from stream and gateway history (latest {FEED_LIMIT})</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(wsStatus)}`}>

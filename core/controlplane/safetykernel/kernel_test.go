@@ -224,6 +224,65 @@ rules:
 	}
 }
 
+func TestPolicyLoaderSkipsInvalidFragments(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	svc, err := configsvc.New("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	defer svc.Close()
+
+	doc := &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "policy",
+		Data: map[string]any{
+			"bundles": map[string]any{
+				"valid": `
+rules:
+  - id: require-ops
+    match:
+      topics:
+        - job.ops.*
+    decision: require_approval
+    reason: ops guardrail
+`,
+				"invalid": `
+default_decision: maybe
+`,
+			},
+		},
+	}
+	if err := svc.Set(context.Background(), doc); err != nil {
+		t.Fatalf("set config doc: %v", err)
+	}
+
+	loader := &policyLoader{
+		configSvc:   svc,
+		configScope: configsvc.ScopeSystem,
+		configID:    "policy",
+		configKey:   "bundles",
+	}
+	policy, snapshot, err := loader.loadFragments(context.Background())
+	if err != nil {
+		t.Fatalf("load fragments: %v", err)
+	}
+	if policy == nil {
+		t.Fatalf("expected policy from valid fragment")
+	}
+	if snapshot == "" {
+		t.Fatalf("expected snapshot hash for valid fragments")
+	}
+	resp := policy.Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.ops.check"})
+	if resp.Decision != "require_approval" {
+		t.Fatalf("expected valid fragment to be applied, got %q", resp.Decision)
+	}
+}
+
 func TestEvaluateExplainSimulate(t *testing.T) {
 	srv := &server{}
 	policy := &config.SafetyPolicy{
