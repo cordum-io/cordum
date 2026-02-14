@@ -55,6 +55,7 @@ tools/private/
 /cordumctl
 /Screenshot*.png
 /demo/mock-bank/worker/mock-bank-worker
+/dashboard/public/monaco/vs/
 
 # Build artifacts and temp files
 .tmp-bin/
