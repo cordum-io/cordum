@@ -1,29 +1,18 @@
 package scheduler
 
-import pb "github.com/cordum/cordum/core/protocol/pb/v1"
+import (
+	"github.com/cordum/cordum/core/model"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+)
 
-const DefaultTenant = "default"
+const DefaultTenant = model.DefaultTenant
 
 // ExtractTenant returns tenant ID with fallbacks to env.
 func ExtractTenant(req *pb.JobRequest) string {
-	if req == nil {
-		return DefaultTenant
-	}
-	if tenant := req.GetTenantId(); tenant != "" {
-		return tenant
-	}
-	if env := req.GetEnv(); env != nil {
-		if tenant := env["tenant_id"]; tenant != "" {
-			return tenant
-		}
-	}
-	return DefaultTenant
+	return model.ExtractTenant(req)
 }
 
 // ExtractPrincipal extracts principal ID if present.
 func ExtractPrincipal(req *pb.JobRequest) string {
-	if req == nil {
-		return ""
-	}
-	return req.GetPrincipalId()
+	return model.ExtractPrincipal(req)
 }

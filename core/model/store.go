@@ -1,0 +1,41 @@
+package model
+
+import (
+	"context"
+	"time"
+
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+)
+
+// JobStore tracks job state and result pointers.
+type JobStore interface {
+	SetState(ctx context.Context, jobID string, state JobState) error
+	GetState(ctx context.Context, jobID string) (JobState, error)
+	SetResultPtr(ctx context.Context, jobID, resultPtr string) error
+	GetResultPtr(ctx context.Context, jobID string) (string, error)
+	SetJobMeta(ctx context.Context, req *pb.JobRequest) error
+	SetDeadline(ctx context.Context, jobID string, deadline time.Time) error
+	ListExpiredDeadlines(ctx context.Context, nowUnix int64, limit int64) ([]JobRecord, error)
+	ListJobsByState(ctx context.Context, state JobState, updatedBeforeUnix int64, limit int64) ([]JobRecord, error)
+	// New: Trace support
+	AddJobToTrace(ctx context.Context, traceID, jobID string) error
+	GetTraceJobs(ctx context.Context, traceID string) ([]JobRecord, error)
+	// Metadata helpers
+	SetTopic(ctx context.Context, jobID, topic string) error
+	GetTopic(ctx context.Context, jobID string) (string, error)
+	SetTenant(ctx context.Context, jobID, tenant string) error
+	GetTenant(ctx context.Context, jobID string) (string, error)
+	SetTeam(ctx context.Context, jobID, team string) error
+	GetTeam(ctx context.Context, jobID string) (string, error)
+	SetSafetyDecision(ctx context.Context, jobID string, record SafetyDecisionRecord) error
+	GetSafetyDecision(ctx context.Context, jobID string) (SafetyDecisionRecord, error)
+	GetAttempts(ctx context.Context, jobID string) (int, error)
+	CountActiveByTenant(ctx context.Context, tenant string) (int, error)
+	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error)
+	ReleaseLock(ctx context.Context, key string, token string) error
+	CancelJob(ctx context.Context, jobID string) (JobState, error)
+	SetFailureReason(ctx context.Context, jobID, reason string) error
+	GetFailureReason(ctx context.Context, jobID string) (string, error)
+	SetOutputDecision(ctx context.Context, jobID string, record OutputSafetyRecord) error
+	GetOutputDecision(ctx context.Context, jobID string) (OutputSafetyRecord, error)
+}

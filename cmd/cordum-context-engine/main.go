@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cordum/cordum/core/context/engine"
+	"github.com/cordum/cordum/core/contextwindow/engine"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"

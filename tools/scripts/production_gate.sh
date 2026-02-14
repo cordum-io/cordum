@@ -994,7 +994,7 @@ gate_8_extensions() {
   local code unauth_mcp mcp_status mcp_ping tools_list resources_list resources_read
   local stats_body rules_body
   local output_bundle_yaml output_bundle_payload
-  local clean_body clean_resp clean_job clean_state
+  local clean_body clean_resp clean_job clean_state clean_attempt
   local secret_body secret_resp secret_job secret_state secret_detail
   local pii_body pii_resp pii_job pii_state pii_detail
   local pii_decision
@@ -1077,7 +1077,8 @@ gate_8_extensions() {
 
   # Runtime output enforcement lives in scheduler and is env-gated.
   OUTPUT_POLICY_ENABLED=1 "${COMPOSE_CMD[@]}" up -d --force-recreate scheduler >/dev/null
-  sleep 2
+  # Allow scheduler registry to refill from worker heartbeats after recreate.
+  sleep 12
   ensure_mock_bank_worker
 
   stats_body="$(api_body GET /policy/output/stats)"
@@ -1164,14 +1165,22 @@ YAML
     return 1
   }
 
-  clean_body="$(jq -cn '{prompt:"normal compliance-safe summary", topic:"job.bank-validators.process"}')"
-  clean_resp="$(api_call POST /jobs "${clean_body}")"
-  clean_job="$(echo "${clean_resp}" | jq -r '.job_id // empty' 2>/dev/null || true)"
-  [[ -n "${clean_job}" ]] || {
-    echo "failed to submit clean output-policy probe job" >&2
-    return 1
-  }
-  clean_state="$(poll_job_terminal "${clean_job}" 180)"
+  clean_state="__POLL_TIMEOUT__"
+  for clean_attempt in 1 2 3 4 5 6; do
+    clean_body="$(jq -cn '{prompt:"normal compliance-safe summary", topic:"job.bank-validators.process"}')"
+    clean_resp="$(api_call POST /jobs "${clean_body}")"
+    clean_job="$(echo "${clean_resp}" | jq -r '.job_id // empty' 2>/dev/null || true)"
+    [[ -n "${clean_job}" ]] || {
+      echo "failed to submit clean output-policy probe job" >&2
+      return 1
+    }
+    clean_state="$(poll_job_terminal "${clean_job}" 30 || true)"
+    if [[ "${clean_state}" == "SUCCEEDED" ]]; then
+      break
+    fi
+    log "gate 8: clean output probe attempt ${clean_attempt} ended in state=${clean_state}; retrying after scheduler warmup"
+    sleep 5
+  done
   [[ "${clean_state}" == "SUCCEEDED" ]] || {
     echo "clean output probe expected SUCCEEDED, got ${clean_state}" >&2
     return 1

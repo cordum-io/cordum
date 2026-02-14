@@ -1,0 +1,464 @@
+package auth
+
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	miniredis "github.com/alicebob/miniredis/v2"
+)
+
+func newTestUserStore(t *testing.T) (*RedisUserStore, *miniredis.Miniredis) {
+	t.Helper()
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(srv.Close)
+
+	store, err := NewRedisUserStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("NewRedisUserStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	return store, srv
+}
+
+func TestLoginThrottle_BlocksAfterMaxAttempts(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+	username := "alice"
+
+	// First 5 attempts should not be throttled.
+	for i := 0; i < maxLoginAttempts(); i++ {
+		if err := store.CheckLoginThrottle(ctx, username); err != nil {
+			t.Fatalf("attempt %d: unexpected throttle: %v", i+1, err)
+		}
+		store.RecordFailedLogin(ctx, username)
+	}
+
+	// 6th attempt should be throttled.
+	if err := store.CheckLoginThrottle(ctx, username); err == nil {
+		t.Fatal("expected throttle after max attempts, got nil")
+	} else if err != ErrLoginThrottled {
+		t.Fatalf("expected ErrLoginThrottled, got: %v", err)
+	}
+}
+
+func TestLoginThrottle_SuccessfulLoginResetsCounter(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+	username := "bob"
+
+	// Record 3 failed attempts.
+	for i := 0; i < 3; i++ {
+		store.RecordFailedLogin(ctx, username)
+	}
+
+	// Not yet throttled.
+	if err := store.CheckLoginThrottle(ctx, username); err != nil {
+		t.Fatalf("unexpected throttle after 3 attempts: %v", err)
+	}
+
+	// Successful login clears the counter.
+	store.ClearFailedLogins(ctx, username)
+
+	// Can now do 5 more failures without being throttled.
+	for i := 0; i < maxLoginAttempts(); i++ {
+		if err := store.CheckLoginThrottle(ctx, username); err != nil {
+			t.Fatalf("attempt %d after reset: unexpected throttle: %v", i+1, err)
+		}
+		store.RecordFailedLogin(ctx, username)
+	}
+
+	// Now should be throttled again.
+	if err := store.CheckLoginThrottle(ctx, username); err == nil {
+		t.Fatal("expected throttle after max attempts post-reset")
+	}
+}
+
+func TestLoginThrottle_IndependentPerUsername(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	// Lock out alice.
+	for i := 0; i < maxLoginAttempts(); i++ {
+		store.RecordFailedLogin(ctx, "alice")
+	}
+
+	// Alice is throttled.
+	if err := store.CheckLoginThrottle(ctx, "alice"); err == nil {
+		t.Fatal("expected alice to be throttled")
+	}
+
+	// Bob is NOT throttled.
+	if err := store.CheckLoginThrottle(ctx, "bob"); err != nil {
+		t.Fatalf("bob should not be throttled: %v", err)
+	}
+}
+
+func TestLoginThrottleLogsOnRedisFailure(t *testing.T) {
+	store, srv := newTestUserStore(t)
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	previous := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	srv.Close()
+	store.RecordFailedLogin(ctx, "alice")
+	store.ClearFailedLogins(ctx, "alice")
+
+	logs := buf.String()
+	if !strings.Contains(logs, "failed to record login attempt") {
+		t.Fatalf("expected record login warning, got %s", logs)
+	}
+	if !strings.Contains(logs, "failed to clear login attempts") {
+		t.Fatalf("expected clear login warning, got %s", logs)
+	}
+}
+
+func TestValidatePassword_TooShort(t *testing.T) {
+	err := validatePassword("Ab1!short")
+	if err == nil {
+		t.Fatal("expected error for short password")
+	}
+	if !strings.Contains(err.Error(), "at least 12 characters") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidatePassword_NoUppercase(t *testing.T) {
+	err := validatePassword("alllowercase1!")
+	if err == nil {
+		t.Fatal("expected error for missing uppercase")
+	}
+	if !strings.Contains(err.Error(), "uppercase letter") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidatePassword_NoDigit(t *testing.T) {
+	err := validatePassword("AllLettersOnly!!")
+	if err == nil {
+		t.Fatal("expected error for missing digit")
+	}
+	if !strings.Contains(err.Error(), "digit") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidatePassword_NoSpecialChar(t *testing.T) {
+	err := validatePassword("AllLetters1234")
+	if err == nil {
+		t.Fatal("expected error for missing special character")
+	}
+	if !strings.Contains(err.Error(), "special character") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidatePassword_Valid(t *testing.T) {
+	valid := []string{
+		"SecurePass1!xy",
+		"MyP@ssword123!",
+		"Abcdefghij1!",
+	}
+	for _, pw := range valid {
+		if err := validatePassword(pw); err != nil {
+			t.Errorf("validatePassword(%q) = %v, want nil", pw, err)
+		}
+	}
+}
+
+func TestValidatePassword_MultipleViolations(t *testing.T) {
+	err := validatePassword("alllowernodigit")
+	if err == nil {
+		t.Fatal("expected error for multiple violations")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "uppercase letter") || !strings.Contains(msg, "digit") || !strings.Contains(msg, "special character") {
+		t.Fatalf("expected all three missing requirements, got: %v", msg)
+	}
+}
+
+func TestLoginThrottle_TTLExpiry(t *testing.T) {
+	store, srv := newTestUserStore(t)
+	ctx := context.Background()
+	username := "charlie"
+
+	// Lock out charlie.
+	for i := 0; i < maxLoginAttempts(); i++ {
+		store.RecordFailedLogin(ctx, username)
+	}
+
+	// Charlie is throttled.
+	if err := store.CheckLoginThrottle(ctx, username); err == nil {
+		t.Fatal("expected throttle")
+	}
+
+	// Fast-forward past lockout period.
+	srv.FastForward(loginLockoutPeriod() + 1)
+
+	// Charlie can try again.
+	if err := store.CheckLoginThrottle(ctx, username); err != nil {
+		t.Fatalf("expected throttle to expire: %v", err)
+	}
+}
+
+func TestCreateUserConcurrentRejectsDuplicates(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	const goroutines = 10
+	var wg sync.WaitGroup
+	var successes atomic.Int32
+	var duplicates atomic.Int32
+	wg.Add(goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			user := &User{Username: "race-user", Tenant: "default", Email: "race@test.com"}
+			err := store.Create(ctx, user, "SecurePass1!")
+			if err == nil {
+				successes.Add(1)
+			} else if err == ErrUserAlreadyExists {
+				duplicates.Add(1)
+			} else {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if successes.Load() != 1 {
+		t.Fatalf("expected exactly 1 success, got %d", successes.Load())
+	}
+	if duplicates.Load() != int32(goroutines-1) {
+		t.Fatalf("expected %d duplicates, got %d", goroutines-1, duplicates.Load())
+	}
+}
+
+func TestCreateUserConcurrentEmailUniqueness(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	const goroutines = 10
+	var wg sync.WaitGroup
+	var successes atomic.Int32
+	wg.Add(goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			// Different usernames but same email — only one should succeed.
+			user := &User{
+				Username: "email-race-" + strings.Repeat("x", i),
+				Tenant:   "default",
+				Email:    "shared@test.com",
+			}
+			err := store.Create(ctx, user, "SecurePass1!")
+			if err == nil {
+				successes.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if successes.Load() != 1 {
+		t.Fatalf("expected exactly 1 success for shared email, got %d", successes.Load())
+	}
+}
+
+// ---- CRUD round-trip tests ----
+
+func TestUserStore_CreateAndGetByUsername(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	user := &User{Username: "alice", Tenant: "default", Email: "alice@test.com", Role: "admin"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if user.ID == "" {
+		t.Fatal("expected user ID to be set after create")
+	}
+
+	got, err := store.GetByUsername(ctx, "alice", "default")
+	if err != nil {
+		t.Fatalf("GetByUsername: %v", err)
+	}
+	if got.Username != "alice" || got.Tenant != "default" || got.Email != "alice@test.com" {
+		t.Fatalf("unexpected user: %+v", got)
+	}
+}
+
+func TestUserStore_CreateAndGetByEmail(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	user := &User{Username: "bob", Tenant: "default", Email: "bob@test.com", Role: "user"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := store.GetByEmail(ctx, "bob@test.com", "default")
+	if err != nil {
+		t.Fatalf("GetByEmail: %v", err)
+	}
+	if got.Username != "bob" {
+		t.Fatalf("expected bob, got %q", got.Username)
+	}
+}
+
+func TestUserStore_UpdateFields(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	user := &User{Username: "charlie", Tenant: "default", Email: "charlie@test.com", Role: "user"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	user.Email = "charlie-new@test.com"
+	user.Role = "admin"
+	if err := store.Update(ctx, user); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	got, err := store.GetByUsername(ctx, "charlie", "default")
+	if err != nil {
+		t.Fatalf("GetByUsername: %v", err)
+	}
+	if got.Email != "charlie-new@test.com" {
+		t.Fatalf("expected updated email, got %q", got.Email)
+	}
+	if got.Role != "admin" {
+		t.Fatalf("expected updated role, got %q", got.Role)
+	}
+}
+
+func TestUserStore_DeleteAndGetReturnsNotFound(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	user := &User{Username: "dave", Tenant: "default", Role: "user"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := store.Delete(ctx, user.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	got, err := store.GetByUsername(ctx, "dave", "default")
+	if err == nil && got != nil && !got.Disabled {
+		t.Fatal("expected user to be disabled or not found after delete")
+	}
+}
+
+func TestUserStore_TenantIsolation(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	// Same username in different tenants should both succeed.
+	u1 := &User{Username: "shared-name", Tenant: "tenant-a", Role: "user"}
+	if err := store.Create(ctx, u1, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create tenant-a: %v", err)
+	}
+
+	u2 := &User{Username: "shared-name", Tenant: "tenant-b", Role: "user"}
+	if err := store.Create(ctx, u2, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create tenant-b: %v", err)
+	}
+
+	gotA, err := store.GetByUsername(ctx, "shared-name", "tenant-a")
+	if err != nil {
+		t.Fatalf("get tenant-a: %v", err)
+	}
+	gotB, err := store.GetByUsername(ctx, "shared-name", "tenant-b")
+	if err != nil {
+		t.Fatalf("get tenant-b: %v", err)
+	}
+
+	if gotA.ID == gotB.ID {
+		t.Fatal("expected different user IDs for different tenants")
+	}
+	if gotA.Tenant != "tenant-a" || gotB.Tenant != "tenant-b" {
+		t.Fatalf("tenant mismatch: a=%q b=%q", gotA.Tenant, gotB.Tenant)
+	}
+}
+
+// ---- Session management tests ----
+
+func TestUserStore_SessionRoundTrip(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	ctx := context.Background()
+
+	user := &User{ID: "u-sess", Username: "sess-user", Tenant: "default", Role: "admin"}
+	token := "session-test-token"
+
+	// Store session.
+	if err := store.StoreSession(ctx, token, user, 5*time.Minute); err != nil {
+		t.Fatalf("StoreSession: %v", err)
+	}
+
+	// Validate session.
+	authCtx, err := store.ValidateSession(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateSession: %v", err)
+	}
+	if authCtx.PrincipalID != "u-sess" {
+		t.Fatalf("expected principal u-sess, got %q", authCtx.PrincipalID)
+	}
+	if authCtx.Tenant != "default" {
+		t.Fatalf("expected tenant default, got %q", authCtx.Tenant)
+	}
+
+	// Delete session.
+	if err := store.DeleteSession(ctx, token); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+
+	// Validate after delete should fail.
+	_, err = store.ValidateSession(ctx, token)
+	if err == nil {
+		t.Fatal("expected error after session deletion")
+	}
+}
+
+func TestUserStore_SessionTTLExpiry(t *testing.T) {
+	store, srv := newTestUserStore(t)
+	ctx := context.Background()
+
+	user := &User{ID: "u-ttl", Username: "ttl-user", Tenant: "default", Role: "user"}
+	token := "session-ttl-token"
+
+	if err := store.StoreSession(ctx, token, user, 1*time.Minute); err != nil {
+		t.Fatalf("StoreSession: %v", err)
+	}
+
+	// Session should be valid.
+	if _, err := store.ValidateSession(ctx, token); err != nil {
+		t.Fatalf("ValidateSession before expiry: %v", err)
+	}
+
+	// Fast-forward past TTL.
+	srv.FastForward(2 * time.Minute)
+
+	// Session should be expired.
+	_, err := store.ValidateSession(ctx, token)
+	if err == nil {
+		t.Fatal("expected error after session TTL expiry")
+	}
+}

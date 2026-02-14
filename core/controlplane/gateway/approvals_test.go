@@ -11,7 +11,8 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -38,15 +39,15 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatalf("set job req: %v", err)
 	}
-	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	hash, err := scheduler.HashJobRequest(req)
 	if err != nil {
 		t.Fatalf("hash job: %v", err)
 	}
-	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyRequireApproval,
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,
 		PolicySnapshot:   "snap-1",
 		JobHash:          hash,
@@ -70,7 +71,7 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get state: %v", err)
 	}
-	if state != scheduler.JobStatePending {
+	if state != model.JobStatePending {
 		t.Fatalf("expected pending got %s", state)
 	}
 	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
@@ -117,15 +118,15 @@ func TestApproveJobUsesAuthContextForApprover(t *testing.T) {
 		if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
 			t.Fatalf("set job req: %v", err)
 		}
-		if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+		if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
 			t.Fatalf("set state: %v", err)
 		}
 		hash, err := scheduler.HashJobRequest(req)
 		if err != nil {
 			t.Fatalf("hash job: %v", err)
 		}
-		if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
-			Decision:         scheduler.SafetyRequireApproval,
+		if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+			Decision:         model.SafetyRequireApproval,
 			ApprovalRequired: true,
 			PolicySnapshot:   "snap-1",
 			JobHash:          hash,
@@ -196,15 +197,15 @@ func TestApproveJobRejectsOnSnapshotMismatch(t *testing.T) {
 	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatalf("set job req: %v", err)
 	}
-	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	hash, err := scheduler.HashJobRequest(req)
 	if err != nil {
 		t.Fatalf("hash job: %v", err)
 	}
-	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyRequireApproval,
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,
 		PolicySnapshot:   "snap-1",
 		JobHash:          hash,
@@ -222,7 +223,7 @@ func TestApproveJobRejectsOnSnapshotMismatch(t *testing.T) {
 		t.Fatalf("expected 409 got %d body=%s", rr.Code, rr.Body.String())
 	}
 	state, _ := s.jobStore.GetState(context.Background(), jobID)
-	if state != scheduler.JobStateApproval {
+	if state != model.JobStateApproval {
 		t.Fatalf("expected approval state got %s", state)
 	}
 }
@@ -242,11 +243,11 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatalf("set job req: %v", err)
 	}
-	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyRequireApproval,
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,
 		PolicySnapshot:   "snap-1",
 		JobHash:          "hash",
@@ -269,7 +270,7 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get state: %v", err)
 	}
-	if state != scheduler.JobStateDenied {
+	if state != model.JobStateDenied {
 		t.Fatalf("expected denied got %s", state)
 	}
 	if len(bus.published) == 0 {
@@ -308,11 +309,11 @@ func TestListApprovalsIncludesJobHash(t *testing.T) {
 	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatalf("set job req: %v", err)
 	}
-	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyRequireApproval,
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,
 		PolicySnapshot:   "snap-1",
 		JobHash:          "hash-123",
@@ -357,10 +358,10 @@ func TestGetJobIncludesApprovalMetadata(t *testing.T) {
 	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatalf("set job req: %v", err)
 	}
-	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := s.jobStore.SetApprovalRecord(context.Background(), jobID, memory.ApprovalRecord{
+	if err := s.jobStore.SetApprovalRecord(context.Background(), jobID, store.ApprovalRecord{
 		ApprovedBy:     "carol",
 		ApprovedRole:   "admin",
 		Reason:         "ok",
@@ -370,8 +371,8 @@ func TestGetJobIncludesApprovalMetadata(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set approval record: %v", err)
 	}
-	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
-		Decision:       scheduler.SafetyAllow,
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:       model.SafetyAllow,
 		PolicySnapshot: "snap-1",
 		JobHash:        "hash",
 	}); err != nil {
@@ -419,15 +420,15 @@ func TestApproveJobDoubleApproveIdempotent(t *testing.T) {
 	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatalf("set job req: %v", err)
 	}
-	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	hash, err := scheduler.HashJobRequest(req)
 	if err != nil {
 		t.Fatalf("hash job: %v", err)
 	}
-	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyRequireApproval,
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,
 		PolicySnapshot:   "snap-1",
 		JobHash:          hash,
@@ -476,15 +477,15 @@ func TestApproveJobConcurrentRace(t *testing.T) {
 	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatalf("set job req: %v", err)
 	}
-	if err := s.jobStore.SetState(context.Background(), jobID, scheduler.JobStateApproval); err != nil {
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 	hash, err := scheduler.HashJobRequest(req)
 	if err != nil {
 		t.Fatalf("hash job: %v", err)
 	}
-	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, scheduler.SafetyDecisionRecord{
-		Decision:         scheduler.SafetyRequireApproval,
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,
 		PolicySnapshot:   "snap-1",
 		JobHash:          hash,

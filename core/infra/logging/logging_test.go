@@ -88,6 +88,87 @@ func TestFormatFields(t *testing.T) {
 	}
 }
 
+func TestSensitiveKeyRedaction(t *testing.T) {
+	logFormatOnce = sync.Once{}
+	logAsJSON = false
+
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	})
+
+	Info("test", "check redaction", "password", "s3cret", "user", "alice")
+	got := buf.String()
+	if strings.Contains(got, "s3cret") {
+		t.Fatalf("sensitive value leaked into log output: %s", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("expected [REDACTED] in log output: %s", got)
+	}
+	if !strings.Contains(got, "user=alice") {
+		t.Fatalf("non-sensitive value should appear: %s", got)
+	}
+}
+
+func TestSensitiveKeyRedactionJSON(t *testing.T) {
+	logFormatOnce = sync.Once{}
+	logAsJSON = false
+	t.Setenv("CORDUM_LOG_FORMAT", "json")
+
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	})
+
+	Error("test", "auth fail", "api_key", "tok_abc123", "status", 401)
+	got := buf.String()
+	if strings.Contains(got, "tok_abc123") {
+		t.Fatalf("sensitive value leaked into JSON log: %s", got)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(got)), &payload); err != nil {
+		t.Fatalf("expected json: %s", got)
+	}
+	fields, _ := payload["fields"].(map[string]any)
+	if fields["api_key"] != "[REDACTED]" {
+		t.Fatalf("expected api_key=[REDACTED], got: %v", fields["api_key"])
+	}
+}
+
+func TestSensitiveKey(t *testing.T) {
+	cases := []struct {
+		key  string
+		want bool
+	}{
+		{"password", true},
+		{"user_password", true},
+		{"api_key", true},
+		{"apikey", true},
+		{"secret", true},
+		{"auth_token", true},
+		{"credential", true},
+		{"user", false},
+		{"status", false},
+		{"error", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := sensitiveKey(tc.key); got != tc.want {
+			t.Errorf("sensitiveKey(%q) = %v, want %v", tc.key, got, tc.want)
+		}
+	}
+}
+
 func TestToString(t *testing.T) {
 	if got := toString(" value\n"); got != " value\n" {
 		t.Fatalf("unexpected string: %s", got)

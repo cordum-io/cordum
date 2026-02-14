@@ -39,7 +39,7 @@ Storage pattern:
 
 Key source files:
 - `core/protocol/proto/v1/bus.proto` — wire format
-- `core/infra/memory/job_store.go` — Redis pointer storage
+- `core/infra/store/job_store.go` — Redis pointer storage
 
 ## Why Not S3/Object Store
 

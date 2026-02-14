@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -37,7 +37,7 @@ func TestSubmitJobGRPCAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get job status: %v", err)
 	}
-	if status.Status != string(scheduler.JobStatePending) {
+	if status.Status != string(model.JobStatePending) {
 		t.Fatalf("expected pending status, got %s", status.Status)
 	}
 
@@ -102,7 +102,7 @@ func TestSubmitJobGRPCRespectsConcurrentJobsLimit(t *testing.T) {
 	if err := s.jobStore.SetTenant(ctx, seedJobID, "org-1"); err != nil {
 		t.Fatalf("set tenant: %v", err)
 	}
-	if err := s.jobStore.SetState(ctx, seedJobID, scheduler.JobStatePending); err != nil {
+	if err := s.jobStore.SetState(ctx, seedJobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 

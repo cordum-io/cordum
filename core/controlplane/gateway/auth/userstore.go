@@ -1,0 +1,80 @@
+package auth
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// User represents an authenticated user in the system.
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email,omitempty"`
+	DisplayName  string    `json:"display_name,omitempty"`
+	PasswordHash string    `json:"-"` // Never exposed in JSON
+	Tenant       string    `json:"tenant"`
+	Role         string    `json:"role"`
+	Disabled     bool      `json:"disabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// UserStore defines the interface for user persistence and authentication.
+type UserStore interface {
+	// GetByUsername retrieves a user by username within a tenant.
+	GetByUsername(ctx context.Context, username, tenant string) (*User, error)
+
+	// GetByEmail retrieves a user by email within a tenant.
+	GetByEmail(ctx context.Context, email, tenant string) (*User, error)
+
+	// GetByID retrieves a user by ID.
+	GetByID(ctx context.Context, id string) (*User, error)
+
+	// Create creates a new user with the given password.
+	Create(ctx context.Context, user *User, password string) error
+
+	// List returns all users for a tenant.
+	List(ctx context.Context, tenant string) ([]*User, error)
+
+	// Update updates a user's mutable fields (email, display name, role).
+	Update(ctx context.Context, user *User) error
+
+	// Delete soft-deletes a user by setting Disabled=true.
+	Delete(ctx context.Context, id string) error
+
+	// UpdatePassword updates a user's password.
+	UpdatePassword(ctx context.Context, userID, newPassword string) error
+
+	// ValidatePassword checks if the provided password matches the user's stored hash.
+	ValidatePassword(ctx context.Context, user *User, password string) bool
+
+	// Close closes any underlying connections.
+	Close() error
+}
+
+// User store errors.
+var (
+	ErrUserNotFound      = errors.New("user not found")
+	ErrUserAlreadyExists = errors.New("user already exists")
+	ErrInvalidPassword   = errors.New("invalid password")
+	ErrUserDisabled      = errors.New("user is disabled")
+)
+
+// CreateUserRequest is the request body for creating a user.
+type CreateUserRequest struct {
+	Username string `json:"username"`
+	Email    string `json:"email,omitempty"`
+	// #nosec G117 -- password is required in request payloads.
+	Password string `json:"password"`
+	Tenant   string `json:"tenant,omitempty"`
+	Role     string `json:"role,omitempty"`
+}
+
+// ChangePasswordRequest is the request body for changing a password.
+type ChangePasswordRequest struct {
+	// #nosec G117 -- password fields are required in request payloads.
+	CurrentPassword string `json:"current_password"`
+	// #nosec G117 -- password fields are required in request payloads.
+	NewPassword string `json:"new_password"`
+}

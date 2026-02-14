@@ -19,14 +19,14 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
 )
 
 type redisDLQSink struct {
-	store    *memory.DLQStore
+	store    *store.DLQStore
 	jobStore scheduler.JobStore
 }
 
@@ -50,7 +50,7 @@ func (s *redisDLQSink) Add(ctx context.Context, entry scheduler.DLQEntry) error 
 			entry.Attempts = attempts
 		}
 	}
-	return s.store.Add(ctx, memory.DLQEntry{
+	return s.store.Add(ctx, store.DLQEntry{
 		JobID:      entry.JobID,
 		Topic:      entry.Topic,
 		Status:     entry.Status,
@@ -104,14 +104,14 @@ func main() {
 		}
 	}()
 
-	jobStore, err := memory.NewRedisJobStore(cfg.RedisURL)
+	jobStore, err := store.NewRedisJobStore(cfg.RedisURL)
 	if err != nil {
 		log.Fatalf("failed to connect to Redis for job store: %v", err)
 	}
 	defer jobStore.Close()
 
-	var dlqStore *memory.DLQStore
-	dlqStore, err = memory.NewDLQStore(cfg.RedisURL, 0)
+	var dlqStore *store.DLQStore
+	dlqStore, err = store.NewDLQStore(cfg.RedisURL, 0)
 	if err != nil {
 		log.Printf("scheduler dlq sink disabled: %v", err)
 	} else {
@@ -222,7 +222,7 @@ func main() {
 		log.Fatalf("failed to start scheduler engine: %v", err)
 	}
 
-	snapshotStore, err := memory.NewRedisStore(cfg.RedisURL)
+	snapshotStore, err := store.NewRedisStore(cfg.RedisURL)
 	if err != nil {
 		log.Printf("worker snapshot disabled: failed to connect to Redis: %v", err)
 	} else {

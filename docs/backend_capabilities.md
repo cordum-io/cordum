@@ -77,7 +77,7 @@ This document tracks the current backend features, their status, and where they 
 ## Key Paths
 - Workflow store/engine: `core/workflow/`
 - Config service: `core/configsvc/`
-- DLQ store: `core/infra/memory/dlq_store.go`
+- DLQ store: `core/infra/store/dlq_store.go`
 - Gateway server/handlers: `core/controlplane/gateway/` (thin binary: `cmd/cordum-api-gateway/main.go`, ships as `cordum-api-gateway`)
 - Safety kernel server: `core/controlplane/safetykernel/` (thin binary: `cmd/cordum-safety-kernel/main.go`, ships as `cordum-safety-kernel`)
-- Scheduler/job store: `core/controlplane/scheduler/`, `core/infra/memory/job_store.go`
+- Scheduler/job store: `core/controlplane/scheduler/`, `core/infra/store/job_store.go`

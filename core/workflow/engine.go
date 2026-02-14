@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	schemas "github.com/cordum/cordum/core/infra/schema"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -24,8 +24,8 @@ import (
 // Engine coordinates workflow runs, dispatching steps as jobs and updating run state.
 type Engine struct {
 	store           *RedisStore
-	bus             scheduler.Bus
-	mem             memory.Store
+	bus             model.Bus
+	mem             store.Store
 	runLocks        sync.Map // per-run locks to avoid global serialization
 	maxForEachItems int
 	// optional callbacks for observability or hooks
@@ -33,7 +33,7 @@ type Engine struct {
 	OnStepFinished   func(runID, stepID string, status StepStatus)
 	config           ConfigProvider
 	schemaRegistry   *schemas.Registry
-	outputSafety     scheduler.OutputSafetyChecker // optional output policy enforcement on step results
+	outputSafety     model.OutputSafetyChecker // optional output policy enforcement on step results
 
 	// timerMu guards pendingTimers. pendingTimers tracks cancellable delay
 	// timers so they can be stopped on engine shutdown without leaking goroutines.
@@ -61,13 +61,13 @@ type ConfigProvider interface {
 }
 
 // NewEngine creates a workflow engine bound to a Redis workflow store and bus.
-func NewEngine(store *RedisStore, bus scheduler.Bus) *Engine {
+func NewEngine(store *RedisStore, bus model.Bus) *Engine {
 	return &Engine{store: store, bus: bus, maxForEachItems: defaultMaxForEachItems}
 }
 
 // WithMemory sets an optional memory store used to persist per-step job context payloads.
-func (e *Engine) WithMemory(store memory.Store) *Engine {
-	e.mem = store
+func (e *Engine) WithMemory(s store.Store) *Engine {
+	e.mem = s
 	return e
 }
 
@@ -84,7 +84,7 @@ func (e *Engine) WithSchemaRegistry(registry *schemas.Registry) *Engine {
 }
 
 // WithOutputSafety sets an optional output safety checker for inter-step policy enforcement.
-func (e *Engine) WithOutputSafety(c scheduler.OutputSafetyChecker) *Engine {
+func (e *Engine) WithOutputSafety(c model.OutputSafetyChecker) *Engine {
 	e.outputSafety = c
 	return e
 }
@@ -430,7 +430,7 @@ func (e *Engine) checkStepOutputPolicy(ctx context.Context, run *WorkflowRun, st
 	}
 	now := time.Now().UTC()
 	switch record.Decision {
-	case scheduler.OutputQuarantine, scheduler.OutputDeny:
+	case model.OutputQuarantine, model.OutputDeny:
 		stepRun.Status = StepStatusFailed
 		stepRun.CompletedAt = &now
 		stepRun.Error = map[string]any{
@@ -439,7 +439,7 @@ func (e *Engine) checkStepOutputPolicy(ctx context.Context, run *WorkflowRun, st
 		}
 		e.appendTimeline(ctx, run, "step_output_quarantined", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, record.Reason, nil)
 		return true
-	case scheduler.OutputRedact:
+	case model.OutputRedact:
 		if record.RedactedPtr != "" {
 			res.ResultPtr = record.RedactedPtr
 		}
@@ -2410,7 +2410,7 @@ func evalTemplateString(s string, scope map[string]any) (any, error) {
 	return b.String(), nil
 }
 
-func recordStepOutput(ctx context.Context, mem memory.Store, run *WorkflowRun, stepID string, stepDef *Step, resultPtr string, applyOutputPath bool) {
+func recordStepOutput(ctx context.Context, mem store.Store, run *WorkflowRun, stepID string, stepDef *Step, resultPtr string, applyOutputPath bool) {
 	if run == nil || stepID == "" || resultPtr == "" {
 		return
 	}
@@ -2464,11 +2464,11 @@ func recordStepInlineOutput(run *WorkflowRun, stepID string, stepDef *Step, outp
 	steps[stepID] = entry
 }
 
-func inlineResult(ctx context.Context, mem memory.Store, resultPtr string) (any, bool) {
+func inlineResult(ctx context.Context, mem store.Store, resultPtr string) (any, bool) {
 	if mem == nil || resultPtr == "" {
 		return nil, false
 	}
-	key, err := memory.KeyFromPointer(resultPtr)
+	key, err := store.KeyFromPointer(resultPtr)
 	if err != nil {
 		return nil, false
 	}
@@ -2524,14 +2524,14 @@ func (e *Engine) validateStepOutput(step *Step, resultPtr string) error {
 	return e.schemaRegistry.ValidateID(context.Background(), id, payload)
 }
 
-func fetchResultPayload(ctx context.Context, mem memory.Store, resultPtr string) (any, bool) {
+func fetchResultPayload(ctx context.Context, mem store.Store, resultPtr string) (any, bool) {
 	if mem == nil || resultPtr == "" {
 		return nil, false
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	key, err := memory.KeyFromPointer(resultPtr)
+	key, err := store.KeyFromPointer(resultPtr)
 	if err != nil {
 		return nil, false
 	}
@@ -2832,11 +2832,11 @@ func (e *Engine) putJobContext(ctx context.Context, jobID string, payload map[st
 	if err != nil {
 		return "", fmt.Errorf("marshal step input: %w", err)
 	}
-	key := memory.MakeContextKey(jobID)
+	key := store.MakeContextKey(jobID)
 	if err := e.mem.PutContext(ctx, key, data); err != nil {
 		return "", fmt.Errorf("store step context: %w", err)
 	}
-	return memory.PointerForKey(key), nil
+	return store.PointerForKey(key), nil
 }
 
 func defaultContextModeForTopic(topic string) string {
@@ -2871,7 +2871,7 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 	if run.Input != nil {
 		if raw, ok := run.Input["memory_id"]; ok {
 			if s, ok := raw.(string); ok {
-				if trimmed := memory.NormalizeMemoryID(s); trimmed != "" {
+				if trimmed := store.NormalizeMemoryID(s); trimmed != "" {
 					memoryID = trimmed
 				}
 			}

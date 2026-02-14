@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 )
 
@@ -261,7 +261,7 @@ func TestPutJobContextAndDelay(t *testing.T) {
 	if err != nil || ptr == "" {
 		t.Fatalf("expected context pointer")
 	}
-	key, err := memory.KeyFromPointer(ptr)
+	key, err := store.KeyFromPointer(ptr)
 	if err != nil {
 		t.Fatalf("parse pointer: %v", err)
 	}
