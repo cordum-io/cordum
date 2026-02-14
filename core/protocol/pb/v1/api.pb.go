@@ -393,7 +393,7 @@ const file_api_proto_rawDesc = "" +
 	"result_ptr\x18\x03 \x01(\tR\tresultPtr2\xa4\x01\n" +
 	"\tCordumApi\x12F\n" +
 	"\tSubmitJob\x12\x1b.cordum.v1.SubmitJobRequest\x1a\x1c.cordum.v1.SubmitJobResponse\x12O\n" +
-	"\fGetJobStatus\x12\x1e.cordum.v1.GetJobStatusRequest\x1a\x1f.cordum.v1.GetJobStatusResponseB/Z-github.com/cordum/cordum/sdk/gen/go/cordum/v1b\x06proto3"
+	"\fGetJobStatus\x12\x1e.cordum.v1.GetJobStatusRequest\x1a\x1f.cordum.v1.GetJobStatusResponseB.Z,github.com/cordum/cordum/core/protocol/pb/v1b\x06proto3"
 
 var (
 	file_api_proto_rawDescOnce sync.Once

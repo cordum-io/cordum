@@ -518,7 +518,7 @@ const file_output_policy_proto_rawDesc = "" +
 	"\x1aOUTPUT_DECISION_QUARANTINE\x10\x01\x12\x1a\n" +
 	"\x16OUTPUT_DECISION_REDACT\x10\x022c\n" +
 	"\x13OutputPolicyService\x12L\n" +
-	"\vCheckOutput\x12\x1d.cordum.v1.OutputCheckRequest\x1a\x1e.cordum.v1.OutputCheckResponseB/Z-github.com/cordum/cordum/sdk/gen/go/cordum/v1b\x06proto3"
+	"\vCheckOutput\x12\x1d.cordum.v1.OutputCheckRequest\x1a\x1e.cordum.v1.OutputCheckResponseB.Z,github.com/cordum/cordum/core/protocol/pb/v1b\x06proto3"
 
 var (
 	file_output_policy_proto_rawDescOnce sync.Once
