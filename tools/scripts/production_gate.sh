@@ -1312,10 +1312,10 @@ gate_9_identity() {
   resp="$(api_call POST /users "$(jq -cn \
     --arg u "${user_name}" \
     --arg p "${user_password}" \
-    '{username: $u, password: $p, role: "user"}')")"
+    '{username: $u, password: $p, role: "user"}')" 2>&1 || true)"
   user_id="$(echo "${resp}" | jq -r '.id // .user_id // empty' 2>/dev/null || true)"
   [[ -n "${user_id}" ]] || {
-    echo "failed to create test user" >&2
+    echo "failed to create test user (response: ${resp:0:200})" >&2
     return 1
   }
 

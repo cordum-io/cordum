@@ -205,10 +205,17 @@ jobs:
 
     - name: Run fast production gates (2-4, 6, 8-17)
       run: |
+        failed=0
         for gate in 2 3 4 6 8 9 10 11 12 13 14 15 16 17; do
           echo "=== Gate $gate ==="
-          bash tools/scripts/production_gate.sh --gate $gate --skip-rebuild
+          if ! bash tools/scripts/production_gate.sh --gate $gate --skip-rebuild; then
+            failed=$((failed + 1))
+          fi
         done
+        if [ "$failed" -gt 0 ]; then
+          echo "::error::$failed gate(s) failed"
+          exit 1
+        fi
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
 
