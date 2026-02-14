@@ -172,7 +172,7 @@ func TestBuildWindowRAGFilePath(t *testing.T) {
 	rec := chunkRecord{Path: "/app/main.go", Content: "line 1"}
 	payload, _ := json.Marshal(rec)
 	idxKey := svc.chunkIndexKey("mem3")
-	chunkKey := svc.chunkKey("mem3", 0)
+	chunkKey := fmt.Sprintf("mem:%s:chunk:%d", "mem3", 0)
 	if err := svc.redis.SAdd(ctx, idxKey, chunkKey).Err(); err != nil {
 		t.Fatalf("set chunk index: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestBuildWindowRAGChunkLimit(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		rec := chunkRecord{Path: fmt.Sprintf("/app/file%d.go", i), Content: fmt.Sprintf("line %d", i)}
 		payload, _ := json.Marshal(rec)
-		chunkKey := svc.chunkKey(memID, i)
+		chunkKey := fmt.Sprintf("mem:%s:chunk:%d", memID, i)
 		if err := svc.redis.SAdd(ctx, svc.chunkIndexKey(memID), chunkKey).Err(); err != nil {
 			t.Fatalf("set chunk index: %v", err)
 		}

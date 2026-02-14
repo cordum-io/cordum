@@ -116,6 +116,7 @@ services:
       - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
+      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-false}
       - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
       - TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml
       - JOB_META_TTL=168h

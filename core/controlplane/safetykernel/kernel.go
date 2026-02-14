@@ -715,13 +715,13 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
 		}
-		hasher.Write([]byte(key))
-		hasher.Write([]byte{0})
-		hasher.Write([]byte(content))
 		policy, err := config.ParseSafetyPolicy([]byte(content))
 		if err != nil {
 			return nil, "", fmt.Errorf("parse policy fragment %q: %w", key, err)
 		}
+		hasher.Write([]byte(key))
+		hasher.Write([]byte{0})
+		hasher.Write([]byte(content))
 		merged = mergePolicies(merged, policy)
 	}
 	if merged == nil {

@@ -749,10 +749,12 @@ export function useSetMcpConfig() {
 export function useMcpStatus() {
   const { data: mcpConfig, isLoading: mcpConfigLoading } = useMcpConfig();
   const mcpEnabled = Boolean(mcpConfig?.enabled);
+  const transport = String(mcpConfig?.transport ?? "http").toLowerCase();
+  const statusSupported = mcpEnabled && (transport === "http" || transport === "both");
 
   return useQuery<McpStatus>({
-    queryKey: ["mcp-status", mcpEnabled],
-    enabled: !mcpConfigLoading && mcpEnabled,
+    queryKey: ["mcp-status", mcpEnabled, transport],
+    enabled: !mcpConfigLoading && statusSupported,
     initialData: {
       running: false,
       connectedClients: 0,

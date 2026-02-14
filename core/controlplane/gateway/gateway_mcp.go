@@ -37,12 +37,23 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 	if s == nil || mux == nil {
 		return nil
 	}
+
+	// Always expose MCP routes so clients get explicit disabled/unavailable responses
+	// instead of startup-time 404s when MCP config loads after route registration.
+	mux.HandleFunc("GET /mcp/sse", s.instrumented("/mcp/sse", s.mcpAuth(s.handleMCPSSE)))
+	mux.HandleFunc("POST /mcp/message", s.instrumented("/mcp/message", s.mcpAuth(s.handleMCPMessage)))
+	mux.HandleFunc("GET /mcp/status", s.instrumented("/mcp/status", s.mcpAuth(s.handleMCPStatus)))
+	mux.HandleFunc("GET /api/v1/mcp/sse", s.instrumented("/api/v1/mcp/sse", s.mcpAuth(s.handleMCPSSE)))
+	mux.HandleFunc("POST /api/v1/mcp/message", s.instrumented("/api/v1/mcp/message", s.mcpAuth(s.handleMCPMessage)))
+	mux.HandleFunc("GET /api/v1/mcp/status", s.instrumented("/api/v1/mcp/status", s.mcpAuth(s.handleMCPStatus)))
+
 	cfg := s.loadMCPConfig(context.Background())
 	if !cfg.Enabled {
+		logging.Info("api-gateway", "mcp runtime disabled by config")
 		return nil
 	}
 	if cfg.Transport != "http" {
-		logging.Info("api-gateway", "mcp route registration skipped", "transport", cfg.Transport)
+		logging.Info("api-gateway", "mcp http runtime disabled", "transport", cfg.Transport)
 		return nil
 	}
 
@@ -87,14 +98,6 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 			s.clearMCPRuntime()
 		}()
 	}
-
-	// Keep MCP routes available with and without /api/v1 prefix for client compatibility.
-	mux.HandleFunc("GET /mcp/sse", s.instrumented("/mcp/sse", s.mcpAuth(transport.HandleSSE)))
-	mux.HandleFunc("POST /mcp/message", s.instrumented("/mcp/message", s.mcpAuth(transport.HandleMessage)))
-	mux.HandleFunc("GET /mcp/status", s.instrumented("/mcp/status", s.mcpAuth(s.handleMCPStatus)))
-	mux.HandleFunc("GET /api/v1/mcp/sse", s.instrumented("/api/v1/mcp/sse", s.mcpAuth(transport.HandleSSE)))
-	mux.HandleFunc("POST /api/v1/mcp/message", s.instrumented("/api/v1/mcp/message", s.mcpAuth(transport.HandleMessage)))
-	mux.HandleFunc("GET /api/v1/mcp/status", s.instrumented("/api/v1/mcp/status", s.mcpAuth(s.handleMCPStatus)))
 
 	logging.Info(
 		"api-gateway",
@@ -169,6 +172,32 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 		cfg.Port = port
 	}
 	return cfg
+}
+
+func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
+	runtime := s.getMCPRuntime()
+	if runtime == nil || runtime.transport != "http" || runtime.httpTransport == nil || runtime.httpTransport.IsClosed() {
+		return nil
+	}
+	return runtime.httpTransport
+}
+
+func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
+	transport := s.mcpHTTPTransport()
+	if transport == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "mcp http transport unavailable")
+		return
+	}
+	transport.HandleSSE(w, r)
+}
+
+func (s *server) handleMCPMessage(w http.ResponseWriter, r *http.Request) {
+	transport := s.mcpHTTPTransport()
+	if transport == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "mcp http transport unavailable")
+		return
+	}
+	transport.HandleMessage(w, r)
 }
 
 func (s *server) handleMCPStatus(w http.ResponseWriter, r *http.Request) {

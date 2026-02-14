@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/config"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -48,6 +49,25 @@ const outputPolicyContent = `output_rules:
     match:
       detectors:
         - pii
+`
+
+const legacyOutputPolicyContentWithNulls = `output_policy:
+  enabled: true
+  fail_mode: ""
+default_decision: ""
+output_rules:
+  - id: out-secret
+    enabled: false
+    description: "Detect secret leaks"
+    severity: high
+    decision: quarantine
+    reason: "secret matched in output"
+    match:
+      topics:
+        - job.*
+      scanners:
+        - secret
+      has_error: null
 `
 
 type policySimAuth struct{}
@@ -552,6 +572,120 @@ func TestPolicyOutputRuleToggleErrors(t *testing.T) {
 	s.handlePutPolicyOutputRule(notFoundRec, notFoundReq)
 	if notFoundRec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing rule, got %d", notFoundRec.Code)
+	}
+}
+
+func TestPolicyOutputRuleToggleSanitizesLegacyNulls(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	seedBody, _ := json.Marshal(map[string]any{
+		"content": legacyOutputPolicyContentWithNulls,
+		"enabled": true,
+	})
+	putBundleReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/output", bytes.NewReader(seedBody))
+	putBundleReq.Header.Set("X-Tenant-ID", "default")
+	putBundleReq.Header.Set("X-Principal-Role", "admin")
+	putBundleReq.SetPathValue("id", "secops/output")
+	putBundleRec := httptest.NewRecorder()
+	s.handlePutPolicyBundle(putBundleRec, putBundleReq)
+	if putBundleRec.Code != http.StatusOK {
+		t.Fatalf("seed output policy bundle: %d %s", putBundleRec.Code, putBundleRec.Body.String())
+	}
+
+	toggleReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/output/rules/out-secret", bytes.NewReader([]byte(`{"enabled":true}`)))
+	toggleReq.Header.Set("X-Tenant-ID", "default")
+	toggleReq.Header.Set("X-Principal-Role", "admin")
+	toggleReq.SetPathValue("id", "out-secret")
+	toggleRec := httptest.NewRecorder()
+	s.handlePutPolicyOutputRule(toggleRec, toggleReq)
+	if toggleRec.Code != http.StatusOK {
+		t.Fatalf("toggle output rule should succeed for sanitized legacy bundle: %d %s", toggleRec.Code, toggleRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles/secops/output", nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
+	getReq.Header.Set("X-Principal-Role", "admin")
+	getReq.SetPathValue("id", "secops/output")
+	getRec := httptest.NewRecorder()
+	s.handleGetPolicyBundle(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get policy bundle: %d %s", getRec.Code, getRec.Body.String())
+	}
+
+	var detail map[string]any
+	if err := json.NewDecoder(getRec.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode bundle detail: %v", err)
+	}
+	content := strings.TrimSpace(anyString(detail["content"]))
+	if strings.Contains(content, "has_error: null") {
+		t.Fatalf("expected sanitized bundle to omit has_error: null, got content:\n%s", content)
+	}
+	if strings.Contains(content, `fail_mode: ""`) {
+		t.Fatalf("expected sanitized bundle to omit empty fail_mode, got content:\n%s", content)
+	}
+	if _, err := config.ParseSafetyPolicy([]byte(content)); err != nil {
+		t.Fatalf("sanitized bundle must stay schema-valid: %v", err)
+	}
+}
+
+func TestMergeSafetyPoliciesPreservesDefaultsAndOutputRules(t *testing.T) {
+	enabled := true
+	hasError := false
+	base := &config.SafetyPolicy{
+		DefaultDecision: "allow",
+		OutputPolicy: config.OutputPolicyConfig{
+			Enabled:  true,
+			FailMode: "closed",
+		},
+		OutputRules: []config.OutputPolicyRule{
+			{
+				ID:       "base-output",
+				Enabled:  &enabled,
+				Severity: "high",
+				Decision: "quarantine",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.base"},
+					Scanners: []string{"secret"},
+					HasError: &hasError,
+				},
+			},
+		},
+	}
+	extra := &config.SafetyPolicy{
+		Rules: []config.PolicyRule{
+			{
+				ID:       "allow-extra",
+				Decision: "allow",
+			},
+		},
+		OutputRules: []config.OutputPolicyRule{
+			{
+				ID:       "extra-output",
+				Severity: "medium",
+				Decision: "redact",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.extra"},
+					Scanners: []string{"pii"},
+				},
+			},
+		},
+	}
+
+	merged := mergeSafetyPolicies(base, extra)
+	if merged == nil {
+		t.Fatal("expected merged policy")
+	}
+	if merged.DefaultDecision != "allow" {
+		t.Fatalf("expected default_decision=allow, got %q", merged.DefaultDecision)
+	}
+	if !merged.OutputPolicy.Enabled || merged.OutputPolicy.FailMode != "closed" {
+		t.Fatalf("expected output policy config preserved, got %#v", merged.OutputPolicy)
+	}
+	if len(merged.OutputRules) != 2 {
+		t.Fatalf("expected 2 output rules, got %d", len(merged.OutputRules))
+	}
+	if merged.OutputRules[0].ID != "base-output" || merged.OutputRules[1].ID != "extra-output" {
+		t.Fatalf("unexpected output rule order: %#v", []string{merged.OutputRules[0].ID, merged.OutputRules[1].ID})
 	}
 }
 

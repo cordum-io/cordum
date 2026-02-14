@@ -224,6 +224,61 @@ rules:
 	}
 }
 
+func TestPolicyLoaderRejectsInvalidFragments(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	svc, err := configsvc.New("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	defer svc.Close()
+
+	doc := &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "policy",
+		Data: map[string]any{
+			"bundles": map[string]any{
+				"valid": `
+rules:
+  - id: require-ops
+    match:
+      topics:
+        - job.ops.*
+    decision: require_approval
+    reason: ops guardrail
+`,
+				"invalid": `
+default_decision: maybe
+`,
+			},
+		},
+	}
+	if err := svc.Set(context.Background(), doc); err != nil {
+		t.Fatalf("set config doc: %v", err)
+	}
+
+	loader := &policyLoader{
+		configSvc:   svc,
+		configScope: configsvc.ScopeSystem,
+		configID:    "policy",
+		configKey:   "bundles",
+	}
+	policy, snapshot, err := loader.loadFragments(context.Background())
+	if err == nil {
+		t.Fatalf("expected parse error for invalid fragment")
+	}
+	if policy != nil {
+		t.Fatalf("expected nil policy on invalid fragment")
+	}
+	if snapshot != "" {
+		t.Fatalf("expected empty snapshot on invalid fragment")
+	}
+}
+
 func TestEvaluateExplainSimulate(t *testing.T) {
 	srv := &server{}
 	policy := &config.SafetyPolicy{

@@ -14,15 +14,15 @@ type SafetyPolicy struct {
 	Rules           []PolicyRule            `yaml:"rules"`
 	OutputPolicy    OutputPolicyConfig      `yaml:"output_policy"`
 	OutputRules     []OutputPolicyRule      `yaml:"output_rules"`
-	DefaultTenant   string                  `yaml:"default_tenant"`
-	DefaultDecision string                  `yaml:"default_decision" json:"default_decision"` // allow|deny (default: deny = fail-closed)
+	DefaultTenant   string                  `yaml:"default_tenant,omitempty"`
+	DefaultDecision string                  `yaml:"default_decision,omitempty" json:"default_decision,omitempty"` // allow|deny (default: deny = fail-closed)
 	Tenants         map[string]TenantPolicy `yaml:"tenants"`
 }
 
 // OutputPolicyConfig controls output-policy evaluation behavior.
 type OutputPolicyConfig struct {
 	Enabled  bool   `yaml:"enabled"`
-	FailMode string `yaml:"fail_mode"` // open|closed (open is current runtime behavior)
+	FailMode string `yaml:"fail_mode,omitempty"` // open|closed (open is current runtime behavior)
 }
 
 type PolicyRule struct {
@@ -37,7 +37,7 @@ type PolicyRule struct {
 // OutputPolicyRule defines policy checks on job outputs.
 type OutputPolicyRule struct {
 	ID       string            `yaml:"id"`
-	Enabled  *bool             `yaml:"enabled"`
+	Enabled  *bool             `yaml:"enabled,omitempty"`
 	Severity string            `yaml:"severity"` // low|medium|high|critical
 	Desc     string            `yaml:"description"`
 	Match    OutputPolicyMatch `yaml:"match"`
@@ -58,7 +58,7 @@ type OutputPolicyMatch struct {
 	Detectors       []string `yaml:"detectors"` // secret_leak|pii|code_injection|custom
 	OutputSizeGt    int64    `yaml:"output_size_gt"`
 	MaxOutputBytes  int64    `yaml:"max_output_bytes"`
-	HasError        *bool    `yaml:"has_error"`
+	HasError        *bool    `yaml:"has_error,omitempty"`
 }
 
 type PolicyMatch struct {
@@ -71,7 +71,7 @@ type PolicyMatch struct {
 	ActorIDs       []string          `yaml:"actor_ids"`
 	ActorTypes     []string          `yaml:"actor_types"`
 	Labels         map[string]string `yaml:"labels"`
-	SecretsPresent *bool             `yaml:"secrets_present"`
+	SecretsPresent *bool             `yaml:"secrets_present,omitempty"`
 	MCP            MCPPolicy         `yaml:"mcp"`
 }
 

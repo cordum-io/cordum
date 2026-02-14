@@ -101,14 +101,3 @@ func validateDAG(steps map[string]wf.Step) error {
 	}
 	return nil
 }
-
-// validateDAGPtr is the same as validateDAG but for pointer-based step maps.
-func validateDAGPtr(steps map[string]*wf.Step) error {
-	flat := make(map[string]wf.Step, len(steps))
-	for id, s := range steps {
-		if s != nil {
-			flat[id] = *s
-		}
-	}
-	return validateDAG(flat)
-}

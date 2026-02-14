@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -180,6 +181,52 @@ func TestOutputClientContentModeLoadsResultFromRedis(t *testing.T) {
 	}
 	if !strings.HasPrefix(got.GetContentHash(), "sha256:") {
 		t.Fatalf("expected sha256 content hash, got %q", got.GetContentHash())
+	}
+}
+
+func TestOutputClientContentModeRetriesMissingResultFromRedis(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer mr.Close()
+
+	resultClient, err := redisutil.NewClient("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("new redis client: %v", err)
+	}
+	defer resultClient.Close()
+
+	content := []byte("retry content with AKIA1234567890ABCDEF")
+	go func() {
+		time.Sleep(outputContentFetchBackoff * 2)
+		_ = resultClient.Set(context.Background(), "res:job-content-retry", content, 0).Err()
+	}()
+
+	fake := &fakeOutputPolicyClient{}
+	client := &OutputSafetyClient{
+		client:       fake,
+		resultClient: resultClient,
+	}
+
+	_, err = client.CheckOutputContent(
+		context.Background(),
+		&pb.JobResult{JobId: "job-content-retry", ResultPtr: "redis://res:job-content-retry"},
+		&pb.JobRequest{JobId: "job-content-retry", Topic: "job.demo", TenantId: "tenant-a"},
+	)
+	if err != nil {
+		t.Fatalf("CheckOutputContent returned error: %v", err)
+	}
+
+	got := fake.lastRequest()
+	if got == nil {
+		t.Fatalf("expected output check request")
+	}
+	if len(got.GetOutputContent()) == 0 {
+		t.Fatalf("expected output_content to be populated after retry")
+	}
+	if got.GetOutputSizeBytes() != int64(len(content)) {
+		t.Fatalf("expected output_size_bytes=%d got %d", len(content), got.GetOutputSizeBytes())
 	}
 }
 

@@ -544,6 +544,28 @@ describe("useSettings hooks", () => {
     hook.unmount();
   });
 
+  it("useMcpStatus skips MCP status call when MCP transport is stdio", async () => {
+    const fetchSpy = mockFetch([
+      {
+        match: "/config",
+        method: "GET",
+        body: {
+          mcp: {
+            enabled: true,
+            transport: "stdio",
+          },
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => useMcpStatus());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.data?.running).toBe(false);
+    });
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes("/mcp/status"))).toBe(false);
+    hook.unmount();
+  });
+
   it("useMcpTools and useMcpResources derive toggle state from config", async () => {
     mockFetch([
       {

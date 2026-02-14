@@ -91,6 +91,37 @@ describe("useSafetyDecisions", () => {
     hook.unmount();
   });
 
+  it("infers deny decisions from denied job state when safety_decision is missing", async () => {
+    mockFetch([
+      {
+        match: "/jobs?limit=100",
+        method: "GET",
+        body: {
+          items: [
+            {
+              id: "job-2",
+              topic: "job.demo-mock-bank.transfer.blocked",
+              state: "DENIED",
+              updated_at: 1771019533753513,
+              safety_rule_id: "mock-bank-block",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => useSafetyDecisions());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.decisions).toHaveLength(1);
+    });
+
+    expect(hook.result.current?.decisions[0]).toMatchObject({
+      decision: "deny",
+      matchedRule: "mock-bank-block",
+    });
+    hook.unmount();
+  });
+
   it("merges live stream decisions and deduplicates equivalent entries", async () => {
     useEventStore.setState({
       safetyDecisions: [

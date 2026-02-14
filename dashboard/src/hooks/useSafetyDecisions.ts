@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../api/client";
 import { mapJobRecord, type BackendJobRecord } from "../api/transform";
+import type { JobStatus } from "../api/types";
 import { useEventStore, type SafetyDecisionEvent } from "../state/events";
 
 const MAX_DECISIONS = 100;
@@ -23,16 +24,28 @@ function decisionFingerprint(event: SafetyDecisionEvent): string {
   ].join("|");
 }
 
+function inferDecisionFromJobStatus(status: JobStatus): SafetyDecisionEvent["decision"] | null {
+  switch (status) {
+    case "denied":
+      return "deny";
+    case "approval_required":
+      return "require_approval";
+    default:
+      return null;
+  }
+}
+
 function mapJobRecordToSafetyDecision(record: BackendJobRecord): SafetyDecisionEvent | null {
   const mapped = mapJobRecord(record);
-  if (!mapped.safetyDecision) return null;
+  const decision = mapped.safetyDecision?.type ?? inferDecisionFromJobStatus(mapped.status);
+  if (!decision) return null;
   return {
     id: `job:${mapped.id}:${mapped.updatedAt}`,
     timestamp: mapped.updatedAt,
     topic: mapped.topic || "job.unknown",
-    decision: mapped.safetyDecision.type,
-    matchedRule: mapped.safetyDecision.matchedRule,
-    evalTimeMs: mapped.safetyDecision.evalTimeMs,
+    decision,
+    matchedRule: mapped.safetyDecision?.matchedRule ?? record.safety_rule_id,
+    evalTimeMs: mapped.safetyDecision?.evalTimeMs,
   };
 }
 
@@ -97,6 +110,7 @@ export const __safetyDecisionInternal = {
   REFRESH_INTERVAL_MS,
   toEpochMs,
   decisionFingerprint,
+  inferDecisionFromJobStatus,
   mapJobRecordToSafetyDecision,
   mergeSafetyDecisionEvents,
 };

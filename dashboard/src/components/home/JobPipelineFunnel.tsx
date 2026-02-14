@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { useStatus } from "../../hooks/useStatus";
+import { usePipelineMetrics } from "../../hooks/useStatus";
 import { Card } from "../ui/Card";
 
 // ---------------------------------------------------------------------------
@@ -34,9 +34,7 @@ function pct(part: number, total: number): number {
 
 export function JobPipelineFunnel() {
   const navigate = useNavigate();
-  const { data: status, isLoading } = useStatus();
-
-  const pipeline = status?.pipeline;
+  const { data: pipeline, isLoading, source } = usePipelineMetrics();
 
   // Build chart data — safety check is estimated as submitted minus dispatched+running+succeeded+failed
   const safetyCount = pipeline
@@ -114,9 +112,12 @@ export function JobPipelineFunnel() {
             <p className="text-[11px] text-muted">Live execution flow by stage</p>
           </div>
           <span className="rounded-full border border-border bg-surface2 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-            realtime
+            {source === "jobs_fallback" ? "derived" : "realtime"}
           </span>
         </div>
+        {source === "jobs_fallback" && (
+          <p className="text-[10px] text-muted">Using recent jobs fallback because gateway pipeline metrics are unavailable.</p>
+        )}
 
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-xl border border-border/70 bg-surface2/40 px-3 py-2">
