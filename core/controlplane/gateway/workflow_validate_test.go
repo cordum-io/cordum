@@ -213,7 +213,7 @@ func TestValidateDAGPtr_CycleDetected(t *testing.T) {
 		"X": {DependsOn: []string{"Y"}},
 		"Y": {DependsOn: []string{"X"}},
 	}
-	err := validateDAGPtr(steps)
+	err := validateDAG(flattenWorkflowSteps(steps))
 	if err == nil {
 		t.Fatal("expected cycle error in pointer variant")
 	}
@@ -227,7 +227,18 @@ func TestValidateDAGPtr_NilStepSkipped(t *testing.T) {
 		"A": nil,
 		"B": {DependsOn: []string{}},
 	}
-	if err := validateDAGPtr(steps); err != nil {
+	if err := validateDAG(flattenWorkflowSteps(steps)); err != nil {
 		t.Fatalf("nil step should be skipped, got: %v", err)
 	}
+}
+
+func flattenWorkflowSteps(steps map[string]*wf.Step) map[string]wf.Step {
+	flat := make(map[string]wf.Step, len(steps))
+	for id, step := range steps {
+		if step == nil {
+			continue
+		}
+		flat[id] = *step
+	}
+	return flat
 }

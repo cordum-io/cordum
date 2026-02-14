@@ -221,10 +221,6 @@ func (s *Service) chunkIndexKey(memoryID string) string {
 	return fmt.Sprintf("mem:%s:chunks", memoryID)
 }
 
-func (s *Service) chunkKey(memoryID string, idx int) string {
-	return fmt.Sprintf("mem:%s:chunk:%d", memoryID, idx)
-}
-
 func (s *Service) summaryKey(memoryID string) string {
 	return fmt.Sprintf("mem:%s:summary", memoryID)
 }
