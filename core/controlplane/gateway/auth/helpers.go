@@ -13,8 +13,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// WSAPIKeyProtocol is the WebSocket subprotocol prefix for API key auth.
-const WSAPIKeyProtocol = "cordum-api-key"
+// WSAuthSubprotocol is the WebSocket subprotocol prefix used during auth handshake.
+const WSAuthSubprotocol = "cordum-api-key" // #nosec G101 -- subprotocol identifier, not a credential
 
 // HeaderValue returns a trimmed HTTP header value.
 func HeaderValue(r *http.Request, name string) string {
@@ -158,10 +158,10 @@ func APIKeyFromWebSocket(r *http.Request) string {
 	}
 	protocols := websocket.Subprotocols(r)
 	for i, protocol := range protocols {
-		if strings.EqualFold(protocol, WSAPIKeyProtocol) && i+1 < len(protocols) {
+		if strings.EqualFold(protocol, WSAuthSubprotocol) && i+1 < len(protocols) {
 			return DecodeWSAPIKey(protocols[i+1])
 		}
-		prefix := strings.ToLower(WSAPIKeyProtocol) + "."
+		prefix := strings.ToLower(WSAuthSubprotocol) + "."
 		if strings.HasPrefix(strings.ToLower(protocol), prefix) {
 			token := protocol[len(prefix):]
 			return DecodeWSAPIKey(token)

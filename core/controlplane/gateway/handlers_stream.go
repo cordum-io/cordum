@@ -51,7 +51,7 @@ var upgrader = websocket.Upgrader{
 // cordum-api-key subprotocol so browsers accept the upgrade handshake.
 func negotiateSubprotocol(r *http.Request) http.Header {
 	for _, p := range websocket.Subprotocols(r) {
-		if strings.HasPrefix(strings.ToLower(p), strings.ToLower(wsAPIKeyProtocol)) {
+		if strings.HasPrefix(strings.ToLower(p), strings.ToLower(wsAuthSubprotocol)) {
 			return http.Header{"Sec-Websocket-Protocol": {p}}
 		}
 	}

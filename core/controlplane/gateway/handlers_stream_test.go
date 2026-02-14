@@ -52,7 +52,7 @@ func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
 
 	okURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
 	token := base64.RawURLEncoding.EncodeToString([]byte("test-api-key"))
-	dialer := websocket.Dialer{Subprotocols: []string{wsAPIKeyProtocol, token}}
+	dialer := websocket.Dialer{Subprotocols: []string{wsAuthSubprotocol, token}}
 	conn, _, err := dialer.Dial(okURL, nil)
 	if err != nil {
 		t.Fatalf("websocket dial failed: %v", err)
@@ -73,7 +73,7 @@ func TestApiKeyFromWebSocketProtocols(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream", nil)
 	req.Header.Set("X-Tenant-ID", "default")
 	token := base64.RawURLEncoding.EncodeToString([]byte("secret"))
-	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+", "+token)
+	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+", "+token)
 	if got := apiKeyFromWebSocket(req); got != "secret" {
 		t.Fatalf("expected secret got %q", got)
 	}
@@ -84,14 +84,14 @@ func TestApiKeyFromWebSocketProtocols(t *testing.T) {
 func TestNegotiateSubprotocol_ValidProtocol(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	token := base64.RawURLEncoding.EncodeToString([]byte("my-key"))
-	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+"."+token)
+	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+"."+token)
 	h := negotiateSubprotocol(req)
 	if h == nil {
 		t.Fatal("expected non-nil header for valid subprotocol")
 	}
 	got := h.Get("Sec-Websocket-Protocol")
-	if !strings.HasPrefix(strings.ToLower(got), strings.ToLower(wsAPIKeyProtocol)) {
-		t.Fatalf("expected protocol starting with %s, got %q", wsAPIKeyProtocol, got)
+	if !strings.HasPrefix(strings.ToLower(got), strings.ToLower(wsAuthSubprotocol)) {
+		t.Fatalf("expected protocol starting with %s, got %q", wsAuthSubprotocol, got)
 	}
 }
 
@@ -117,7 +117,7 @@ func TestNegotiateSubprotocol_EmptyProtocols(t *testing.T) {
 func TestApiKeyFromWebSocket_DotFormat(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	token := base64.RawURLEncoding.EncodeToString([]byte("secret-key"))
-	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+"."+token)
+	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+"."+token)
 	got := apiKeyFromWebSocket(req)
 	if got != "secret-key" {
 		t.Fatalf("expected secret-key, got %q", got)
@@ -142,7 +142,7 @@ func TestApiKeyFromWebSocket_NoSubprotocol(t *testing.T) {
 func TestApiKeyFromWebSocket_MalformedBase64FallsBack(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	// Non-base64 token — decodeWSAPIKey returns raw string as fallback
-	req.Header.Set("Sec-WebSocket-Protocol", wsAPIKeyProtocol+".not-base64!!!")
+	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+".not-base64!!!")
 	got := apiKeyFromWebSocket(req)
 	if got == "" {
 		t.Fatal("expected non-empty fallback for malformed base64")

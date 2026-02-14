@@ -53,8 +53,7 @@ const (
 	defaultMaxHeaderBytes       = 1 << 20
 	maxLabelKeyLen              = 256  // Max length for label keys
 	maxLabelValueLen            = 4096 // Max length for label values (4KB)
-	// #nosec G101 -- protocol label, not a credential.
-	wsAPIKeyProtocol = "cordum-api-key"
+	wsAuthSubprotocol = "cordum-api-key" // #nosec G101 -- subprotocol identifier, not a credential
 	shutdownTimeout  = 15 * time.Second
 	wsWriteTimeout   = 5 * time.Second
 )
