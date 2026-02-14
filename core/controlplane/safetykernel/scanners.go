@@ -283,6 +283,7 @@ func (s *keywordScanner) Scan(content []byte) []outputFinding {
 	if len(content) == 0 || s == nil || len(s.keywords) == 0 {
 		return nil
 	}
+	scannerName := s.Name()
 	text := strings.ToLower(string(content))
 	findings := make([]outputFinding, 0, 4)
 	for _, kw := range s.keywords {
@@ -299,7 +300,7 @@ func (s *keywordScanner) Scan(content []byte) []outputFinding {
 				Detail:         "keyword matched: " + kw.original,
 				Offset:         int64(absPos),
 				Length:         int64(len(kw.lower)),
-				Scanner:        "keyword",
+				Scanner:        scannerName,
 				Confidence:     1.0,
 				MatchedPattern: truncateFinding(kw.original, 160),
 			})

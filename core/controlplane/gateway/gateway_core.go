@@ -128,6 +128,7 @@ type server struct {
 // Close releases resources owned by the server, notably the user store
 // connection. It is safe to call with a nil userStore.
 func (s *server) Close() {
+	s.stopBusTaps()
 	if s.auditExporter != nil {
 		if err := s.auditExporter.Close(); err != nil {
 			logging.Error("api-gateway", "audit exporter close failed", "error", err)
@@ -613,6 +614,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 		// Stop the event broadcast goroutine.
 		if s.shutdownCh != nil {
+			s.stopBusTaps()
 			close(s.shutdownCh)
 		}
 
