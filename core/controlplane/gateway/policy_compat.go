@@ -57,7 +57,6 @@ var (
 	buildPolicyFromBundles   = policybundles.BuildPolicyFromBundles
 	policyBundleContent      = policybundles.PolicyBundleContent
 	sanitizePolicyBundleYAML = policybundles.SanitizePolicyBundleYAML
-	sanitizePolicyBundleValue = policybundles.SanitizePolicyBundleValue
 	validateBundles          = policybundles.ValidateBundles
 	resolvePublishTargets    = policybundles.ResolvePublishTargets
 )
@@ -65,36 +64,24 @@ var (
 // ---------- function re-exports (merge.go) ----------
 
 var (
-	mergeSafetyPolicies   = policybundles.MergeSafetyPolicies
-	cloneSafetyPolicy     = policybundles.CloneSafetyPolicy
-	cloneOutputPolicyRules = policybundles.CloneOutputPolicyRules
-	mergeTenantPolicies   = policybundles.MergeTenantPolicies
-	cloneTenantPolicy     = policybundles.CloneTenantPolicy
-	mergeMCPPolicy        = policybundles.MergeMCPPolicy
+	mergeSafetyPolicies = policybundles.MergeSafetyPolicies
+	mergeTenantPolicies = policybundles.MergeTenantPolicies
+	mergeMCPPolicy      = policybundles.MergeMCPPolicy
 )
 
 // ---------- function re-exports (eval.go) ----------
 
 var (
-	evaluatePolicyCheck  = policybundles.EvaluatePolicyCheck
-	policyMetaFromRequest = policybundles.PolicyMetaFromRequest
-	actorTypeString      = policybundles.ActorTypeString
-	secretsPresent       = policybundles.SecretsPresent
-	extractMCPRequest    = policybundles.ExtractMCPRequest
-	pickLabel            = policybundles.PickLabel
-	toProtoConstraints   = policybundles.ToProtoConstraints
-	toProtoRemediations  = policybundles.ToProtoRemediations
-	isConstraintsEmpty   = policybundles.IsConstraintsEmpty
-	matchAny             = policybundles.MatchAny
-	configMatch          = policybundles.ConfigMatch
+	evaluatePolicyCheck = policybundles.EvaluatePolicyCheck
+	pickLabel           = policybundles.PickLabel
+	toProtoConstraints  = policybundles.ToProtoConstraints
+	matchAny            = policybundles.MatchAny
 )
 
 // ---------- function re-exports (audit.go) ----------
 
 var (
-	auditEntryToSIEM       = policybundles.AuditEntryToSIEM
-	classifyAuditAction    = policybundles.ClassifyAuditAction
-	classifyAuditSeverity  = policybundles.ClassifyAuditSeverity
-	policyActorID          = policybundles.PolicyActorID
-	policyRole             = policybundles.PolicyRole
+	auditEntryToSIEM = policybundles.AuditEntryToSIEM
+	policyActorID    = policybundles.PolicyActorID
+	policyRole       = policybundles.PolicyRole
 )

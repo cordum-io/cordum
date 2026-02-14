@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"testing"
-	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 )
@@ -10,11 +9,6 @@ import (
 // maxLoginAttempts mirrors auth.maxLoginAttempts for gateway handler tests.
 func maxLoginAttempts() int {
 	return intFromEnv("MAX_LOGIN_ATTEMPTS", 5)
-}
-
-// loginLockoutPeriod mirrors auth.loginLockoutPeriod for gateway handler tests.
-func loginLockoutPeriod() time.Duration {
-	return durationFromEnv("LOGIN_LOCKOUT_PERIOD", 15*time.Minute)
 }
 
 // newTestUserStore creates a RedisUserStore backed by miniredis for testing.

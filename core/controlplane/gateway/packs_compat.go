@@ -12,7 +12,6 @@ import (
 // ---------- type aliases ----------
 
 type packManifest = packs.PackManifest
-type packOverlays = packs.PackOverlays
 type packConfigOverlay = packs.PackConfigOverlay
 type packPolicyOverlay = packs.PackPolicyOverlay
 type packPolicySimulation = packs.PackPolicySimulation
