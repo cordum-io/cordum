@@ -118,7 +118,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 - Local gRPC APIs:
   - `CordumApi` (submit job, get status) in `core/protocol/proto/v1/api.proto` (gRPC service name).
   - `ContextEngine` in `core/protocol/proto/v1/context.proto`
-- Generated Go types live in `core/protocol/pb/v1` and `sdk/gen/go/cordum/v1`, exposed via the `sdk` module.
+- Generated Go types live in `core/protocol/pb/v1`.
 
 ## Bus subjects and delivery
 

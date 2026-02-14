@@ -20,7 +20,7 @@ The SDK has two main packages:
 | `sdk/client` | `github.com/cordum/cordum/sdk/client` | HTTP client for the API gateway |
 | `sdk/runtime` | `github.com/cordum/cordum/sdk/runtime` | Worker runtime (NATS subscriptions, heartbeats, blob store) |
 
-Generated protobuf types live in `sdk/gen/go/cordum/v1/`.
+Generated protobuf types live in `core/protocol/pb/v1/`.
 
 ---
 

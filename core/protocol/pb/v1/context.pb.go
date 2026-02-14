@@ -405,7 +405,7 @@ const file_context_proto_rawDesc = "" +
 	"\x10CONTEXT_MODE_RAG\x10\x032\xae\x01\n" +
 	"\rContextEngine\x12L\n" +
 	"\vBuildWindow\x12\x1d.cordum.v1.BuildWindowRequest\x1a\x1e.cordum.v1.BuildWindowResponse\x12O\n" +
-	"\fUpdateMemory\x12\x1e.cordum.v1.UpdateMemoryRequest\x1a\x1f.cordum.v1.UpdateMemoryResponseB/Z-github.com/cordum/cordum/sdk/gen/go/cordum/v1b\x06proto3"
+	"\fUpdateMemory\x12\x1e.cordum.v1.UpdateMemoryRequest\x1a\x1f.cordum.v1.UpdateMemoryResponseB.Z,github.com/cordum/cordum/core/protocol/pb/v1b\x06proto3"
 
 var (
 	file_context_proto_rawDescOnce sync.Once
