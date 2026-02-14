@@ -46,7 +46,7 @@ NATS JetStream provides durable, replayable message delivery needed for job
 dispatch (at-least-once), workflow step triggers, and event streaming.
 
 Key source files:
-- `core/infra/memory/job_store.go` — Redis job state
+- `core/infra/store/job_store.go` — Redis job state
 - `core/controlplane/scheduler/engine.go` — NATS pub/sub for dispatch
 - `config/nats.conf` — JetStream configuration
 

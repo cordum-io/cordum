@@ -26,7 +26,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/schema"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -87,8 +87,8 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
-	memStore   memory.Store
-	jobStore   *memory.RedisJobStore // Typed for ListRecentJobs
+	memStore   store.Store
+	jobStore   *store.RedisJobStore // Typed for ListRecentJobs
 	bus        model.Bus
 	workers    map[string]*pb.Heartbeat
 	workerSeen map[string]time.Time
@@ -106,7 +106,7 @@ type server struct {
 	workflowStore  *wf.RedisStore
 	workflowEng    *wf.Engine
 	configSvc      *configsvc.Service
-	dlqStore       *memory.DLQStore
+	dlqStore       *store.DLQStore
 	artifactStore  artifacts.Store
 	lockStore      locks.Store
 	schemaRegistry *schema.Registry
@@ -228,13 +228,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		logging.Error("api-gateway", "SECURITY WARNING: CORDUM_DASHBOARD_EMBED_API_KEY is enabled in production — API key will be exposed in browser JavaScript")
 	}
 
-	memStore, err := memory.NewRedisStore(cfg.RedisURL)
+	memStore, err := store.NewRedisStore(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis: %w", err)
 	}
 	defer memStore.Close()
 
-	jobStore, err := memory.NewRedisJobStore(cfg.RedisURL)
+	jobStore, err := store.NewRedisJobStore(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis job store: %w", err)
 	}
@@ -273,7 +273,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		}
 	}
 
-	dlqStore, err := memory.NewDLQStore(cfg.RedisURL, 0)
+	dlqStore, err := store.NewDLQStore(cfg.RedisURL, 0)
 	if err != nil {
 		return fmt.Errorf("connect redis dlq store: %w", err)
 	}

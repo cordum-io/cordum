@@ -8,12 +8,12 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/model"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 )
 
 func TestHandleGetMemoryRedisTypes(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	store, ok := s.memStore.(*memory.RedisStore)
+	store, ok := s.memStore.(*store.RedisStore)
 	if !ok {
 		t.Fatalf("expected redis store")
 	}

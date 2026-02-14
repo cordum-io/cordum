@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 func TestHandleDLQListAndDelete(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	entry := memory.DLQEntry{JobID: "job-dlq", Topic: "job.test", CreatedAt: time.Now().UTC()}
+	entry := store.DLQEntry{JobID: "job-dlq", Topic: "job.test", CreatedAt: time.Now().UTC()}
 	if err := s.dlqStore.Add(context.Background(), entry); err != nil {
 		t.Fatalf("add dlq: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestHandleDLQListAndDelete(t *testing.T) {
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("unexpected list status: %d", listRec.Code)
 	}
-	var entries []memory.DLQEntry
+	var entries []store.DLQEntry
 	if err := json.NewDecoder(listRec.Body).Decode(&entries); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestHandleRetryDLQ(t *testing.T) {
 	s, bus, _ := newTestGateway(t)
 	ctx := context.Background()
 	jobID := "job-retry"
-	entry := memory.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
+	entry := store.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
 	if err := s.dlqStore.Add(ctx, entry); err != nil {
 		t.Fatalf("add dlq: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestHandleRetryDLQ(t *testing.T) {
 	_ = s.jobStore.SetTenant(ctx, jobID, "tenant")
 	_ = s.jobStore.SetTeam(ctx, jobID, "team")
 	_ = s.jobStore.SetPrincipal(ctx, jobID, "principal")
-	if err := s.memStore.PutContext(ctx, memory.MakeContextKey(jobID), []byte(`{"prompt":"hello"}`)); err != nil {
+	if err := s.memStore.PutContext(ctx, store.MakeContextKey(jobID), []byte(`{"prompt":"hello"}`)); err != nil {
 		t.Fatalf("put context: %v", err)
 	}
 
@@ -109,7 +109,7 @@ func TestHandleRetryDLQPreservesRequestFields(t *testing.T) {
 	s, bus, _ := newTestGateway(t)
 	ctx := context.Background()
 	jobID := "job-retry-preserve"
-	entry := memory.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
+	entry := store.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
 	if err := s.dlqStore.Add(ctx, entry); err != nil {
 		t.Fatalf("add dlq: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestHandleRetryDLQPreservesRequestFields(t *testing.T) {
 	_ = s.jobStore.SetTenant(ctx, jobID, "tenant")
 	_ = s.jobStore.SetTeam(ctx, jobID, "team")
 	_ = s.jobStore.SetPrincipal(ctx, jobID, "principal")
-	if err := s.memStore.PutContext(ctx, memory.MakeContextKey(jobID), []byte(`{"prompt":"hello"}`)); err != nil {
+	if err := s.memStore.PutContext(ctx, store.MakeContextKey(jobID), []byte(`{"prompt":"hello"}`)); err != nil {
 		t.Fatalf("put context: %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestRetryDLQConcurrent(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()
 	jobID := "job-concurrent-retry"
-	entry := memory.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
+	entry := store.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
 	if err := s.dlqStore.Add(ctx, entry); err != nil {
 		t.Fatalf("add dlq: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestRetryDLQConcurrent(t *testing.T) {
 	_ = s.jobStore.SetTenant(ctx, jobID, "tenant")
 	_ = s.jobStore.SetTeam(ctx, jobID, "team")
 	_ = s.jobStore.SetPrincipal(ctx, jobID, "principal")
-	if err := s.memStore.PutContext(ctx, memory.MakeContextKey(jobID), []byte(`{"prompt":"hello"}`)); err != nil {
+	if err := s.memStore.PutContext(ctx, store.MakeContextKey(jobID), []byte(`{"prompt":"hello"}`)); err != nil {
 		t.Fatalf("put context: %v", err)
 	}
 
@@ -224,7 +224,7 @@ func TestRetryDLQMissingContext(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()
 	jobID := "job-no-context"
-	entry := memory.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
+	entry := store.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}
 	if err := s.dlqStore.Add(ctx, entry); err != nil {
 		t.Fatalf("add dlq: %v", err)
 	}

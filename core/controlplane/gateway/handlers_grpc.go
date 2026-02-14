@@ -11,7 +11,7 @@ import (
 
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/secrets"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -83,8 +83,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		}
 	}
 
-	ctxKey := memory.MakeContextKey(jobID)
-	ctxPtr := memory.PointerForKey(ctxKey)
+	ctxKey := store.MakeContextKey(jobID)
+	ctxPtr := store.PointerForKey(ctxKey)
 	jobPriority := parsePriority(req.GetPriority())
 
 	payloadReq := submitJobRequest{
@@ -107,7 +107,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		// SubmitJobRequest does not carry budget limits yet; defaults are applied below.
 	}
 	rawMemoryID := strings.TrimSpace(req.GetMemoryId())
-	explicitMemoryID := memory.NormalizeMemoryID(rawMemoryID)
+	explicitMemoryID := store.NormalizeMemoryID(rawMemoryID)
 	if rawMemoryID != "" && explicitMemoryID == "" {
 		return nil, status.Error(codes.InvalidArgument, "invalid memory id")
 	}

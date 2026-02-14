@@ -8,7 +8,7 @@ import (
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/model"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 )
@@ -41,7 +41,7 @@ func TestReconcilerReconcileRun(t *testing.T) {
 	}
 	defer workflowStore.Close()
 
-	jobStore, err := memory.NewRedisJobStore(redisURL)
+	jobStore, err := store.NewRedisJobStore(redisURL)
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}

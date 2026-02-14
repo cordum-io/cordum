@@ -11,7 +11,7 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/bus"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 )
@@ -101,7 +101,7 @@ func TestReconcilerFailureReasonPropagation(t *testing.T) {
 	}
 	defer workflowStore.Close()
 
-	jobStore, err := memory.NewRedisJobStore(redisURL)
+	jobStore, err := store.NewRedisJobStore(redisURL)
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestReconcilerFallbackErrorMessage(t *testing.T) {
 	}
 	defer workflowStore.Close()
 
-	jobStore, err := memory.NewRedisJobStore(redisURL)
+	jobStore, err := store.NewRedisJobStore(redisURL)
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestReconcilerHandleJobResultLockBusy(t *testing.T) {
 	}
 	defer srv.Close()
 
-	jobStore, err := memory.NewRedisJobStore("redis://" + srv.Addr())
+	jobStore, err := store.NewRedisJobStore("redis://" + srv.Addr())
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestReconcilerStartStopsOnContext(t *testing.T) {
 	}
 	defer workflowStore.Close()
 
-	jobStore, err := memory.NewRedisJobStore(redisURL)
+	jobStore, err := store.NewRedisJobStore(redisURL)
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}

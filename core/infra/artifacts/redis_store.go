@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -89,7 +89,7 @@ func (s *RedisStore) Put(ctx context.Context, content []byte, meta Metadata) (st
 	if _, err := pipe.Exec(ctx); err != nil {
 		return "", err
 	}
-	return memory.PointerForKey(key), nil
+	return store.PointerForKey(key), nil
 }
 
 // Get returns artifact content and metadata for a pointer.
@@ -100,7 +100,7 @@ func (s *RedisStore) Get(ctx context.Context, ptr string) ([]byte, Metadata, err
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	key, err := memory.KeyFromPointer(ptr)
+	key, err := store.KeyFromPointer(ptr)
 	if err != nil {
 		return nil, Metadata{}, err
 	}

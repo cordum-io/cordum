@@ -11,7 +11,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/locks"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -159,11 +159,11 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	t.Cleanup(srv.Close)
 
 	redisURL := "redis://" + srv.Addr()
-	memStore, err := memory.NewRedisStore(redisURL)
+	memStore, err := store.NewRedisStore(redisURL)
 	if err != nil {
 		t.Fatalf("mem store: %v", err)
 	}
-	jobStore, err := memory.NewRedisJobStore(redisURL)
+	jobStore, err := store.NewRedisJobStore(redisURL)
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}
@@ -179,7 +179,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	if err != nil {
 		t.Fatalf("schema registry: %v", err)
 	}
-	dlqStore, err := memory.NewDLQStore(redisURL, 0)
+	dlqStore, err := store.NewDLQStore(redisURL, 0)
 	if err != nil {
 		t.Fatalf("dlq store: %v", err)
 	}

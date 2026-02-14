@@ -16,7 +16,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -60,13 +60,13 @@ func Run(cfg *config.Config) error {
 		}
 	}
 
-	memStore, err := memory.NewRedisStore(cfg.RedisURL)
+	memStore, err := store.NewRedisStore(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis memory store: %w", err)
 	}
 	defer memStore.Close()
 
-	jobStore, err := memory.NewRedisJobStore(cfg.RedisURL)
+	jobStore, err := store.NewRedisJobStore(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis job store: %w", err)
 	}

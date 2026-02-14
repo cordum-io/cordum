@@ -12,7 +12,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/model"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -361,7 +361,7 @@ func TestGetJobIncludesApprovalMetadata(t *testing.T) {
 	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := s.jobStore.SetApprovalRecord(context.Background(), jobID, memory.ApprovalRecord{
+	if err := s.jobStore.SetApprovalRecord(context.Background(), jobID, store.ApprovalRecord{
 		ApprovedBy:     "carol",
 		ApprovedRole:   "admin",
 		Reason:         "ok",

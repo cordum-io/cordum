@@ -19,7 +19,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -610,7 +610,7 @@ func (e memoryPolicyError) Error() string {
 }
 
 func (s *server) enforceMemoryID(ctx context.Context, orgID, teamID, workflowID, stepID, memoryID string) error {
-	memoryID = memory.NormalizeMemoryID(memoryID)
+	memoryID = store.NormalizeMemoryID(memoryID)
 	if memoryID == "" {
 		return nil
 	}
@@ -642,7 +642,7 @@ func (s *server) enforceMemoryID(ctx context.Context, orgID, teamID, workflowID,
 
 func deriveMemoryIDFromReq(topic, explicit, jobID string) string {
 	if explicit != "" {
-		return memory.NormalizeMemoryID(explicit)
+		return store.NormalizeMemoryID(explicit)
 	}
 	return strings.TrimSpace(jobID)
 }

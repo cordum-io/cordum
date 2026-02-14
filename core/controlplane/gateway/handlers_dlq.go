@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/cordum/cordum/core/model"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -37,7 +37,7 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.jobStore != nil {
-		filtered := make([]memory.DLQEntry, 0, len(entries))
+		filtered := make([]store.DLQEntry, 0, len(entries))
 		for _, entry := range entries {
 			tenant, _ := s.jobStore.GetTenant(r.Context(), entry.JobID)
 			if err := s.requireTenantAccess(r, tenant); err != nil {
@@ -80,7 +80,7 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.jobStore != nil {
-		filtered := make([]memory.DLQEntry, 0, len(entries))
+		filtered := make([]store.DLQEntry, 0, len(entries))
 		for _, entry := range entries {
 			tenant, _ := s.jobStore.GetTenant(r.Context(), entry.JobID)
 			if err := s.requireTenantAccess(r, tenant); err != nil {
@@ -180,11 +180,11 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	newJobID := jobID + "-retry-" + uuid.NewString()[:8]
 	traceID := "dlq-retry-" + jobID
 	var ctxPtr string
-	origCtxKey := memory.MakeContextKey(jobID)
+	origCtxKey := store.MakeContextKey(jobID)
 	if data, err := s.memStore.GetContext(r.Context(), origCtxKey); err == nil {
-		newCtxKey := memory.MakeContextKey(newJobID)
+		newCtxKey := store.MakeContextKey(newJobID)
 		if err := s.memStore.PutContext(r.Context(), newCtxKey, data); err == nil {
-			ctxPtr = memory.PointerForKey(newCtxKey)
+			ctxPtr = store.PointerForKey(newCtxKey)
 		}
 	}
 

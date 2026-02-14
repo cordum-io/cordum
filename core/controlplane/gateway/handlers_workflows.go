@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -279,7 +279,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusBadRequest, "memory_id must be a string")
 			return
 		}
-		norm := memory.NormalizeMemoryID(memStr)
+		norm := store.NormalizeMemoryID(memStr)
 		if strings.TrimSpace(memStr) != "" && norm == "" {
 			writeErrorJSON(w, http.StatusBadRequest, "invalid memory id")
 			return

@@ -10,7 +10,7 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/model"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -149,15 +149,15 @@ func TestHandleListJobsAndGetJob(t *testing.T) {
 	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
 	_ = s.jobStore.SetTenant(ctx, jobID, "tenant")
 
-	ctxKey := memory.MakeContextKey(jobID)
+	ctxKey := store.MakeContextKey(jobID)
 	if err := s.memStore.PutContext(ctx, ctxKey, []byte(`{"prompt":"hello"}`)); err != nil {
 		t.Fatalf("put context: %v", err)
 	}
-	resKey := memory.MakeResultKey(jobID)
+	resKey := store.MakeResultKey(jobID)
 	if err := s.memStore.PutResult(ctx, resKey, []byte(`{"result":"ok"}`)); err != nil {
 		t.Fatalf("put result: %v", err)
 	}
-	resPtr := memory.PointerForKey(resKey)
+	resPtr := store.PointerForKey(resKey)
 	if err := s.jobStore.SetResultPtr(ctx, jobID, resPtr); err != nil {
 		t.Fatalf("set result ptr: %v", err)
 	}

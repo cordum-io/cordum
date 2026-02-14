@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
 
@@ -63,7 +63,7 @@ func TestMemoryTenantIsolation_CrossTenantBlocked(t *testing.T) {
 		t.Fatalf("set state: %v", err)
 	}
 	_ = s.jobStore.SetTenant(ctx, jobID, "tenant-b")
-	ctxKey := memory.MakeContextKey(jobID)
+	ctxKey := store.MakeContextKey(jobID)
 	if err := s.memStore.PutContext(ctx, ctxKey, []byte(`{"secret":"data"}`)); err != nil {
 		t.Fatalf("put context: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestMemoryTenantIsolation_OwnTenantAllowed(t *testing.T) {
 		t.Fatalf("set state: %v", err)
 	}
 	_ = s.jobStore.SetTenant(ctx, jobID, "tenant-a")
-	ctxKey := memory.MakeContextKey(jobID)
+	ctxKey := store.MakeContextKey(jobID)
 	if err := s.memStore.PutContext(ctx, ctxKey, []byte(`{"data":"ok"}`)); err != nil {
 		t.Fatalf("put context: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -19,17 +19,17 @@ func (s stubConfig) Effective(ctx context.Context, orgID, teamID, workflowID, st
 	return s.cfg, nil
 }
 
-func newMemoryStore(t *testing.T) (*memory.RedisStore, *miniredis.Miniredis) {
+func newMemoryStore(t *testing.T) (*store.RedisStore, *miniredis.Miniredis) {
 	t.Helper()
 	srv, err := miniredis.Run()
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	store, err := memory.NewRedisStore("redis://" + srv.Addr())
+	rs, err := store.NewRedisStore("redis://" + srv.Addr())
 	if err != nil {
 		t.Fatalf("memory store init: %v", err)
 	}
-	return store, srv
+	return rs, srv
 }
 
 func TestEvalTemplateString(t *testing.T) {
@@ -79,13 +79,13 @@ func TestValidateStepOutputInlineSchema(t *testing.T) {
 	engine := (&Engine{}).WithMemory(memStore)
 	step := &Step{OutputSchema: map[string]any{"type": "object", "required": []any{"result"}}}
 
-	key := memory.MakeResultKey("job-1")
+	key := store.MakeResultKey("job-1")
 	payload := map[string]any{"result": "ok"}
 	data, _ := json.Marshal(payload)
 	if err := memStore.PutResult(context.Background(), key, data); err != nil {
 		t.Fatalf("put result: %v", err)
 	}
-	ptr := memory.PointerForKey(key)
+	ptr := store.PointerForKey(key)
 	if err := engine.validateStepOutput(step, ptr); err != nil {
 		t.Fatalf("validate output: %v", err)
 	}
@@ -200,12 +200,12 @@ func TestSetContextPathAndRecordStepOutput(t *testing.T) {
 	defer memStore.Close()
 
 	jobID := "job-ctx"
-	key := memory.MakeResultKey(jobID)
+	key := store.MakeResultKey(jobID)
 	data, _ := json.Marshal(map[string]any{"result": "ok"})
 	if err := memStore.PutResult(context.Background(), key, data); err != nil {
 		t.Fatalf("put result: %v", err)
 	}
-	ptr := memory.PointerForKey(key)
+	ptr := store.PointerForKey(key)
 	step := &Step{OutputPath: "outputs.result"}
 	recordStepOutput(context.Background(), memStore, run, "step", step, ptr, true)
 	steps := run.Context["steps"].(map[string]any)
@@ -230,12 +230,12 @@ func TestInlineResultAndFetchPayload(t *testing.T) {
 	defer memStore.Close()
 
 	jobID := "job-inline"
-	key := memory.MakeResultKey(jobID)
+	key := store.MakeResultKey(jobID)
 	data, _ := json.Marshal(map[string]any{"result": "ok"})
 	if err := memStore.PutResult(context.Background(), key, data); err != nil {
 		t.Fatalf("put result: %v", err)
 	}
-	ptr := memory.PointerForKey(key)
+	ptr := store.PointerForKey(key)
 	if val, ok := inlineResult(context.Background(), memStore, ptr); !ok || val.(map[string]any)["result"] != "ok" {
 		t.Fatalf("expected inline result")
 	}

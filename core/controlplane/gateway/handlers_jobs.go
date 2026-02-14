@@ -18,7 +18,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/secrets"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -356,7 +356,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build approval record from hash fields.
-	approvalRecord := memory.ApprovalRecord{
+	approvalRecord := store.ApprovalRecord{
 		ApprovedBy:     meta["approval_by"],
 		ApprovedRole:   meta["approval_role"],
 		Reason:         meta["approval_reason"],
@@ -373,13 +373,13 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	// Output safety uses a dedicated key — separate call.
 	outputSafety, _ := s.jobStore.GetOutputSafety(r.Context(), id)
 
-	ctxPtr := memory.PointerForKey(memory.MakeContextKey(id))
+	ctxPtr := store.PointerForKey(store.MakeContextKey(id))
 	resPtr := meta["result_ptr"]
 
 	var resultData any
 	if resPtr != "" {
 		// Attempt to fetch result payload
-		if key, err := memory.KeyFromPointer(resPtr); err == nil {
+		if key, err := store.KeyFromPointer(resPtr); err == nil {
 			if bytes, err := s.memStore.GetResult(r.Context(), key); err == nil {
 				_ = json.Unmarshal(bytes, &resultData)
 			}
@@ -388,7 +388,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 	var contextData any
 	if s.memStore != nil {
-		if bytes, err := s.memStore.GetContext(r.Context(), memory.MakeContextKey(id)); err == nil {
+		if bytes, err := s.memStore.GetContext(r.Context(), store.MakeContextKey(id)); err == nil {
 			_ = json.Unmarshal(bytes, &contextData)
 		}
 	}
@@ -567,7 +567,7 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 		key = strings.Trim(key, "\"'")
 		if strings.HasPrefix(key, "redis://") {
 			ptr = key
-			parsedKey, err := memory.KeyFromPointer(key)
+			parsedKey, err := store.KeyFromPointer(key)
 			if err != nil {
 				writeErrorJSON(w, http.StatusBadRequest, "invalid key pointer")
 				return
@@ -577,7 +577,7 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if key == "" {
-		parsedKey, err := memory.KeyFromPointer(ptr)
+		parsedKey, err := store.KeyFromPointer(ptr)
 		if err != nil {
 			writeErrorJSON(w, http.StatusBadRequest, "invalid pointer")
 			return
@@ -585,7 +585,7 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 		key = parsedKey
 	}
 	if ptr == "" {
-		ptr = memory.PointerForKey(key)
+		ptr = store.PointerForKey(key)
 	}
 
 	if auth := authFromRequest(r); auth != nil {
@@ -629,7 +629,7 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(key, "mem:"):
 		kind = "memory"
 
-		rs, ok := s.memStore.(*memory.RedisStore)
+		rs, ok := s.memStore.(*store.RedisStore)
 		if !ok || rs.Client() == nil {
 			writeErrorJSON(w, http.StatusServiceUnavailable, "memory inspection unavailable: Redis store not configured")
 			return
@@ -1057,11 +1057,11 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 
 	ctxPtr := origReq.GetContextPtr()
 	if ctxPtr != "" {
-		if key, err := memory.KeyFromPointer(ctxPtr); err == nil {
+		if key, err := store.KeyFromPointer(ctxPtr); err == nil {
 			if data, err := s.memStore.GetContext(r.Context(), key); err == nil {
-				newKey := memory.MakeContextKey(newJobID)
+				newKey := store.MakeContextKey(newJobID)
 				if err := s.memStore.PutContext(r.Context(), newKey, data); err == nil {
-					ctxPtr = memory.PointerForKey(newKey)
+					ctxPtr = store.PointerForKey(newKey)
 				}
 			}
 		}
@@ -1244,8 +1244,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ctxKey := memory.MakeContextKey(jobID)
-	ctxPtr := memory.PointerForKey(ctxKey)
+	ctxKey := store.MakeContextKey(jobID)
+	ctxPtr := store.PointerForKey(ctxKey)
 	jobPriority := parsePriority(req.Priority)
 
 	secretsPresent := secrets.ContainsSecretRefs(req.Prompt) || secrets.ContainsSecretRefs(req.Context)
@@ -1258,7 +1258,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawMemoryID := strings.TrimSpace(req.MemoryId)
-	explicitMemoryID := memory.NormalizeMemoryID(rawMemoryID)
+	explicitMemoryID := store.NormalizeMemoryID(rawMemoryID)
 	if rawMemoryID != "" && explicitMemoryID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid memory id")
 		return

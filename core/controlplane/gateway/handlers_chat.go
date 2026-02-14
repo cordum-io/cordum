@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/google/uuid"
@@ -300,7 +300,7 @@ func runMemoryID(run *wf.WorkflowRun) string {
 	if run.Input != nil {
 		if raw, ok := run.Input["memory_id"]; ok {
 			if s, ok := raw.(string); ok {
-				if trimmed := memory.NormalizeMemoryID(s); trimmed != "" {
+				if trimmed := store.NormalizeMemoryID(s); trimmed != "" {
 					return trimmed
 				}
 			}
@@ -313,8 +313,8 @@ func chatHistoryKey(memoryID string) string {
 	return "mem:" + memoryID + ":events"
 }
 
-func chatRedisClient(store memory.Store) (redis.UniversalClient, error) {
-	rs, ok := store.(*memory.RedisStore)
+func chatRedisClient(s store.Store) (redis.UniversalClient, error) {
+	rs, ok := s.(*store.RedisStore)
 	if !ok || rs.Client() == nil {
 		return nil, errChatStoreUnavailable
 	}

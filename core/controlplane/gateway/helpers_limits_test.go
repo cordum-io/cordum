@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/model"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 )
 
 func TestListJobsAndApprovalsLimitClamped(t *testing.T) {
@@ -81,7 +81,7 @@ func TestListDLQLimitClamped(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < int(maxListLimit)+1; i++ {
-		entry := memory.DLQEntry{
+		entry := store.DLQEntry{
 			JobID:     fmt.Sprintf("job-%d", i),
 			CreatedAt: time.Unix(int64(i+1), 0).UTC(),
 		}

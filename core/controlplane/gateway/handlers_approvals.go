@@ -13,7 +13,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -297,7 +297,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		approvedBy = "system/unknown"
 	}
 	approvalRole := strings.TrimSpace(policyRole(r))
-	if err := s.jobStore.SetApprovalRecord(r.Context(), jobID, memory.ApprovalRecord{
+	if err := s.jobStore.SetApprovalRecord(r.Context(), jobID, store.ApprovalRecord{
 		ApprovedBy:     approvedBy,
 		ApprovedRole:   approvalRole,
 		ApprovedAt:     time.Now().UnixMicro(),
@@ -383,7 +383,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		approvedBy = "system/unknown"
 	}
 	approvalRole := strings.TrimSpace(policyRole(r))
-	if err := s.jobStore.SetApprovalRecord(r.Context(), jobID, memory.ApprovalRecord{
+	if err := s.jobStore.SetApprovalRecord(r.Context(), jobID, store.ApprovalRecord{
 		ApprovedBy:     approvedBy,
 		ApprovedRole:   approvalRole,
 		ApprovedAt:     time.Now().UnixMicro(),

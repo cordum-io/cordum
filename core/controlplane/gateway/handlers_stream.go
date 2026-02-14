@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/memory"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
@@ -99,7 +99,7 @@ func (s *server) startBusTaps() error {
 						attempts = a
 					}
 				}
-				if err := s.dlqStore.Add(dlqCtx, memory.DLQEntry{
+				if err := s.dlqStore.Add(dlqCtx, store.DLQEntry{
 					JobID:      jobID,
 					Topic:      topic,
 					Status:     jr.Status.String(),
@@ -114,8 +114,8 @@ func (s *server) startBusTaps() error {
 
 				// Best effort: ensure a result exists for failed-to-dispatch jobs so clients can inspect `res:<job_id>`.
 				if s.memStore != nil && s.jobStore != nil && jobID != "" {
-					resKey := memory.MakeResultKey(jobID)
-					resPtr := memory.PointerForKey(resKey)
+					resKey := store.MakeResultKey(jobID)
+					resPtr := store.PointerForKey(resKey)
 					body := map[string]any{
 						"job_id":       jobID,
 						"status":       jr.Status.String(),
