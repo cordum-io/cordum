@@ -1,7 +1,5 @@
 PROTO_SRC = core/protocol/proto/v1
-PB_OUT    = sdk/gen/go/cordum/v1
 PB_OUT_CORE = core/protocol/pb/v1
-PROTO_OUT = $(abspath $(PB_OUT))
 PROTO_OUT_CORE = $(abspath $(PB_OUT_CORE))
 PROTO_FILES = api.proto context.proto output_policy.proto
 OPENAPI_OUT = docs/api/openapi
@@ -19,18 +17,12 @@ LDFLAGS = -s -w \
 	-X 'github.com/cordum/cordum/core/infra/buildinfo.Date=$(BUILD_DATE)'
 
 proto:
-	@mkdir -p $(PROTO_OUT) $(PROTO_OUT_CORE)
+	@mkdir -p $(PROTO_OUT_CORE)
 	cd $(PROTO_SRC) && PATH="$$PATH:$(HOME)/go/bin" protoc \
 		-I . \
 		-I $(CURDIR) \
 		--go_out=$(PROTO_OUT_CORE) --go_opt=paths=source_relative \
 		--go-grpc_out=$(PROTO_OUT_CORE) --go-grpc_opt=paths=source_relative \
-		$(PROTO_FILES)
-	cd $(PROTO_SRC) && PATH="$$PATH:$(HOME)/go/bin" protoc \
-		-I . \
-		-I $(CURDIR) \
-		--go_out=$(PROTO_OUT) --go_opt=paths=source_relative \
-		--go-grpc_out=$(PROTO_OUT) --go-grpc_opt=paths=source_relative \
 		$(PROTO_FILES)
 
 build: proto

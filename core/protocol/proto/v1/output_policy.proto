@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package cordum.v1;
-option go_package = "github.com/cordum/cordum/sdk/gen/go/cordum/v1";
+option go_package = "github.com/cordum/cordum/core/protocol/pb/v1";
 
 // OutputPolicyService evaluates job outputs in two phases:
 // 1) fast synchronous metadata checks on the scheduler hot path
