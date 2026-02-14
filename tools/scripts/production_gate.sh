@@ -397,9 +397,25 @@ gate_3_workflows() {
   local run_body timeline code
   local cancel_wf_payload cancel_wf_resp cancel_wf_id
   local ts
+  local policy_ready=0 policy_probe policy_decision
 
   ensure_mock_bank_pack
   ensure_mock_bank_worker
+  policy_probe="$(jq -cn --arg tenant "${TENANT_ID}" '{tenant: $tenant, topic: "job.demo-mock-bank.transfer.auto"}')"
+  for _ in {1..30}; do
+    policy_decision="$(api_call POST /policy/evaluate "${policy_probe}" | jq -r '.decision // empty' 2>/dev/null || true)"
+    case "${policy_decision}" in
+      ALLOW|DECISION_TYPE_ALLOW)
+        policy_ready=1
+        break
+        ;;
+    esac
+    sleep 1
+  done
+  [[ "${policy_ready}" == "1" ]] || {
+    echo "mock-bank policy not ready for auto workflow (decision=${policy_decision:-empty})" >&2
+    return 1
+  }
 
   auto_input="$(jq -cn --arg bucket "auto" --arg customer "gate-auto" --arg currency "USD" \
     '{amount: 10, currency: $currency, customer: $customer, reason: "gate auto", note: "prod gate", requested_by: "prod-gate", policy_bucket: $bucket}')"
@@ -724,6 +740,7 @@ gate_6_performance() {
   local failed=0 remaining=0
   local p50 p95 p99 error_rate
   local start_all
+  local jobs_json stuck_count idle_wait
 
   declare -a job_ids
   declare -a latencies
@@ -733,6 +750,17 @@ gate_6_performance() {
 
   ensure_mock_bank_pack
   ensure_mock_bank_worker
+  for idle_wait in {1..45}; do
+    jobs_json="$(api_body GET "/jobs?limit=200")"
+    stuck_count="$(echo "${jobs_json}" | jq '[.items[]? | select(.state == "RUNNING" or .state == "DISPATCHED" or .state == "SCHEDULED")] | length' 2>/dev/null || echo "999")"
+    if [[ "${stuck_count}" =~ ^[0-9]+$ ]] && (( stuck_count == 0 )); then
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${stuck_count}" =~ ^[0-9]+$ ]] && (( stuck_count > 0 )); then
+    log "gate 6: starting perf check with ${stuck_count} non-terminal jobs still in flight"
+  fi
 
   concurrency="${PERF_CONCURRENCY:-20}"
   timeout_sec="${PERF_TIMEOUT_SEC:-180}"
