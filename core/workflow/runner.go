@@ -1,4 +1,4 @@
-package workflowengine
+package workflow
 
 import (
 	"context"
@@ -19,7 +19,6 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
-	wf "github.com/cordum/cordum/core/workflow"
 )
 
 const (
@@ -72,7 +71,7 @@ func Run(cfg *config.Config) error {
 	}
 	defer jobStore.Close()
 
-	workflowStore, err := wf.NewRedisWorkflowStore(cfg.RedisURL)
+	workflowStore, err := NewRedisWorkflowStore(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis workflow store: %w", err)
 	}
@@ -96,7 +95,7 @@ func Run(cfg *config.Config) error {
 	}
 	defer natsBus.Close()
 
-	engine := wf.NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	engine := NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
 	if maxForEachItems > 0 {
 		engine = engine.WithMaxForEachItems(maxForEachItems)
 	}

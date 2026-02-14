@@ -1,4 +1,4 @@
-package workflowengine
+package workflow
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
-	wf "github.com/cordum/cordum/core/workflow"
 )
 
 type stubBus struct {
@@ -35,7 +34,7 @@ func TestReconcilerReconcileRun(t *testing.T) {
 	defer srv.Close()
 
 	redisURL := "redis://" + srv.Addr()
-	workflowStore, err := wf.NewRedisWorkflowStore(redisURL)
+	workflowStore, err := NewRedisWorkflowStore(redisURL)
 	if err != nil {
 		t.Fatalf("workflow store: %v", err)
 	}
@@ -48,26 +47,26 @@ func TestReconcilerReconcileRun(t *testing.T) {
 	defer jobStore.Close()
 
 	bus := &stubBus{}
-	engine := wf.NewEngine(workflowStore, bus)
+	engine := NewEngine(workflowStore, bus)
 
-	wfDef := &wf.Workflow{
+	wfDef := &Workflow{
 		ID:    "wf-test",
 		OrgID: "org",
-		Steps: map[string]*wf.Step{
-			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.test"},
+		Steps: map[string]*Step{
+			"step": {ID: "step", Type: StepTypeWorker, Topic: "job.test"},
 		},
 	}
 	if err := workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
-	run := &wf.WorkflowRun{
+	run := &WorkflowRun{
 		ID:         "run-1",
 		WorkflowID: wfDef.ID,
 		OrgID:      "org",
-		Status:     wf.RunStatusRunning,
-		Steps: map[string]*wf.StepRun{
-			"step": {StepID: "step", Status: wf.StepStatusRunning, JobID: "run-1:step@1"},
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step": {StepID: "step", Status: StepStatusRunning, JobID: "run-1:step@1"},
 		},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
@@ -94,10 +93,10 @@ func TestReconcilerReconcileRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}
-	if updated.Steps["step"].Status != wf.StepStatusSucceeded {
+	if updated.Steps["step"].Status != StepStatusSucceeded {
 		t.Fatalf("expected step succeeded, got %s", updated.Steps["step"].Status)
 	}
-	if updated.Status != wf.RunStatusSucceeded {
+	if updated.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded, got %s", updated.Status)
 	}
 }

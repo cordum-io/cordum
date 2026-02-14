@@ -1,16 +1,14 @@
-package workflowengine
+package workflow
 
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
-	wf "github.com/cordum/cordum/core/workflow"
 )
 
 const (
@@ -18,15 +16,15 @@ const (
 )
 
 type reconciler struct {
-	workflowStore *wf.RedisStore
-	engine        *wf.Engine
+	workflowStore *RedisStore
+	engine        *Engine
 	jobStore      model.JobStore
 	pollInterval  time.Duration
 	lockTTL       time.Duration
 	runScanLimit  int64
 }
 
-func newReconciler(workflowStore *wf.RedisStore, engine *wf.Engine, jobStore model.JobStore, pollInterval time.Duration, runScanLimit int64) *reconciler {
+func newReconciler(workflowStore *RedisStore, engine *Engine, jobStore model.JobStore, pollInterval time.Duration, runScanLimit int64) *reconciler {
 	if pollInterval <= 0 {
 		pollInterval = 5 * time.Second
 	}
@@ -95,7 +93,7 @@ func (r *reconciler) HandleJobResult(ctx context.Context, jr *pb.JobResult) erro
 }
 
 func (r *reconciler) tick(ctx context.Context) {
-	statuses := []wf.RunStatus{wf.RunStatusPending, wf.RunStatusRunning, wf.RunStatusWaiting}
+	statuses := []RunStatus{RunStatusPending, RunStatusRunning, RunStatusWaiting}
 	for _, status := range statuses {
 		ids, err := r.workflowStore.ListRunIDsByStatus(ctx, status, r.runScanLimit)
 		if err != nil {
@@ -124,12 +122,12 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 		return
 	}
 	switch run.Status {
-	case wf.RunStatusSucceeded, wf.RunStatusFailed, wf.RunStatusCancelled, wf.RunStatusTimedOut:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
 		return
 	}
 
 	for _, sr := range run.Steps {
-		if sr == nil || sr.Status != wf.StepStatusRunning || sr.JobID == "" {
+		if sr == nil || sr.Status != StepStatusRunning || sr.JobID == "" {
 			continue
 		}
 		state, err := r.jobStore.GetState(ctx, sr.JobID)
@@ -183,15 +181,3 @@ func runLockKey(runID string) string {
 	return "cordum:wf:run:lock:" + runID
 }
 
-func splitJobID(jobID string) (runID, stepID string) {
-	parts := strings.SplitN(jobID, ":", 2)
-	if len(parts) != 2 {
-		return "", ""
-	}
-	runID = parts[0]
-	stepID = parts[1]
-	if at := strings.LastIndex(stepID, "@"); at > 0 {
-		stepID = stepID[:at]
-	}
-	return
-}

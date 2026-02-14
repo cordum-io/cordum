@@ -1,4 +1,4 @@
-package workflowengine
+package workflow
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
-	wf "github.com/cordum/cordum/core/workflow"
 )
 
 func TestJobStatusFromState(t *testing.T) {
@@ -95,7 +94,7 @@ func TestReconcilerFailureReasonPropagation(t *testing.T) {
 	defer srv.Close()
 
 	redisURL := "redis://" + srv.Addr()
-	workflowStore, err := wf.NewRedisWorkflowStore(redisURL)
+	workflowStore, err := NewRedisWorkflowStore(redisURL)
 	if err != nil {
 		t.Fatalf("workflow store: %v", err)
 	}
@@ -107,25 +106,25 @@ func TestReconcilerFailureReasonPropagation(t *testing.T) {
 	}
 	defer jobStore.Close()
 
-	engine := wf.NewEngine(workflowStore, &stubBus{})
-	wfDef := &wf.Workflow{
+	engine := NewEngine(workflowStore, &stubBus{})
+	wfDef := &Workflow{
 		ID:    "wf-err",
 		OrgID: "org",
-		Steps: map[string]*wf.Step{
-			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.test"},
+		Steps: map[string]*Step{
+			"step": {ID: "step", Type: StepTypeWorker, Topic: "job.test"},
 		},
 	}
 	if err := workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	jobID := "run-err:step@1"
-	run := &wf.WorkflowRun{
+	run := &WorkflowRun{
 		ID:         "run-err",
 		WorkflowID: wfDef.ID,
 		OrgID:      "org",
-		Status:     wf.RunStatusRunning,
-		Steps: map[string]*wf.StepRun{
-			"step": {StepID: "step", Status: wf.StepStatusRunning, JobID: jobID},
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step": {StepID: "step", Status: StepStatusRunning, JobID: jobID},
 		},
 	}
 	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
@@ -158,7 +157,7 @@ func TestReconcilerFallbackErrorMessage(t *testing.T) {
 	defer srv.Close()
 
 	redisURL := "redis://" + srv.Addr()
-	workflowStore, err := wf.NewRedisWorkflowStore(redisURL)
+	workflowStore, err := NewRedisWorkflowStore(redisURL)
 	if err != nil {
 		t.Fatalf("workflow store: %v", err)
 	}
@@ -170,25 +169,25 @@ func TestReconcilerFallbackErrorMessage(t *testing.T) {
 	}
 	defer jobStore.Close()
 
-	engine := wf.NewEngine(workflowStore, &stubBus{})
-	wfDef := &wf.Workflow{
+	engine := NewEngine(workflowStore, &stubBus{})
+	wfDef := &Workflow{
 		ID:    "wf-fallback",
 		OrgID: "org",
-		Steps: map[string]*wf.Step{
-			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.test"},
+		Steps: map[string]*Step{
+			"step": {ID: "step", Type: StepTypeWorker, Topic: "job.test"},
 		},
 	}
 	if err := workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	jobID := "run-fallback:step@1"
-	run := &wf.WorkflowRun{
+	run := &WorkflowRun{
 		ID:         "run-fallback",
 		WorkflowID: wfDef.ID,
 		OrgID:      "org",
-		Status:     wf.RunStatusRunning,
-		Steps: map[string]*wf.StepRun{
-			"step": {StepID: "step", Status: wf.StepStatusRunning, JobID: jobID},
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step": {StepID: "step", Status: StepStatusRunning, JobID: jobID},
 		},
 	}
 	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
@@ -260,7 +259,7 @@ func TestReconcilerStartStopsOnContext(t *testing.T) {
 	defer srv.Close()
 
 	redisURL := "redis://" + srv.Addr()
-	workflowStore, err := wf.NewRedisWorkflowStore(redisURL)
+	workflowStore, err := NewRedisWorkflowStore(redisURL)
 	if err != nil {
 		t.Fatalf("workflow store: %v", err)
 	}
@@ -272,7 +271,7 @@ func TestReconcilerStartStopsOnContext(t *testing.T) {
 	}
 	defer jobStore.Close()
 
-	engine := wf.NewEngine(workflowStore, &stubBus{})
+	engine := NewEngine(workflowStore, &stubBus{})
 	rec := newReconciler(workflowStore, engine, jobStore, 5*time.Millisecond, 10)
 
 	ctx, cancel := context.WithCancel(context.Background())
