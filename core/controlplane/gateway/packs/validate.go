@@ -1,4 +1,4 @@
-package gateway
+package packs
 
 import (
 	"archive/tar"
@@ -22,16 +22,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func loadPackBundleFromReader(src io.Reader) (string, func(), error) {
+// LoadPackBundleFromReader extracts a tar.gz pack bundle and returns the root directory.
+func LoadPackBundleFromReader(src io.Reader) (string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "cordum-pack-*")
 	if err != nil {
 		return "", func() {}, fmt.Errorf("create temp dir: %w", err)
 	}
-	if err := extractTarGzReader(src, tmpDir); err != nil {
+	if err := ExtractTarGzReader(src, tmpDir); err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return "", func() {}, fmt.Errorf("extract tar.gz: %w", err)
 	}
-	root, err := findPackRoot(tmpDir)
+	root, err := FindPackRoot(tmpDir)
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return "", func() {}, fmt.Errorf("find pack root: %w", err)
@@ -39,7 +40,8 @@ func loadPackBundleFromReader(src io.Reader) (string, func(), error) {
 	return root, func() { _ = os.RemoveAll(tmpDir) }, nil
 }
 
-func loadPackManifest(dir string) (*packManifest, error) {
+// LoadPackManifest reads and parses pack.yaml from the given directory.
+func LoadPackManifest(dir string) (*PackManifest, error) {
 	paths := []string{
 		filepath.Join(dir, "pack.yaml"),
 		filepath.Join(dir, "pack.yml"),
@@ -56,14 +58,15 @@ func loadPackManifest(dir string) (*packManifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pack.yaml not found: %w", err)
 	}
-	var manifest packManifest
+	var manifest PackManifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Errorf("parse pack.yaml: %w", err)
 	}
 	return &manifest, nil
 }
 
-func validatePackManifest(manifest *packManifest) error {
+// ValidatePackManifest checks that the manifest has all required fields.
+func ValidatePackManifest(manifest *PackManifest) error {
 	if manifest == nil {
 		return errors.New("pack manifest required")
 	}
@@ -105,7 +108,8 @@ func validatePackManifest(manifest *packManifest) error {
 	return nil
 }
 
-func ensureProtocolCompatible(manifest *packManifest) error {
+// EnsureProtocolCompatible verifies the pack's protocol version matches.
+func EnsureProtocolCompatible(manifest *PackManifest) error {
 	if manifest.Compatibility.ProtocolVersion == 0 {
 		return errors.New("compatibility.protocolVersion required")
 	}
@@ -115,27 +119,29 @@ func ensureProtocolCompatible(manifest *packManifest) error {
 	return nil
 }
 
-func ensureCoreVersionCompatible(minCoreVersion string) error {
+// EnsureCoreVersionCompatible checks the minimum core version requirement.
+func EnsureCoreVersionCompatible(minCoreVersion string) error {
 	minCoreVersion = strings.TrimSpace(minCoreVersion)
 	if minCoreVersion == "" {
 		return nil
 	}
-	minParsed, ok := parseSemver(minCoreVersion)
+	minParsed, ok := ParseSemver(minCoreVersion)
 	if !ok {
 		return fmt.Errorf("invalid minCoreVersion %q", minCoreVersion)
 	}
-	coreParsed, ok := parseSemver(buildinfo.Version)
+	coreParsed, ok := ParseSemver(buildinfo.Version)
 	if !ok {
 		// Allow installs on dev/unknown builds; use --force to bypass explicitly.
 		return nil
 	}
-	if compareSemver(coreParsed, minParsed) < 0 {
+	if CompareSemver(coreParsed, minParsed) < 0 {
 		return fmt.Errorf("core version %s does not satisfy minCoreVersion %s", buildinfo.Version, minCoreVersion)
 	}
 	return nil
 }
 
-func parseSemver(raw string) ([3]int, bool) {
+// ParseSemver parses a semver-like version string into [major, minor, patch].
+func ParseSemver(raw string) ([3]int, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return [3]int{}, false
@@ -164,7 +170,8 @@ func parseSemver(raw string) ([3]int, bool) {
 	return out, true
 }
 
-func compareSemver(left, right [3]int) int {
+// CompareSemver compares two [major, minor, patch] tuples.
+func CompareSemver(left, right [3]int) int {
 	for i := 0; i < 3; i++ {
 		if left[i] < right[i] {
 			return -1
@@ -176,14 +183,16 @@ func compareSemver(left, right [3]int) int {
 	return 0
 }
 
-func shouldSkipConfigOverlay(inactive bool, overlay packConfigOverlay) bool {
+// ShouldSkipConfigOverlay returns true if the overlay should be skipped.
+func ShouldSkipConfigOverlay(inactive bool, overlay PackConfigOverlay) bool {
 	if !inactive {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(overlay.Key), "pools")
 }
 
-func hasPoolOverlay(overlays []packAppliedConfigOverlay) bool {
+// HasPoolOverlay returns true if any applied overlay targets the "pools" config key.
+func HasPoolOverlay(overlays []PackAppliedConfigOverlay) bool {
 	for _, overlay := range overlays {
 		if strings.EqualFold(overlay.Key, "pools") {
 			return true
@@ -192,19 +201,21 @@ func hasPoolOverlay(overlays []packAppliedConfigOverlay) bool {
 	return false
 }
 
-func validateConfigPatch(key string, patch map[string]any, packID string, current any) error {
+// ValidateConfigPatch dispatches validation based on the config key.
+func ValidateConfigPatch(key string, patch map[string]any, packID string, current any) error {
 	switch strings.ToLower(key) {
 	case "pools":
-		return validatePoolsPatch(patch, packID, current)
+		return ValidatePoolsPatch(patch, packID, current)
 	case "timeouts":
-		return validateTimeoutsPatch(patch, packID)
+		return ValidateTimeoutsPatch(patch, packID)
 	default:
 		return fmt.Errorf("unsupported config overlay key %q", key)
 	}
 }
 
-func validatePoolsPatch(patch map[string]any, packID string, current any) error {
-	rawTopics := normalizeJSON(patch["topics"])
+// ValidatePoolsPatch validates a pools config overlay.
+func ValidatePoolsPatch(patch map[string]any, packID string, current any) error {
+	rawTopics := NormalizeJSON(patch["topics"])
 	if rawTopics != nil {
 		topics, ok := rawTopics.(map[string]any)
 		if !ok {
@@ -216,13 +227,13 @@ func validatePoolsPatch(patch map[string]any, packID string, current any) error 
 			}
 		}
 	}
-	rawPools := normalizeJSON(patch["pools"])
+	rawPools := NormalizeJSON(patch["pools"])
 	if rawPools != nil {
 		pools, ok := rawPools.(map[string]any)
 		if !ok {
 			return errors.New("pools.pools must be a map")
 		}
-		existingPools := extractPools(current)
+		existingPools := ExtractPools(current)
 		for poolName := range pools {
 			if _, ok := existingPools[poolName]; ok {
 				continue
@@ -240,13 +251,14 @@ func validatePoolsPatch(patch map[string]any, packID string, current any) error 
 	return nil
 }
 
-func extractPools(current any) map[string]struct{} {
+// ExtractPools returns the set of existing pool names from config.
+func ExtractPools(current any) map[string]struct{} {
 	out := map[string]struct{}{}
-	currentMap, ok := normalizeJSON(current).(map[string]any)
+	currentMap, ok := NormalizeJSON(current).(map[string]any)
 	if !ok || currentMap == nil {
 		return out
 	}
-	rawPools := normalizeJSON(currentMap["pools"])
+	rawPools := NormalizeJSON(currentMap["pools"])
 	pools, ok := rawPools.(map[string]any)
 	if !ok || pools == nil {
 		return out
@@ -257,11 +269,12 @@ func extractPools(current any) map[string]struct{} {
 	return out
 }
 
-func validateTimeoutsPatch(patch map[string]any, packID string) error {
+// ValidateTimeoutsPatch validates a timeouts config overlay.
+func ValidateTimeoutsPatch(patch map[string]any, packID string) error {
 	if patch == nil {
 		return nil
 	}
-	rawTopics := normalizeJSON(patch["topics"])
+	rawTopics := NormalizeJSON(patch["topics"])
 	if rawTopics != nil {
 		topics, ok := rawTopics.(map[string]any)
 		if !ok {
@@ -273,7 +286,7 @@ func validateTimeoutsPatch(patch map[string]any, packID string) error {
 			}
 		}
 	}
-	rawWorkflows := normalizeJSON(patch["workflows"])
+	rawWorkflows := NormalizeJSON(patch["workflows"])
 	if rawWorkflows != nil {
 		workflows, ok := rawWorkflows.(map[string]any)
 		if !ok {
@@ -293,12 +306,13 @@ func validateTimeoutsPatch(patch map[string]any, packID string) error {
 	return nil
 }
 
-func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
-	path, err := safeJoin(dir, relPath)
+// LoadSchemaFile reads and hashes a JSON/YAML schema file.
+func LoadSchemaFile(dir, relPath string) (map[string]any, string, error) {
+	path, err := SafeJoin(dir, relPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("load schema file %s: %w", relPath, err)
 	}
-	payload, err := loadDataFile(path)
+	payload, err := LoadDataFile(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("load schema file %s: %w", relPath, err)
 	}
@@ -306,19 +320,46 @@ func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
 	if !ok {
 		return nil, "", errors.New("schema file must be an object")
 	}
-	digest, err := hashValue(schemaMap)
+	digest, err := HashValue(schemaMap)
 	if err != nil {
 		return nil, "", fmt.Errorf("hash schema file %s: %w", relPath, err)
 	}
 	return schemaMap, digest, nil
 }
 
-func loadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
-	path, err := safeJoin(dir, relPath)
+const maxWorkflowStepIDLen = 64
+
+var workflowStepIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+func validateWorkflowStepID(stepID string) error {
+	if stepID == "" {
+		return errors.New("workflow step id required")
+	}
+	if len(stepID) > maxWorkflowStepIDLen {
+		return fmt.Errorf("workflow step id %q exceeds %d characters", stepID, maxWorkflowStepIDLen)
+	}
+	if !workflowStepIDPattern.MatchString(stepID) {
+		return fmt.Errorf("workflow step id %q must match %s", stepID, workflowStepIDPattern.String())
+	}
+	return nil
+}
+
+func validateWorkflowStepMap(steps map[string]any) error {
+	for id := range steps {
+		if err := validateWorkflowStepID(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LoadWorkflowFile reads, validates, and hashes a workflow file.
+func LoadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
+	path, err := SafeJoin(dir, relPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("load workflow file %s: %w", relPath, err)
 	}
-	payload, err := loadDataFile(path)
+	payload, err := LoadDataFile(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("load workflow file %s: %w", relPath, err)
 	}
@@ -338,15 +379,16 @@ func loadWorkflowFile(dir, relPath, id string) (map[string]any, string, error) {
 			return nil, "", fmt.Errorf("validate workflow steps in %s: %w", relPath, err)
 		}
 	}
-	normalized := normalizeWorkflowMap(workflowMap)
-	digest, err := hashValue(normalized)
+	normalized := NormalizeWorkflowMap(workflowMap)
+	digest, err := HashValue(normalized)
 	if err != nil {
 		return nil, "", fmt.Errorf("hash workflow file %s: %w", relPath, err)
 	}
 	return workflowMap, digest, nil
 }
 
-func normalizeWorkflowMap(workflow map[string]any) map[string]any {
+// NormalizeWorkflowMap strips volatile fields (timestamps) from a workflow map.
+func NormalizeWorkflowMap(workflow map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range workflow {
 		switch k {
@@ -359,11 +401,13 @@ func normalizeWorkflowMap(workflow map[string]any) map[string]any {
 	return out
 }
 
-func hashWorkflow(workflow map[string]any) (string, error) {
-	return hashValue(normalizeWorkflowMap(workflow))
+// HashWorkflow returns the SHA-256 digest of a normalized workflow map.
+func HashWorkflow(workflow map[string]any) (string, error) {
+	return HashValue(NormalizeWorkflowMap(workflow))
 }
 
-func workflowToMap(workflow *wf.Workflow) map[string]any {
+// WorkflowToMap converts a Workflow struct to a generic map.
+func WorkflowToMap(workflow *wf.Workflow) map[string]any {
 	if workflow == nil {
 		return map[string]any{}
 	}
@@ -378,55 +422,58 @@ func workflowToMap(workflow *wf.Workflow) map[string]any {
 	return out
 }
 
-func loadDataFile(path string) (any, error) {
-	// #nosec G304 -- path is validated by safeJoin at call sites.
+// LoadDataFile reads a JSON or YAML file and returns the normalized content.
+func LoadDataFile(path string) (any, error) {
+	// #nosec G304 -- path is validated by SafeJoin at call sites.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read data file: %w", err)
 	}
 	var payload any
 	if json.Unmarshal(data, &payload) == nil {
-		return normalizeJSON(payload), nil
+		return NormalizeJSON(payload), nil
 	}
 	if err := yaml.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("parse data file as yaml: %w", err)
 	}
-	return normalizeJSON(payload), nil
+	return NormalizeJSON(payload), nil
 }
 
-func loadPatchFile(dir, relPath string) (any, error) {
-	path, err := safeJoin(dir, relPath)
+// LoadPatchFile reads a config overlay patch file.
+func LoadPatchFile(dir, relPath string) (any, error) {
+	path, err := SafeJoin(dir, relPath)
 	if err != nil {
 		return nil, fmt.Errorf("load patch file %s: %w", relPath, err)
 	}
-	payload, err := loadDataFile(path)
+	payload, err := LoadDataFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("load patch file %s: %w", relPath, err)
 	}
 	return payload, nil
 }
 
-func normalizeJSON(value any) any {
+// NormalizeJSON recursively converts map[any]any (from YAML) to map[string]any.
+func NormalizeJSON(value any) any {
 	switch v := value.(type) {
 	case nil:
 		return nil
 	case map[string]any:
 		out := map[string]any{}
 		for k, child := range v {
-			out[k] = normalizeJSON(child)
+			out[k] = NormalizeJSON(child)
 		}
 		return out
 	case map[any]any:
 		out := map[string]any{}
 		for k, child := range v {
 			key := fmt.Sprint(k)
-			out[key] = normalizeJSON(child)
+			out[key] = NormalizeJSON(child)
 		}
 		return out
 	case []any:
 		out := make([]any, len(v))
 		for i, child := range v {
-			out[i] = normalizeJSON(child)
+			out[i] = NormalizeJSON(child)
 		}
 		return out
 	default:
@@ -434,7 +481,8 @@ func normalizeJSON(value any) any {
 	}
 }
 
-func deepCopy(value any) any {
+// DeepCopy performs a JSON round-trip deep copy.
+func DeepCopy(value any) any {
 	if value == nil {
 		return nil
 	}
@@ -449,11 +497,12 @@ func deepCopy(value any) any {
 	return out
 }
 
-func mergePatch(current any, patch map[string]any) any {
+// MergePatch applies a JSON Merge Patch to the current value.
+func MergePatch(current any, patch map[string]any) any {
 	if patch == nil {
 		return current
 	}
-	currentMap, _ := normalizeJSON(current).(map[string]any)
+	currentMap, _ := NormalizeJSON(current).(map[string]any)
 	if currentMap == nil {
 		currentMap = map[string]any{}
 	}
@@ -462,7 +511,7 @@ func mergePatch(current any, patch map[string]any) any {
 		case nil:
 			delete(currentMap, key)
 		case map[string]any:
-			currentMap[key] = mergePatch(currentMap[key], v)
+			currentMap[key] = MergePatch(currentMap[key], v)
 		default:
 			currentMap[key] = v
 		}
@@ -470,7 +519,8 @@ func mergePatch(current any, patch map[string]any) any {
 	return currentMap
 }
 
-func buildDeletePatch(patch map[string]any) map[string]any {
+// BuildDeletePatch creates a patch that deletes all keys from the original.
+func BuildDeletePatch(patch map[string]any) map[string]any {
 	if patch == nil {
 		return nil
 	}
@@ -478,7 +528,7 @@ func buildDeletePatch(patch map[string]any) map[string]any {
 	for key, value := range patch {
 		switch v := value.(type) {
 		case map[string]any:
-			out[key] = buildDeletePatch(v)
+			out[key] = BuildDeletePatch(v)
 		default:
 			out[key] = nil
 		}
@@ -486,8 +536,9 @@ func buildDeletePatch(patch map[string]any) map[string]any {
 	return out
 }
 
-func hashValue(value any) (string, error) {
-	encoded, err := canonicalJSON(value)
+// HashValue returns the SHA-256 hex digest of the canonical JSON encoding.
+func HashValue(value any) (string, error) {
+	encoded, err := CanonicalJSON(value)
 	if err != nil {
 		return "", fmt.Errorf("encode canonical json: %w", err)
 	}
@@ -495,15 +546,17 @@ func hashValue(value any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func canonicalJSON(value any) ([]byte, error) {
+// CanonicalJSON encodes a value to deterministic JSON with sorted keys.
+func CanonicalJSON(value any) ([]byte, error) {
 	buf := &strings.Builder{}
-	if err := appendCanonical(buf, value); err != nil {
+	if err := AppendCanonical(buf, value); err != nil {
 		return nil, fmt.Errorf("build canonical json: %w", err)
 	}
 	return []byte(buf.String()), nil
 }
 
-func appendCanonical(buf *strings.Builder, value any) error {
+// AppendCanonical writes a value to the builder in canonical JSON format.
+func AppendCanonical(buf *strings.Builder, value any) error {
 	switch v := value.(type) {
 	case nil:
 		buf.WriteString("null")
@@ -536,7 +589,7 @@ func appendCanonicalMap(buf *strings.Builder, m map[string]any) error {
 		keyBytes, _ := json.Marshal(k)
 		buf.Write(keyBytes)
 		buf.WriteByte(':')
-		if err := appendCanonical(buf, m[k]); err != nil {
+		if err := AppendCanonical(buf, m[k]); err != nil {
 			return fmt.Errorf("append canonical map value for key %s: %w", k, err)
 		}
 	}
@@ -550,7 +603,7 @@ func appendCanonicalSlice(buf *strings.Builder, items []any) error {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		if err := appendCanonical(buf, item); err != nil {
+		if err := AppendCanonical(buf, item); err != nil {
 			return fmt.Errorf("append canonical slice item at index %d: %w", i, err)
 		}
 	}
@@ -558,18 +611,21 @@ func appendCanonicalSlice(buf *strings.Builder, items []any) error {
 	return nil
 }
 
-func isTarGz(path string) bool {
+// IsTarGz returns true if the file name ends with .tgz or .tar.gz.
+func IsTarGz(path string) bool {
 	lower := strings.ToLower(path)
 	return strings.HasSuffix(lower, ".tgz") || strings.HasSuffix(lower, ".tar.gz")
 }
 
-func exists(path string) bool {
+// Exists returns true if the path exists on disk.
+func Exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-func findPackRoot(dir string) (string, error) {
-	if exists(filepath.Join(dir, "pack.yaml")) || exists(filepath.Join(dir, "pack.yml")) {
+// FindPackRoot locates the directory containing pack.yaml in an extracted archive.
+func FindPackRoot(dir string) (string, error) {
+	if Exists(filepath.Join(dir, "pack.yaml")) || Exists(filepath.Join(dir, "pack.yml")) {
 		return dir, nil
 	}
 	entries, err := os.ReadDir(dir)
@@ -583,13 +639,14 @@ func findPackRoot(dir string) (string, error) {
 		return "", errors.New("pack.yaml not found in archive root")
 	}
 	subdir := filepath.Join(dir, entries[0].Name())
-	if exists(filepath.Join(subdir, "pack.yaml")) || exists(filepath.Join(subdir, "pack.yml")) {
+	if Exists(filepath.Join(subdir, "pack.yaml")) || Exists(filepath.Join(subdir, "pack.yml")) {
 		return subdir, nil
 	}
 	return "", errors.New("pack.yaml not found in archive")
 }
 
-func extractTarGzReader(src io.Reader, dest string) error {
+// ExtractTarGzReader extracts a gzipped tar stream into the destination directory.
+func ExtractTarGzReader(src io.Reader, dest string) error {
 	gz, err := gzip.NewReader(src)
 	if err != nil {
 		return fmt.Errorf("create gzip reader: %w", err)
@@ -608,31 +665,31 @@ func extractTarGzReader(src io.Reader, dest string) error {
 		if err != nil {
 			return fmt.Errorf("read tar header: %w", err)
 		}
-		target, err := safeJoin(dest, hdr.Name)
+		target, err := SafeJoin(dest, hdr.Name)
 		if err != nil {
 			return fmt.Errorf("validate tar entry path %s: %w", hdr.Name, err)
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
+			if err := os.MkdirAll(target, 0o750); err != nil { // #nosec -- target path is validated by SafeJoin.
 				return fmt.Errorf("extract tar.gz mkdir: %w", err)
 			}
 		case tar.TypeReg:
 			files++
-			if files > maxPackFiles {
-				return fmt.Errorf("pack archive exceeds max files (%d)", maxPackFiles)
+			if files > MaxPackFiles {
+				return fmt.Errorf("pack archive exceeds max files (%d)", MaxPackFiles)
 			}
-			if hdr.Size < 0 || hdr.Size > maxPackFileBytes {
+			if hdr.Size < 0 || hdr.Size > MaxPackFileBytes {
 				return fmt.Errorf("pack file too large: %s", hdr.Name)
 			}
 			totalSz += hdr.Size
-			if totalSz > maxPackUncompressedBytes {
-				return fmt.Errorf("pack archive exceeds max size (%d bytes)", maxPackUncompressedBytes)
+			if totalSz > MaxPackUncompressedBytes {
+				return fmt.Errorf("pack archive exceeds max size (%d bytes)", MaxPackUncompressedBytes)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil { // #nosec -- target path is validated by safeJoin.
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil { // #nosec -- target path is validated by SafeJoin.
 				return fmt.Errorf("extract tar.gz mkdir: %w", err)
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec -- target path is validated by safeJoin.
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec -- target path is validated by SafeJoin.
 			if err != nil {
 				return fmt.Errorf("extract tar.gz create file: %w", err)
 			}
@@ -647,7 +704,8 @@ func extractTarGzReader(src io.Reader, dest string) error {
 	}
 }
 
-func safeJoin(base, name string) (string, error) {
+// SafeJoin securely joins a base directory with a relative path.
+func SafeJoin(base, name string) (string, error) {
 	clean := filepath.Clean(strings.TrimSpace(name))
 	if clean == "." || clean == "" {
 		return "", fmt.Errorf("invalid archive path: %s", name)

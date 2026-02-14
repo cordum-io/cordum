@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -23,194 +22,6 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/redis/go-redis/v9"
 )
-
-var errMarketplaceNotFound = errors.New("marketplace pack not found")
-var marketplaceCatalogFetchTimeout = 30 * time.Second
-
-func seedDefaultPackCatalogs(ctx context.Context, svc *configsvc.Service) error {
-	if svc == nil {
-		return nil
-	}
-	disabled := strings.TrimSpace(os.Getenv(envPackCatalogDisableDefault))
-	if disabled != "" {
-		switch strings.ToLower(disabled) {
-		case "1", "true", "yes":
-			return nil
-		}
-	}
-	catalogURL := strings.TrimSpace(os.Getenv(envPackCatalogURL))
-	if catalogURL == "" {
-		catalogURL = defaultPackCatalogURL
-	}
-	if catalogURL == "" {
-		return nil
-	}
-	title := strings.TrimSpace(os.Getenv(envPackCatalogTitle))
-	if title == "" {
-		title = defaultPackCatalogTitle
-	}
-	catalogID := strings.TrimSpace(os.Getenv(envPackCatalogID))
-	if catalogID == "" {
-		catalogID = defaultPackCatalogID
-	}
-
-	doc, err := svc.Get(ctx, configsvc.Scope(packCatalogScope), packCatalogID)
-	if err != nil {
-		if !errors.Is(err, redis.Nil) {
-			return err
-		}
-		doc = &configsvc.Document{
-			Scope:   configsvc.Scope(packCatalogScope),
-			ScopeID: packCatalogID,
-			Data:    map[string]any{},
-		}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	if existing, ok := doc.Data["catalogs"]; ok && existing != nil {
-		switch typed := existing.(type) {
-		case []any:
-			if len(typed) > 0 {
-				return nil
-			}
-		case []map[string]any:
-			if len(typed) > 0 {
-				return nil
-			}
-		default:
-			return nil
-		}
-	}
-
-	doc.Data["catalogs"] = []map[string]any{
-		{
-			"id":      catalogID,
-			"title":   title,
-			"url":     catalogURL,
-			"enabled": true,
-		},
-	}
-	return svc.Set(ctx, doc)
-}
-
-type marketplaceCatalogConfig struct {
-	Catalogs []marketplaceCatalog `json:"catalogs"`
-}
-
-type marketplaceCatalog struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Enabled *bool  `json:"enabled"`
-}
-
-type marketplaceCatalogFile struct {
-	UpdatedAt string                   `json:"updated_at"`
-	Packs     []marketplaceCatalogPack `json:"packs"`
-}
-
-type marketplaceCatalogPack struct {
-	ID           string   `json:"id"`
-	Version      string   `json:"version"`
-	Title        string   `json:"title"`
-	Description  string   `json:"description"`
-	Author       string   `json:"author"`
-	Homepage     string   `json:"homepage"`
-	Source       string   `json:"source"`
-	Image        string   `json:"image"`
-	License      string   `json:"license"`
-	URL          string   `json:"url"`
-	Sha256       string   `json:"sha256"`
-	Capabilities []string `json:"capabilities"`
-	Requires     []string `json:"requires"`
-	RiskTags     []string `json:"risk_tags"`
-}
-
-type marketplaceCatalogStatus struct {
-	ID        string `json:"id"`
-	Title     string `json:"title,omitempty"`
-	URL       string `json:"url"`
-	Enabled   bool   `json:"enabled"`
-	UpdatedAt string `json:"updated_at,omitempty"`
-	Error     string `json:"error,omitempty"`
-}
-
-type marketplacePackItem struct {
-	ID               string   `json:"id"`
-	Version          string   `json:"version"`
-	Title            string   `json:"title,omitempty"`
-	Description      string   `json:"description,omitempty"`
-	Author           string   `json:"author,omitempty"`
-	Homepage         string   `json:"homepage,omitempty"`
-	Source           string   `json:"source,omitempty"`
-	Image            string   `json:"image,omitempty"`
-	License          string   `json:"license,omitempty"`
-	URL              string   `json:"url,omitempty"`
-	Sha256           string   `json:"sha256,omitempty"`
-	CatalogID        string   `json:"catalog_id,omitempty"`
-	CatalogTitle     string   `json:"catalog_title,omitempty"`
-	Capabilities     []string `json:"capabilities,omitempty"`
-	Requires         []string `json:"requires,omitempty"`
-	RiskTags         []string `json:"risk_tags,omitempty"`
-	InstalledVersion string   `json:"installed_version,omitempty"`
-	InstalledStatus  string   `json:"installed_status,omitempty"`
-	InstalledAt      string   `json:"installed_at,omitempty"`
-}
-
-type marketplaceResponse struct {
-	Catalogs  []marketplaceCatalogStatus `json:"catalogs"`
-	Items     []marketplacePackItem      `json:"items"`
-	FetchedAt string                     `json:"fetched_at,omitempty"`
-	Cached    bool                       `json:"cached,omitempty"`
-}
-
-type marketplaceCache struct {
-	Response  marketplaceResponse
-	FetchedAt time.Time
-}
-
-func cloneMarketplaceResponse(resp marketplaceResponse) marketplaceResponse {
-	out := resp
-	if len(resp.Catalogs) > 0 {
-		out.Catalogs = append([]marketplaceCatalogStatus(nil), resp.Catalogs...)
-	}
-	if len(resp.Items) > 0 {
-		out.Items = make([]marketplacePackItem, len(resp.Items))
-		for idx, item := range resp.Items {
-			outItem := item
-			if len(item.Capabilities) > 0 {
-				outItem.Capabilities = append([]string(nil), item.Capabilities...)
-			}
-			if len(item.Requires) > 0 {
-				outItem.Requires = append([]string(nil), item.Requires...)
-			}
-			if len(item.RiskTags) > 0 {
-				outItem.RiskTags = append([]string(nil), item.RiskTags...)
-			}
-			out.Items[idx] = outItem
-		}
-	}
-	return out
-}
-
-type marketplaceCatalogEntry struct {
-	Pack         marketplaceCatalogPack
-	CatalogID    string
-	CatalogTitle string
-	CatalogURL   string
-}
-
-type marketplaceInstallRequest struct {
-	CatalogID string `json:"catalog_id"`
-	PackID    string `json:"pack_id"`
-	Version   string `json:"version"`
-	URL       string `json:"url"`
-	Sha256    string `json:"sha256"`
-	Force     bool   `json:"force"`
-	Upgrade   bool   `json:"upgrade"`
-	Inactive  bool   `json:"inactive"`
-}
 
 func (s *server) handleMarketplacePacks(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
@@ -644,72 +455,6 @@ func (s *server) findMarketplaceEntryByURL(ctx context.Context, rawURL string) (
 	return marketplaceCatalogEntry{}, errMarketplaceNotFound
 }
 
-func compareVersions(a, b string) int {
-	pa, oka := parseVersion(a)
-	pb, okb := parseVersion(b)
-	if oka && okb {
-		max := len(pa)
-		if len(pb) > max {
-			max = len(pb)
-		}
-		for i := 0; i < max; i++ {
-			ai := 0
-			bi := 0
-			if i < len(pa) {
-				ai = pa[i]
-			}
-			if i < len(pb) {
-				bi = pb[i]
-			}
-			if ai > bi {
-				return 1
-			}
-			if ai < bi {
-				return -1
-			}
-		}
-		return 0
-	}
-	na := normalizeVersion(a)
-	nb := normalizeVersion(b)
-	if na == nb {
-		return 0
-	}
-	if na > nb {
-		return 1
-	}
-	return -1
-}
-
-func normalizeVersion(version string) string {
-	version = strings.TrimSpace(version)
-	version = strings.TrimPrefix(version, "v")
-	return version
-}
-
-func parseVersion(version string) ([]int, bool) {
-	version = normalizeVersion(version)
-	if version == "" {
-		return nil, false
-	}
-	if strings.ContainsAny(version, "+-") {
-		return nil, false
-	}
-	parts := strings.Split(version, ".")
-	out := make([]int, 0, len(parts))
-	for _, part := range parts {
-		if part == "" {
-			return nil, false
-		}
-		value, err := strconv.Atoi(part)
-		if err != nil {
-			return nil, false
-		}
-		out = append(out, value)
-	}
-	return out, true
-}
-
 func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[string]struct{}) (string, string, func(), error) {
 	if parsed == nil {
 		return "", "", func() {}, errors.New("url required")
@@ -751,52 +496,6 @@ func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[s
 		return "", "", func() {}, fmt.Errorf("pack download exceeds max size (%d bytes)", maxPackUploadBytes)
 	}
 	return tmpFile.Name(), hex.EncodeToString(hasher.Sum(nil)), cleanup, nil
-}
-
-// resolvePackURL resolves a potentially relative pack URL against its catalog base URL.
-func resolvePackURL(packURL, catalogURL string) string {
-	packURL = strings.TrimSpace(packURL)
-	if packURL == "" {
-		return packURL
-	}
-	parsed, err := url.Parse(packURL)
-	if err != nil || parsed.Scheme != "" {
-		return packURL // already absolute or unparseable
-	}
-	base, err := url.Parse(strings.TrimSpace(catalogURL))
-	if err != nil || base.Scheme == "" {
-		return packURL
-	}
-	return base.ResolveReference(parsed).String()
-}
-
-// privateIPNets are RFC 1918 / RFC 4193 / link-local / loopback ranges.
-var privateIPNets = func() []*net.IPNet {
-	cidrs := []string{
-		"127.0.0.0/8",    // IPv4 loopback
-		"10.0.0.0/8",     // RFC 1918
-		"172.16.0.0/12",  // RFC 1918
-		"192.168.0.0/16", // RFC 1918
-		"169.254.0.0/16", // link-local / AWS metadata
-		"::1/128",        // IPv6 loopback
-		"fe80::/10",      // IPv6 link-local
-		"fc00::/7",       // IPv6 unique-local (RFC 4193)
-	}
-	nets := make([]*net.IPNet, 0, len(cidrs))
-	for _, cidr := range cidrs {
-		_, n, err := net.ParseCIDR(cidr)
-		if err != nil {
-			panic("bad private CIDR: " + cidr)
-		}
-		nets = append(nets, n)
-	}
-	return nets
-}()
-
-// privateHostnames are hostnames that always resolve to private/internal addresses.
-var privateHostnames = map[string]bool{
-	"localhost":                true,
-	"metadata.google.internal": true,
 }
 
 // skipPrivateIPCheck disables SSRF protection. Only set in tests.
@@ -844,18 +543,6 @@ func isPrivateIP(host string) bool {
 	}
 	for _, ip := range ips {
 		if isPrivateNet(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-func isPrivateNet(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	for _, n := range privateIPNets {
-		if n.Contains(ip) {
 			return true
 		}
 	}
@@ -1002,18 +689,6 @@ func marketplaceDialContext(allowedHosts map[string]struct{}) func(context.Conte
 		}
 		return nil, errors.New("no resolved IPs")
 	}
-}
-
-func hostFromURL(rawURL string) string {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
-		return ""
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "" {
-		return ""
-	}
-	return host
 }
 
 func (s *server) marketplaceAllowedHosts(ctx context.Context) (map[string]struct{}, error) {
