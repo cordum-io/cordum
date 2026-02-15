@@ -177,7 +177,7 @@ done
 # --- Check ports ---
 warn_port 8081 "api-gateway http"
 warn_port 8082 "dashboard"
-warn_port 8080 "api-gateway grpc"
+warn_port 9080 "api-gateway grpc"
 warn_port 9092 "gateway metrics"
 warn_port 9093 "workflow-engine http"
 warn_port 50051 "safety-kernel grpc"
@@ -197,6 +197,21 @@ COMPOSE_FILES=${CORDUM_COMPOSE_FILES:-docker-compose.yml}
 ALLOW_ENTERPRISE=${CORDUM_ALLOW_ENTERPRISE:-0}
 export COMPOSE_HTTP_TIMEOUT=${COMPOSE_HTTP_TIMEOUT:-1800}
 export DOCKER_CLIENT_TIMEOUT=${DOCKER_CLIENT_TIMEOUT:-1800}
+
+# --- TLS certificate generation ---
+# Generate self-signed certs if they don't exist yet.
+if [[ ! -f "./certs/ca/ca.crt" ]]; then
+  if command -v cordumctl >/dev/null 2>&1; then
+    log "generating TLS certificates"
+    cordumctl generate-certs >/dev/null
+  elif command -v go >/dev/null 2>&1; then
+    log "generating TLS certificates"
+    go run ./cmd/cordumctl generate-certs >/dev/null
+  else
+    log "warning: Go not found — cannot generate TLS certs"
+    log "         install Go or run 'cordumctl generate-certs' manually"
+  fi
+fi
 
 # --- TLS auto-detection ---
 CURL_TLS_OPTS=()
@@ -282,4 +297,8 @@ fi
 
 echo ""
 log "try:"
-echo "curl -sS ${API_BASE}/api/v1/status -H \"X-API-Key: \$CORDUM_API_KEY\" -H \"X-Tenant-ID: ${TENANT_ID}\" | jq"
+if [[ -n "${TLS_CA}" ]]; then
+  echo "curl -sS --cacert ./certs/ca/ca.crt ${API_BASE}/api/v1/status -H \"X-API-Key: \$CORDUM_API_KEY\" -H \"X-Tenant-ID: ${TENANT_ID}\" | jq"
+else
+  echo "curl -sS ${API_BASE}/api/v1/status -H \"X-API-Key: \$CORDUM_API_KEY\" -H \"X-Tenant-ID: ${TENANT_ID}\" | jq"
+fi

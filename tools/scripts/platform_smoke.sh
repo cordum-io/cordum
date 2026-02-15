@@ -10,7 +10,6 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-API_BASE=${CORDUM_API_BASE:-http://localhost:8081}
 API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
 if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the smoke test." >&2
@@ -18,6 +17,22 @@ if [[ -z "${API_KEY}" ]]; then
 fi
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
+
+# TLS auto-detection
+CURL_TLS_OPTS=()
+TLS_CA="${CORDUM_TLS_CA:-}"
+if [[ -z "${TLS_CA}" && -f "./certs/ca/ca.crt" ]]; then
+  TLS_CA="./certs/ca/ca.crt"
+fi
+if [[ -n "${TLS_CA}" ]]; then
+  CURL_TLS_OPTS=(--cacert "${TLS_CA}")
+  if curl --version 2>/dev/null | grep -qi schannel; then
+    CURL_TLS_OPTS+=(--ssl-no-revoke)
+  fi
+  API_BASE="${CORDUM_API_BASE:-https://localhost:8081}"
+else
+  API_BASE="${CORDUM_API_BASE:-http://localhost:8081}"
+fi
 
 auth_header=("-H" "X-API-Key: ${API_KEY}" "-H" "X-Tenant-ID: ${TENANT_ID}")
 json_header=("-H" "Content-Type: application/json")
@@ -41,7 +56,7 @@ workflow_payload=$(cat <<JSON
 JSON
 )
 
-wf_id=$(curl -sS "${auth_header[@]}" "${json_header[@]}" \
+wf_id=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${json_header[@]}" \
   -X POST "${API_BASE}/api/v1/workflows" \
   -d "${workflow_payload}" | jq -r '.id')
 
@@ -52,7 +67,7 @@ fi
 log "workflow id: ${wf_id}"
 
 log "starting run"
-run_id=$(curl -sS "${auth_header[@]}" "${json_header[@]}" \
+run_id=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${json_header[@]}" \
   -X POST "${API_BASE}/api/v1/workflows/${wf_id}/runs" \
   -d '{}' | jq -r '.run_id')
 
@@ -63,13 +78,13 @@ fi
 log "run id: ${run_id}"
 
 log "approving step"
-curl -sS "${auth_header[@]}" "${json_header[@]}" \
+curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${json_header[@]}" \
   -X POST "${API_BASE}/api/v1/workflows/${wf_id}/runs/${run_id}/steps/approve/approve" \
   -d '{"approved": true}' >/dev/null
 
 status=""
 for _ in {1..10}; do
-  status=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${run_id}" | jq -r '.status')
+  status=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${run_id}" | jq -r '.status')
   if [[ "${status}" == "succeeded" ]]; then
     break
   fi
@@ -78,9 +93,9 @@ done
 log "run status: ${status}"
 
 log "deleting run"
-curl -sS "${auth_header[@]}" -X DELETE "${API_BASE}/api/v1/workflow-runs/${run_id}" >/dev/null
+curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" -X DELETE "${API_BASE}/api/v1/workflow-runs/${run_id}" >/dev/null
 
 log "deleting workflow"
-curl -sS "${auth_header[@]}" -X DELETE "${API_BASE}/api/v1/workflows/${wf_id}" >/dev/null
+curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" -X DELETE "${API_BASE}/api/v1/workflows/${wf_id}" >/dev/null
 
 log "done"

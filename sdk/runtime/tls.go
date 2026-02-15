@@ -45,7 +45,7 @@ func NATSTLSConfigFromEnv() (*tls.Config, error) {
 	}
 
 	if caPath != "" {
-		data, err := os.ReadFile(filepath.Clean(caPath))
+		data, err := os.ReadFile(filepath.Clean(caPath)) // #nosec G304 -- operator-configured path
 		if err != nil {
 			return nil, fmt.Errorf("nats tls ca read: %w", err)
 		}
@@ -101,7 +101,7 @@ func RedisTLSConfigFromEnv() (*tls.Config, error) {
 	}
 
 	if caPath != "" {
-		data, err := os.ReadFile(filepath.Clean(caPath))
+		data, err := os.ReadFile(filepath.Clean(caPath)) // #nosec G304 -- operator-configured path
 		if err != nil {
 			return nil, fmt.Errorf("redis tls ca read: %w", err)
 		}

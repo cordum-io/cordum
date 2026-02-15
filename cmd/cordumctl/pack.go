@@ -562,7 +562,7 @@ func planWorkflows(ctx context.Context, client *restClient, dir string, manifest
 	return plans, nil
 }
 
-func loadPackBundle(src string, transport http.RoundTripper) (*packBundle, error) {
+func loadPackBundle(src string, transport *http.Transport) (*packBundle, error) {
 	if isURL(src) {
 		tmpFile, err := downloadToTemp(src, transport)
 		if err != nil {
@@ -1618,15 +1618,16 @@ type restClient struct {
 	httpClient *http.Client
 }
 
-func newRestClient(gateway, apiKey, tenantID string, transport http.RoundTripper) *restClient {
+func newRestClient(gateway, apiKey, tenantID string, transport *http.Transport) *restClient {
+	c := &http.Client{Timeout: 20 * time.Second}
+	if transport != nil {
+		c.Transport = transport
+	}
 	return &restClient{
-		baseURL:  strings.TrimRight(gateway, "/"),
-		apiKey:   apiKey,
-		tenantID: strings.TrimSpace(tenantID),
-		httpClient: &http.Client{
-			Timeout:   20 * time.Second,
-			Transport: transport,
-		},
+		baseURL:    strings.TrimRight(gateway, "/"),
+		apiKey:     apiKey,
+		tenantID:   strings.TrimSpace(tenantID),
+		httpClient: c,
 	}
 }
 
@@ -1784,7 +1785,7 @@ func isURL(raw string) bool {
 	return parsed.Scheme == "http" || parsed.Scheme == "https"
 }
 
-func downloadToTemp(raw string, transport http.RoundTripper) (string, error) {
+func downloadToTemp(raw string, transport *http.Transport) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return "", fmt.Errorf("download to temp: %w", err)
@@ -1799,7 +1800,10 @@ func downloadToTemp(raw string, transport http.RoundTripper) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("download to temp: %w", err)
 	}
-	client := &http.Client{Timeout: 30 * time.Second, Transport: transport}
+	client := &http.Client{Timeout: 30 * time.Second}
+	if transport != nil {
+		client.Transport = transport
+	}
 	resp, err := client.Do(req) // #nosec -- URL is operator-provided and validated.
 	if err != nil {
 		return "", fmt.Errorf("download to temp: %w", err)

@@ -132,7 +132,7 @@ http://localhost:8082
 ## Reset local state
 
 ```bash
-docker compose exec redis redis-cli FLUSHALL
+docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "${REDIS_PASSWORD:-cordum-dev}" FLUSHALL
 ```
 
 To wipe JetStream state too:

@@ -227,20 +227,24 @@ poll_run_terminal() {
 ensure_mock_bank_pack() {
   if command -v cordumctl >/dev/null 2>&1; then
     CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+      CORDUM_GATEWAY="${API_BASE}" \
       cordumctl pack install --upgrade ./demo/mock-bank/pack >/dev/null
     return
   fi
   CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+    CORDUM_GATEWAY="${API_BASE}" \
     go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack >/dev/null
 }
 
 ensure_demo_guardrails_pack() {
   if command -v cordumctl >/dev/null 2>&1; then
     CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+      CORDUM_GATEWAY="${API_BASE}" \
       cordumctl pack install --upgrade ./examples/demo-guardrails >/dev/null
     return
   fi
   CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+    CORDUM_GATEWAY="${API_BASE}" \
     go run ./cmd/cordumctl pack install --upgrade ./examples/demo-guardrails >/dev/null
 }
 
@@ -2676,6 +2680,8 @@ if [[ -z "${_tls_ca}" && -f "./certs/ca/ca.crt" ]]; then
   _tls_ca="./certs/ca/ca.crt"
 fi
 if [[ -n "${_tls_ca}" ]]; then
+  # Export so subprocess tools (cordumctl, platform_smoke.sh) pick it up.
+  export CORDUM_TLS_CA="${_tls_ca}"
   API_BASE="${CORDUM_API_BASE:-https://localhost:8081}"
   NATS_URL="${NATS_URL:-tls://localhost:4222}"
   REDIS_URL="${REDIS_URL:-rediss://:${REDIS_PASSWORD}@localhost:6379}"

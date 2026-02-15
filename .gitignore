@@ -62,3 +62,4 @@ tools/private/
 .tmp-go/
 production_gate_results.json
 *.go.[0-9]*
+certs/

@@ -60,27 +60,31 @@ Cordum is a **control plane for AI agents** that closes the Trust Gap.
 
 ## Quickstart
 
-**Prerequisites:** Docker, Docker Compose
+**Prerequisites:** Docker, Docker Compose, Go 1.24+
 
 ```bash
 # Clone the repo
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
 
-# Start everything
-docker compose up -d
+# Set an API key
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+
+# Start everything (auto-generates TLS certs on first run)
+go run ./cmd/cordumctl up
 
 # Open dashboard
 open http://localhost:8082
 ```
 
-**Run the smoke test:**
+Or use the quickstart script:
 
 ```bash
-./tools/scripts/platform_smoke.sh
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+./tools/scripts/quickstart.sh
 ```
 
-That's it. You have a running Cordum instance with API, scheduler, safety kernel, and dashboard. System configuration is auto-bootstrapped on first startup — no manual config seeding required.
+That's it. You have a running Cordum instance with API, scheduler, safety kernel, dashboard, and TLS enabled by default. System configuration is auto-bootstrapped on first startup.
 
 ## How It Works
 

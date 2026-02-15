@@ -283,11 +283,11 @@ func dlqEntryTTLFromEnv() time.Duration {
 	}
 	days, err := strconv.Atoi(raw)
 	if err != nil {
-		slog.Warn("invalid "+dlqEntryTTLDaysEnv+", using default", "value", sanitizeLogValue(raw), "error", sanitizeLogValue(err.Error()), "default", defaultDLQEntryTTL)
+		slog.Warn("invalid "+dlqEntryTTLDaysEnv+", using default", "value", sanitizeLogValue(raw), "error", sanitizeLogValue(err.Error()), "default", defaultDLQEntryTTL) // #nosec -- structured log, sanitized
 		return 0
 	}
 	if days <= 0 {
-		slog.Warn("non-positive "+dlqEntryTTLDaysEnv+", using default", "value", days, "default", defaultDLQEntryTTL)
+		slog.Warn("non-positive "+dlqEntryTTLDaysEnv+", using default", "value", days, "default", defaultDLQEntryTTL) // #nosec -- structured log, int value
 		return 0
 	}
 	return time.Duration(days) * 24 * time.Hour
