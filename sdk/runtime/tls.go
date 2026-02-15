@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -44,7 +45,7 @@ func NATSTLSConfigFromEnv() (*tls.Config, error) {
 	}
 
 	if caPath != "" {
-		data, err := os.ReadFile(caPath) // #nosec G304 -- CA path is configured by the operator.
+		data, err := os.ReadFile(filepath.Clean(caPath))
 		if err != nil {
 			return nil, fmt.Errorf("nats tls ca read: %w", err)
 		}
@@ -59,7 +60,7 @@ func NATSTLSConfigFromEnv() (*tls.Config, error) {
 		if certPath == "" || keyPath == "" {
 			return nil, fmt.Errorf("nats tls cert/key must be set together")
 		}
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		cert, err := tls.LoadX509KeyPair(filepath.Clean(certPath), filepath.Clean(keyPath))
 		if err != nil {
 			return nil, fmt.Errorf("nats tls keypair: %w", err)
 		}
@@ -100,7 +101,7 @@ func RedisTLSConfigFromEnv() (*tls.Config, error) {
 	}
 
 	if caPath != "" {
-		data, err := os.ReadFile(caPath) // #nosec G304 -- CA path is configured by the operator.
+		data, err := os.ReadFile(filepath.Clean(caPath))
 		if err != nil {
 			return nil, fmt.Errorf("redis tls ca read: %w", err)
 		}
@@ -115,7 +116,7 @@ func RedisTLSConfigFromEnv() (*tls.Config, error) {
 		if certPath == "" || keyPath == "" {
 			return nil, fmt.Errorf("redis tls cert/key must be set together")
 		}
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		cert, err := tls.LoadX509KeyPair(filepath.Clean(certPath), filepath.Clean(keyPath))
 		if err != nil {
 			return nil, fmt.Errorf("redis tls keypair: %w", err)
 		}
