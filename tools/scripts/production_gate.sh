@@ -237,10 +237,28 @@ has_mock_bank_worker() {
   echo "${workers}" | jq -e '[.[] | select(.pool == "demo-mock-bank")] | length > 0' >/dev/null 2>&1
 }
 
+MOCK_BANK_PID_FILE="/tmp/production-gate-mock-bank.pid"
+
+# Recover PID from file (survives $() subshell boundaries since run_gate
+# captures gate output in a subshell, losing any variables set there).
+_recover_mock_bank_pid() {
+  if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]] && [[ -f "${MOCK_BANK_PID_FILE}" ]]; then
+    MOCK_BANK_WORKER_PID="$(cat "${MOCK_BANK_PID_FILE}" 2>/dev/null || true)"
+    if [[ -n "${MOCK_BANK_WORKER_PID}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
+      MOCK_BANK_WORKER_STARTED=1
+    else
+      MOCK_BANK_WORKER_PID=""
+      MOCK_BANK_WORKER_STARTED=0
+    fi
+  fi
+}
+
 ensure_mock_bank_worker() {
   if has_mock_bank_worker; then
     return 0
   fi
+
+  _recover_mock_bank_pid
 
   if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && ! kill -0 "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1; then
     MOCK_BANK_WORKER_PID=""
@@ -248,9 +266,11 @@ ensure_mock_bank_worker() {
   fi
 
   if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]]; then
-    (cd demo/mock-bank/worker && exec env NATS_URL="${NATS_URL}" REDIS_URL="${REDIS_URL}" go run .) >/tmp/production-gate-mock-bank-worker.log 2>&1 &
+    # Use nohup so the worker survives when the $() subshell (from run_gate) exits.
+    nohup env NATS_URL="${NATS_URL}" REDIS_URL="${REDIS_URL}" go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 &
     MOCK_BANK_WORKER_PID=$!
     MOCK_BANK_WORKER_STARTED=1
+    echo "${MOCK_BANK_WORKER_PID}" >"${MOCK_BANK_PID_FILE}"
   fi
 
   for _ in {1..40}; do
@@ -261,10 +281,11 @@ ensure_mock_bank_worker() {
   done
 
   if [[ "${MOCK_BANK_WORKER_STARTED:-0}" == "1" ]] && [[ -n "${MOCK_BANK_WORKER_PID:-}" ]]; then
-    kill -- -"${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || kill "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || true
+    kill "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || true
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
     MOCK_BANK_WORKER_PID=""
     MOCK_BANK_WORKER_STARTED=0
+    rm -f "${MOCK_BANK_PID_FILE}"
   fi
 
   echo "mock-bank worker did not register" >&2
@@ -272,10 +293,12 @@ ensure_mock_bank_worker() {
 }
 
 cleanup() {
-  if [[ "${MOCK_BANK_WORKER_STARTED:-0}" == "1" ]] && [[ -n "${MOCK_BANK_WORKER_PID:-}" ]]; then
-    kill -- -"${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || kill "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || true
+  _recover_mock_bank_pid
+  if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
+    kill "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
   fi
+  rm -f "${MOCK_BANK_PID_FILE}" /tmp/gate_ws_*.tmp 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -875,8 +898,8 @@ gate_7_security() {
   local large_file large_code
   local redis_secret
 
-  burst="${RATE_LIMIT_BURST_REQUESTS:-5000}"
-  parallel="${RATE_LIMIT_PARALLEL:-200}"
+  burst="${RATE_LIMIT_BURST_REQUESTS:-500}"
+  parallel="${RATE_LIMIT_PARALLEL:-50}"
   local attempt_burst attempt_parallel
   local attempt
   if [[ -z "${REDIS_PASSWORD:-}" ]]; then
@@ -917,7 +940,10 @@ gate_7_security() {
       break
     fi
     attempt_burst=$((attempt_burst * 2))
-    if (( attempt_parallel < 800 )); then
+    if (( attempt_burst > 2000 )); then
+      attempt_burst=2000
+    fi
+    if (( attempt_parallel < 200 )); then
       attempt_parallel=$((attempt_parallel * 2))
     fi
     log "gate 7: no 429 observed; escalating burst to ${attempt_burst} (parallel=${attempt_parallel})"
@@ -2639,15 +2665,15 @@ if [[ "${STRICT_MODE:-0}" == "1" ]]; then
   ADVISORY_GATES=()
 fi
 
-# Cleanup trap: stop background mock-bank worker on exit
+# Cleanup trap: stop background mock-bank worker on exit (reuses _recover_mock_bank_pid)
 cleanup() {
-  if [[ -n "${MOCK_BANK_WORKER_PID}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
+  _recover_mock_bank_pid
+  if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
     log "cleanup: stopping mock-bank worker (PID ${MOCK_BANK_WORKER_PID})"
     kill "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
   fi
-  # Remove temp files created during gate runs
-  rm -f /tmp/gate_ws_*.tmp 2>/dev/null || true
+  rm -f "${MOCK_BANK_PID_FILE}" /tmp/gate_ws_*.tmp 2>/dev/null || true
 }
 trap cleanup EXIT
 
