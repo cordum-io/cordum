@@ -24,6 +24,22 @@ const (
 	envRedisDataTTLFallback  = "REDIS_DATA_TTL" // accepts ParseDuration values (e.g. 24h)
 )
 
+// sanitizeLogValue strips newlines and control characters from a string
+// before it is interpolated into a structured log call.  This prevents
+// log-injection attacks when the value originates from an environment
+// variable or other external source.
+func sanitizeLogValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return ' '
+		}
+		if r < 0x20 && r != ' ' {
+			return -1 // drop other control characters
+		}
+		return r
+	}, s)
+}
+
 // Store defines access to the memory fabric for contexts and results.
 type Store interface {
 	PutContext(ctx context.Context, key string, data []byte) error
@@ -49,7 +65,7 @@ func NewRedisStore(url string) (*RedisStore, error) {
 	if ttlSeconds := os.Getenv(envRedisDataTTLInSeconds); ttlSeconds != "" {
 		secs, err := strconv.Atoi(ttlSeconds)
 		if err != nil {
-			slog.Warn("invalid "+envRedisDataTTLInSeconds+", using default", "value", ttlSeconds, "error", err, "default", defaultDataTTL)
+			slog.Warn("invalid "+envRedisDataTTLInSeconds+", using default", "value", sanitizeLogValue(ttlSeconds), "error", err, "default", defaultDataTTL)
 		} else if secs <= 0 {
 			slog.Warn("non-positive "+envRedisDataTTLInSeconds+", using default", "value", secs, "default", defaultDataTTL)
 		} else {
@@ -59,9 +75,9 @@ func NewRedisStore(url string) (*RedisStore, error) {
 	if ttlEnv := os.Getenv(envRedisDataTTLFallback); ttlEnv != "" {
 		parsed, err := time.ParseDuration(ttlEnv)
 		if err != nil {
-			slog.Warn("invalid "+envRedisDataTTLFallback+", using default", "value", ttlEnv, "error", err, "default", defaultDataTTL)
+			slog.Warn("invalid "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "error", err, "default", defaultDataTTL)
 		} else if parsed <= 0 {
-			slog.Warn("non-positive "+envRedisDataTTLFallback+", using default", "value", ttlEnv, "default", defaultDataTTL)
+			slog.Warn("non-positive "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "default", defaultDataTTL)
 		} else {
 			ttl = parsed
 		}

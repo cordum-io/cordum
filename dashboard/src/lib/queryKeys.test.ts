@@ -88,8 +88,6 @@ describe("queryKeys factory", () => {
 
   // ── Invalidation prefix tests ──────────────────────────────────
   it("jobs.all is a prefix of jobs.list", () => {
-    const prefix = JSON.stringify(queryKeys.jobs.all);
-    const full = JSON.stringify(queryKeys.jobs.list({ topic: "t" }));
     // The prefix array ["jobs"] should be a subset of ["jobs", {topic: "t"}]
     expect(queryKeys.jobs.list({ topic: "t" })[0]).toBe(queryKeys.jobs.all[0]);
   });

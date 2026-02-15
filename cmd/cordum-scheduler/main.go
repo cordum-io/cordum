@@ -123,6 +123,19 @@ func (s *redisDLQSink) Add(ctx context.Context, entry scheduler.DLQEntry) error 
 	})
 }
 
+// sanitizeLogValue strips newlines and control characters to prevent log injection.
+func sanitizeLogValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return ' '
+		}
+		if r < 0x20 && r != ' ' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func main() {
 	log.Println("cordum scheduler starting...")
 	buildinfo.Log("cordum-scheduler")
@@ -133,7 +146,7 @@ func main() {
 	if err != nil {
 		explicitPath := os.Getenv("TIMEOUT_CONFIG_PATH")
 		if env.IsProduction() && explicitPath != "" {
-			log.Fatalf("timeout config load failed (production mode, TIMEOUT_CONFIG_PATH=%s): %v", explicitPath, err)
+			log.Fatalf("timeout config load failed (production mode, TIMEOUT_CONFIG_PATH=%s): %v", sanitizeLogValue(explicitPath), err)
 		}
 		log.Printf("using default timeout config (could not load %s): %v", cfg.TimeoutConfigPath, err)
 	}

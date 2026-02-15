@@ -78,6 +78,14 @@ function channel(): MockBroadcastChannel {
   return c;
 }
 
+/** Create a StorageEvent with overridden readonly properties. */
+function makeStorageEvent(props: { key: string; newValue: string | null }): StorageEvent {
+  const event = new StorageEvent("storage");
+  Object.defineProperty(event, "key", { value: props.key });
+  Object.defineProperty(event, "newValue", { value: props.newValue });
+  return event;
+}
+
 describe("useCrossTabSync", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -170,9 +178,7 @@ describe("useCrossTabSync", () => {
 
     const hook = renderWithQueryClient(() => useCrossTabSync());
 
-    window.dispatchEvent(
-      new StorageEvent("storage", { key: "cordum-api-key", newValue: "storage-token" }),
-    );
+    window.dispatchEvent(makeStorageEvent({ key: "cordum-api-key", newValue: "storage-token" }));
 
     await hook.waitFor(() => {
       expect(loginMock).toHaveBeenCalledWith(
@@ -189,9 +195,7 @@ describe("useCrossTabSync", () => {
 
     const hook = renderWithQueryClient(() => useCrossTabSync());
 
-    window.dispatchEvent(
-      new StorageEvent("storage", { key: "cordum-api-key", newValue: "some-token" }),
-    );
+    window.dispatchEvent(makeStorageEvent({ key: "cordum-api-key", newValue: "some-token" }));
 
     // Give it a tick to process
     await new Promise((r) => setTimeout(r, 50));
@@ -218,13 +222,13 @@ describe("useCrossTabSync", () => {
   it("handles storage-event fallback for logout and theme changes", async () => {
     const hook = renderWithQueryClient(() => useCrossTabSync());
 
-    window.dispatchEvent(new StorageEvent("storage", { key: "cordum-api-key", newValue: null }));
+    window.dispatchEvent(makeStorageEvent({ key: "cordum-api-key", newValue: null }));
     await hook.waitFor(() => {
       expect(logoutMock).toHaveBeenCalledTimes(1);
     });
     expect(navigateMock).toHaveBeenCalledWith("/login", { replace: true });
 
-    window.dispatchEvent(new StorageEvent("storage", { key: "cordum-theme", newValue: "dark" }));
+    window.dispatchEvent(makeStorageEvent({ key: "cordum-theme", newValue: "dark" }));
     await hook.waitFor(() => {
       expect(setThemeMock).toHaveBeenCalledWith("dark");
     });
