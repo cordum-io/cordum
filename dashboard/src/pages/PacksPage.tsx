@@ -156,9 +156,13 @@ export default function PacksPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-full border border-border p-1 w-fit">
+      <div className="flex gap-1 rounded-full border border-border p-1 w-fit" role="tablist" aria-label="Pack views">
         <button
           type="button"
+          role="tab"
+          aria-selected={activeTab === "installed"}
+          aria-controls="tabpanel-installed"
+          id="tab-installed"
           className={cn(
             "flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition",
             activeTab === "installed"
@@ -172,6 +176,10 @@ export default function PacksPage() {
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={activeTab === "marketplace"}
+          aria-controls="tabpanel-marketplace"
+          id="tab-marketplace"
           className={cn(
             "flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition",
             activeTab === "marketplace"
@@ -186,7 +194,7 @@ export default function PacksPage() {
       </div>
 
       {activeTab === "installed" && (
-        <>
+        <div id="tabpanel-installed" role="tabpanel" aria-labelledby="tab-installed">
           {isLoading && (
             <p className="text-sm text-muted">Loading packs...</p>
           )}
@@ -213,10 +221,10 @@ export default function PacksPage() {
               ))}
             </div>
           )}
-        </>
+        </div>
       )}
 
-      {activeTab === "marketplace" && <MarketplaceBrowser />}
+      {activeTab === "marketplace" && <div id="tabpanel-marketplace" role="tabpanel" aria-labelledby="tab-marketplace"><MarketplaceBrowser /></div>}
 
       {confirmPack && (
         <ConfirmDialog

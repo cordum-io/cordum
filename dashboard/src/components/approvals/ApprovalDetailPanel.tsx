@@ -13,6 +13,7 @@ import { ApiError } from "../../api/client";
 import { computeUrgencyLevel } from "../../api/transform";
 import { useEventStore } from "../../state/events";
 import { useConfigStore } from "../../state/config";
+import { useDialogA11y } from "../../hooks/useDialogA11y";
 import type { Approval, UrgencyLevel } from "../../api/types";
 
 // ---------------------------------------------------------------------------
@@ -105,6 +106,8 @@ export function ApprovalDetailPanel({
   const [modifiedPayload, setModifiedPayload] = useState("");
   const [payloadError, setPayloadError] = useState<string | null>(null);
   const [conditionScope, setConditionScope] = useState<"this-run" | "pattern">("this-run");
+
+  const dialogRef = useDialogA11y(onClose);
 
   // Presence tracking — mark as reviewing on mount, clear on unmount
   const currentUser = useConfigStore((s) => s.principalId || "operator");
@@ -248,6 +251,10 @@ export function ApprovalDetailPanel({
 
       {/* Panel */}
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Approval detail"
         className={cn(
           "fixed right-0 top-0 z-50 flex h-full flex-col",
           "w-full md:w-[65%] border-l border-border bg-surface shadow-2xl",

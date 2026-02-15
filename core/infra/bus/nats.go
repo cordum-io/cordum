@@ -28,6 +28,11 @@ type NatsBus struct {
 
 	subsMu sync.Mutex
 	subs   []*nats.Subscription
+
+	// OnMessageTerminated is called when a message is permanently terminated
+	// (poison pill or corrupt payload). Callers can use this to route the
+	// message to a dead-letter queue.
+	OnMessageTerminated func(subject string, data []byte, numDelivered uint64)
 }
 
 const (
@@ -184,12 +189,36 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	}
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		cb := func(msg *nats.Msg) {
-			// Log warning when a message is approaching max redelivery
-			if meta, err := msg.Metadata(); err == nil && meta.NumDelivered > 50 {
-				log.Printf("nats bus: message on %s redelivered %d times (max=%d)", subject, meta.NumDelivered, maxJSRedeliveries)
+			var numDelivered uint64
+			if meta, metaErr := msg.Metadata(); metaErr == nil {
+				numDelivered = meta.NumDelivered
+				// Terminate messages that have reached max delivery — they are poison pills
+				// blocking the queue for all messages behind them.
+				if numDelivered >= uint64(maxJSRedeliveries) {
+					log.Printf("nats bus: TERMINATING poison message on %s after %d deliveries (stream_seq=%d consumer_seq=%d)",
+						subject, numDelivered, meta.Sequence.Stream, meta.Sequence.Consumer)
+					if termErr := msg.Term(); termErr != nil {
+						log.Printf("nats bus: term failed: %v", termErr)
+					}
+					if b.OnMessageTerminated != nil {
+						b.OnMessageTerminated(subject, msg.Data, numDelivered)
+					}
+					return
+				}
+				if numDelivered > 50 {
+					log.Printf("nats bus: message on %s redelivered %d times (max=%d)", subject, numDelivered, maxJSRedeliveries)
+				}
 			}
-			action, delay := processBusMsg(msg.Data, handler)
+			action, delay := processBusMsg(msg.Data, handler, numDelivered)
 			switch action {
+			case msgActionTerm:
+				log.Printf("nats bus: terminating non-retryable message on %s (deliveries=%d)", subject, numDelivered)
+				if termErr := msg.Term(); termErr != nil {
+					log.Printf("nats bus: term failed: %v", termErr)
+				}
+				if b.OnMessageTerminated != nil {
+					b.OnMessageTerminated(subject, msg.Data, numDelivered)
+				}
 			case msgActionNakDelay:
 				log.Printf("nats bus: nak-with-delay on %s (delay=%v)", subject, delay)
 				if nakErr := msg.NakWithDelay(delay); nakErr != nil {
@@ -276,13 +305,24 @@ const (
 	msgActionAck      msgAction = iota // Acknowledge (processed or non-retryable error)
 	msgActionNak                       // Retry immediately
 	msgActionNakDelay                  // Retry after delay (poison pill or retryable error)
+	msgActionTerm                      // Terminate redelivery (permanent failure, e.g. corrupt payload)
 )
 
+// poisonUnmarshalThreshold is the number of delivery attempts after which an
+// unmarshal failure is treated as permanent corruption rather than transient.
+const poisonUnmarshalThreshold uint64 = 3
+
 // processBusMsg unmarshals raw message data, invokes the handler, and returns
-// the action to take plus an optional NAK delay.
-func processBusMsg(data []byte, handler func(*pb.BusPacket) error) (msgAction, time.Duration) {
+// the action to take plus an optional NAK delay. numDelivered is the JetStream
+// delivery count (0 when metadata is unavailable).
+func processBusMsg(data []byte, handler func(*pb.BusPacket) error, numDelivered uint64) (msgAction, time.Duration) {
 	var packet pb.BusPacket
 	if err := proto.Unmarshal(data, &packet); err != nil {
+		// If unmarshal fails after multiple redeliveries, the payload is
+		// permanently corrupt. Terminate to prevent queue starvation.
+		if numDelivered > poisonUnmarshalThreshold {
+			return msgActionTerm, 0
+		}
 		return msgActionNakDelay, 5 * time.Second
 	}
 	if err := handler(&packet); err != nil {

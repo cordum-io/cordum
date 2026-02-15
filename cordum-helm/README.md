@@ -197,9 +197,35 @@ Configure the ingress controller label selector if not using ingress-nginx:
 helm install cordum ./cordum-helm -n cordum --create-namespace \
   --set secrets.apiKey=$(openssl rand -hex 32) \
   --set redis.auth.password=$(openssl rand -hex 32) \
+  --set global.production=true \
   --set networkPolicy.enabled=true \
   --set ingress.enabled=true
 ```
+
+Setting `global.production=true` adds `CORDUM_ENV=production` to all services,
+enabling TLS enforcement, strict security defaults, and TLS 1.3 minimum.
+
+### Production Install with TLS
+
+```bash
+# Create server TLS secret first:
+kubectl -n cordum create secret tls cordum-server-tls \
+  --cert=server.crt --key=server.key
+
+helm install cordum ./cordum-helm -n cordum --create-namespace \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
+  --set global.production=true \
+  --set global.tls.enabled=true \
+  --set global.tls.serverCertSecret=cordum-server-tls \
+  --set networkPolicy.enabled=true \
+  --set ingress.enabled=true
+```
+
+When `global.tls.enabled=true`, the chart mounts server certificates and sets
+TLS env vars for gateway (gRPC + HTTP), safety kernel, and context engine.
+See [Production Deployment Guide](../docs/guides/production-deployment.md) for
+full details.
 
 ## Migration Notes
 
@@ -213,6 +239,8 @@ When upgrading from a chart version that did not include these security features
   `containerSecurityContext=null`.
 - **Network policies**: Disabled by default (`networkPolicy.enabled=false`), so
   no breaking change on upgrade.
+- **Production mode**: New `global.production` (default `false`) and
+  `global.tls` settings have no effect unless explicitly enabled.
 
 ## Notes
 

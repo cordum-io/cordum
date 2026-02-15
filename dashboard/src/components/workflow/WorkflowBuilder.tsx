@@ -13,13 +13,15 @@ import {
   useUpdateWorkflow,
 } from "../../hooks/useWorkflows";
 import { logger } from "../../lib/logger";
+import { isValidResourceId } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
 // WorkflowBuilder — orchestrator
 // ---------------------------------------------------------------------------
 
 export function WorkflowBuilder() {
-  const { id: workflowId } = useParams<{ id: string }>();
+  const { id: rawWorkflowId } = useParams<{ id: string }>();
+  const workflowId = isValidResourceId(rawWorkflowId) ? rawWorkflowId : rawWorkflowId === "new" ? "new" : undefined;
   const isEdit = !!workflowId && workflowId !== "new";
   const navigate = useNavigate();
 

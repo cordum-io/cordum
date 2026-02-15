@@ -97,7 +97,7 @@ func TestNormalizeDecision(t *testing.T) {
 		"require-approval":       "require_approval",
 		"allow_with_constraints": "allow_with_constraints",
 		"throttle":               "throttle",
-		"":                       "allow",
+		"":                       "deny",
 	}
 	for input, expect := range cases {
 		if got := normalizeDecision(input); got != expect {
@@ -304,5 +304,32 @@ output_policy:
 `))
 	if err == nil {
 		t.Fatalf("expected schema validation error for invalid output fail mode")
+	}
+}
+
+func TestNormalizeDecisionUnknown(t *testing.T) {
+	// A typo like "denyy" must default to deny (fail-closed), not allow.
+	got := normalizeDecision("denyy")
+	if got != "deny" {
+		t.Fatalf("expected deny for typo 'denyy', got %q", got)
+	}
+	got = normalizeDecision("alllow")
+	if got != "deny" {
+		t.Fatalf("expected deny for typo 'alllow', got %q", got)
+	}
+	got = normalizeDecision("maybe")
+	if got != "deny" {
+		t.Fatalf("expected deny for invalid 'maybe', got %q", got)
+	}
+}
+
+func TestNormalizeDecisionEmpty(t *testing.T) {
+	got := normalizeDecision("")
+	if got != "deny" {
+		t.Fatalf("expected deny for empty string, got %q", got)
+	}
+	got = normalizeDecision("   ")
+	if got != "deny" {
+		t.Fatalf("expected deny for whitespace-only string, got %q", got)
 	}
 }

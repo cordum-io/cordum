@@ -81,7 +81,7 @@ function SuccessSparkline({ data }: { data: RunStatus[] }) {
           className={cn(
             "w-1 rounded-sm",
             SPARKLINE_COLORS[status] ?? "bg-gray-200",
-            status === "succeeded" || status === "completed" ? "h-3" : "h-2",
+            status === "succeeded" ? "h-3" : "h-2",
           )}
         />
       ))}

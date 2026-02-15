@@ -11,9 +11,13 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/cordum/cordum/core/infra/env"
 )
 
 // ===========================================================================
@@ -27,6 +31,9 @@ type jwtValidator struct {
 	audience    string
 	clockSkew   time.Duration
 	defaultRole string
+
+	warnIssuerOnce   sync.Once
+	warnAudienceOnce sync.Once
 }
 
 func newJWTValidatorFromEnv() (*jwtValidator, bool, error) {
@@ -55,8 +62,11 @@ func newJWTValidatorFromEnv() (*jwtValidator, bool, error) {
 		v.defaultRole = "viewer"
 	}
 	if rawSkew := strings.TrimSpace(os.Getenv("CORDUM_JWT_CLOCK_SKEW")); rawSkew != "" {
+		const maxClockSkew = 5 * time.Minute
 		if d, err := time.ParseDuration(rawSkew); err != nil {
 			return nil, false, fmt.Errorf("parse jwt clock skew: %w", err)
+		} else if d > maxClockSkew {
+			return nil, false, fmt.Errorf("jwt clock skew %v exceeds maximum %v", d, maxClockSkew)
 		} else if d > 0 {
 			v.clockSkew = d
 		}
@@ -186,10 +196,12 @@ func (v *jwtValidator) verifySignature(alg, signingInput string, sig []byte) err
 
 func (v *jwtValidator) validateClaims(claims map[string]any) error {
 	now := time.Now()
-	if exp, ok := numericClaim(claims, "exp"); ok {
-		if now.After(exp.Add(v.clockSkew)) {
-			return errors.New("jwt expired")
-		}
+	exp, ok := numericClaim(claims, "exp")
+	if !ok {
+		return errors.New("jwt missing exp claim")
+	}
+	if now.After(exp.Add(v.clockSkew)) {
+		return errors.New("jwt expired")
 	}
 	if nbf, ok := numericClaim(claims, "nbf"); ok {
 		if now.Add(v.clockSkew).Before(nbf) {
@@ -200,11 +212,25 @@ func (v *jwtValidator) validateClaims(claims map[string]any) error {
 		if iss, _ := claims["iss"].(string); iss != v.issuer {
 			return errors.New("jwt issuer mismatch")
 		}
+	} else {
+		if env.IsProduction() {
+			return errors.New("jwt: issuer validation required in production — set CORDUM_JWT_ISSUER")
+		}
+		v.warnIssuerOnce.Do(func() {
+			slog.Warn("jwt: issuer validation disabled — CORDUM_JWT_ISSUER not configured")
+		})
 	}
 	if v.audience != "" {
 		if !audienceMatches(claims["aud"], v.audience) {
 			return errors.New("jwt audience mismatch")
 		}
+	} else {
+		if env.IsProduction() {
+			return errors.New("jwt: audience validation required in production — set CORDUM_JWT_AUDIENCE")
+		}
+		v.warnAudienceOnce.Do(func() {
+			slog.Warn("jwt: audience validation disabled — CORDUM_JWT_AUDIENCE not configured")
+		})
 	}
 	return nil
 }
@@ -229,7 +255,19 @@ func (v *jwtValidator) authFromClaims(claims map[string]any) *AuthContext {
 	if principal == "" {
 		principal = claimString(claims, "principal_id")
 	}
-	allowCrossTenant, _ := claims["allow_cross_tenant"].(bool)
+	// Only honor allow_cross_tenant from tokens signed by the platform's own
+	// trusted issuer. Self-asserted cross-tenant from arbitrary JWTs is a
+	// privilege escalation vector.
+	var allowCrossTenant bool
+	if claimBool(claims, "allow_cross_tenant") {
+		iss := claimString(claims, "iss")
+		if v.issuer != "" && iss == v.issuer {
+			allowCrossTenant = true
+		} else {
+			slog.Warn("jwt: ignoring self-asserted allow_cross_tenant — issuer not trusted",
+				"iss", iss, "trusted_issuer", v.issuer)
+		}
+	}
 
 	return &AuthContext{
 		Tenant:           strings.TrimSpace(tenant),
@@ -270,6 +308,24 @@ func claimString(claims map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func claimBool(claims map[string]any, key string) bool {
+	raw, exists := claims[key]
+	if !exists {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(v, "true") || v == "1"
+	case float64:
+		return v != 0
+	default:
+		slog.Warn("jwt: unexpected type for claim", "key", key, "type", fmt.Sprintf("%T", raw))
+		return false
+	}
 }
 
 func audienceMatches(raw any, expected string) bool {

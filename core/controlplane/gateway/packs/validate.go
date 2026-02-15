@@ -700,6 +700,8 @@ func ExtractTarGzReader(src io.Reader, dest string) error {
 			if err := out.Close(); err != nil {
 				return fmt.Errorf("extract tar.gz close: %w", err)
 			}
+		default:
+			return fmt.Errorf("pack archive contains disallowed entry type %d: %s", hdr.Typeflag, hdr.Name)
 		}
 	}
 }

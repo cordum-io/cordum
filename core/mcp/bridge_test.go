@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHTTPBridgeSubmitJob(t *testing.T) {
@@ -159,6 +160,51 @@ func TestHTTPBridgeRejectsPrivateTargetByDefault(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "private") {
 		t.Fatalf("expected private-target error, got %v", err)
+	}
+}
+
+func TestSafeHTTPClient_BlocksExcessRedirects(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.String(), http.StatusFound)
+	}))
+	defer srv.Close()
+
+	client := SafeHTTPClient(5 * time.Second)
+	client.Transport = srv.Client().Transport // trust test TLS cert
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	_, err := client.Do(req)
+	if err == nil {
+		t.Fatal("expected error from excessive redirects")
+	}
+	if !strings.Contains(err.Error(), "stopped after") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSafeHTTPClient_BlocksNonHTTPS(t *testing.T) {
+	t.Parallel()
+
+	httpTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer httpTarget.Close()
+
+	// Server redirects to the plain HTTP target.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, httpTarget.URL, http.StatusFound)
+	}))
+	defer srv.Close()
+
+	client := SafeHTTPClient(5 * time.Second)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	_, err := client.Do(req)
+	if err == nil {
+		t.Fatal("expected error from non-HTTPS redirect")
+	}
+	if !strings.Contains(err.Error(), "non-HTTPS") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

@@ -321,6 +321,17 @@ Each scope's `data` map shallow-merges into the result. Keys in lower scopes ove
 - `PUT /api/v1/config` — write/update a config document
 - `GET /api/v1/config/effective?scope={scope}&scope_id={id}` — get merged effective config
 
+### Fresh Install Behavior
+
+On fresh installs, no `cfg:system:default` key exists in Redis. When the dashboard
+requests `GET /api/v1/config` (which defaults to `scope=system&scope_id=default`),
+the gateway returns `200 {}` — an empty JSON object. The dashboard renders its
+built-in defaults (safety stance, rate limits, retention days, etc.) until an admin
+saves settings via the Settings page or `POST /api/v1/config`.
+
+No manual config seeding is required. Non-default scope queries (e.g.,
+`?scope=org&scope_id=acme`) still return `404` if the config document does not exist.
+
 ---
 
 ## pools.yaml — Worker Pool Routing
@@ -632,7 +643,7 @@ scanners:
 | `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `redis://:${REDIS_PASSWORD}@redis:6379` — password required) |
 | `NATS_USE_JETSTREAM` | `0` | No | Enable NATS JetStream: `0` or `1` |
 | `POOL_CONFIG_PATH` | `config/pools.yaml` | No | Path to pools config |
-| `TIMEOUT_CONFIG_PATH` | `config/timeouts.yaml` | No | Path to timeouts config |
+| `TIMEOUT_CONFIG_PATH` | `config/timeouts.yaml` | No | Path to timeouts config. **Production mode**: if explicitly set and the file cannot be loaded or parsed, the scheduler exits with an error. In dev mode, falls back to built-in defaults with a warning. |
 | `SAFETY_POLICY_PATH` | `config/safety.yaml` | No | Path to safety policy |
 | `SAFETY_KERNEL_ADDR` | `localhost:50051` | No | Safety kernel gRPC address |
 | `CONTEXT_ENGINE_ADDR` | `:50070` | No | Context engine gRPC address |

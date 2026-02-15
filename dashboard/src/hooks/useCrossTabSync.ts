@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import type { User } from "../api/types";
 import { useConfigStore } from "../state/config";
 import { useUiStore } from "../state/ui";
 
@@ -9,7 +10,7 @@ import { useUiStore } from "../state/ui";
 
 type SyncMessage =
   | { type: "auth-logout" }
-  | { type: "auth-login" }
+  | { type: "auth-login"; token: string; user: User }
   | { type: "theme-change"; theme: "light" | "dark" | "system" };
 
 let channel: BroadcastChannel | null = null;
@@ -51,18 +52,8 @@ export function useCrossTabSync(): void {
             navigate("/login", { replace: true });
             break;
           case "auth-login":
-            // Reload auth state from localStorage
-            {
-              const token = window.localStorage.getItem("cordum-api-key") ?? "";
-              const rawUser = window.localStorage.getItem("cordum-user");
-              if (token && rawUser) {
-                try {
-                  const user = JSON.parse(rawUser);
-                  useConfigStore.getState().login(token, user);
-                } catch {
-                  // corrupt data — ignore
-                }
-              }
+            if (msg.token && msg.user) {
+              useConfigStore.getState().login(msg.token, msg.user);
             }
             break;
           case "theme-change":
@@ -87,7 +78,16 @@ export function useCrossTabSync(): void {
         if (!e.newValue) {
           handleMessage({ type: "auth-logout" });
         } else {
-          handleMessage({ type: "auth-login" });
+          // Read user from localStorage since StorageEvent doesn't carry full payload
+          const rawUser = window.localStorage.getItem("cordum-user");
+          try {
+            const user = rawUser ? (JSON.parse(rawUser) as User) : null;
+            if (user) {
+              handleMessage({ type: "auth-login", token: e.newValue, user });
+            }
+          } catch {
+            // corrupt user data — ignore
+          }
         }
       } else if (e.key === "cordum-theme" && e.newValue) {
         const theme = e.newValue as "light" | "dark" | "system";

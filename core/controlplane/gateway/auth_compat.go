@@ -65,6 +65,9 @@ var (
 	seedDefaultAdminUser = auth.SeedDefaultAdminUser
 	GenerateRawKey       = auth.GenerateRawKey
 
+	// Validation helpers.
+	ValidatePassword = auth.ValidatePassword
+
 	// Auth helpers (unexported — used by gateway internals + tests).
 	basicAuthProvider  = auth.ExtractBasicAuth
 	normalizeAPIKey    = auth.NormalizeAPIKey

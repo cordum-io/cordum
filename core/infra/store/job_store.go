@@ -76,15 +76,20 @@ var (
 		"":                            {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed},
 		model.JobStatePending:     {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
 		model.JobStateApproval:    {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
+		// Quarantined transitions from active states: output policy 2-phase evaluation
+		// can quarantine a job at any point during execution if the output scanner
+		// detects unsafe content. See ADR-005 (output-policy-2-phase).
 		model.JobStateScheduled:   {model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
 		model.JobStateDispatched:  {model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
 		model.JobStateRunning:     {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
+		// Succeeded → Quarantined: async output scanning may flag content after the
+		// job completes. This is the only allowed post-success transition.
 		model.JobStateSucceeded:   {model.JobStateQuarantined},
 		model.JobStateFailed:      {},
 		model.JobStateCancelled:   {},
 		model.JobStateTimeout:     {},
 		model.JobStateDenied:      {},
-		model.JobStateQuarantined: {},
+		model.JobStateQuarantined: {}, // Terminal — no further transitions allowed.
 	}
 )
 
@@ -218,6 +223,7 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 // TryAcquireLock attempts to acquire a distributed lock with TTL; returns token if acquired.
 func (s *RedisJobStore) TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	if ttl <= 0 {
+		slog.Warn("non-positive lock TTL, using default 30s", "requested", ttl)
 		ttl = 30 * time.Second
 	}
 	token := uuid.NewString()
@@ -259,12 +265,22 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 
 	ttl := defaultJobMetaTTL
 	if v := os.Getenv(envJobMetaTTLSeconds); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		secs, err := strconv.Atoi(v)
+		if err != nil {
+			slog.Warn("invalid "+envJobMetaTTLSeconds+", using default", "value", v, "error", err, "default", defaultJobMetaTTL)
+		} else if secs <= 0 {
+			slog.Warn("non-positive "+envJobMetaTTLSeconds+", using default", "value", secs, "default", defaultJobMetaTTL)
+		} else {
 			ttl = time.Duration(secs) * time.Second
 		}
 	}
 	if v := os.Getenv(envJobMetaTTL); v != "" {
-		if parsed, err := time.ParseDuration(v); err == nil && parsed > 0 {
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			slog.Warn("invalid "+envJobMetaTTL+", using default", "value", v, "error", err, "default", defaultJobMetaTTL)
+		} else if parsed <= 0 {
+			slog.Warn("non-positive "+envJobMetaTTL+", using default", "value", v, "default", defaultJobMetaTTL)
+		} else {
 			ttl = parsed
 		}
 	}
@@ -423,7 +439,11 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 		if !ok || jobID == "" {
 			continue
 		}
-		meta, _ := metaCmds[jobID].Result()
+		meta, metaErr := metaCmds[jobID].Result()
+		if metaErr != nil {
+			slog.Error("job-store: pipeline HGetAll failed", "job_id", jobID, "error", metaErr)
+			continue
+		}
 		state := model.JobState(meta["state"])
 		if state == "" {
 			if sCmd := stateCmds[jobID]; sCmd != nil {
@@ -431,6 +451,12 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 					state = model.JobState(val)
 				}
 			}
+		}
+		// Skip records with no metadata — the job hash has expired or was deleted
+		// while the index entry remains. Producing a zero-value record hides the issue.
+		if len(meta) == 0 && state == "" {
+			slog.Warn("job-store: skipping job with expired metadata", "job_id", jobID)
+			continue
 		}
 		topic := meta[metaFieldTopic]
 		tenant := meta[metaFieldTenant]

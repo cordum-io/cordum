@@ -27,6 +27,22 @@ In production, metrics bind to loopback unless you set:
 
 All services log to stdout/stderr. Aggregate with your preferred log collector.
 
+## Config auto-bootstrap
+
+On first startup, the gateway and scheduler create the `system/default` config
+document in Redis with minimal safety and rate-limit defaults. This is idempotent
+and safe to run on upgrades.
+
+**Helm:** A post-install/post-upgrade Job verifies the config endpoint returns `200`.
+Disable with `--set configBootstrap.enabled=false`.
+
+**Troubleshooting empty settings page:**
+1. Check `GET /api/v1/config` returns `200` (not `404` or `500`).
+2. If `404`, restart the gateway pod to trigger auto-bootstrap.
+3. If Redis is unreachable, fix connectivity — the bootstrap is non-fatal on startup
+   but the config will be empty until Redis is available.
+4. Manually seed config: `POST /api/v1/config -d '{"safetyStance":"balanced"}'`.
+
 ## Scaling notes
 
 Tags: scaling, scheduler, availability

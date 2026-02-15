@@ -204,10 +204,10 @@ describe("useApprovals hooks", () => {
       hook.result.current?.mutateAsync({ id: "a1" }),
     ).rejects.toThrow("approve failed");
 
-    expect(queryClient.getQueryData<{ items: Array<{ id: string }> }>(["approvals", "all"])?.items).toEqual([
-      { id: "a1" },
-      { id: "a2" },
-    ]);
+    // Per-item rollback re-adds the failed item at the end (preserving other optimistic removals)
+    const items = queryClient.getQueryData<{ items: Array<{ id: string }> }>(["approvals", "all"])?.items;
+    expect(items).toHaveLength(2);
+    expect(items?.map((i) => i.id).sort()).toEqual(["a1", "a2"]);
     expect(addToastMock).toHaveBeenCalledWith({
       type: "error",
       title: "Approval failed",
@@ -280,6 +280,105 @@ describe("useApprovals hooks", () => {
       workflowId: "wf-1",
       waitDurationMs: 300000,
     });
+    hook.unmount();
+  });
+
+  it("useApprovalHistory handles null snapshot_after gracefully", async () => {
+    mockFetch([
+      {
+        match: "/policy/audit",
+        method: "GET",
+        body: {
+          items: [
+            {
+              id: "h1",
+              action: "approve",
+              resource_id: "j1",
+              actor_id: "alice",
+              created_at: "2026-02-13T10:05:00.000Z",
+              snapshot_after: null,
+            },
+          ],
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => useApprovalHistory());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.isSuccess).toBe(true);
+    });
+    expect(hook.result.current?.data?.items).toHaveLength(1);
+    expect(hook.result.current?.data?.items[0].topic).toBeUndefined();
+    expect(hook.result.current?.data?.items[0].workflowId).toBeUndefined();
+    expect(hook.result.current?.data?.items[0].waitDurationMs).toBeUndefined();
+    hook.unmount();
+  });
+
+  it("useApprovalHistory handles malformed snapshot_after JSON and logs warn with context", async () => {
+    mockFetch([
+      {
+        match: "/policy/audit",
+        method: "GET",
+        body: {
+          items: [
+            {
+              id: "h1",
+              action: "reject",
+              resource_id: "j1",
+              actor_id: "bob",
+              created_at: "2026-02-13T10:05:00.000Z",
+              snapshot_after: "not-json{",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => useApprovalHistory());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.isSuccess).toBe(true);
+    });
+    expect(hook.result.current?.data?.items).toHaveLength(1);
+    expect(hook.result.current?.data?.items[0].topic).toBeUndefined();
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      "approvals",
+      "Failed to parse approval snapshot_after",
+      expect.objectContaining({
+        auditId: "h1",
+        rawType: "string",
+      }),
+    );
+    hook.unmount();
+  });
+
+  it("useApprovalHistory handles snapshot_after with unexpected shape", async () => {
+    mockFetch([
+      {
+        match: "/policy/audit",
+        method: "GET",
+        body: {
+          items: [
+            {
+              id: "h1",
+              action: "approve",
+              resource_id: "j1",
+              actor_id: "charlie",
+              created_at: "2026-02-13T10:05:00.000Z",
+              snapshot_after: JSON.stringify({ unexpected: "shape" }),
+            },
+          ],
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => useApprovalHistory());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.isSuccess).toBe(true);
+    });
+    expect(hook.result.current?.data?.items).toHaveLength(1);
+    // Fields silently resolve to undefined but don't throw
+    expect(hook.result.current?.data?.items[0].topic).toBeUndefined();
+    expect(hook.result.current?.data?.items[0].workflowId).toBeUndefined();
     hook.unmount();
   });
 

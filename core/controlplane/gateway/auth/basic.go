@@ -232,6 +232,24 @@ func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext,
 	return b.authenticate(ctx, key, principalID)
 }
 
+// roleFromScopes maps API key scopes to a role, using the highest privilege
+// scope present. Order: admin > operator > viewer. Keys with no scopes
+// default to viewer (principle of least privilege).
+func roleFromScopes(scopes []string) string {
+	role := "viewer"
+	for _, scope := range scopes {
+		switch strings.ToLower(strings.TrimSpace(scope)) {
+		case "admin":
+			return "admin" // highest — short-circuit
+		case "write", "operator":
+			role = "operator"
+		case "read", "viewer":
+			// only upgrade from default viewer
+		}
+	}
+	return role
+}
+
 func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID string) (*AuthContext, error) {
 	if b == nil {
 		return &AuthContext{}, nil
@@ -266,13 +284,7 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 		if b.keyStore != nil {
 			mk, err := b.keyStore.ValidateKey(ctx, key)
 			if err == nil {
-				role := "user"
-				for _, scope := range mk.Scopes {
-					if scope == "admin" {
-						role = "admin"
-						break
-					}
-				}
+				role := roleFromScopes(mk.Scopes)
 				tenant := strings.TrimSpace(mk.Tenant)
 				if tenant == "" {
 					tenant = b.defaultTenant

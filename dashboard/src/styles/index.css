@@ -532,8 +532,7 @@ body::before {
   background: var(--success);
 }
 
-.workflow-node[data-status="running"] .workflow-node__status-dot,
-.workflow-node[data-status="in_progress"] .workflow-node__status-dot {
+.workflow-node[data-status="running"] .workflow-node__status-dot {
   background: var(--accent);
 }
 
@@ -543,9 +542,8 @@ body::before {
   background: var(--danger);
 }
 
-.workflow-node[data-status="queued"] .workflow-node__status-dot,
 .workflow-node[data-status="pending"] .workflow-node__status-dot,
-.workflow-node[data-status="blocked"] .workflow-node__status-dot {
+.workflow-node[data-status="waiting"] .workflow-node__status-dot {
   background: var(--warning);
 }
 
@@ -991,8 +989,7 @@ body::before {
   background: var(--success);
 }
 
-.builder-node__status[data-status="running"] .builder-node__status-dot,
-.builder-node__status[data-status="in_progress"] .builder-node__status-dot {
+.builder-node__status[data-status="running"] .builder-node__status-dot {
   background: var(--accent);
 }
 
@@ -1002,9 +999,8 @@ body::before {
   background: var(--danger);
 }
 
-.builder-node__status[data-status="queued"] .builder-node__status-dot,
 .builder-node__status[data-status="pending"] .builder-node__status-dot,
-.builder-node__status[data-status="blocked"] .builder-node__status-dot {
+.builder-node__status[data-status="waiting"] .builder-node__status-dot {
   background: var(--warning);
 }
 

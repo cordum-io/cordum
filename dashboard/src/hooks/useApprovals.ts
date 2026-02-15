@@ -8,6 +8,16 @@ import { mapApprovalItem, type BackendApprovalItem, type BackendPolicyAuditEntry
 
 type ApprovalsSnapshot = { previous: [QueryKey, ApiResponse<Approval[]> | undefined][] };
 
+interface ApprovalSnapshot {
+  topic?: string;
+  workflow_id?: string;
+  requested_at?: string;
+}
+
+function isApprovalSnapshot(v: unknown): v is ApprovalSnapshot {
+  return typeof v === "object" && v !== null;
+}
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -98,16 +108,22 @@ export function useApprovalHistory(filters: ApprovalHistoryFilters = {}) {
           let waitDurationMs: number | undefined;
           if (e.snapshot_after) {
             try {
-              const snap = typeof e.snapshot_after === "string"
+              const raw = typeof e.snapshot_after === "string"
                 ? JSON.parse(e.snapshot_after)
                 : e.snapshot_after;
-              topic = snap.topic;
-              workflowId = snap.workflow_id;
-              if (snap.requested_at && e.created_at) {
-                waitDurationMs = new Date(e.created_at).getTime() - new Date(snap.requested_at).getTime();
+              if (isApprovalSnapshot(raw)) {
+                topic = raw.topic;
+                workflowId = raw.workflow_id;
+                if (raw.requested_at && e.created_at) {
+                  waitDurationMs = new Date(e.created_at).getTime() - new Date(raw.requested_at).getTime();
+                }
               }
-            } catch {
-              logger.debug("approvals", "Failed to parse approval snapshot JSON");
+            } catch (parseErr) {
+              logger.warn("approvals", "Failed to parse approval snapshot_after", {
+                auditId: e.id,
+                rawType: typeof e.snapshot_after,
+                error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+              });
             }
           }
           return {
@@ -148,6 +164,7 @@ interface ApproveInput {
 export function useApproveJob() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, ApproveInput, ApprovalsSnapshot>({
+    mutationKey: ["approve-job"],
     mutationFn: ({ id, comment }) => {
       logger.info("approvals", "Approving job", { id });
       return post<void>(`/approvals/${id}/approve`, comment ? { note: comment } : undefined);
@@ -169,10 +186,20 @@ export function useApproveJob() {
       useToastStore.getState().addToast({ type: "success", title: "Approved" });
     },
     onError: (err, { id }, context) => {
-      if (context?.previous) {
-        for (const [key, data] of context.previous) {
-          queryClient.setQueryData(key, data);
-        }
+      // Re-add only the specific failed item instead of restoring the entire
+      // snapshot, which could overwrite concurrent optimistic removals.
+      const originalItem = context?.previous
+        ?.flatMap(([, data]) => data?.items ?? [])
+        ?.find((a) => a.id === id);
+      if (originalItem) {
+        queryClient.setQueriesData<ApiResponse<Approval[]>>(
+          { queryKey: queryKeys.approvals.all },
+          (old) => {
+            if (!old?.items) return old;
+            if (old.items.some((a) => a.id === id)) return old;
+            return { ...old, items: [...old.items, originalItem] };
+          },
+        );
       }
       logger.error("approvals", "Approve failed", { id, error: err.message });
       const desc = err instanceof ApiError && err.status === 409
@@ -199,6 +226,7 @@ interface RejectInput {
 export function useRejectJob() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, RejectInput, ApprovalsSnapshot>({
+    mutationKey: ["reject-job"],
     mutationFn: ({ id, reason, comment }) => {
       logger.info("approvals", "Rejecting job", { id, reason });
       return post<void>(`/approvals/${id}/reject`, { reason, note: comment });
@@ -220,10 +248,20 @@ export function useRejectJob() {
       useToastStore.getState().addToast({ type: "success", title: "Rejected" });
     },
     onError: (err, { id }, context) => {
-      if (context?.previous) {
-        for (const [key, data] of context.previous) {
-          queryClient.setQueryData(key, data);
-        }
+      // Re-add only the specific failed item instead of restoring the entire
+      // snapshot, which could overwrite concurrent optimistic removals.
+      const originalItem = context?.previous
+        ?.flatMap(([, data]) => data?.items ?? [])
+        ?.find((a) => a.id === id);
+      if (originalItem) {
+        queryClient.setQueriesData<ApiResponse<Approval[]>>(
+          { queryKey: queryKeys.approvals.all },
+          (old) => {
+            if (!old?.items) return old;
+            if (old.items.some((a) => a.id === id)) return old;
+            return { ...old, items: [...old.items, originalItem] };
+          },
+        );
       }
       logger.error("approvals", "Reject failed", { id, error: err.message });
       const desc = err instanceof ApiError && err.status === 409

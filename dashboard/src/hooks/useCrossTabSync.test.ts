@@ -117,30 +117,85 @@ describe("useCrossTabSync", () => {
     hook.unmount();
   });
 
-  it("handles auth-login message by reading localStorage and calling login", async () => {
-    window.localStorage.setItem("cordum-api-key", "k-1");
+  it("handles auth-login message using payload directly, not localStorage", async () => {
+    // localStorage has stale/different data — should NOT be used for BroadcastChannel
+    window.localStorage.setItem("cordum-api-key", "stale-key");
     window.localStorage.setItem(
       "cordum-user",
-      JSON.stringify({
+      JSON.stringify({ id: "stale-user", username: "stale", email: "", display_name: "", roles: [], tenant: "stale" }),
+    );
+
+    const hook = renderWithQueryClient(() => useCrossTabSync());
+
+    channel().emit({
+      type: "auth-login",
+      token: "fresh-token",
+      user: {
         id: "u1",
         username: "alice",
         email: "alice@example.com",
         display_name: "Alice",
         roles: ["admin"],
         tenant: "tenant-1",
+      },
+    });
+
+    await hook.waitFor(() => {
+      expect(loginMock).toHaveBeenCalledWith(
+        "fresh-token",
+        expect.objectContaining({ id: "u1", tenant: "tenant-1" }),
+      );
+    });
+    // Verify it used message payload, not localStorage
+    expect(loginMock).not.toHaveBeenCalledWith(
+      "stale-key",
+      expect.anything(),
+    );
+
+    hook.unmount();
+  });
+
+  it("storage-event login fallback reads token and user from localStorage", async () => {
+    window.localStorage.setItem(
+      "cordum-user",
+      JSON.stringify({
+        id: "u2",
+        username: "bob",
+        email: "bob@example.com",
+        display_name: "Bob",
+        roles: ["viewer"],
+        tenant: "tenant-2",
       }),
     );
 
     const hook = renderWithQueryClient(() => useCrossTabSync());
 
-    channel().emit({ type: "auth-login" });
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "cordum-api-key", newValue: "storage-token" }),
+    );
 
     await hook.waitFor(() => {
       expect(loginMock).toHaveBeenCalledWith(
-        "k-1",
-        expect.objectContaining({ id: "u1", tenant: "tenant-1" }),
+        "storage-token",
+        expect.objectContaining({ id: "u2", tenant: "tenant-2" }),
       );
     });
+
+    hook.unmount();
+  });
+
+  it("storage-event login fallback skips login when user data is corrupt", async () => {
+    window.localStorage.setItem("cordum-user", "not-json{{{");
+
+    const hook = renderWithQueryClient(() => useCrossTabSync());
+
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "cordum-api-key", newValue: "some-token" }),
+    );
+
+    // Give it a tick to process
+    await new Promise((r) => setTimeout(r, 50));
+    expect(loginMock).not.toHaveBeenCalled();
 
     hook.unmount();
   });

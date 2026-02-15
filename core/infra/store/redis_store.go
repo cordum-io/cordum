@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -46,12 +47,22 @@ func NewRedisStore(url string) (*RedisStore, error) {
 
 	ttl := defaultDataTTL
 	if ttlSeconds := os.Getenv(envRedisDataTTLInSeconds); ttlSeconds != "" {
-		if secs, err := strconv.Atoi(ttlSeconds); err == nil && secs > 0 {
+		secs, err := strconv.Atoi(ttlSeconds)
+		if err != nil {
+			slog.Warn("invalid "+envRedisDataTTLInSeconds+", using default", "value", ttlSeconds, "error", err, "default", defaultDataTTL)
+		} else if secs <= 0 {
+			slog.Warn("non-positive "+envRedisDataTTLInSeconds+", using default", "value", secs, "default", defaultDataTTL)
+		} else {
 			ttl = time.Duration(secs) * time.Second
 		}
 	}
 	if ttlEnv := os.Getenv(envRedisDataTTLFallback); ttlEnv != "" {
-		if parsed, err := time.ParseDuration(ttlEnv); err == nil && parsed > 0 {
+		parsed, err := time.ParseDuration(ttlEnv)
+		if err != nil {
+			slog.Warn("invalid "+envRedisDataTTLFallback+", using default", "value", ttlEnv, "error", err, "default", defaultDataTTL)
+		} else if parsed <= 0 {
+			slog.Warn("non-positive "+envRedisDataTTLFallback+", using default", "value", ttlEnv, "default", defaultDataTTL)
+		} else {
 			ttl = parsed
 		}
 	}

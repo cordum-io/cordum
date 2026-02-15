@@ -57,6 +57,9 @@ interface EventState {
   approvalAssignments: Map<string, string>;
   assignApproval: (approvalId: string, actor: string) => void;
   unassignApproval: (approvalId: string) => void;
+
+  // Reset all state (called on logout / tenant switch)
+  reset: () => void;
 }
 
 export const useEventStore = create<EventState>((set, get) => ({
@@ -114,6 +117,15 @@ export const useEventStore = create<EventState>((set, get) => ({
       const next = new Map(state.approvalAssignments);
       next.delete(approvalId);
       return { approvalAssignments: next };
+    }),
+
+  reset: () =>
+    set({
+      events: [],
+      safetyDecisions: [],
+      approvalPresence: new Map(),
+      approvalAssignments: new Map(),
+      status: "disconnected",
     }),
 }));
 

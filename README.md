@@ -80,7 +80,7 @@ open http://localhost:8082
 ./tools/scripts/platform_smoke.sh
 ```
 
-That's it. You have a running Cordum instance with API, scheduler, safety kernel, and dashboard.
+That's it. You have a running Cordum instance with API, scheduler, safety kernel, and dashboard. System configuration is auto-bootstrapped on first startup — no manual config seeding required.
 
 ## How It Works
 

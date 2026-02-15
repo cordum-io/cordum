@@ -118,7 +118,7 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 
 	client, err := chatRedisClient(s.memStore)
 	if err != nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, err.Error())
+		writeServiceUnavailable(w, r, "chat redis", err)
 		return
 	}
 
@@ -231,7 +231,7 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 
 	client, err := chatRedisClient(s.memStore)
 	if err != nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, err.Error())
+		writeServiceUnavailable(w, r, "chat redis", err)
 		return
 	}
 

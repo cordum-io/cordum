@@ -100,7 +100,7 @@ wait_for_health() {
           return 0
         fi
       else
-        if echo "${body}" | grep -q '"connected":true' && echo "${body}" | grep -q '"ok":true'; then
+        if echo "${body}" | grep -qE '"connected"\s*:\s*true' && echo "${body}" | grep -qE '"ok"\s*:\s*true'; then
           log "health ready (${elapsed}s)"
           return 0
         fi
@@ -233,9 +233,20 @@ if ! wait_for_health "${HEALTH_TIMEOUT}" "http://localhost:8081" "${API_KEY}" "$
 fi
 
 log "stack ready"
+
+# Verify config auto-bootstrap completed
+config_status="$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" \
+  "http://localhost:8081/api/v1/config" 2>/dev/null || echo "000")"
+if [[ "${config_status}" == "200" ]]; then
+  log "config auto-bootstrap verified"
+else
+  log "warning: config endpoint returned ${config_status} — settings page may show empty state"
+fi
+
 echo "  Gateway:   http://localhost:8081"
 echo "  Dashboard: http://localhost:8082"
-echo "  API key:   ${API_KEY}"
+echo "  API key:   ${API_KEY:0:8}... (masked — check .env or CORDUM_API_KEY env var)"
 
 # --- Capture artifacts ---
 if [[ -n "${ARTIFACTS_DIR}" ]]; then
@@ -253,4 +264,4 @@ fi
 
 echo ""
 log "try:"
-echo "curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: ${API_KEY}\" -H \"X-Tenant-ID: ${TENANT_ID}\" | jq"
+echo "curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: \$CORDUM_API_KEY\" -H \"X-Tenant-ID: ${TENANT_ID}\" | jq"

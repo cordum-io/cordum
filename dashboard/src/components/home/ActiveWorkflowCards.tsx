@@ -19,7 +19,7 @@ function relativeTime(iso: string): string {
   return `${hrs}h ago`;
 }
 
-const ACTIVE_STATUSES = new Set(["running", "in_progress", "pending", "queued"]);
+const ACTIVE_STATUSES = new Set(["running", "pending", "waiting"]);
 
 // ---------------------------------------------------------------------------
 // Component
@@ -53,7 +53,7 @@ export function ActiveWorkflowCards() {
           <div className="space-y-3">
             {runs.map((run: WorkflowRun) => {
               const completedSteps = run.steps.filter(
-                (s) => s.status === "succeeded" || s.status === "completed",
+                (s) => s.status === "succeeded",
               ).length;
               const totalSteps = run.steps.length;
               const pct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
@@ -72,7 +72,7 @@ export function ActiveWorkflowCards() {
                       <RunStatusBadge status={run.status} />
                     </div>
                     <span className="text-[10px] text-muted">
-                      {relativeTime(run.startedAt)}
+                      {run.startedAt ? relativeTime(run.startedAt) : "pending"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">

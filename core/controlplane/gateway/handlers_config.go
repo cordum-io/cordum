@@ -20,7 +20,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 
@@ -62,7 +62,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	scope := configsvc.Scope(scopeStr)
 	if scope == configsvc.ScopeSystem {
 		if err := s.requireRole(r, "admin"); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, err.Error())
+			writeForbidden(w, r, err)
 			return
 		}
 	}
@@ -107,7 +107,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if configsvc.Scope(scope) == configsvc.ScopeSystem {
 		if err := s.requireRole(r, "admin"); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, err.Error())
+			writeForbidden(w, r, err)
 			return
 		}
 	}
@@ -122,6 +122,13 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	doc, err := s.configSvc.Get(r.Context(), configsvc.Scope(scope), scopeID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
+			// System/default config missing on clean install — return empty config
+			// so the dashboard can bootstrap without error storms.
+			if scope == string(configsvc.ScopeSystem) && scopeID == "default" {
+				w.Header().Set("Content-Type", "application/json")
+				writeJSON(w, map[string]any{})
+				return
+			}
 			writeErrorJSON(w, http.StatusNotFound, "config not found")
 			return
 		}
@@ -183,7 +190,7 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var req schemaRegisterRequest
@@ -205,6 +212,10 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin", "operator", "viewer"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
 	if s.schemaRegistry == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "schema registry unavailable")
 		return
@@ -226,6 +237,10 @@ func (s *server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin", "operator", "viewer"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
 	if s.schemaRegistry == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "schema registry unavailable")
 		return
@@ -260,7 +275,7 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	id := r.PathValue("id")

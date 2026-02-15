@@ -20,7 +20,7 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	limit := int64(100)
@@ -57,7 +57,7 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	limit := int64(100)
@@ -111,7 +111,7 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	jobID := r.PathValue("job_id")
@@ -143,7 +143,7 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	jobID := r.PathValue("job_id")

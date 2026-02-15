@@ -25,7 +25,7 @@ func NewGatewayClient(addr, apiKey string, httpClient *http.Client) *GatewayClie
 		addr = "http://localhost:8081"
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+		httpClient = mcp.SafeHTTPClient(10 * time.Second)
 	}
 	return &GatewayClient{
 		Addr:       addr,

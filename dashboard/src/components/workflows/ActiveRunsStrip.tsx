@@ -37,11 +37,11 @@ const STEP_BAR_COLORS: Record<string, string> = {
 
 function statusDotClass(run: WorkflowRun): string {
   const steps = run.steps ?? [];
-  if (steps.some((s) => s.status === "waiting" || s.status === "blocked"))
+  if (steps.some((s) => s.status === "waiting"))
     return "bg-amber-400 animate-pulse";
   if (steps.some((s) => s.status === "failed" || s.status === "timed_out"))
     return "bg-red-500";
-  if (run.status === "running" || run.status === "in_progress")
+  if (run.status === "running")
     return "bg-blue-500";
   return "bg-gray-400";
 }
@@ -54,7 +54,7 @@ function MiniProgressBar({ steps }: { steps: WorkflowStep[] }) {
   if (steps.length === 0) return null;
   const total = steps.length;
   const done = steps.filter(
-    (s) => s.status === "succeeded" || s.status === "completed",
+    (s) => s.status === "succeeded",
   ).length;
 
   return (

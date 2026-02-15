@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -132,5 +133,177 @@ func TestDLQStoreListByScore(t *testing.T) {
 	}
 	if len(next) != 1 || next[0].JobID != "job-a" {
 		t.Fatalf("unexpected next: %+v", next)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CleanupStaleEntries tests
+// ---------------------------------------------------------------------------
+
+func TestDLQStoreCleanupStaleEntries(t *testing.T) {
+	store := newDLQStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Add 5 entries.
+	for i := 0; i < 5; i++ {
+		entry := DLQEntry{
+			JobID:     fmt.Sprintf("job-%d", i),
+			Status:    "FAILED",
+			CreatedAt: now.Add(-time.Duration(i) * time.Minute),
+		}
+		if err := store.Add(ctx, entry); err != nil {
+			t.Fatalf("add job-%d: %v", i, err)
+		}
+	}
+
+	// Verify all 5 are in the index.
+	indexCount, err := store.client.ZCard(ctx, dlqIndexKey()).Result()
+	if err != nil {
+		t.Fatalf("zcard: %v", err)
+	}
+	if indexCount != 5 {
+		t.Fatalf("expected 5 index entries, got %d", indexCount)
+	}
+
+	// Simulate expiry: delete data keys for job-1 and job-3.
+	store.client.Del(ctx, dlqEntryKey("job-1"), dlqEntryKey("job-3"))
+
+	// Run cleanup.
+	removed, err := store.CleanupStaleEntries(ctx)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected 2 removed, got %d", removed)
+	}
+
+	// Verify index now has 3 entries.
+	indexCount, err = store.client.ZCard(ctx, dlqIndexKey()).Result()
+	if err != nil {
+		t.Fatalf("zcard after cleanup: %v", err)
+	}
+	if indexCount != 3 {
+		t.Fatalf("expected 3 index entries after cleanup, got %d", indexCount)
+	}
+
+	// Verify the right entries remain.
+	list, err := store.List(ctx, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(list))
+	}
+}
+
+func TestDLQStoreListLazyCleanup(t *testing.T) {
+	store := newDLQStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Add 3 entries.
+	for _, id := range []string{"job-a", "job-b", "job-c"} {
+		entry := DLQEntry{
+			JobID:     id,
+			Status:    "FAILED",
+			CreatedAt: now,
+		}
+		if err := store.Add(ctx, entry); err != nil {
+			t.Fatalf("add %s: %v", id, err)
+		}
+	}
+
+	// Simulate expiry of job-b data key.
+	store.client.Del(ctx, dlqEntryKey("job-b"))
+
+	// List should return only job-a and job-c, and lazily clean the index.
+	list, err := store.List(ctx, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(list))
+	}
+	for _, e := range list {
+		if e.JobID == "job-b" {
+			t.Fatal("expired entry job-b should not appear in results")
+		}
+	}
+
+	// Verify index was cleaned — job-b should be removed from sorted set.
+	indexCount, err := store.client.ZCard(ctx, dlqIndexKey()).Result()
+	if err != nil {
+		t.Fatalf("zcard: %v", err)
+	}
+	if indexCount != 2 {
+		t.Fatalf("expected 2 index entries after lazy cleanup, got %d", indexCount)
+	}
+}
+
+func TestDLQStoreListByScoreLazyCleanup(t *testing.T) {
+	store := newDLQStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for _, id := range []string{"job-x", "job-y", "job-z"} {
+		entry := DLQEntry{
+			JobID:     id,
+			Status:    "FAILED",
+			CreatedAt: now,
+		}
+		if err := store.Add(ctx, entry); err != nil {
+			t.Fatalf("add %s: %v", id, err)
+		}
+	}
+
+	// Expire job-y.
+	store.client.Del(ctx, dlqEntryKey("job-y"))
+
+	list, err := store.ListByScore(ctx, now.Unix()+1, 10)
+	if err != nil {
+		t.Fatalf("list by score: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(list))
+	}
+
+	// Index should have 2 entries after lazy cleanup.
+	indexCount, err := store.client.ZCard(ctx, dlqIndexKey()).Result()
+	if err != nil {
+		t.Fatalf("zcard: %v", err)
+	}
+	if indexCount != 2 {
+		t.Fatalf("expected 2 index entries after lazy cleanup, got %d", indexCount)
+	}
+}
+
+func TestDLQStoreCleanupNoStaleEntries(t *testing.T) {
+	store := newDLQStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	entry := DLQEntry{
+		JobID:     "job-ok",
+		Status:    "FAILED",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := store.Add(ctx, entry); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Cleanup with no stale entries should return 0.
+	removed, err := store.CleanupStaleEntries(ctx)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected 0 removed, got %d", removed)
 	}
 }

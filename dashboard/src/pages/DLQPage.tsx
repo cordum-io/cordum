@@ -367,16 +367,21 @@ export default function DLQPage() {
   const { data, isLoading, isError, dataUpdatedAt, refetch, isRefetching } = useDLQ({
     limit,
     cursor,
-    topic: debouncedTopic || undefined,
-    since: sinceISO,
   });
 
   const entries = data?.items ?? [];
   const nextCursor = data?.next_cursor ?? null;
 
   const resultFilteredEntries = useMemo(
-    () => entries.filter((entry) => matchesResultFilter(entry, resultType)),
-    [entries, resultType],
+    () =>
+      entries.filter((entry) => {
+        if (!matchesResultFilter(entry, resultType)) return false;
+        if (debouncedTopic && !(entry.originalTopic ?? "").toLowerCase().includes(debouncedTopic.toLowerCase()))
+          return false;
+        if (sinceISO && (entry.failedAt ?? "") < sinceISO) return false;
+        return true;
+      }),
+    [entries, resultType, debouncedTopic, sinceISO],
   );
 
   // Client-side sort

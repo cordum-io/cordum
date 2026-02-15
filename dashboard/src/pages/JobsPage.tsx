@@ -93,12 +93,17 @@ function SortableHeader({
   onSort: (key: SortKey) => void;
 }) {
   const isActive = activeKey === sortKey;
+  const ariaSort = isActive ? (activeDir === "asc" ? "ascending" : "descending") : "none";
   return (
     <th
-      className="cursor-pointer select-none px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted hover:text-ink transition-colors"
-      onClick={() => onSort(sortKey)}
+      className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted"
+      aria-sort={ariaSort as "ascending" | "descending" | "none"}
     >
-      <span className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 select-none hover:text-ink transition-colors"
+        onClick={() => onSort(sortKey)}
+      >
         {label}
         {isActive ? (
           activeDir === "asc" ? (
@@ -109,7 +114,7 @@ function SortableHeader({
         ) : (
           <ChevronDown className="h-3 w-3 opacity-0 group-hover:opacity-30" />
         )}
-      </span>
+      </button>
     </th>
   );
 }

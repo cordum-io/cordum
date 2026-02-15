@@ -173,10 +173,10 @@ func TestProcessBusMsgPoisonPill(t *testing.T) {
 		return nil
 	}
 
-	// Malformed data should trigger NakDelay (poison pill), handler should NOT be called
-	action, delay := processBusMsg([]byte("not-protobuf-data"), handler)
+	// Malformed data on first delivery should trigger NakDelay (allow retry)
+	action, delay := processBusMsg([]byte("not-protobuf-data"), handler, 1)
 	if action != msgActionNakDelay {
-		t.Fatalf("expected NakDelay for poison pill, got action=%d", action)
+		t.Fatalf("expected NakDelay for poison pill on first delivery, got action=%d", action)
 	}
 	if delay != 5*time.Second {
 		t.Fatalf("expected 5s delay, got %v", delay)
@@ -185,13 +185,19 @@ func TestProcessBusMsgPoisonPill(t *testing.T) {
 		t.Fatal("handler should not be called for poison pill")
 	}
 
+	// Malformed data after threshold deliveries should terminate
+	action, _ = processBusMsg([]byte("not-protobuf-data"), handler, poisonUnmarshalThreshold+1)
+	if action != msgActionTerm {
+		t.Fatalf("expected Term for corrupt data after %d deliveries, got action=%d", poisonUnmarshalThreshold+1, action)
+	}
+
 	// Valid protobuf should ACK and call handler
 	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, err := proto.Marshal(valid)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	action, _ = processBusMsg(data, handler)
+	action, _ = processBusMsg(data, handler, 1)
 	if action != msgActionAck {
 		t.Fatalf("expected Ack for valid message, got action=%d", action)
 	}
@@ -208,7 +214,7 @@ func TestProcessBusMsgRetryableError(t *testing.T) {
 	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, _ := proto.Marshal(valid)
 
-	action, delay := processBusMsg(data, handler)
+	action, delay := processBusMsg(data, handler, 1)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay for retryable error, got action=%d", action)
 	}
@@ -225,9 +231,69 @@ func TestProcessBusMsgNonRetryableError(t *testing.T) {
 	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, _ := proto.Marshal(valid)
 
-	action, _ := processBusMsg(data, handler)
+	action, _ := processBusMsg(data, handler, 1)
 	if action != msgActionAck {
 		t.Fatalf("expected Ack for non-retryable error, got action=%d", action)
+	}
+}
+
+func TestProcessBusMsgCorruptAtThreshold(t *testing.T) {
+	handler := func(p *pb.BusPacket) error {
+		t.Fatal("handler should not be called for corrupt data")
+		return nil
+	}
+
+	corrupt := []byte("definitely-not-protobuf")
+
+	// At exactly the threshold: should still NakDelay (allow retry)
+	action, delay := processBusMsg(corrupt, handler, poisonUnmarshalThreshold)
+	if action != msgActionNakDelay {
+		t.Fatalf("expected NakDelay at threshold (%d), got action=%d", poisonUnmarshalThreshold, action)
+	}
+	if delay != 5*time.Second {
+		t.Fatalf("expected 5s delay, got %v", delay)
+	}
+
+	// One above threshold: should terminate
+	action, _ = processBusMsg(corrupt, handler, poisonUnmarshalThreshold+1)
+	if action != msgActionTerm {
+		t.Fatalf("expected Term above threshold, got action=%d", action)
+	}
+
+	// Zero delivery count (metadata unavailable): should NakDelay
+	action, _ = processBusMsg(corrupt, handler, 0)
+	if action != msgActionNakDelay {
+		t.Fatalf("expected NakDelay for zero delivery count, got action=%d", action)
+	}
+}
+
+func TestProcessBusMsgValidDataHighDeliveryCount(t *testing.T) {
+	// Even with high delivery count, valid data that processes successfully should ACK.
+	handlerCalled := false
+	handler := func(p *pb.BusPacket) error {
+		handlerCalled = true
+		return nil
+	}
+
+	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	data, err := proto.Marshal(valid)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	action, _ := processBusMsg(data, handler, 99)
+	if action != msgActionAck {
+		t.Fatalf("expected Ack for valid message even with high delivery count, got action=%d", action)
+	}
+	if !handlerCalled {
+		t.Fatal("handler should be called for valid message regardless of delivery count")
+	}
+}
+
+func TestMsgActionTermConstant(t *testing.T) {
+	// Verify msgActionTerm is distinct from other actions.
+	if msgActionTerm == msgActionAck || msgActionTerm == msgActionNak || msgActionTerm == msgActionNakDelay {
+		t.Fatal("msgActionTerm should be distinct from other action types")
 	}
 }
 

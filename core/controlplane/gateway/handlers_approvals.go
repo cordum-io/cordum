@@ -26,7 +26,7 @@ func (s *server) handleApproveStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	wfID := r.PathValue("id")
@@ -83,7 +83,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	runID := r.PathValue("run_id")
@@ -133,7 +133,7 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	limit := int64(100)
@@ -151,7 +151,7 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	}
 	jobs, err := s.jobStore.ListJobsByState(r.Context(), model.JobStateApproval, cursor, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "list approvals", err)
 		return
 	}
 	items := make([]map[string]any, 0, len(jobs))
@@ -190,7 +190,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var body struct {
@@ -251,7 +251,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	}
 	snapResp, err := s.safetyClient.ListSnapshots(r.Context(), &pb.ListSnapshotsRequest{})
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadGateway, err.Error())
+		writeBadGateway(w, r, "list safety snapshots", err)
 		return
 	}
 	currentSnapshot := ""
@@ -314,7 +314,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusConflict, "concurrent approval conflict; retry")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "set job state", err)
 		return
 	}
 	traceID, _ := s.jobStore.GetTraceID(r.Context(), jobID)
@@ -328,7 +328,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
-		writeErrorJSON(w, http.StatusBadGateway, err.Error())
+		writeBadGateway(w, r, "publish approval", err)
 		return
 	}
 	s.appendAuditEntryNamed(r.Context(), "approve", "job", jobID, req.GetTopic(), policyActorID(r), policyRole(r), "approve job "+jobID)
@@ -342,7 +342,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var body struct {
@@ -396,7 +396,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.jobStore.SetState(r.Context(), jobID, model.JobStateDenied); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "set job state", err)
 		return
 	}
 	traceID, _ := s.jobStore.GetTraceID(r.Context(), jobID)

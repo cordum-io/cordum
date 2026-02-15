@@ -33,11 +33,25 @@ const workerHeartbeatTTL = 30 * time.Second
 // statusPipelineSampleLimit bounds the status pipeline aggregation scan cost.
 const statusPipelineSampleLimit = int64(500)
 
+// safeUnmarshal attempts JSON unmarshal and logs a warning on failure.
+// Returns true if unmarshal succeeded, false otherwise.
+func safeUnmarshal(data []byte, v any, field, jobID string) bool {
+	if err := json.Unmarshal(data, v); err != nil {
+		logging.Warn("api-gateway", "job meta: corrupt JSON field",
+			"field", field,
+			"job_id", jobID,
+			"error", err,
+		)
+		return false
+	}
+	return true
+}
+
 // --- Handlers ---
 
 func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	out := s.activeWorkersSnapshot(time.Now().UTC())
@@ -329,16 +343,27 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	idempotencyKey := meta["idempotency_key"]
 	capability := meta["capability"]
 	packID := meta["pack_id"]
-	attemptVal, _ := strconv.Atoi(meta["attempts"])
-	attempts := attemptVal
+	attempts := 0
+	if raw := meta["attempts"]; raw != "" {
+		var parseErr error
+		attempts, parseErr = strconv.Atoi(raw)
+		if parseErr != nil {
+			logging.Warn("api-gateway", "job meta: non-numeric attempts field",
+				"job_id", id,
+				"raw", raw,
+				"error", parseErr,
+			)
+			attempts = 0
+		}
+	}
 
 	var riskTags []string
 	if raw := meta["risk_tags"]; raw != "" {
-		_ = json.Unmarshal([]byte(raw), &riskTags)
+		safeUnmarshal([]byte(raw), &riskTags, "risk_tags", id)
 	}
 	var requires []string
 	if raw := meta["requires"]; raw != "" {
-		_ = json.Unmarshal([]byte(raw), &requires)
+		safeUnmarshal([]byte(raw), &requires, "requires", id)
 	}
 
 	// Build safety record from hash fields.
@@ -352,7 +377,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		JobHash:          meta["safety_job_hash"],
 	}
 	if raw := meta["safety_remediations"]; raw != "" {
-		_ = json.Unmarshal([]byte(raw), &safetyRecord.Remediations)
+		safeUnmarshal([]byte(raw), &safetyRecord.Remediations, "safety_remediations", id)
 	}
 
 	// Build approval record from hash fields.
@@ -381,7 +406,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		// Attempt to fetch result payload
 		if key, err := store.KeyFromPointer(resPtr); err == nil {
 			if bytes, err := s.memStore.GetResult(r.Context(), key); err == nil {
-				_ = json.Unmarshal(bytes, &resultData)
+				safeUnmarshal(bytes, &resultData, "result_data", id)
 			}
 		}
 	}
@@ -389,7 +414,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	var contextData any
 	if s.memStore != nil {
 		if bytes, err := s.memStore.GetContext(r.Context(), store.MakeContextKey(id)); err == nil {
-			_ = json.Unmarshal(bytes, &contextData)
+			safeUnmarshal(bytes, &contextData, "context_data", id)
 		}
 	}
 
@@ -469,20 +494,28 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	if outputSafety.Decision != "" || outputSafety.RedactedPtr != "" || outputSafety.OriginalPtr != "" || len(outputSafety.Findings) > 0 {
 		resp["output_safety"] = outputSafety
 	}
-	if errorMessage != "" {
-		resp["error_message"] = errorMessage
-	}
-	if errorStatus != "" {
-		resp["error_status"] = errorStatus
-	}
-	if errorCode != "" {
-		resp["error_code"] = errorCode
-	}
-	if lastState != "" {
-		resp["last_state"] = lastState
-	}
-	if attemptsFromDLQ > 0 {
-		resp["attempts"] = attemptsFromDLQ
+	// Only surface DLQ error info when the job is actually in a failure state.
+	// Recovered/running jobs should not show stale DLQ error messages.
+	isFailureState := state == model.JobStateFailed ||
+		state == model.JobStateTimeout ||
+		state == model.JobStateQuarantined
+	if isFailureState {
+		if errorMessage != "" {
+			resp["error_message"] = errorMessage
+		}
+		if errorStatus != "" {
+			resp["error_status"] = errorStatus
+		}
+		if errorCode != "" {
+			resp["error_code"] = errorCode
+		}
+		if lastState != "" {
+			resp["last_state"] = lastState
+		}
+		// Use DLQ attempt count only as fallback when meta has no value.
+		if attempts == 0 && attemptsFromDLQ > 0 {
+			resp["attempts"] = attemptsFromDLQ
+		}
 	}
 	if approvalRecord.ApprovedBy != "" {
 		resp["approval_by"] = approvalRecord.ApprovedBy
@@ -547,7 +580,7 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 
@@ -906,7 +939,7 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	id := r.PathValue("id")
@@ -1001,7 +1034,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	jobID := r.PathValue("id")
@@ -1167,7 +1200,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			actorID, role = ac.PrincipalID, ac.Role
 		}
 		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", "", "", actorID, role, "job submit denied: "+err.Error())
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 
@@ -1194,7 +1227,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	req.TenantId = orgID
 	principalID, err := s.resolvePrincipal(r, req.PrincipalId)
 	if err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	teamID := req.TeamId

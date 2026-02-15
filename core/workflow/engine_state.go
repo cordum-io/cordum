@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
 
@@ -130,6 +131,32 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 	}
 	sr.CompletedAt = &now
 	run.Steps[stepID] = sr
+
+	// On denial, activate the on_error handler (matching HandleJobResult logic).
+	if !approved {
+		stepDef := wfDef.Steps[stepID]
+		if stepDef != nil && stepDef.OnError != "" {
+			if _, ok := wfDef.Steps[stepDef.OnError]; ok {
+				targetSR := run.Steps[stepDef.OnError]
+				if targetSR == nil {
+					targetSR = &StepRun{StepID: stepDef.OnError}
+				}
+				if targetSR.Status == "" || targetSR.Status == StepStatusPending {
+					targetSR.Status = StepStatusPending
+					if targetSR.Input == nil {
+						targetSR.Input = make(map[string]any)
+					}
+					errCtx := make(map[string]any)
+					errCtx["step_id"] = stepID
+					errCtx["message"] = "approval denied"
+					targetSR.Input["error"] = errCtx
+					run.Steps[stepDef.OnError] = targetSR
+					e.appendTimeline(ctx, run, "step_error_redirect", stepID, "", string(sr.Status), "", stepDef.OnError, nil)
+				}
+			}
+		}
+	}
+
 	updateRunStatus(run, wfDef, now)
 	if approved {
 		e.appendTimeline(ctx, run, "step_approved", stepID, "", string(sr.Status), "", "", nil)
@@ -145,7 +172,7 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 	if isTerminalRunStatus(run.Status) {
 		e.markRunTerminal(run.ID)
 	}
-	if approved && run.Status == RunStatusRunning {
+	if run.Status == RunStatusRunning {
 		return e.scheduleReady(ctx, wfDef, run)
 	}
 	return nil
@@ -187,6 +214,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 	}
 	e.markRunTerminal(run.ID)
 	e.appendTimeline(ctx, run, "run_status", "", "", string(run.Status), "", "run cancelled", nil)
+	var failedJobIDs []string
 	seen := make(map[string]struct{}, len(cancelJobIDs))
 	for _, jobID := range cancelJobIDs {
 		if jobID == "" {
@@ -196,7 +224,16 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 			continue
 		}
 		seen[jobID] = struct{}{}
-		e.publishJobCancel(jobID, "workflow run cancelled")
+		if err := e.publishJobCancel(jobID, "workflow run cancelled"); err != nil {
+			failedJobIDs = append(failedJobIDs, jobID)
+		}
+	}
+	if len(failedJobIDs) > 0 {
+		e.appendTimeline(ctx, run, "cancel_publish_failed", "", "", "error", "",
+			fmt.Sprintf("failed to cancel %d job(s) — these jobs may still be running", len(failedJobIDs)),
+			map[string]any{"orphaned_job_ids": failedJobIDs},
+		)
+		return fmt.Errorf("workflow cancel run %s: %d cancel publish failures (jobs: %v)", runID, len(failedJobIDs), failedJobIDs)
 	}
 	return nil
 }
@@ -265,6 +302,7 @@ func (e *Engine) timeoutRun(ctx context.Context, wfDef *Workflow, run *WorkflowR
 	}
 	e.markRunTerminal(run.ID)
 	e.appendTimeline(ctx, run, "run_status", "", "", string(run.Status), "", "run timed out", map[string]any{"timeout_sec": wfDef.TimeoutSec})
+	var failedJobIDs []string
 	seen := make(map[string]struct{}, len(cancelJobIDs))
 	for _, jobID := range cancelJobIDs {
 		if jobID == "" {
@@ -274,7 +312,16 @@ func (e *Engine) timeoutRun(ctx context.Context, wfDef *Workflow, run *WorkflowR
 			continue
 		}
 		seen[jobID] = struct{}{}
-		e.publishJobCancel(jobID, "workflow run timed out")
+		if err := e.publishJobCancel(jobID, "workflow run timed out"); err != nil {
+			failedJobIDs = append(failedJobIDs, jobID)
+		}
+	}
+	if len(failedJobIDs) > 0 {
+		e.appendTimeline(ctx, run, "cancel_publish_failed", "", "", "error", "",
+			fmt.Sprintf("failed to cancel %d job(s) after timeout — these jobs may still be running", len(failedJobIDs)),
+			map[string]any{"orphaned_job_ids": failedJobIDs},
+		)
+		return fmt.Errorf("workflow timeout run %s: %d cancel publish failures (jobs: %v)", run.ID, len(failedJobIDs), failedJobIDs)
 	}
 	return nil
 }
@@ -334,9 +381,9 @@ func collectCancelableJobs(sr *StepRun) []string {
 	return out
 }
 
-func (e *Engine) publishJobCancel(jobID, reason string) {
+func (e *Engine) publishJobCancel(jobID, reason string) error {
 	if e == nil || e.bus == nil || jobID == "" {
-		return
+		return nil
 	}
 	cancelReq := &pb.JobCancel{
 		JobId:       jobID,
@@ -350,7 +397,25 @@ func (e *Engine) publishJobCancel(jobID, reason string) {
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
-	_ = e.bus.Publish(capsdk.SubjectCancel, packet)
+
+	backoff := [3]time.Duration{100 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		lastErr = e.bus.Publish(capsdk.SubjectCancel, packet)
+		if lastErr == nil {
+			return nil
+		}
+		slog.Error("publish job cancel failed",
+			"job_id", jobID,
+			"reason", reason,
+			"attempt", attempt+1,
+			"err", lastErr,
+		)
+		if attempt < 2 {
+			time.Sleep(backoff[attempt])
+		}
+	}
+	return fmt.Errorf("publish job cancel %s after 3 attempts: %w", jobID, lastErr)
 }
 
 func applyResult(sr *StepRun, res *pb.JobResult, step *Step) (retry bool, delay time.Duration) {
@@ -574,13 +639,5 @@ func (e *Engine) markRunTerminal(runID string) {
 	if e == nil || runID == "" {
 		return
 	}
-	val, ok := e.runLocks.Load(runID)
-	if !ok {
-		return
-	}
-	lock := val.(*runLock)
-	lock.terminal.Store(true)
-	if lock.refs.Load() == 0 {
-		e.runLocks.Delete(runID)
-	}
+	e.lockMgr.markTerminal(runID)
 }

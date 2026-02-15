@@ -3,6 +3,10 @@
 # Reads config from .env, applies the local kustomize overlay, creates secrets,
 # and waits for all pods to be ready.
 #
+# Secrets (API key, admin password) are stored in K8s secrets and never printed
+# to stdout. To retrieve the API key after deployment:
+#   kubectl get secret cordum-api-key -n cordum -o jsonpath='{.data.API_KEY}' | base64 -d
+#
 # Usage: ./tools/scripts/k8s-local-deploy.sh [--no-port-forward]
 set -euo pipefail
 
@@ -47,7 +51,8 @@ CORDUM_ADMIN_EMAIL=$(read_env CORDUM_ADMIN_EMAIL "")
 if [ -z "$CORDUM_API_KEY" ]; then
   warn "CORDUM_API_KEY not set in .env — generating a random key"
   CORDUM_API_KEY=$(openssl rand -hex 32)
-  info "Generated API key: $CORDUM_API_KEY"
+  info "Generated API key: ${CORDUM_API_KEY:0:8}... (masked)"
+  info "Stored in K8s secret 'cordum-api-key' in namespace '$NAMESPACE'"
 fi
 
 # ---- pre-flight checks ----
@@ -111,7 +116,7 @@ if [ "$PORT_FORWARD" = true ]; then
   info "Access URLs:"
   info "  API Gateway:  http://localhost:8081"
   info "  Dashboard:    http://localhost:8082"
-  info "  API Key:      $CORDUM_API_KEY"
+  info "  API Key:      kubectl get secret cordum-api-key -n $NAMESPACE -o jsonpath='{.data.API_KEY}' | base64 -d"
   echo ""
   info "Port forwarding running in background. Press Ctrl+C or run k8s-local-teardown.sh to stop."
   wait

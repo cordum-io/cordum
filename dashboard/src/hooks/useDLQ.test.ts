@@ -49,10 +49,8 @@ describe("useDLQ internals", () => {
       __dlqInternal.buildParams({
         limit: 25,
         cursor: 10,
-        topic: "sys.job.submit",
-        since: "2026-02-13T00:00:00.000Z",
       }),
-    ).toBe("?limit=25&cursor=10&topic=sys.job.submit&since=2026-02-13T00%3A00%3A00.000Z");
+    ).toBe("?limit=25&cursor=10");
   });
 });
 
@@ -100,7 +98,7 @@ describe("useDLQ hooks", () => {
   it("useDLQ fetches /dlq/page with params and maps entries", async () => {
     const fetchSpy = mockFetch([
       {
-        match: "/dlq/page?limit=20&cursor=4&topic=sys.job.submit&since=2026-02-13T00%3A00%3A00.000Z",
+        match: "/dlq/page?limit=20&cursor=4",
         method: "GET",
         body: {
           items: [
@@ -121,8 +119,6 @@ describe("useDLQ hooks", () => {
       useDLQ({
         limit: 20,
         cursor: 4,
-        topic: "sys.job.submit",
-        since: "2026-02-13T00:00:00.000Z",
       }),
     );
 

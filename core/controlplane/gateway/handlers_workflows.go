@@ -44,7 +44,7 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var req createWorkflowRequest
@@ -167,7 +167,7 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	id := r.PathValue("id")
@@ -222,7 +222,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	wfID := r.PathValue("id")
@@ -402,7 +402,7 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	runID := r.PathValue("id")
@@ -666,7 +666,7 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	id := r.PathValue("id")
@@ -753,7 +753,7 @@ func (s *server) handleWorkflowDryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	id := r.PathValue("id")

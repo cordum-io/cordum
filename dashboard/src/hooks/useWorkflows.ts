@@ -727,20 +727,17 @@ const ACTIVE_STATUSES = new Set<string>([
   "running",
   "pending",
   "waiting",
-  "in_progress",
-  "queued",
-  "blocked",
 ]);
 
 function getAttentionPriority(run: WorkflowRun): number {
   const steps = run.steps ?? [];
   // Priority 0: Any step waiting for approval
-  if (steps.some((s) => s.status === "waiting" || s.status === "blocked")) return 0;
+  if (steps.some((s) => s.status === "waiting")) return 0;
   // Priority 1: Any step failed
   if (steps.some((s) => s.status === "failed" || s.status === "timed_out")) return 1;
   // Priority 2: Currently running
-  if (run.status === "running" || run.status === "in_progress") return 2;
-  // Priority 3: Pending/queued
+  if (run.status === "running") return 2;
+  // Priority 3: Pending
   return 3;
 }
 
@@ -782,7 +779,6 @@ export function useActiveRuns() {
 
 const TERMINAL_STATUSES = new Set<string>([
   "succeeded",
-  "completed",
   "failed",
   "cancelled",
   "timed_out",
@@ -801,7 +797,7 @@ function computeWorkflowStats(runs: WorkflowRun[]): WorkflowStats {
   }
   const terminal = runs.filter((r) => TERMINAL_STATUSES.has(r.status));
   const succeeded = terminal.filter(
-    (r) => r.status === "succeeded" || r.status === "completed",
+    (r) => r.status === "succeeded",
   ).length;
   const successRate = terminal.length > 0 ? Math.round((succeeded / terminal.length) * 100) : 0;
   return {

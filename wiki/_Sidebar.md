@@ -5,6 +5,7 @@
 - [Configuration](Configuration)
 - [Security](Security)
 - [Operations](Operations)
+- [Soak Testing](Soak-Testing)
 - [CLI](CLI)
 - [Packs and Workers](Packs-and-Workers)
 - [Dashboard](Dashboard)

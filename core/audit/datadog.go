@@ -51,7 +51,7 @@ func WithDatadogTags(tags string) DatadogOption {
 func NewDatadogExporter(apiKey string, opts ...DatadogOption) *DatadogExporter {
 	hostname, _ := os.Hostname()
 	d := &DatadogExporter{
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:   safeHTTPClient(10 * time.Second),
 		apiKey:   apiKey,
 		endpoint: datadogSites["us1"] + "/api/v2/logs",
 		tags:     "service:cordum-gateway",

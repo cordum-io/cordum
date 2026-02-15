@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/logging"
@@ -35,6 +36,13 @@ type wsClient struct {
 	tenant           string
 	allowCrossTenant bool
 	jobID            string
+	closeOnce        sync.Once
+}
+
+// closeChannel closes the client's event channel exactly once.
+// Safe to call from both the broadcast loop (eviction) and handler defer.
+func (c *wsClient) closeChannel() {
+	c.closeOnce.Do(func() { close(c.ch) })
 }
 
 type wsEvent struct {
@@ -183,7 +191,9 @@ func (s *server) startBusTaps() error {
 		subject := subj
 		if err := s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
 			if subject == "sys.job.>" {
-				s.handleWorkflowJobResult(context.Background(), p.GetJobResult())
+				handlerCtx, handlerCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer handlerCancel()
+				s.handleWorkflowJobResult(handlerCtx, p.GetJobResult())
 			}
 			s.enqueueBusPacket(p)
 			return nil
@@ -222,15 +232,14 @@ func (s *server) startBusTaps() error {
 					}
 				}
 				for _, conn := range slowClients {
+					if client := s.clients[conn]; client != nil {
+						// Signal handler goroutine to exit by closing its channel.
+						// The handler's defer will close the actual connection.
+						client.closeChannel()
+					}
 					delete(s.clients, conn)
 				}
 				s.clientsMu.Unlock()
-
-				for _, conn := range slowClients {
-					if err := conn.Close(); err != nil {
-						logging.Error("api-gateway", "ws client close failed", "error", err)
-					}
-				}
 			case <-s.shutdownCh:
 				return
 			}
@@ -339,7 +348,7 @@ func splitWorkflowJobID(jobID string) (runID, stepID string) {
 func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if s.auth != nil {
 		if err := s.requireRole(r, "admin"); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, err.Error())
+			writeForbidden(w, r, err)
 			return
 		}
 	}
@@ -366,7 +375,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		s.clientsMu.Lock()
 		delete(s.clients, ws)
 		s.clientsMu.Unlock()
-		close(client.ch)
+		client.closeChannel()
 	}()
 
 	for {
@@ -407,7 +416,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireTenantAccess(r, tenant); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 
@@ -428,7 +437,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 		s.clientsMu.Lock()
 		delete(s.clients, ws)
 		s.clientsMu.Unlock()
-		close(client.ch)
+		client.closeChannel()
 	}()
 
 	for {

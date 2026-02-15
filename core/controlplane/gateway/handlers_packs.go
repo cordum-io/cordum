@@ -32,12 +32,12 @@ func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	records, _, err := s.loadPackRegistry(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "pack operation", err)
 		return
 	}
 	items := make([]packRecord, 0, len(records))
@@ -55,7 +55,7 @@ func (s *server) handleGetPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -65,7 +65,7 @@ func (s *server) handleGetPack(w http.ResponseWriter, r *http.Request) {
 	}
 	records, _, err := s.loadPackRegistry(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "pack operation", err)
 		return
 	}
 	rec, ok := records[packID]
@@ -87,7 +87,7 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxPackUploadBytes)
@@ -301,7 +301,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.lockStore == nil {
@@ -324,14 +324,15 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 	owner := packLockOwner(r)
 	release, err := acquirePackLocks(r.Context(), s.lockStore, packID, owner)
 	if err != nil {
-		writeErrorJSON(w, http.StatusConflict, err.Error())
+		logging.Warn("api-gateway", "pack lock conflict", "method", r.Method, "path", r.URL.Path, "error", err)
+		writeErrorJSON(w, http.StatusConflict, "resource is locked")
 		return
 	}
 	defer release()
 
 	records, doc, err := s.loadPackRegistry(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "pack operation", err)
 		return
 	}
 	rec, ok := records[packID]
@@ -341,13 +342,13 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := len(rec.Overlays.Config) - 1; i >= 0; i-- {
 		if err := s.removeConfigOverlay(r.Context(), rec.Overlays.Config[i]); err != nil {
-			writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, r, "pack operation", err)
 			return
 		}
 	}
 	for _, overlay := range rec.Overlays.Policy {
 		if err := s.removePolicyOverlay(r.Context(), overlay); err != nil {
-			writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, r, "pack operation", err)
 			return
 		}
 	}
@@ -362,7 +363,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 	rec.Status = "DISABLED"
 	records[packID] = rec
 	if err := s.savePackRegistry(r.Context(), records, doc); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "pack operation", err)
 		return
 	}
 	s.appendAuditEntryNamed(r.Context(), "uninstall", "pack", packID, rec.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "uninstall pack "+packID)
@@ -376,7 +377,7 @@ func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -386,7 +387,7 @@ func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
 	}
 	records, _, err := s.loadPackRegistry(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "pack operation", err)
 		return
 	}
 	rec, ok := records[packID]
@@ -972,7 +973,7 @@ func (s *server) handleMarketplacePacks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	resp, err := s.marketplaceSnapshot(r.Context(), false)
@@ -995,7 +996,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var req marketplaceInstallRequest

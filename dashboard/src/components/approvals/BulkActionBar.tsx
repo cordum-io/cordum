@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { Button } from "../ui/Button";
 import { Textarea } from "../ui/Textarea";
 import { cn } from "../../lib/utils";
@@ -61,6 +61,9 @@ export function BulkActionBar({
   const eligibleCount = eligibleForApprove.length;
   const totalSelected = selectedIds.size;
 
+  // Synchronous guard prevents double-submit even when React state hasn't re-rendered yet
+  const executingRef = useRef(false);
+
   const reset = useCallback(() => {
     setMode("idle");
     setComment("");
@@ -71,38 +74,44 @@ export function BulkActionBar({
 
   const executeBulk = useCallback(
     async (action: "approve" | "reject", items: Approval[], payload: string) => {
-      setMode("executing");
-      setProgress({ done: 0, total: items.length, failed: 0 });
-      let failed = 0;
+      if (executingRef.current) return;
+      executingRef.current = true;
+      try {
+        setMode("executing");
+        setProgress({ done: 0, total: items.length, failed: 0 });
+        let failed = 0;
 
-      for (let i = 0; i < items.length; i++) {
-        try {
-          if (action === "approve") {
-            await onApprove(items[i].id, payload || undefined);
-          } else {
-            await onReject(items[i].id, payload);
+        for (let i = 0; i < items.length; i++) {
+          try {
+            if (action === "approve") {
+              await onApprove(items[i].id, payload || undefined);
+            } else {
+              await onReject(items[i].id, payload);
+            }
+          } catch {
+            failed++;
           }
-        } catch {
-          failed++;
+          setProgress({ done: i + 1, total: items.length, failed });
+          // Small delay to avoid flooding
+          if (i < items.length - 1) {
+            await new Promise((r) => setTimeout(r, 200));
+          }
         }
-        setProgress({ done: i + 1, total: items.length, failed });
-        // Small delay to avoid flooding
-        if (i < items.length - 1) {
-          await new Promise((r) => setTimeout(r, 200));
+
+        const verb = action === "approve" ? "approved" : "rejected";
+        if (failed === 0) {
+          setResultMsg(`${items.length} ${verb}`);
+        } else {
+          setResultMsg(`${items.length - failed} ${verb}, ${failed} failed`);
         }
-      }
 
-      const verb = action === "approve" ? "approved" : "rejected";
-      if (failed === 0) {
-        setResultMsg(`${items.length} ${verb}`);
-      } else {
-        setResultMsg(`${items.length - failed} ${verb}, ${failed} failed`);
+        setTimeout(() => {
+          reset();
+          if (failed === 0) onDone();
+        }, 1500);
+      } finally {
+        executingRef.current = false;
       }
-
-      setTimeout(() => {
-        reset();
-        if (failed === 0) onDone();
-      }, 1500);
     },
     [onApprove, onReject, onDone, reset],
   );
@@ -160,6 +169,7 @@ export function BulkActionBar({
               <Button
                 size="sm"
                 className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                disabled={mode !== "confirm-approve"}
                 onClick={() => executeBulk("approve", eligibleForApprove, comment)}
               >
                 Confirm ({eligibleCount})
@@ -182,7 +192,7 @@ export function BulkActionBar({
               <Button
                 variant="danger"
                 size="sm"
-                disabled={!reason.trim()}
+                disabled={!reason.trim() || mode !== "confirm-reject"}
                 onClick={() => executeBulk("reject", selectedApprovals, reason)}
               >
                 Confirm ({totalSelected})

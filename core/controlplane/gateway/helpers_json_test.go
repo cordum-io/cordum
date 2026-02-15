@@ -138,3 +138,58 @@ func TestMaxBodyMiddleware_SkipsMultipart(t *testing.T) {
 		t.Fatal("multipart should pass through without body limit")
 	}
 }
+
+func TestMaxBodyMiddleware_LimitsDELETEWithBody(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called for oversized DELETE body")
+	})
+	handler := maxBodyMiddleware(inner)
+
+	body := strings.NewReader(strings.Repeat("x", 100))
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/j1", body)
+	req.ContentLength = defaultMaxJSONBodyBytes + 1
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for oversized DELETE body, got %d", rr.Code)
+	}
+}
+
+func TestMaxBodyMiddleware_SkipsHEAD(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := maxBodyMiddleware(inner)
+
+	req := httptest.NewRequest(http.MethodHead, "/api/v1/config", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if !called {
+		t.Fatal("HEAD should pass through without body limit")
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestMaxBodyMiddleware_SkipsOPTIONS(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := maxBodyMiddleware(inner)
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/config", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if !called {
+		t.Fatal("OPTIONS should pass through without body limit")
+	}
+}

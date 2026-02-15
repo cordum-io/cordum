@@ -283,6 +283,9 @@ CORDUM_VERSION=latest
 
 > **Production**: You MUST change REDIS_PASSWORD to a strong random value
 > and generate a unique CORDUM_API_KEY. The defaults are for local development only.
+>
+> **Kubernetes**: API keys are stored in K8s secrets. Retrieve with:
+> ` + "`kubectl get secret cordum-api-key -n cordum -o jsonpath='{.data.API_KEY}' | base64 -d`" + `
 
 ## Start the stack
 

@@ -100,6 +100,44 @@ containers:
     allowPrivilegeEscalation: false
 ```
 
+### ServiceAccount
+
+All pods use a dedicated `cordum` ServiceAccount with `automountServiceAccountToken: false`. No Cordum service needs Kubernetes API access, so the API token is not mounted into pods. This follows the principle of least privilege — compromised containers cannot access the K8s API or read cluster secrets.
+
+If a future service needs K8s API access (e.g., for leader election), create a separate ServiceAccount with a scoped Role/RoleBinding.
+
+### Resource Quotas
+
+The base manifest includes a `ResourceQuota` and `LimitRange` for the `cordum` namespace:
+
+| Quota | Value | Notes |
+|-------|-------|-------|
+| `requests.cpu` | 8 | Total CPU requests across all pods |
+| `limits.cpu` | 16 | Total CPU limits |
+| `requests.memory` | 8Gi | Total memory requests |
+| `limits.memory` | 16Gi | Total memory limits |
+| `pods` | 50 | Max pod count (accommodates HPA max replicas + headroom) |
+| `services` | 20 | Max Service count |
+| `persistentvolumeclaims` | 10 | Max PVC count |
+
+The `LimitRange` assigns default resource requests (100m CPU, 128Mi memory) and limits (500m CPU, 256Mi memory) to containers that don't specify them.
+
+**Adjusting for larger deployments:** Increase the ResourceQuota values in `base.yaml` or apply a kustomize patch in your production overlay:
+
+```yaml
+# In production/kustomization.yaml patches:
+- target:
+    kind: ResourceQuota
+    name: cordum-quota
+  patch: |
+    - op: replace
+      path: /spec/hard/pods
+      value: "100"
+    - op: replace
+      path: /spec/hard/limits.cpu
+      value: "32"
+```
+
 ### Resource Requests/Limits
 
 | Service | CPU Request | CPU Limit | Memory Request | Memory Limit |

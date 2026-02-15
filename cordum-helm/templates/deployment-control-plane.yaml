@@ -332,13 +332,13 @@ spec:
               subPath: timeouts.yaml
           livenessProbe:
             httpGet:
-              path: /metrics
+              path: /health
               port: metrics
             initialDelaySeconds: 10
             periodSeconds: 15
           readinessProbe:
             httpGet:
-              path: /metrics
+              path: /health
               port: metrics
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -622,6 +622,8 @@ spec:
               value: {{ include "cordum.redisUrl" . | quote }}
             - name: CONTEXT_ENGINE_ADDR
               value: {{ printf ":%d" (int .Values.contextEngine.service.port) | quote }}
+            - name: CONTEXT_ENGINE_METRICS_ADDR
+              value: {{ printf ":%d" (int (.Values.contextEngine.metricsPort | default 9094)) | quote }}
             {{- if .Values.global.tls.enabled }}
             - name: CONTEXT_ENGINE_TLS_CERT
               value: /etc/cordum/tls/server/tls.crt
@@ -631,6 +633,8 @@ spec:
           ports:
             - name: grpc
               containerPort: {{ .Values.contextEngine.service.port }}
+            - name: metrics
+              containerPort: {{ .Values.contextEngine.metricsPort | default 9094 }}
           {{- if .Values.global.tls.enabled }}
           volumeMounts:
             - name: server-tls
@@ -638,8 +642,9 @@ spec:
               readOnly: true
           {{- end }}
           livenessProbe:
-            tcpSocket:
-              port: grpc
+            httpGet:
+              path: /health
+              port: metrics
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:

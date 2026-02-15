@@ -4,18 +4,33 @@ import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@ta
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LoadingScreen } from "./components/ui/Spinner";
+import { ToastContainer } from "./components/ui/Toast";
 import { logger } from "./lib/logger";
+import { shouldRetry, retryDelay } from "./api/retry";
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { refetchOnWindowFocus: false },
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: shouldRetry,
+      retryDelay,
+    },
   },
   queryCache: new QueryCache({
     onError: (error, query) => {
-      logger.error("react-query", "Query failed", {
-        queryKey: query.queryKey,
-        error: error.message,
-      });
+      const retryCount = query.state.fetchFailureCount;
+      if (retryCount > 0) {
+        logger.warn("react-query", "Query retry exhausted", {
+          queryKey: query.queryKey,
+          attempt: retryCount,
+          error: error.message,
+        });
+      } else {
+        logger.error("react-query", "Query failed", {
+          queryKey: query.queryKey,
+          error: error.message,
+        });
+      }
     },
   }),
   mutationCache: new MutationCache({
@@ -72,6 +87,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <ErrorBoundary>
+          <ToastContainer />
           <Suspense fallback={<LoadingScreen />}>
             <Routes>
               {/* Public route */}

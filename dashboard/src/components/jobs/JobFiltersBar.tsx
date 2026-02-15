@@ -156,6 +156,15 @@ export function JobFiltersBar({
   const poolTimer = useRef<ReturnType<typeof setTimeout>>();
   const tenantTimer = useRef<ReturnType<typeof setTimeout>>();
 
+  // Clear pending debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      clearTimeout(topicTimer.current);
+      clearTimeout(poolTimer.current);
+      clearTimeout(tenantTimer.current);
+    };
+  }, []);
+
   // Count active filters
   const activeCount =
     (stateFilter.length > 0 ? 1 : 0) +

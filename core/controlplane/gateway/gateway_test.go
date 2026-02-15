@@ -531,6 +531,40 @@ func TestRateLimitTenantSharedAcrossIPs(t *testing.T) {
 	}
 }
 
+func TestMCPRoutes_RateLimited(t *testing.T) {
+	apiLimiterMu.Lock()
+	origAPI := apiLimiter
+	origPublic := publicLimiter
+	defer func() {
+		apiLimiter = origAPI
+		publicLimiter = origPublic
+		apiLimiterMu.Unlock()
+	}()
+
+	apiLimiter = newKeyedRateLimiter(1, 1)
+	publicLimiter = newKeyedRateLimiter(1, 1)
+	auth := newBasicAuthForTest(t, nil)
+	handler := rateLimitMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// First MCP request should succeed.
+	req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+	req.RemoteAddr = "10.0.0.5:12345"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first MCP request: expected 200, got %d", rr.Code)
+	}
+
+	// Second MCP request from same IP should be rate limited.
+	rr2 := httptest.NewRecorder()
+	handler.ServeHTTP(rr2, req)
+	if rr2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second MCP request: expected 429, got %d", rr2.Code)
+	}
+}
+
 func TestGatewaySafetyTransportCredentials(t *testing.T) {
 	t.Setenv("SAFETY_KERNEL_TLS_CA", "")
 	t.Setenv("SAFETY_KERNEL_INSECURE", "true")

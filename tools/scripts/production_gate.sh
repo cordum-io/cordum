@@ -10,11 +10,13 @@ require() {
 
 usage() {
   cat <<'EOF'
-Usage: ./tools/scripts/production_gate.sh [--gate N] [--skip-rebuild]
+Usage: ./tools/scripts/production_gate.sh [--gate N] [--skip-rebuild] [--strict]
 
 Runs production readiness gates.
-  --gate N         Run only gate N (1..17)
+  --gate N         Run only gate N (1..18)
   --skip-rebuild   Skip docker compose down/rebuild in gate 1
+  --strict         Make ALL gates blocking (for release pipelines).
+                   Also settable via STRICT_MODE=1 env var.
 EOF
 }
 
@@ -305,6 +307,13 @@ gate_1_deploy() {
   code="$(api_code GET /status)"
   [[ "${code}" == "200" ]] || {
     echo "status endpoint returned ${code} after deploy gate" >&2
+    return 1
+  }
+
+  # Verify config auto-bootstrap: GET /api/v1/config should return 200.
+  code="$(api_code GET /config)"
+  [[ "${code}" == "200" ]] || {
+    echo "config endpoint returned ${code} — auto-bootstrap may have failed" >&2
     return 1
   }
 
@@ -2257,6 +2266,56 @@ gate_16_degradation() {
 # Gate 17 — Dashboard: HTML serves, static assets load, API proxy,
 #            Content-Security-Policy, theme assets
 # ---------------------------------------------------------------------------
+gate_18_release_config() {
+  local compose_file="docker-compose.release.yml"
+  local line
+
+  if [[ ! -f "${compose_file}" ]]; then
+    echo "FAIL: ${compose_file} not found" >&2
+    return 1
+  fi
+
+  # Verify OUTPUT_POLICY_ENABLED defaults to true (not false/empty)
+  line="$(grep 'OUTPUT_POLICY_ENABLED' "${compose_file}" || true)"
+  if [[ -z "${line}" ]]; then
+    echo "FAIL: OUTPUT_POLICY_ENABLED not found in ${compose_file}" >&2
+    return 1
+  fi
+  if echo "${line}" | grep -qE ':-false|:-0|:-\}'; then
+    echo "FAIL: OUTPUT_POLICY_ENABLED defaults to disabled in ${compose_file}" >&2
+    return 1
+  fi
+  if ! echo "${line}" | grep -qE ':-true|:-1'; then
+    echo "FAIL: OUTPUT_POLICY_ENABLED does not default to true/1 in ${compose_file}" >&2
+    return 1
+  fi
+
+  # Verify internal services do not expose host ports
+  local internal_services=("nats" "redis" "context-engine" "safety-kernel" "workflow-engine")
+  local svc in_svc=0 svc_match=""
+  while IFS= read -r line; do
+    if echo "${line}" | grep -qE '^  [a-z]'; then
+      svc_match=""
+      for svc in "${internal_services[@]}"; do
+        if echo "${line}" | grep -qE "^  ${svc}:"; then
+          svc_match="${svc}"
+          in_svc=1
+          break
+        fi
+      done
+      if [[ -z "${svc_match}" ]]; then
+        in_svc=0
+      fi
+    fi
+    if [[ "${in_svc}" == "1" ]] && echo "${line}" | grep -qE '^\s+- "[0-9]+:[0-9]+"'; then
+      echo "FAIL: internal service ${svc_match} exposes host port in ${compose_file}: ${line}" >&2
+      return 1
+    fi
+  done < "${compose_file}"
+
+  echo "release config checks passed (output_policy_enabled=true, no internal port exposure)"
+}
+
 gate_17_dashboard() {
   local code resp
 
@@ -2376,18 +2435,27 @@ write_results_json() {
   local generated_at
   local selected_gate
   local all_passed="true"
+  local blocking_passed="true"
   local gate_lines
-  local gate_no
+  local gate_no class
 
   generated_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   selected_gate="${SELECT_GATE:-all}"
   gate_lines=""
 
   for gate_no in "${SELECTED_GATES[@]}"; do
+    if is_blocking_gate "${gate_no}"; then
+      class="BLOCKING"
+    else
+      class="ADVISORY"
+    fi
     if [[ "${GATE_STATUS[${gate_no}]}" != "PASS" ]]; then
       all_passed="false"
+      if [[ "${class}" == "BLOCKING" ]]; then
+        blocking_passed="false"
+      fi
     fi
-    gate_lines+="${gate_no}"$'\t'"${GATE_NAME[${gate_no}]}"$'\t'"${GATE_STATUS[${gate_no}]}"$'\t'"${GATE_DURATION_MS[${gate_no}]}"$'\t'"${GATE_MESSAGE[${gate_no}]}"$'\n'
+    gate_lines+="${gate_no}"$'\t'"${GATE_NAME[${gate_no}]}"$'\t'"${GATE_STATUS[${gate_no}]}"$'\t'"${GATE_DURATION_MS[${gate_no}]}"$'\t'"${GATE_MESSAGE[${gate_no}]}"$'\t'"${class}"$'\n'
   done
 
   {
@@ -2397,13 +2465,19 @@ write_results_json() {
     printf '  "tenant_id": %s,\n' "$(json_escape "${TENANT_ID}")"
     printf '  "selected_gate": %s,\n' "$(json_escape "${selected_gate}")"
     printf '  "all_passed": %s,\n' "${all_passed}"
+    printf '  "blocking_passed": %s,\n' "${blocking_passed}"
+    if [[ "${STRICT_MODE:-0}" == "1" ]]; then
+      printf '  "strict_mode": true,\n'
+    else
+      printf '  "strict_mode": false,\n'
+    fi
     printf '  "gates": [\n'
     printf '%s' "${gate_lines}" | awk -F'\t' '
-      NF >= 5 {
+      NF >= 6 {
         gsub(/\\/,"\\\\",$2); gsub(/"/,"\\\"",$2);
         gsub(/\\/,"\\\\",$3); gsub(/"/,"\\\"",$3);
         gsub(/\\/,"\\\\",$5); gsub(/"/,"\\\"",$5);
-        printf("    {\"gate\": %d, \"name\": \"%s\", \"status\": \"%s\", \"duration_ms\": %d, \"message\": \"%s\"}", $1, $2, $3, $4, $5);
+        printf("    {\"gate\": %d, \"name\": \"%s\", \"status\": \"%s\", \"duration_ms\": %d, \"message\": \"%s\", \"class\": \"%s\"}", $1, $2, $3, $4, $5, $6);
         if (NR > 0) printf(",\n");
       }
     ' | sed '$ s/,$//'
@@ -2412,26 +2486,48 @@ write_results_json() {
   } >"${output_file}"
 }
 
+is_blocking_gate() {
+  local gate_no="$1"
+  local bg
+  for bg in "${BLOCKING_GATES[@]}"; do
+    [[ "${bg}" == "${gate_no}" ]] && return 0
+  done
+  return 1
+}
+
 print_summary() {
-  local gate_no
-  local failed=0
+  local gate_no class
+  local blocking_failed=0
+  local advisory_failed=0
   echo ""
-  echo "Gate | Status | Duration(ms) | Name"
-  echo "-----|--------|--------------|-------------------------------"
+  echo "Gate | Class     | Status | Duration(ms) | Name"
+  echo "-----|-----------|--------|--------------|-------------------------------"
   for gate_no in "${SELECTED_GATES[@]}"; do
-    printf "%4s | %6s | %12s | %s\n" "${gate_no}" "${GATE_STATUS[${gate_no}]}" "${GATE_DURATION_MS[${gate_no}]}" "${GATE_NAME[${gate_no}]}"
+    if is_blocking_gate "${gate_no}"; then
+      class="BLOCKING"
+    else
+      class="ADVISORY"
+    fi
+    printf "%4s | %-9s | %6s | %12s | %s\n" "${gate_no}" "${class}" "${GATE_STATUS[${gate_no}]}" "${GATE_DURATION_MS[${gate_no}]}" "${GATE_NAME[${gate_no}]}"
     if [[ "${GATE_STATUS[${gate_no}]}" != "PASS" ]]; then
-      failed=1
       echo "      message: ${GATE_MESSAGE[${gate_no}]}"
+      if [[ "${class}" == "BLOCKING" ]]; then
+        blocking_failed=1
+      else
+        advisory_failed=1
+      fi
     fi
   done
   echo ""
-  if [[ "${failed}" -eq 0 ]]; then
-    echo "[production-gate] all selected gates passed"
-    return 0
+  if [[ "${blocking_failed}" -eq 1 ]]; then
+    echo "[production-gate] BLOCKING gate(s) failed — release blocked"
+    return 1
   fi
-  echo "[production-gate] one or more gates failed"
-  return 1
+  if [[ "${advisory_failed}" -eq 1 ]]; then
+    echo "[production-gate] advisory gate(s) failed (non-blocking)"
+  fi
+  echo "[production-gate] all blocking gates passed"
+  return 0
 }
 
 require docker
@@ -2464,6 +2560,19 @@ MOCK_BANK_WORKER_STARTED=0
 SKIP_REBUILD=0
 SELECT_GATE=""
 
+# Gate classification: blocking failures prevent release, advisory failures are logged only.
+# Blocking: Deploy(1), Auth(2), Workflows(3), Policy(4), Reliability(5), Security(7), Identity(9), Release Config(18)
+# Advisory: Performance(6), Extensions(8), Data Lifecycle(10), Streaming(11), Adv Workflows(12),
+#           Config(13), Policy Lifecycle(14), Pack Mgmt(15), Degradation(16), Dashboard(17)
+BLOCKING_GATES=(1 2 3 4 5 7 9 18)
+ADVISORY_GATES=(6 8 10 11 12 13 14 15 16 17)
+
+# --strict / STRICT_MODE=1: promote all gates to blocking (for release pipelines)
+if [[ "${STRICT_MODE:-0}" == "1" ]]; then
+  BLOCKING_GATES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18)
+  ADVISORY_GATES=()
+fi
+
 # Cleanup trap: stop background mock-bank worker on exit
 cleanup() {
   if [[ -n "${MOCK_BANK_WORKER_PID}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
@@ -2491,6 +2600,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_REBUILD=1
       shift
       ;;
+    --strict)
+      STRICT_MODE=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -2502,10 +2615,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "${SELECT_GATE}" ]]; then
-  [[ "${SELECT_GATE}" =~ ^([1-9]|1[0-7])$ ]] || die "--gate must be 1..17"
+  [[ "${SELECT_GATE}" =~ ^([1-9]|1[0-8])$ ]] || die "--gate must be 1..18"
   SELECTED_GATES=("${SELECT_GATE}")
 else
-  SELECTED_GATES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17)
+  SELECTED_GATES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18)
 fi
 
 build_auth_headers
@@ -2534,6 +2647,7 @@ for gate in "${SELECTED_GATES[@]}"; do
     15) run_gate 15 gate_15_pack_management   "Gate 15 Pack Management" ;;
     16) run_gate 16 gate_16_degradation       "Gate 16 Degradation" ;;
     17) run_gate 17 gate_17_dashboard         "Gate 17 Dashboard" ;;
+    18) run_gate 18 gate_18_release_config    "Gate 18 Release Config" ;;
   esac
 done
 

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -85,5 +86,46 @@ func TestConfigAndSchemaHandlers(t *testing.T) {
 	s.handleDeleteSchema(delRR, delReq)
 	if delRR.Code != http.StatusNoContent {
 		t.Fatalf("delete schema: %d %s", delRR.Code, delRR.Body.String())
+	}
+}
+
+func TestSchemaRegister_ViewerForbidden(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"viewer-key","role":"viewer"}]`,
+	})
+
+	schemaPayload := map[string]any{
+		"id":     "test/viewer",
+		"schema": map[string]any{"type": "object"},
+	}
+	body, _ := json.Marshal(schemaPayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/schemas", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+
+	rec := httptest.NewRecorder()
+	s.handleRegisterSchema(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for viewer on schema register, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSchemaList_ViewerAllowed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"viewer-key","role":"viewer"}]`,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/schemas", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+
+	rec := httptest.NewRecorder()
+	s.handleListSchemas(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for viewer on schema list, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

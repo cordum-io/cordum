@@ -850,3 +850,91 @@ func anyString(v any) string {
 		return ""
 	}
 }
+
+// ---- Policy evaluate/simulate/explain role checks ----
+
+func TestPolicyEvaluate_ViewerForbidden(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"viewer-key","role":"viewer"}]`,
+	})
+	s.auth = provider
+
+	body := `{"prompt":"test","topic":"job.default"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", strings.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-Api-Key", "viewer-key")
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+
+	rec := httptest.NewRecorder()
+	s.handlePolicyEvaluate(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for viewer on policy/evaluate, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPolicyEvaluate_AdminAllowed(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"admin-key","role":"admin"}]`,
+	})
+	s.auth = provider
+	safety.resp = &pb.PolicyCheckResponse{
+		Decision: pb.DecisionType_DECISION_TYPE_ALLOW,
+	}
+
+	body := `{"prompt":"test","topic":"job.default"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", strings.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-Api-Key", "admin-key")
+	authCtx := &AuthContext{Role: "admin", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+
+	rec := httptest.NewRecorder()
+	s.handlePolicyEvaluate(rec, req)
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("expected non-403 for admin on policy/evaluate, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPolicySimulate_ViewerForbidden(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"viewer-key","role":"viewer"}]`,
+	})
+	s.auth = provider
+
+	body := `{"prompt":"test","topic":"job.default"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/simulate", strings.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-Api-Key", "viewer-key")
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+
+	rec := httptest.NewRecorder()
+	s.handlePolicySimulate(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for viewer on policy/simulate, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPolicySnapshots_ViewerForbidden(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"viewer-key","role":"viewer"}]`,
+	})
+	s.auth = provider
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/snapshots", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-Api-Key", "viewer-key")
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+
+	rec := httptest.NewRecorder()
+	s.handlePolicySnapshots(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for viewer on policy/snapshots, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

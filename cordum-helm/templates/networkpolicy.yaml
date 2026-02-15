@@ -1,0 +1,432 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny policy for all Cordum pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-default-deny
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Redis: accept from control-plane services on 6379, allow DNS egress
+{{- if .Values.redis.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-redis
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: safety-kernel
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: scheduler
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: workflow-engine
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: context-engine
+      ports:
+        - port: {{ .Values.redis.service.port }}
+          protocol: TCP
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+{{- end }}
+# NATS: accept from scheduler, gateway, workflow-engine on 4222, allow DNS egress
+{{- if .Values.nats.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-nats
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: scheduler
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: workflow-engine
+      ports:
+        - port: {{ .Values.nats.service.port }}
+          protocol: TCP
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+{{- end }}
+# Safety Kernel: accept from scheduler, gateway on 50051
+{{- if .Values.safetyKernel.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-safety-kernel
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: safety-kernel
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: scheduler
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+      ports:
+        - port: {{ .Values.safetyKernel.service.port }}
+          protocol: TCP
+  egress:
+    # Redis
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: {{ .Values.redis.service.port }}
+          protocol: TCP
+    {{- end }}
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+{{- end }}
+# Scheduler: accept metrics on 9090, egress to Redis, NATS, safety-kernel, DNS
+{{- if .Values.scheduler.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-scheduler
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: {{ .Values.scheduler.service.metricsPort }}
+          protocol: TCP
+  egress:
+    # Redis
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: {{ .Values.redis.service.port }}
+          protocol: TCP
+    {{- end }}
+    # NATS
+    {{- if .Values.nats.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: nats
+      ports:
+        - port: {{ .Values.nats.service.port }}
+          protocol: TCP
+    {{- end }}
+    # Safety Kernel
+    {{- if .Values.safetyKernel.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: safety-kernel
+      ports:
+        - port: {{ .Values.safetyKernel.service.port }}
+          protocol: TCP
+    {{- end }}
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+{{- end }}
+# API Gateway: accept from ingress controller on 8080/8081, egress to Redis, NATS, safety-kernel, DNS
+{{- if .Values.gateway.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-api-gateway
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressControllerSelector.matchLabels | nindent 14 }}
+        # Allow dashboard to reach gateway
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: dashboard
+      ports:
+        - port: {{ .Values.gateway.service.grpcPort }}
+          protocol: TCP
+        - port: {{ .Values.gateway.service.httpPort }}
+          protocol: TCP
+  egress:
+    # Redis
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: {{ .Values.redis.service.port }}
+          protocol: TCP
+    {{- end }}
+    # NATS
+    {{- if .Values.nats.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: nats
+      ports:
+        - port: {{ .Values.nats.service.port }}
+          protocol: TCP
+    {{- end }}
+    # Safety Kernel
+    {{- if .Values.safetyKernel.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: safety-kernel
+      ports:
+        - port: {{ .Values.safetyKernel.service.port }}
+          protocol: TCP
+    {{- end }}
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+{{- end }}
+# Workflow Engine: accept on 9093, egress to Redis, NATS, DNS
+{{- if .Values.workflowEngine.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-workflow-engine
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: workflow-engine
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: {{ .Values.workflowEngine.service.port }}
+          protocol: TCP
+  egress:
+    # Redis
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: {{ .Values.redis.service.port }}
+          protocol: TCP
+    {{- end }}
+    # NATS
+    {{- if .Values.nats.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: nats
+      ports:
+        - port: {{ .Values.nats.service.port }}
+          protocol: TCP
+    {{- end }}
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+{{- end }}
+# Context Engine: accept from gateway on 50070, egress to Redis, DNS
+{{- if .Values.contextEngine.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-context-engine
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: context-engine
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+      ports:
+        - port: {{ .Values.contextEngine.service.port }}
+          protocol: TCP
+  egress:
+    # Redis
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: {{ .Values.redis.service.port }}
+          protocol: TCP
+    {{- end }}
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+{{- end }}
+# Dashboard: accept from ingress controller on 8080, egress to gateway, DNS
+{{- if .Values.dashboard.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cordum.fullname" . }}-dashboard
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cordum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dashboard
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressControllerSelector.matchLabels | nindent 14 }}
+      ports:
+        - port: {{ .Values.dashboard.service.port }}
+          protocol: TCP
+  egress:
+    # API Gateway
+    {{- if .Values.gateway.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cordum.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+      ports:
+        - port: {{ .Values.gateway.service.httpPort }}
+          protocol: TCP
+    {{- end }}
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
+{{- end }}

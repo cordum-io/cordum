@@ -145,7 +145,7 @@ func NewHTTPServiceBridge(cfg HTTPServiceBridgeConfig) *HTTPServiceBridge {
 	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+		httpClient = SafeHTTPClient(10 * time.Second)
 	}
 	return &HTTPServiceBridge{
 		baseURL:           strings.TrimRight(baseURL, "/"),
@@ -383,7 +383,7 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 
 	client := b.httpClient
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = SafeHTTPClient(10 * time.Second)
 	}
 	// #nosec G704 -- URL is validated via validateOutboundTargetURL above.
 	resp, err := client.Do(req)

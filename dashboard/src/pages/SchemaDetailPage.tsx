@@ -4,9 +4,11 @@ import { Button } from "../components/ui/Button";
 import { SchemaViewer } from "../components/schemas/SchemaViewer";
 import { useSchema } from "../hooks/useSchemas";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { isValidResourceId } from "../lib/utils";
 
 export default function SchemaDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id: rawId } = useParams<{ id: string }>();
+  const id = isValidResourceId(rawId) ? rawId : undefined;
   usePageTitle(id ? `Schema ${id.slice(0, 8)}` : "Schema");
   const navigate = useNavigate();
   const { data: schema, isLoading, isError } = useSchema(id ?? "");

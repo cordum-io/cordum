@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
@@ -410,5 +411,35 @@ func TestVerifyPolicySignatureRejectsInvalidSignatureLength(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "policy signature length") {
 		t.Fatalf("expected signature length error, got %v", err)
+	}
+}
+
+func TestWatchPolicy_ContextCancel(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "50ms")
+
+	dir := t.TempDir()
+	policyPath := dir + "/policy.yaml"
+	if err := os.WriteFile(policyPath, []byte("default_tenant: default\ntenants:\n  default:\n    allow_topics:\n      - job.*\n"), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	loader := &policyLoader{source: policyPath}
+
+	srv := &server{}
+	srv.setPolicy(&config.SafetyPolicy{}, "initial")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		srv.watchPolicy(ctx, loader)
+		close(done)
+	}()
+
+	// Cancel context — watchPolicy must exit promptly.
+	cancel()
+	select {
+	case <-done:
+		// Success: goroutine exited.
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchPolicy did not exit after context cancellation (goroutine leak)")
 	}
 }

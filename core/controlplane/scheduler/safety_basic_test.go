@@ -1,6 +1,10 @@
 package scheduler
 
-import pb "github.com/cordum/cordum/core/protocol/pb/v1"
+import (
+	"context"
+
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+)
 
 // SafetyBasic performs a minimal safety check for tests.
 type SafetyBasic struct{}
@@ -9,7 +13,7 @@ func NewSafetyBasic() *SafetyBasic {
 	return &SafetyBasic{}
 }
 
-func (s *SafetyBasic) Check(req *pb.JobRequest) (SafetyDecisionRecord, error) {
+func (s *SafetyBasic) Check(_ context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
 	if req == nil {
 		return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "nil job request"}, nil
 	}

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { logger } from "../lib/logger";
 import { broadcastSync } from "../hooks/useCrossTabSync";
+import { useEventStore } from "./events";
 import type { User } from "../api/types";
 
 // ---------------------------------------------------------------------------
@@ -103,6 +104,8 @@ interface ConfigState {
   user: User | null;
   isAuthenticated: boolean;
   loginTimestamp: number | null;
+  /** @internal Prevents tenant impersonation via store mutation after login. */
+  tenantLocked: boolean;
 
   // Actions
   update: (patch: ConfigPatch) => void;
@@ -124,14 +127,30 @@ export const useConfigStore = create<ConfigState>((set) => {
     user: savedUser,
     isAuthenticated: !!loadToken(),
     loginTimestamp: loadLoginTimestamp(),
+    tenantLocked: !!(savedUser?.tenant),
 
     update: (patch) =>
       set((s) => {
         if (patch.apiKey !== undefined) {
           persistToken(patch.apiKey);
         }
+        // Defense-in-depth: prevent tenant impersonation via store mutation
+        if (s.tenantLocked && patch.tenantId !== undefined && patch.tenantId !== s.tenantId) {
+          logger.warn("config-store", "Blocked tenantId change while locked", {
+            current: s.tenantId,
+            attempted: patch.tenantId,
+          });
+          const { tenantId: _ignored, ...safePatch } = patch;
+          const next = { ...s, ...safePatch };
+          return { ...next, isAuthenticated: !!next.apiKey };
+        }
+        // Reset event store on tenant switch to prevent cross-tenant data leakage
+        if (patch.tenantId !== undefined && patch.tenantId !== s.tenantId) {
+          useEventStore.getState().reset();
+        }
         const next = { ...s, ...patch };
-        return { ...next, isAuthenticated: !!next.apiKey };
+        const locked = s.tenantLocked || !!(next.tenantId);
+        return { ...next, isAuthenticated: !!next.apiKey, tenantLocked: locked };
       }),
 
     login: (token, user) => {
@@ -148,8 +167,9 @@ export const useConfigStore = create<ConfigState>((set) => {
         tenantId: user.tenant ?? "",
         principalId: user.id ?? "",
         principalRole: user.roles?.[0] ?? "",
+        tenantLocked: !!(user.tenant),
       });
-      broadcastSync({ type: "auth-login" });
+      broadcastSync({ type: "auth-login", token, user });
     },
 
     logout: () => {
@@ -157,6 +177,7 @@ export const useConfigStore = create<ConfigState>((set) => {
       persistToken("");
       persistUser(null);
       persistLoginTimestamp(null);
+      useEventStore.getState().reset();
       set({
         apiKey: "",
         user: null,
@@ -165,6 +186,7 @@ export const useConfigStore = create<ConfigState>((set) => {
         tenantId: "",
         principalId: "",
         principalRole: "",
+        tenantLocked: false,
       });
       broadcastSync({ type: "auth-logout" });
     },

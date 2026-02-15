@@ -146,6 +146,15 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const resourceIdTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
+  // Clear pending debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      clearTimeout(actorTimerRef.current);
+      clearTimeout(searchTimerRef.current);
+      clearTimeout(resourceIdTimerRef.current);
+    };
+  }, []);
+
   // Sync local state when URL changes externally
   useEffect(() => { setLocalActor(actor); }, [actor]);
   useEffect(() => { setLocalSearch(search); }, [search]);

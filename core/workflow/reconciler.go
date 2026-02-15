@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/cordum/cordum/core/model"
@@ -104,6 +105,18 @@ func (r *reconciler) tick(ctx context.Context) {
 			r.reconcileRun(ctx, runID)
 		}
 	}
+	// Scan cancelled/timed-out runs for orphaned jobs that failed to cancel.
+	terminalStatuses := []RunStatus{RunStatusCancelled, RunStatusTimedOut}
+	for _, status := range terminalStatuses {
+		ids, err := r.workflowStore.ListRunIDsByStatus(ctx, status, r.runScanLimit)
+		if err != nil {
+			logging.Error("workflow-engine", "list terminal runs by status", "status", status, "error", err)
+			continue
+		}
+		for _, runID := range ids {
+			r.reconcileOrphanedJobs(ctx, runID)
+		}
+	}
 }
 
 func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
@@ -158,6 +171,86 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 	}
 
 	_ = r.engine.StartRun(ctx, run.WorkflowID, run.ID)
+}
+
+// reconcileOrphanedJobs scans cancelled/timed-out runs for step runs whose
+// underlying jobs are still running or dispatched. This catches cases where
+// the initial cancel publish failed despite retries.
+func (r *reconciler) reconcileOrphanedJobs(ctx context.Context, runID string) {
+	if runID == "" || r.workflowStore == nil || r.engine == nil || r.jobStore == nil {
+		return
+	}
+	run, err := r.workflowStore.GetRun(ctx, runID)
+	if err != nil || run == nil {
+		return
+	}
+	if run.Status != RunStatusCancelled && run.Status != RunStatusTimedOut {
+		return
+	}
+
+	var orphaned []string
+	for _, sr := range run.Steps {
+		orphaned = append(orphaned, collectOrphanedJobIDs(ctx, sr, r.jobStore)...)
+	}
+	if len(orphaned) == 0 {
+		return
+	}
+
+	lockKey := runLockKey(runID)
+	token, err := r.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
+	if err != nil || token == "" {
+		return
+	}
+	defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
+
+	reason := "orphaned after workflow " + string(run.Status)
+	for _, jobID := range orphaned {
+		slog.Warn("re-cancelling orphaned workflow job",
+			"run_id", runID,
+			"job_id", jobID,
+			"run_status", run.Status,
+		)
+		if err := r.engine.publishJobCancel(jobID, reason); err != nil {
+			slog.Error("reconciler: orphan cancel still failing",
+				"run_id", runID,
+				"job_id", jobID,
+				"err", err,
+			)
+		}
+	}
+}
+
+// collectOrphanedJobIDs recursively finds job IDs in a step run tree whose
+// underlying job state is still Running or Dispatched (not yet terminated).
+func collectOrphanedJobIDs(ctx context.Context, sr *StepRun, jobStore model.JobStore) []string {
+	if sr == nil || sr.JobID == "" {
+		if sr != nil {
+			var out []string
+			for _, child := range sr.Children {
+				out = append(out, collectOrphanedJobIDs(ctx, child, jobStore)...)
+			}
+			return out
+		}
+		return nil
+	}
+	var out []string
+	state, err := jobStore.GetState(ctx, sr.JobID)
+	if err == nil && isActiveJobState(state) {
+		out = append(out, sr.JobID)
+	}
+	for _, child := range sr.Children {
+		out = append(out, collectOrphanedJobIDs(ctx, child, jobStore)...)
+	}
+	return out
+}
+
+func isActiveJobState(state model.JobState) bool {
+	switch state {
+	case model.JobStateRunning, model.JobStateDispatched:
+		return true
+	default:
+		return false
+	}
 }
 
 func jobStatusFromState(state model.JobState) pb.JobStatus {

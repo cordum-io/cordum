@@ -35,7 +35,7 @@ export const SuccessSparkline = memo(function SuccessSparkline({
           className="w-0.5 rounded-sm"
           style={{
             backgroundColor: COLOR_MAP[status] ?? "#6b7280",
-            height: status === "succeeded" || status === "completed" ? "100%" : "75%",
+            height: status === "succeeded" ? "100%" : "75%",
           }}
         />
       ))}

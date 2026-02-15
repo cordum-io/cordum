@@ -322,7 +322,7 @@ func rateLimitMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !strings.HasPrefix(r.URL.Path, "/api/") {
+		if !strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/mcp/") {
 			next.ServeHTTP(w, r)
 			return
 		}

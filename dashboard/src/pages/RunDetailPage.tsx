@@ -15,6 +15,7 @@ import {
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
+import { isValidResourceId } from "../lib/utils";
 import { RunStatusBadge } from "../components/StatusBadge";
 import { GanttTimeline } from "../components/workflow/GanttTimeline";
 import { RunVisualization } from "../components/workflow/RunVisualization";
@@ -36,7 +37,7 @@ function formatDuration(ms: number | undefined): string {
   return `${mins}m ${remSecs}s`;
 }
 
-function computeDuration(run: { startedAt?: string; completedAt?: string }): number | undefined {
+function computeDuration(run: { startedAt?: string | null; completedAt?: string | null }): number | undefined {
   if (!run.startedAt) return undefined;
   const end = run.completedAt ? new Date(run.completedAt).getTime() : Date.now();
   return end - new Date(run.startedAt).getTime();
@@ -181,7 +182,9 @@ function StepItem({ step }: { step: WorkflowStep }) {
 // ---------------------------------------------------------------------------
 
 export default function RunDetailPage() {
-  const { id: workflowId, runId } = useParams<{ id: string; runId: string }>();
+  const { id: rawWorkflowId, runId: rawRunId } = useParams<{ id: string; runId: string }>();
+  const workflowId = isValidResourceId(rawWorkflowId) ? rawWorkflowId : undefined;
+  const runId = isValidResourceId(rawRunId) ? rawRunId : undefined;
   usePageTitle(runId ? `Run ${runId.slice(0, 8)}` : "Run");
   const { data: run, isLoading, isError } = useRun(runId);
 
@@ -234,7 +237,7 @@ export default function RunDetailPage() {
 
   const duration = run.duration ?? computeDuration(run);
   const isRunning = run.status === "running" || run.status === "waiting" || run.status === "pending";
-  const isTerminal = ["succeeded", "completed", "failed", "cancelled", "timed_out"].includes(run.status);
+  const isTerminal = ["succeeded", "failed", "cancelled", "timed_out"].includes(run.status);
 
   return (
     <div className="space-y-6">

@@ -132,6 +132,13 @@ type server struct {
 func (s *server) Close() {
 	s.stopBusTaps()
 	s.stopWorkerExpiry()
+	// Close safety kernel gRPC connection AFTER HTTP shutdown completes so
+	// in-flight handlers can finish their safety RPCs during the drain window.
+	if s.safetyConn != nil {
+		if err := s.safetyConn.Close(); err != nil {
+			logging.Error("api-gateway", "safety conn close failed", "error", err)
+		}
+	}
 	if nb, ok := s.bus.(*bus.NatsBus); ok {
 		nb.Drain()
 	}
@@ -268,6 +275,9 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if err := seedDefaultPackCatalogs(context.Background(), configSvc); err != nil {
 		logging.Error("api-gateway", "seed pack catalogs failed", "error", err)
 	}
+	if err := configSvc.EnsureDefault(context.Background()); err != nil {
+		logging.Warn("api-gateway", "auto-bootstrap default config failed", "error", err)
+	}
 	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis schema registry: %w", err)
@@ -285,6 +295,10 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		return fmt.Errorf("connect redis dlq store: %w", err)
 	}
 	defer dlqStore.Close()
+	// Periodic cleanup of stale DLQ index entries whose data keys have expired.
+	dlqCleanupCtx, dlqCleanupCancel := context.WithCancel(context.Background())
+	defer dlqCleanupCancel()
+	dlqStore.StartCleanupLoop(dlqCleanupCtx, time.Hour)
 
 	artifactStore, err := artifacts.NewRedisStore(cfg.RedisURL)
 	if err != nil {
@@ -310,7 +324,8 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		} else {
 			safetyConn = conn
 			safetyClient = client
-			defer safetyConn.Close()
+			// safetyConn is closed in s.Close(), NOT here — handlers may still
+			// use safetyClient during the graceful shutdown window.
 		}
 	}
 
@@ -612,7 +627,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		basic.SetUsageContext(sigCtx)
 	}
 
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-sigCtx.Done()
 		logging.Info("api-gateway", "shutting down gracefully", "timeout", shutdownTimeout.String())
 
@@ -630,9 +647,20 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 			logging.Error("api-gateway", "http shutdown error", "error", err)
 		}
 
-		// Drain gRPC server (waits for in-flight RPCs to finish).
+		// Drain gRPC server with timeout — fallback to force Stop if it hangs.
 		if grpcServer != nil {
-			grpcServer.GracefulStop()
+			grpcDone := make(chan struct{})
+			go func() {
+				grpcServer.GracefulStop()
+				close(grpcDone)
+			}()
+			select {
+			case <-grpcDone:
+				logging.Info("api-gateway", "gRPC server drained")
+			case <-shutdownCtx.Done():
+				logging.Warn("api-gateway", "gRPC graceful stop timed out, forcing")
+				grpcServer.Stop()
+			}
 		}
 
 		if basic := basicAuthProvider(s.auth); basic != nil {
@@ -653,6 +681,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		return srv.ListenAndServe()
 	}(); err != nil {
 		if errors.Is(err, http.ErrServerClosed) {
+			// Wait for the shutdown goroutine to finish draining all servers
+			// before returning, so defers (s.Close, store closes) fire AFTER
+			// in-flight handlers complete.
+			<-shutdownDone
 			logging.Info("api-gateway", "http server closed")
 			return nil
 		}

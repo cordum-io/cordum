@@ -116,7 +116,11 @@ describe("useConfigStore", () => {
     expect(window.localStorage.getItem(LOGIN_TS_KEY)).toBe(
       String(new Date("2026-02-13T06:00:00.000Z").getTime()),
     );
-    expect(broadcastSyncMock).toHaveBeenCalledWith({ type: "auth-login" });
+    expect(broadcastSyncMock).toHaveBeenCalledWith({
+      type: "auth-login",
+      token: "login-token",
+      user: expect.objectContaining({ id: "user-2", tenant: "tenant-b" }),
+    });
   });
 
   it("logout clears auth fields, clears localStorage, and broadcasts auth-logout", async () => {
@@ -171,6 +175,91 @@ describe("useConfigStore", () => {
     const ts = new Date("2026-02-13T06:30:00.000Z").getTime();
     expect(useConfigStore.getState().loginTimestamp).toBe(ts);
     expect(window.localStorage.getItem(LOGIN_TS_KEY)).toBe(String(ts));
+  });
+});
+
+describe("tenant lock (defense-in-depth)", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it("locks tenantId after login and blocks subsequent changes via update()", async () => {
+    const { useConfigStore } = await loadConfigModule();
+    useConfigStore.getState().login("token-1", {
+      id: "user-1",
+      username: "alice",
+      email: "a@example.com",
+      display_name: "Alice",
+      roles: ["admin"],
+      tenant: "tenant-a",
+    });
+
+    expect(useConfigStore.getState().tenantLocked).toBe(true);
+    expect(useConfigStore.getState().tenantId).toBe("tenant-a");
+
+    // Attempt to change tenant — should be blocked
+    useConfigStore.getState().update({ tenantId: "tenant-evil" });
+    expect(useConfigStore.getState().tenantId).toBe("tenant-a");
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      "config-store",
+      "Blocked tenantId change while locked",
+      expect.objectContaining({ current: "tenant-a", attempted: "tenant-evil" }),
+    );
+  });
+
+  it("allows tenantId to be set initially via update() when not locked", async () => {
+    const { useConfigStore } = await loadConfigModule();
+    expect(useConfigStore.getState().tenantLocked).toBe(false);
+
+    useConfigStore.getState().update({ tenantId: "tenant-first" });
+    expect(useConfigStore.getState().tenantId).toBe("tenant-first");
+    expect(useConfigStore.getState().tenantLocked).toBe(true);
+  });
+
+  it("resets tenantLocked on logout so a new login can set tenant", async () => {
+    const { useConfigStore } = await loadConfigModule();
+    useConfigStore.getState().login("token-1", {
+      id: "user-1",
+      username: "alice",
+      email: "a@example.com",
+      display_name: "Alice",
+      roles: ["admin"],
+      tenant: "tenant-a",
+    });
+    expect(useConfigStore.getState().tenantLocked).toBe(true);
+
+    useConfigStore.getState().logout();
+    expect(useConfigStore.getState().tenantLocked).toBe(false);
+    expect(useConfigStore.getState().tenantId).toBe("");
+
+    // Can now set a different tenant
+    useConfigStore.getState().login("token-2", {
+      id: "user-2",
+      username: "bob",
+      email: "b@example.com",
+      display_name: "Bob",
+      roles: ["operator"],
+      tenant: "tenant-b",
+    });
+    expect(useConfigStore.getState().tenantId).toBe("tenant-b");
+    expect(useConfigStore.getState().tenantLocked).toBe(true);
+  });
+
+  it("still applies non-tenant fields from a patch that includes a blocked tenant change", async () => {
+    const { useConfigStore } = await loadConfigModule();
+    useConfigStore.getState().login("token-1", {
+      id: "user-1",
+      username: "alice",
+      email: "a@example.com",
+      display_name: "Alice",
+      roles: ["admin"],
+      tenant: "tenant-a",
+    });
+
+    useConfigStore.getState().update({ tenantId: "tenant-evil", apiBaseUrl: "https://new-api.test" });
+    expect(useConfigStore.getState().tenantId).toBe("tenant-a");
+    expect(useConfigStore.getState().apiBaseUrl).toBe("https://new-api.test");
   });
 });
 

@@ -5,10 +5,15 @@ on:
     # Run at 03:00 UTC every day
     - cron: '0 3 * * *'
   workflow_dispatch:
+    inputs:
+      soak_duration:
+        description: 'Soak test duration in minutes'
+        required: false
+        default: '60'
 
 jobs:
   full-production-gate:
-    name: Full Production Gate (17 gates)
+    name: Full Production Gate (18 gates)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -57,20 +62,10 @@ jobs:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
 
     - name: Run all production gates (1-17)
-      run: |
-        failed=0
-        for gate in $(seq 1 17); do
-          echo "=== Gate $gate ==="
-          if ! bash tools/scripts/production_gate.sh --gate $gate --skip-rebuild; then
-            failed=$((failed + 1))
-          fi
-        done
-        if [ "$failed" -gt 0 ]; then
-          echo "::error::$failed gate(s) failed"
-          exit 1
-        fi
+      run: bash tools/scripts/production_gate.sh --skip-rebuild
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
     - name: Upload gate results
       if: always()
@@ -90,6 +85,160 @@ jobs:
       with:
         name: docker-compose-logs
         path: docker-compose-logs.txt
+
+    - name: Tear down services
+      if: always()
+      run: docker compose down -v
+
+  release-gate:
+    name: Release Gate (strict, all blocking)
+    runs-on: ubuntu-latest
+    needs: [full-production-gate]
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Generate API key
+      run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
+    - name: Start services
+      run: |
+        docker compose up -d --build
+        echo "Waiting for services to become healthy..."
+        for i in $(seq 1 90); do
+          healthy=$(docker compose ps --format json | jq -r 'select(.Health == "healthy") | .Name' | wc -l)
+          total=$(docker compose ps --format json | jq -r '.Name' | wc -l)
+          echo "  Healthy: $healthy / $total"
+          if [ "$healthy" -ge "$total" ] && [ "$total" -gt 0 ]; then
+            echo "All services healthy"
+            break
+          fi
+          if [ "$i" -eq 90 ]; then
+            echo "Timed out waiting for services"
+            docker compose logs
+            exit 1
+          fi
+          sleep 5
+        done
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+
+    - name: Run strict production gate
+      run: bash tools/scripts/production_gate.sh --skip-rebuild --strict
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+
+    - name: Upload strict gate results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-gate-results
+        path: production_gate_results.json
+
+    - name: Collect logs on failure
+      if: failure()
+      run: docker compose logs > release-gate-logs.txt 2>&1
+
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-gate-logs
+        path: release-gate-logs.txt
+
+    - name: Tear down services
+      if: always()
+      run: docker compose down -v
+
+  soak-test:
+    name: Soak Test (stability)
+    runs-on: ubuntu-latest
+    needs: [full-production-gate]
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Generate API key
+      run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
+    - name: Start services
+      run: |
+        docker compose up -d --build
+        echo "Waiting for services to become healthy..."
+        for i in $(seq 1 90); do
+          healthy=$(docker compose ps --format json | jq -r 'select(.Health == "healthy") | .Name' | wc -l)
+          total=$(docker compose ps --format json | jq -r '.Name' | wc -l)
+          echo "  Healthy: $healthy / $total"
+          if [ "$healthy" -ge "$total" ] && [ "$total" -gt 0 ]; then
+            echo "All services healthy"
+            break
+          fi
+          if [ "$i" -eq 90 ]; then
+            echo "Timed out waiting for services"
+            docker compose logs
+            exit 1
+          fi
+          sleep 5
+        done
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+
+    - name: Run soak test
+      run: bash tools/scripts/soak_test.sh
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        SOAK_DURATION_MINUTES: ${{ inputs.soak_duration || '60' }}
+
+    - name: Upload soak results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: soak-test-results
+        path: |
+          soak_results.json
+          soak_metrics.log
+          soak_http.log
+
+    - name: Collect logs on failure
+      if: failure()
+      run: docker compose logs > soak-docker-logs.txt 2>&1
+
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: soak-docker-logs
+        path: soak-docker-logs.txt
 
     - name: Tear down services
       if: always()

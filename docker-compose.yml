@@ -78,6 +78,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
       - SAFETY_KERNEL_ADDR=:50051
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
+      - SAFETY_POLICY_RELOAD_INTERVAL=5s
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
     ports:
@@ -116,7 +117,7 @@ services:
       - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
-      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-false}
+      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
       - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
       - TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml
       - JOB_META_TTL=168h
@@ -130,7 +131,7 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/metrics"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/health"]
       interval: 10s
       timeout: 3s
       retries: 3

@@ -43,7 +43,7 @@ const (
 
 // SafetyChecker determines if a job request may proceed.
 type SafetyChecker interface {
-	Check(req *pb.JobRequest) (SafetyDecisionRecord, error)
+	Check(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error)
 }
 
 // OutputDecision indicates the result of an output policy check.

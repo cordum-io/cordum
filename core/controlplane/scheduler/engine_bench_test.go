@@ -47,8 +47,7 @@ func (b *benchBus) Subscribe(string, string, func(*pb.BusPacket) error) error { 
 // safety check, strategy pick, bus publish, and state transitions.
 func BenchmarkHandlePacket(b *testing.B) {
 	silenceLogs(b)
-	registry := NewMemoryRegistry()
-	defer registry.Close()
+	registry := newTestRegistry(b)
 
 	store := newFakeJobStore()
 	engine := NewEngine(&benchBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
@@ -75,8 +74,7 @@ func BenchmarkHandlePacket(b *testing.B) {
 // BenchmarkHandleHeartbeat measures the cost of heartbeat processing through HandlePacket.
 func BenchmarkHandleHeartbeat(b *testing.B) {
 	silenceLogs(b)
-	registry := NewMemoryRegistry()
-	defer registry.Close()
+	registry := newTestRegistry(b)
 
 	engine := NewEngine(&benchBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
 
@@ -105,8 +103,7 @@ func BenchmarkHandleHeartbeat(b *testing.B) {
 // in the registry to exercise the pool-based selection path.
 func BenchmarkHandlePacketWithLeastLoaded(b *testing.B) {
 	silenceLogs(b)
-	registry := NewMemoryRegistry()
-	defer registry.Close()
+	registry := newTestRegistry(b)
 
 	routing := PoolRouting{
 		Topics: map[string][]string{"job.bench": {"bench-pool"}},

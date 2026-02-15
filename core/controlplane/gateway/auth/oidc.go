@@ -461,11 +461,13 @@ func verifyEC(key *ecdsa.PublicKey, hashFn func() hash.Hash, sigSize int, signin
 
 func (p *OIDCProvider) validateClaims(claims map[string]any) error {
 	now := time.Now()
-	// Validate exp
-	if exp, ok := numericClaim(claims, "exp"); ok {
-		if now.After(exp.Add(30 * time.Second)) { // 30s clock skew
-			return errors.New("oidc: token expired")
-		}
+	// Validate exp — required to prevent tokens without expiry from granting permanent access
+	exp, ok := numericClaim(claims, "exp")
+	if !ok {
+		return errors.New("oidc: token missing exp claim")
+	}
+	if now.After(exp.Add(30 * time.Second)) { // 30s clock skew
+		return errors.New("oidc: token expired")
 	}
 	// Validate nbf
 	if nbf, ok := numericClaim(claims, "nbf"); ok {
@@ -482,6 +484,8 @@ func (p *OIDCProvider) validateClaims(claims map[string]any) error {
 		if !audienceMatches(claims["aud"], p.cfg.Audience) {
 			return errors.New("oidc: audience mismatch")
 		}
+	} else if env.IsProduction() {
+		return errors.New("oidc: audience validation required in production — set CORDUM_OIDC_AUDIENCE")
 	}
 	return nil
 }

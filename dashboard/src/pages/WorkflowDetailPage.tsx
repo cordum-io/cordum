@@ -16,6 +16,7 @@ import {
   useDeleteWorkflow,
   useDeleteRuns,
 } from "../hooks/useWorkflows";
+import { isValidResourceId } from "../lib/utils";
 import { RequireRole } from "../components/RequireRole";
 import { useRunStream } from "../hooks/useRunStream";
 import { RunDAG, NodeDetailPanel } from "../components/workflows/dag";
@@ -95,7 +96,7 @@ function StepsMiniBar({ steps }: { steps: WorkflowStep[] }) {
         ))}
       </div>
       <span className="text-[10px] text-muted">
-        {steps.filter((s) => s.status === "succeeded" || s.status === "completed").length}/{total}
+        {steps.filter((s) => s.status === "succeeded").length}/{total}
       </span>
     </div>
   );
@@ -105,10 +106,11 @@ function StepsMiniBar({ steps }: { steps: WorkflowStep[] }) {
 // WorkflowDetailPage
 // ---------------------------------------------------------------------------
 
-const TERMINAL_STATUSES = new Set(["succeeded", "completed", "failed", "cancelled", "timed_out"]);
+const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 
 export default function WorkflowDetailPage() {
-  const { id, runId: urlRunId } = useParams<{ id: string; runId?: string }>();
+  const { id: rawId, runId: urlRunId } = useParams<{ id: string; runId?: string }>();
+  const id = isValidResourceId(rawId) ? rawId : undefined;
   usePageTitle(id ? `Workflow ${id.slice(0, 8)}` : "Workflow");
   const navigate = useNavigate();
 

@@ -276,7 +276,7 @@ healthcheck:
 | `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `SAFETY_KERNEL_ADDR` | `safety-kernel:50051` | gRPC address of safety kernel |
 | `POOL_CONFIG_PATH` | `/etc/cordum/pools.yaml` | Worker pool configuration |
-| `TIMEOUT_CONFIG_PATH` | `/etc/cordum/timeouts.yaml` | Job timeout configuration |
+| `TIMEOUT_CONFIG_PATH` | `/etc/cordum/timeouts.yaml` | Job timeout configuration. In production (`CORDUM_ENV=production`), load/parse failures are fatal. |
 | `JOB_META_TTL` | `168h` | TTL for job metadata |
 | `WORKER_SNAPSHOT_INTERVAL` | `5s` | How often to snapshot worker state |
 

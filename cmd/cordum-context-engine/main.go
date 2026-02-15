@@ -4,13 +4,18 @@ import (
 	"crypto/tls"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/cordum/cordum/core/contextwindow/engine"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -23,6 +28,39 @@ import (
 func main() {
 	cfg := config.Load()
 	buildinfo.Log("cordum-context-engine")
+
+	infraMetrics.NewProm("cordum_context_engine")
+	metricsAddr := strings.TrimSpace(os.Getenv("CONTEXT_ENGINE_METRICS_ADDR"))
+	if metricsAddr == "" {
+		metricsAddr = ":9094"
+	}
+	if env.IsProduction() {
+		if err := infraMetrics.ValidateBindAddr(metricsAddr, env.Bool("CONTEXT_ENGINE_METRICS_PUBLIC")); err != nil {
+			log.Fatalf("metrics bind rejected: %v", err)
+		}
+	}
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	metricsSrv := &http.Server{
+		Addr:              metricsAddr,
+		Handler:           metricsMux,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	go func() {
+		log.Printf("context engine metrics on %s/metrics", metricsAddr)
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("metrics server error: %v", err)
+		}
+	}()
 
 	svc, err := engine.NewService(cfg.RedisURL)
 	if err != nil {

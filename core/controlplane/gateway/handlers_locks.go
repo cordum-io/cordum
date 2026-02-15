@@ -19,6 +19,10 @@ type lockRequest struct {
 }
 
 func (s *server) handleGetLock(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin", "operator", "viewer"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
 	if s.lockStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "lock store unavailable")
 		return
@@ -34,7 +38,7 @@ func (s *server) handleGetLock(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "lock not found")
 			return
 		}
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "lock operation", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -47,7 +51,7 @@ func (s *server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var req lockRequest
@@ -75,7 +79,7 @@ func (s *server) handleReleaseLock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var req lockRequest
@@ -102,7 +106,7 @@ func (s *server) handleRenewLock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var req lockRequest

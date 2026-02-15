@@ -14,12 +14,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/logging"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // ---------------------------------------------------------------------------
 // Server authorize helpers
 // ---------------------------------------------------------------------------
+
+// extractBasicAuth returns the BasicAuthProvider from s.auth, handling both
+// direct BasicAuthProvider and CompositeAuthProvider wrapping one.
+func (s *server) extractBasicAuth() *BasicAuthProvider {
+	if s == nil || s.auth == nil {
+		return nil
+	}
+	if bp, ok := s.auth.(*BasicAuthProvider); ok {
+		return bp
+	}
+	if cp, ok := s.auth.(*CompositeAuthProvider); ok {
+		return cp.BasicProvider()
+	}
+	return nil
+}
 
 func (s *server) requireRole(r *http.Request, roles ...string) error {
 	if s == nil || s.auth == nil {
@@ -170,7 +186,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try user/password authentication first if user store is configured
-	if basicAuth, ok := s.auth.(*BasicAuthProvider); ok && basicAuth.UserStore() != nil {
+	if basicAuth := s.extractBasicAuth(); basicAuth != nil && basicAuth.UserStore() != nil {
 		userStore := basicAuth.UserStore()
 		username := strings.TrimSpace(req.Username)
 
@@ -188,8 +204,9 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 			// Brute-force protection: check throttle before password validation.
 			if redisStore, ok := userStore.(*RedisUserStore); ok {
-				if err := redisStore.CheckLoginThrottle(r.Context(), username); err != nil {
-					writeErrorJSON(w, http.StatusTooManyRequests, err.Error())
+				if err := redisStore.CheckLoginThrottle(r.Context(), username, clientIP(r)); err != nil {
+					logging.Warn("api-gateway", "rate limit exceeded", "method", r.Method, "path", r.URL.Path, "error", err)
+					writeErrorJSON(w, http.StatusTooManyRequests, "rate limit exceeded")
 					return
 				}
 			}
@@ -197,7 +214,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			if userStore.ValidatePassword(r.Context(), user, password) {
 				// User/password authentication successful — clear failed counter.
 				if redisStore, ok := userStore.(*RedisUserStore); ok {
-					redisStore.ClearFailedLogins(r.Context(), username)
+					redisStore.ClearFailedLogins(r.Context(), username, clientIP(r))
 				}
 				resp, err := buildUserLoginResponse(r.Context(), user)
 				if err != nil {
@@ -218,7 +235,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 			// Password validation failed — record the attempt.
 			if redisStore, ok := userStore.(*RedisUserStore); ok {
-				redisStore.RecordFailedLogin(r.Context(), username)
+				redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
 			}
 		} else if username != "" {
 			// Timing equalization: spend bcrypt time even when user is not found,
@@ -401,8 +418,8 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	basicAuth, ok := s.auth.(*BasicAuthProvider)
-	if !ok || basicAuth.UserStore() == nil {
+	basicAuth := s.extractBasicAuth()
+	if basicAuth == nil || basicAuth.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
 	}
@@ -501,8 +518,8 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	basicAuth, ok := s.auth.(*BasicAuthProvider)
-	if !ok || basicAuth.UserStore() == nil {
+	basicAuth := s.extractBasicAuth()
+	if basicAuth == nil || basicAuth.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
 	}
@@ -796,8 +813,8 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 	}
 
 	password := strings.TrimSpace(req.Password)
-	if len(password) < 8 {
-		writeErrorJSON(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if err := ValidatePassword(password); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -871,7 +888,7 @@ func (s *server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 
@@ -903,7 +920,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 
@@ -989,7 +1006,7 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 

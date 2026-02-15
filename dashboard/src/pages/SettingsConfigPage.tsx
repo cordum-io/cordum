@@ -2,7 +2,7 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Shield, Database, Gauge, Save, RotateCcw } from "lucide-react";
+import { Shield, Database, Gauge, Save, RotateCcw, AlertTriangle } from "lucide-react";
 import { useGeneralConfig, useSetGeneralConfig } from "../hooks/useSettings";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -139,7 +139,7 @@ const TABS: { key: ConfigTab; label: string }[] = [
 export default function SettingsConfigPage() {
   usePageTitle("Settings - Configuration");
   const [tab, setTab] = useState<ConfigTab>("configuration");
-  const { data: config, isLoading } = useGeneralConfig();
+  const { data: config, isLoading, isError, refetch } = useGeneralConfig();
   const saveConfig = useSetGeneralConfig();
 
   const {
@@ -183,6 +183,24 @@ export default function SettingsConfigPage() {
           <div key={i} className="h-48 animate-pulse rounded-2xl bg-surface2" />
         ))}
       </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card>
+        <div className="flex flex-col items-center gap-3 py-12 text-center">
+          <AlertTriangle className="h-8 w-8 text-danger" />
+          <p className="text-sm font-semibold text-ink">Failed to load configuration</p>
+          <p className="text-xs text-muted">
+            The configuration could not be retrieved. Editing is disabled to prevent overwriting existing settings.
+          </p>
+          <Button variant="outline" size="sm" type="button" onClick={() => refetch()}>
+            <RotateCcw className="h-3.5 w-3.5" />
+            Retry
+          </Button>
+        </div>
+      </Card>
     );
   }
 

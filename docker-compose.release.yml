@@ -5,8 +5,7 @@ services:
     image: nats:2.10-alpine
     restart: unless-stopped
     command: ["-c", "/etc/nats/nats.conf"]
-    ports:
-      - "4222:4222"
+    # No host port exposure — internal service accessible via Docker network only.
     volumes:
       - ./config/nats.conf:/etc/nats/nats.conf:ro
       - nats_data:/data
@@ -21,8 +20,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}"]
-    ports:
-      - "6379:6379"
+    # No host port exposure — internal service accessible via Docker network only.
     volumes:
       - redis_data:/data
     healthcheck:
@@ -45,8 +43,7 @@ services:
       # Server TLS (required in production mode — services fail-fast if missing):
       # - CONTEXT_ENGINE_TLS_CERT=/etc/cordum/tls/server.crt
       # - CONTEXT_ENGINE_TLS_KEY=/etc/cordum/tls/server.key
-    ports:
-      - "50070:50070"
+    # No host port exposure — internal gRPC service accessible via Docker network only.
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 50070"]
       interval: 10s
@@ -71,8 +68,7 @@ services:
       # - SAFETY_KERNEL_TLS_KEY=/etc/cordum/tls/server.key
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
-    ports:
-      - "50051:50051"
+    # No host port exposure — internal gRPC service accessible via Docker network only.
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 50051"]
       interval: 10s
@@ -96,7 +92,7 @@ services:
       - NATS_USE_JETSTREAM=1
       - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
-      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-false}
+      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
       - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
       - TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml
       - JOB_META_TTL=168h
@@ -105,7 +101,7 @@ services:
       - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/metrics"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/health"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -145,7 +141,7 @@ services:
     ports:
       - "8080:8080"
       - "8081:8081"
-      - "9092:9092"
+      # Metrics port (9092) not exposed — use internal Docker network or kubectl port-forward.
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8081/health"]
       interval: 10s
@@ -171,8 +167,7 @@ services:
       - WORKFLOW_ENGINE_HTTP_ADDR=:9093
       - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
       - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200
-    ports:
-      - "9093:9093"
+    # No host port exposure — internal service accessible via Docker network only.
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9093/health"]
       interval: 10s

@@ -751,6 +751,32 @@ func writeErrorJSON(w http.ResponseWriter, status int, message string) {
 	}
 }
 
+// writeInternalError logs the real error server-side and returns a generic message to the client.
+// Use for ALL 5xx responses to prevent leaking internal details (Redis URLs, config paths, etc.).
+func writeInternalError(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	logging.Error("api-gateway", operation+" failed", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeErrorJSON(w, http.StatusInternalServerError, "internal error")
+}
+
+// writeBadGateway logs an upstream failure server-side and returns a generic message.
+func writeBadGateway(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	logging.Error("api-gateway", operation+" upstream failed", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeErrorJSON(w, http.StatusBadGateway, "upstream service error")
+}
+
+// writeServiceUnavailable logs a service-unavailable error server-side and returns a generic message.
+func writeServiceUnavailable(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	logging.Error("api-gateway", operation+" unavailable", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeErrorJSON(w, http.StatusServiceUnavailable, "service unavailable")
+}
+
+// writeForbidden logs the auth failure server-side and returns a generic message.
+// Use for ALL 403 responses to avoid leaking tenant IDs and role requirements.
+func writeForbidden(w http.ResponseWriter, r *http.Request, err error) {
+	logging.Warn("api-gateway", "access denied", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeErrorJSON(w, http.StatusForbidden, "access denied")
+}
+
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	if r == nil {
 		return errors.New("request required")
@@ -778,14 +804,13 @@ func writeJSONDecodeError(w http.ResponseWriter, err error, invalidMsg string) {
 	writeErrorJSON(w, http.StatusBadRequest, invalidMsg)
 }
 
-// maxBodyMiddleware enforces a body size limit on mutating requests to prevent
-// large-body DoS. Multipart uploads are excluded since those routes manage
-// their own limits (e.g. pack install).
+// maxBodyMiddleware enforces a body size limit on all requests that carry a
+// body to prevent large-body DoS. Multipart uploads are excluded since those
+// routes manage their own limits (e.g. pack install).
 func maxBodyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost, http.MethodPut, http.MethodPatch:
-		default:
+		// Skip requests that never carry a body or have no body present.
+		if r.Body == nil || r.Body == http.NoBody || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}

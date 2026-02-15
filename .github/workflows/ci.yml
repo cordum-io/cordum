@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.23', '1.24']
+        go-version: ['1.24']
 
     steps:
     - uses: actions/checkout@v4
@@ -97,6 +97,9 @@ jobs:
       with:
         version: latest
         args: --timeout=5m
+
+    - name: Lint shell scripts for secret leaks
+      run: bash tools/scripts/lint_no_secret_log.sh
 
   security:
     name: Security Scan
@@ -202,6 +205,13 @@ jobs:
         done
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+
+    - name: Run Go integration tests
+      run: go test -v -tags=integration -timeout 5m ./...
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_URL: redis://localhost:6379
+        NATS_URL: nats://localhost:4222
 
     - name: Run production gates (2-4, 8-17)
       run: |

@@ -431,3 +431,202 @@ func TestHandleRemediateJob(t *testing.T) {
 		t.Fatalf("unexpected publish subject: %s", bus.published[len(bus.published)-1].subject)
 	}
 }
+
+func TestGetJob_RecoveredJob_NoDLQErrors(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-recovered"
+
+	// Job recovered: transition through valid states to SUCCEEDED.
+	for _, st := range []model.JobState{model.JobStatePending, model.JobStateScheduled, model.JobStateSucceeded} {
+		if err := s.jobStore.SetState(ctx, jobID, st); err != nil {
+			t.Fatalf("set state %s: %v", st, err)
+		}
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "default")
+
+	if err := s.dlqStore.Add(ctx, store.DLQEntry{
+		JobID:      jobID,
+		Reason:     "timeout exceeded",
+		Status:     "TIMEOUT",
+		ReasonCode: "DEADLINE_EXCEEDED",
+		LastState:  "RUNNING",
+		Attempts:   3,
+	}); err != nil {
+		t.Fatalf("add dlq entry: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", jobID)
+	rec := httptest.NewRecorder()
+	s.handleGetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["state"] != "SUCCEEDED" {
+		t.Fatalf("expected SUCCEEDED, got %v", resp["state"])
+	}
+	// Stale DLQ error fields must NOT appear on a recovered job.
+	for _, field := range []string{"error_message", "error_status", "error_code", "last_state"} {
+		if v, ok := resp[field]; ok {
+			t.Errorf("recovered job should not have %s, got %v", field, v)
+		}
+	}
+}
+
+func TestGetJob_FailedJob_ShowsDLQErrors(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-failed"
+
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateFailed); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "default")
+
+	if err := s.dlqStore.Add(ctx, store.DLQEntry{
+		JobID:      jobID,
+		Reason:     "worker crashed",
+		Status:     "FAILED",
+		ReasonCode: "WORKER_ERROR",
+		LastState:  "RUNNING",
+		Attempts:   2,
+	}); err != nil {
+		t.Fatalf("add dlq entry: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", jobID)
+	rec := httptest.NewRecorder()
+	s.handleGetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["error_message"] != "worker crashed" {
+		t.Errorf("expected error_message 'worker crashed', got %v", resp["error_message"])
+	}
+	if resp["error_status"] != "FAILED" {
+		t.Errorf("expected error_status 'FAILED', got %v", resp["error_status"])
+	}
+	if resp["error_code"] != "WORKER_ERROR" {
+		t.Errorf("expected error_code 'WORKER_ERROR', got %v", resp["error_code"])
+	}
+	if resp["last_state"] != "RUNNING" {
+		t.Errorf("expected last_state 'RUNNING', got %v", resp["last_state"])
+	}
+}
+
+func TestGetJob_AttemptCount_PrefersMetaOverDLQ(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-attempts-meta"
+
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateFailed); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "default")
+
+	// Set meta attempts to 5 via IncrAttempts.
+	for i := 0; i < 5; i++ {
+		if err := s.jobStore.IncrAttempts(ctx, jobID); err != nil {
+			t.Fatalf("incr attempts: %v", err)
+		}
+	}
+
+	// DLQ has stale attempt count of 3.
+	if err := s.dlqStore.Add(ctx, store.DLQEntry{
+		JobID:      jobID,
+		Reason:     "failed",
+		Status:     "FAILED",
+		ReasonCode: "ERR",
+		Attempts:   3,
+	}); err != nil {
+		t.Fatalf("add dlq entry: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", jobID)
+	rec := httptest.NewRecorder()
+	s.handleGetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Meta attempts (5) must win over DLQ attempts (3).
+	attemptsVal, ok := resp["attempts"].(float64)
+	if !ok {
+		t.Fatalf("expected attempts in response, got %v (%T)", resp["attempts"], resp["attempts"])
+	}
+	if int(attemptsVal) != 5 {
+		t.Errorf("expected attempts=5 (from meta), got %d", int(attemptsVal))
+	}
+}
+
+func TestGetJob_AttemptCount_FallsThroughToDLQ(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-attempts-dlq"
+
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateFailed); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "default")
+
+	// No meta attempts set (legacy job). DLQ has attempts=3.
+	if err := s.dlqStore.Add(ctx, store.DLQEntry{
+		JobID:      jobID,
+		Reason:     "failed",
+		Status:     "FAILED",
+		ReasonCode: "ERR",
+		Attempts:   3,
+	}); err != nil {
+		t.Fatalf("add dlq entry: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", jobID)
+	rec := httptest.NewRecorder()
+	s.handleGetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// DLQ attempts (3) should backfill when meta has no value.
+	attemptsVal, ok := resp["attempts"].(float64)
+	if !ok {
+		t.Fatalf("expected attempts in response, got %v (%T)", resp["attempts"], resp["attempts"])
+	}
+	if int(attemptsVal) != 3 {
+		t.Errorf("expected attempts=3 (from DLQ fallback), got %d", int(attemptsVal))
+	}
+}

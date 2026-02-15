@@ -36,6 +36,8 @@ export function useConfig() {
     queryKey: ["config"],
     queryFn: () => get<SystemConfig>("/config"),
     staleTime: 60_000,
+    // Config may not exist on fresh installs — return empty object as placeholder
+    placeholderData: {} as SystemConfig,
   });
 }
 
@@ -839,7 +841,7 @@ const GENERAL_CONFIG_DEFAULTS: GeneralConfig = {
 };
 
 export function useGeneralConfig() {
-  const { data: config, isLoading } = useConfig();
+  const { data: config, isLoading, isError, refetch } = useConfig();
 
   const generalConfig = useMemo<GeneralConfig>(() => {
     if (!config) return GENERAL_CONFIG_DEFAULTS;
@@ -862,7 +864,7 @@ export function useGeneralConfig() {
     };
   }, [config]);
 
-  return { data: generalConfig, isLoading };
+  return { data: generalConfig, isLoading, isError, refetch };
 }
 
 export function useSetGeneralConfig() {

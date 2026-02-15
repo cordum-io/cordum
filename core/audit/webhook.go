@@ -43,7 +43,7 @@ func WithWebhookTimeout(d time.Duration) WebhookOption {
 // NewWebhookExporter creates a webhook exporter that POSTs JSON to endpoint.
 func NewWebhookExporter(endpoint string, opts ...WebhookOption) *WebhookExporter {
 	w := &WebhookExporter{
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:   safeHTTPClient(10 * time.Second),
 		endpoint: endpoint,
 		headers:  map[string]string{},
 	}

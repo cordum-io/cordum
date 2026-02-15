@@ -54,6 +54,8 @@ Operational characteristics from current scheduler code:
 OUTPUT_POLICY_ENABLED=true
 ```
 
+**Release default:** In `docker-compose.release.yml`, output policy is **enabled by default** (`OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}`). To disable it in a specific deployment, explicitly set `OUTPUT_POLICY_ENABLED=false` in your environment. Production Gate 18 (`gate_18_release_config`) verifies this default has not regressed.
+
 ### 3.2 Fail mode
 
 Current scheduler behavior is effectively `fail_mode: open`:

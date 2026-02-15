@@ -7,6 +7,50 @@ kind: Namespace
 metadata:
   name: cordum
 ---
+# ServiceAccount for all Cordum workloads. automountServiceAccountToken is
+# disabled because no Cordum service needs Kubernetes API access.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cordum
+  namespace: cordum
+automountServiceAccountToken: false
+---
+# ResourceQuota prevents runaway pods from consuming unbounded cluster
+# resources. Values accommodate production HPA maxReplicas (36 pods) plus
+# headroom for NATS, Redis, and jobs. Adjust for larger deployments.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cordum-quota
+  namespace: cordum
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 8Gi
+    limits.cpu: "16"
+    limits.memory: 16Gi
+    pods: "50"
+    services: "20"
+    persistentvolumeclaims: "10"
+---
+# LimitRange assigns default resource requests/limits to containers that
+# don't specify them, preventing unbounded resource consumption.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cordum-limits
+  namespace: cordum
+spec:
+  limits:
+  - default:
+      cpu: 500m
+      memory: 256Mi
+    defaultRequest:
+      cpu: 100m
+      memory: 128Mi
+    type: Container
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -52,6 +96,121 @@ metadata:
   namespace: cordum
 data:
   safety.yaml: |
+    # Fail-closed: unmatched jobs are denied.
+    default_decision: deny
+
+    rules:
+      # Fraud detection jobs require human approval before execution
+      - id: fraud-review-required
+        match:
+          topics:
+            - job.fraud-detection.process
+        decision: require_approval
+        reason: "Fraud detection results must be reviewed by a human before action."
+
+      # Risk assessment agents require approval — high-impact decisions
+      - id: risk-assessment-approval
+        match:
+          topics:
+            - job.risk-agents.process
+        decision: require_approval
+        reason: "Risk assessment outcomes require human sign-off."
+
+      # Compliance jobs require approval — regulatory oversight
+      - id: compliance-approval
+        match:
+          topics:
+            - job.compliance-agents.process
+        decision: require_approval
+        reason: "Compliance checks require human verification before proceeding."
+
+      # Bank executors (wire transfers, account changes) — always require approval
+      - id: bank-executor-approval
+        match:
+          topics:
+            - job.bank-executors.process
+        decision: require_approval
+        reason: "Financial execution actions require explicit human authorization."
+
+      # Underwriting requires approval — loan decisions are high-stakes
+      - id: underwriting-approval
+        match:
+          topics:
+            - job.underwriting-agents.process
+        decision: require_approval
+        reason: "Underwriting decisions require human review before commitment."
+
+      # Low-risk topics are auto-allowed
+      - id: validators-auto-allow
+        match:
+          topics:
+            - job.bank-validators.process
+            - job.notification-service.process
+            - job.valuation-agents.process
+        decision: allow
+        reason: "Read-only validation and notification jobs are auto-approved."
+
+    output_policy:
+      enabled: true
+      fail_mode: closed
+
+    output_rules:
+      - id: output-secret-leak
+        description: "Quarantine outputs that contain likely credential or key material."
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "secret"
+        decision: quarantine
+        severity: critical
+        reason: "Potential secret material detected in output."
+
+      - id: output-pii-leak
+        description: "PII detection rule (disabled by default to avoid false positives)."
+        enabled: true
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "pii"
+        decision: quarantine
+        severity: high
+        reason: "Potential PII detected in output."
+
+      - id: output-injection-detected
+        description: "Quarantine outputs containing likely injection payload fragments."
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "injection"
+        decision: quarantine
+        severity: high
+        reason: "Potential injection payload detected in output."
+
+      - id: output-size-limit
+        description: "Quarantine oversized outputs beyond the default 10 MiB threshold."
+        match:
+          topics:
+            - "job.*"
+          output_size_gt: 10485760
+        decision: quarantine
+        severity: medium
+        reason: "Output exceeds configured size threshold."
+
+      - id: output-error-secret-leak
+        description: "Quarantine failed job outputs when secret indicators are present."
+        match:
+          topics:
+            - "job.*"
+          has_error: true
+          scanners:
+            - "secret"
+        decision: quarantine
+        severity: high
+        reason: "Secrets detected in failed job output context."
+
     default_tenant: default
     tenants:
       default:
@@ -117,6 +276,8 @@ spec:
     metadata:
       labels: {app: nats}
     spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -190,6 +351,8 @@ spec:
     metadata:
       labels: {app: redis}
     spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
@@ -197,6 +360,21 @@ spec:
         fsGroup: 999
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
       containers:
       - name: redis
         image: redis:7
@@ -205,6 +383,14 @@ spec:
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
+        command: ["redis-server"]
+        args: ["--appendonly", "yes", "--requirepass", "$(REDIS_PASSWORD)"]
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         ports:
         - containerPort: 6379
         livenessProbe:
@@ -248,6 +434,8 @@ spec:
     metadata:
       labels: {app: cordum-context-engine}
     spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -287,11 +475,16 @@ spec:
           value: redis://:$(REDIS_PASSWORD)@redis:6379
         - name: CONTEXT_ENGINE_ADDR
           value: :50070
+        - name: CONTEXT_ENGINE_METRICS_ADDR
+          value: :9094
         ports:
         - containerPort: 50070
+        - containerPort: 9094
+          name: metrics
         livenessProbe:
-          grpc:
-            port: 50070
+          httpGet:
+            path: /health
+            port: 9094
           initialDelaySeconds: 5
           periodSeconds: 10
         readinessProbe:
@@ -318,6 +511,9 @@ spec:
   - name: grpc
     port: 50070
     targetPort: 50070
+  - name: metrics
+    port: 9094
+    targetPort: 9094
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -332,6 +528,8 @@ spec:
     metadata:
       labels: {app: cordum-safety-kernel}
     spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -428,6 +626,8 @@ spec:
     metadata:
       labels: {app: cordum-scheduler}
     spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -488,13 +688,13 @@ spec:
         - containerPort: 9090
         livenessProbe:
           httpGet:
-            path: /metrics
+            path: /health
             port: 9090
           initialDelaySeconds: 5
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /metrics
+            path: /health
             port: 9090
           initialDelaySeconds: 5
           periodSeconds: 10
@@ -538,6 +738,8 @@ spec:
     metadata:
       labels: {app: cordum-api-gateway}
     spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -684,6 +886,8 @@ spec:
     metadata:
       labels: {app: cordum-workflow-engine}
     spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -778,6 +982,8 @@ spec:
     metadata:
       labels: {app: cordum-dashboard}
     spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 101

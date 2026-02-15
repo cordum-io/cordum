@@ -13,8 +13,6 @@ import { mapDLQEntry, type BackendDLQEntry } from "../api/transform";
 export interface DLQFilters {
   limit?: number;
   cursor?: number;
-  topic?: string;
-  since?: string;
 }
 
 function buildParams(filters: DLQFilters): string {
@@ -23,8 +21,6 @@ function buildParams(filters: DLQFilters): string {
   if (filters.cursor !== undefined && filters.cursor > 0) {
     params.set("cursor", String(filters.cursor));
   }
-  if (filters.topic) params.set("topic", filters.topic);
-  if (filters.since) params.set("since", filters.since);
   const qs = params.toString();
   return qs ? `?${qs}` : "";
 }

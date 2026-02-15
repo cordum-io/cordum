@@ -103,19 +103,30 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func() error) e
 		if time.Now().After(deadline) {
 			return RetryAfter(fmt.Errorf("job lock busy"), retryDelayBusy)
 		}
+		backoff := time.NewTimer(25 * time.Millisecond)
 		select {
 		case <-e.ctx.Done():
+			backoff.Stop()
 			return e.ctx.Err()
-		case <-time.After(25 * time.Millisecond):
+		case <-backoff.C:
 		}
 	}
 	if e.metrics != nil {
 		e.metrics.ObserveJobLockWait(time.Since(lockStart).Seconds())
 	}
 	defer func() {
-		ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
 		defer cancel()
-		_ = e.jobStore.ReleaseLock(ctx, key, token)
+		if err := e.jobStore.ReleaseLock(ctx, key, token); err != nil {
+			logging.Warn("scheduler", "job lock release failed, retrying",
+				"job_id", jobID, "error", err)
+			ctx2, cancel2 := context.WithTimeout(context.Background(), storeOpTimeout)
+			defer cancel2()
+			if err2 := e.jobStore.ReleaseLock(ctx2, key, token); err2 != nil {
+				logging.Error("scheduler", "job lock release retry failed, lock will expire via TTL",
+					"job_id", jobID, "ttl", ttl, "error", err2)
+			}
+		}
 	}()
 	return fn()
 }
@@ -326,6 +337,10 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 // Stop prevents new packet handling, then waits for in-flight handlers
 // to complete with a 10s deadline.  Bus subscriptions are cleaned up
 // when the bus is closed by the caller.
+//
+// The background goroutine waiting on wg.Wait() will exit once all
+// in-flight handlers complete; context cancellation should ensure this
+// happens within storeOpTimeout.
 func (e *Engine) Stop() {
 	e.stopped.Store(true)
 	if e.cancel != nil {
@@ -336,9 +351,11 @@ func (e *Engine) Stop() {
 		e.wg.Wait()
 		close(done)
 	}()
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-timer.C:
 		logging.Warn("scheduler", "graceful shutdown deadline exceeded, some handlers still in-flight")
 	}
 }
@@ -751,28 +768,17 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 		}
 	}
 
-	var err error
-	type safetyResult struct {
-		record SafetyDecisionRecord
-		err    error
+	safetyCtx, safetyCancel := context.WithTimeout(e.ctx, safetyCheckTimeout)
+	defer safetyCancel()
+
+	record, err := e.safety.Check(safetyCtx, req)
+	if safetyCtx.Err() != nil && e.ctx.Err() != nil {
+		return record, e.ctx.Err()
 	}
-	ch := make(chan safetyResult, 1)
-	go func() {
-		r, checkErr := e.safety.Check(req)
-		ch <- safetyResult{r, checkErr}
-	}()
-	timer := time.NewTimer(safetyCheckTimeout)
-	defer timer.Stop()
-	select {
-	case res := <-ch:
-		record = res.record
-		err = res.err
-	case <-timer.C:
+	if safetyCtx.Err() != nil {
 		record.Decision = SafetyUnavailable
 		err = fmt.Errorf("safety check timeout (defense-in-depth, %s)", safetyCheckTimeout)
 		logging.Warn("scheduler", "safety check timed out", "job_id", jobID, "timeout", safetyCheckTimeout)
-	case <-e.ctx.Done():
-		return record, e.ctx.Err()
 	}
 	if record.CheckedAt == 0 {
 		record.CheckedAt = time.Now().UTC().UnixNano() / int64(time.Microsecond)
@@ -1485,10 +1491,12 @@ func (e *Engine) emitDLQWithRetry(jobID, topic string, status pb.JobStatus, reas
 		return nil
 	}
 	logging.Warn("scheduler", "dlq emit failed, retrying", "job_id", jobID, "error", err)
+	retryTimer := time.NewTimer(500 * time.Millisecond)
 	select {
 	case <-e.ctx.Done():
+		retryTimer.Stop()
 		return e.ctx.Err()
-	case <-time.After(500 * time.Millisecond):
+	case <-retryTimer.C:
 	}
 	err = e.emitDLQ(jobID, topic, status, reason, reasonCode)
 	if err != nil {

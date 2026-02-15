@@ -18,7 +18,7 @@ LDFLAGS = -s -w \
 
 proto:
 	@mkdir -p $(PROTO_OUT_CORE)
-	cd $(PROTO_SRC) && PATH="$$PATH:$(HOME)/go/bin" protoc \
+	cd $(PROTO_SRC) && PATH="$$PATH:$(shell go env GOPATH)/bin" protoc \
 		-I . \
 		-I $(CURDIR) \
 		--go_out=$(PROTO_OUT_CORE) --go_opt=paths=source_relative \

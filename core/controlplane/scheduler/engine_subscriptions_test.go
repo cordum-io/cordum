@@ -28,7 +28,7 @@ func (b *recordingBus) Subscribe(subject, queue string, _ func(*pb.BusPacket) er
 func TestEngineStartSubscriptions(t *testing.T) {
 	bus := &recordingBus{}
 
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewLeastLoadedStrategy(PoolRouting{}), newFakeJobStore(), nil)
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewLeastLoadedStrategy(PoolRouting{}), newFakeJobStore(), nil)
 	if err := engine.Start(); err != nil {
 		t.Fatalf("engine start failed: %v", err)
 	}

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   auditResourceLink,
   computeUrgencyLevel,
+  deriveApprovalStatus,
   mapApprovalItem,
   mapDLQEntry,
   mapJobDetail,
@@ -879,7 +880,7 @@ describe("workflow mapping", () => {
     const runStep = mapWorkflowRunStep(
       {
         step_id: "step-99",
-        status: "completed",
+        status: "succeeded",
         output: { ok: true },
         error: { code: "E_FAIL" },
         started_at: "2026-02-10T10:00:00.000Z",
@@ -891,7 +892,7 @@ describe("workflow mapping", () => {
       id: "step-99",
       name: "step-99",
       type: "step",
-      status: "completed",
+      status: "succeeded",
       output: { ok: true },
       error: "{\"code\":\"E_FAIL\"}",
       startedAt: "2026-02-10T10:00:00.000Z",
@@ -915,7 +916,7 @@ describe("workflow mapping", () => {
       rerun_step: "s2",
       dry_run: true,
       steps: {
-        s1: { status: "completed", output: { ok: true } },
+        s1: { status: "succeeded", output: { ok: true } },
       },
     });
     expect(run).toMatchObject({
@@ -923,7 +924,7 @@ describe("workflow mapping", () => {
       workflowId: "wf-1",
       status: "running",
       startedAt: "2026-02-10T10:00:00.000Z",
-      completedAt: undefined,
+      completedAt: null,
       createdAt: "2026-02-10T09:59:00.000Z",
       updatedAt: "2026-02-10T10:00:05.000Z",
       orgId: "org-1",
@@ -945,8 +946,8 @@ describe("workflow mapping", () => {
     expect(run.workflowId).toBe("");
     expect(run.status).toBe("pending");
     expect(run.steps).toEqual([]);
-    expect(run.startedAt).toBe("");
-    expect(run.completedAt).toBeUndefined();
+    expect(run.startedAt).toBeNull();
+    expect(run.completedAt).toBeNull();
     expect(run.rerunOf).toBeUndefined();
     expect(run.rerunStep).toBeUndefined();
   });
@@ -1156,5 +1157,65 @@ describe("mapOutputSafetyRecord", () => {
     expect(result?.reason).toBeUndefined();
     expect(result?.rule_id).toBeUndefined();
     expect(result?.findings).toEqual([]);
+  });
+});
+
+describe("deriveApprovalStatus", () => {
+  it("returns approved for approve/approved decisions", () => {
+    expect(deriveApprovalStatus(undefined, "approve")).toBe("approved");
+    expect(deriveApprovalStatus(undefined, "approved")).toBe("approved");
+  });
+
+  it("returns rejected for reject/rejected/deny decisions", () => {
+    expect(deriveApprovalStatus(undefined, "reject")).toBe("rejected");
+    expect(deriveApprovalStatus(undefined, "rejected")).toBe("rejected");
+    expect(deriveApprovalStatus(undefined, "deny")).toBe("rejected");
+  });
+
+  it("returns rejected for denied job state", () => {
+    expect(deriveApprovalStatus("denied", undefined)).toBe("rejected");
+  });
+
+  it("returns quarantined for output_quarantined job state", () => {
+    expect(deriveApprovalStatus("output_quarantined", undefined)).toBe("quarantined");
+  });
+
+  it("returns pending for approval_required job state", () => {
+    expect(deriveApprovalStatus("approval_required", undefined)).toBe("pending");
+  });
+
+  it("returns resolved for terminal job states", () => {
+    expect(deriveApprovalStatus("succeeded", undefined)).toBe("resolved");
+    expect(deriveApprovalStatus("failed", undefined)).toBe("resolved");
+    expect(deriveApprovalStatus("cancelled", undefined)).toBe("resolved");
+  });
+
+  it("returns pending for unknown/undefined states", () => {
+    expect(deriveApprovalStatus(undefined, undefined)).toBe("pending");
+    expect(deriveApprovalStatus("running", undefined)).toBe("pending");
+  });
+
+  it("decision takes precedence over job state", () => {
+    expect(deriveApprovalStatus("denied", "approved")).toBe("approved");
+    expect(deriveApprovalStatus("succeeded", "reject")).toBe("rejected");
+  });
+});
+
+describe("mapJobRecord empty ID validation", () => {
+  it("returns job with valid ID unchanged", () => {
+    const job = mapJobRecord({ id: "job-valid", state: "RUNNING" });
+    expect(job.id).toBe("job-valid");
+  });
+
+  it("generates a placeholder UUID for empty ID", () => {
+    const job = mapJobRecord({ id: "" });
+    expect(job.id).toBeTruthy();
+    expect(job.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it("generates unique IDs for separate empty-ID records", () => {
+    const job1 = mapJobRecord({ id: "" });
+    const job2 = mapJobRecord({ id: "" });
+    expect(job1.id).not.toBe(job2.id);
   });
 });

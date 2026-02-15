@@ -52,7 +52,7 @@ type BusPacket = {
 
 function normalizeEnum(raw?: unknown): string {
   if (typeof raw !== "string") return "";
-  return raw.replace(/^.*_/, "").toLowerCase();
+  return raw.toLowerCase();
 }
 
 function timestampFromProto(ts?: BusTimestamp): string {

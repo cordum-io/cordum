@@ -2,9 +2,9 @@ import { useEffect, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useConfigStore } from "../state/config";
+import { useToastStore } from "../state/toast";
 import { AppShell } from "./layout/AppShell";
 import { CommandPalette } from "./CommandPalette";
-import { ToastContainer } from "./ui/Toast";
 import { get } from "../api/client";
 import { ApiError } from "../api/client";
 import { useEventStream } from "../hooks/useEventStream";
@@ -51,11 +51,18 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   });
 
   // Handle 401 from session validation
+  const addToast = useToastStore((s) => s.addToast);
   useEffect(() => {
     if (sessionQuery.error instanceof ApiError && sessionQuery.error.status === 401) {
+      addToast({
+        type: "warning",
+        title: "Session expired",
+        description: "Please sign in again to continue.",
+        duration: 5000,
+      });
       logout();
     }
-  }, [sessionQuery.error, logout]);
+  }, [sessionQuery.error, logout, addToast]);
 
   // Connect WebSocket when authenticated (disconnects on unmount / logout)
   useEventStream();
@@ -75,7 +82,6 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
       <SessionTimeoutWarning />
       <AppShell>{children}</AppShell>
       <CommandPalette />
-      <ToastContainer />
       <KeyboardShortcutsHelp />
     </>
   );

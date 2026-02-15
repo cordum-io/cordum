@@ -11,6 +11,5 @@ export function useAuthConfig() {
     queryKey: ["auth-config"],
     queryFn: fetchAuthConfig,
     staleTime: 5 * 60_000,
-    retry: 1,
   });
 }

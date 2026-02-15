@@ -100,6 +100,15 @@ export interface Job {
   errorCode?: string;
   lastState?: string;
   output_safety?: OutputSafetyRecord;
+  idempotencyKey?: string;
+  labels?: Record<string, string>;
+  approvalRequired?: boolean;
+  approvalRef?: string;
+  approvalBy?: string;
+  approvalRole?: string;
+  approvalAt?: number;
+  approvalReason?: string;
+  approvalNote?: string;
 }
 
 export type JobPriority = "low" | "normal" | "high" | "critical";
@@ -205,11 +214,7 @@ export type RunStatus =
   | "succeeded"
   | "failed"
   | "timed_out"
-  | "cancelled"
-  | "queued"
-  | "in_progress"
-  | "completed"
-  | "blocked";
+  | "cancelled";
 
 export interface WorkflowStep {
   id: string;
@@ -272,8 +277,8 @@ export interface WorkflowRun {
   workflowId: string;
   status: RunStatus;
   steps: WorkflowStep[];
-  startedAt: string;
-  completedAt?: string;
+  startedAt: string | null;
+  completedAt?: string | null;
   duration?: number;
   createdAt?: string;
   updatedAt?: string;

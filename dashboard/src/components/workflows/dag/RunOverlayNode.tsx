@@ -97,7 +97,6 @@ interface StatusStyle {
 function getStatusStyle(status?: RunStatus): StatusStyle {
   switch (status) {
     case "succeeded":
-    case "completed":
       return {
         bg: "bg-green-50",
         border: "border-green-400",
@@ -107,7 +106,6 @@ function getStatusStyle(status?: RunStatus): StatusStyle {
         strikethrough: false,
       };
     case "running":
-    case "in_progress":
       return {
         bg: "bg-blue-50",
         border: "border-blue-400",
@@ -126,7 +124,6 @@ function getStatusStyle(status?: RunStatus): StatusStyle {
         strikethrough: false,
       };
     case "pending":
-    case "queued":
       return {
         bg: "bg-gray-50",
         border: "border-gray-200",
@@ -136,7 +133,6 @@ function getStatusStyle(status?: RunStatus): StatusStyle {
         strikethrough: false,
       };
     case "waiting":
-    case "blocked":
       return {
         bg: "bg-amber-50",
         border: "border-amber-400",
@@ -247,8 +243,8 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
                   <span className="text-border">&middot;</span>
                   <span className={cn(
                     data.runStatus === "failed" && "text-danger",
-                    (data.runStatus === "succeeded" || data.runStatus === "completed") && "text-success",
-                    (data.runStatus === "running" || data.runStatus === "in_progress") && "text-info",
+                    data.runStatus === "succeeded" && "text-success",
+                    data.runStatus === "running" && "text-info",
                   )}>
                     {STATUS_LABELS[data.runStatus] ?? data.runStatus}
                   </span>
