@@ -2269,6 +2269,7 @@ gate_16_degradation() {
 gate_18_release_config() {
   local compose_file="docker-compose.release.yml"
   local line
+  local required_var
 
   if [[ ! -f "${compose_file}" ]]; then
     echo "FAIL: ${compose_file} not found" >&2
@@ -2289,6 +2290,70 @@ gate_18_release_config() {
     echo "FAIL: OUTPUT_POLICY_ENABLED does not default to true/1 in ${compose_file}" >&2
     return 1
   fi
+
+  # Verify release compose parses with required variable placeholders.
+  # (Use placeholder values for compile-time substitution checks.)
+  REDIS_PASSWORD="gate18-redispw" \
+  CORDUM_API_KEY="gate18-apikey" \
+  CORDUM_TLS_DIR="${CORDUM_TLS_DIR:-./certs}" \
+  SAFETY_POLICY_PUBLIC_KEY="${SAFETY_POLICY_PUBLIC_KEY:-gate18-public-key}" \
+  SAFETY_POLICY_SIGNATURE="${SAFETY_POLICY_SIGNATURE:-gate18-signature}" \
+    "${COMPOSE_CMD[@]}" -f "${compose_file}" config >/dev/null 2>&1 || {
+      echo "FAIL: ${compose_file} does not parse via docker compose config" >&2
+      return 1
+    }
+
+  # Production release config must not rely on insecure TLS bypasses.
+  if grep -q 'TLS_INSECURE' "${compose_file}"; then
+    echo "FAIL: TLS_INSECURE bypass found in ${compose_file}" >&2
+    return 1
+  fi
+
+  # NATS and Redis transport must be TLS in production.
+  if grep -q 'NATS_URL:.*nats://' "${compose_file}"; then
+    echo "FAIL: NATS_URL uses plaintext nats:// in ${compose_file}" >&2
+    return 1
+  fi
+  if ! grep -q 'NATS_URL:.*tls://' "${compose_file}"; then
+    echo "FAIL: NATS_URL does not use tls:// in ${compose_file}" >&2
+    return 1
+  fi
+  if grep -q 'REDIS_URL:.*redis://' "${compose_file}"; then
+    echo "FAIL: REDIS_URL uses plaintext redis:// in ${compose_file}" >&2
+    return 1
+  fi
+  if ! grep -q 'REDIS_URL:.*rediss://' "${compose_file}"; then
+    echo "FAIL: REDIS_URL does not use rediss:// in ${compose_file}" >&2
+    return 1
+  fi
+
+  # Policy signatures must not be disabled in production release config.
+  if grep -q 'SAFETY_POLICY_SIGNATURE_REQUIRED:.*false' "${compose_file}"; then
+    echo "FAIL: SAFETY_POLICY_SIGNATURE_REQUIRED set false in ${compose_file}" >&2
+    return 1
+  fi
+  if ! grep -q 'SAFETY_POLICY_PUBLIC_KEY:.*:?error' "${compose_file}"; then
+    echo "FAIL: SAFETY_POLICY_PUBLIC_KEY is not required in ${compose_file}" >&2
+    return 1
+  fi
+  if ! grep -q 'SAFETY_POLICY_SIGNATURE:.*:?error' "${compose_file}"; then
+    echo "FAIL: SAFETY_POLICY_SIGNATURE is not required in ${compose_file}" >&2
+    return 1
+  fi
+
+  # Verify critical server/client TLS env wiring exists.
+  for required_var in \
+    GRPC_TLS_CERT GRPC_TLS_KEY GATEWAY_HTTP_TLS_CERT GATEWAY_HTTP_TLS_KEY \
+    SAFETY_KERNEL_TLS_CERT SAFETY_KERNEL_TLS_KEY \
+    CONTEXT_ENGINE_TLS_CERT CONTEXT_ENGINE_TLS_KEY \
+    NATS_TLS_CA NATS_TLS_CERT NATS_TLS_KEY \
+    REDIS_TLS_CA REDIS_TLS_CERT REDIS_TLS_KEY \
+    SAFETY_KERNEL_TLS_CA; do
+    if ! grep -q "${required_var}" "${compose_file}"; then
+      echo "FAIL: missing ${required_var} in ${compose_file}" >&2
+      return 1
+    fi
+  done
 
   # Verify internal services do not expose host ports
   local internal_services=("nats" "redis" "context-engine" "safety-kernel" "workflow-engine")
@@ -2313,7 +2378,7 @@ gate_18_release_config() {
     fi
   done < "${compose_file}"
 
-  echo "release config checks passed (output_policy_enabled=true, no internal port exposure)"
+  echo "release config checks passed (secure tls wiring, policy signatures, no internal port exposure)"
 }
 
 gate_17_dashboard() {
@@ -2553,11 +2618,8 @@ DASHBOARD_BASE="${CORDUM_DASHBOARD_URL:-http://localhost:8082}"
 API_KEY="${CORDUM_API_KEY:-${API_KEY:-}}"
 TENANT_ID="${CORDUM_TENANT_ID:-default}"
 ORG_ID="${CORDUM_ORG_ID:-${TENANT_ID}}"
-if [[ -n "${REDIS_PASSWORD:-}" ]]; then
-  REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD}@localhost:6379}"
-else
-  REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
-fi
+REDIS_PASSWORD="${REDIS_PASSWORD:-cordum-dev}"
+REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD}@localhost:6379}"
 NATS_URL="${NATS_URL:-nats://localhost:4222}"
 MOCK_BANK_WORKER_PID=""
 MOCK_BANK_WORKER_STARTED=0
