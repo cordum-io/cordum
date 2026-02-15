@@ -78,12 +78,11 @@ function channel(): MockBroadcastChannel {
   return c;
 }
 
-/** Create a StorageEvent with overridden readonly properties. */
+/** Create a StorageEvent with the given key and newValue. */
 function makeStorageEvent(props: { key: string; newValue: string | null }): StorageEvent {
-  const event = new StorageEvent("storage");
-  Object.defineProperty(event, "key", { value: props.key });
-  Object.defineProperty(event, "newValue", { value: props.newValue });
-  return event;
+  // StorageEvent constructor accepts StorageEventInit per DOM spec.
+  // lgtm[js/superfluous-trailing-arguments]
+  return new StorageEvent("storage", { key: props.key, newValue: props.newValue });
 }
 
 describe("useCrossTabSync", () => {
