@@ -37,12 +37,16 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - CORDUM_ENV=production
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
-      - CONTEXT_ENGINE_ADDR=:50070
-      # Server TLS (required in production mode — services fail-fast if missing):
-      # - CONTEXT_ENGINE_TLS_CERT=/etc/cordum/tls/server.crt
-      # - CONTEXT_ENGINE_TLS_KEY=/etc/cordum/tls/server.key
+      CORDUM_ENV: production
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      CONTEXT_ENGINE_ADDR: ":50070"
+      CONTEXT_ENGINE_METRICS_ADDR: ":9094"
+      CONTEXT_ENGINE_METRICS_PUBLIC: "true"
+      # Redis TLS (enable when Redis is TLS-terminated):
+      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
+      # Server TLS (enable for mTLS between services):
+      # CONTEXT_ENGINE_TLS_CERT: /etc/cordum/tls/server.crt
+      # CONTEXT_ENGINE_TLS_KEY: /etc/cordum/tls/server.key
     # No host port exposure — internal gRPC service accessible via Docker network only.
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 50070"]
@@ -58,14 +62,24 @@ services:
       nats:
         condition: service_healthy
     environment:
-      - CORDUM_ENV=production
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
-      - SAFETY_KERNEL_ADDR=:50051
-      - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
-      # Server TLS (required in production mode — services fail-fast if missing):
-      # - SAFETY_KERNEL_TLS_CERT=/etc/cordum/tls/server.crt
-      # - SAFETY_KERNEL_TLS_KEY=/etc/cordum/tls/server.key
+      CORDUM_ENV: production
+      NATS_URL: "nats://nats:4222"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      SAFETY_KERNEL_ADDR: ":50051"
+      SAFETY_POLICY_PATH: /etc/cordum/safety.yaml
+      # Metrics (exposed on Docker network for Prometheus):
+      SAFETY_KERNEL_METRICS_ADDR: ":9095"
+      SAFETY_KERNEL_METRICS_PUBLIC: "true"
+      # Redis TLS (enable when Redis is TLS-terminated):
+      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
+      # NATS TLS (enable when NATS is TLS-terminated):
+      NATS_TLS_INSECURE: "${NATS_TLS_INSECURE:-true}"
+      # Policy signature verification — set SAFETY_POLICY_PUBLIC_KEY to enforce:
+      SAFETY_POLICY_SIGNATURE_REQUIRED: "${SAFETY_POLICY_SIGNATURE_REQUIRED:-false}"
+      # SAFETY_POLICY_PUBLIC_KEY: ${SAFETY_POLICY_PUBLIC_KEY:-}
+      # Server TLS (enable for mTLS between services):
+      # SAFETY_KERNEL_TLS_CERT: /etc/cordum/tls/server.crt
+      # SAFETY_KERNEL_TLS_KEY: /etc/cordum/tls/server.key
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
     # No host port exposure — internal gRPC service accessible via Docker network only.
@@ -87,16 +101,26 @@ services:
       safety-kernel:
         condition: service_healthy
     environment:
-      - CORDUM_ENV=production
-      - NATS_URL=nats://nats:4222
-      - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
-      - SAFETY_KERNEL_ADDR=safety-kernel:50051
-      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
-      - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
-      - TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml
-      - JOB_META_TTL=168h
-      - WORKER_SNAPSHOT_INTERVAL=5s
+      CORDUM_ENV: production
+      NATS_URL: "nats://nats:4222"
+      NATS_USE_JETSTREAM: "1"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      SAFETY_KERNEL_ADDR: "safety-kernel:50051"
+      OUTPUT_POLICY_ENABLED: "${OUTPUT_POLICY_ENABLED:-true}"
+      POOL_CONFIG_PATH: /etc/cordum/pools.yaml
+      TIMEOUT_CONFIG_PATH: /etc/cordum/timeouts.yaml
+      JOB_META_TTL: "168h"
+      WORKER_SNAPSHOT_INTERVAL: "5s"
+      # Metrics (exposed on Docker network for Prometheus):
+      SCHEDULER_METRICS_ADDR: ":9090"
+      SCHEDULER_METRICS_PUBLIC: "true"
+      # Redis TLS (enable when Redis is TLS-terminated):
+      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
+      # NATS TLS (enable when NATS is TLS-terminated):
+      NATS_TLS_INSECURE: "${NATS_TLS_INSECURE:-true}"
+      # Server TLS (enable for mTLS between services):
+      # SCHEDULER_TLS_CERT: /etc/cordum/tls/server.crt
+      # SCHEDULER_TLS_KEY: /etc/cordum/tls/server.key
     volumes:
       - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
@@ -122,22 +146,29 @@ services:
       scheduler:
         condition: service_healthy
     environment:
-      - CORDUM_ENV=production
-      - NATS_URL=nats://nats:4222
-      - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
-      - SAFETY_KERNEL_ADDR=safety-kernel:50051
-      - "CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
-      - TENANT_ID=default
-      - API_RATE_LIMIT_RPS=50
-      - API_RATE_LIMIT_BURST=100
-      - REDIS_DATA_TTL=24h
-      - JOB_META_TTL=168h
-      # Server TLS (required in production mode — services fail-fast if missing):
-      # - GRPC_TLS_CERT=/etc/cordum/tls/server.crt
-      # - GRPC_TLS_KEY=/etc/cordum/tls/server.key
-      # - GATEWAY_HTTP_TLS_CERT=/etc/cordum/tls/server.crt
-      # - GATEWAY_HTTP_TLS_KEY=/etc/cordum/tls/server.key
+      CORDUM_ENV: production
+      NATS_URL: "nats://nats:4222"
+      NATS_USE_JETSTREAM: "1"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      SAFETY_KERNEL_ADDR: "safety-kernel:50051"
+      CORDUM_API_KEY: "${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
+      TENANT_ID: default
+      API_RATE_LIMIT_RPS: "50"
+      API_RATE_LIMIT_BURST: "100"
+      REDIS_DATA_TTL: "24h"
+      JOB_META_TTL: "168h"
+      # Metrics (exposed on Docker network for Prometheus):
+      GATEWAY_METRICS_ADDR: ":9092"
+      GATEWAY_METRICS_PUBLIC: "true"
+      # Redis TLS (enable when Redis is TLS-terminated):
+      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
+      # NATS TLS (enable when NATS is TLS-terminated):
+      NATS_TLS_INSECURE: "${NATS_TLS_INSECURE:-true}"
+      # Server TLS (enable for mTLS between services):
+      # GRPC_TLS_CERT: /etc/cordum/tls/server.crt
+      # GRPC_TLS_KEY: /etc/cordum/tls/server.key
+      # GATEWAY_HTTP_TLS_CERT: /etc/cordum/tls/server.crt
+      # GATEWAY_HTTP_TLS_KEY: /etc/cordum/tls/server.key
     ports:
       - "8080:8080"
       - "8081:8081"
@@ -160,13 +191,23 @@ services:
       scheduler:
         condition: service_healthy
     environment:
-      - CORDUM_ENV=production
-      - NATS_URL=nats://nats:4222
-      - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
-      - WORKFLOW_ENGINE_HTTP_ADDR=:9093
-      - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
-      - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200
+      CORDUM_ENV: production
+      NATS_URL: "nats://nats:4222"
+      NATS_USE_JETSTREAM: "1"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      WORKFLOW_ENGINE_HTTP_ADDR: ":9093"
+      WORKFLOW_ENGINE_SCAN_INTERVAL: "5s"
+      WORKFLOW_ENGINE_RUN_SCAN_LIMIT: "200"
+      # Metrics (exposed on Docker network for Prometheus):
+      WORKFLOW_METRICS_ADDR: ":9096"
+      WORKFLOW_METRICS_PUBLIC: "true"
+      # Redis TLS (enable when Redis is TLS-terminated):
+      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
+      # NATS TLS (enable when NATS is TLS-terminated):
+      NATS_TLS_INSECURE: "${NATS_TLS_INSECURE:-true}"
+      # Server TLS (enable for mTLS between services):
+      # WORKFLOW_TLS_CERT: /etc/cordum/tls/server.crt
+      # WORKFLOW_TLS_KEY: /etc/cordum/tls/server.key
     # No host port exposure — internal service accessible via Docker network only.
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9093/health"]
@@ -182,12 +223,12 @@ services:
       api-gateway:
         condition: service_healthy
     environment:
-      - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-}
-      - CORDUM_API_KEY=${CORDUM_API_KEY:-}
-      - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
-      - CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default}
-      - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-}
-      - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-}
+      CORDUM_API_BASE_URL: "${CORDUM_API_BASE_URL:-}"
+      CORDUM_API_KEY: "${CORDUM_API_KEY:-}"
+      CORDUM_DASHBOARD_EMBED_API_KEY: "${CORDUM_DASHBOARD_EMBED_API_KEY:-false}"
+      CORDUM_TENANT_ID: "${CORDUM_TENANT_ID:-default}"
+      CORDUM_PRINCIPAL_ID: "${CORDUM_PRINCIPAL_ID:-}"
+      CORDUM_PRINCIPAL_ROLE: "${CORDUM_PRINCIPAL_ROLE:-}"
     ports:
       - "8082:8080"
     healthcheck:
