@@ -2553,7 +2553,11 @@ DASHBOARD_BASE="${CORDUM_DASHBOARD_URL:-http://localhost:8082}"
 API_KEY="${CORDUM_API_KEY:-${API_KEY:-}}"
 TENANT_ID="${CORDUM_TENANT_ID:-default}"
 ORG_ID="${CORDUM_ORG_ID:-${TENANT_ID}}"
-REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@localhost:6379}"
+if [[ -n "${REDIS_PASSWORD:-}" ]]; then
+  REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD}@localhost:6379}"
+else
+  REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
+fi
 NATS_URL="${NATS_URL:-nats://localhost:4222}"
 MOCK_BANK_WORKER_PID=""
 MOCK_BANK_WORKER_STARTED=0
