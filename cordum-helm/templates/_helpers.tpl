@@ -49,9 +49,29 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "cordum.redisUrl" -}}
 {{- if .Values.redis.enabled -}}
+{{- if .Values.redis.auth.enabled -}}
+{{- printf "redis://:$(REDIS_PASSWORD)@%s-redis:%d" (include "cordum.fullname" .) (int .Values.redis.service.port) -}}
+{{- else -}}
 {{- printf "redis://%s-redis:%d" (include "cordum.fullname" .) (int .Values.redis.service.port) -}}
+{{- end -}}
 {{- else -}}
 {{- required "external.redisUrl is required when redis.enabled=false" .Values.external.redisUrl -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.redisSecretName" -}}
+{{- if .Values.redis.auth.existingSecret -}}
+{{- .Values.redis.auth.existingSecret -}}
+{{- else -}}
+{{- printf "%s-secrets" (include "cordum.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.redisSecretKey" -}}
+{{- if .Values.redis.auth.existingSecret -}}
+{{- .Values.redis.auth.existingSecretKey -}}
+{{- else -}}
+redisPassword
 {{- end -}}
 {{- end -}}
 

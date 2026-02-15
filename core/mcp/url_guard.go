@@ -13,6 +13,9 @@ import (
 const outboundResolveTimeout = 2 * time.Second
 
 // outboundPrivateIPNets mirror gateway SSRF protections for private/link-local ranges.
+// This list intentionally differs from auth.PrivateIPNets: it additionally includes
+// 0.0.0.0/8 (IPv4 unspecified) and 100.64.0.0/10 (carrier-grade NAT) for stricter
+// outbound validation.
 var outboundPrivateIPNets = func() []*net.IPNet {
 	cidrs := []string{
 		"0.0.0.0/8",      // IPv4 unspecified
@@ -30,6 +33,8 @@ var outboundPrivateIPNets = func() []*net.IPNet {
 	for _, cidr := range cidrs {
 		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {
+			// INVARIANT: CIDRs are hardcoded constants; panic is acceptable
+			// as a process-fatal assertion — no user input is involved.
 			panic("invalid CIDR in outboundPrivateIPNets: " + cidr)
 		}
 		nets = append(nets, n)

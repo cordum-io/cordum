@@ -441,7 +441,7 @@ These are used by `cordumctl up` and `cordumctl dev`:
 | `CORDUM_API_KEY` | *(required)* | API key for all services |
 | `CORDUM_VERSION` | `latest` | Docker image version tag |
 | `CORDUM_TENANT_ID` | `default` | Default tenant ID |
-| `REDIS_PASSWORD` | `cordum-dev` | Redis password |
+| `REDIS_PASSWORD` | *(required)* | Redis password (generate with `openssl rand -hex 32`) |
 | `CORDUM_API_BASE_URL` | | Dashboard API base URL |
 | `CORDUM_PRINCIPAL_ID` | | Dashboard principal ID |
 | `CORDUM_PRINCIPAL_ROLE` | | Dashboard principal role |

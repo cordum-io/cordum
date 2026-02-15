@@ -237,6 +237,29 @@ func TestMaxJSRedeliveriesConstant(t *testing.T) {
 	}
 }
 
+func TestNatsBusDrainClearsSubs(t *testing.T) {
+	b := &NatsBus{}
+	// Drain on empty bus should not panic.
+	b.Drain()
+	if len(b.subs) != 0 {
+		t.Fatalf("expected empty subs after drain")
+	}
+	// trackSub with nil should be a no-op.
+	b.trackSub(nil)
+	if len(b.subs) != 0 {
+		t.Fatalf("expected nil sub to be ignored")
+	}
+}
+
+func TestNatsBusCloseCallsDrain(t *testing.T) {
+	b := &NatsBus{}
+	// Close on nil nc should not panic and should drain.
+	b.Close()
+	if b.subs != nil {
+		t.Fatalf("expected subs to be nil after close")
+	}
+}
+
 func TestNatsTLSConfigFromEnv(t *testing.T) {
 	t.Setenv(envNATSTLSCA, "")
 	t.Setenv(envNATSTLSCert, "")

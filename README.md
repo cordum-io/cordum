@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/cordum-io/cordum/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License"/></a>
   <a href="https://github.com/cordum-io/cordum/releases"><img src="https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver" alt="Release"/></a>
-  <a href="https://discord.gg/cordum"><img src="https://img.shields.io/discord/YOUR_DISCORD_ID?label=discord&logo=discord" alt="Discord"/></a>
+  <a href="https://discord.gg/U4NpXtjP"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
   <a href="https://github.com/cordum-io/cap"><img src="https://img.shields.io/badge/protocol-CAP%20v2-green" alt="CAP Protocol"/></a>
 </p>
 
@@ -209,7 +209,7 @@ func main() {
 }
 ```
 
-SDKs: **Go** (stable) | Python (coming soon) | Node (coming soon)
+SDKs: **Go** (stable) | [**Python**](https://github.com/cordum-io/cap) | [**Node**](https://github.com/cordum-io/cap)
 
 ## Community
 
@@ -258,7 +258,7 @@ Free for self-hosted and internal use. Not permitted for competing hosted/manage
 
 <p align="center">
   <strong>Ready to govern your AI agents?</strong><br/>
-  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://discord.gg/cordum">Discord</a>
+  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://discord.gg/U4NpXtjP">Discord</a>
 </p>
 
 <p align="center">

@@ -32,6 +32,16 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
 
+	// RBAC: only admin and user roles may submit jobs.
+	if err := s.requireRoleGRPC(ctx, "admin", "user"); err != nil {
+		actorID, role := "anonymous", "none"
+		if ac := authFromContext(ctx); ac != nil {
+			actorID, role = ac.PrincipalID, ac.Role
+		}
+		s.appendAuditEntryNamed(ctx, "submit_denied", "job", "", "", actorID, role, "job submit denied: "+err.Error())
+		return nil, err
+	}
+
 	orgID, err := resolveGRPCTenant(ctx, req.GetOrgId(), s.tenant)
 	if err != nil {
 		return nil, err
@@ -277,6 +287,31 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 
 	logging.Info("api-gateway", "job submitted", "job_id", jobID)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
+}
+
+// requireRoleGRPC checks that the gRPC context carries an AuthContext with
+// one of the allowed roles.  It mirrors the HTTP requireRole helper but
+// returns proper gRPC status errors.  When no auth provider is configured
+// (s.auth == nil) the check is skipped — matching the HTTP requireRole
+// behaviour used in tests.
+func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
+	if s == nil || s.auth == nil {
+		return nil
+	}
+	authCtx := authFromContext(ctx)
+	if authCtx == nil {
+		return status.Error(codes.Unauthenticated, "authentication required")
+	}
+	role := normalizeRole(authCtx.Role)
+	if role == "" {
+		return status.Error(codes.PermissionDenied, "role required")
+	}
+	for _, candidate := range roles {
+		if normalizeRole(candidate) == role {
+			return nil
+		}
+	}
+	return status.Errorf(codes.PermissionDenied, "role %s not permitted", role)
 }
 
 func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string, error) {

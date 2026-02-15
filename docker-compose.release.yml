@@ -20,13 +20,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-cordum-dev}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}"]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-cordum-dev}", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -39,8 +39,12 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - CORDUM_ENV=production
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - CONTEXT_ENGINE_ADDR=:50070
+      # Server TLS (required in production mode — services fail-fast if missing):
+      # - CONTEXT_ENGINE_TLS_CERT=/etc/cordum/tls/server.crt
+      # - CONTEXT_ENGINE_TLS_KEY=/etc/cordum/tls/server.key
     ports:
       - "50070:50070"
     healthcheck:
@@ -57,10 +61,14 @@ services:
       nats:
         condition: service_healthy
     environment:
+      - CORDUM_ENV=production
       - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - SAFETY_KERNEL_ADDR=:50051
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
+      # Server TLS (required in production mode — services fail-fast if missing):
+      # - SAFETY_KERNEL_TLS_CERT=/etc/cordum/tls/server.crt
+      # - SAFETY_KERNEL_TLS_KEY=/etc/cordum/tls/server.key
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
     ports:
@@ -83,9 +91,10 @@ services:
       safety-kernel:
         condition: service_healthy
     environment:
+      - CORDUM_ENV=production
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
       - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-false}
       - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
@@ -117,9 +126,10 @@ services:
       scheduler:
         condition: service_healthy
     environment:
+      - CORDUM_ENV=production
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
       - "CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
       - TENANT_ID=default
@@ -127,6 +137,11 @@ services:
       - API_RATE_LIMIT_BURST=100
       - REDIS_DATA_TTL=24h
       - JOB_META_TTL=168h
+      # Server TLS (required in production mode — services fail-fast if missing):
+      # - GRPC_TLS_CERT=/etc/cordum/tls/server.crt
+      # - GRPC_TLS_KEY=/etc/cordum/tls/server.key
+      # - GATEWAY_HTTP_TLS_CERT=/etc/cordum/tls/server.crt
+      # - GATEWAY_HTTP_TLS_KEY=/etc/cordum/tls/server.key
     ports:
       - "8080:8080"
       - "8081:8081"
@@ -149,9 +164,10 @@ services:
       scheduler:
         condition: service_healthy
     environment:
+      - CORDUM_ENV=production
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379
       - WORKFLOW_ENGINE_HTTP_ADDR=:9093
       - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
       - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200

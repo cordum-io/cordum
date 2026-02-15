@@ -28,7 +28,8 @@ data:
     topics: {}
     reconciler:
       dispatch_timeout_seconds: 300
-      running_timeout_seconds: 9000
+      # Per-topic overrides available via topics.<topic>.running_timeout_seconds
+      running_timeout_seconds: 900
       scan_interval_seconds: 30
 ---
 apiVersion: v1
@@ -254,6 +255,21 @@ spec:
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
       containers:
       - name: context-engine
         image: cordum-context-engine
@@ -323,6 +339,21 @@ spec:
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
       containers:
       - name: safety
         image: cordum-safety-kernel
@@ -404,6 +435,21 @@ spec:
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
       containers:
       - name: scheduler
         image: cordum-scheduler
@@ -499,6 +545,29 @@ spec:
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          fail=0
+          [ -z "$API_KEY" ] && echo 'FATAL: API_KEY secret is empty' && fail=1
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty' && fail=1
+          [ $fail -eq 1 ] && echo 'Set required secrets before deploying. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-api-key
+              key: API_KEY
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
       containers:
       - name: gateway
         image: cordum-api-gateway
@@ -622,6 +691,21 @@ spec:
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
       containers:
       - name: workflow-engine
         image: cordum-workflow-engine
@@ -702,6 +786,20 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$CORDUM_API_KEY" ] && echo 'FATAL: API_KEY secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: CORDUM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-api-key
+              key: API_KEY
       - name: copy-static
         image: cordum-dashboard
         command: ["sh", "-c", "cp -r /usr/share/nginx/html/. /html/"]

@@ -239,6 +239,46 @@ describe("useAudit hooks", () => {
     missing.unmount();
   });
 
+  it("useAuditEvent uses placeholderData from main audit cache", () => {
+    const queryClient = createTestQueryClient();
+    // Seed the main audit cache with entries
+    queryClient.setQueryData(["audit"], {
+      items: [
+        makeEntry({ id: "e1", actor: "alice" }),
+        makeEntry({ id: "e2", actor: "bob" }),
+      ],
+    });
+    // No fetch mock needed — placeholderData should resolve synchronously
+    mockFetch([
+      { match: "/policy/audit", method: "GET", body: { items: [] } },
+    ]);
+    const hook = renderWithQueryClient(() => useAuditEvent("e1"), queryClient);
+
+    // Placeholder should resolve immediately from the audit cache
+    expect(hook.result.current?.data?.id).toBe("e1");
+    expect(hook.result.current?.data?.actor).toBe("alice");
+    hook.unmount();
+  });
+
+  it("useAuditCorrelation uses placeholderData from main audit cache", () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["audit"], {
+      items: [
+        makeEntry({ id: "c1", resourceId: "j1", timestamp: "2026-02-13T11:00:00.000Z" }),
+        makeEntry({ id: "c2", resourceId: "j1", timestamp: "2026-02-13T10:00:00.000Z" }),
+        makeEntry({ id: "c3", resourceId: "j2", timestamp: "2026-02-13T09:00:00.000Z" }),
+      ],
+    });
+    mockFetch([
+      { match: "/policy/audit", method: "GET", body: { items: [] } },
+    ]);
+    const hook = renderWithQueryClient(() => useAuditCorrelation("j1"), queryClient);
+
+    // Placeholder should filter to j1 and sort ascending
+    expect(hook.result.current?.data?.map((e) => e.id)).toEqual(["c2", "c1"]);
+    hook.unmount();
+  });
+
   it("useAuditCorrelation filters by resourceId and sorts ascending", async () => {
     mockFetch([
       {

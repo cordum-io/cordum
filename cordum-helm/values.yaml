@@ -8,6 +8,15 @@ global:
     repository: ghcr.io/cordum-io/cordum/control-plane
     tag: "v0.1.4"
     pullPolicy: IfNotPresent
+  # Set to true for production deployments (enables TLS enforcement, strict guards)
+  production: false
+  tls:
+    # Enable server-side TLS for gRPC/HTTP endpoints
+    enabled: false
+    # K8s Secret name (type kubernetes.io/tls) containing server cert + key
+    serverCertSecret: ""
+    # K8s Secret name for client TLS (NATS/Redis connections)
+    clientCertSecret: ""
 
 secrets:
   apiKey: ""
@@ -16,6 +25,11 @@ secrets:
 
 config:
   safety: |-
+    # Fail-closed: unmatched jobs are denied.
+    default_decision: deny
+    output_policy:
+      enabled: true
+      fail_mode: closed
     default_tenant: default
     tenants:
       default:
@@ -45,7 +59,8 @@ config:
     topics: {}
     reconciler:
       dispatch_timeout_seconds: 300
-      running_timeout_seconds: 9000
+      # Per-topic overrides available via topics.<topic>.running_timeout_seconds
+      running_timeout_seconds: 900
       scan_interval_seconds: 30
 
 external:
@@ -56,6 +71,11 @@ external:
 nats:
   enabled: true
   image: nats:2.10-alpine
+  containerSecurityContext:
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
   service:
     type: ClusterIP
     port: 4222
@@ -77,6 +97,19 @@ nats:
 redis:
   enabled: true
   image: redis:7-alpine
+  containerSecurityContext:
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  auth:
+    enabled: true
+    # Required when auth.enabled=true. Provide via --set or values override.
+    # Generate with: openssl rand -hex 32
+    password: ""
+    # Alternatively reference an existing K8s secret:
+    existingSecret: ""
+    existingSecretKey: "REDIS_PASSWORD"
   service:
     type: ClusterIP
     port: 6379
@@ -91,6 +124,20 @@ redis:
     requests:
       cpu: 100m
       memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
 
 serviceAccount:
   create: true
@@ -233,3 +280,10 @@ dashboard:
     requests:
       cpu: 50m
       memory: 128Mi
+
+networkPolicy:
+  enabled: false
+  # Label selector for ingress controller pods (used for gateway/dashboard ingress rules)
+  ingressControllerSelector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx

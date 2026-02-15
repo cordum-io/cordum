@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/env"
@@ -24,6 +25,9 @@ type NatsBus struct {
 	js        nats.JetStreamContext
 	jsEnabled bool
 	ackWait   time.Duration
+
+	subsMu sync.Mutex
+	subs   []*nats.Subscription
 }
 
 const (
@@ -99,8 +103,27 @@ func NewNatsBus(url string) (*NatsBus, error) {
 	return b, nil
 }
 
-// Close shuts down the underlying NATS connection.
+// Drain unsubscribes all tracked subscriptions, allowing in-flight messages
+// to complete. Call before Close() to avoid orphaned JetStream consumers.
+func (b *NatsBus) Drain() {
+	b.subsMu.Lock()
+	subs := b.subs
+	b.subs = nil
+	b.subsMu.Unlock()
+
+	for _, sub := range subs {
+		if sub == nil || !sub.IsValid() {
+			continue
+		}
+		if err := sub.Drain(); err != nil {
+			log.Printf("[BUS] drain subscription %s: %v", sub.Subject, err)
+		}
+	}
+}
+
+// Close drains all subscriptions and shuts down the underlying NATS connection.
 func (b *NatsBus) Close() {
+	b.Drain()
 	if b.nc != nil {
 		b.nc.Close()
 	}
@@ -194,15 +217,19 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 			opts = append(opts, nats.Durable(durable))
 		}
 
-		var err error
+		var (
+			sub *nats.Subscription
+			err error
+		)
 		if queue == "" {
-			_, err = b.js.Subscribe(subject, cb, opts...)
+			sub, err = b.js.Subscribe(subject, cb, opts...)
 		} else {
-			_, err = b.js.QueueSubscribe(subject, queue, cb, opts...)
+			sub, err = b.js.QueueSubscribe(subject, queue, cb, opts...)
 		}
 		if err != nil {
 			return fmt.Errorf("subscribe %s: %w", subject, err)
 		}
+		b.trackSub(sub)
 		return nil
 	}
 
@@ -217,17 +244,29 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 		}
 	}
 	if queue == "" {
-		_, err := b.nc.Subscribe(subject, cb)
+		sub, err := b.nc.Subscribe(subject, cb)
 		if err != nil {
 			return fmt.Errorf("subscribe %s: %w", subject, err)
 		}
+		b.trackSub(sub)
 		return nil
 	}
-	_, err := b.nc.QueueSubscribe(subject, queue, cb)
+	sub, err := b.nc.QueueSubscribe(subject, queue, cb)
 	if err != nil {
 		return fmt.Errorf("subscribe %s: %w", subject, err)
 	}
+	b.trackSub(sub)
 	return nil
+}
+
+// trackSub appends a subscription to the tracked list.
+func (b *NatsBus) trackSub(sub *nats.Subscription) {
+	if sub == nil {
+		return
+	}
+	b.subsMu.Lock()
+	b.subs = append(b.subs, sub)
+	b.subsMu.Unlock()
 }
 
 // msgAction represents the action to take after processing a NATS message.

@@ -58,6 +58,43 @@ func negotiateSubprotocol(r *http.Request) http.Header {
 	return nil
 }
 
+// startWorkerExpiry launches a background goroutine that evicts stale entries
+// from the workerSeen and workers maps. This prevents unbounded growth when
+// workers disconnect without sending a final heartbeat.
+func (s *server) startWorkerExpiry() {
+	s.workerExpireStop = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(workerHeartbeatTTL / 2)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.workerExpireStop:
+				return
+			case <-ticker.C:
+				now := time.Now().UTC()
+				cutoff := now.Add(-workerHeartbeatTTL)
+				s.workerMu.Lock()
+				for id, seen := range s.workerSeen {
+					if seen.Before(cutoff) {
+						delete(s.workerSeen, id)
+						delete(s.workers, id)
+					}
+				}
+				s.workerMu.Unlock()
+			}
+		}
+	}()
+}
+
+// stopWorkerExpiry signals the expiry goroutine to stop. Safe to call multiple times.
+func (s *server) stopWorkerExpiry() {
+	s.workerExpireOnce.Do(func() {
+		if s.workerExpireStop != nil {
+			close(s.workerExpireStop)
+		}
+	})
+}
+
 // startBusTaps subscribes to heartbeats and system events once for the lifetime of the gateway.
 func (s *server) startBusTaps() error {
 	// Heartbeats -> worker registry snapshot
@@ -199,6 +236,8 @@ func (s *server) startBusTaps() error {
 			}
 		}
 	}()
+
+	s.startWorkerExpiry()
 
 	return nil
 }

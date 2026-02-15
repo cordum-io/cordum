@@ -62,6 +62,123 @@ func TestHandleSubmitJobHTTP(t *testing.T) {
 	}
 }
 
+func TestHandleSubmitJobHTTPViewerDenied(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"viewer-key","role":"viewer","tenant":"default"}]`,
+	})
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.test",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-API-Key", "viewer-key")
+	// Authenticate to populate auth context.
+	authCtx, err := s.auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for viewer role, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSubmitJobHTTPAdminAllowed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"admin-key","role":"admin","tenant":"default"}]`,
+	})
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.test",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-API-Key", "admin-key")
+	authCtx, err := s.auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for admin role, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSubmitJobHTTPUserAllowed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"user-key","role":"user","tenant":"default"}]`,
+	})
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.test",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-API-Key", "user-key")
+	authCtx, err := s.auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for user role, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSubmitJobHTTPOperatorAllowed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"operator-key","role":"operator","tenant":"default"}]`,
+	})
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.test",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-API-Key", "operator-key")
+	authCtx, err := s.auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for operator role (admin alias), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleSubmitJobHTTPRejectsDisallowedMemoryID(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.tenant = "default"

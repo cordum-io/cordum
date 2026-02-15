@@ -150,6 +150,48 @@ describe("useApprovals hooks", () => {
     hook.unmount();
   });
 
+  it("useApproval finds placeholder from non-all filtered cache", async () => {
+    mockFetch([
+      {
+        match: "/approvals",
+        method: "GET",
+        body: {
+          items: [
+            {
+              approval_ref: "a1",
+              job: {
+                id: "j1",
+                state: "RUNNING",
+                updated_at: 1_707_000_000_000_000,
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const queryClient = createTestQueryClient();
+    // Seed a filtered cache (not "all") — useApproval should still find it
+    queryClient.setQueryData(["approvals", "pending"], {
+      items: [
+        {
+          id: "a1",
+          jobId: "j1",
+          status: "pending",
+          requestedAt: "2026-02-13T00:00:00.000Z",
+        },
+      ],
+    });
+    const hook = renderWithQueryClient(() => useApproval("a1"), queryClient);
+
+    // Placeholder should resolve from the "pending" cache
+    expect(hook.result.current?.data?.id).toBe("a1");
+    await hook.waitFor(() => {
+      expect(hook.result.current?.isSuccess).toBe(true);
+    });
+    expect(hook.result.current?.data?.id).toBe("a1");
+    hook.unmount();
+  });
+
   it("useApproveJob removes from cache optimistically and restores on error", async () => {
     mockFetch([{ match: "/approvals/a1/approve", method: "POST", rejectWith: new Error("approve failed") }]);
     const queryClient = createTestQueryClient();

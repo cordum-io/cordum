@@ -122,12 +122,19 @@ type server struct {
 	stopBusTapsOnce  sync.Once
 	eventsStopped    atomic.Bool
 	shutdownCh       chan struct{}
+
+	workerExpireStop chan struct{}
+	workerExpireOnce sync.Once
 }
 
 // Close releases resources owned by the server, notably the user store
 // connection. It is safe to call with a nil userStore.
 func (s *server) Close() {
 	s.stopBusTaps()
+	s.stopWorkerExpiry()
+	if nb, ok := s.bus.(*bus.NatsBus); ok {
+		nb.Drain()
+	}
 	if s.auditExporter != nil {
 		if err := s.auditExporter.Close(); err != nil {
 			logging.Error("api-gateway", "audit exporter close failed", "error", err)

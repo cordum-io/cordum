@@ -1,4 +1,4 @@
-# Testing Guide - Claude CLI Configuration
+# Testing Guide
 
 Comprehensive testing strategies for Cordum components.
 
@@ -9,6 +9,121 @@ Comprehensive testing strategies for Cordum components.
 3. **Integration tests** - Verify component interactions
 4. **Contract tests** - Ensure CAP protocol compliance
 5. **Benchmarks** - Performance regressions caught early
+
+## Deterministic Redeploy Workflow
+
+A reproducible process for deploying the full Cordum stack and validating production readiness.
+
+### Prerequisites
+
+- Docker with Compose v2 plugin
+- `curl`, Go toolchain, `openssl`
+- `jq` (or `tools/scripts/jq.exe` on Windows/MSYS)
+- `CORDUM_API_KEY` environment variable set (generate with `openssl rand -hex 32`)
+
+### Quick Deploy
+
+```bash
+# Fresh clean deploy with artifact capture
+export CORDUM_API_KEY=$(openssl rand -hex 32)
+./tools/scripts/quickstart.sh --clean --artifacts-dir ./deploy-artifacts
+```
+
+### Quickstart Options
+
+| Flag | Description |
+|------|-------------|
+| `--clean` | Tear down existing stack (`docker compose down -v`) before starting |
+| `--artifacts-dir DIR` | Capture deploy logs, status, and image versions to DIR |
+| `--skip-build` | Reuse existing images (skip rebuild) |
+| `--skip-smoke` | Skip the post-deploy smoke test |
+| `--health-timeout N` | Seconds to wait for health readiness (default: 120) |
+
+### What the Deploy Does
+
+1. **Teardown** (with `--clean`): `docker compose down -v --remove-orphans`
+2. **Build & start**: `docker compose up -d --build` (7 services + dashboard)
+3. **Health readiness**: Polls `GET /api/v1/status` until `nats.connected=true` and `redis.ok=true` (bounded timeout)
+4. **Artifact capture** (with `--artifacts-dir`): Saves container status, per-service logs (last 200 lines), image versions, and git log
+5. **Smoke test**: Creates a workflow, runs it, approves, verifies completion, cleans up
+
+### Artifacts Captured
+
+When `--artifacts-dir` is specified, the following files are written:
+
+| File | Contents |
+|------|----------|
+| `compose-status-{timestamp}.txt` | Container names, status, ports |
+| `{service}-{timestamp}.log` | Last 200 log lines per service |
+| `compose-images-{timestamp}.txt` | Image names and versions |
+| `git-log-{timestamp}.txt` | Last 5 git commits |
+
+### Full Production Gate
+
+After the deploy, run the 17-gate production readiness suite:
+
+```bash
+./tools/scripts/production_gate.sh                    # All 17 gates
+./tools/scripts/production_gate.sh --gate 3           # Single gate
+./tools/scripts/production_gate.sh --skip-rebuild     # Skip gate 1 teardown
+```
+
+Gates 1-17 cover: deploy, auth/tenant, workflows, policy, reliability, performance, security, MCP/output-policy, identity, data lifecycle, streaming, advanced workflows, config hierarchy, policy lifecycle, pack management, degradation, and dashboard.
+
+Results are written to `production_gate_results.json`.
+
+### Port Mapping
+
+| Port | Protocol | Service |
+|------|----------|---------|
+| 8080 | gRPC | API Gateway gRPC endpoint |
+| 8081 | HTTP | API Gateway REST API |
+| 9092 | HTTP | API Gateway metrics |
+| 4222 | TCP | NATS |
+| 6379 | TCP | Redis |
+| 50051 | gRPC | Safety Kernel |
+| 50070 | gRPC | Context Engine |
+| 9093 | gRPC | Workflow Engine |
+| 8082 | HTTP | Dashboard (nginx proxy) |
+
+### Production Gate Matrix
+
+| Gate | Name | Coverage |
+|------|------|----------|
+| 1 | Deploy | Docker Compose build + health readiness |
+| 2 | Auth/Tenant | API key auth, tenant isolation, CORS |
+| 3 | Workflow Matrix | Multi-step workflow with policy evaluation |
+| 4 | Policy | Safety rules, deny/allow/approval decisions |
+| 5 | Reliability | Retry, timeout, circuit-breaker, reconciler |
+| 6 | Performance | Latency p99 < 5ms, throughput benchmarks |
+| 7 | Security | SSRF, injection, header hardening |
+| 8 | Extensions | MCP server, output policy, context engine |
+| 9 | Identity/Access | RBAC enforcement, key lifecycle, user CRUD |
+| 10 | Data Lifecycle | DLQ, artifact storage, job cleanup |
+| 11 | Streaming | WebSocket events, presence, reconnection |
+| 12 | Adv Workflows | Multi-step, branching, failure handling |
+| 13 | Config Hierarchy | System/tenant/team config cascade |
+| 14 | Policy Lifecycle | Bundle CRUD, rule versioning, snapshots |
+| 15 | Pack Management | Install, activate, overlay, uninstall |
+| 16 | Degradation | Pool failover, orphan detection, recovery |
+| 17 | Dashboard | SPA serving, CSP headers, proxy routing |
+
+**CI runs**: Gates 2-4, 8-17 on PRs; all 17 nightly.
+
+### Validation Evidence Checklist
+
+After a production gate run, verify:
+
+- [ ] `go build ./...` — clean (0 errors)
+- [ ] `go vet ./...` — clean (0 warnings)
+- [ ] `go test ./... -count=1` — all packages pass
+- [ ] Docker images rebuilt from current source
+- [ ] All 8 services healthy (`docker compose ps`)
+- [ ] Gates 2-4, 8-17 pass (gate 3 requires policy config)
+- [ ] Auth: login returns masked token, session returns user context
+- [ ] Tenant isolation: cross-tenant requests get 403
+- [ ] RBAC: viewer blocked from job submit (HTTP 403, gRPC PermissionDenied)
+- [ ] Dashboard: serves SPA, has CSP + X-Frame-Options + X-Content-Type-Options
 
 ## Test Categories
 

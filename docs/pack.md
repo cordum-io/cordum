@@ -481,7 +481,7 @@ services:
     build: .
     environment:
       - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://:cordum-dev@redis:6379
+      - REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379
       - WORKER_ID=my-worker
     depends_on:
       nats:
@@ -599,7 +599,7 @@ The scheduler's `bootstrapConfig()` is write-once — it caches pool config in R
 
 ```bash
 # Delete the cached config key
-docker compose exec redis redis-cli -a cordum-dev DEL cfg:system:default
+docker compose exec redis redis-cli -a "$REDIS_PASSWORD" DEL cfg:system:default
 docker compose restart scheduler
 ```
 
@@ -624,7 +624,7 @@ import (
 // 1. Create an agent
 agent := &runtime.Agent{
     NATSURL:  "nats://nats:4222",
-    RedisURL: "redis://:cordum-dev@redis:6379",
+    RedisURL: "redis://:$REDIS_PASSWORD@redis:6379",
     SenderID: "my-worker",
 }
 
@@ -667,7 +667,7 @@ Workers emit heartbeats on `sys.heartbeat` every 5 seconds (default). The schedu
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_URL` | `nats://127.0.0.1:4222` | NATS connection URL |
-| `REDIS_URL` | `redis://:cordum-dev@127.0.0.1:6379/0` | Redis connection URL |
+| `REDIS_URL` | `redis://:$REDIS_PASSWORD@127.0.0.1:6379/0` | Redis connection URL |
 | `WORKER_ID` | *(required)* | Unique worker identifier |
 
 See [sdk-reference.md](sdk-reference.md) for the full SDK API reference.
@@ -734,14 +734,14 @@ Located at `examples/hello-worker-go/`. A minimal Go worker demonstrating:
 ```bash
 # Run locally
 NATS_URL=nats://localhost:4222 \
-REDIS_URL=redis://:cordum-dev@localhost:6379 \
+REDIS_URL=redis://:$REDIS_PASSWORD@localhost:6379 \
 go run ./examples/hello-worker-go
 
 # Or via Docker
 docker build -f examples/hello-worker-go/Dockerfile -t hello-worker .
 docker run --network cordum_default \
   -e NATS_URL=nats://nats:4222 \
-  -e REDIS_URL=redis://:cordum-dev@redis:6379 \
+  -e REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379 \
   hello-worker
 ```
 

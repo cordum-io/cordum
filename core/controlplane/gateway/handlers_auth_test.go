@@ -487,3 +487,80 @@ func TestLoginHandler_APIKeyFallback(t *testing.T) {
 		t.Fatalf("expected source=api_key, got %q", resp.User.Source)
 	}
 }
+
+// ---- Revoke key handler tests ----
+
+// stubKeyStore implements KeyStore for testing handleRevokeKey.
+type stubKeyStore struct {
+	revokeErr error
+}
+
+func (s *stubKeyStore) List(_ context.Context, _ string) ([]*ManagedKey, error) { return nil, nil }
+func (s *stubKeyStore) Create(_ context.Context, _ *ManagedKey, _ string) error  { return nil }
+func (s *stubKeyStore) Revoke(_ context.Context, _ string, _ string) error       { return s.revokeErr }
+func (s *stubKeyStore) ValidateKey(_ context.Context, _ string) (*ManagedKey, error) {
+	return nil, ErrKeyNotFound
+}
+func (s *stubKeyStore) RecordUsage(_ context.Context, _ string) error { return nil }
+
+func TestHandleRevokeKeyNotFound(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.keyStore = &stubKeyStore{revokeErr: ErrKeyNotFound}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/keys/nonexistent", nil)
+	req.SetPathValue("id", "nonexistent")
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, &AuthContext{
+		Role:   "admin",
+		Tenant: "default",
+	}))
+	rec := httptest.NewRecorder()
+	s.handleRevokeKey(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing key, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRevokeKeyInternalError(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.keyStore = &stubKeyStore{revokeErr: errors.New("redis connection refused")}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/keys/some-id", nil)
+	req.SetPathValue("id", "some-id")
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, &AuthContext{
+		Role:   "admin",
+		Tenant: "default",
+	}))
+	rec := httptest.NewRecorder()
+	s.handleRevokeKey(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for internal error, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRevokeKeyViewerDenied(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.keyStore = &stubKeyStore{}
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"viewer-key","role":"viewer","tenant":"default"}]`,
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/keys/some-id", nil)
+	req.SetPathValue("id", "some-id")
+	req.Header.Set("X-API-Key", "viewer-key")
+	authCtx, err := s.auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	rec := httptest.NewRecorder()
+	s.handleRevokeKey(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for viewer revoking keys, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

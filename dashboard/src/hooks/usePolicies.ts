@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, put, del } from "../api/client";
 import { logger } from "../lib/logger";
+import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
 import type {
   PolicyBundle,
@@ -64,7 +65,7 @@ function policyBundleSimulatePath(bundleId: string): string {
 
 export function usePolicyBundles() {
   return useQuery<ApiResponse<PolicyBundle[]>>({
-    queryKey: ["policy-bundles"],
+    queryKey: queryKeys.policies.bundles(),
     queryFn: async () => {
       const res = await get<{
         items: BackendPolicyBundleSummary[];
@@ -84,7 +85,7 @@ export function usePolicyBundles() {
 
 export function usePolicyBundle(id: string) {
   return useQuery<PolicyBundle>({
-    queryKey: ["policy-bundle", id],
+    queryKey: queryKeys.policies.bundle(id),
     queryFn: async () => {
       const res = await get<BackendPolicyBundleDetail>(policyBundlePath(id));
       return mapPolicyBundleDetail(res);
@@ -100,7 +101,7 @@ export function usePolicyBundle(id: string) {
 
 export function usePolicyRules() {
   return useQuery<ApiResponse<PolicyRule[]>>({
-    queryKey: ["policy-rules"],
+    queryKey: queryKeys.policies.rules(),
     queryFn: async () => {
       const res = await get<{ items: Record<string, unknown>[] }>(
         "/policy/rules",
@@ -133,9 +134,9 @@ export function usePublishPolicy() {
       logger.info("policies", "Policy published", { bundleId });
       useToastStore.getState().addToast({ type: "success", title: "Policy published" });
       queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
-      queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
-      queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
-      queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundles() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.snapshots() });
     },
     onError: (err, { bundleId }) => {
       logger.error("policies", "Publish failed", { bundleId, error: err.message });
@@ -155,9 +156,9 @@ export function useRollbackPolicy() {
       logger.info("policies", "Policy rolled back", { snapshotId });
       useToastStore.getState().addToast({ type: "success", title: "Policy rolled back" });
       queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
-      queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
-      queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
-      queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundles() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.snapshots() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
     },
     onError: (err, { snapshotId }) => {
       logger.error("policies", "Rollback failed", { snapshotId, error: err.message });
@@ -176,7 +177,7 @@ export function useCaptureSnapshot() {
     onSuccess: () => {
       logger.info("policies", "Snapshot captured");
       useToastStore.getState().addToast({ type: "success", title: "Snapshot captured" });
-      queryClient.invalidateQueries({ queryKey: ["policy-snapshots"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.snapshots() });
     },
     onError: (err) => {
       logger.error("policies", "Snapshot capture failed", { error: err.message });
@@ -195,9 +196,9 @@ export function useToggleRule() {
     onSuccess: (_, { bundleId, ruleId, enabled }) => {
       logger.info("policies", "Rule toggled", { bundleId, ruleId, enabled });
       useToastStore.getState().addToast({ type: "success", title: "Rule updated" });
-      queryClient.invalidateQueries({ queryKey: ["policy-bundle", bundleId] });
-      queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
-      queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundle(bundleId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundles() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
     },
     onError: (err, { bundleId, ruleId }) => {
       logger.error("policies", "Toggle rule failed", { bundleId, ruleId, error: err.message });
@@ -246,9 +247,9 @@ export function useUpdatePolicyBundle() {
       useToastStore
         .getState()
         .addToast({ type: "success", title: "Policy bundle updated" });
-      queryClient.invalidateQueries({ queryKey: ["policy-bundles"] });
-      queryClient.invalidateQueries({ queryKey: ["policy-bundle", normalizedID] });
-      queryClient.invalidateQueries({ queryKey: ["policy-rules"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundles() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundle(normalizedID) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
     },
     onError: (err, { id }) => {
       logger.error("policies", "Update policy bundle failed", {
@@ -280,7 +281,7 @@ export interface PolicyAuditEntry {
 
 export function usePolicyAudit() {
   return useQuery<ApiResponse<PolicyAuditEntry[]>>({
-    queryKey: ["policy-audit"],
+    queryKey: queryKeys.policies.audit(),
     queryFn: async () => {
       const res = await get<{ items: BackendPolicyAuditEntry[] }>("/policy/audit");
       const items = (res.items ?? []).map((entry) => ({
@@ -306,7 +307,7 @@ export function usePolicyAudit() {
 
 export function usePolicySnapshots() {
   return useQuery<ApiResponse<PolicySnapshotSummary[]>>({
-    queryKey: ["policy-snapshots"],
+    queryKey: queryKeys.policies.snapshots(),
     queryFn: async () => {
       const res = await get<{ items: BackendPolicySnapshotSummary[] }>("/policy/bundles/snapshots");
       return { items: (res.items ?? []).map(mapPolicySnapshotSummary) };
@@ -317,7 +318,7 @@ export function usePolicySnapshots() {
 
 export function usePolicySnapshot(id: string | null) {
   return useQuery<PolicySnapshot>({
-    queryKey: ["policy-snapshot", id],
+    queryKey: queryKeys.policies.snapshot(id),
     queryFn: async () => {
       const res = await get<BackendPolicySnapshot>(`/policy/bundles/snapshots/${id}`);
       return mapPolicySnapshot(res);
@@ -476,7 +477,7 @@ const DEFAULT_POLICY_CONFIG: PolicyConfig = { defaultStance: "allow", lockdown: 
 
 export function usePolicyConfig() {
   return useQuery<PolicyConfig>({
-    queryKey: ["policy-config"],
+    queryKey: queryKeys.policies.config(),
     queryFn: async () => {
       if (!POLICY_CONFIG_SUPPORTED) return DEFAULT_POLICY_CONFIG;
       return get<PolicyConfig>("/policy/config");
@@ -500,7 +501,7 @@ export function useUpdatePolicyConfig() {
     onSuccess: () => {
       logger.info("policies", "Policy config updated");
       useToastStore.getState().addToast({ type: "success", title: "Policy config saved" });
-      queryClient.invalidateQueries({ queryKey: ["policy-config"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.config() });
     },
     onError: (err) => {
       logger.error("policies", "Policy config update failed", { error: err.message });
@@ -522,7 +523,7 @@ export function useActivateLockdown() {
     onSuccess: () => {
       logger.warn("policies", "Lockdown activated");
       useToastStore.getState().addToast({ type: "warning", title: "Lockdown activated" });
-      queryClient.invalidateQueries({ queryKey: ["policy-config"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.config() });
     },
     onError: (err) => {
       logger.error("policies", "Lockdown activation failed", { error: err.message });
@@ -544,7 +545,7 @@ export function useDeactivateLockdown() {
     onSuccess: () => {
       logger.info("policies", "Lockdown deactivated");
       useToastStore.getState().addToast({ type: "success", title: "Lockdown deactivated" });
-      queryClient.invalidateQueries({ queryKey: ["policy-config"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.config() });
     },
     onError: (err) => {
       logger.error("policies", "Lockdown deactivation failed", { error: err.message });

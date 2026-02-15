@@ -51,7 +51,7 @@ Core:
 - `CORDUM_API_BASE`: default `http://localhost:8081`.
 - `CORDUM_TENANT_ID`: default `default`.
 - `CORDUM_ORG_ID`: default `CORDUM_TENANT_ID`.
-- `REDIS_URL`: default `redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379`.
+- `REDIS_URL`: default `redis://:${REDIS_PASSWORD}@localhost:6379` (`REDIS_PASSWORD` is required).
 - `NATS_URL`: default `nats://localhost:4222`.
 
 Performance gate tuning:

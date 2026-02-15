@@ -1005,7 +1005,7 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.keyStore.Revoke(r.Context(), id, tenant); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrKeyNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, "key not found")
 			return
 		}

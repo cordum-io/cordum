@@ -9,6 +9,16 @@ import (
 	"testing"
 )
 
+func TestOutboundPrivateIPNetsInitialized(t *testing.T) {
+	if outboundPrivateIPNets == nil {
+		t.Fatal("outboundPrivateIPNets is nil — IIFE init failed")
+	}
+	// 10 CIDRs: 0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12, 192.168/16, ::1/128, fe80::/10, fc00::/7
+	if got := len(outboundPrivateIPNets); got != 10 {
+		t.Fatalf("expected 10 outbound private nets, got %d", got)
+	}
+}
+
 func TestNormalizeAllowedHosts(t *testing.T) {
 	t.Parallel()
 	got := normalizeAllowedHosts([]string{

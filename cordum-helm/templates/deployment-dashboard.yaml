@@ -23,6 +23,10 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
       {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: dashboard
           image: {{ printf "%s:%s" .Values.dashboard.image.repository .Values.dashboard.image.tag | quote }}
@@ -60,6 +64,10 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.dashboard.resources | nindent 12 }}
 {{- end }}

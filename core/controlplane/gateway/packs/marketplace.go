@@ -10,31 +10,12 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/redis/go-redis/v9"
 )
 
-// PrivateIPNets are RFC 1918 / RFC 4193 / link-local / loopback ranges.
-var PrivateIPNets = func() []*net.IPNet {
-	cidrs := []string{
-		"127.0.0.0/8",    // IPv4 loopback
-		"10.0.0.0/8",     // RFC 1918
-		"172.16.0.0/12",  // RFC 1918
-		"192.168.0.0/16", // RFC 1918
-		"169.254.0.0/16", // link-local / AWS metadata
-		"::1/128",        // IPv6 loopback
-		"fe80::/10",      // IPv6 link-local
-		"fc00::/7",       // IPv6 unique-local (RFC 4193)
-	}
-	nets := make([]*net.IPNet, 0, len(cidrs))
-	for _, cidr := range cidrs {
-		_, n, err := net.ParseCIDR(cidr)
-		if err != nil {
-			panic("bad private CIDR: " + cidr)
-		}
-		nets = append(nets, n)
-	}
-	return nets
-}()
+// PrivateIPNets delegates to the canonical list in auth/private_nets.go.
+var PrivateIPNets = auth.PrivateIPNets
 
 // PrivateHostnames are hostnames that always resolve to private/internal addresses.
 var PrivateHostnames = map[string]bool{
@@ -42,17 +23,9 @@ var PrivateHostnames = map[string]bool{
 	"metadata.google.internal": true,
 }
 
-// IsPrivateNet returns true if the IP falls within a private/loopback/link-local range.
+// IsPrivateNet delegates to auth.IsPrivateNet.
 func IsPrivateNet(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	for _, n := range PrivateIPNets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	return auth.IsPrivateNet(ip)
 }
 
 // SeedDefaultPackCatalogs initializes the default pack catalog in config.

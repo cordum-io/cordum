@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { get } from "../api/client";
 import type { AuditEntry, ApiResponse } from "../api/types";
 import { mapPolicyAuditEntry, type BackendPolicyAuditEntry } from "../api/transform";
+import { queryKeys } from "../lib/queryKeys";
 
 // ---------------------------------------------------------------------------
 // Filters
@@ -120,7 +121,7 @@ function applySort(entries: AuditEntry[], sort?: string): AuditEntry[] {
 
 export function useAuditLog(filters: AuditFilters = {}) {
   const query = useQuery<ApiResponse<AuditEntry[]>>({
-    queryKey: ["audit"],
+    queryKey: queryKeys.audit.all,
     queryFn: async () => {
       const res = await get<{ items: BackendPolicyAuditEntry[] }>(`/policy/audit`);
       return { items: (res.items ?? []).map(mapPolicyAuditEntry) };
@@ -139,20 +140,26 @@ export function useAuditLog(filters: AuditFilters = {}) {
 export type ExportFormat = "csv" | "json";
 
 export function useAuditEvent(eventId: string | null) {
+  const queryClient = useQueryClient();
   return useQuery<AuditEntry | null>({
-    queryKey: ["audit", "event", eventId],
+    queryKey: queryKeys.audit.event(eventId),
     queryFn: async () => {
       const res = await get<{ items: BackendPolicyAuditEntry[] }>("/policy/audit");
       const entries = (res.items ?? []).map(mapPolicyAuditEntry);
       return entries.find((e) => e.id === eventId) ?? null;
     },
     enabled: !!eventId,
+    placeholderData: () => {
+      const cached = queryClient.getQueryData<ApiResponse<AuditEntry[]>>(queryKeys.audit.all);
+      return cached?.items?.find((e) => e.id === eventId);
+    },
   });
 }
 
 export function useAuditCorrelation(resourceId: string | null) {
+  const queryClient = useQueryClient();
   return useQuery<AuditEntry[]>({
-    queryKey: ["audit", "correlation", resourceId],
+    queryKey: queryKeys.audit.correlation(resourceId),
     queryFn: async () => {
       const res = await get<{ items: BackendPolicyAuditEntry[] }>("/policy/audit");
       const all = (res.items ?? []).map(mapPolicyAuditEntry);
@@ -161,6 +168,13 @@ export function useAuditCorrelation(resourceId: string | null) {
         .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     },
     enabled: !!resourceId,
+    placeholderData: () => {
+      const cached = queryClient.getQueryData<ApiResponse<AuditEntry[]>>(queryKeys.audit.all);
+      if (!cached?.items) return undefined;
+      return cached.items
+        .filter((e) => e.resourceId === resourceId)
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    },
   });
 }
 
@@ -170,7 +184,7 @@ export function useAuditExport(
   enabled: boolean,
 ) {
   return useQuery<ApiResponse<AuditEntry[]>>({
-    queryKey: ["audit-export", filters, format],
+    queryKey: queryKeys.audit.export(filters, format),
     queryFn: () => {
       return get<{ items: BackendPolicyAuditEntry[] }>("/policy/audit").then((res) => ({
         items: (res.items ?? []).map(mapPolicyAuditEntry),

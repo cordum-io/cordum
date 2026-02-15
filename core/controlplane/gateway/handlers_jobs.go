@@ -1160,6 +1160,17 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
+	// RBAC: only admin and user roles may submit jobs.
+	if err := s.requireRole(r, "admin", "user"); err != nil {
+		actorID, role := "anonymous", "none"
+		if ac := authFromRequest(r); ac != nil {
+			actorID, role = ac.PrincipalID, ac.Role
+		}
+		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", "", "", actorID, role, "job submit denied: "+err.Error())
+		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxJobPayloadBytes)
 
 	var req submitJobRequest

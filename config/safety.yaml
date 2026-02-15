@@ -1,5 +1,5 @@
-# Default decision when no rule matches. Set to "deny" for fail-closed (recommended for production).
-default_decision: allow
+# Default decision when no rule matches. Fail-closed: unmatched jobs are denied.
+default_decision: deny
 
 rules:
   # Fraud detection jobs require human approval before execution
@@ -54,7 +54,7 @@ rules:
 
 output_policy:
   enabled: true
-  fail_mode: open
+  fail_mode: closed
 
 output_rules:
   - id: output-secret-leak

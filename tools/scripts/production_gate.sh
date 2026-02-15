@@ -870,7 +870,11 @@ gate_7_security() {
   parallel="${RATE_LIMIT_PARALLEL:-200}"
   local attempt_burst attempt_parallel
   local attempt
-  redis_secret="${REDIS_PASSWORD:-cordum-dev}"
+  if [[ -z "${REDIS_PASSWORD:-}" ]]; then
+    echo "FAIL: REDIS_PASSWORD not set — cannot run security gate" >&2
+    return 1
+  fi
+  redis_secret="${REDIS_PASSWORD}"
 
   [[ "${burst}" =~ ^[0-9]+$ && "${parallel}" =~ ^[0-9]+$ ]] || {
     echo "RATE_LIMIT_BURST_REQUESTS and RATE_LIMIT_PARALLEL must be numeric" >&2
@@ -1401,7 +1405,8 @@ gate_9_identity() {
       return 1
     }
   else
-    log "gate 9: revoke key returned ${code} (known bug: keystore unmarshal on scopes)"
+    echo "revoke key expected 200/204, got ${code}" >&2
+    return 1
   fi
 
   # --- RBAC: create viewer user ---
@@ -1425,7 +1430,10 @@ gate_9_identity() {
         "${JSON_HEADERS[@]}" \
         -d '{"prompt":"viewer test","topic":"job.default"}')"
       [[ "${code}" == "403" ]] || {
-        log "gate 9: viewer RBAC check: expected 403 for job submit, got ${code} (non-blocking)"
+        echo "viewer RBAC: expected 403 for job submit, got ${code}" >&2
+        # Cleanup before failing
+        api_code DELETE "/users/${viewer_id}" >/dev/null 2>&1 || true
+        return 1
       }
     fi
     # Cleanup viewer
@@ -1447,7 +1455,8 @@ gate_9_identity() {
       "${JSON_HEADERS[@]}" \
       -d "$(jq -cn --arg old "${user_password}" --arg new "${new_password}" '{current_password:$old, new_password:$new}')")"
     [[ "${code}" == "200" || "${code}" == "204" ]] || {
-      log "gate 9: change password returned ${code} (non-blocking)"
+      echo "change password expected 200/204, got ${code}" >&2
+      return 1
     }
   fi
 
@@ -1532,7 +1541,8 @@ gate_10_data_lifecycle() {
       }
     fi
   else
-    log "gate 10: DLQ entry not found for denied job (non-blocking, continuing)"
+    echo "DLQ entry not found for denied job ${dlq_job_id}" >&2
+    return 1
   fi
 
   # --- Artifact upload ---
@@ -1548,7 +1558,8 @@ gate_10_data_lifecycle() {
   artifact_retrieved="$(api_body GET "/artifacts/${artifact_ptr}")"
   # Response may be raw content or JSON; verify non-empty
   [[ -n "${artifact_retrieved}" ]] || {
-    log "gate 10: artifact download returned empty (non-blocking)"
+    echo "artifact download returned empty for pointer ${artifact_ptr}" >&2
+    return 1
   }
 
   # --- Artifact oversize (>10 MiB) ---
@@ -2275,7 +2286,8 @@ gate_17_dashboard() {
   # CSP may be in HTML meta tag instead of header — both are valid
   if [[ -z "${csp_header}" ]]; then
     echo "${html_body}" | grep -qi 'content-security-policy' || {
-      log "gate 17: no Content-Security-Policy header or meta tag (non-blocking)"
+      echo "missing Content-Security-Policy header and meta tag" >&2
+      return 1
     }
   fi
 
@@ -2445,7 +2457,7 @@ DASHBOARD_BASE="${CORDUM_DASHBOARD_URL:-http://localhost:8082}"
 API_KEY="${CORDUM_API_KEY:-${API_KEY:-}}"
 TENANT_ID="${CORDUM_TENANT_ID:-default}"
 ORG_ID="${CORDUM_ORG_ID:-${TENANT_ID}}"
-REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379}"
+REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@localhost:6379}"
 NATS_URL="${NATS_URL:-nats://localhost:4222}"
 MOCK_BANK_WORKER_PID=""
 MOCK_BANK_WORKER_STARTED=0

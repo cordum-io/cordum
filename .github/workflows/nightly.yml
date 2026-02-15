@@ -28,6 +28,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
+    - name: Verify required-secret guards
+      run: bash tools/scripts/test_required_secrets.sh
+
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
@@ -55,10 +58,17 @@ jobs:
 
     - name: Run all production gates (1-17)
       run: |
+        failed=0
         for gate in $(seq 1 17); do
           echo "=== Gate $gate ==="
-          bash tools/scripts/production_gate.sh --gate $gate --skip-rebuild
+          if ! bash tools/scripts/production_gate.sh --gate $gate --skip-rebuild; then
+            failed=$((failed + 1))
+          fi
         done
+        if [ "$failed" -gt 0 ]; then
+          echo "::error::$failed gate(s) failed"
+          exit 1
+        fi
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
 
