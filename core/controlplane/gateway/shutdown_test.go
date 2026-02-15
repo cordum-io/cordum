@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TestGRPCGracefulStopTimeout verifies that the gRPC shutdown pattern falls
@@ -153,7 +154,7 @@ func TestSafetyConnInServerClose(t *testing.T) {
 	go func() { _ = grpcSrv.Serve(lis) }()
 	defer grpcSrv.Stop()
 
-	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithInsecure())
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

@@ -101,11 +101,6 @@ func TestScaffoldInit_ComposeAllServicesHaveHealthcheck(t *testing.T) {
 		}
 		// Find section until next top-level service or volumes.
 		section := content[idx:]
-		nextSvc := strings.Index(section[1:], "\n  ")
-		if nextSvc > 0 {
-			// Look for healthcheck within the broader section
-			// (using a large window since indented content has leading spaces)
-		}
 		// Simple check: find "healthcheck:" after this service name.
 		hcIdx := strings.Index(section, "healthcheck:")
 		if hcIdx < 0 {

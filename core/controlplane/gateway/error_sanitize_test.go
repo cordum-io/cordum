@@ -98,24 +98,6 @@ func TestErrorHelpersDoNotLeakInternals(t *testing.T) {
 	}
 }
 
-// forbiddenBodyPatterns are strings that must never appear in HTTP error responses.
-// They indicate internal details leaking to clients.
-var forbiddenBodyPatterns = []string{
-	"redis:",
-	"nats:",
-	"localhost:",
-	":6379",
-	":4222",
-	":50051",
-	"connection refused",
-	"context deadline",
-	"redis.Nil",
-	"permission denied",
-	"/etc/cordum/",
-	"grpc:",
-	"dial tcp",
-}
-
 // TestForbiddenResponseIsGeneric verifies that writeForbidden never exposes
 // role names, tenant IDs, or internal error details.
 func TestForbiddenResponseIsGeneric(t *testing.T) {
