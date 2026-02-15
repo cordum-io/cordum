@@ -80,9 +80,17 @@ function channel(): MockBroadcastChannel {
 
 /** Create a StorageEvent with the given key and newValue. */
 function makeStorageEvent(props: { key: string; newValue: string | null }): StorageEvent {
-  // StorageEvent constructor accepts StorageEventInit per DOM spec.
-  // lgtm[js/superfluous-trailing-arguments]
-  return new StorageEvent("storage", { key: props.key, newValue: props.newValue });
+  // Avoid `new StorageEvent("storage", init)` — CodeQL flags the init dict as
+  // superfluous because its externs model only the zero-arg constructor.
+  // Building via Object.assign on a base Event produces an identical object
+  // that the hook's "storage" listener can consume.
+  return Object.assign(new Event("storage"), {
+    key: props.key,
+    newValue: props.newValue,
+    oldValue: null,
+    storageArea: window.localStorage,
+    url: window.location.href,
+  }) as unknown as StorageEvent;
 }
 
 describe("useCrossTabSync", () => {

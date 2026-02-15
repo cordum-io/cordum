@@ -267,7 +267,7 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 	if v := os.Getenv(envJobMetaTTLSeconds); v != "" {
 		secs, err := strconv.Atoi(v)
 		if err != nil {
-			slog.Warn("invalid "+envJobMetaTTLSeconds+", using default", "value", sanitizeLogValue(v), "error", err, "default", defaultJobMetaTTL)
+			slog.Warn("invalid "+envJobMetaTTLSeconds+", using default", "value", sanitizeLogValue(v), "error", sanitizeLogValue(err.Error()), "default", defaultJobMetaTTL)
 		} else if secs <= 0 {
 			slog.Warn("non-positive "+envJobMetaTTLSeconds+", using default", "value", secs, "default", defaultJobMetaTTL)
 		} else {
@@ -277,9 +277,9 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 	if v := os.Getenv(envJobMetaTTL); v != "" {
 		parsed, err := time.ParseDuration(v)
 		if err != nil {
-			slog.Warn("invalid "+envJobMetaTTL+", using default", "value", sanitizeLogValue(v), "error", err, "default", defaultJobMetaTTL)
+			slog.Warn("invalid "+envJobMetaTTL+", using default", "value", sanitizeLogValue(v), "error", sanitizeLogValue(err.Error()), "default", defaultJobMetaTTL)
 		} else if parsed <= 0 {
-			slog.Warn("non-positive "+envJobMetaTTL+", using default", "value", sanitizeLogValue(v), "default", defaultJobMetaTTL)
+			slog.Warn("non-positive "+envJobMetaTTL+", using default", "value", sanitizeLogValue(v), "default", defaultJobMetaTTL) // #nosec G115 -- v already sanitized above
 		} else {
 			ttl = parsed
 		}

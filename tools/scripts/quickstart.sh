@@ -89,7 +89,7 @@ wait_for_health() {
 
   log "waiting for health readiness (timeout: ${timeout_sec}s)"
   while (( elapsed < timeout_sec )); do
-    body="$(curl -sS -m 5 \
+    body="$(curl -sS -m 5 "${CURL_TLS_OPTS[@]}" \
       -H "X-API-Key: ${api_key}" -H "X-Tenant-ID: ${tenant_id}" \
       "${api_base}/api/v1/status" 2>/dev/null || true)"
     if [[ -n "${body}" ]]; then
@@ -198,6 +198,24 @@ ALLOW_ENTERPRISE=${CORDUM_ALLOW_ENTERPRISE:-0}
 export COMPOSE_HTTP_TIMEOUT=${COMPOSE_HTTP_TIMEOUT:-1800}
 export DOCKER_CLIENT_TIMEOUT=${DOCKER_CLIENT_TIMEOUT:-1800}
 
+# --- TLS auto-detection ---
+CURL_TLS_OPTS=()
+TLS_CA="${CORDUM_TLS_CA:-}"
+if [[ -z "${TLS_CA}" && -f "./certs/ca/ca.crt" ]]; then
+  TLS_CA="./certs/ca/ca.crt"
+fi
+if [[ -n "${TLS_CA}" ]]; then
+  CURL_TLS_OPTS=(--cacert "${TLS_CA}")
+  # Windows/Schannel needs --ssl-no-revoke for self-signed CA certs.
+  if curl --version 2>/dev/null | grep -qi schannel; then
+    CURL_TLS_OPTS+=(--ssl-no-revoke)
+  fi
+  API_BASE="${CORDUM_API_BASE:-https://localhost:8081}"
+  log "TLS detected (CA: ${TLS_CA})"
+else
+  API_BASE="${CORDUM_API_BASE:-http://localhost:8081}"
+fi
+
 # --- Clean teardown ---
 if [[ "${CLEAN}" == "1" ]]; then
   log "tearing down existing stack (clean deploy)"
@@ -223,7 +241,7 @@ log "starting stack"
 "${compose_cmd[@]}" "${compose_args[@]}"
 
 # --- Health readiness ---
-if ! wait_for_health "${HEALTH_TIMEOUT}" "http://localhost:8081" "${API_KEY}" "${TENANT_ID}"; then
+if ! wait_for_health "${HEALTH_TIMEOUT}" "${API_BASE}" "${API_KEY}" "${TENANT_ID}"; then
   log "stack did not become healthy within ${HEALTH_TIMEOUT}s"
   # Capture artifacts even on failure for debugging
   if [[ -n "${ARTIFACTS_DIR}" ]]; then
@@ -235,16 +253,16 @@ fi
 log "stack ready"
 
 # Verify config auto-bootstrap completed
-config_status="$(curl -s -o /dev/null -w '%{http_code}' \
+config_status="$(curl -s -o /dev/null -w '%{http_code}' "${CURL_TLS_OPTS[@]}" \
   -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" \
-  "http://localhost:8081/api/v1/config" 2>/dev/null || echo "000")"
+  "${API_BASE}/api/v1/config" 2>/dev/null || echo "000")"
 if [[ "${config_status}" == "200" ]]; then
   log "config auto-bootstrap verified"
 else
   log "warning: config endpoint returned ${config_status} — settings page may show empty state"
 fi
 
-echo "  Gateway:   http://localhost:8081"
+echo "  Gateway:   ${API_BASE}"
 echo "  Dashboard: http://localhost:8082"
 echo "  API key:   ${API_KEY:0:8}... (masked — check .env or CORDUM_API_KEY env var)"
 
@@ -264,4 +282,4 @@ fi
 
 echo ""
 log "try:"
-echo "curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: \$CORDUM_API_KEY\" -H \"X-Tenant-ID: ${TENANT_ID}\" | jq"
+echo "curl -sS ${API_BASE}/api/v1/status -H \"X-API-Key: \$CORDUM_API_KEY\" -H \"X-Tenant-ID: ${TENANT_ID}\" | jq"

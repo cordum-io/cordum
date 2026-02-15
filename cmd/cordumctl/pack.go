@@ -22,6 +22,7 @@ import (
 	"time"
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	sdk "github.com/cordum/cordum/sdk/client"
 	"gopkg.in/yaml.v3"
 )
 
@@ -208,7 +209,9 @@ func runPackInstall(args []string) {
 		fail("pack path or url required")
 	}
 
-	bundle, err := loadPackBundle(fs.Arg(0))
+	tlsTransport := sdk.BuildTLSTransport(fs.tlsOptions())
+
+	bundle, err := loadPackBundle(fs.Arg(0), tlsTransport)
 	check(err)
 	defer bundle.Cleanup()
 
@@ -221,7 +224,7 @@ func runPackInstall(args []string) {
 		fail(err.Error())
 	}
 
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, tlsTransport)
 	ctx := context.Background()
 	if !*force {
 		if err := enforceCoreVersion(ctx, client, manifest); err != nil {
@@ -367,7 +370,7 @@ func runPackUninstall(args []string) {
 		fail("pack id required")
 	}
 	packID := fs.Arg(0)
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, sdk.BuildTLSTransport(fs.tlsOptions()))
 	ctx := context.Background()
 	owner := lockOwner()
 	release, err := acquirePackLocks(ctx, client, packID, owner)
@@ -408,7 +411,7 @@ func runPackUninstall(args []string) {
 func runPackList(args []string) {
 	fs := newFlagSet("pack list")
 	fs.ParseArgs(args)
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, sdk.BuildTLSTransport(fs.tlsOptions()))
 	ctx := context.Background()
 	records, err := listPackRecords(ctx, client)
 	check(err)
@@ -433,7 +436,7 @@ func runPackShow(args []string) {
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, sdk.BuildTLSTransport(fs.tlsOptions()))
 	ctx := context.Background()
 	record, err := getPackRecord(ctx, client, fs.Arg(0))
 	check(err)
@@ -449,7 +452,7 @@ func runPackVerify(args []string) {
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, sdk.BuildTLSTransport(fs.tlsOptions()))
 	ctx := context.Background()
 	record, err := getPackRecord(ctx, client, fs.Arg(0))
 	check(err)
@@ -559,14 +562,14 @@ func planWorkflows(ctx context.Context, client *restClient, dir string, manifest
 	return plans, nil
 }
 
-func loadPackBundle(src string) (*packBundle, error) {
+func loadPackBundle(src string, transport http.RoundTripper) (*packBundle, error) {
 	if isURL(src) {
-		tmpFile, err := downloadToTemp(src)
+		tmpFile, err := downloadToTemp(src, transport)
 		if err != nil {
 			return nil, fmt.Errorf("load pack bundle: %w", err)
 		}
 		defer os.Remove(tmpFile)
-		return loadPackBundle(tmpFile)
+		return loadPackBundle(tmpFile, transport)
 	}
 	info, err := os.Stat(src)
 	if err != nil {
@@ -1615,13 +1618,14 @@ type restClient struct {
 	httpClient *http.Client
 }
 
-func newRestClient(gateway, apiKey, tenantID string) *restClient {
+func newRestClient(gateway, apiKey, tenantID string, transport http.RoundTripper) *restClient {
 	return &restClient{
 		baseURL:  strings.TrimRight(gateway, "/"),
 		apiKey:   apiKey,
 		tenantID: strings.TrimSpace(tenantID),
 		httpClient: &http.Client{
-			Timeout: 20 * time.Second,
+			Timeout:   20 * time.Second,
+			Transport: transport,
 		},
 	}
 }
@@ -1780,7 +1784,7 @@ func isURL(raw string) bool {
 	return parsed.Scheme == "http" || parsed.Scheme == "https"
 }
 
-func downloadToTemp(raw string) (string, error) {
+func downloadToTemp(raw string, transport http.RoundTripper) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return "", fmt.Errorf("download to temp: %w", err)
@@ -1795,7 +1799,7 @@ func downloadToTemp(raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("download to temp: %w", err)
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: transport}
 	resp, err := client.Do(req) // #nosec -- URL is operator-provided and validated.
 	if err != nil {
 		return "", fmt.Errorf("download to temp: %w", err)

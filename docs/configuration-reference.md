@@ -886,6 +886,20 @@ scanners:
 | `NATS_URL` | `nats://localhost:4222` | NATS URL for worker connections |
 | `WORKER_ID` | — | Explicit worker ID (auto-generated if not set) |
 
+### CLI TLS
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_TLS_CA` | — | CA certificate path for CLI TLS verification |
+| `CORDUM_TLS_INSECURE` | — | Set to `1` to skip TLS verification (dev/debug only) |
+
+### Dashboard
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_API_UPSTREAM_SCHEME` | `http` | Set to `https` when gateway serves TLS |
+| `CORDUM_DASHBOARD_EMBED_API_KEY` | — | Embed API key in dashboard (dev only) |
+
 ### Docker Compose Helpers
 
 | Variable | Default | Description |
@@ -898,6 +912,7 @@ scanners:
 ## Cross-References
 
 - [configuration.md](configuration.md) — Quick-start config overview
+- [guides/tls-setup.md](guides/tls-setup.md) — TLS setup and troubleshooting
 - [safety-kernel.md](safety-kernel.md) — Safety kernel architecture and evaluation
 - [output-policy.md](output-policy.md) — Output scanning and quarantine system
 - [DOCKER.md](DOCKER.md) — Docker Compose deployment and NATS JetStream durability

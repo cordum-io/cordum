@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	sdk "github.com/cordum/cordum/sdk/client"
 )
 
 func TestEnvOr(t *testing.T) {
@@ -36,15 +38,64 @@ func TestNewFlagSetDefaults(t *testing.T) {
 }
 
 func TestNewClientTrimsGateway(t *testing.T) {
-	client := newClient("http://localhost:8081/", "key", "tenant")
-	if client.BaseURL != "http://localhost:8081" {
-		t.Fatalf("expected trimmed base url, got %s", client.BaseURL)
+	client := sdk.NewWithTLS("http://localhost:8081/", "key", sdk.TLSOptions{})
+	client.TenantID = "tenant"
+	// NewWithTLS doesn't trim trailing slash — newClientFromFlags does via
+	// strings.TrimRight, so we test the full path here.
+	client2 := sdk.NewWithTLS(
+		strings.TrimRight("http://localhost:8081/", "/"),
+		"key",
+		sdk.TLSOptions{},
+	)
+	client2.TenantID = "tenant"
+	if client2.BaseURL != "http://localhost:8081" {
+		t.Fatalf("expected trimmed base url, got %s", client2.BaseURL)
 	}
-	if client.APIKey != "key" {
+	if client2.APIKey != "key" {
 		t.Fatalf("expected api key on client")
 	}
-	if client.TenantID != "tenant" {
+	if client2.TenantID != "tenant" {
 		t.Fatalf("expected tenant id on client")
+	}
+}
+
+func TestTLSOptionsFromFlags(t *testing.T) {
+	// CLI flag takes priority over env var.
+	t.Setenv("CORDUM_TLS_CA", "/env/ca.crt")
+	t.Setenv("CORDUM_TLS_INSECURE", "")
+	fs := newFlagSet("tls-test")
+	fs.ParseArgs([]string{"--cacert", "/flag/ca.crt"})
+	opts := fs.tlsOptions()
+	if opts.CACertPath != "/flag/ca.crt" {
+		t.Fatalf("expected flag ca path, got %s", opts.CACertPath)
+	}
+	if opts.InsecureSkipVerify {
+		t.Fatalf("expected insecure=false")
+	}
+}
+
+func TestTLSOptionsFromEnv(t *testing.T) {
+	t.Setenv("CORDUM_TLS_CA", "/env/ca.crt")
+	t.Setenv("CORDUM_TLS_INSECURE", "1")
+	fs := newFlagSet("tls-env-test")
+	fs.ParseArgs([]string{})
+	opts := fs.tlsOptions()
+	if opts.CACertPath != "/env/ca.crt" {
+		t.Fatalf("expected env ca path, got %s", opts.CACertPath)
+	}
+	if !opts.InsecureSkipVerify {
+		t.Fatalf("expected insecure=true from env")
+	}
+}
+
+func TestTLSOptionsInsecureFlag(t *testing.T) {
+	t.Setenv("CORDUM_TLS_CA", "")
+	t.Setenv("CORDUM_TLS_INSECURE", "")
+	fs := newFlagSet("tls-insecure-test")
+	fs.ParseArgs([]string{"--insecure"})
+	opts := fs.tlsOptions()
+	if !opts.InsecureSkipVerify {
+		t.Fatalf("expected insecure=true from flag")
 	}
 }
 

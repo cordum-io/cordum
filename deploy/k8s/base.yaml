@@ -1027,6 +1027,8 @@ spec:
               key: API_KEY
         - name: CORDUM_TENANT_ID
           value: default
+        - name: CORDUM_API_UPSTREAM_SCHEME
+          value: http
         ports:
         - containerPort: 8080
         volumeMounts:

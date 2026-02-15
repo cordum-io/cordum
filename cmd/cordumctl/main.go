@@ -25,6 +25,8 @@ func main() {
 	switch cmd {
 	case "init":
 		runInitCmd(args)
+	case "generate-certs":
+		runGenerateCertsCmd(args)
 	case "dev":
 		runDevCmd(args)
 	case "up":
@@ -59,7 +61,7 @@ func runWorkflowCmd(args []string) {
 		fs := newFlagSet("workflow create")
 		file := fs.String("file", "", "workflow json file")
 		fs.ParseArgs(args[1:])
-		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+		client := newClientFromFlags(fs)
 		if *file == "" {
 			fail("workflow file required")
 		}
@@ -74,7 +76,7 @@ func runWorkflowCmd(args []string) {
 		if fs.NArg() < 1 {
 			fail("workflow id required")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+		client := newClientFromFlags(fs)
 		check(client.DeleteWorkflow(context.Background(), fs.Arg(0)))
 	default:
 		usage()
@@ -101,7 +103,7 @@ func runRunCmd(args []string) {
 		if *input != "" {
 			loadJSON(*input, &payload)
 		}
-		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+		client := newClientFromFlags(fs)
 		runID, err := client.StartRunWithOptions(context.Background(), fs.Arg(0), payload, sdk.RunOptions{
 			DryRun:         *dryRun,
 			IdempotencyKey: *idempotencyKey,
@@ -114,7 +116,7 @@ func runRunCmd(args []string) {
 		if fs.NArg() < 1 {
 			fail("run id required")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+		client := newClientFromFlags(fs)
 		check(client.DeleteRun(context.Background(), fs.Arg(0)))
 	case "timeline":
 		fs := newFlagSet("run timeline")
@@ -122,7 +124,7 @@ func runRunCmd(args []string) {
 		if fs.NArg() < 1 {
 			fail("run id required")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+		client := newClientFromFlags(fs)
 		events, err := client.GetRunTimeline(context.Background(), fs.Arg(0))
 		check(err)
 		printJSON(events)
@@ -149,7 +151,7 @@ func runApprovalCmd(args []string) {
 		if *approve == *reject {
 			fail("use --approve or --reject")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+		client := newClientFromFlags(fs)
 		check(client.ApproveStep(context.Background(), fs.Arg(0), fs.Arg(1), fs.Arg(2), *approve))
 	case "job":
 		fs := newFlagSet("approval job")
@@ -162,7 +164,7 @@ func runApprovalCmd(args []string) {
 		if *approve == *reject {
 			fail("use --approve or --reject")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+		client := newClientFromFlags(fs)
 		check(client.ApproveJob(context.Background(), fs.Arg(0), *approve))
 	default:
 		usage()
@@ -182,7 +184,7 @@ func runDLQCmd(args []string) {
 		if fs.NArg() < 1 {
 			fail("usage: dlq retry <job_id>")
 		}
-		client := newClient(*fs.gateway, *fs.apiKey, *fs.tenant)
+		client := newClientFromFlags(fs)
 		check(client.RetryDLQ(context.Background(), fs.Arg(0)))
 	default:
 		usage()
@@ -192,9 +194,11 @@ func runDLQCmd(args []string) {
 
 type flagSet struct {
 	*flag.FlagSet
-	gateway *string
-	apiKey  *string
-	tenant  *string
+	gateway  *string
+	apiKey   *string
+	tenant   *string
+	insecure *bool
+	cacert   *string
 }
 
 func newFlagSet(name string) *flagSet {
@@ -202,7 +206,9 @@ func newFlagSet(name string) *flagSet {
 	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base url")
 	apiKey := fs.String("api-key", envOr("CORDUM_API_KEY", ""), "api key")
 	tenant := fs.String("tenant", envOr("CORDUM_TENANT_ID", "default"), "tenant id")
-	return &flagSet{FlagSet: fs, gateway: gateway, apiKey: apiKey, tenant: tenant}
+	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1)")
+	cacert := fs.String("cacert", envOr("CORDUM_TLS_CA", ""), "CA certificate for TLS verification (also: CORDUM_TLS_CA)")
+	return &flagSet{FlagSet: fs, gateway: gateway, apiKey: apiKey, tenant: tenant, insecure: insecure, cacert: cacert}
 }
 
 func (fs *flagSet) ParseArgs(args []string) {
@@ -211,10 +217,28 @@ func (fs *flagSet) ParseArgs(args []string) {
 	}
 }
 
-func newClient(gateway, apiKey, tenant string) *sdk.Client {
-	client := sdk.New(strings.TrimRight(gateway, "/"), apiKey)
-	if strings.TrimSpace(tenant) != "" {
-		client.TenantID = strings.TrimSpace(tenant)
+// tlsOptions resolves TLS config from CLI flags (priority) then env vars.
+func (fs *flagSet) tlsOptions() sdk.TLSOptions {
+	var opts sdk.TLSOptions
+	switch {
+	case fs.cacert != nil && *fs.cacert != "":
+		opts.CACertPath = *fs.cacert
+	default:
+		opts.CACertPath = strings.TrimSpace(os.Getenv("CORDUM_TLS_CA"))
+	}
+	opts.InsecureSkipVerify = (fs.insecure != nil && *fs.insecure) ||
+		strings.TrimSpace(os.Getenv("CORDUM_TLS_INSECURE")) == "1"
+	return opts
+}
+
+func newClientFromFlags(fs *flagSet) *sdk.Client {
+	client := sdk.NewWithTLS(
+		strings.TrimRight(*fs.gateway, "/"),
+		*fs.apiKey,
+		fs.tlsOptions(),
+	)
+	if t := strings.TrimSpace(*fs.tenant); t != "" {
+		client.TenantID = t
 	}
 	return client
 }
@@ -239,6 +263,7 @@ func usage() {
 
 Usage:
   cordumctl init <dir> [--force]
+  cordumctl generate-certs [--dir ./certs] [--force] [--days 365]
   cordumctl dev [--file docker-compose.yml] [--build] [--detach]
   cordumctl up [--file docker-compose.yml] [--build] [--detach]
   cordumctl status
@@ -261,8 +286,10 @@ Usage:
   cordumctl pack create <pack_id> [--dir path] [--force]
 
 Global flags:
-  --gateway   Gateway base URL (default from CORDUM_GATEWAY)
-  --api-key   API key (default from CORDUM_API_KEY)
+  --gateway    Gateway base URL (default from CORDUM_GATEWAY)
+  --api-key    API key (default from CORDUM_API_KEY)
+  --cacert     CA certificate for TLS verification (also: CORDUM_TLS_CA)
+  --insecure   Skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1)
 `)
 }
 

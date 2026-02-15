@@ -270,6 +270,9 @@ func ValidateBundles(bundles map[string]any) error {
 }
 
 // ResolvePublishTargets resolves which bundles to publish.
+// When no specific IDs are requested, only secops/ bundles are included
+// (to avoid accidentally publishing core system bundles). When explicit
+// bundle IDs are requested, any bundle that exists in the map is allowed.
 func ResolvePublishTargets(bundles map[string]any, requested []string) []string {
 	targets := []string{}
 	seen := map[string]struct{}{}
@@ -285,7 +288,7 @@ func ResolvePublishTargets(bundles map[string]any, requested []string) []string 
 	} else {
 		for _, raw := range requested {
 			key := strings.TrimSpace(raw)
-			if key == "" || !strings.HasPrefix(key, PolicyStudioPrefix) {
+			if key == "" {
 				continue
 			}
 			if _, ok := bundles[key]; !ok {

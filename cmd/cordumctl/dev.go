@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"path/filepath"
 )
 
 func runDevCmd(args []string) {
@@ -13,6 +14,8 @@ func runDevCmd(args []string) {
 	if err := fs.Parse(args); err != nil {
 		fail(err.Error())
 	}
+
+	ensureDevCerts(filepath.Dir(*file))
 
 	if err := runCompose(*file, *build, *detach); err != nil {
 		fail(err.Error())

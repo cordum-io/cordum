@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/cordum/cordum/tools/certgen"
 )
 
 const (
@@ -242,6 +244,16 @@ func runInitCmd(args []string) {
 	if err := scaffoldInit(target, *force); err != nil {
 		fail(err.Error())
 	}
+
+	// Generate TLS certificates (warn-only on failure — don't abort init).
+	certsDir := filepath.Join(target, "certs")
+	if err := certgen.GenerateAll(certgen.Options{BaseDir: certsDir, Force: *force}); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: certificate generation failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  run 'cordumctl generate-certs' manually to generate TLS certificates")
+	} else {
+		fmt.Printf("TLS certificates generated at %s\n", certsDir)
+	}
+
 	fmt.Printf("Cordum project initialized at %s\n", target)
 }
 

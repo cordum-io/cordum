@@ -65,7 +65,7 @@ func NewRedisStore(url string) (*RedisStore, error) {
 	if ttlSeconds := os.Getenv(envRedisDataTTLInSeconds); ttlSeconds != "" {
 		secs, err := strconv.Atoi(ttlSeconds)
 		if err != nil {
-			slog.Warn("invalid "+envRedisDataTTLInSeconds+", using default", "value", sanitizeLogValue(ttlSeconds), "error", err, "default", defaultDataTTL)
+			slog.Warn("invalid "+envRedisDataTTLInSeconds+", using default", "value", sanitizeLogValue(ttlSeconds), "error", sanitizeLogValue(err.Error()), "default", defaultDataTTL)
 		} else if secs <= 0 {
 			slog.Warn("non-positive "+envRedisDataTTLInSeconds+", using default", "value", secs, "default", defaultDataTTL)
 		} else {
@@ -75,9 +75,9 @@ func NewRedisStore(url string) (*RedisStore, error) {
 	if ttlEnv := os.Getenv(envRedisDataTTLFallback); ttlEnv != "" {
 		parsed, err := time.ParseDuration(ttlEnv)
 		if err != nil {
-			slog.Warn("invalid "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "error", err, "default", defaultDataTTL)
+			slog.Warn("invalid "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "error", sanitizeLogValue(err.Error()), "default", defaultDataTTL)
 		} else if parsed <= 0 {
-			slog.Warn("non-positive "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "default", defaultDataTTL)
+			slog.Warn("non-positive "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "default", defaultDataTTL) // #nosec G115 -- ttlEnv already sanitized above
 		} else {
 			ttl = parsed
 		}

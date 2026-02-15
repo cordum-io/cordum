@@ -50,12 +50,21 @@ Or the fastest one-liner:
 `cordumctl up` sets `COMPOSE_HTTP_TIMEOUT` and `DOCKER_CLIENT_TIMEOUT` to `1800`
 seconds if they are not already set. Override them in your shell if needed.
 
+**TLS is enabled by default.** `cordumctl up` and `cordumctl dev` auto-generate
+self-signed TLS certificates into `./certs/` on first run. All services
+communicate over TLS with proper certificate verification — no `--insecure`
+flags needed.
+
+The API gateway listens on `https://localhost:8081` by default. Use `--cacert`
+to trust the auto-generated CA:
+
 ```bash
-docker compose build
-docker compose up -d
+curl --cacert ./certs/ca/ca.crt \
+  -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/status
 ```
 
-The API gateway listens on `http://localhost:8081` by default.
+For full TLS details, see [TLS Setup Guide](guides/tls-setup.md).
 
 ## Enterprise gateway
 
@@ -97,7 +106,8 @@ cd ../../
 ./bin/cordumctl pack install ./examples/hello-pack
 
 # Trigger a run
-curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
+curl -sS --cacert ./certs/ca/ca.crt \
+  -X POST https://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
   -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
   -H "X-Tenant-ID: ${CORDUM_TENANT_ID:-default}" \
   -H "Content-Type: application/json" \

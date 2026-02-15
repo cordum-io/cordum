@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordum/cordum/tools/certgen"
 )
 
 const (
@@ -29,12 +31,14 @@ func runUpCmd(args []string) {
 		fail("CORDUM_API_KEY is required (set it in the environment or .env before running)")
 	}
 
+	ensureDevCerts(filepath.Dir(*file))
+
 	if err := runCompose(*file, *build, *detach); err != nil {
 		fail(err.Error())
 	}
 
 	fmt.Println("Cordum stack started.")
-	fmt.Println("Gateway: http://localhost:8081")
+	fmt.Println("Gateway: https://localhost:8081")
 	fmt.Println("Dashboard: http://localhost:8082")
 	if source != "" {
 		fmt.Println("API Key: configured (value hidden)")
@@ -170,4 +174,18 @@ func trimQuotes(val string) string {
 		return val[1 : len(val)-1]
 	}
 	return val
+}
+
+// ensureDevCerts generates TLS certificates if they don't already exist.
+func ensureDevCerts(composeDir string) {
+	certsDir := filepath.Join(composeDir, "certs")
+	caPath := filepath.Join(certsDir, "ca", "ca.crt")
+	if _, err := os.Stat(caPath); err == nil {
+		return // certs already exist
+	}
+	fmt.Printf("Generating TLS certificates in %s ...\n", certsDir)
+	if err := certgen.GenerateAll(certgen.Options{BaseDir: certsDir}); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: certificate generation failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  run 'cordumctl generate-certs' manually")
+	}
 }

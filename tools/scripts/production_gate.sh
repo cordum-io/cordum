@@ -98,6 +98,22 @@ build_auth_headers() {
   JSON_HEADERS=(-H "Content-Type: application/json")
 }
 
+build_curl_tls_opts() {
+  CURL_TLS_OPTS=()
+  local ca="${CORDUM_TLS_CA:-}"
+  if [[ -z "${ca}" && -f "./certs/ca/ca.crt" ]]; then
+    ca="./certs/ca/ca.crt"
+  fi
+  if [[ -n "${ca}" ]]; then
+    CURL_TLS_OPTS=(--cacert "${ca}")
+    # Windows/Schannel needs --ssl-no-revoke for self-signed CA certs
+    # (CRL check fails with CERT_TRUST_REVOCATION_STATUS_UNKNOWN).
+    if curl --version 2>/dev/null | grep -qi schannel; then
+      CURL_TLS_OPTS+=(--ssl-no-revoke)
+    fi
+  fi
+}
+
 api_url() {
   local path="$1"
   if [[ "${path}" == /api/v1/* ]]; then
@@ -112,14 +128,14 @@ api_code() {
   local path="$2"
   shift 2
   curl -sS -o /dev/null -w "%{http_code}" -X "${method}" \
-    "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")"
+    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")"
 }
 
 api_body() {
   local method="$1"
   local path="$2"
   shift 2
-  curl -sS -X "${method}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")"
+  curl -sS -X "${method}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")"
 }
 
 api_call() {
@@ -137,7 +153,7 @@ http_code() {
   local method="$1"
   local url="$2"
   shift 2
-  curl -s -o /dev/null -w "%{http_code}" -X "${method}" "$@" "${url}" 2>/dev/null
+  curl -s -o /dev/null -w "%{http_code}" -X "${method}" "${CURL_TLS_OPTS[@]}" "$@" "${url}" 2>/dev/null
 }
 
 wait_for_status_ready() {
@@ -267,7 +283,10 @@ ensure_mock_bank_worker() {
 
   if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]]; then
     # Use nohup so the worker survives when the $() subshell (from run_gate) exits.
-    nohup env NATS_URL="${NATS_URL}" REDIS_URL="${REDIS_URL}" go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 &
+    nohup env NATS_URL="${NATS_URL}" REDIS_URL="${REDIS_URL}" \
+      NATS_TLS_CA="${NATS_TLS_CA:-}" NATS_TLS_CERT="${NATS_TLS_CERT:-}" NATS_TLS_KEY="${NATS_TLS_KEY:-}" NATS_TLS_SERVER_NAME="${NATS_TLS_SERVER_NAME:-}" \
+      REDIS_TLS_CA="${REDIS_TLS_CA:-}" REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" REDIS_TLS_SERVER_NAME="${REDIS_TLS_SERVER_NAME:-}" \
+      go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 &
     MOCK_BANK_WORKER_PID=$!
     MOCK_BANK_WORKER_STARTED=1
     echo "${MOCK_BANK_WORKER_PID}" >"${MOCK_BANK_PID_FILE}"
@@ -370,7 +389,7 @@ gate_2_auth() {
     return 1
   }
 
-  oidc_enabled="$(curl -sS "$(api_url /auth/config)" | jq -r '.oidc_enabled // false' 2>/dev/null || echo "false")"
+  oidc_enabled="$(curl -sS "${CURL_TLS_OPTS[@]}" "$(api_url /auth/config)" | jq -r '.oidc_enabled // false' 2>/dev/null || echo "false")"
   if [[ -n "${CORDUM_JWT_HMAC_SECRET:-}" ]]; then
     jwt_token="$(generate_hs256_jwt "${CORDUM_JWT_HMAC_SECRET}" "${tenant_a}")"
     code="$(http_code GET "$(api_url /status)" -H "Authorization: Bearer ${jwt_token}" -H "X-Tenant-ID: ${tenant_a}")"
@@ -925,7 +944,7 @@ gate_7_security() {
     for _ in $(seq 1 "${attempt_burst}"); do
       (
         curl -sS -o /dev/null -w "%{http_code}" \
-          "${API_BASE}/health" >>"${tmp_codes}"
+          "${CURL_TLS_OPTS[@]}" "${API_BASE}/health" >>"${tmp_codes}"
         echo >>"${tmp_codes}"
       ) &
       while (( $(jobs -pr | wc -l) >= attempt_parallel )); do
@@ -967,7 +986,7 @@ gate_7_security() {
     return 1
   fi
 
-  headers="$(curl -sSI -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" "$(api_url /status)")"
+  headers="$(curl -sSI "${CURL_TLS_OPTS[@]}" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" "$(api_url /status)")"
   echo "${headers}" | grep -qi '^X-Frame-Options:' || {
     echo "missing security header: X-Frame-Options" >&2
     return 1
@@ -1013,6 +1032,7 @@ gate_7_security() {
     printf '","topic":"job.default"}'
   } >"${large_file}"
   large_code="$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+    "${CURL_TLS_OPTS[@]}" \
     -H "X-API-Key: ${API_KEY}" \
     -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Content-Type: application/json" \
@@ -1080,34 +1100,34 @@ gate_8_extensions() {
     return 1
   }
 
-  mcp_status="$(curl -sS -X GET "${AUTH_HEADERS[@]}" "${API_BASE}/mcp/status")"
+  mcp_status="$(curl -sS -X GET "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${API_BASE}/mcp/status")"
   echo "${mcp_status}" | jq -e '.running == true and (.enabled_tools // 0) >= 1 and (.enabled_resources // 0) >= 1' >/dev/null 2>&1 || {
     echo "mcp status did not report running/enabled tool/resource counts" >&2
     return 1
   }
 
-  mcp_ping="$(curl -sS -X POST "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+  mcp_ping="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' "${API_BASE}/mcp/message")"
   echo "${mcp_ping}" | jq -e '.result != null and .error == null' >/dev/null 2>&1 || {
     echo "mcp ping failed" >&2
     return 1
   }
 
-  tools_list="$(curl -sS -X POST "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+  tools_list="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' "${API_BASE}/mcp/message")"
   echo "${tools_list}" | jq -e '(.result.tools | length) >= 1' >/dev/null 2>&1 || {
     echo "mcp tools/list returned no tools" >&2
     return 1
   }
 
-  resources_list="$(curl -sS -X POST "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+  resources_list="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -d '{"jsonrpc":"2.0","id":3,"method":"resources/list"}' "${API_BASE}/mcp/message")"
   echo "${resources_list}" | jq -e '(.result.resources | length) >= 1' >/dev/null 2>&1 || {
     echo "mcp resources/list returned no resources" >&2
     return 1
   }
 
-  resources_read="$(curl -sS -X POST "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+  resources_read="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -d '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"cordum://health"}}' "${API_BASE}/mcp/message")"
   echo "${resources_read}" | jq -e '.result != null and (.result.contents | length) >= 1' >/dev/null 2>&1 || {
     echo "mcp resources/read health probe failed" >&2
@@ -1372,6 +1392,7 @@ gate_9_identity() {
 
   # --- Login with new user ---
   resp="$(curl -sS -X POST \
+    "${CURL_TLS_OPTS[@]}" \
     "$(api_url /auth/login)" \
     "${JSON_HEADERS[@]}" \
     -d "$(jq -cn --arg u "${user_name}" --arg p "${user_password}" '{username:$u, password:$p}')")"
@@ -1454,6 +1475,7 @@ gate_9_identity() {
   if [[ -n "${viewer_id}" ]]; then
     # Login as viewer, get session
     resp="$(curl -sS -X POST \
+      "${CURL_TLS_OPTS[@]}" \
       "$(api_url /auth/login)" \
       "${JSON_HEADERS[@]}" \
       -d "$(jq -cn --arg u "pg9-viewer-${user_name}" --arg p "${viewer_password}" '{username:$u, password:$p}')")"
@@ -1479,6 +1501,7 @@ gate_9_identity() {
 
   # --- Change password ---
   resp="$(curl -sS -X POST \
+    "${CURL_TLS_OPTS[@]}" \
     "$(api_url /auth/login)" \
     "${JSON_HEADERS[@]}" \
     -d "$(jq -cn --arg u "${user_name}" --arg p "${user_password}" '{username:$u, password:$p}')")"
@@ -1605,7 +1628,7 @@ gate_10_data_lifecycle() {
     printf '"}'
   } >"${oversize_file}"
   code="$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
-    "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     --data-binary @"${oversize_file}" \
     "$(api_url /artifacts)")"
   rm -f "${oversize_file}"
@@ -1700,6 +1723,7 @@ gate_11_streaming() {
   local ws_tmp
   ws_tmp="$(mktemp)"
   curl -s -o /dev/null -w "%{http_code}" -m 2 \
+    "${CURL_TLS_OPTS[@]}" \
     -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Connection: Upgrade" -H "Upgrade: websocket" \
     -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
@@ -1718,6 +1742,7 @@ gate_11_streaming() {
   # --- WebSocket no-auth → rejected ---
   ws_tmp="$(mktemp)"
   curl -s -o /dev/null -w "%{http_code}" -m 2 \
+    "${CURL_TLS_OPTS[@]}" \
     -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Connection: Upgrade" -H "Upgrade: websocket" \
     -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
@@ -1743,7 +1768,7 @@ gate_11_streaming() {
   # --- Job SSE stream endpoint ---
   # Just verify endpoint returns 200 with text/event-stream (we can't keep SSE open in bash)
   sse_code="$(curl -sS -o /dev/null -w "%{http_code}" -m 3 \
-    "${AUTH_HEADERS[@]}" \
+    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
     "$(api_url "/jobs/${job_id}/stream")" 2>/dev/null || echo "200")"
   # SSE may return 200 then stream, or timeout after our 3s limit — either is acceptable
   [[ "${sse_code}" != "404" && "${sse_code}" != "500" ]] || {
@@ -2639,14 +2664,39 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 ensure_compose_cmd
 
-API_BASE="${CORDUM_API_BASE:-http://localhost:8081}"
-DASHBOARD_BASE="${CORDUM_DASHBOARD_URL:-http://localhost:8082}"
 API_KEY="${CORDUM_API_KEY:-${API_KEY:-}}"
 TENANT_ID="${CORDUM_TENANT_ID:-default}"
 ORG_ID="${CORDUM_ORG_ID:-${TENANT_ID}}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-cordum-dev}"
-REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD}@localhost:6379}"
-NATS_URL="${NATS_URL:-nats://localhost:4222}"
+DASHBOARD_BASE="${CORDUM_DASHBOARD_URL:-http://localhost:8082}"
+
+# TLS auto-detection: if CA cert exists, default to TLS URLs.
+_tls_ca="${CORDUM_TLS_CA:-}"
+if [[ -z "${_tls_ca}" && -f "./certs/ca/ca.crt" ]]; then
+  _tls_ca="./certs/ca/ca.crt"
+fi
+if [[ -n "${_tls_ca}" ]]; then
+  API_BASE="${CORDUM_API_BASE:-https://localhost:8081}"
+  NATS_URL="${NATS_URL:-tls://localhost:4222}"
+  REDIS_URL="${REDIS_URL:-rediss://:${REDIS_PASSWORD}@localhost:6379}"
+  # Auto-set TLS env vars for mock-bank worker when certs directory exists.
+  if [[ -d "./certs" ]]; then
+    : "${NATS_TLS_CA:=./certs/ca/ca.crt}"
+    : "${NATS_TLS_CERT:=./certs/client/tls.crt}"
+    : "${NATS_TLS_KEY:=./certs/client/tls.key}"
+    : "${NATS_TLS_SERVER_NAME:=localhost}"
+    : "${REDIS_TLS_CA:=./certs/ca/ca.crt}"
+    : "${REDIS_TLS_CERT:=./certs/client/tls.crt}"
+    : "${REDIS_TLS_KEY:=./certs/client/tls.key}"
+    : "${REDIS_TLS_SERVER_NAME:=localhost}"
+    export NATS_TLS_CA NATS_TLS_CERT NATS_TLS_KEY NATS_TLS_SERVER_NAME
+    export REDIS_TLS_CA REDIS_TLS_CERT REDIS_TLS_KEY REDIS_TLS_SERVER_NAME
+  fi
+else
+  API_BASE="${CORDUM_API_BASE:-http://localhost:8081}"
+  NATS_URL="${NATS_URL:-nats://localhost:4222}"
+  REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD}@localhost:6379}"
+fi
 MOCK_BANK_WORKER_PID=""
 MOCK_BANK_WORKER_STARTED=0
 SKIP_REBUILD=0
@@ -2714,6 +2764,7 @@ else
 fi
 
 build_auth_headers
+build_curl_tls_opts
 
 declare -A GATE_STATUS
 declare -A GATE_DURATION_MS

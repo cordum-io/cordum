@@ -250,3 +250,28 @@ spec:
       - name: cordum-server-tls
         secret:
           secretName: cordum-server-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-dashboard
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: dashboard
+        env:
+        - name: CORDUM_API_UPSTREAM_SCHEME
+          value: https
+        volumeMounts:
+        - name: cordum-ca-tls
+          mountPath: /etc/cordum/tls/ca
+          readOnly: true
+      volumes:
+      - name: cordum-ca-tls
+        secret:
+          secretName: cordum-client-tls
+          items:
+          - key: ca.crt
+            path: ca.crt

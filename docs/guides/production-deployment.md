@@ -67,7 +67,19 @@ as documentation. To enable TLS:
 
 ### 1. Generate or obtain certificates
 
-For testing with self-signed certificates:
+For production, use certificates from your organization's CA or a public CA.
+
+For testing with self-signed certificates, use `cordumctl generate-certs`:
+
+```bash
+cordumctl generate-certs --dir ./certs
+```
+
+This generates a full CA chain (CA, server, client) with EC P-256 keys and
+correct SANs for all Cordum services. See [tls-setup.md](tls-setup.md) for
+details.
+
+Alternatively, generate with openssl:
 
 ```bash
 mkdir -p certs
@@ -219,10 +231,15 @@ Before deploying to production, verify:
 
 ## Backward Compatibility
 
-- **Dev profile unchanged**: The dev `docker-compose.yml` does not set
-  `CORDUM_ENV` and continues to work without TLS
+- **Dev profile uses TLS**: The dev `docker-compose.yml` now uses TLS by
+  default with auto-generated self-signed certificates. `cordumctl up` and
+  `cordumctl dev` generate certificates automatically on first run.
 - **Helm default unchanged**: `global.production=false` and
   `global.tls.enabled=false` are the defaults, so existing installs are
   unaffected by upgrade
 - **K8s base unchanged**: `deploy/k8s/base.yaml` does not set `CORDUM_ENV`,
   only the production overlay applies it
+
+## See Also
+
+- [tls-setup.md](tls-setup.md) — TLS architecture, dev/prod setup, troubleshooting

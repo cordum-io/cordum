@@ -15,13 +15,15 @@ is not provided on the command line.
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL |
+| `--gateway` | `CORDUM_GATEWAY` | `https://localhost:8081` | Gateway base URL |
 | `--api-key` | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `--tenant` | `CORDUM_TENANT_ID` | `default` | Tenant ID |
+| `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification |
+| `--insecure` | `CORDUM_TLS_INSECURE` | `false` | Skip TLS verification (dev/debug only) |
 
 ```bash
 # Flags take precedence over env vars
-cordumctl status --gateway http://prod:8081 --api-key $KEY
+cordumctl status --gateway https://prod:8081 --api-key $KEY --cacert ./certs/ca/ca.crt
 ```
 
 ---
@@ -31,6 +33,7 @@ cordumctl status --gateway http://prod:8081 --api-key $KEY
 | Command | Description |
 |---------|-------------|
 | `init` | Scaffold a new Cordum project |
+| `generate-certs` | Generate TLS certificates (CA, server, client) |
 | `up` | Start production stack via Docker Compose |
 | `dev` | Start development stack via Docker Compose |
 | `status` | Show gateway health and version |
@@ -85,6 +88,54 @@ workflow.
 cordumctl init my-project
 cd my-project
 ```
+
+---
+
+## TLS Certificate Generation
+
+### `generate-certs`
+
+Generate a full TLS certificate chain: CA certificate, server certificate
+(with SANs for all Cordum services), and client certificate.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--dir` | `./certs` | Output directory |
+| `--force` | `false` | Overwrite existing certificates |
+| `--days` | `365` | Certificate validity in days |
+
+Certificates use EC P-256 keys with PKCS8 encoding.
+
+```bash
+# Generate into default ./certs directory
+cordumctl generate-certs
+
+# Custom output directory
+cordumctl generate-certs --dir /path/to/certs
+
+# Regenerate expired certificates
+cordumctl generate-certs --force --days 730
+```
+
+**Output structure:**
+
+```
+certs/
+├── ca/
+│   ├── ca.crt          # CA certificate
+│   └── ca.key          # CA private key
+├── server/
+│   ├── tls.crt         # Server certificate (SANs: localhost, service names)
+│   └── tls.key         # Server private key
+└── client/
+    ├── tls.crt         # Client certificate
+    └── tls.key         # Client private key
+```
+
+`cordumctl up` and `cordumctl dev` auto-generate certificates if `certs/ca/ca.crt`
+does not exist. Use `generate-certs --force` to regenerate manually.
+
+For full TLS documentation, see [guides/tls-setup.md](guides/tls-setup.md).
 
 ---
 
@@ -481,6 +532,7 @@ These are used by `cordumctl up` and `cordumctl dev`:
 
 - [api-reference.md](api-reference.md) — REST endpoint reference
 - [configuration-reference.md](configuration-reference.md) — Config file reference
+- [guides/tls-setup.md](guides/tls-setup.md) — TLS setup and troubleshooting
 - [pack.md](pack.md) — Pack format specification
 - [DOCKER.md](DOCKER.md) — Docker Compose deployment
 - [quickstart.md](quickstart.md) — Getting started tutorial

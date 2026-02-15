@@ -4,10 +4,11 @@ services:
   nats:
     image: nats:2.10-alpine
     restart: unless-stopped
-    command: ["-c", "/etc/nats/nats.conf"]
+    command: ["-c", "/etc/nats/nats.release.conf"]
     # No host port exposure — internal service accessible via Docker network only.
     volumes:
-      - ./config/nats.conf:/etc/nats/nats.conf:ro
+      - ./config/nats.release.conf:/etc/nats/nats.release.conf:ro
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
       - nats_data:/data
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 4222"]
@@ -19,12 +20,32 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}"]
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--port",
+        "0",
+        "--tls-port",
+        "6379",
+        "--tls-cert-file",
+        "/etc/cordum/tls/server/tls.crt",
+        "--tls-key-file",
+        "/etc/cordum/tls/server/tls.key",
+        "--tls-ca-cert-file",
+        "/etc/cordum/tls/ca/ca.crt",
+        "--tls-auth-clients",
+        "yes",
+        "--requirepass",
+        "${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}",
+      ]
     # No host port exposure — internal service accessible via Docker network only.
     volumes:
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
       - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping"]
+      test: ["CMD-SHELL", "redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -38,15 +59,18 @@ services:
         condition: service_healthy
     environment:
       CORDUM_ENV: production
-      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_URL: "rediss://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      REDIS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      REDIS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      REDIS_TLS_SERVER_NAME: redis
       CONTEXT_ENGINE_ADDR: ":50070"
       CONTEXT_ENGINE_METRICS_ADDR: ":9094"
       CONTEXT_ENGINE_METRICS_PUBLIC: "true"
-      # Redis TLS (enable when Redis is TLS-terminated):
-      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
-      # Server TLS (enable for mTLS between services):
-      # CONTEXT_ENGINE_TLS_CERT: /etc/cordum/tls/server.crt
-      # CONTEXT_ENGINE_TLS_KEY: /etc/cordum/tls/server.key
+      CONTEXT_ENGINE_TLS_CERT: /etc/cordum/tls/server/tls.crt
+      CONTEXT_ENGINE_TLS_KEY: /etc/cordum/tls/server/tls.key
+    volumes:
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     # No host port exposure — internal gRPC service accessible via Docker network only.
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 50070"]
@@ -63,25 +87,25 @@ services:
         condition: service_healthy
     environment:
       CORDUM_ENV: production
-      NATS_URL: "nats://nats:4222"
-      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      NATS_URL: "tls://nats:4222"
+      NATS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      NATS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      NATS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      NATS_TLS_SERVER_NAME: nats
+      REDIS_URL: "rediss://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      REDIS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      REDIS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      REDIS_TLS_SERVER_NAME: redis
       SAFETY_KERNEL_ADDR: ":50051"
       SAFETY_POLICY_PATH: /etc/cordum/safety.yaml
-      # Metrics (exposed on Docker network for Prometheus):
-      SAFETY_KERNEL_METRICS_ADDR: ":9095"
-      SAFETY_KERNEL_METRICS_PUBLIC: "true"
-      # Redis TLS (enable when Redis is TLS-terminated):
-      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
-      # NATS TLS (enable when NATS is TLS-terminated):
-      NATS_TLS_INSECURE: "${NATS_TLS_INSECURE:-true}"
-      # Policy signature verification — set SAFETY_POLICY_PUBLIC_KEY to enforce:
-      SAFETY_POLICY_SIGNATURE_REQUIRED: "${SAFETY_POLICY_SIGNATURE_REQUIRED:-false}"
-      # SAFETY_POLICY_PUBLIC_KEY: ${SAFETY_POLICY_PUBLIC_KEY:-}
-      # Server TLS (enable for mTLS between services):
-      # SAFETY_KERNEL_TLS_CERT: /etc/cordum/tls/server.crt
-      # SAFETY_KERNEL_TLS_KEY: /etc/cordum/tls/server.key
+      SAFETY_POLICY_PUBLIC_KEY: "${SAFETY_POLICY_PUBLIC_KEY:?error: SAFETY_POLICY_PUBLIC_KEY is not set}"
+      SAFETY_POLICY_SIGNATURE: "${SAFETY_POLICY_SIGNATURE:?error: SAFETY_POLICY_SIGNATURE is not set}"
+      SAFETY_KERNEL_TLS_CERT: /etc/cordum/tls/server/tls.crt
+      SAFETY_KERNEL_TLS_KEY: /etc/cordum/tls/server/tls.key
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     # No host port exposure — internal gRPC service accessible via Docker network only.
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 50051"]
@@ -102,10 +126,19 @@ services:
         condition: service_healthy
     environment:
       CORDUM_ENV: production
-      NATS_URL: "nats://nats:4222"
+      NATS_URL: "tls://nats:4222"
+      NATS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      NATS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      NATS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      NATS_TLS_SERVER_NAME: nats
       NATS_USE_JETSTREAM: "1"
-      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_URL: "rediss://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      REDIS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      REDIS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      REDIS_TLS_SERVER_NAME: redis
       SAFETY_KERNEL_ADDR: "safety-kernel:50051"
+      SAFETY_KERNEL_TLS_CA: /etc/cordum/tls/ca/ca.crt
       OUTPUT_POLICY_ENABLED: "${OUTPUT_POLICY_ENABLED:-true}"
       POOL_CONFIG_PATH: /etc/cordum/pools.yaml
       TIMEOUT_CONFIG_PATH: /etc/cordum/timeouts.yaml
@@ -114,16 +147,10 @@ services:
       # Metrics (exposed on Docker network for Prometheus):
       SCHEDULER_METRICS_ADDR: ":9090"
       SCHEDULER_METRICS_PUBLIC: "true"
-      # Redis TLS (enable when Redis is TLS-terminated):
-      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
-      # NATS TLS (enable when NATS is TLS-terminated):
-      NATS_TLS_INSECURE: "${NATS_TLS_INSECURE:-true}"
-      # Server TLS (enable for mTLS between services):
-      # SCHEDULER_TLS_CERT: /etc/cordum/tls/server.crt
-      # SCHEDULER_TLS_KEY: /etc/cordum/tls/server.key
     volumes:
       - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/health"]
       interval: 10s
@@ -147,10 +174,21 @@ services:
         condition: service_healthy
     environment:
       CORDUM_ENV: production
-      NATS_URL: "nats://nats:4222"
+      NATS_URL: "tls://nats:4222"
+      NATS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      NATS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      NATS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      NATS_TLS_SERVER_NAME: nats
       NATS_USE_JETSTREAM: "1"
-      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_URL: "rediss://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      REDIS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      REDIS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      REDIS_TLS_SERVER_NAME: redis
       SAFETY_KERNEL_ADDR: "safety-kernel:50051"
+      SAFETY_KERNEL_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      CONTEXT_ENGINE_ADDR: "context-engine:50070"
+      CONTEXT_ENGINE_TLS_CA: /etc/cordum/tls/ca/ca.crt
       CORDUM_API_KEY: "${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
       TENANT_ID: default
       API_RATE_LIMIT_RPS: "50"
@@ -160,21 +198,18 @@ services:
       # Metrics (exposed on Docker network for Prometheus):
       GATEWAY_METRICS_ADDR: ":9092"
       GATEWAY_METRICS_PUBLIC: "true"
-      # Redis TLS (enable when Redis is TLS-terminated):
-      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
-      # NATS TLS (enable when NATS is TLS-terminated):
-      NATS_TLS_INSECURE: "${NATS_TLS_INSECURE:-true}"
-      # Server TLS (enable for mTLS between services):
-      # GRPC_TLS_CERT: /etc/cordum/tls/server.crt
-      # GRPC_TLS_KEY: /etc/cordum/tls/server.key
-      # GATEWAY_HTTP_TLS_CERT: /etc/cordum/tls/server.crt
-      # GATEWAY_HTTP_TLS_KEY: /etc/cordum/tls/server.key
+      GRPC_TLS_CERT: /etc/cordum/tls/server/tls.crt
+      GRPC_TLS_KEY: /etc/cordum/tls/server/tls.key
+      GATEWAY_HTTP_TLS_CERT: /etc/cordum/tls/server/tls.crt
+      GATEWAY_HTTP_TLS_KEY: /etc/cordum/tls/server/tls.key
+    volumes:
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     ports:
       - "8080:8080"
       - "8081:8081"
       # Metrics port (9092) not exposed — use internal Docker network or kubectl port-forward.
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8081/health"]
+      test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://127.0.0.1:8081/health"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -192,22 +227,22 @@ services:
         condition: service_healthy
     environment:
       CORDUM_ENV: production
-      NATS_URL: "nats://nats:4222"
+      NATS_URL: "tls://nats:4222"
+      NATS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      NATS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      NATS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      NATS_TLS_SERVER_NAME: nats
       NATS_USE_JETSTREAM: "1"
-      REDIS_URL: "redis://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_URL: "rediss://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      REDIS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      REDIS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      REDIS_TLS_SERVER_NAME: redis
       WORKFLOW_ENGINE_HTTP_ADDR: ":9093"
       WORKFLOW_ENGINE_SCAN_INTERVAL: "5s"
       WORKFLOW_ENGINE_RUN_SCAN_LIMIT: "200"
-      # Metrics (exposed on Docker network for Prometheus):
-      WORKFLOW_METRICS_ADDR: ":9096"
-      WORKFLOW_METRICS_PUBLIC: "true"
-      # Redis TLS (enable when Redis is TLS-terminated):
-      REDIS_TLS_INSECURE: "${REDIS_TLS_INSECURE:-true}"
-      # NATS TLS (enable when NATS is TLS-terminated):
-      NATS_TLS_INSECURE: "${NATS_TLS_INSECURE:-true}"
-      # Server TLS (enable for mTLS between services):
-      # WORKFLOW_TLS_CERT: /etc/cordum/tls/server.crt
-      # WORKFLOW_TLS_KEY: /etc/cordum/tls/server.key
+    volumes:
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     # No host port exposure — internal service accessible via Docker network only.
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9093/health"]
@@ -229,6 +264,10 @@ services:
       CORDUM_TENANT_ID: "${CORDUM_TENANT_ID:-default}"
       CORDUM_PRINCIPAL_ID: "${CORDUM_PRINCIPAL_ID:-}"
       CORDUM_PRINCIPAL_ROLE: "${CORDUM_PRINCIPAL_ROLE:-}"
+      # Proxy to gateway over HTTPS in production.
+      CORDUM_API_UPSTREAM_SCHEME: https
+    volumes:
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     ports:
       - "8082:8080"
     healthcheck:

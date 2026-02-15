@@ -3,6 +3,8 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -23,20 +25,59 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// New returns a client with a default HTTP timeout.
+// TLSOptions controls TLS behaviour for HTTP clients that connect to the
+// Cordum gateway. Zero value means "use system defaults".
+type TLSOptions struct {
+	// CACertPath is the path to a PEM-encoded CA certificate bundle
+	// used to verify the server certificate. Empty uses the system pool.
+	CACertPath string
+	// InsecureSkipVerify disables server certificate verification.
+	// Use only for development or testing.
+	InsecureSkipVerify bool
+}
+
+// New returns a client that uses the system default TLS settings.
 func New(baseURL, apiKey string) *Client {
+	return NewWithTLS(baseURL, apiKey, TLSOptions{})
+}
+
+// NewWithTLS returns a client with explicit TLS configuration.
+func NewWithTLS(baseURL, apiKey string, opts TLSOptions) *Client {
 	tenantID := strings.TrimSpace(os.Getenv("CORDUM_TENANT_ID"))
 	if tenantID == "" {
 		tenantID = "default"
 	}
-	return &Client{
-		BaseURL:  baseURL,
-		APIKey:   apiKey,
-		TenantID: tenantID,
-		HTTPClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	if tr := BuildTLSTransport(opts); tr != nil {
+		httpClient.Transport = tr
 	}
+	return &Client{
+		BaseURL:    baseURL,
+		APIKey:     apiKey,
+		TenantID:   tenantID,
+		HTTPClient: httpClient,
+	}
+}
+
+// BuildTLSTransport returns an [http.Transport] configured from the given
+// options, or nil when no TLS customization is needed.
+func BuildTLSTransport(opts TLSOptions) *http.Transport {
+	if opts.CACertPath == "" && !opts.InsecureSkipVerify {
+		return nil
+	}
+	tlsConfig := &tls.Config{} // #nosec G402 -- operator-controlled TLS settings.
+	if opts.InsecureSkipVerify {
+		tlsConfig.InsecureSkipVerify = true // #nosec G402 -- operator opt-in for dev/testing.
+	}
+	if opts.CACertPath != "" {
+		caCert, err := os.ReadFile(opts.CACertPath) // #nosec G304 -- path from operator config.
+		if err == nil {
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(caCert)
+			tlsConfig.RootCAs = pool
+		}
+	}
+	return &http.Transport{TLSClientConfig: tlsConfig}
 }
 
 // Step is a generic workflow step payload.

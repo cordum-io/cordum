@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -97,7 +98,7 @@ type RedisUserStore struct {
 
 // NewRedisUserStore creates a new Redis-backed user store.
 func NewRedisUserStore(redisURL string) (*RedisUserStore, error) {
-	opts, err := redis.ParseURL(redisURL)
+	opts, err := redisutil.ParseOptions(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}

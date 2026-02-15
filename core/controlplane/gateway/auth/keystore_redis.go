@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -39,7 +40,7 @@ type RedisKeyStore struct {
 
 // NewRedisKeyStore creates a new Redis-backed API key store.
 func NewRedisKeyStore(redisURL string) (*RedisKeyStore, error) {
-	opts, err := redis.ParseURL(redisURL)
+	opts, err := redisutil.ParseOptions(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
