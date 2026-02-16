@@ -34,8 +34,6 @@ Without governance, you're flying blind:
 
 Cordum is a **control plane for AI agents** that closes the Trust Gap.
 
-![Cordum control plane](./Screenshot%202026-01-23%20162612.png)
-
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Cordum                                  │
@@ -151,7 +149,7 @@ cordum/
 | Doc | Description |
 |-----|-------------|
 | [System Overview](docs/system_overview.md) | Architecture and data flow |
-| [Core Reference](docs/CORE.MD) | Deep technical details |
+| [Core Reference](docs/CORE.md) | Deep technical details |
 | [Docker Guide](docs/DOCKER.md) | Running with Compose |
 | [Agent Protocol](docs/AGENT_PROTOCOL.md) | CAP bus + pointer semantics |
 | [MCP Server](docs/mcp-server.md) | MCP stdio + HTTP/SSE integration |
