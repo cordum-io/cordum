@@ -242,6 +242,18 @@ jobs:
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
 
+    - name: Dump debug logs on failure
+      if: failure()
+      run: |
+        echo "=== Mock-bank worker log ==="
+        cat /tmp/production-gate-mock-bank-worker.log 2>/dev/null || echo "(no log)"
+        echo ""
+        echo "=== Docker service logs (last 80 lines each) ==="
+        for svc in scheduler workflow-engine api-gateway safety-kernel nats redis; do
+          echo "--- $svc ---"
+          docker compose logs --tail=80 --no-color "$svc" 2>/dev/null || true
+        done
+
     - name: Upload gate results
       if: always()
       uses: actions/upload-artifact@v4
