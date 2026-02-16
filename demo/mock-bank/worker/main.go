@@ -123,10 +123,15 @@ func main() {
 	if !runtime.ValidateRedisURL(redisURL) {
 		log.Println("[mock-bank] WARNING: REDIS_URL has no '@' — may be missing auth credentials")
 	}
-	if err := runtime.PingRedis(redisURL); err != nil {
-		log.Fatalf("[mock-bank] Redis connection failed (check REDIS_URL and password): %v", err)
+	// Create a TLS-aware blob store that applies REDIS_TLS_* env vars.
+	// This is required because the CAP runtime's default NewRedisBlobStore
+	// only uses the rediss:// scheme's basic TLS config, which trusts system
+	// CAs but not our self-signed CA from cordumctl generate-certs.
+	blobStore, err := runtime.NewRedisBlobStoreWithPing(redisURL)
+	if err != nil {
+		log.Fatalf("[mock-bank] Redis connection failed (check REDIS_URL, password, and TLS certs): %v", err)
 	}
-	log.Println("[mock-bank] Redis connection verified")
+	log.Println("[mock-bank] Redis connection verified (TLS-aware)")
 
 	log.Println("[mock-bank] connecting to NATS...")
 	nc, err := connectNATSWithTLS(natsURL)
@@ -145,6 +150,7 @@ func main() {
 			NATS:     nc,
 			NATSURL:  natsURL,
 			RedisURL: redisURL,
+			Store:    blobStore,
 			SenderID: worker.ID,
 		}
 
