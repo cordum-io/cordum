@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +23,22 @@ const (
 	envRedisDataTTLInSeconds = "REDIS_DATA_TTL_SECONDS"
 	envRedisDataTTLFallback  = "REDIS_DATA_TTL" // accepts ParseDuration values (e.g. 24h)
 )
+
+// sanitizeLogValue strips newlines and control characters from a string
+// before it is interpolated into a structured log call.  This prevents
+// log-injection attacks when the value originates from an environment
+// variable or other external source.
+func sanitizeLogValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return ' '
+		}
+		if r < 0x20 && r != ' ' {
+			return -1 // drop other control characters
+		}
+		return r
+	}, s)
+}
 
 // Store defines access to the memory fabric for contexts and results.
 type Store interface {
@@ -46,12 +63,22 @@ func NewRedisStore(url string) (*RedisStore, error) {
 
 	ttl := defaultDataTTL
 	if ttlSeconds := os.Getenv(envRedisDataTTLInSeconds); ttlSeconds != "" {
-		if secs, err := strconv.Atoi(ttlSeconds); err == nil && secs > 0 {
+		secs, err := strconv.Atoi(ttlSeconds)
+		if err != nil {
+			slog.Warn("invalid "+envRedisDataTTLInSeconds+", using default", "value", sanitizeLogValue(ttlSeconds), "error", sanitizeLogValue(err.Error()), "default", defaultDataTTL) // #nosec -- structured log, sanitized
+		} else if secs <= 0 {
+			slog.Warn("non-positive "+envRedisDataTTLInSeconds+", using default", "value", secs, "default", defaultDataTTL) // #nosec -- structured log, int value
+		} else {
 			ttl = time.Duration(secs) * time.Second
 		}
 	}
 	if ttlEnv := os.Getenv(envRedisDataTTLFallback); ttlEnv != "" {
-		if parsed, err := time.ParseDuration(ttlEnv); err == nil && parsed > 0 {
+		parsed, err := time.ParseDuration(ttlEnv)
+		if err != nil {
+			slog.Warn("invalid "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "error", sanitizeLogValue(err.Error()), "default", defaultDataTTL) // #nosec -- structured log, sanitized
+		} else if parsed <= 0 {
+			slog.Warn("non-positive "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "default", defaultDataTTL) // #nosec G115 G706 -- ttlEnv already sanitized above
+		} else {
 			ttl = parsed
 		}
 	}

@@ -3,6 +3,7 @@ package configsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -133,8 +134,10 @@ func (s *Service) EffectiveSnapshot(ctx context.Context, orgID, teamID, workflow
 		}
 		doc, err := s.Get(ctx, item.scope, item.id)
 		if err != nil {
-			// ignore missing
-			continue
+			if errors.Is(err, redis.Nil) {
+				continue // key does not exist — skip this scope
+			}
+			return nil, fmt.Errorf("config %s/%s: %w", item.scope, item.id, err)
 		}
 		revisions[item.scope] = doc.Revision
 		mergeShallow(result, doc.Data)
@@ -159,6 +162,29 @@ func mergeShallow(dst, src map[string]any) {
 	for k, v := range src {
 		dst[k] = v
 	}
+}
+
+// EnsureDefault creates the system/default config document with minimal sensible
+// defaults if one does not already exist. This is idempotent — repeated calls are
+// no-ops when the document exists. Called during gateway/scheduler startup to
+// guarantee a usable config on fresh installs.
+func (s *Service) EnsureDefault(ctx context.Context) error {
+	_, err := s.Get(ctx, ScopeSystem, "default")
+	if err == nil {
+		return nil // already exists
+	}
+	if !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("check default config: %w", err)
+	}
+	return s.Set(ctx, &Document{
+		Scope:   ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"safety":      map[string]any{"enabled": true, "mode": "enforce"},
+			"rate_limits": map[string]any{"enabled": true},
+		},
+		Meta: map[string]string{"source": "auto-bootstrap"},
+	})
 }
 
 func cfgKey(scope Scope, id string) string {

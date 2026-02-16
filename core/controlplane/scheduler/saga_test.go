@@ -245,14 +245,14 @@ func TestSagaRollbackRespectsContextTimeout(t *testing.T) {
 // denySafety always denies.
 type denySafety struct{}
 
-func (d *denySafety) Check(_ *pb.JobRequest) (SafetyDecisionRecord, error) {
+func (d *denySafety) Check(_ context.Context, _ *pb.JobRequest) (SafetyDecisionRecord, error) {
 	return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "denied-by-test", RuleID: "test-rule"}, nil
 }
 
 // allowSafety always allows.
 type allowSafety struct{}
 
-func (a *allowSafety) Check(_ *pb.JobRequest) (SafetyDecisionRecord, error) {
+func (a *allowSafety) Check(_ context.Context, _ *pb.JobRequest) (SafetyDecisionRecord, error) {
 	return SafetyDecisionRecord{Decision: SafetyAllow}, nil
 }
 

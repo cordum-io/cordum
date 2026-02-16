@@ -20,7 +20,7 @@ export function markCriticalPath(
   for (const step of steps) {
     const status = step.status;
     const isCompleted =
-      status === "succeeded" || status === "completed" || status === "failed";
+      status === "succeeded" || status === "failed";
 
     if (isCompleted && step.startedAt && step.completedAt) {
       const dur =
@@ -120,12 +120,10 @@ export function markCriticalPath(
 
 const COMPLETED_STATUSES: Set<string> = new Set([
   "succeeded",
-  "completed",
 ]);
 
 const RUNNING_STATUSES: Set<string> = new Set([
   "running",
-  "in_progress",
 ]);
 
 const FAILED_STATUSES: Set<string> = new Set(["failed", "timed_out"]);

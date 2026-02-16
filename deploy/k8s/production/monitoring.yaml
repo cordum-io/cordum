@@ -101,6 +101,23 @@ spec:
     path: /metrics
 ---
 apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cordum-context-engine
+  namespace: cordum
+spec:
+  namespaceSelector:
+    matchNames:
+    - cordum
+  selector:
+    matchLabels:
+      app: cordum-context-engine
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: cordum-platform
@@ -157,3 +174,11 @@ spec:
       annotations:
         summary: Cordum safety kernel is down
         description: No targets for cordum-safety-kernel have been reachable for 1m.
+    - alert: CordumContextEngineDown
+      expr: sum by (service) (up{namespace="cordum", service="cordum-context-engine"}) == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: Cordum context engine is down
+        description: No targets for cordum-context-engine have been reachable for 1m. Memory and context retrieval will fail.

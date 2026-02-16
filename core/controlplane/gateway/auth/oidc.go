@@ -461,11 +461,13 @@ func verifyEC(key *ecdsa.PublicKey, hashFn func() hash.Hash, sigSize int, signin
 
 func (p *OIDCProvider) validateClaims(claims map[string]any) error {
 	now := time.Now()
-	// Validate exp
-	if exp, ok := numericClaim(claims, "exp"); ok {
-		if now.After(exp.Add(30 * time.Second)) { // 30s clock skew
-			return errors.New("oidc: token expired")
-		}
+	// Validate exp — required to prevent tokens without expiry from granting permanent access
+	exp, ok := numericClaim(claims, "exp")
+	if !ok {
+		return errors.New("oidc: token missing exp claim")
+	}
+	if now.After(exp.Add(30 * time.Second)) { // 30s clock skew
+		return errors.New("oidc: token expired")
 	}
 	// Validate nbf
 	if nbf, ok := numericClaim(claims, "nbf"); ok {
@@ -482,6 +484,8 @@ func (p *OIDCProvider) validateClaims(claims map[string]any) error {
 		if !audienceMatches(claims["aud"], p.cfg.Audience) {
 			return errors.New("oidc: audience mismatch")
 		}
+	} else if env.IsProduction() {
+		return errors.New("oidc: audience validation required in production — set CORDUM_OIDC_AUDIENCE")
 	}
 	return nil
 }
@@ -710,43 +714,9 @@ func envBool(name string) bool {
 	return v == "true" || v == "1" || v == "yes"
 }
 
-// ---------------------------------------------------------------------------
-// Private IP detection (copied from packs_marketplace.go to avoid circular deps)
-// ---------------------------------------------------------------------------
-
-// privateIPNets are RFC 1918 / RFC 4193 / link-local / loopback ranges.
-var privateIPNets = func() []*net.IPNet {
-	cidrs := []string{
-		"127.0.0.0/8",    // IPv4 loopback
-		"10.0.0.0/8",     // RFC 1918
-		"172.16.0.0/12",  // RFC 1918
-		"192.168.0.0/16", // RFC 1918
-		"169.254.0.0/16", // link-local / AWS metadata
-		"::1/128",        // IPv6 loopback
-		"fe80::/10",      // IPv6 link-local
-		"fc00::/7",       // IPv6 unique-local (RFC 4193)
-	}
-	nets := make([]*net.IPNet, 0, len(cidrs))
-	for _, cidr := range cidrs {
-		_, n, err := net.ParseCIDR(cidr)
-		if err != nil {
-			panic("bad private CIDR: " + cidr)
-		}
-		nets = append(nets, n)
-	}
-	return nets
-}()
-
+// isPrivateNet delegates to the shared PrivateIPNets in private_nets.go.
 func isPrivateNet(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	for _, n := range privateIPNets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	return IsPrivateNet(ip)
 }
 
 // ===========================================================================

@@ -34,12 +34,12 @@ func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	bundles, updatedAt, err := s.loadPolicyBundles(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	items := bundleSummaryList(bundles)
@@ -57,12 +57,12 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	includeDisabled := parseBool(r.URL.Query().Get("include_disabled"))
@@ -125,12 +125,12 @@ func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	includeDisabled := parseBool(r.URL.Query().Get("include_disabled"))
@@ -189,7 +189,7 @@ func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request)
 
 func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request) {
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 
@@ -218,7 +218,7 @@ func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request)
 
 	jobs, err := s.jobStore.ListRecentJobs(r.Context(), limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 
@@ -279,7 +279,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	ruleID := strings.TrimSpace(r.PathValue("id"))
@@ -299,7 +299,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 
 	bundles, doc, err := s.loadPolicyBundlesWithDoc(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 
@@ -371,7 +371,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 	}
 	doc.Data[policyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 
@@ -393,7 +393,7 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -403,7 +403,7 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	raw, ok := bundles[bundleID]
@@ -436,7 +436,7 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -466,7 +466,7 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	doc, err := getConfigDoc(r.Context(), s.configSvc, policyConfigScope, policyConfigID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, r, "policy operation", err)
 			return
 		}
 		doc = &configsvc.Document{Scope: configsvc.Scope(policyConfigScope), ScopeID: policyConfigID, Data: map[string]any{}}
@@ -499,7 +499,7 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	bundles[bundleID] = bundle
 	doc.Data[policyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	s.appendAuditEntryNamed(r.Context(), "edit", "policy", bundleID, bundleID, policyActorID(r), policyRole(r), "edit policy bundle "+bundleID)
@@ -516,7 +516,7 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -538,7 +538,7 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 	body.Request.OrgId = tenant
 	principalID, err := s.resolvePrincipal(r, body.Request.PrincipalId)
 	if err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	body.Request.PrincipalId = principalID
@@ -554,7 +554,7 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 
 	bundles, _, err := s.loadPolicyBundles(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	working := cloneBundleMap(bundles)
@@ -587,7 +587,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var body policyPublishRequest
@@ -597,7 +597,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 	}
 	bundles, doc, err := s.loadPolicyBundlesWithDoc(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	if len(bundles) == 0 {
@@ -643,7 +643,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 	}
 	doc.Data[policyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	afterSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), bundles, body.Note)
@@ -672,7 +672,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var body policyRollbackRequest
@@ -687,14 +687,14 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 	}
 	bundles, doc, err := s.loadPolicyBundlesWithDoc(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	beforeSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), bundles, body.Note)
 
 	snapshots, _, err := s.loadPolicySnapshots(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	var target *policyBundleSnapshot
@@ -716,7 +716,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 	}
 	doc.Data[policyConfigKey] = target.Bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	afterSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), target.Bundles, body.Note)
@@ -745,7 +745,7 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	limit := parseAuditLimit(r.URL.Query().Get("limit"))
@@ -755,7 +755,7 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 	if auditType == "output" {
 		items, err := s.listOutputPolicyAudit(r, ruleID, limit)
 		if err != nil {
-			writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, r, "policy operation", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -765,7 +765,7 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := s.loadPolicyAudit(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	filtered := make([]policyAuditEntry, 0, len(entries))
@@ -899,12 +899,12 @@ func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	snapshots, _, err := s.loadPolicySnapshots(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	items := make([]policyBundleSnapshotSummary, 0, len(snapshots))
@@ -926,7 +926,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	var body struct {
@@ -936,7 +936,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 
 	bundles, _, err := s.loadPolicyBundles(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	hash, err := hashValue(bundles)
@@ -955,7 +955,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 
 	snapshots, doc, err := s.loadPolicySnapshots(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	snapshots = append([]policyBundleSnapshot{snapshot}, snapshots...)
@@ -963,7 +963,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 		snapshots = snapshots[:10]
 	}
 	if err := s.savePolicySnapshots(r.Context(), snapshots, doc); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 
@@ -978,7 +978,7 @@ func (s *server) handleGetPolicyBundleSnapshot(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	snapshotID := strings.TrimSpace(r.PathValue("id"))
@@ -988,7 +988,7 @@ func (s *server) handleGetPolicyBundleSnapshot(w http.ResponseWriter, r *http.Re
 	}
 	snapshots, _, err := s.loadPolicySnapshots(r.Context())
 	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	for _, snap := range snapshots {

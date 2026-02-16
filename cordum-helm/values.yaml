@@ -1,3 +1,18 @@
+# =============================================================================
+# SECURITY CHECKLIST for production deployments:
+#   1. Set global.production: true
+#   2. Set global.tls.enabled: true (and provide cert secrets)
+#   3. Set networkPolicy.enabled: true
+#   4. Set secrets.apiKey to a strong random value (openssl rand -hex 32)
+#   5. Set redis.auth.password to a strong random value (openssl rand -hex 32)
+#   6. Set secrets.adminPassword to a strong password (12+ chars)
+#   7. Verify nats.persistence.enabled: true
+#   8. Verify redis.persistence.enabled: true (or use external Redis)
+#
+# The chart will FAIL if global.production=true and global.tls.enabled=false.
+# See templates/NOTES.txt for additional warnings printed at install time.
+# =============================================================================
+
 nameOverride: ""
 fullnameOverride: ""
 imagePullSecrets: []
@@ -8,6 +23,15 @@ global:
     repository: ghcr.io/cordum-io/cordum/control-plane
     tag: "v0.1.4"
     pullPolicy: IfNotPresent
+  # Set to true for production deployments (enables TLS enforcement, strict guards)
+  production: false
+  tls:
+    # Enable server-side TLS for gRPC/HTTP endpoints
+    enabled: false
+    # K8s Secret name (type kubernetes.io/tls) containing server cert + key
+    serverCertSecret: ""
+    # K8s Secret name for client TLS (NATS/Redis connections)
+    clientCertSecret: ""
 
 secrets:
   apiKey: ""
@@ -16,6 +40,102 @@ secrets:
 
 config:
   safety: |-
+    # Fail-closed: unmatched jobs are denied.
+    default_decision: deny
+    rules:
+      - id: fraud-review-required
+        match:
+          topics:
+            - job.fraud-detection.process
+        decision: require_approval
+        reason: "Fraud detection results must be reviewed by a human before action."
+      - id: risk-assessment-approval
+        match:
+          topics:
+            - job.risk-agents.process
+        decision: require_approval
+        reason: "Risk assessment outcomes require human sign-off."
+      - id: compliance-approval
+        match:
+          topics:
+            - job.compliance-agents.process
+        decision: require_approval
+        reason: "Compliance checks require human verification before proceeding."
+      - id: bank-executor-approval
+        match:
+          topics:
+            - job.bank-executors.process
+        decision: require_approval
+        reason: "Financial execution actions require explicit human authorization."
+      - id: underwriting-approval
+        match:
+          topics:
+            - job.underwriting-agents.process
+        decision: require_approval
+        reason: "Underwriting decisions require human review before commitment."
+      - id: validators-auto-allow
+        match:
+          topics:
+            - job.bank-validators.process
+            - job.notification-service.process
+            - job.valuation-agents.process
+        decision: allow
+        reason: "Read-only validation and notification jobs are auto-approved."
+    output_policy:
+      enabled: true
+      fail_mode: closed
+    output_rules:
+      - id: output-secret-leak
+        description: "Quarantine outputs that contain likely credential or key material."
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "secret"
+        decision: quarantine
+        severity: critical
+        reason: "Potential secret material detected in output."
+      - id: output-pii-leak
+        description: "PII detection rule (disabled by default to avoid false positives)."
+        enabled: true
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "pii"
+        decision: quarantine
+        severity: high
+        reason: "Potential PII detected in output."
+      - id: output-injection-detected
+        description: "Quarantine outputs containing likely injection payload fragments."
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "injection"
+        decision: quarantine
+        severity: high
+        reason: "Potential injection payload detected in output."
+      - id: output-size-limit
+        description: "Quarantine oversized outputs beyond the default 10 MiB threshold."
+        match:
+          topics:
+            - "job.*"
+          output_size_gt: 10485760
+        decision: quarantine
+        severity: medium
+        reason: "Output exceeds configured size threshold."
+      - id: output-error-secret-leak
+        description: "Quarantine failed job outputs when secret indicators are present."
+        match:
+          topics:
+            - "job.*"
+          has_error: true
+          scanners:
+            - "secret"
+        decision: quarantine
+        severity: high
+        reason: "Secrets detected in failed job output context."
     default_tenant: default
     tenants:
       default:
@@ -45,7 +165,8 @@ config:
     topics: {}
     reconciler:
       dispatch_timeout_seconds: 300
-      running_timeout_seconds: 9000
+      # Per-topic overrides available via topics.<topic>.running_timeout_seconds
+      running_timeout_seconds: 900
       scan_interval_seconds: 30
 
 external:
@@ -56,11 +177,16 @@ external:
 nats:
   enabled: true
   image: nats:2.10-alpine
+  containerSecurityContext:
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
   service:
     type: ClusterIP
     port: 4222
   persistence:
-    enabled: false
+    enabled: true
     size: 1Gi
     storageClassName: ""
   jetstream:
@@ -77,6 +203,19 @@ nats:
 redis:
   enabled: true
   image: redis:7-alpine
+  containerSecurityContext:
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  auth:
+    enabled: true
+    # Required when auth.enabled=true. Provide via --set or values override.
+    # Generate with: openssl rand -hex 32
+    password: ""
+    # Alternatively reference an existing K8s secret:
+    existingSecret: ""
+    existingSecretKey: "REDIS_PASSWORD"
   service:
     type: ClusterIP
     port: 6379
@@ -91,6 +230,20 @@ redis:
     requests:
       cpu: 100m
       memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
 
 serviceAccount:
   create: true
@@ -233,3 +386,17 @@ dashboard:
     requests:
       cpu: 50m
       memory: 128Mi
+
+configBootstrap:
+  # Run a post-install/post-upgrade Job that ensures the system/default config
+  # document exists. Belt-and-suspenders with the in-code EnsureDefault().
+  enabled: true
+  image: curlimages/curl:8.5.0
+  retries: 30
+
+networkPolicy:
+  enabled: false
+  # Label selector for ingress controller pods (used for gateway/dashboard ingress rules)
+  ingressControllerSelector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx

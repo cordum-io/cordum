@@ -48,7 +48,7 @@ func TestDepsSatisfied_OnErrorBypassesDeps(t *testing.T) {
 		},
 	}
 
-	if !depsSatisfied(step, run) {
+	if !depsSatisfied(step, run, nil) {
 		t.Fatal("on_error step with error input should bypass dependency check")
 	}
 }
@@ -62,13 +62,13 @@ func TestDepsSatisfied_NormalDepsEnforced(t *testing.T) {
 		},
 	}
 
-	if depsSatisfied(step, run) {
+	if depsSatisfied(step, run, nil) {
 		t.Fatal("deps should not be satisfied when dependency is still running")
 	}
 
 	// Succeed the dependency
 	run.Steps["before"].Status = StepStatusSucceeded
-	if !depsSatisfied(step, run) {
+	if !depsSatisfied(step, run, nil) {
 		t.Fatal("deps should be satisfied when dependency succeeded")
 	}
 }
@@ -166,5 +166,192 @@ func TestUpdateRunStatus_OnErrorAware(t *testing.T) {
 	updateRunStatus(run, wf, now)
 	if run.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded when on_error handler succeeds, got: %s", run.Status)
+	}
+}
+
+// ---- depsSatisfied with failed + on_error succeeded ----
+
+func TestDepsSatisfied_FailedWithOnErrorSucceeded(t *testing.T) {
+	// Step C depends on step A. A failed but A's on_error handler B succeeded.
+	// depsSatisfied(C) should return true.
+	wf := &Workflow{
+		Steps: map[string]*Step{
+			"A": {ID: "A", OnError: "B"},
+			"B": {ID: "B"},
+			"C": {ID: "C", DependsOn: []string{"A"}},
+		},
+	}
+	run := &WorkflowRun{
+		Steps: map[string]*StepRun{
+			"A": {StepID: "A", Status: StepStatusFailed},
+			"B": {StepID: "B", Status: StepStatusSucceeded},
+			"C": {StepID: "C", Status: StepStatusPending},
+		},
+	}
+
+	stepC := wf.Steps["C"]
+	if !depsSatisfied(stepC, run, wf) {
+		t.Fatal("C should be satisfiable when dependency A failed but on_error handler B succeeded")
+	}
+
+	// If handler B is still running, deps should NOT be satisfied.
+	run.Steps["B"].Status = StepStatusRunning
+	if depsSatisfied(stepC, run, wf) {
+		t.Fatal("C should NOT be satisfiable when on_error handler B is still running")
+	}
+
+	// If handler B failed, deps should NOT be satisfied.
+	run.Steps["B"].Status = StepStatusFailed
+	if depsSatisfied(stepC, run, wf) {
+		t.Fatal("C should NOT be satisfiable when on_error handler B also failed")
+	}
+
+	// If A failed with no on_error handler, deps should NOT be satisfied.
+	wfNoHandler := &Workflow{
+		Steps: map[string]*Step{
+			"A": {ID: "A"},
+			"C": {ID: "C", DependsOn: []string{"A"}},
+		},
+	}
+	run2 := &WorkflowRun{
+		Steps: map[string]*StepRun{
+			"A": {StepID: "A", Status: StepStatusFailed},
+			"C": {StepID: "C", Status: StepStatusPending},
+		},
+	}
+	if depsSatisfied(wfNoHandler.Steps["C"], run2, wfNoHandler) {
+		t.Fatal("C should NOT be satisfiable when A failed and has no on_error handler")
+	}
+}
+
+// ---- ApproveStep denial activates OnError ----
+
+func TestApproveStep_Denied_ActivatesOnError(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-approve-onerror",
+		OrgID: "org",
+		Steps: map[string]*Step{
+			"approval": {ID: "approval", Type: StepTypeApproval, OnError: "handler"},
+			"handler":  {ID: "handler", Type: StepTypeWorker, Topic: "job.default"},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	now := time.Now().UTC()
+	run := &WorkflowRun{
+		ID:         "run-approve-onerror",
+		WorkflowID: wf.ID,
+		OrgID:      "org",
+		TeamID:     "team",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"approval": {StepID: "approval", Status: StepStatusWaiting, StartedAt: &now},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Deny the approval step
+	if err := engine.ApproveStep(context.Background(), run.ID, "approval", false); err != nil {
+		t.Fatalf("approve step: %v", err)
+	}
+
+	// Verify the on_error handler was activated and dispatched
+	final, _ := store.GetRun(context.Background(), run.ID)
+	handlerSR := final.Steps["handler"]
+	if handlerSR == nil {
+		t.Fatal("on_error handler should have been activated")
+	}
+	// Handler should be pending or running (dispatched by scheduleReady)
+	if handlerSR.Status != StepStatusPending && handlerSR.Status != StepStatusRunning {
+		t.Fatalf("expected handler PENDING or RUNNING, got %s", handlerSR.Status)
+	}
+
+	// Verify a job was dispatched for the handler (scheduleReady was called)
+	msgs := bus.Snapshot()
+	found := false
+	for _, m := range msgs {
+		if req := m.packet.GetJobRequest(); req != nil {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("on_error handler job should have been dispatched via scheduleReady")
+	}
+
+	// Run should still be running (not failed) because on_error handler is active
+	if final.Status == RunStatusFailed {
+		t.Fatal("run should not be failed while on_error handler is active")
+	}
+	if final.Status != RunStatusRunning {
+		t.Fatalf("expected run RUNNING, got %s", final.Status)
+	}
+}
+
+// ---- ApproveStep denial without on_error marks run failed ----
+
+func TestApproveStep_Denied_NoOnError_RunFails(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-approve-noonerror",
+		OrgID: "org",
+		Steps: map[string]*Step{
+			"approval": {ID: "approval", Type: StepTypeApproval},
+			"next":     {ID: "next", Type: StepTypeWorker, Topic: "job.default", DependsOn: []string{"approval"}},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	now := time.Now().UTC()
+	run := &WorkflowRun{
+		ID:         "run-approve-noonerror",
+		WorkflowID: wf.ID,
+		OrgID:      "org",
+		TeamID:     "team",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"approval": {StepID: "approval", Status: StepStatusWaiting, StartedAt: &now},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Deny the approval step
+	if err := engine.ApproveStep(context.Background(), run.ID, "approval", false); err != nil {
+		t.Fatalf("approve step: %v", err)
+	}
+
+	// Run should be failed because no on_error handler and the only step failed
+	final, _ := store.GetRun(context.Background(), run.ID)
+	if final.Status != RunStatusFailed {
+		t.Fatalf("expected run to be failed when approval denied with no on_error, got %s", final.Status)
+	}
+	// "next" step should NOT have been dispatched
+	if bus.Count() > 0 {
+		for _, m := range bus.Snapshot() {
+			if req := m.packet.GetJobRequest(); req != nil {
+				t.Fatal("next step should not have been dispatched after approval denial")
+			}
+		}
 	}
 }

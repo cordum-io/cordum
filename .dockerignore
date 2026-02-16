@@ -14,6 +14,12 @@ dashboard/dist
 dashboard/src.zip
 .next
 .moe
+.qa_taske5
 *.exe
 *.png
 *.zip
+*.pem
+*.key
+*.crt
+credentials*
+.env*

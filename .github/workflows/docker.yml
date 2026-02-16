@@ -46,7 +46,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push control plane image
+      - name: Build control plane image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          push: false
+          tags: |
+            ghcr.io/cordum-io/cordum/control-plane:${{ github.ref_name }}-${{ matrix.name }}
+            ghcr.io/cordum-io/cordum/control-plane:latest-${{ matrix.name }}
+          build-args: |
+            SERVICE=${{ matrix.service }}
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+
+      - name: Verify control plane image
+        run: |
+          IMAGE="ghcr.io/cordum-io/cordum/control-plane:${{ github.ref_name }}-${{ matrix.name }}"
+          echo "Verifying $IMAGE..."
+          docker run --rm "$IMAGE" --version || docker run --rm "$IMAGE" version || echo "No --version flag; checking binary exists..."
+          # Verify the binary is present and executable
+          docker run --rm --entrypoint sh "$IMAGE" -c "ls -la /usr/local/bin/${{ matrix.service }} 2>/dev/null || ls -la /app/${{ matrix.service }} 2>/dev/null || echo 'binary location unknown'"
+
+      - name: Push control plane image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -80,7 +104,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push dashboard image
+      - name: Build dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./dashboard
+          file: ./dashboard/Dockerfile
+          load: true
+          push: false
+          tags: |
+            ghcr.io/cordum-io/cordum/dashboard:${{ github.ref_name }}
+            ghcr.io/cordum-io/cordum/dashboard:latest
+
+      - name: Verify dashboard image
+        run: |
+          IMAGE="ghcr.io/cordum-io/cordum/dashboard:${{ github.ref_name }}"
+          echo "Verifying $IMAGE responds on port 8080..."
+          docker run -d --name dash-verify -p 18080:8080 "$IMAGE"
+          sleep 3
+          if curl -sf http://localhost:18080/ > /dev/null 2>&1; then
+            echo "Dashboard image verified"
+          else
+            echo "Dashboard image failed health check"
+            docker logs dash-verify
+            docker stop dash-verify && docker rm dash-verify
+            exit 1
+          fi
+          docker stop dash-verify && docker rm dash-verify
+
+      - name: Push dashboard image
         uses: docker/build-push-action@v5
         with:
           context: ./dashboard

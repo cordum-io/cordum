@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { del, get, post } from "../api/client";
 import { logger } from "../lib/logger";
+import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
 import type { RunStatus, Workflow, WorkflowRun } from "../api/types";
 import {
@@ -468,7 +469,7 @@ function toWorkflowUpsertPayload(input: Partial<Workflow> & { id?: string }): Re
 
 export function useWorkflows(params?: WorkflowListParams) {
   return useQuery<Workflow[]>({
-    queryKey: ["workflows", params ?? {}],
+    queryKey: queryKeys.workflows.list(params),
     queryFn: async () => {
       const res = await get<BackendWorkflow[]>(
         `/workflows${buildQuery({
@@ -482,7 +483,7 @@ export function useWorkflows(params?: WorkflowListParams) {
 
 export function useWorkflow(id: string | null | undefined) {
   return useQuery<Workflow>({
-    queryKey: ["workflow", id],
+    queryKey: queryKeys.workflows.detail(id),
     queryFn: () => {
       if (!id) {
         throw new Error("workflow id is required");
@@ -503,9 +504,9 @@ export function useCreateWorkflow() {
     onSuccess: (data) => {
       logger.info("workflows", "Workflow created", { id: data?.id });
       useToastStore.getState().addToast({ type: "success", title: "Workflow created" });
-      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
       if (data?.id) {
-        queryClient.invalidateQueries({ queryKey: ["workflow", data.id] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflows.detail(data.id) });
       }
     },
     onError: (err) => {
@@ -528,10 +529,10 @@ export function useUpdateWorkflow() {
     onSuccess: (data, variables) => {
       logger.info("workflows", "Workflow updated", { id: data?.id || variables?.id });
       useToastStore.getState().addToast({ type: "success", title: "Workflow saved" });
-      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
       const workflowId = data?.id || variables?.id;
       if (workflowId) {
-        queryClient.invalidateQueries({ queryKey: ["workflow", workflowId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflows.detail(workflowId) });
       }
     },
     onError: (err, variables) => {
@@ -554,9 +555,9 @@ export function useDeleteWorkflow() {
     onSuccess: (_data, workflowId) => {
       logger.info("workflows", "Workflow deleted", { id: workflowId });
       useToastStore.getState().addToast({ type: "success", title: "Workflow deleted" });
-      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
       if (workflowId) {
-        queryClient.invalidateQueries({ queryKey: ["workflow", workflowId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflows.detail(workflowId) });
       }
     },
     onError: (err, workflowId) => {
@@ -568,7 +569,7 @@ export function useDeleteWorkflow() {
 
 export function useRuns(workflowId: string | null | undefined, params?: WorkflowRunsParams) {
   return useQuery<WorkflowRun[]>({
-    queryKey: ["workflow-runs", workflowId, params ?? {}],
+    queryKey: queryKeys.workflowRuns.byWorkflow(workflowId, params),
     queryFn: () => {
       if (!workflowId) {
         throw new Error("workflow id is required");
@@ -585,7 +586,7 @@ export function useRuns(workflowId: string | null | undefined, params?: Workflow
 
 export function useAllRuns(filters?: AllRunsParams) {
   return useQuery<WorkflowRunListResponse>({
-    queryKey: ["workflow-runs", "all", filters ?? {}],
+    queryKey: queryKeys.workflowRuns.allRuns(filters),
     queryFn: async () => {
       const res = await get<{ items: BackendWorkflowRun[]; next_cursor?: number | null }>(
         `/workflow-runs${buildQuery({
@@ -609,7 +610,7 @@ export function useAllRuns(filters?: AllRunsParams) {
 
 export function useRun(runId: string | null | undefined) {
   return useQuery<WorkflowRun>({
-    queryKey: ["workflow-run", runId],
+    queryKey: queryKeys.workflowRuns.detail(runId),
     queryFn: () => {
       if (!runId) {
         throw new Error("run id is required");
@@ -622,7 +623,7 @@ export function useRun(runId: string | null | undefined) {
 
 export function useRunTimeline(runId: string | null | undefined, params?: RunTimelineParams) {
   return useQuery<RunTimelineEvent[]>({
-    queryKey: ["workflow-run", runId, "timeline", params?.limit ?? "default"],
+    queryKey: queryKeys.workflowRuns.timeline(runId, params?.limit),
     queryFn: () => {
       if (!runId) {
         throw new Error("run id is required");
@@ -672,12 +673,12 @@ export function useStartRun() {
       if (!variables?.dryRun) {
         useToastStore.getState().addToast({ type: "success", title: "Run started" });
       }
-      queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.all });
       if (variables?.workflowId) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-runs", variables.workflowId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.byWorkflow(variables.workflowId) });
       }
       if (data?.run_id) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-run", data.run_id] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.detail(data.run_id) });
       }
     },
     onError: (err, variables) => {
@@ -704,12 +705,12 @@ export function useRerunRun() {
       if (!variables?.dryRun) {
         useToastStore.getState().addToast({ type: "success", title: "Run restarted" });
       }
-      queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.all });
       if (variables?.runId) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-run", variables.runId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.detail(variables.runId) });
       }
       if (data?.run_id) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-run", data.run_id] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.detail(data.run_id) });
       }
     },
     onError: (err) => {
@@ -726,20 +727,17 @@ const ACTIVE_STATUSES = new Set<string>([
   "running",
   "pending",
   "waiting",
-  "in_progress",
-  "queued",
-  "blocked",
 ]);
 
 function getAttentionPriority(run: WorkflowRun): number {
   const steps = run.steps ?? [];
   // Priority 0: Any step waiting for approval
-  if (steps.some((s) => s.status === "waiting" || s.status === "blocked")) return 0;
+  if (steps.some((s) => s.status === "waiting")) return 0;
   // Priority 1: Any step failed
   if (steps.some((s) => s.status === "failed" || s.status === "timed_out")) return 1;
   // Priority 2: Currently running
-  if (run.status === "running" || run.status === "in_progress") return 2;
-  // Priority 3: Pending/queued
+  if (run.status === "running") return 2;
+  // Priority 3: Pending
   return 3;
 }
 
@@ -759,7 +757,7 @@ function sortByAttention(runs: WorkflowRun[]): WorkflowRun[] {
 
 export function useActiveRuns() {
   return useQuery<WorkflowRunListResponse, Error, WorkflowRun[]>({
-    queryKey: ["workflow-runs", "active"],
+    queryKey: queryKeys.workflowRuns.active(),
     queryFn: async () => {
       const res = await get<{ items: BackendWorkflowRun[]; next_cursor?: number | null }>(
         `/workflow-runs${buildQuery({ limit: 50 })}`,
@@ -781,7 +779,6 @@ export function useActiveRuns() {
 
 const TERMINAL_STATUSES = new Set<string>([
   "succeeded",
-  "completed",
   "failed",
   "cancelled",
   "timed_out",
@@ -800,7 +797,7 @@ function computeWorkflowStats(runs: WorkflowRun[]): WorkflowStats {
   }
   const terminal = runs.filter((r) => TERMINAL_STATUSES.has(r.status));
   const succeeded = terminal.filter(
-    (r) => r.status === "succeeded" || r.status === "completed",
+    (r) => r.status === "succeeded",
   ).length;
   const successRate = terminal.length > 0 ? Math.round((succeeded / terminal.length) * 100) : 0;
   return {
@@ -813,7 +810,7 @@ function computeWorkflowStats(runs: WorkflowRun[]): WorkflowStats {
 
 export function useWorkflowStats(workflowId: string | null | undefined) {
   return useQuery<WorkflowRun[], Error, WorkflowStats>({
-    queryKey: ["workflow-runs", workflowId, { limit: 20 }],
+    queryKey: queryKeys.workflowRuns.byWorkflow(workflowId, { limit: 20 }),
     queryFn: () => {
       if (!workflowId) throw new Error("workflow id is required");
       return get<BackendWorkflowRun[]>(
@@ -839,12 +836,12 @@ export function useCancelRun() {
     onSuccess: (_data, variables) => {
       logger.info("workflows", "Run cancelled", { workflowId: variables?.workflowId, runId: variables?.runId });
       useToastStore.getState().addToast({ type: "success", title: "Run cancelled" });
-      queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.all });
       if (variables?.workflowId) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-runs", variables.workflowId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.byWorkflow(variables.workflowId) });
       }
       if (variables?.runId) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-run", variables.runId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.detail(variables.runId) });
       }
     },
     onError: (err, variables) => {
@@ -876,9 +873,9 @@ export function useDeleteRun() {
     onSuccess: (_data, variables) => {
       logger.info("workflows", "Run deleted", { workflowId: variables?.workflowId, runId: variables?.runId });
       useToastStore.getState().addToast({ type: "success", title: "Run deleted" });
-      queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.all });
       if (variables?.workflowId) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-runs", variables.workflowId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.byWorkflow(variables.workflowId) });
       }
     },
     onError: (err, variables) => {
@@ -903,10 +900,10 @@ export function useDeleteRuns() {
     onSuccess: (_data, variables) => {
       logger.info("workflows", "Runs deleted", { count: variables?.length });
       useToastStore.getState().addToast({ type: "success", title: `${variables?.length ?? 0} run(s) deleted` });
-      queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.all });
       const workflowIds = new Set(variables?.map((v) => v.workflowId));
       for (const wid of workflowIds) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-runs", wid] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.byWorkflow(wid) });
       }
     },
     onError: (err) => {

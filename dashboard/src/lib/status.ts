@@ -22,18 +22,15 @@ export interface StatusMeta {
 export function runStatusMeta(status?: string): StatusMeta {
   switch (status) {
     case "succeeded":
-    case "completed":
       return { label: status, tone: "success", shape: "circle", icon: CheckCircle };
     case "waiting":
       return { label: status, tone: "warning", shape: "circle", icon: Clock };
     case "running":
-    case "in_progress":
       return { label: status, tone: "accent", shape: "circle", icon: Loader };
     case "failed":
     case "timed_out":
       return { label: status, tone: "danger", shape: "circle", icon: XCircle };
     case "pending":
-    case "queued":
       return { label: status, tone: "warning", shape: "circle", icon: Clock };
     case "cancelled":
       return { label: status, tone: "muted", shape: "circle", icon: XCircle };

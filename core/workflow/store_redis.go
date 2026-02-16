@@ -203,17 +203,46 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	return nil
 }
 
-// UpdateRun overwrites an existing run document and bumps the index score.
+// updateRunScript atomically reads prev status, writes new run, and updates all indexes.
+// This prevents TOCTOU races when concurrent goroutines update the same run.
+//
+// KEYS: [1]=runKey [2]=workflowIndexKey [3]=allIndexKey [4]=newStatusIndexKey
+// ARGV: [1]=payload [2]=score [3]=runID [4]=newStatus [5]=orgActiveKey [6]=isActive
+var updateRunScript = redis.NewScript(`
+local prev = redis.call('GET', KEYS[1])
+local prevStatus = ''
+if prev then
+  local ok, decoded = pcall(cjson.decode, prev)
+  if ok and decoded and decoded.status then
+    prevStatus = decoded.status
+  end
+end
+
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
+redis.call('ZADD', KEYS[3], ARGV[2], ARGV[3])
+redis.call('ZADD', KEYS[4], ARGV[2], ARGV[3])
+
+if prevStatus ~= '' and prevStatus ~= ARGV[4] then
+  redis.call('ZREM', 'wf:runs:status:' .. prevStatus, ARGV[3])
+end
+
+if ARGV[5] ~= '' then
+  if ARGV[6] == '1' then
+    redis.call('SADD', ARGV[5], ARGV[3])
+  else
+    redis.call('SREM', ARGV[5], ARGV[3])
+  end
+end
+
+return prevStatus
+`)
+
+// UpdateRun atomically overwrites an existing run document and updates all indexes.
+// Uses a Lua script to prevent TOCTOU races on concurrent step completions.
 func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	if run == nil || run.ID == "" || run.WorkflowID == "" {
 		return fmt.Errorf("run id and workflow id required")
-	}
-	prevStatus := RunStatus("")
-	if data, err := s.client.Get(ctx, runKey(run.ID)).Bytes(); err == nil {
-		var prev WorkflowRun
-		if err := json.Unmarshal(data, &prev); err == nil {
-			prevStatus = prev.Status
-		}
 	}
 	now := time.Now().UTC()
 	run.UpdatedAt = now
@@ -223,24 +252,32 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 		return fmt.Errorf("marshal run: %w", err)
 	}
 
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, runKey(run.ID), payload, 0)
-	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: float64(now.Unix()), Member: run.ID})
-	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: float64(now.Unix()), Member: run.ID})
-	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: float64(now.Unix()), Member: run.ID})
-	if prevStatus != "" && prevStatus != run.Status {
-		pipe.ZRem(ctx, runStatusIndexKey(prevStatus), run.ID)
-	}
+	score := fmt.Sprintf("%d", now.Unix())
+	orgActiveKey := ""
+	isActive := "0"
 	if run.OrgID != "" {
-		activeKey := runOrgActiveKey(run.OrgID)
+		orgActiveKey = runOrgActiveKey(run.OrgID)
 		if isActiveRunStatus(run.Status) {
-			pipe.SAdd(ctx, activeKey, run.ID)
-		} else {
-			pipe.SRem(ctx, activeKey, run.ID)
+			isActive = "1"
 		}
 	}
-	_, err = pipe.Exec(ctx)
-	if err != nil {
+
+	keys := []string{
+		runKey(run.ID),
+		runIndexKey(run.WorkflowID),
+		runAllIndexKey(),
+		runStatusIndexKey(run.Status),
+	}
+	args := []interface{}{
+		string(payload),
+		score,
+		run.ID,
+		string(run.Status),
+		orgActiveKey,
+		isActive,
+	}
+
+	if _, err := updateRunScript.Run(ctx, s.client, keys, args...).Result(); err != nil {
 		return fmt.Errorf("update run: %w", err)
 	}
 	return nil

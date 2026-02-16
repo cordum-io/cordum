@@ -49,9 +49,43 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "cordum.redisUrl" -}}
 {{- if .Values.redis.enabled -}}
+{{- if .Values.redis.auth.enabled -}}
+{{- printf "redis://:$(REDIS_PASSWORD)@%s-redis:%d" (include "cordum.fullname" .) (int .Values.redis.service.port) -}}
+{{- else -}}
 {{- printf "redis://%s-redis:%d" (include "cordum.fullname" .) (int .Values.redis.service.port) -}}
+{{- end -}}
 {{- else -}}
 {{- required "external.redisUrl is required when redis.enabled=false" .Values.external.redisUrl -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.redisSecretName" -}}
+{{- if .Values.redis.auth.existingSecret -}}
+{{- .Values.redis.auth.existingSecret -}}
+{{- else -}}
+{{- printf "%s-secrets" (include "cordum.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.redisSecretKey" -}}
+{{- if .Values.redis.auth.existingSecret -}}
+{{- .Values.redis.auth.existingSecretKey -}}
+{{- else -}}
+redisPassword
+{{- end -}}
+{{- end -}}
+
+{{/*
+Production safety validations — hard-fail on dangerous combinations.
+TLS is mandatory in production mode; network policies and persistence
+are warned about in NOTES.txt but not blocked (legitimate use cases exist).
+*/}}
+{{- define "cordum.validateProductionConfig" -}}
+{{- if and .Values.global.production (not .Values.global.tls.enabled) -}}
+{{- fail "FATAL: TLS must be enabled in production mode (global.production=true requires global.tls.enabled=true)" -}}
+{{- end -}}
+{{- if and .Values.global.production .Values.redis.auth.enabled (not .Values.redis.auth.password) (not .Values.redis.auth.existingSecret) -}}
+{{- fail "FATAL: Redis auth is enabled in production mode but no password or existingSecret is configured" -}}
 {{- end -}}
 {{- end -}}
 

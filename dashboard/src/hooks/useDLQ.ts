@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { get, post, del } from "../api/client";
 import { logger } from "../lib/logger";
+import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
 import type { DLQEntry, ApiResponse } from "../api/types";
 import { mapDLQEntry, type BackendDLQEntry } from "../api/transform";
@@ -12,8 +13,6 @@ import { mapDLQEntry, type BackendDLQEntry } from "../api/transform";
 export interface DLQFilters {
   limit?: number;
   cursor?: number;
-  topic?: string;
-  since?: string;
 }
 
 function buildParams(filters: DLQFilters): string {
@@ -22,8 +21,6 @@ function buildParams(filters: DLQFilters): string {
   if (filters.cursor !== undefined && filters.cursor > 0) {
     params.set("cursor", String(filters.cursor));
   }
-  if (filters.topic) params.set("topic", filters.topic);
-  if (filters.since) params.set("since", filters.since);
   const qs = params.toString();
   return qs ? `?${qs}` : "";
 }
@@ -34,7 +31,7 @@ function buildParams(filters: DLQFilters): string {
 
 export function useDLQ(filters: DLQFilters = {}) {
   return useQuery<ApiResponse<DLQEntry[]>>({
-    queryKey: ["dlq", filters],
+    queryKey: queryKeys.dlq.list(filters),
     queryFn: async () => {
       const res = await get<{ items: BackendDLQEntry[]; next_cursor?: number | null }>(
         `/dlq/page${buildParams(filters)}`,
@@ -65,10 +62,10 @@ export function useRetryDLQ() {
       return post<void>(`/dlq/${id}/retry`);
     },
     onMutate: async ({ id }) => {
-      await queryClient.cancelQueries({ queryKey: ["dlq"] });
-      const previous = queryClient.getQueriesData<ApiResponse<DLQEntry[]>>({ queryKey: ["dlq"] });
+      await queryClient.cancelQueries({ queryKey: queryKeys.dlq.all });
+      const previous = queryClient.getQueriesData<ApiResponse<DLQEntry[]>>({ queryKey: queryKeys.dlq.all });
       queryClient.setQueriesData<ApiResponse<DLQEntry[]>>(
-        { queryKey: ["dlq"] },
+        { queryKey: queryKeys.dlq.all },
         (old) => {
           if (!old?.items) return old;
           return { ...old, items: old.items.filter((e) => e.id !== id) };
@@ -90,7 +87,7 @@ export function useRetryDLQ() {
       useToastStore.getState().addToast({ type: "error", title: "Failed to retry entry", description: err.message });
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["dlq"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
   });
 }
@@ -105,7 +102,7 @@ export function useDeleteDLQ() {
     onSuccess: (_, id) => {
       logger.info("dlq", "DLQ entry deleted", { id });
       useToastStore.getState().addToast({ type: "success", title: "Entry deleted" });
-      queryClient.invalidateQueries({ queryKey: ["dlq"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
     onError: (err, id) => {
       logger.error("dlq", "DLQ delete failed", { id, error: err.message });

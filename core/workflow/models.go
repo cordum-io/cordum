@@ -159,6 +159,11 @@ type StepRun struct {
 	JobID         string              `json:"job_id,omitempty"` // dispatched job ID
 	Item          any                 `json:"item,omitempty"`   // for for_each child entries
 	Children      map[string]*StepRun `json:"children,omitempty"`
+
+	// ResolvedItems holds the evaluated for_each items list. Populated once
+	// when the for_each step first becomes ready, to prevent re-evaluation
+	// from shifting indexes on subsequent scheduleReady calls.
+	ResolvedItems []any `json:"resolved_items,omitempty"`
 }
 
 // TimelineEvent captures append-only run events for audit/replay.

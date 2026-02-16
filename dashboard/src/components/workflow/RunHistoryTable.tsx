@@ -34,7 +34,7 @@ function formatDuration(ms?: number): string {
 
 function stepsProgress(run: WorkflowRun): string {
   const completed = run.steps.filter(
-    (s) => s.status === "succeeded" || s.status === "completed",
+    (s) => s.status === "succeeded",
   ).length;
   return `${completed}/${run.steps.length}`;
 }
@@ -47,7 +47,7 @@ const STATUS_OPTIONS: { label: string; value: string }[] = [
   { label: "All", value: "" },
   { label: "Running", value: "running" },
   { label: "Succeeded", value: "succeeded" },
-  { label: "Completed", value: "completed" },
+  { label: "Timed Out", value: "timed_out" },
   { label: "Failed", value: "failed" },
   { label: "Cancelled", value: "cancelled" },
   { label: "Pending", value: "pending" },
@@ -211,7 +211,7 @@ export function RunHistoryTable({ workflowId }: { workflowId: string }) {
                       <RunStatusBadge status={run.status as RunStatus} />
                     </td>
                     <td className="px-4 py-3 text-xs text-muted">
-                      {timeAgo(run.startedAt)}
+                      {run.startedAt ? timeAgo(run.startedAt) : "\u2014"}
                     </td>
                     <td className="px-4 py-3 text-xs text-muted">
                       {formatDuration(run.duration)}

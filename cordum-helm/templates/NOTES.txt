@@ -1,0 +1,64 @@
+Cordum {{ .Chart.Version }} has been deployed to namespace {{ .Release.Namespace }}.
+
+{{- if not .Values.global.production }}
+
+  *** WARNING: global.production is FALSE ***
+  Safety guards (TLS enforcement, strict validation) are DISABLED.
+  Set global.production=true for any non-dev deployment:
+    helm upgrade {{ .Release.Name }} . --set global.production=true
+
+{{- end }}
+
+{{- if not .Values.global.tls.enabled }}
+
+  *** WARNING: TLS is DISABLED ***
+  All inter-service communication (gRPC, NATS, Redis) is unencrypted.
+  Set global.tls.enabled=true and provide TLS certificate secrets for production:
+    helm upgrade {{ .Release.Name }} . --set global.tls.enabled=true \
+      --set global.tls.serverCertSecret=cordum-server-tls \
+      --set global.tls.clientCertSecret=cordum-client-tls
+
+{{- end }}
+
+{{- if not .Values.networkPolicy.enabled }}
+
+  *** WARNING: Network policies are DISABLED ***
+  All pods can communicate freely without network segmentation.
+  Set networkPolicy.enabled=true for production:
+    helm upgrade {{ .Release.Name }} . --set networkPolicy.enabled=true
+
+{{- end }}
+
+{{- if and .Values.global.production (not .Values.nats.persistence.enabled) }}
+
+  *** WARNING: NATS persistence is DISABLED in production mode ***
+  A NATS pod restart will lose all in-flight messages and JetStream state.
+  Set nats.persistence.enabled=true for production:
+    helm upgrade {{ .Release.Name }} . --set nats.persistence.enabled=true
+
+{{- end }}
+
+{{- if and .Values.global.production (not .Values.redis.persistence.enabled) }}
+
+  *** WARNING: Redis persistence is DISABLED in production mode ***
+  A Redis pod restart will lose all job state, config, and workflow data.
+  Set redis.persistence.enabled=true for production:
+    helm upgrade {{ .Release.Name }} . --set redis.persistence.enabled=true
+
+{{- end }}
+
+{{- if and .Values.global.production (not .Values.secrets.apiKey) }}
+
+  *** WARNING: No API key configured in production mode ***
+  Set secrets.apiKey to a strong random value:
+    helm upgrade {{ .Release.Name }} . --set secrets.apiKey=$(openssl rand -hex 32)
+
+{{- end }}
+
+To access the API gateway:
+  kubectl port-forward svc/{{ include "cordum.fullname" . }}-gateway {{ .Values.gateway.service.httpPort }}:{{ .Values.gateway.service.httpPort }} -n {{ .Release.Namespace }}
+
+{{- if .Values.dashboard.enabled }}
+To access the dashboard:
+  kubectl port-forward svc/{{ include "cordum.fullname" . }}-dashboard {{ .Values.dashboard.service.port }}:{{ .Values.dashboard.service.port }} -n {{ .Release.Namespace }}
+{{- end }}

@@ -51,10 +51,18 @@ func NewRedisBlobStoreWithPing(redisURL string) (*RedisBlobStore, error) {
 }
 
 // PingRedis verifies connectivity and auth to a Redis instance.
+// It applies REDIS_TLS_* env vars when the URL uses the rediss:// scheme.
 func PingRedis(redisURL string) error {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return fmt.Errorf("parse redis url: %w", err)
+	}
+	tlsCfg, tlsErr := RedisTLSConfigFromEnv()
+	if tlsErr != nil {
+		return fmt.Errorf("redis tls config: %w", tlsErr)
+	}
+	if tlsCfg != nil {
+		opts.TLSConfig = tlsCfg
 	}
 	client := redis.NewClient(opts)
 	defer client.Close()

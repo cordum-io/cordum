@@ -8,10 +8,6 @@ describe("runStatusMeta", () => {
     expect(meta.label).toBe("succeeded");
   });
 
-  it("maps completed to success tone", () => {
-    expect(runStatusMeta("completed").tone).toBe("success");
-  });
-
   it("maps running to accent tone", () => {
     expect(runStatusMeta("running").tone).toBe("accent");
   });

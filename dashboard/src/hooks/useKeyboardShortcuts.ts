@@ -45,6 +45,8 @@ function isEditableTarget(el: EventTarget | null): boolean {
 
 export function useKeyboardShortcuts() {
   const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
   const prefixRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -82,7 +84,7 @@ export function useKeyboardShortcuts() {
         const action = NAV_MAP.get(key);
         if (action) {
           e.preventDefault();
-          navigate(action);
+          navigateRef.current(action);
         }
         return;
       }
@@ -103,7 +105,7 @@ export function useKeyboardShortcuts() {
       document.removeEventListener("keydown", handleKeyDown);
       clearTimeout(timerRef.current);
     };
-  }, [navigate]);
+  }, []);
 }
 
 /** @internal exported for unit tests */

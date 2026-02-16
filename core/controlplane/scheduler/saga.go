@@ -271,7 +271,9 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 
 	// Soft safety check: deny → skip compensation, unavailable → proceed.
 	if s.safety != nil {
-		record, err := s.safety.Check(req)
+		safetyCtx, safetyCancel := context.WithTimeout(context.Background(), storeOpTimeout)
+		record, err := s.safety.Check(safetyCtx, req)
+		safetyCancel()
 		if err != nil {
 			logging.Warn("scheduler-saga", "safety check error for compensation, proceeding",
 				"job_id", req.JobId, "workflow_id", workflowID, "error", err)

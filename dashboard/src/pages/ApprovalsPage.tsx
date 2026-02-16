@@ -159,8 +159,10 @@ export default function ApprovalsPage() {
     setSearchParams(params);
   }, [searchParams, setSearchParams]);
 
-  const assignments = useEventStore((s) => s.approvalAssignments);
-  const sorted = useMemo(() => applyFilters(approvals, filters), [approvals, filters, assignments]);
+  // Subscribe to assignment count as a lightweight change signal —
+  // avoids re-rendering the full page on every individual assignment update.
+  const assignmentVersion = useEventStore((s) => s.approvalAssignments.size);
+  const sorted = useMemo(() => applyFilters(approvals, filters), [approvals, filters, assignmentVersion]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const toggleSelect = useCallback((id: string) => { setSelectedIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }, []);
   const selectAll = useCallback(() => { setSelectedIds((prev) => prev.size === sorted.length ? new Set() : new Set(sorted.map((a) => a.id))); }, [sorted]);
@@ -185,16 +187,16 @@ export default function ApprovalsPage() {
         {sorted.length > 0 && <Badge variant="warning">{sorted.length} pending</Badge>}
       </div>
       <StatsStrip approvals={approvals} resolvedToday={resolvedToday} selectedCount={selectedIds.size} totalCount={sorted.length} onSelectAll={selectAll} />
-      <div className="flex gap-1 rounded-full border border-border p-1 w-fit">
-        <button type="button" className={cn("flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition", activeTab === "queue" ? "bg-accent/15 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("queue")}>
+      <div className="flex gap-1 rounded-full border border-border p-1 w-fit" role="tablist" aria-label="Approval views">
+        <button type="button" role="tab" aria-selected={activeTab === "queue"} aria-controls="tabpanel-queue" id="tab-queue" className={cn("flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition", activeTab === "queue" ? "bg-accent/15 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("queue")}>
           <Clock className="h-3.5 w-3.5" />Queue{sorted.length > 0 ? ` (${sorted.length})` : ""}
         </button>
-        <button type="button" className={cn("flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition", activeTab === "history" ? "bg-accent/15 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("history")}>
+        <button type="button" role="tab" aria-selected={activeTab === "history"} aria-controls="tabpanel-history" id="tab-history" className={cn("flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition", activeTab === "history" ? "bg-accent/15 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("history")}>
           <History className="h-3.5 w-3.5" />History
         </button>
       </div>
       {activeTab === "queue" && (
-        <>
+        <div id="tabpanel-queue" role="tabpanel" aria-labelledby="tab-queue">
           {!isLoading && approvals.length > 0 && <ApprovalQueueFilters approvals={approvals} filters={filters} onFiltersChange={setFilters} />}
           {isLoading && (<div className="space-y-3">{Array.from({ length: 4 }, (_, i) => (<Card key={i} className="animate-pulse"><div className="space-y-3"><div className="h-5 w-1/3 rounded bg-surface2" /><div className="h-4 w-2/3 rounded bg-surface2" /><div className="h-4 w-1/2 rounded bg-surface2" /></div></Card>))}</div>)}
           {!isLoading && isError && (<Card><p className="py-8 text-center text-muted">Failed to load approvals. Please try again.</p></Card>)}
@@ -208,9 +210,9 @@ export default function ApprovalsPage() {
           )}
           {panelOpen && selectedApproval && (<ApprovalDetailPanel approval={selectedApproval} allApprovals={approvals} onClose={closePanel} onApprove={handleApprove} onReject={handleReject} />)}
           {selectedIds.size > 0 && (<RequireRole roles={["admin", "operator"]}><BulkActionBar selectedIds={selectedIds} approvals={sorted} onApprove={handleApprove} onReject={handleReject} onClear={clearSelection} onDone={clearSelection} /></RequireRole>)}
-        </>
+        </div>
       )}
-      {activeTab === "history" && <ApprovalHistory />}
+      {activeTab === "history" && <div id="tabpanel-history" role="tabpanel" aria-labelledby="tab-history"><ApprovalHistory /></div>}
     </div>
   );
 }

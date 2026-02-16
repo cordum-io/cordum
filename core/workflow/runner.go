@@ -108,7 +108,9 @@ func Run(cfg *config.Config) error {
 
 	if err := natsBus.Subscribe(capsdk.SubjectResult, workflowEngineQueue, func(p *pb.BusPacket) error {
 		if jr := p.GetJobResult(); jr != nil {
-			return rec.HandleJobResult(context.Background(), jr)
+			handlerCtx, handlerCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer handlerCancel()
+			return rec.HandleJobResult(handlerCtx, jr)
 		}
 		return nil
 	}); err != nil {

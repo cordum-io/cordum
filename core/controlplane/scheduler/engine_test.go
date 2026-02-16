@@ -17,6 +17,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// newTestRegistry creates a MemoryRegistry that is automatically closed when the test ends.
+func newTestRegistry(t testing.TB) *MemoryRegistry {
+	t.Helper()
+	reg := NewMemoryRegistry()
+	t.Cleanup(reg.Close)
+	return reg
+}
+
 // NaiveStrategy forwards jobs directly to the requested topic (test-only).
 type NaiveStrategy struct{}
 
@@ -304,7 +312,7 @@ func (b *fakeBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 
 func TestEngineHandleHeartbeatStoresWorker(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
 
 	packet := &pb.BusPacket{
@@ -335,7 +343,7 @@ func TestEngineHandleHeartbeatStoresWorker(t *testing.T) {
 
 func TestProcessJobPublishesToSubject(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	strategy := &NaiveStrategy{}
 	jobStore := newFakeJobStore()
 	engine := NewEngine(bus, NewSafetyBasic(), registry, strategy, jobStore, nil)
@@ -369,7 +377,7 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 
 func TestHandleJobRequestNoWorkersDefersRetry(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	jobStore := newFakeJobStore()
 	strategy := &errStrategy{err: ErrNoWorkers}
 	engine := NewEngine(bus, NewSafetyBasic(), registry, strategy, jobStore, nil)
@@ -395,7 +403,7 @@ func TestHandleJobRequestNoWorkersDefersRetry(t *testing.T) {
 
 func TestCancelJobPublishesOnlyCancelSubject(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	jobStore := newFakeJobStore()
 	jobStore.states["job-1"] = JobStateRunning
 	jobStore.topics["job-1"] = "job.default"
@@ -419,7 +427,7 @@ func TestCancelJobPublishesOnlyCancelSubject(t *testing.T) {
 
 func TestHandleJobResultTreatsCompletedAsSucceeded(t *testing.T) {
 	store := newFakeJobStore()
-	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
 
 	res := &pb.JobResult{
 		JobId:  "job-completed",
@@ -437,7 +445,7 @@ func TestHandleJobResultTreatsCompletedAsSucceeded(t *testing.T) {
 
 func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	strategy := &NaiveStrategy{}
 	jobStore := newFakeJobStore()
 	cfg := &fakeConfigProvider{cfg: map[string]any{"feature": "on", "limit": 3}}
@@ -479,7 +487,7 @@ func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
 
 func TestProcessJobBlockedBySafety(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	jobStore := newFakeJobStore()
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
 
@@ -505,7 +513,7 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 
 func TestProcessJobSkipsInvalidRequest(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
 
 	req := &pb.JobRequest{
@@ -524,7 +532,7 @@ func TestProcessJobSkipsInvalidRequest(t *testing.T) {
 
 func TestHandleJobResultUpdatesState(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	jobStore := newFakeJobStore()
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
 
@@ -550,7 +558,7 @@ func TestHandleJobResultUpdatesState(t *testing.T) {
 func TestHandleJobResultRetryableSkipsDLQ(t *testing.T) {
 	bus := &fakeBus{}
 	jobStore := newFakeJobStore()
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), jobStore, nil)
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), jobStore, nil)
 
 	res := &pb.JobResult{
 		JobId:  "job-retryable",
@@ -600,7 +608,7 @@ func TestHandleJobResultFatalTriggersRollback(t *testing.T) {
 		WorkflowId: "wf-fatal",
 	}
 
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), jobStore, nil).WithSaga(saga)
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), jobStore, nil).WithSaga(saga)
 	res := &pb.JobResult{
 		JobId:  "job-fatal",
 		Status: pb.JobStatus_JOB_STATUS_FAILED_FATAL,
@@ -630,7 +638,7 @@ done:
 }
 
 func TestStopCancelsEngineContext(t *testing.T) {
-	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), newFakeJobStore(), nil)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil)
 
 	// Context must be alive before Stop.
 	if err := engine.ctx.Err(); err != nil {
@@ -657,7 +665,7 @@ func TestStopCancelsEngineContext(t *testing.T) {
 
 func TestProcessJobSafetyUnavailableRetries(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	jobStore := newFakeJobStore()
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
 
@@ -705,7 +713,7 @@ func (b *slowBus) Publish(subject string, packet *pb.BusPacket) error {
 
 func TestStopWaitsForInflightHandlers(t *testing.T) {
 	bus := &slowBus{delay: 200 * time.Millisecond}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	// Register a worker so dispatch succeeds.
 	registry.UpdateHeartbeat(&pb.Heartbeat{
 		WorkerId:     "w1",
@@ -769,7 +777,7 @@ func TestStopWaitsForInflightHandlers(t *testing.T) {
 
 func TestProcessJobMaxSchedulingRetriesFailsToDLQ(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	jobStore := newFakeJobStore()
 	// Pre-set attempts at the max threshold so processJob gives up immediately.
 	jobStore.attempts["job-stuck"] = maxSchedulingRetries
@@ -805,7 +813,7 @@ func TestProcessJobMaxSchedulingRetriesFailsToDLQ(t *testing.T) {
 
 func TestProcessJobBelowMaxRetriesStillRetries(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	jobStore := newFakeJobStore()
 	// Set attempts below max — should still retry, not fail.
 	jobStore.attempts["job-retry"] = maxSchedulingRetries - 1
@@ -839,7 +847,7 @@ func TestProcessJobBelowMaxRetriesStillRetries(t *testing.T) {
 
 func TestProcessJobIncrAttemptsNotCalledOnSuccess(t *testing.T) {
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	jobStore := newFakeJobStore()
 	engine := NewEngine(bus, NewSafetyBasic(), registry, &NaiveStrategy{}, jobStore, nil)
 
@@ -903,7 +911,7 @@ func TestHandlePacket_CancelJob_ErrorPropagates(t *testing.T) {
 		cancelErr:    fmt.Errorf("redis connection lost"),
 	}
 	spy := &cancelMetricsSpy{}
-	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, spy)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, spy)
 
 	packet := &pb.BusPacket{
 		TraceId:         "trace-cancel-err",
@@ -934,7 +942,7 @@ func TestHandlePacket_CancelJob_SuccessReturnsNil(t *testing.T) {
 	store := newFakeJobStore()
 	store.states["job-ok"] = JobStateRunning
 	spy := &cancelMetricsSpy{}
-	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, spy)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, spy)
 
 	packet := &pb.BusPacket{
 		TraceId:         "trace-cancel-ok",

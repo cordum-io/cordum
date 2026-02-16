@@ -56,10 +56,10 @@ WORKDIR /home/cordum
 ARG SERVICE
 COPY --from=builder /out/${SERVICE} /usr/local/bin/app
 
-# Default includes Redis auth to match local docker-compose Redis
-# (`--requirepass cordum-dev`) and avoid NOAUTH startup failures.
+# REDIS_URL must be provided via docker-compose or orchestrator env.
+# No default password — operators must set REDIS_PASSWORD explicitly.
 ENV NATS_URL=nats://nats:4222 \
-    REDIS_URL=redis://:cordum-dev@redis:6379 \
+    REDIS_URL= \
     SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
 
 ENTRYPOINT ["/usr/local/bin/app"]

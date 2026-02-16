@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"path"
 	"strings"
 
@@ -240,7 +241,8 @@ func normalizeDecision(raw string) string {
 	case "throttle":
 		return "throttle"
 	default:
-		return "allow"
+		slog.Warn("normalizeDecision: unrecognized decision value, defaulting to deny (fail-closed)", "raw", raw)
+		return "deny"
 	}
 }
 

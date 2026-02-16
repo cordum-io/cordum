@@ -5,6 +5,7 @@ import { ArrowLeft, ExternalLink, Clock, RotateCw } from "lucide-react";
 
 import { useJob, useJobDecisions } from "../hooks/useJobs";
 import { useOutputFindings, useReleaseQuarantinedJob } from "../hooks/useOutputPolicy";
+import { isValidResourceId } from "../lib/utils";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -80,7 +81,8 @@ type DetailTab = "overview" | "memory" | "artifacts";
 // ---------------------------------------------------------------------------
 
 export default function JobDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id: rawId } = useParams<{ id: string }>();
+  const id = isValidResourceId(rawId) ? rawId : undefined;
   usePageTitle(id ? `Job ${id.slice(0, 8)}` : "Job");
   const { data: job, isLoading, isError } = useJob(id ?? "");
   const { data: decisions } = useJobDecisions(id ?? "");
@@ -209,11 +211,15 @@ export default function JobDetailPage() {
       )}
 
       {availableTabs.length > 1 && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Job detail views">
           {availableTabs.map((tab) => (
             <button
               key={tab.key}
               type="button"
+              role="tab"
+              aria-selected={activeTab === tab.key}
+              aria-controls={`tabpanel-${tab.key}`}
+              id={`tab-${tab.key}`}
               className={
                 activeTab === tab.key
                   ? "rounded-full bg-accent/15 px-4 py-1.5 text-xs font-semibold uppercase tracking-widest text-accent"
@@ -228,7 +234,7 @@ export default function JobDetailPage() {
       )}
 
       {activeTab === "overview" && (
-        <>
+        <div id="tabpanel-overview" role="tabpanel" aria-labelledby="tab-overview">
           {/* State machine visualization */}
           <Card>
             <CardHeader>
@@ -309,6 +315,56 @@ export default function JobDetailPage() {
             </Card>
           )}
 
+          {/* Labels */}
+          {job.labels && Object.keys(job.labels).length > 0 && (
+            <section>
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
+                Labels
+              </h2>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(job.labels).map(([k, v]) => (
+                  <span key={k} className="inline-flex items-center rounded-full border border-border/60 bg-surface2 px-2.5 py-0.5 text-xs text-ink">
+                    <span className="font-semibold">{k}</span>
+                    {v && <span className="ml-1 text-muted">= {v}</span>}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Approval */}
+          {job.approvalBy && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Approval</CardTitle>
+              </CardHeader>
+              <div className="grid gap-2 text-xs sm:grid-cols-2">
+                <div>
+                  <span className="font-semibold text-muted">Approved by</span>
+                  <p className="text-ink">{job.approvalBy}{job.approvalRole ? ` (${job.approvalRole})` : ""}</p>
+                </div>
+                {job.approvalAt != null && (
+                  <div>
+                    <span className="font-semibold text-muted">Approved at</span>
+                    <p className="text-ink">{new Date(job.approvalAt * 1000).toLocaleString()}</p>
+                  </div>
+                )}
+                {job.approvalReason && (
+                  <div className="sm:col-span-2">
+                    <span className="font-semibold text-muted">Reason</span>
+                    <p className="text-ink">{job.approvalReason}</p>
+                  </div>
+                )}
+                {job.approvalNote && (
+                  <div className="sm:col-span-2">
+                    <span className="font-semibold text-muted">Note</span>
+                    <p className="text-ink">{job.approvalNote}</p>
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
           {/* Timeline */}
           {timeline.length > 0 && (
             <Card>
@@ -362,15 +418,19 @@ export default function JobDetailPage() {
               </div>
             </Card>
           )}
-        </>
+        </div>
       )}
 
       {activeTab === "memory" && hasMemory && (
-        <MemoryPanel memoryPtr={job.contextPtr} jobId={job.id} />
+        <div id="tabpanel-memory" role="tabpanel" aria-labelledby="tab-memory">
+          <MemoryPanel memoryPtr={job.contextPtr} jobId={job.id} />
+        </div>
       )}
 
       {activeTab === "artifacts" && hasArtifacts && (
-        <ArtifactPanel jobId={job.id} />
+        <div id="tabpanel-artifacts" role="tabpanel" aria-labelledby="tab-artifacts">
+          <ArtifactPanel jobId={job.id} />
+        </div>
       )}
 
       <RemediateDrawer

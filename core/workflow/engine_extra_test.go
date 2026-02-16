@@ -243,12 +243,9 @@ func TestEvalForEachVariants(t *testing.T) {
 }
 
 func countRunLocks(engine *Engine) int {
-	count := 0
-	engine.runLocks.Range(func(_, _ any) bool {
-		count++
-		return true
-	})
-	return count
+	engine.lockMgr.mu.Lock()
+	defer engine.lockMgr.mu.Unlock()
+	return len(engine.lockMgr.locks)
 }
 
 func TestPutJobContextAndDelay(t *testing.T) {

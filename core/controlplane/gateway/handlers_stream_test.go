@@ -420,6 +420,76 @@ func TestFilterQuarantinedPacketPassesHeartbeat(t *testing.T) {
 	}
 }
 
+func TestWorkerExpiryEvictsStaleEntries(t *testing.T) {
+	s := &server{
+		workers:    make(map[string]*pb.Heartbeat),
+		workerSeen: make(map[string]time.Time),
+	}
+
+	now := time.Now().UTC()
+	// w-fresh: seen just now, should survive
+	s.workers["w-fresh"] = &pb.Heartbeat{WorkerId: "w-fresh"}
+	s.workerSeen["w-fresh"] = now
+
+	// w-stale: seen 2x TTL ago, should be evicted
+	s.workers["w-stale"] = &pb.Heartbeat{WorkerId: "w-stale"}
+	s.workerSeen["w-stale"] = now.Add(-2 * workerHeartbeatTTL)
+
+	// Run one expiry cycle manually (same logic as startWorkerExpiry ticker)
+	cutoff := now.Add(-workerHeartbeatTTL)
+	s.workerMu.Lock()
+	for id, seen := range s.workerSeen {
+		if seen.Before(cutoff) {
+			delete(s.workerSeen, id)
+			delete(s.workers, id)
+		}
+	}
+	s.workerMu.Unlock()
+
+	s.workerMu.RLock()
+	defer s.workerMu.RUnlock()
+	if _, ok := s.workers["w-fresh"]; !ok {
+		t.Fatal("fresh worker should not be evicted")
+	}
+	if _, ok := s.workers["w-stale"]; ok {
+		t.Fatal("stale worker should be evicted")
+	}
+	if _, ok := s.workerSeen["w-stale"]; ok {
+		t.Fatal("stale workerSeen entry should be evicted")
+	}
+}
+
+func TestStartWorkerExpiryStopsCleanly(t *testing.T) {
+	s := &server{
+		workers:    make(map[string]*pb.Heartbeat),
+		workerSeen: make(map[string]time.Time),
+	}
+
+	s.startWorkerExpiry()
+	// Should have created the stop channel.
+	if s.workerExpireStop == nil {
+		t.Fatal("expected workerExpireStop channel to be created")
+	}
+
+	// stopWorkerExpiry is idempotent — call twice.
+	s.stopWorkerExpiry()
+	s.stopWorkerExpiry()
+
+	// Channel should be closed (receive returns immediately).
+	select {
+	case <-s.workerExpireStop:
+		// OK, channel is closed
+	case <-time.After(time.Second):
+		t.Fatal("workerExpireStop should be closed after stopWorkerExpiry")
+	}
+}
+
+func TestStopWorkerExpirySafeWithoutStart(t *testing.T) {
+	s := &server{}
+	// Should not panic when called without startWorkerExpiry.
+	s.stopWorkerExpiry()
+}
+
 func newIPv4Server(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
 

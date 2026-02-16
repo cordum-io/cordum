@@ -3,11 +3,20 @@
 This chart deploys the Cordum control plane (gateway, scheduler, safety kernel,
 workflow engine, optional context engine) plus Redis and NATS by default.
 
+## Required Values
+
+| Value | Required | Description |
+|-------|----------|-------------|
+| `secrets.apiKey` | Yes | API authentication key (`openssl rand -hex 32`) |
+| `redis.auth.password` | Yes (when `redis.auth.enabled=true`) | Redis password (`openssl rand -hex 32`) |
+| `secrets.adminPassword` | When `gateway.env.userAuthEnabled=true` | Admin user password |
+
 ## Install (local chart)
 
 ```bash
 helm install cordum ./cordum-helm -n cordum --create-namespace \
-  --set secrets.apiKey=<your-api-key> \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
   --set gateway.env.tenantId=default \
   --set dashboard.env.tenantId=default
 ```
@@ -18,7 +27,8 @@ helm install cordum ./cordum-helm -n cordum --create-namespace \
 helm repo add cordum https://charts.cordum.io
 helm repo update
 helm install cordum cordum/cordum -n cordum --create-namespace \
-  --set secrets.apiKey=<your-api-key> \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
   --set gateway.env.tenantId=default \
   --set dashboard.env.tenantId=default
 ```
@@ -35,7 +45,8 @@ Common overrides:
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
   --set global.image.tag=v0.1.4 \
-  --set secrets.apiKey=<your-api-key> \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
   --set gateway.env.tenantId=default \
   --set dashboard.env.tenantId=default \
   --set ingress.enabled=true
@@ -74,7 +85,8 @@ Enable user/password authentication:
 ```bash
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
-  --set secrets.apiKey=<your-api-key> \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
   --set gateway.env.userAuthEnabled=true \
   --set secrets.adminPassword=<secure-password> \
   --set gateway.env.adminUsername=admin \
@@ -123,6 +135,112 @@ kubectl -n cordum port-forward svc/cordum-dashboard 8082:8080
 
 Dashboard: `http://localhost:8082`
 HTTP requests must include `X-API-Key` and `X-Tenant-ID` (use `gateway.env.tenantId` as the default tenant).
+
+## Security Configuration
+
+### Redis Authentication
+
+Redis authentication is enabled by default (`redis.auth.enabled=true`). You must
+provide a password:
+
+```bash
+--set redis.auth.password=$(openssl rand -hex 32)
+```
+
+To use an existing Kubernetes secret instead:
+
+```bash
+--set redis.auth.existingSecret=my-redis-secret \
+--set redis.auth.existingSecretKey=REDIS_PASSWORD
+```
+
+### Pod and Container Security Contexts
+
+Security contexts are applied by default to all pods and containers:
+
+- **Pod-level**: `runAsNonRoot`, UID/GID 65532, `RuntimeDefault` seccomp profile
+- **Container-level**: `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, drop all capabilities
+
+NATS and Redis containers override `readOnlyRootFilesystem: false` since they
+write to data directories. To disable security contexts entirely:
+
+```bash
+--set podSecurityContext=null \
+--set containerSecurityContext=null
+```
+
+### Network Policies
+
+Network policies are disabled by default. Enable them for production:
+
+```bash
+--set networkPolicy.enabled=true
+```
+
+When enabled, a default-deny policy is applied to all Cordum pods, and
+per-component allow rules permit only the required traffic:
+
+- Redis accepts connections from control-plane services only
+- NATS accepts connections from scheduler, gateway, workflow-engine only
+- Gateway accepts ingress from the ingress controller and dashboard
+- Dashboard egress is limited to the gateway
+
+Configure the ingress controller label selector if not using ingress-nginx:
+
+```bash
+--set networkPolicy.ingressControllerSelector.matchLabels."app\.kubernetes\.io/name"=traefik
+```
+
+### Production Install
+
+```bash
+helm install cordum ./cordum-helm -n cordum --create-namespace \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
+  --set global.production=true \
+  --set networkPolicy.enabled=true \
+  --set ingress.enabled=true
+```
+
+Setting `global.production=true` adds `CORDUM_ENV=production` to all services,
+enabling TLS enforcement, strict security defaults, and TLS 1.3 minimum.
+
+### Production Install with TLS
+
+```bash
+# Create server TLS secret first:
+kubectl -n cordum create secret tls cordum-server-tls \
+  --cert=server.crt --key=server.key
+
+helm install cordum ./cordum-helm -n cordum --create-namespace \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
+  --set global.production=true \
+  --set global.tls.enabled=true \
+  --set global.tls.serverCertSecret=cordum-server-tls \
+  --set networkPolicy.enabled=true \
+  --set ingress.enabled=true
+```
+
+When `global.tls.enabled=true`, the chart mounts server certificates and sets
+TLS env vars for gateway (gRPC + HTTP), safety kernel, and context engine.
+See [Production Deployment Guide](../docs/guides/production-deployment.md) for
+full details.
+
+## Migration Notes
+
+When upgrading from a chart version that did not include these security features:
+
+- **Redis auth**: Existing installs must set `redis.auth.password` on the next
+  `helm upgrade`. If you were using Redis without a password, set
+  `redis.auth.enabled=false` to opt out.
+- **Security contexts**: New defaults are applied automatically. To preserve
+  previous behavior (no security context), set `podSecurityContext=null` and
+  `containerSecurityContext=null`.
+- **Network policies**: Disabled by default (`networkPolicy.enabled=false`), so
+  no breaking change on upgrade.
+- **Production mode**: New `global.production` (default `false`) and
+  `global.tls` settings have no effect unless explicitly enabled.
 
 ## Notes
 

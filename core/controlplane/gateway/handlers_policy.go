@@ -22,6 +22,10 @@ func (s *server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin", "operator"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
 	if s.safetyClient == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "safety kernel unavailable")
 		return
@@ -44,6 +48,10 @@ func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode string) {
+	if err := s.requireRole(r, "admin", "operator"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
 	if s.safetyClient == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "safety kernel unavailable")
 		return
@@ -62,7 +70,7 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 	req.OrgId = tenant
 	principalID, err := s.resolvePrincipal(r, req.PrincipalId)
 	if err != nil {
-		writeErrorJSON(w, http.StatusForbidden, err.Error())
+		writeForbidden(w, r, err)
 		return
 	}
 	req.PrincipalId = principalID

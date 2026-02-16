@@ -16,7 +16,7 @@ func TestPendingReplayerReplaysJobs(t *testing.T) {
 	}
 
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
 
 	req := &pb.JobRequest{JobId: "job-1", Topic: "job.test", TenantId: "default"}
@@ -70,7 +70,7 @@ func TestPendingReplayerStartTriggersTick(t *testing.T) {
 		reqs:         map[string]*pb.JobRequest{},
 	}
 	bus := &observedBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
 
 	req := &pb.JobRequest{JobId: "job-start", Topic: "job.test", TenantId: "default"}
@@ -125,7 +125,7 @@ func TestPendingReplayerReplaysApprovedJobs(t *testing.T) {
 	}
 
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
 
 	// Create a job in APPROVAL_REQUIRED state with approval_granted label
@@ -207,7 +207,7 @@ func TestPendingReplayerOrphanMetric(t *testing.T) {
 	}
 
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
 
 	req := &pb.JobRequest{JobId: "orphan-1", Topic: "job.replay-test", TenantId: "default"}
@@ -237,7 +237,7 @@ func TestPendingReplayerSkipsUnapprovedJobs(t *testing.T) {
 	}
 
 	bus := &fakeBus{}
-	registry := NewMemoryRegistry()
+	registry := newTestRegistry(t)
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
 
 	// Create a job in APPROVAL_REQUIRED state WITHOUT approval_granted label

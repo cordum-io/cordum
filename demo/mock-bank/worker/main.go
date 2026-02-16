@@ -129,7 +129,7 @@ func main() {
 	log.Println("[mock-bank] Redis connection verified")
 
 	log.Println("[mock-bank] connecting to NATS...")
-	nc, err := nats.Connect(natsURL, nats.Name("mock-bank-fleet"), nats.Timeout(5*time.Second))
+	nc, err := connectNATSWithTLS(natsURL)
 	if err != nil {
 		log.Fatalf("nats connect: %v", err)
 	}
@@ -142,6 +142,7 @@ func main() {
 		worker := w
 
 		agent := &runtime.Agent{
+			NATS:     nc,
 			NATSURL:  natsURL,
 			RedisURL: redisURL,
 			SenderID: worker.ID,
@@ -302,4 +303,19 @@ func randFloat32() float32 {
 		return 0
 	}
 	return float32(n.Int64()) / 1_000_000
+}
+
+// connectNATSWithTLS creates a NATS connection, adding TLS if NATS_TLS_* env
+// vars are set (via sdk/runtime.NATSTLSConfigFromEnv).
+func connectNATSWithTLS(natsURL string) (*nats.Conn, error) {
+	opts := []nats.Option{nats.Name("mock-bank-fleet"), nats.Timeout(5 * time.Second)}
+	tlsCfg, err := runtime.NATSTLSConfigFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("nats tls config: %w", err)
+	}
+	if tlsCfg != nil {
+		opts = append(opts, nats.Secure(tlsCfg))
+		log.Println("[mock-bank] NATS TLS enabled")
+	}
+	return nats.Connect(natsURL, opts...)
 }

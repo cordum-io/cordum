@@ -430,7 +430,7 @@ function RotateKeyCard({
 
 export default function SettingsKeysPage() {
   usePageTitle("Settings - API Keys");
-  const { data, isLoading } = useApiKeys();
+  const { data, isLoading, isError, refetch } = useApiKeys();
   const revokeKey = useRevokeApiKey();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [revokeId, setRevokeId] = useState<string | null>(null);
@@ -493,6 +493,18 @@ export default function SettingsKeysPage() {
             <div key={i} className="h-16 animate-pulse rounded-2xl bg-surface2" />
           ))}
         </div>
+      ) : isError ? (
+        <Card>
+          <div className="flex flex-col items-center gap-3 py-12 text-center">
+            <AlertTriangle className="h-8 w-8 text-danger" />
+            <p className="text-sm font-semibold text-ink">Failed to load API keys</p>
+            <p className="text-xs text-muted">Could not retrieve your API keys. Please try again.</p>
+            <Button variant="outline" size="sm" type="button" onClick={() => refetch()}>
+              <RotateCw className="h-3.5 w-3.5" />
+              Retry
+            </Button>
+          </div>
+        </Card>
       ) : keys.length === 0 ? (
         <Card>
           <p className="py-8 text-center text-sm text-muted">

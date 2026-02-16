@@ -237,10 +237,6 @@ export function useMemory(ptr?: string) {
     },
     enabled: !!ptr,
     staleTime: 60_000,
-    retry: (count, error) => {
-      if (error instanceof ApiError && [404, 410].includes(error.status)) return false;
-      return count < 2;
-    },
   });
 }
 
@@ -250,10 +246,6 @@ export function useArtifact(ptr?: string) {
     queryFn: async () => get<ArtifactPayload>(`/artifacts/${encodeURIComponent(ptr ?? "")}`),
     enabled: !!ptr,
     staleTime: 60_000,
-    retry: (count, error) => {
-      if (error instanceof ApiError && [404, 410].includes(error.status)) return false;
-      return count < 2;
-    },
   });
 }
 
@@ -282,10 +274,6 @@ export function useJobArtifacts(jobId?: string) {
     },
     enabled: !!jobId,
     staleTime: 60_000,
-    retry: (count, error) => {
-      if (error instanceof ApiError && [404, 410].includes(error.status)) return false;
-      return count < 2;
-    },
   });
 }
 

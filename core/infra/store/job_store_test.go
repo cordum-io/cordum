@@ -1,9 +1,12 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -1095,5 +1098,169 @@ func TestActorTypeString(t *testing.T) {
 	}
 	if got := actorTypeString(pb.ActorType_ACTOR_TYPE_UNSPECIFIED); got != "" {
 		t.Fatalf("expected empty actor type for unspecified")
+	}
+}
+
+func TestIsAllowedTransition_SucceededToQuarantined(t *testing.T) {
+	if !isAllowedTransition(model.JobStateSucceeded, model.JobStateQuarantined) {
+		t.Fatal("Succeeded → Quarantined should be allowed (output policy 2-phase)")
+	}
+}
+
+func TestIsAllowedTransition_SucceededToFailed_Denied(t *testing.T) {
+	if isAllowedTransition(model.JobStateSucceeded, model.JobStateFailed) {
+		t.Fatal("Succeeded → Failed should NOT be allowed")
+	}
+	if isAllowedTransition(model.JobStateSucceeded, model.JobStatePending) {
+		t.Fatal("Succeeded → Pending should NOT be allowed")
+	}
+}
+
+func TestIsAllowedTransition_QuarantinedIsTerminal(t *testing.T) {
+	targets := []model.JobState{
+		model.JobStatePending, model.JobStateScheduled, model.JobStateRunning,
+		model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled,
+		model.JobStateTimeout, model.JobStateDenied,
+	}
+	for _, to := range targets {
+		if isAllowedTransition(model.JobStateQuarantined, to) {
+			t.Fatalf("Quarantined → %s should NOT be allowed (terminal state)", to)
+		}
+	}
+	// Self-transition is always allowed.
+	if !isAllowedTransition(model.JobStateQuarantined, model.JobStateQuarantined) {
+		t.Fatal("Quarantined → Quarantined (self) should be allowed")
+	}
+}
+
+func TestRedisJobStoreListRecentSkipsExpiredMetadata(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create two jobs via normal state transitions.
+	if err := store.SetState(ctx, "job-live", model.JobStatePending); err != nil {
+		t.Fatalf("set state live: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := store.SetState(ctx, "job-expired", model.JobStatePending); err != nil {
+		t.Fatalf("set state expired: %v", err)
+	}
+
+	// Verify both appear in list.
+	list, err := store.ListRecentJobs(ctx, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 jobs, got %d", len(list))
+	}
+
+	// Simulate metadata expiry: delete the job meta hash and state key for job-expired.
+	// The index entry (job:recent sorted set) remains — this is the stale data scenario.
+	store.client.Del(ctx, jobMetaKey("job-expired"))
+	store.client.Del(ctx, jobStateKey("job-expired"))
+
+	// Now list should skip the expired job instead of returning a zero-value record.
+	list, err = store.ListRecentJobs(ctx, 10)
+	if err != nil {
+		t.Fatalf("list after expiry: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 job (expired skipped), got %d", len(list))
+	}
+	if list[0].ID != "job-live" {
+		t.Fatalf("expected job-live, got %s", list[0].ID)
+	}
+}
+
+func TestNewRedisJobStore_NegativeTTLWarns(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	// Capture slog output to verify warning is emitted.
+	var logBuf bytes.Buffer
+	origLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(origLogger)
+
+	t.Setenv(envJobMetaTTLSeconds, "-10")
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	// TTL should fall back to default (7 days).
+	if store.metaTTL != defaultJobMetaTTL {
+		t.Fatalf("expected default TTL %v, got %v", defaultJobMetaTTL, store.metaTTL)
+	}
+
+	logOutput := logBuf.String()
+	if !bytes.Contains([]byte(logOutput), []byte("non-positive")) {
+		t.Fatalf("expected warning about non-positive TTL, got: %s", logOutput)
+	}
+}
+
+func TestNewRedisJobStore_ValidTTLApplied(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	t.Setenv(envJobMetaTTLSeconds, "3600")
+	// Clear the duration variant so it doesn't override.
+	os.Unsetenv(envJobMetaTTL)
+
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	expected := time.Duration(3600) * time.Second
+	if store.metaTTL != expected {
+		t.Fatalf("expected TTL %v, got %v", expected, store.metaTTL)
+	}
+}
+
+func TestNewRedisJobStore_InvalidTTLWarns(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	var logBuf bytes.Buffer
+	origLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(origLogger)
+
+	t.Setenv(envJobMetaTTLSeconds, "not-a-number")
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	if store.metaTTL != defaultJobMetaTTL {
+		t.Fatalf("expected default TTL %v, got %v", defaultJobMetaTTL, store.metaTTL)
+	}
+
+	logOutput := logBuf.String()
+	if !bytes.Contains([]byte(logOutput), []byte("invalid")) {
+		t.Fatalf("expected warning about invalid TTL, got: %s", logOutput)
 	}
 }

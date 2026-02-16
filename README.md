@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/cordum-io/cordum/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License"/></a>
   <a href="https://github.com/cordum-io/cordum/releases"><img src="https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver" alt="Release"/></a>
-  <a href="https://discord.gg/cordum"><img src="https://img.shields.io/discord/YOUR_DISCORD_ID?label=discord&logo=discord" alt="Discord"/></a>
+  <a href="https://discord.gg/U4NpXtjP"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
   <a href="https://github.com/cordum-io/cap"><img src="https://img.shields.io/badge/protocol-CAP%20v2-green" alt="CAP Protocol"/></a>
 </p>
 
@@ -60,27 +60,31 @@ Cordum is a **control plane for AI agents** that closes the Trust Gap.
 
 ## Quickstart
 
-**Prerequisites:** Docker, Docker Compose
+**Prerequisites:** Docker, Docker Compose, Go 1.24+
 
 ```bash
 # Clone the repo
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
 
-# Start everything
-docker compose up -d
+# Set an API key
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+
+# Start everything (auto-generates TLS certs on first run)
+go run ./cmd/cordumctl up
 
 # Open dashboard
 open http://localhost:8082
 ```
 
-**Run the smoke test:**
+Or use the quickstart script:
 
 ```bash
-./tools/scripts/platform_smoke.sh
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+./tools/scripts/quickstart.sh
 ```
 
-That's it. You have a running Cordum instance with API, scheduler, safety kernel, and dashboard.
+That's it. You have a running Cordum instance with API, scheduler, safety kernel, dashboard, and TLS enabled by default. System configuration is auto-bootstrapped on first startup.
 
 ## How It Works
 
@@ -209,7 +213,7 @@ func main() {
 }
 ```
 
-SDKs: **Go** (stable) | Python (coming soon) | Node (coming soon)
+SDKs: **Go** (stable) | [**Python**](https://github.com/cordum-io/cap) | [**Node**](https://github.com/cordum-io/cap)
 
 ## Community
 
@@ -258,7 +262,7 @@ Free for self-hosted and internal use. Not permitted for competing hosted/manage
 
 <p align="center">
   <strong>Ready to govern your AI agents?</strong><br/>
-  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://discord.gg/cordum">Discord</a>
+  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://discord.gg/U4NpXtjP">Discord</a>
 </p>
 
 <p align="center">

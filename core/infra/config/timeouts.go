@@ -31,19 +31,27 @@ type ReconcilerTimeout struct {
 }
 
 // LoadTimeouts loads a YAML timeouts file; returns defaults if missing.
+// Error semantics:
+//   - Empty path: returns defaults, nil error.
+//   - File not found: returns defaults + error (caller decides severity).
+//   - File unreadable or malformed: returns nil + error (caller must handle).
 func LoadTimeouts(path string) (*TimeoutsConfig, error) {
 	if path == "" {
-		return defaultTimeouts(), nil
+		return DefaultTimeouts(), nil
 	}
 	// #nosec G304 -- timeouts config path is operator-provided.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Return defaults if file missing
-		return defaultTimeouts(), fmt.Errorf("read timeouts config %s: %w", path, err)
+		if os.IsNotExist(err) {
+			return DefaultTimeouts(), fmt.Errorf("read timeouts config %s: %w", path, err)
+		}
+		// Permission errors, I/O errors — config file exists but unreadable
+		return nil, fmt.Errorf("read timeouts config %s: %w", path, err)
 	}
 	cfg, err := ParseTimeouts(data)
 	if err != nil {
-		return cfg, fmt.Errorf("load timeouts config %s: %w", path, err)
+		// File readable but content is malformed — never silently fall back
+		return nil, fmt.Errorf("load timeouts config %s: %w", path, err)
 	}
 	return cfg, nil
 }
@@ -51,16 +59,16 @@ func LoadTimeouts(path string) (*TimeoutsConfig, error) {
 // ParseTimeouts parses timeouts config data from YAML/JSON bytes.
 func ParseTimeouts(data []byte) (*TimeoutsConfig, error) {
 	if len(data) == 0 {
-		return defaultTimeouts(), nil
+		return DefaultTimeouts(), nil
 	}
 	if err := validateConfigSchema("timeouts", timeoutsSchemaFile, data); err != nil {
-		return defaultTimeouts(), err
+		return DefaultTimeouts(), err
 	}
 	var cfg TimeoutsConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return defaultTimeouts(), fmt.Errorf("parse timeouts config: %w", err)
+		return DefaultTimeouts(), fmt.Errorf("parse timeouts config: %w", err)
 	}
-	def := defaultTimeouts()
+	def := DefaultTimeouts()
 	if cfg.Workflows == nil {
 		cfg.Workflows = def.Workflows
 	}
@@ -71,7 +79,7 @@ func ParseTimeouts(data []byte) (*TimeoutsConfig, error) {
 		cfg.Reconciler = def.Reconciler
 	}
 	if err := cfg.Validate(); err != nil {
-		return defaultTimeouts(), fmt.Errorf("validate timeouts config: %w", err)
+		return DefaultTimeouts(), fmt.Errorf("validate timeouts config: %w", err)
 	}
 	return &cfg, nil
 }
@@ -112,7 +120,8 @@ func (c *TimeoutsConfig) Validate() error {
 	return nil
 }
 
-func defaultTimeouts() *TimeoutsConfig {
+// DefaultTimeouts returns the built-in default timeout configuration.
+func DefaultTimeouts() *TimeoutsConfig {
 	return &TimeoutsConfig{
 		Workflows: map[string]WorkflowTimeout{},
 		Topics:    map[string]TopicTimeout{},

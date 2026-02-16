@@ -88,14 +88,14 @@ Cost control and attribution settings.
 
 ### rate_limits
 
-System-wide rate limiting (applies before per-tenant API rate limits).
+System-level budget rate limits enforced by the scheduler. These are independent from gateway-level API rate limiting (`API_RATE_LIMIT_RPS` env var), which is enforced by the api-gateway middleware before requests reach the scheduler.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `requests_per_minute` | int | `120000` | Max requests per minute |
-| `requests_per_hour` | int | `7200000` | Max requests per hour |
-| `burst_size` | int | `4000` | Token bucket burst size |
-| `concurrent_jobs` | int | `10000` | Max concurrent jobs |
+| `requests_per_minute` | int | `120000` | Sustained throughput limit (2000 req/sec) |
+| `requests_per_hour` | int | `7200000` | Hourly throughput limit |
+| `burst_size` | int | `4000` | Token bucket burst — peak spike capacity before throttling |
+| `concurrent_jobs` | int | `10000` | Max concurrent jobs across all tenants |
 | `concurrent_workflows` | int | `5` | Max concurrent workflows |
 | `queue_size` | int | `5000` | Max pending queue depth |
 
@@ -321,6 +321,17 @@ Each scope's `data` map shallow-merges into the result. Keys in lower scopes ove
 - `PUT /api/v1/config` — write/update a config document
 - `GET /api/v1/config/effective?scope={scope}&scope_id={id}` — get merged effective config
 
+### Fresh Install Behavior
+
+On fresh installs, no `cfg:system:default` key exists in Redis. When the dashboard
+requests `GET /api/v1/config` (which defaults to `scope=system&scope_id=default`),
+the gateway returns `200 {}` — an empty JSON object. The dashboard renders its
+built-in defaults (safety stance, rate limits, retention days, etc.) until an admin
+saves settings via the Settings page or `POST /api/v1/config`.
+
+No manual config seeding is required. Non-default scope queries (e.g.,
+`?scope=org&scope_id=acme`) still return `404` if the config document does not exist.
+
 ---
 
 ## pools.yaml — Worker Pool Routing
@@ -393,7 +404,7 @@ Controls per-topic timeouts, per-workflow timeouts, and reconciler settings.
 ```yaml
 reconciler:
   dispatch_timeout_seconds: 300    # 5 min for pending→dispatched
-  running_timeout_seconds: 9000    # 2.5 hr for dispatched→running
+  running_timeout_seconds: 900     # 15 min default for running jobs
   scan_interval_seconds: 30        # check every 30s
 
 topics:
@@ -417,8 +428,8 @@ Controls how the scheduler detects and handles stalled jobs.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `dispatch_timeout_seconds` | int | `120` (2m) | Max time for pending → dispatched transition |
-| `running_timeout_seconds` | int | `300` (5m) | Max time for dispatched → completed transition |
+| `dispatch_timeout_seconds` | int | `300` (5m) | Max time for pending → dispatched transition |
+| `running_timeout_seconds` | int | `900` (15m) | Max time for dispatched → completed transition. Per-topic overrides available via `topics.<topic>.running_timeout_seconds`. |
 | `scan_interval_seconds` | int | `30` | How often reconciler scans for stale jobs |
 
 ### Topics Section
@@ -512,12 +523,21 @@ tenants:
 
 Rules are evaluated top-to-bottom; first match wins.
 
+### Default Decision
+
+The `default_decision` field at the top of `safety.yaml` controls what happens when no input rule matches a job. The production default is `deny` (fail-closed), meaning unmatched jobs are rejected. To whitelist specific topics, add `decision: allow` rules.
+
+```yaml
+# Fail-closed: unmatched jobs are denied
+default_decision: deny
+```
+
 ### Output Policy Section
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `output_policy.enabled` | bool | `false` | Enable output scanning |
-| `output_policy.fail_mode` | string | `"open"` | `open` = allow on error, `closed` = deny on error |
+| `output_policy.fail_mode` | string | `"closed"` | `open` = allow on scanner error, `closed` = quarantine on scanner error (recommended for production) |
 
 ### Output Rules Section
 
@@ -620,10 +640,10 @@ scanners:
 | `CORDUM_LOG_FORMAT` | `text` | No | Log format: `json` or `text` |
 | `CORDUM_GRPC_REFLECTION` | — | No | Set to `1` to enable gRPC reflection (dev only) |
 | `NATS_URL` | `nats://localhost:4222` | Yes | NATS server URL |
-| `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379`) |
+| `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `redis://:${REDIS_PASSWORD}@redis:6379` — password required) |
 | `NATS_USE_JETSTREAM` | `0` | No | Enable NATS JetStream: `0` or `1` |
 | `POOL_CONFIG_PATH` | `config/pools.yaml` | No | Path to pools config |
-| `TIMEOUT_CONFIG_PATH` | `config/timeouts.yaml` | No | Path to timeouts config |
+| `TIMEOUT_CONFIG_PATH` | `config/timeouts.yaml` | No | Path to timeouts config. **Production mode**: if explicitly set and the file cannot be loaded or parsed, the scheduler exits with an error. In dev mode, falls back to built-in defaults with a warning. |
 | `SAFETY_POLICY_PATH` | `config/safety.yaml` | No | Path to safety policy |
 | `SAFETY_KERNEL_ADDR` | `localhost:50051` | No | Safety kernel gRPC address |
 | `CONTEXT_ENGINE_ADDR` | `:50070` | No | Context engine gRPC address |
@@ -866,6 +886,20 @@ scanners:
 | `NATS_URL` | `nats://localhost:4222` | NATS URL for worker connections |
 | `WORKER_ID` | — | Explicit worker ID (auto-generated if not set) |
 
+### CLI TLS
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_TLS_CA` | — | CA certificate path for CLI TLS verification |
+| `CORDUM_TLS_INSECURE` | — | Set to `1` to skip TLS verification (dev/debug only) |
+
+### Dashboard
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_API_UPSTREAM_SCHEME` | `http` | Set to `https` when gateway serves TLS |
+| `CORDUM_DASHBOARD_EMBED_API_KEY` | — | Embed API key in dashboard (dev only) |
+
 ### Docker Compose Helpers
 
 | Variable | Default | Description |
@@ -878,6 +912,7 @@ scanners:
 ## Cross-References
 
 - [configuration.md](configuration.md) — Quick-start config overview
+- [guides/tls-setup.md](guides/tls-setup.md) — TLS setup and troubleshooting
 - [safety-kernel.md](safety-kernel.md) — Safety kernel architecture and evaluation
 - [output-policy.md](output-policy.md) — Output scanning and quarantine system
 - [DOCKER.md](DOCKER.md) — Docker Compose deployment and NATS JetStream durability

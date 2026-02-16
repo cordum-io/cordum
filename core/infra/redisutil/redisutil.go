@@ -41,13 +41,18 @@ func NewClient(url string) (redis.UniversalClient, error) {
 }
 
 // ParseOptions parses a Redis URL and applies TLS settings from the environment.
-func ParseOptions(url string) (*redis.Options, error) {
-	opts, err := redis.ParseURL(url)
+// TLS env vars (REDIS_TLS_CA, etc.) are only applied when the URL uses the
+// rediss:// scheme, so plain redis:// connections (e.g. miniredis in tests)
+// are not affected by ambient TLS environment variables.
+func ParseOptions(rawURL string) (*redis.Options, error) {
+	opts, err := redis.ParseURL(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	if err := applyTLSFromEnv(opts); err != nil {
-		return nil, fmt.Errorf("apply redis tls config: %w", err)
+	if strings.HasPrefix(rawURL, "rediss://") {
+		if err := applyTLSFromEnv(opts); err != nil {
+			return nil, fmt.Errorf("apply redis tls config: %w", err)
+		}
 	}
 	return opts, nil
 }

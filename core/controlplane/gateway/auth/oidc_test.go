@@ -309,6 +309,8 @@ func TestOIDC_CustomClaimMapping(t *testing.T) {
 }
 
 func TestOIDC_NoAudienceConfig(t *testing.T) {
+	// Skip in production mode (audience is required)
+	t.Setenv("CORDUM_PRODUCTION", "false")
 	m := newMockOIDCServer(t)
 	defer m.Close()
 
@@ -328,6 +330,58 @@ func TestOIDC_NoAudienceConfig(t *testing.T) {
 	_, err = provider.ValidateJWT(token)
 	if err != nil {
 		t.Fatalf("ValidateJWT with no audience config: %v", err)
+	}
+}
+
+func TestOIDCValidateClaims_MissingExp(t *testing.T) {
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: m.issuer,
+		Audience:  "cordum-api",
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	claims := m.validClaims()
+	delete(claims, "exp") // remove exp claim
+	token := m.signJWT(claims)
+
+	_, err = provider.ValidateJWT(token)
+	if err == nil {
+		t.Fatal("expected error for missing exp claim")
+	}
+	if !strings.Contains(err.Error(), "missing exp") {
+		t.Fatalf("expected 'missing exp' in error, got: %v", err)
+	}
+}
+
+func TestOIDCValidateClaims_MissingAudienceProd(t *testing.T) {
+	t.Setenv("CORDUM_PRODUCTION", "true")
+	t.Setenv("CORDUM_OIDC_ALLOW_HTTP", "true")
+	t.Setenv("CORDUM_OIDC_ALLOW_PRIVATE", "true")
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: m.issuer,
+		Audience:  "", // no audience — should fail in production
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	token := m.signJWT(m.validClaims())
+	_, err = provider.ValidateJWT(token)
+	if err == nil {
+		t.Fatal("expected error in production mode without audience configured")
+	}
+	if !strings.Contains(err.Error(), "audience validation required") {
+		t.Fatalf("expected 'audience validation required' in error, got: %v", err)
 	}
 }
 

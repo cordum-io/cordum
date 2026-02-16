@@ -52,7 +52,7 @@ type BusPacket = {
 
 function normalizeEnum(raw?: unknown): string {
   if (typeof raw !== "string") return "";
-  return raw.replace(/^.*_/, "").toLowerCase();
+  return raw.toLowerCase();
 }
 
 function timestampFromProto(ts?: BusTimestamp): string {
@@ -312,11 +312,12 @@ export function useEventStream(): void {
     connect();
 
     return () => {
-      unmountedRef.current = true;
+      // Clear pending reconnect timer FIRST to prevent it firing during cleanup.
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
+      unmountedRef.current = true;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;

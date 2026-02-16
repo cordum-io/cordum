@@ -11,7 +11,7 @@ import (
 func TestEngineStopSkipsHandling(t *testing.T) {
 	store := newFakeJobStore()
 	bus := &observedBus{}
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil)
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
 	engine.Stop()
 
 	req := &pb.JobRequest{JobId: "job-stop", Topic: "job.test", TenantId: "default"}
@@ -42,8 +42,7 @@ func TestRetryableErrorDelay(t *testing.T) {
 }
 
 func TestStartStopWithRegistryStats(t *testing.T) {
-	registry := NewMemoryRegistry()
-	defer registry.Close()
+	registry := newTestRegistry(t)
 	registry.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w1", Pool: "test"})
 
 	engine := NewEngine(&observedBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)

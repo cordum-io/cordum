@@ -1,10 +1,14 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/cordum/cordum/core/configsvc"
 )
 
 func TestDeleteSchemaForbiddenWithoutAdmin(t *testing.T) {
@@ -61,5 +65,156 @@ func TestDeleteSchemaAllowedForAdmin(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 for admin, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetConfig_MissingDefault_Returns200Empty verifies that GET /api/v1/config
+// returns 200 with an empty JSON object on clean installs (no config in Redis).
+func TestGetConfig_MissingDefault_Returns200Empty(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleGetConfig(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("expected empty object, got %v", body)
+	}
+}
+
+// TestGetConfig_MissingExplicitScope_Returns404 verifies that GET /api/v1/config
+// with a non-default scope still returns 404 when the config doesn't exist.
+func TestGetConfig_MissingExplicitScope_Returns404(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=nonexistent", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleGetConfig(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetConfig_ExistingDefault_Returns200WithData verifies that GET /api/v1/config
+// returns the stored data when a system/default config exists.
+func TestGetConfig_ExistingDefault_Returns200WithData(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	// Seed config via the config service directly.
+	doc := &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data:    map[string]any{"safetyStance": "strict", "rateLimitPerKey": 100},
+	}
+	if err := s.configSvc.Set(ctx, doc); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleGetConfig(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if body["safetyStance"] != "strict" {
+		t.Fatalf("expected safetyStance=strict, got %v", body["safetyStance"])
+	}
+	if body["rateLimitPerKey"] != float64(100) {
+		t.Fatalf("expected rateLimitPerKey=100, got %v", body["rateLimitPerKey"])
+	}
+}
+
+// TestConfigBootstrap_FreshDeploy verifies that EnsureDefault creates a usable
+// config document on a fresh deploy, and GET /api/v1/config returns it.
+func TestConfigBootstrap_FreshDeploy(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	// Before bootstrap: GET /config returns empty object (graceful fallback).
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleGetConfig(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pre-bootstrap: expected 200, got %d", rec.Code)
+	}
+
+	// Run EnsureDefault (what gateway startup does).
+	if err := s.configSvc.EnsureDefault(ctx); err != nil {
+		t.Fatalf("EnsureDefault: %v", err)
+	}
+
+	// After bootstrap: GET /config returns the seeded defaults.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec = httptest.NewRecorder()
+	s.handleGetConfig(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post-bootstrap: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	// Must contain the seeded safety section.
+	safety, ok := body["safety"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected safety section in bootstrapped config, got %v", body)
+	}
+	if safety["enabled"] != true {
+		t.Fatalf("expected safety.enabled=true, got %v", safety["enabled"])
+	}
+}
+
+// TestSetConfig_ThenGet_Roundtrip verifies that POST then GET roundtrips correctly.
+func TestSetConfig_ThenGet_Roundtrip(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	// POST flat config (dashboard format — auto-wraps as system/default).
+	payload := map[string]any{"maintenanceMode": true}
+	body, _ := json.Marshal(payload)
+	setReq := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
+	setReq.Header.Set("X-Tenant-ID", "default")
+	setRR := httptest.NewRecorder()
+	s.handleSetConfig(setRR, setReq)
+	if setRR.Code != http.StatusNoContent {
+		t.Fatalf("set config: %d %s", setRR.Code, setRR.Body.String())
+	}
+
+	// GET should return the data.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
+	getRR := httptest.NewRecorder()
+	s.handleGetConfig(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("get config: %d %s", getRR.Code, getRR.Body.String())
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(getRR.Body.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if result["maintenanceMode"] != true {
+		t.Fatalf("expected maintenanceMode=true, got %v", result["maintenanceMode"])
 	}
 }

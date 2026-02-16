@@ -24,12 +24,24 @@ func TestParseOptionsNoTLS(t *testing.T) {
 
 func TestParseOptionsInsecureTLS(t *testing.T) {
 	t.Setenv(envRedisTLSInsecure, "true")
-	opts, err := ParseOptions("redis://localhost:6379")
+	opts, err := ParseOptions("rediss://localhost:6379")
 	if err != nil {
 		t.Fatalf("ParseOptions error: %v", err)
 	}
 	if opts.TLSConfig == nil || !opts.TLSConfig.InsecureSkipVerify {
 		t.Fatalf("expected insecure TLS config")
+	}
+}
+
+func TestParseOptionsPlainURLIgnoresTLSEnv(t *testing.T) {
+	// TLS env vars should NOT affect plain redis:// connections (e.g. miniredis).
+	t.Setenv(envRedisTLSInsecure, "true")
+	opts, err := ParseOptions("redis://localhost:6379")
+	if err != nil {
+		t.Fatalf("ParseOptions error: %v", err)
+	}
+	if opts.TLSConfig != nil {
+		t.Fatalf("expected nil TLS config for plain redis:// URL")
 	}
 }
 
@@ -40,7 +52,7 @@ func TestParseOptionsTLSCA(t *testing.T) {
 	t.Setenv(envRedisTLSCert, certPath)
 	t.Setenv(envRedisTLSKey, keyPath)
 
-	opts, err := ParseOptions("redis://localhost:6379")
+	opts, err := ParseOptions("rediss://localhost:6379")
 	if err != nil {
 		t.Fatalf("ParseOptions error: %v", err)
 	}
@@ -57,7 +69,7 @@ func TestParseOptionsMissingKey(t *testing.T) {
 	certPath, _ := writeTempCert(t, dir)
 	t.Setenv(envRedisTLSCert, certPath)
 
-	_, err := ParseOptions("redis://localhost:6379")
+	_, err := ParseOptions("rediss://localhost:6379")
 	if err == nil {
 		t.Fatalf("expected error for missing key")
 	}

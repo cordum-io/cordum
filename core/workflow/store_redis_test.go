@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -336,5 +337,95 @@ func TestRunTimelineAppendAndList(t *testing.T) {
 	}
 	if events[0].Type != "run_created" || events[1].Type != "run_status" {
 		t.Fatalf("unexpected timeline events: %+v", events)
+	}
+}
+
+// TestUpdateRunConcurrent verifies the Lua-based atomic UpdateRun doesn't lose
+// updates when multiple goroutines transition the same run through different statuses.
+func TestUpdateRunConcurrent(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create the base run.
+	run := &WorkflowRun{
+		ID:         "run-conc",
+		WorkflowID: "wf-1",
+		OrgID:      "org-1",
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Spawn goroutines that each transition the run to a different status.
+	statuses := []RunStatus{
+		RunStatusRunning,
+		RunStatusSucceeded,
+		RunStatusFailed,
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, len(statuses))
+	for i, s := range statuses {
+		wg.Add(1)
+		go func(idx int, status RunStatus) {
+			defer wg.Done()
+			r := &WorkflowRun{
+				ID:         "run-conc",
+				WorkflowID: "wf-1",
+				OrgID:      "org-1",
+				Status:     status,
+				Steps:      map[string]*StepRun{},
+			}
+			errs[idx] = store.UpdateRun(ctx, r)
+		}(i, s)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d update failed: %v", i, err)
+		}
+	}
+
+	// The run must be in exactly one status index (the last writer wins).
+	got, err := store.GetRun(ctx, "run-conc")
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	finalStatus := got.Status
+
+	// Verify run appears in its final status index.
+	ids, err := store.ListRunIDsByStatus(ctx, finalStatus, 10)
+	if err != nil {
+		t.Fatalf("list final status: %v", err)
+	}
+	found := false
+	for _, id := range ids {
+		if id == "run-conc" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("run-conc not found in status index %s", finalStatus)
+	}
+
+	// Verify run does NOT appear in other status indexes.
+	for _, s := range statuses {
+		if s == finalStatus {
+			continue
+		}
+		ids, err := store.ListRunIDsByStatus(ctx, s, 10)
+		if err != nil {
+			t.Fatalf("list status %s: %v", s, err)
+		}
+		for _, id := range ids {
+			if id == "run-conc" {
+				t.Fatalf("run-conc should not be in status index %s (final=%s)", s, finalStatus)
+			}
+		}
 	}
 }

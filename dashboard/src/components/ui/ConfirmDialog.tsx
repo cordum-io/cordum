@@ -1,5 +1,7 @@
+import { useId } from "react";
 import { X } from "lucide-react";
 import { Button } from "./Button";
+import { useDialogA11y } from "../../hooks/useDialogA11y";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -22,19 +24,32 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const dialogRef = useDialogA11y(onCancel);
+  const titleId = useId();
+
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="surface-card w-full max-w-md rounded-3xl p-6 shadow-xl">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="surface-card w-full max-w-md rounded-3xl p-6 shadow-xl"
+      >
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-display text-lg font-semibold text-ink">
+          <h3
+            id={titleId}
+            className="font-display text-lg font-semibold text-ink"
+          >
             {title}
           </h3>
           <button
             type="button"
             onClick={onCancel}
             className="rounded-full p-1 hover:bg-surface2"
+            aria-label="Close dialog"
           >
             <X className="h-4 w-4 text-muted" />
           </button>

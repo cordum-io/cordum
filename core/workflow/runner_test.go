@@ -289,3 +289,43 @@ func TestReconcilerStartStopsOnContext(t *testing.T) {
 		t.Fatalf("reconciler did not stop after context cancel")
 	}
 }
+
+func TestHandleJobResult_CancelledContext(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	jobStore, err := store.NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("job store: %v", err)
+	}
+	defer jobStore.Close()
+
+	workflowStore, err := NewRedisWorkflowStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	defer workflowStore.Close()
+
+	engine := NewEngine(workflowStore, &stubBus{})
+	rec := newReconciler(workflowStore, engine, jobStore, time.Minute, 10)
+
+	// Pre-cancel the context to simulate shutdown.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// HandleJobResult should return promptly with a cancelled context,
+	// not block on Redis operations.
+	done := make(chan error, 1)
+	go func() {
+		done <- rec.HandleJobResult(ctx, &pb.JobResult{JobId: "run-1:step-1"})
+	}()
+	select {
+	case <-done:
+		// Returned promptly — no goroutine leak.
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleJobResult did not return after context cancellation (goroutine leak)")
+	}
+}

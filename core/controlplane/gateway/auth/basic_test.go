@@ -108,6 +108,109 @@ func TestUsageRecordingDrain(t *testing.T) {
 	}
 }
 
+func TestCompositeAuthProvider_BasicProvider(t *testing.T) {
+	bp := &BasicAuthProvider{defaultTenant: "test"}
+	cp, err := NewCompositeAuthProvider(bp)
+	if err != nil {
+		t.Fatalf("NewCompositeAuthProvider: %v", err)
+	}
+
+	got := cp.BasicProvider()
+	if got != bp {
+		t.Fatal("expected BasicProvider to return the wrapped BasicAuthProvider")
+	}
+
+	us := cp.UserStore()
+	// No user store set — should return nil without panic.
+	if us != nil {
+		t.Fatal("expected nil UserStore when none configured")
+	}
+}
+
+func TestCompositeAuthProvider_BasicProvider_NotPresent(t *testing.T) {
+	// CompositeAuthProvider with only an OIDC adapter (no BasicAuthProvider).
+	adapter := &OIDCAuthAdapter{}
+	cp, err := NewCompositeAuthProvider(adapter)
+	if err != nil {
+		t.Fatalf("NewCompositeAuthProvider: %v", err)
+	}
+
+	got := cp.BasicProvider()
+	if got != nil {
+		t.Fatal("expected nil when no BasicAuthProvider in composite")
+	}
+
+	us := cp.UserStore()
+	if us != nil {
+		t.Fatal("expected nil UserStore when no BasicAuthProvider")
+	}
+}
+
+func TestRoleFromScopes(t *testing.T) {
+	tests := []struct {
+		name   string
+		scopes []string
+		want   string
+	}{
+		{"no scopes", nil, "viewer"},
+		{"empty scopes", []string{}, "viewer"},
+		{"read scope", []string{"read"}, "viewer"},
+		{"viewer scope", []string{"viewer"}, "viewer"},
+		{"write scope", []string{"write"}, "operator"},
+		{"operator scope", []string{"operator"}, "operator"},
+		{"admin scope", []string{"admin"}, "admin"},
+		{"multiple read+write", []string{"read", "write"}, "operator"},
+		{"multiple read+admin", []string{"read", "admin"}, "admin"},
+		{"multiple write+admin", []string{"write", "admin"}, "admin"},
+		{"all scopes", []string{"read", "write", "admin"}, "admin"},
+		{"case insensitive", []string{"ADMIN"}, "admin"},
+		{"unknown scope", []string{"custom"}, "viewer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := roleFromScopes(tt.scopes)
+			if got != tt.want {
+				t.Fatalf("roleFromScopes(%v) = %q, want %q", tt.scopes, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestManagedKeyScope_ReflectedInAuthContext(t *testing.T) {
+	tests := []struct {
+		name     string
+		scopes   []string
+		wantRole string
+	}{
+		{"read key", []string{"read"}, "viewer"},
+		{"write key", []string{"write"}, "operator"},
+		{"admin key", []string{"admin"}, "admin"},
+		{"no scopes key", nil, "viewer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ks := &fakeKeyStore{
+				validateFn: func(context.Context, string) (*ManagedKey, error) {
+					return &ManagedKey{ID: "key-1", Tenant: "default", Scopes: tt.scopes}, nil
+				},
+				recordFn: func(context.Context, string) error { return nil },
+			}
+			b := &BasicAuthProvider{
+				defaultTenant: "default",
+				keyStore:      ks,
+			}
+			authCtx, err := b.authenticate(context.Background(), "test-key", "")
+			if err != nil {
+				t.Fatalf("authenticate() error = %v", err)
+			}
+			b.DrainUsage()
+			if authCtx.Role != tt.wantRole {
+				t.Fatalf("role = %q, want %q", authCtx.Role, tt.wantRole)
+			}
+		})
+	}
+}
+
 func TestUsageRecordingErrorLogged(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))

@@ -98,6 +98,28 @@ func waitFor(t *testing.T, timeout, interval time.Duration, cond func() bool, ms
 	t.Fatalf("timed out waiting: %s", msg)
 }
 
+func TestStartBusTapsStartsWorkerExpiry(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.shutdownCh = make(chan struct{})
+
+	if s.workerExpireStop != nil {
+		t.Fatal("workerExpireStop should be nil before startBusTaps")
+	}
+
+	if err := s.startBusTaps(); err != nil {
+		t.Fatalf("start bus taps: %v", err)
+	}
+	t.Cleanup(func() {
+		close(s.shutdownCh)
+		s.stopBusTaps()
+		s.stopWorkerExpiry()
+	})
+
+	if s.workerExpireStop == nil {
+		t.Fatal("workerExpireStop should be set after startBusTaps")
+	}
+}
+
 func TestJobIDForBusPacket(t *testing.T) {
 	cases := []struct {
 		name   string

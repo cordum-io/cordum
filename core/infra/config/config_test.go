@@ -3,6 +3,15 @@ package config
 import "testing"
 
 func TestLoadDefaults(t *testing.T) {
+	t.Setenv("NATS_URL", "")
+	t.Setenv("REDIS_URL", "")
+	t.Setenv("SAFETY_KERNEL_ADDR", "")
+	t.Setenv("CONTEXT_ENGINE_ADDR", "")
+	t.Setenv("POOL_CONFIG_PATH", "")
+	t.Setenv("TIMEOUT_CONFIG_PATH", "")
+	t.Setenv("SAFETY_POLICY_PATH", "")
+	t.Setenv("OUTPUT_POLICY_ENABLED", "")
+
 	cfg := Load()
 	if cfg.NatsURL != defaultNATSURL {
 		t.Fatalf("expected default nats url")

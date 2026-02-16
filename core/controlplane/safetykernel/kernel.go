@@ -140,8 +140,18 @@ func Run(cfg *config.Config) error {
 		resultClient: resultClient,
 	}
 	srv.setPolicy(policy, snapshot)
+
+	// Lifecycle context for background goroutines — cancelled when Run returns.
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	defer lifecycleCancel()
+
+	var wg sync.WaitGroup
 	if loader.ShouldWatch() {
-		go srv.watchPolicy(loader)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			srv.watchPolicy(lifecycleCtx, loader)
+		}()
 	}
 
 	grpcServer := grpc.NewServer(serverCreds)
@@ -155,8 +165,11 @@ func Run(cfg *config.Config) error {
 	}
 
 	log.Printf("safety-kernel: listening on %s", cfg.SafetyKernelAddr)
-	if err := grpcServer.Serve(lis); err != nil {
-		return fmt.Errorf("grpc serve: %w", err)
+	serveErr := grpcServer.Serve(lis)
+	lifecycleCancel()
+	wg.Wait()
+	if serveErr != nil {
+		return fmt.Errorf("grpc serve: %w", serveErr)
 	}
 	return nil
 }
@@ -579,7 +592,7 @@ func pathMatchImpl(pattern, value string) (bool, error) {
 	return path.Match(pattern, value)
 }
 
-func (s *server) watchPolicy(loader *policyLoader) {
+func (s *server) watchPolicy(ctx context.Context, loader *policyLoader) {
 	interval := 30 * time.Second
 	if raw := os.Getenv("SAFETY_POLICY_RELOAD_INTERVAL"); raw != "" {
 		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
@@ -588,18 +601,26 @@ func (s *server) watchPolicy(loader *policyLoader) {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		policy, snapshot, err := loader.Load(context.Background())
-		if err != nil {
-			log.Printf("safety-kernel: policy reload failed: %v", err)
-			continue
-		}
-		s.mu.RLock()
-		current := s.snapshot
-		s.mu.RUnlock()
-		if snapshot != "" && snapshot != current {
-			s.setPolicy(policy, snapshot)
-			log.Printf("safety-kernel: policy snapshot updated %s", snapshot)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			policy, snapshot, err := loader.Load(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("safety-kernel: policy reload failed: %v", err)
+				continue
+			}
+			s.mu.RLock()
+			current := s.snapshot
+			s.mu.RUnlock()
+			if snapshot != "" && snapshot != current {
+				s.setPolicy(policy, snapshot)
+				log.Printf("safety-kernel: policy snapshot updated %s", snapshot)
+			}
 		}
 	}
 }

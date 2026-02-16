@@ -5,3 +5,7 @@ dist
 *.tmp
 *.log
 *.zip
+*.pem
+*.key
+*.crt
+.env*

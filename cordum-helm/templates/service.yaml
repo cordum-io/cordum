@@ -132,6 +132,9 @@ spec:
     - name: grpc
       port: {{ .Values.contextEngine.service.port }}
       targetPort: grpc
+    - name: metrics
+      port: {{ .Values.contextEngine.metricsPort | default 9094 }}
+      targetPort: metrics
   selector:
     {{- include "cordum.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: context-engine

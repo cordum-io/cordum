@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -40,6 +41,9 @@ type Config struct {
 	HeartbeatEvery  time.Duration
 	PublicKeys      map[string]*ecdsa.PublicKey
 	PrivateKey      *ecdsa.PrivateKey
+	// NATSTLSConfig is an optional TLS configuration for the NATS connection.
+	// When nil, NewWorker attempts to build one from NATS_TLS_* env vars.
+	NATSTLSConfig *tls.Config
 }
 
 // Worker subscribes to subjects and publishes job results.
@@ -88,7 +92,21 @@ func NewWorker(cfg Config) (*Worker, error) {
 	}
 
 	connectTimeout := defaultConnectTimeout
-	conn, err := nats.Connect(natsURL, nats.Name(workerID), nats.Timeout(connectTimeout))
+	natsOpts := []nats.Option{nats.Name(workerID), nats.Timeout(connectTimeout)}
+
+	tlsCfg := cfg.NATSTLSConfig
+	if tlsCfg == nil {
+		var tlsErr error
+		tlsCfg, tlsErr = NATSTLSConfigFromEnv()
+		if tlsErr != nil {
+			return nil, fmt.Errorf("nats tls config: %w", tlsErr)
+		}
+	}
+	if tlsCfg != nil {
+		natsOpts = append(natsOpts, nats.Secure(tlsCfg))
+	}
+
+	conn, err := nats.Connect(natsURL, natsOpts...)
 	if err != nil {
 		return nil, err
 	}

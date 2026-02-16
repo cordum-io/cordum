@@ -1,0 +1,73 @@
+{{- if .Values.configBootstrap.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cordum.fullname" . }}-config-bootstrap
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: config-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        {{- include "cordum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: config-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bootstrap
+          image: {{ .Values.configBootstrap.image }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cordum.fullname" . }}-secrets
+                  key: apiKey
+            - name: GATEWAY_URL
+              value: "http://{{ include "cordum.fullname" . }}-api-gateway:{{ .Values.gateway.service.httpPort }}"
+            - name: MAX_RETRIES
+              value: {{ .Values.configBootstrap.retries | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for gateway to become ready..."
+              attempt=0
+              while [ "$attempt" -lt "$MAX_RETRIES" ]; do
+                attempt=$((attempt + 1))
+                status=$(curl -s -o /dev/null -w '%{http_code}' \
+                  -H "X-API-Key: $API_KEY" \
+                  -H "X-Tenant-ID: default" \
+                  "$GATEWAY_URL/api/v1/config" 2>/dev/null || echo "000")
+                if [ "$status" = "200" ]; then
+                  echo "Config endpoint returned 200 — bootstrap complete."
+                  exit 0
+                fi
+                echo "Attempt $attempt/$MAX_RETRIES: status=$status, retrying in 4s..."
+                sleep 4
+              done
+              echo "ERROR: Gateway config endpoint not reachable after $MAX_RETRIES attempts."
+              exit 1
+          resources:
+            limits:
+              cpu: 100m
+              memory: 64Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+{{- end }}

@@ -195,7 +195,7 @@ function runToGraph(run: WorkflowRun): { nodes: Node[]; edges: Edge[] } {
       }
     }
 
-    const isRunning = step.status === "running" || step.status === "in_progress";
+    const isRunning = step.status === "running";
 
     nodes.push({
       id: step.id,
@@ -217,7 +217,7 @@ function runToGraph(run: WorkflowRun): { nodes: Node[]; edges: Edge[] } {
 
     for (const dep of deps) {
       const depStep = run.steps.find((s) => s.id === dep);
-      const depSucceeded = depStep?.status === "succeeded" || depStep?.status === "completed";
+      const depSucceeded = depStep?.status === "succeeded";
       edges.push({
         id: `e-${dep}-${step.id}`,
         source: dep,

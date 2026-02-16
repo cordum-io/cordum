@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -197,7 +198,13 @@ func (e *Engine) cancelParallelChildren(parent *StepRun, run *WorkflowRun, child
 			continue
 		}
 		if child.JobID != "" {
-			e.publishJobCancel(child.JobID, "parallel strategy satisfied")
+			if err := e.publishJobCancel(child.JobID, "parallel strategy satisfied"); err != nil {
+				slog.Error("cancel parallel child publish failed",
+					"job_id", child.JobID,
+					"step_id", childStepID,
+					"err", err,
+				)
+			}
 		}
 		child.Status = StepStatusCancelled
 		child.CompletedAt = &now

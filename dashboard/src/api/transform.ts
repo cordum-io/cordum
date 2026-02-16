@@ -84,6 +84,15 @@ export interface BackendJobDetail extends BackendJobRecord {
   workflow_id?: string;
   run_id?: string;
   step_id?: string;
+  idempotency_key?: string;
+  labels?: Record<string, string>;
+  approval_required?: boolean;
+  approval_ref?: string;
+  approval_by?: string;
+  approval_role?: string;
+  approval_at?: number;
+  approval_reason?: string;
+  approval_note?: string;
 }
 
 export interface BackendWorkflowStep {
@@ -478,6 +487,11 @@ export function mapOutputSafetyRecord(
 // ---------------------------------------------------------------------------
 
 export function mapJobRecord(record: BackendJobRecord): Job {
+  let id = record.id;
+  if (!id) {
+    id = crypto.randomUUID();
+    logger.warn("transform", "Job record with empty ID, assigned placeholder", { placeholderId: id });
+  }
   const updatedAt = microsToISO(record.updated_at);
   const outputSafetyFromDecision =
     record.output_decision
@@ -492,7 +506,7 @@ export function mapJobRecord(record: BackendJobRecord): Job {
     ),
   );
   return {
-    id: record.id,
+    id,
     type: "",
     topic: record.topic || "",
     status: normalizeJobStatus(record.state),
@@ -534,6 +548,15 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
     lastState: detail.last_state,
     workflowRunId: detail.run_id || base.workflowRunId,
     workflowId: detail.workflow_id,
+    idempotencyKey: detail.idempotency_key,
+    labels: detail.labels,
+    approvalRequired: detail.approval_required,
+    approvalRef: detail.approval_ref,
+    approvalBy: detail.approval_by,
+    approvalRole: detail.approval_role,
+    approvalAt: detail.approval_at,
+    approvalReason: detail.approval_reason,
+    approvalNote: detail.approval_note,
   };
 }
 
@@ -873,8 +896,8 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
     workflowId: run.workflow_id || "",
     status: (run.status as WorkflowRun["status"]) || "pending",
     steps,
-    startedAt: run.started_at || "",
-    completedAt: run.completed_at || undefined,
+    startedAt: run.started_at ?? null,
+    completedAt: run.completed_at ?? null,
     duration: undefined,
     createdAt: run.created_at,
     updatedAt: run.updated_at,
@@ -896,13 +919,16 @@ export function computeUrgencyLevel(waitMs: number): UrgencyLevel {
   return "breach";
 }
 
-function deriveApprovalStatus(
+export function deriveApprovalStatus(
   jobState: string | undefined,
   decision: string | undefined,
 ): string {
   if (decision === "approve" || decision === "approved") return "approved";
   if (decision === "reject" || decision === "rejected" || decision === "deny")
     return "rejected";
+  if (jobState === "denied") return "rejected";
+  if (jobState === "output_quarantined") return "quarantined";
+  if (jobState === "approval_required") return "pending";
   if (
     jobState === "succeeded" ||
     jobState === "failed" ||

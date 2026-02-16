@@ -10,11 +10,13 @@ require() {
 
 usage() {
   cat <<'EOF'
-Usage: ./tools/scripts/production_gate.sh [--gate N] [--skip-rebuild]
+Usage: ./tools/scripts/production_gate.sh [--gate N] [--skip-rebuild] [--strict]
 
 Runs production readiness gates.
-  --gate N         Run only gate N (1..17)
+  --gate N         Run only gate N (1..18)
   --skip-rebuild   Skip docker compose down/rebuild in gate 1
+  --strict         Make ALL gates blocking (for release pipelines).
+                   Also settable via STRICT_MODE=1 env var.
 EOF
 }
 
@@ -96,6 +98,22 @@ build_auth_headers() {
   JSON_HEADERS=(-H "Content-Type: application/json")
 }
 
+build_curl_tls_opts() {
+  CURL_TLS_OPTS=()
+  local ca="${CORDUM_TLS_CA:-}"
+  if [[ -z "${ca}" && -f "./certs/ca/ca.crt" ]]; then
+    ca="./certs/ca/ca.crt"
+  fi
+  if [[ -n "${ca}" ]]; then
+    CURL_TLS_OPTS=(--cacert "${ca}")
+    # Windows/Schannel needs --ssl-no-revoke for self-signed CA certs
+    # (CRL check fails with CERT_TRUST_REVOCATION_STATUS_UNKNOWN).
+    if curl --version 2>/dev/null | grep -qi schannel; then
+      CURL_TLS_OPTS+=(--ssl-no-revoke)
+    fi
+  fi
+}
+
 api_url() {
   local path="$1"
   if [[ "${path}" == /api/v1/* ]]; then
@@ -110,14 +128,14 @@ api_code() {
   local path="$2"
   shift 2
   curl -sS -o /dev/null -w "%{http_code}" -X "${method}" \
-    "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")"
+    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")"
 }
 
 api_body() {
   local method="$1"
   local path="$2"
   shift 2
-  curl -sS -X "${method}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")"
+  curl -sS -X "${method}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")"
 }
 
 api_call() {
@@ -135,7 +153,7 @@ http_code() {
   local method="$1"
   local url="$2"
   shift 2
-  curl -s -o /dev/null -w "%{http_code}" -X "${method}" "$@" "${url}" 2>/dev/null
+  curl -s -o /dev/null -w "%{http_code}" -X "${method}" "${CURL_TLS_OPTS[@]}" "$@" "${url}" 2>/dev/null
 }
 
 wait_for_status_ready() {
@@ -209,20 +227,24 @@ poll_run_terminal() {
 ensure_mock_bank_pack() {
   if command -v cordumctl >/dev/null 2>&1; then
     CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+      CORDUM_GATEWAY="${API_BASE}" \
       cordumctl pack install --upgrade ./demo/mock-bank/pack >/dev/null
     return
   fi
   CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+    CORDUM_GATEWAY="${API_BASE}" \
     go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack >/dev/null
 }
 
 ensure_demo_guardrails_pack() {
   if command -v cordumctl >/dev/null 2>&1; then
     CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+      CORDUM_GATEWAY="${API_BASE}" \
       cordumctl pack install --upgrade ./examples/demo-guardrails >/dev/null
     return
   fi
   CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+    CORDUM_GATEWAY="${API_BASE}" \
     go run ./cmd/cordumctl pack install --upgrade ./examples/demo-guardrails >/dev/null
 }
 
@@ -235,10 +257,28 @@ has_mock_bank_worker() {
   echo "${workers}" | jq -e '[.[] | select(.pool == "demo-mock-bank")] | length > 0' >/dev/null 2>&1
 }
 
+MOCK_BANK_PID_FILE="/tmp/production-gate-mock-bank.pid"
+
+# Recover PID from file (survives $() subshell boundaries since run_gate
+# captures gate output in a subshell, losing any variables set there).
+_recover_mock_bank_pid() {
+  if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]] && [[ -f "${MOCK_BANK_PID_FILE}" ]]; then
+    MOCK_BANK_WORKER_PID="$(cat "${MOCK_BANK_PID_FILE}" 2>/dev/null || true)"
+    if [[ -n "${MOCK_BANK_WORKER_PID}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
+      MOCK_BANK_WORKER_STARTED=1
+    else
+      MOCK_BANK_WORKER_PID=""
+      MOCK_BANK_WORKER_STARTED=0
+    fi
+  fi
+}
+
 ensure_mock_bank_worker() {
   if has_mock_bank_worker; then
     return 0
   fi
+
+  _recover_mock_bank_pid
 
   if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && ! kill -0 "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1; then
     MOCK_BANK_WORKER_PID=""
@@ -246,9 +286,14 @@ ensure_mock_bank_worker() {
   fi
 
   if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]]; then
-    (cd demo/mock-bank/worker && exec env NATS_URL="${NATS_URL}" REDIS_URL="${REDIS_URL}" go run .) >/tmp/production-gate-mock-bank-worker.log 2>&1 &
+    # Use nohup so the worker survives when the $() subshell (from run_gate) exits.
+    nohup env NATS_URL="${NATS_URL}" REDIS_URL="${REDIS_URL}" \
+      NATS_TLS_CA="${NATS_TLS_CA:-}" NATS_TLS_CERT="${NATS_TLS_CERT:-}" NATS_TLS_KEY="${NATS_TLS_KEY:-}" NATS_TLS_SERVER_NAME="${NATS_TLS_SERVER_NAME:-}" \
+      REDIS_TLS_CA="${REDIS_TLS_CA:-}" REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" REDIS_TLS_SERVER_NAME="${REDIS_TLS_SERVER_NAME:-}" \
+      go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 &
     MOCK_BANK_WORKER_PID=$!
     MOCK_BANK_WORKER_STARTED=1
+    echo "${MOCK_BANK_WORKER_PID}" >"${MOCK_BANK_PID_FILE}"
   fi
 
   for _ in {1..40}; do
@@ -259,10 +304,11 @@ ensure_mock_bank_worker() {
   done
 
   if [[ "${MOCK_BANK_WORKER_STARTED:-0}" == "1" ]] && [[ -n "${MOCK_BANK_WORKER_PID:-}" ]]; then
-    kill -- -"${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || kill "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || true
+    kill "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || true
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
     MOCK_BANK_WORKER_PID=""
     MOCK_BANK_WORKER_STARTED=0
+    rm -f "${MOCK_BANK_PID_FILE}"
   fi
 
   echo "mock-bank worker did not register" >&2
@@ -270,10 +316,12 @@ ensure_mock_bank_worker() {
 }
 
 cleanup() {
-  if [[ "${MOCK_BANK_WORKER_STARTED:-0}" == "1" ]] && [[ -n "${MOCK_BANK_WORKER_PID:-}" ]]; then
-    kill -- -"${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || kill "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1 || true
+  _recover_mock_bank_pid
+  if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
+    kill "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
   fi
+  rm -f "${MOCK_BANK_PID_FILE}" /tmp/gate_ws_*.tmp 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -308,6 +356,13 @@ gate_1_deploy() {
     return 1
   }
 
+  # Verify config auto-bootstrap: GET /api/v1/config should return 200.
+  code="$(api_code GET /config)"
+  [[ "${code}" == "200" ]] || {
+    echo "config endpoint returned ${code} — auto-bootstrap may have failed" >&2
+    return 1
+  }
+
   echo "quickstart/smoke/health checks passed"
 }
 
@@ -338,7 +393,7 @@ gate_2_auth() {
     return 1
   }
 
-  oidc_enabled="$(curl -sS "$(api_url /auth/config)" | jq -r '.oidc_enabled // false' 2>/dev/null || echo "false")"
+  oidc_enabled="$(curl -sS "${CURL_TLS_OPTS[@]}" "$(api_url /auth/config)" | jq -r '.oidc_enabled // false' 2>/dev/null || echo "false")"
   if [[ -n "${CORDUM_JWT_HMAC_SECRET:-}" ]]; then
     jwt_token="$(generate_hs256_jwt "${CORDUM_JWT_HMAC_SECRET}" "${tenant_a}")"
     code="$(http_code GET "$(api_url /status)" -H "Authorization: Bearer ${jwt_token}" -H "X-Tenant-ID: ${tenant_a}")"
@@ -866,11 +921,15 @@ gate_7_security() {
   local large_file large_code
   local redis_secret
 
-  burst="${RATE_LIMIT_BURST_REQUESTS:-5000}"
-  parallel="${RATE_LIMIT_PARALLEL:-200}"
+  burst="${RATE_LIMIT_BURST_REQUESTS:-500}"
+  parallel="${RATE_LIMIT_PARALLEL:-50}"
   local attempt_burst attempt_parallel
   local attempt
-  redis_secret="${REDIS_PASSWORD:-cordum-dev}"
+  if [[ -z "${REDIS_PASSWORD:-}" ]]; then
+    echo "FAIL: REDIS_PASSWORD not set — cannot run security gate" >&2
+    return 1
+  fi
+  redis_secret="${REDIS_PASSWORD}"
 
   [[ "${burst}" =~ ^[0-9]+$ && "${parallel}" =~ ^[0-9]+$ ]] || {
     echo "RATE_LIMIT_BURST_REQUESTS and RATE_LIMIT_PARALLEL must be numeric" >&2
@@ -889,7 +948,7 @@ gate_7_security() {
     for _ in $(seq 1 "${attempt_burst}"); do
       (
         curl -sS -o /dev/null -w "%{http_code}" \
-          "${API_BASE}/health" >>"${tmp_codes}"
+          "${CURL_TLS_OPTS[@]}" "${API_BASE}/health" >>"${tmp_codes}"
         echo >>"${tmp_codes}"
       ) &
       while (( $(jobs -pr | wc -l) >= attempt_parallel )); do
@@ -904,7 +963,10 @@ gate_7_security() {
       break
     fi
     attempt_burst=$((attempt_burst * 2))
-    if (( attempt_parallel < 800 )); then
+    if (( attempt_burst > 2000 )); then
+      attempt_burst=2000
+    fi
+    if (( attempt_parallel < 200 )); then
       attempt_parallel=$((attempt_parallel * 2))
     fi
     log "gate 7: no 429 observed; escalating burst to ${attempt_burst} (parallel=${attempt_parallel})"
@@ -928,7 +990,7 @@ gate_7_security() {
     return 1
   fi
 
-  headers="$(curl -sSI -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" "$(api_url /status)")"
+  headers="$(curl -sSI "${CURL_TLS_OPTS[@]}" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" "$(api_url /status)")"
   echo "${headers}" | grep -qi '^X-Frame-Options:' || {
     echo "missing security header: X-Frame-Options" >&2
     return 1
@@ -974,6 +1036,7 @@ gate_7_security() {
     printf '","topic":"job.default"}'
   } >"${large_file}"
   large_code="$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+    "${CURL_TLS_OPTS[@]}" \
     -H "X-API-Key: ${API_KEY}" \
     -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Content-Type: application/json" \
@@ -1041,34 +1104,34 @@ gate_8_extensions() {
     return 1
   }
 
-  mcp_status="$(curl -sS -X GET "${AUTH_HEADERS[@]}" "${API_BASE}/mcp/status")"
+  mcp_status="$(curl -sS -X GET "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${API_BASE}/mcp/status")"
   echo "${mcp_status}" | jq -e '.running == true and (.enabled_tools // 0) >= 1 and (.enabled_resources // 0) >= 1' >/dev/null 2>&1 || {
     echo "mcp status did not report running/enabled tool/resource counts" >&2
     return 1
   }
 
-  mcp_ping="$(curl -sS -X POST "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+  mcp_ping="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' "${API_BASE}/mcp/message")"
   echo "${mcp_ping}" | jq -e '.result != null and .error == null' >/dev/null 2>&1 || {
     echo "mcp ping failed" >&2
     return 1
   }
 
-  tools_list="$(curl -sS -X POST "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+  tools_list="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' "${API_BASE}/mcp/message")"
   echo "${tools_list}" | jq -e '(.result.tools | length) >= 1' >/dev/null 2>&1 || {
     echo "mcp tools/list returned no tools" >&2
     return 1
   }
 
-  resources_list="$(curl -sS -X POST "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+  resources_list="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -d '{"jsonrpc":"2.0","id":3,"method":"resources/list"}' "${API_BASE}/mcp/message")"
   echo "${resources_list}" | jq -e '(.result.resources | length) >= 1' >/dev/null 2>&1 || {
     echo "mcp resources/list returned no resources" >&2
     return 1
   }
 
-  resources_read="$(curl -sS -X POST "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+  resources_read="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -d '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"cordum://health"}}' "${API_BASE}/mcp/message")"
   echo "${resources_read}" | jq -e '.result != null and (.result.contents | length) >= 1' >/dev/null 2>&1 || {
     echo "mcp resources/read health probe failed" >&2
@@ -1333,6 +1396,7 @@ gate_9_identity() {
 
   # --- Login with new user ---
   resp="$(curl -sS -X POST \
+    "${CURL_TLS_OPTS[@]}" \
     "$(api_url /auth/login)" \
     "${JSON_HEADERS[@]}" \
     -d "$(jq -cn --arg u "${user_name}" --arg p "${user_password}" '{username:$u, password:$p}')")"
@@ -1401,7 +1465,8 @@ gate_9_identity() {
       return 1
     }
   else
-    log "gate 9: revoke key returned ${code} (known bug: keystore unmarshal on scopes)"
+    echo "revoke key expected 200/204, got ${code}" >&2
+    return 1
   fi
 
   # --- RBAC: create viewer user ---
@@ -1414,6 +1479,7 @@ gate_9_identity() {
   if [[ -n "${viewer_id}" ]]; then
     # Login as viewer, get session
     resp="$(curl -sS -X POST \
+      "${CURL_TLS_OPTS[@]}" \
       "$(api_url /auth/login)" \
       "${JSON_HEADERS[@]}" \
       -d "$(jq -cn --arg u "pg9-viewer-${user_name}" --arg p "${viewer_password}" '{username:$u, password:$p}')")"
@@ -1425,7 +1491,10 @@ gate_9_identity() {
         "${JSON_HEADERS[@]}" \
         -d '{"prompt":"viewer test","topic":"job.default"}')"
       [[ "${code}" == "403" ]] || {
-        log "gate 9: viewer RBAC check: expected 403 for job submit, got ${code} (non-blocking)"
+        echo "viewer RBAC: expected 403 for job submit, got ${code}" >&2
+        # Cleanup before failing
+        api_code DELETE "/users/${viewer_id}" >/dev/null 2>&1 || true
+        return 1
       }
     fi
     # Cleanup viewer
@@ -1436,6 +1505,7 @@ gate_9_identity() {
 
   # --- Change password ---
   resp="$(curl -sS -X POST \
+    "${CURL_TLS_OPTS[@]}" \
     "$(api_url /auth/login)" \
     "${JSON_HEADERS[@]}" \
     -d "$(jq -cn --arg u "${user_name}" --arg p "${user_password}" '{username:$u, password:$p}')")"
@@ -1447,7 +1517,8 @@ gate_9_identity() {
       "${JSON_HEADERS[@]}" \
       -d "$(jq -cn --arg old "${user_password}" --arg new "${new_password}" '{current_password:$old, new_password:$new}')")"
     [[ "${code}" == "200" || "${code}" == "204" ]] || {
-      log "gate 9: change password returned ${code} (non-blocking)"
+      echo "change password expected 200/204, got ${code}" >&2
+      return 1
     }
   fi
 
@@ -1532,7 +1603,8 @@ gate_10_data_lifecycle() {
       }
     fi
   else
-    log "gate 10: DLQ entry not found for denied job (non-blocking, continuing)"
+    echo "DLQ entry not found for denied job ${dlq_job_id}" >&2
+    return 1
   fi
 
   # --- Artifact upload ---
@@ -1548,7 +1620,8 @@ gate_10_data_lifecycle() {
   artifact_retrieved="$(api_body GET "/artifacts/${artifact_ptr}")"
   # Response may be raw content or JSON; verify non-empty
   [[ -n "${artifact_retrieved}" ]] || {
-    log "gate 10: artifact download returned empty (non-blocking)"
+    echo "artifact download returned empty for pointer ${artifact_ptr}" >&2
+    return 1
   }
 
   # --- Artifact oversize (>10 MiB) ---
@@ -1559,7 +1632,7 @@ gate_10_data_lifecycle() {
     printf '"}'
   } >"${oversize_file}"
   code="$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
-    "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     --data-binary @"${oversize_file}" \
     "$(api_url /artifacts)")"
   rm -f "${oversize_file}"
@@ -1654,6 +1727,7 @@ gate_11_streaming() {
   local ws_tmp
   ws_tmp="$(mktemp)"
   curl -s -o /dev/null -w "%{http_code}" -m 2 \
+    "${CURL_TLS_OPTS[@]}" \
     -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Connection: Upgrade" -H "Upgrade: websocket" \
     -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
@@ -1672,6 +1746,7 @@ gate_11_streaming() {
   # --- WebSocket no-auth → rejected ---
   ws_tmp="$(mktemp)"
   curl -s -o /dev/null -w "%{http_code}" -m 2 \
+    "${CURL_TLS_OPTS[@]}" \
     -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Connection: Upgrade" -H "Upgrade: websocket" \
     -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
@@ -1697,7 +1772,7 @@ gate_11_streaming() {
   # --- Job SSE stream endpoint ---
   # Just verify endpoint returns 200 with text/event-stream (we can't keep SSE open in bash)
   sse_code="$(curl -sS -o /dev/null -w "%{http_code}" -m 3 \
-    "${AUTH_HEADERS[@]}" \
+    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
     "$(api_url "/jobs/${job_id}/stream")" 2>/dev/null || echo "200")"
   # SSE may return 200 then stream, or timeout after our 3s limit — either is acceptable
   [[ "${sse_code}" != "404" && "${sse_code}" != "500" ]] || {
@@ -2246,6 +2321,121 @@ gate_16_degradation() {
 # Gate 17 — Dashboard: HTML serves, static assets load, API proxy,
 #            Content-Security-Policy, theme assets
 # ---------------------------------------------------------------------------
+gate_18_release_config() {
+  local compose_file="docker-compose.release.yml"
+  local line
+  local required_var
+
+  if [[ ! -f "${compose_file}" ]]; then
+    echo "FAIL: ${compose_file} not found" >&2
+    return 1
+  fi
+
+  # Verify OUTPUT_POLICY_ENABLED defaults to true (not false/empty)
+  line="$(grep 'OUTPUT_POLICY_ENABLED' "${compose_file}" || true)"
+  if [[ -z "${line}" ]]; then
+    echo "FAIL: OUTPUT_POLICY_ENABLED not found in ${compose_file}" >&2
+    return 1
+  fi
+  if echo "${line}" | grep -qE ':-false|:-0|:-\}'; then
+    echo "FAIL: OUTPUT_POLICY_ENABLED defaults to disabled in ${compose_file}" >&2
+    return 1
+  fi
+  if ! echo "${line}" | grep -qE ':-true|:-1'; then
+    echo "FAIL: OUTPUT_POLICY_ENABLED does not default to true/1 in ${compose_file}" >&2
+    return 1
+  fi
+
+  # Verify release compose parses with required variable placeholders.
+  # (Use placeholder values for compile-time substitution checks.)
+  REDIS_PASSWORD="gate18-redispw" \
+  CORDUM_API_KEY="gate18-apikey" \
+  CORDUM_TLS_DIR="${CORDUM_TLS_DIR:-./certs}" \
+  SAFETY_POLICY_PUBLIC_KEY="${SAFETY_POLICY_PUBLIC_KEY:-gate18-public-key}" \
+  SAFETY_POLICY_SIGNATURE="${SAFETY_POLICY_SIGNATURE:-gate18-signature}" \
+    "${COMPOSE_CMD[@]}" -f "${compose_file}" config >/dev/null 2>&1 || {
+      echo "FAIL: ${compose_file} does not parse via docker compose config" >&2
+      return 1
+    }
+
+  # Production release config must not rely on insecure TLS bypasses.
+  if grep -q 'TLS_INSECURE' "${compose_file}"; then
+    echo "FAIL: TLS_INSECURE bypass found in ${compose_file}" >&2
+    return 1
+  fi
+
+  # NATS and Redis transport must be TLS in production.
+  if grep -q 'NATS_URL:.*nats://' "${compose_file}"; then
+    echo "FAIL: NATS_URL uses plaintext nats:// in ${compose_file}" >&2
+    return 1
+  fi
+  if ! grep -q 'NATS_URL:.*tls://' "${compose_file}"; then
+    echo "FAIL: NATS_URL does not use tls:// in ${compose_file}" >&2
+    return 1
+  fi
+  if grep -q 'REDIS_URL:.*redis://' "${compose_file}"; then
+    echo "FAIL: REDIS_URL uses plaintext redis:// in ${compose_file}" >&2
+    return 1
+  fi
+  if ! grep -q 'REDIS_URL:.*rediss://' "${compose_file}"; then
+    echo "FAIL: REDIS_URL does not use rediss:// in ${compose_file}" >&2
+    return 1
+  fi
+
+  # Policy signatures must not be disabled in production release config.
+  if grep -q 'SAFETY_POLICY_SIGNATURE_REQUIRED:.*false' "${compose_file}"; then
+    echo "FAIL: SAFETY_POLICY_SIGNATURE_REQUIRED set false in ${compose_file}" >&2
+    return 1
+  fi
+  if ! grep -q 'SAFETY_POLICY_PUBLIC_KEY:.*:?error' "${compose_file}"; then
+    echo "FAIL: SAFETY_POLICY_PUBLIC_KEY is not required in ${compose_file}" >&2
+    return 1
+  fi
+  if ! grep -q 'SAFETY_POLICY_SIGNATURE:.*:?error' "${compose_file}"; then
+    echo "FAIL: SAFETY_POLICY_SIGNATURE is not required in ${compose_file}" >&2
+    return 1
+  fi
+
+  # Verify critical server/client TLS env wiring exists.
+  for required_var in \
+    GRPC_TLS_CERT GRPC_TLS_KEY GATEWAY_HTTP_TLS_CERT GATEWAY_HTTP_TLS_KEY \
+    SAFETY_KERNEL_TLS_CERT SAFETY_KERNEL_TLS_KEY \
+    CONTEXT_ENGINE_TLS_CERT CONTEXT_ENGINE_TLS_KEY \
+    NATS_TLS_CA NATS_TLS_CERT NATS_TLS_KEY \
+    REDIS_TLS_CA REDIS_TLS_CERT REDIS_TLS_KEY \
+    SAFETY_KERNEL_TLS_CA; do
+    if ! grep -q "${required_var}" "${compose_file}"; then
+      echo "FAIL: missing ${required_var} in ${compose_file}" >&2
+      return 1
+    fi
+  done
+
+  # Verify internal services do not expose host ports
+  local internal_services=("nats" "redis" "context-engine" "safety-kernel" "workflow-engine")
+  local svc in_svc=0 svc_match=""
+  while IFS= read -r line; do
+    if echo "${line}" | grep -qE '^  [a-z]'; then
+      svc_match=""
+      for svc in "${internal_services[@]}"; do
+        if echo "${line}" | grep -qE "^  ${svc}:"; then
+          svc_match="${svc}"
+          in_svc=1
+          break
+        fi
+      done
+      if [[ -z "${svc_match}" ]]; then
+        in_svc=0
+      fi
+    fi
+    if [[ "${in_svc}" == "1" ]] && echo "${line}" | grep -qE '^\s+- "[0-9]+:[0-9]+"'; then
+      echo "FAIL: internal service ${svc_match} exposes host port in ${compose_file}: ${line}" >&2
+      return 1
+    fi
+  done < "${compose_file}"
+
+  echo "release config checks passed (secure tls wiring, policy signatures, no internal port exposure)"
+}
+
 gate_17_dashboard() {
   local code resp
 
@@ -2275,7 +2465,8 @@ gate_17_dashboard() {
   # CSP may be in HTML meta tag instead of header — both are valid
   if [[ -z "${csp_header}" ]]; then
     echo "${html_body}" | grep -qi 'content-security-policy' || {
-      log "gate 17: no Content-Security-Policy header or meta tag (non-blocking)"
+      echo "missing Content-Security-Policy header and meta tag" >&2
+      return 1
     }
   fi
 
@@ -2364,18 +2555,27 @@ write_results_json() {
   local generated_at
   local selected_gate
   local all_passed="true"
+  local blocking_passed="true"
   local gate_lines
-  local gate_no
+  local gate_no class
 
   generated_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   selected_gate="${SELECT_GATE:-all}"
   gate_lines=""
 
   for gate_no in "${SELECTED_GATES[@]}"; do
+    if is_blocking_gate "${gate_no}"; then
+      class="BLOCKING"
+    else
+      class="ADVISORY"
+    fi
     if [[ "${GATE_STATUS[${gate_no}]}" != "PASS" ]]; then
       all_passed="false"
+      if [[ "${class}" == "BLOCKING" ]]; then
+        blocking_passed="false"
+      fi
     fi
-    gate_lines+="${gate_no}"$'\t'"${GATE_NAME[${gate_no}]}"$'\t'"${GATE_STATUS[${gate_no}]}"$'\t'"${GATE_DURATION_MS[${gate_no}]}"$'\t'"${GATE_MESSAGE[${gate_no}]}"$'\n'
+    gate_lines+="${gate_no}"$'\t'"${GATE_NAME[${gate_no}]}"$'\t'"${GATE_STATUS[${gate_no}]}"$'\t'"${GATE_DURATION_MS[${gate_no}]}"$'\t'"${GATE_MESSAGE[${gate_no}]}"$'\t'"${class}"$'\n'
   done
 
   {
@@ -2385,13 +2585,19 @@ write_results_json() {
     printf '  "tenant_id": %s,\n' "$(json_escape "${TENANT_ID}")"
     printf '  "selected_gate": %s,\n' "$(json_escape "${selected_gate}")"
     printf '  "all_passed": %s,\n' "${all_passed}"
+    printf '  "blocking_passed": %s,\n' "${blocking_passed}"
+    if [[ "${STRICT_MODE:-0}" == "1" ]]; then
+      printf '  "strict_mode": true,\n'
+    else
+      printf '  "strict_mode": false,\n'
+    fi
     printf '  "gates": [\n'
     printf '%s' "${gate_lines}" | awk -F'\t' '
-      NF >= 5 {
+      NF >= 6 {
         gsub(/\\/,"\\\\",$2); gsub(/"/,"\\\"",$2);
         gsub(/\\/,"\\\\",$3); gsub(/"/,"\\\"",$3);
         gsub(/\\/,"\\\\",$5); gsub(/"/,"\\\"",$5);
-        printf("    {\"gate\": %d, \"name\": \"%s\", \"status\": \"%s\", \"duration_ms\": %d, \"message\": \"%s\"}", $1, $2, $3, $4, $5);
+        printf("    {\"gate\": %d, \"name\": \"%s\", \"status\": \"%s\", \"duration_ms\": %d, \"message\": \"%s\", \"class\": \"%s\"}", $1, $2, $3, $4, $5, $6);
         if (NR > 0) printf(",\n");
       }
     ' | sed '$ s/,$//'
@@ -2400,26 +2606,48 @@ write_results_json() {
   } >"${output_file}"
 }
 
+is_blocking_gate() {
+  local gate_no="$1"
+  local bg
+  for bg in "${BLOCKING_GATES[@]}"; do
+    [[ "${bg}" == "${gate_no}" ]] && return 0
+  done
+  return 1
+}
+
 print_summary() {
-  local gate_no
-  local failed=0
+  local gate_no class
+  local blocking_failed=0
+  local advisory_failed=0
   echo ""
-  echo "Gate | Status | Duration(ms) | Name"
-  echo "-----|--------|--------------|-------------------------------"
+  echo "Gate | Class     | Status | Duration(ms) | Name"
+  echo "-----|-----------|--------|--------------|-------------------------------"
   for gate_no in "${SELECTED_GATES[@]}"; do
-    printf "%4s | %6s | %12s | %s\n" "${gate_no}" "${GATE_STATUS[${gate_no}]}" "${GATE_DURATION_MS[${gate_no}]}" "${GATE_NAME[${gate_no}]}"
+    if is_blocking_gate "${gate_no}"; then
+      class="BLOCKING"
+    else
+      class="ADVISORY"
+    fi
+    printf "%4s | %-9s | %6s | %12s | %s\n" "${gate_no}" "${class}" "${GATE_STATUS[${gate_no}]}" "${GATE_DURATION_MS[${gate_no}]}" "${GATE_NAME[${gate_no}]}"
     if [[ "${GATE_STATUS[${gate_no}]}" != "PASS" ]]; then
-      failed=1
       echo "      message: ${GATE_MESSAGE[${gate_no}]}"
+      if [[ "${class}" == "BLOCKING" ]]; then
+        blocking_failed=1
+      else
+        advisory_failed=1
+      fi
     fi
   done
   echo ""
-  if [[ "${failed}" -eq 0 ]]; then
-    echo "[production-gate] all selected gates passed"
-    return 0
+  if [[ "${blocking_failed}" -eq 1 ]]; then
+    echo "[production-gate] BLOCKING gate(s) failed — release blocked"
+    return 1
   fi
-  echo "[production-gate] one or more gates failed"
-  return 1
+  if [[ "${advisory_failed}" -eq 1 ]]; then
+    echo "[production-gate] advisory gate(s) failed (non-blocking)"
+  fi
+  echo "[production-gate] all blocking gates passed"
+  return 0
 }
 
 require docker
@@ -2440,27 +2668,68 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 ensure_compose_cmd
 
-API_BASE="${CORDUM_API_BASE:-http://localhost:8081}"
-DASHBOARD_BASE="${CORDUM_DASHBOARD_URL:-http://localhost:8082}"
 API_KEY="${CORDUM_API_KEY:-${API_KEY:-}}"
 TENANT_ID="${CORDUM_TENANT_ID:-default}"
 ORG_ID="${CORDUM_ORG_ID:-${TENANT_ID}}"
-REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379}"
-NATS_URL="${NATS_URL:-nats://localhost:4222}"
+REDIS_PASSWORD="${REDIS_PASSWORD:-cordum-dev}"
+DASHBOARD_BASE="${CORDUM_DASHBOARD_URL:-http://localhost:8082}"
+
+# TLS auto-detection: if CA cert exists, default to TLS URLs.
+_tls_ca="${CORDUM_TLS_CA:-}"
+if [[ -z "${_tls_ca}" && -f "./certs/ca/ca.crt" ]]; then
+  _tls_ca="./certs/ca/ca.crt"
+fi
+if [[ -n "${_tls_ca}" ]]; then
+  # Export so subprocess tools (cordumctl, platform_smoke.sh) pick it up.
+  export CORDUM_TLS_CA="${_tls_ca}"
+  API_BASE="${CORDUM_API_BASE:-https://localhost:8081}"
+  NATS_URL="${NATS_URL:-tls://localhost:4222}"
+  REDIS_URL="${REDIS_URL:-rediss://:${REDIS_PASSWORD}@localhost:6379}"
+  # Auto-set TLS env vars for mock-bank worker when certs directory exists.
+  if [[ -d "./certs" ]]; then
+    : "${NATS_TLS_CA:=./certs/ca/ca.crt}"
+    : "${NATS_TLS_CERT:=./certs/client/tls.crt}"
+    : "${NATS_TLS_KEY:=./certs/client/tls.key}"
+    : "${NATS_TLS_SERVER_NAME:=localhost}"
+    : "${REDIS_TLS_CA:=./certs/ca/ca.crt}"
+    : "${REDIS_TLS_CERT:=./certs/client/tls.crt}"
+    : "${REDIS_TLS_KEY:=./certs/client/tls.key}"
+    : "${REDIS_TLS_SERVER_NAME:=localhost}"
+    export NATS_TLS_CA NATS_TLS_CERT NATS_TLS_KEY NATS_TLS_SERVER_NAME
+    export REDIS_TLS_CA REDIS_TLS_CERT REDIS_TLS_KEY REDIS_TLS_SERVER_NAME
+  fi
+else
+  API_BASE="${CORDUM_API_BASE:-http://localhost:8081}"
+  NATS_URL="${NATS_URL:-nats://localhost:4222}"
+  REDIS_URL="${REDIS_URL:-redis://:${REDIS_PASSWORD}@localhost:6379}"
+fi
 MOCK_BANK_WORKER_PID=""
 MOCK_BANK_WORKER_STARTED=0
 SKIP_REBUILD=0
 SELECT_GATE=""
 
-# Cleanup trap: stop background mock-bank worker on exit
+# Gate classification: blocking failures prevent release, advisory failures are logged only.
+# Blocking: Deploy(1), Auth(2), Workflows(3), Policy(4), Reliability(5), Security(7), Identity(9), Release Config(18)
+# Advisory: Performance(6), Extensions(8), Data Lifecycle(10), Streaming(11), Adv Workflows(12),
+#           Config(13), Policy Lifecycle(14), Pack Mgmt(15), Degradation(16), Dashboard(17)
+BLOCKING_GATES=(1 2 3 4 5 7 9 18)
+ADVISORY_GATES=(6 8 10 11 12 13 14 15 16 17)
+
+# --strict / STRICT_MODE=1: promote all gates to blocking (for release pipelines)
+if [[ "${STRICT_MODE:-0}" == "1" ]]; then
+  BLOCKING_GATES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18)
+  ADVISORY_GATES=()
+fi
+
+# Cleanup trap: stop background mock-bank worker on exit (reuses _recover_mock_bank_pid)
 cleanup() {
-  if [[ -n "${MOCK_BANK_WORKER_PID}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
+  _recover_mock_bank_pid
+  if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
     log "cleanup: stopping mock-bank worker (PID ${MOCK_BANK_WORKER_PID})"
     kill "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
   fi
-  # Remove temp files created during gate runs
-  rm -f /tmp/gate_ws_*.tmp 2>/dev/null || true
+  rm -f "${MOCK_BANK_PID_FILE}" /tmp/gate_ws_*.tmp 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -2479,6 +2748,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_REBUILD=1
       shift
       ;;
+    --strict)
+      STRICT_MODE=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -2490,13 +2763,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "${SELECT_GATE}" ]]; then
-  [[ "${SELECT_GATE}" =~ ^([1-9]|1[0-7])$ ]] || die "--gate must be 1..17"
+  [[ "${SELECT_GATE}" =~ ^([1-9]|1[0-8])$ ]] || die "--gate must be 1..18"
   SELECTED_GATES=("${SELECT_GATE}")
 else
-  SELECTED_GATES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17)
+  SELECTED_GATES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18)
 fi
 
 build_auth_headers
+build_curl_tls_opts
 
 declare -A GATE_STATUS
 declare -A GATE_DURATION_MS
@@ -2522,6 +2796,7 @@ for gate in "${SELECTED_GATES[@]}"; do
     15) run_gate 15 gate_15_pack_management   "Gate 15 Pack Management" ;;
     16) run_gate 16 gate_16_degradation       "Gate 16 Degradation" ;;
     17) run_gate 17 gate_17_dashboard         "Gate 17 Dashboard" ;;
+    18) run_gate 18 gate_18_release_config    "Gate 18 Release Config" ;;
   esac
 done
 

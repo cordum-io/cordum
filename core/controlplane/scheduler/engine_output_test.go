@@ -59,7 +59,7 @@ func TestHandleJobResultOutputAllowed(t *testing.T) {
 		PrincipalId: "principal-a",
 	}
 
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true).
 		WithAsyncFailMode("open")
@@ -103,7 +103,7 @@ func TestHandleJobResultOutputQuarantined(t *testing.T) {
 	store.topics["job-out-quarantine"] = "job.default"
 	store.reqs["job-out-quarantine"] = &pb.JobRequest{JobId: "job-out-quarantine", Topic: "job.default", TenantId: "tenant-a"}
 
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true)
 
@@ -158,7 +158,7 @@ func TestHandleJobResultOutputCheckDisabled(t *testing.T) {
 	store.topics["job-out-disabled"] = "job.default"
 	store.reqs["job-out-disabled"] = &pb.JobRequest{JobId: "job-out-disabled", Topic: "job.default", TenantId: "tenant-a"}
 
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(false)
 
@@ -189,7 +189,7 @@ func TestHandleJobResultOutputCheckFailOpen(t *testing.T) {
 	store.topics["job-out-failopen"] = "job.default"
 	store.reqs["job-out-failopen"] = &pb.JobRequest{JobId: "job-out-failopen", Topic: "job.default", TenantId: "tenant-a"}
 
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true).
 		WithAsyncFailMode("open")
@@ -221,7 +221,7 @@ func TestHandleJobResultFailedJobSkipsOutputCheck(t *testing.T) {
 	store.topics["job-out-failed"] = "job.default"
 	store.reqs["job-out-failed"] = &pb.JobRequest{JobId: "job-out-failed", Topic: "job.default", TenantId: "tenant-a"}
 
-	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true)
 
@@ -253,7 +253,7 @@ func TestHandleJobResultAsyncQuarantine(t *testing.T) {
 		contentRecord: OutputSafetyRecord{Decision: OutputQuarantine, Reason: "async secret"},
 	}
 	bus := &fakeBus{}
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true)
 
@@ -350,7 +350,7 @@ func TestHandleJobResultSecretContentEventuallyQuarantined(t *testing.T) {
 	store.topics[jobID] = "job.default"
 	store.reqs[jobID] = &pb.JobRequest{JobId: jobID, Topic: "job.default", TenantId: "tenant-a"}
 	bus := &fakeBus{}
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true)
 
@@ -418,7 +418,7 @@ func TestHandleJobResultCleanContentRemainsAllowed(t *testing.T) {
 	store.topics[jobID] = "job.default"
 	store.reqs[jobID] = &pb.JobRequest{JobId: jobID, Topic: "job.default", TenantId: "tenant-a"}
 	bus := &fakeBus{}
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true)
 
@@ -455,7 +455,7 @@ func TestAsyncOutputCheckFailClosedQuarantinesOnError(t *testing.T) {
 		contentErr: errors.New("service unavailable"),
 	}
 	bus := &fakeBus{}
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true)
 	// Default asyncFailMode is "" which means fail-closed (isAsyncFailClosed returns true)
@@ -502,7 +502,7 @@ func TestAsyncOutputCheckFailOpenAllowsOnError(t *testing.T) {
 		contentErr: errors.New("service unavailable"),
 	}
 	bus := &fakeBus{}
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true).
 		WithAsyncFailMode("open")
@@ -540,7 +540,7 @@ func TestAsyncOutputWaitGroupTracked(t *testing.T) {
 		contentRecord: OutputSafetyRecord{Decision: OutputAllow, Reason: "clean"},
 	}
 	bus := &fakeBus{}
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithOutputChecker(checker).
 		WithOutputSafetyEnabled(true)
 

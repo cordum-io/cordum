@@ -53,6 +53,144 @@ func TestSubmitJobGRPCAndStatus(t *testing.T) {
 	}
 }
 
+func TestSubmitJobGRPCViewerDenied(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{}
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Role:   "viewer",
+		Tenant: "org-1",
+	})
+
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied for viewer, got %v", err)
+	}
+}
+
+func TestSubmitJobGRPCAdminAllowed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{}
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Role:   "admin",
+		Tenant: "org-1",
+	})
+
+	resp, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if err != nil {
+		t.Fatalf("expected admin to be allowed, got %v", err)
+	}
+	if resp.JobId == "" {
+		t.Fatalf("expected job_id")
+	}
+}
+
+func TestSubmitJobGRPCUserAllowed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{}
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Role:   "user",
+		Tenant: "org-1",
+	})
+
+	resp, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if err != nil {
+		t.Fatalf("expected user to be allowed, got %v", err)
+	}
+	if resp.JobId == "" {
+		t.Fatalf("expected job_id")
+	}
+}
+
+func TestSubmitJobGRPCSecopsNormalizedToAdmin(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{}
+	// secops normalizes to admin, which is allowed.
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Role:   "secops",
+		Tenant: "org-1",
+	})
+
+	resp, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if err != nil {
+		t.Fatalf("expected secops (admin alias) to be allowed, got %v", err)
+	}
+	if resp.JobId == "" {
+		t.Fatalf("expected job_id")
+	}
+}
+
+func TestSubmitJobGRPCNilAuthDenied(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{} // Enable RBAC enforcement.
+	// Bare context with no auth — must be rejected as unauthenticated.
+	ctx := context.Background()
+
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("expected Unauthenticated for nil auth context, got %v", err)
+	}
+}
+
+func TestSubmitJobGRPCEmptyRoleDenied(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{} // Enable RBAC enforcement.
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Role:   "",
+		Tenant: "org-1",
+	})
+
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied for empty role, got %v", err)
+	}
+}
+
+func TestSubmitJobGRPCOperatorNormalizedToAdmin(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{} // Enable RBAC enforcement.
+	// operator normalizes to admin, which is allowed.
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Role:   "operator",
+		Tenant: "org-1",
+	})
+
+	resp, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if err != nil {
+		t.Fatalf("expected operator (admin alias) to be allowed, got %v", err)
+	}
+	if resp.JobId == "" {
+		t.Fatalf("expected job_id")
+	}
+}
+
 func TestSubmitJobGRPCRejectsDisallowedMemoryID(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()

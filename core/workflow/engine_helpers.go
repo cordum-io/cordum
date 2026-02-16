@@ -178,7 +178,7 @@ func setContextPath(ctx map[string]any, path string, value any) error {
 	return nil
 }
 
-func depsSatisfied(step *Step, run *WorkflowRun) bool {
+func depsSatisfied(step *Step, run *WorkflowRun, wfDef *Workflow) bool {
 	if step == nil || len(step.DependsOn) == 0 {
 		return true
 	}
@@ -191,9 +191,23 @@ func depsSatisfied(step *Step, run *WorkflowRun) bool {
 	}
 	for _, dep := range step.DependsOn {
 		sr, ok := run.Steps[dep]
-		if !ok || sr.Status != StepStatusSucceeded {
+		if !ok || sr.Status == "" {
 			return false
 		}
+		if sr.Status == StepStatusSucceeded {
+			continue
+		}
+		// A failed dependency is satisfied if its on_error handler succeeded.
+		if sr.Status == StepStatusFailed && wfDef != nil {
+			depDef := wfDef.Steps[dep]
+			if depDef != nil && depDef.OnError != "" {
+				handlerSR := run.Steps[depDef.OnError]
+				if handlerSR != nil && handlerSR.Status == StepStatusSucceeded {
+					continue
+				}
+			}
+		}
+		return false
 	}
 	return true
 }

@@ -11,6 +11,7 @@ import (
 
 func TestMemoryRegistry_UpdateHeartbeat(t *testing.T) {
 	r := scheduler.NewMemoryRegistry()
+	t.Cleanup(r.Close)
 
 	hb := &pb.Heartbeat{
 		WorkerId: "worker-1",
@@ -36,6 +37,7 @@ func TestMemoryRegistry_UpdateHeartbeat(t *testing.T) {
 
 func TestMemoryRegistry_WorkersForPool(t *testing.T) {
 	r := scheduler.NewMemoryRegistry()
+	t.Cleanup(r.Close)
 
 	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w1", Pool: "A"})
 	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w2", Pool: "A"})
@@ -59,6 +61,7 @@ func TestMemoryRegistry_WorkersForPool(t *testing.T) {
 
 func TestMemoryRegistry_Concurrency(t *testing.T) {
 	r := scheduler.NewMemoryRegistry()
+	t.Cleanup(r.Close)
 	var wg sync.WaitGroup
 
 	// Concurrently update heartbeats
@@ -170,6 +173,7 @@ func TestMemoryRegistry_StatsEmptyPoolName(t *testing.T) {
 
 func TestMemoryRegistry_ExpiresStaleWorkers(t *testing.T) {
 	r := scheduler.NewMemoryRegistryWithTTL(10 * time.Millisecond)
+	t.Cleanup(r.Close)
 
 	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-expire", Pool: "A"})
 

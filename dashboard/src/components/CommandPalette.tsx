@@ -274,17 +274,18 @@ export function CommandPalette() {
     }
   }, [open]);
 
-  // Global keyboard shortcut
+  // Global keyboard shortcut — stable listener (no deps)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        setOpen(!open);
+        const current = useUiStore.getState().commandOpen;
+        useUiStore.getState().setCommandOpen(!current);
       }
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, setOpen]);
+  }, []);
 
   const close = useCallback(() => {
     setOpen(false);

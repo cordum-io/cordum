@@ -3,6 +3,7 @@ import { ApiError, del, get, post, put } from "../api/client";
 import { mapJobDetail, mapJobRecord, type BackendJobDetail, type BackendJobRecord } from "../api/transform";
 import type { ApiResponse, Job, OutputFinding } from "../api/types";
 import { logger } from "../lib/logger";
+import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
 import type { OutputPolicyConfig, OutputPolicyStats, TopicOverride } from "../types/settings";
 import { DEFAULT_OUTPUT_POLICY_CONFIG } from "../types/settings";
@@ -27,7 +28,7 @@ function buildQuarantineParams(filters: QuarantinedJobsFilters): string {
 
 export function useQuarantinedJobs(filters: QuarantinedJobsFilters = {}) {
   return useQuery<ApiResponse<Job[]>>({
-    queryKey: ["jobs", "quarantined", filters],
+    queryKey: queryKeys.jobs.quarantined(filters),
     queryFn: async () => {
       const res = await get<{ items: BackendJobRecord[]; next_cursor?: number | null }>(
         `/jobs${buildQuarantineParams(filters)}`,
@@ -50,9 +51,9 @@ export function useReleaseQuarantinedJob() {
     },
     onSuccess: (_, jobId) => {
       useToastStore.getState().addToast({ type: "success", title: "Released quarantined job" });
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
-      queryClient.invalidateQueries({ queryKey: ["dlq"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(jobId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
     onError: (err, jobId) => {
       logger.error("output-policy", "Release quarantined job failed", { jobId, error: err.message });
@@ -74,9 +75,9 @@ export function useConfirmQuarantine() {
     },
     onSuccess: (_, jobId) => {
       useToastStore.getState().addToast({ type: "success", title: "Quarantine confirmed" });
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
-      queryClient.invalidateQueries({ queryKey: ["dlq"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(jobId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
     onError: (err, jobId) => {
       logger.error("output-policy", "Confirm quarantine failed", { jobId, error: err.message });
@@ -91,7 +92,7 @@ export function useConfirmQuarantine() {
 
 export function useOutputFindings(jobId: string) {
   return useQuery<OutputFinding[]>({
-    queryKey: ["job", jobId, "output-findings"],
+    queryKey: queryKeys.jobs.outputFindings(jobId),
     queryFn: async () => {
       const res = await get<BackendJobDetail>(`/jobs/${jobId}`);
       const job = mapJobDetail(res);
@@ -333,7 +334,7 @@ function mapOutputPolicyStats(raw?: RawOutputPolicyStats): OutputPolicyStats {
 
 export function useOutputPolicyConfig() {
   return useQuery<OutputPolicyConfig>({
-    queryKey: ["output-policy-config"],
+    queryKey: queryKeys.outputPolicy.config(),
     queryFn: async () => {
       const raw = await fetchOutputPolicyConfigRaw();
       return parseOutputPolicyConfig(raw);
@@ -355,10 +356,10 @@ export function useUpdateOutputPolicy() {
         type: "success",
         title: "Output Safety settings saved",
       });
-      queryClient.invalidateQueries({ queryKey: ["output-policy-config"] });
-      queryClient.invalidateQueries({ queryKey: ["config"] });
-      queryClient.invalidateQueries({ queryKey: ["status"] });
-      queryClient.invalidateQueries({ queryKey: ["output-policy", "stats"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.outputPolicy.config() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.config.system() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.status.overview() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.outputPolicy.stats() });
     },
     onError: (err) => {
       logger.error("output-policy", "failed to update output policy config", {
@@ -375,7 +376,7 @@ export function useUpdateOutputPolicy() {
 
 export function useOutputPolicyStats() {
   return useQuery<OutputPolicyStats>({
-    queryKey: ["output-policy", "stats"],
+    queryKey: queryKeys.outputPolicy.stats(),
     queryFn: async () => {
       try {
         const raw = await get<RawOutputPolicyStats>("/policy/output/stats");

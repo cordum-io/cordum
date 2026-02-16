@@ -111,3 +111,21 @@ func (c *CompositeAuthProvider) RegisterRoutes(mux *http.ServeMux, wrap func(str
 		}
 	}
 }
+
+// BasicProvider returns the first BasicAuthProvider in the composite, or nil.
+func (c *CompositeAuthProvider) BasicProvider() *BasicAuthProvider {
+	for _, p := range c.providers {
+		if bp, ok := p.(*BasicAuthProvider); ok {
+			return bp
+		}
+	}
+	return nil
+}
+
+// UserStore returns the UserStore from the first BasicAuthProvider, or nil.
+func (c *CompositeAuthProvider) UserStore() UserStore {
+	if bp := c.BasicProvider(); bp != nil {
+		return bp.UserStore()
+	}
+	return nil
+}

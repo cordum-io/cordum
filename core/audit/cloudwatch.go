@@ -52,7 +52,7 @@ func WithCloudWatchEndpoint(endpoint string) CloudWatchOption {
 // Reads AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION from env.
 func NewCloudWatchExporter(logGroup, logStream string, opts ...CloudWatchOption) (*CloudWatchExporter, error) {
 	c := &CloudWatchExporter{
-		client:    &http.Client{Timeout: 10 * time.Second},
+		client:    safeHTTPClient(10 * time.Second),
 		region:    os.Getenv("AWS_REGION"),
 		accessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
 		secretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),

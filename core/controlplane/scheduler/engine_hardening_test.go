@@ -57,9 +57,13 @@ type slowSafety struct {
 	delay time.Duration
 }
 
-func (s *slowSafety) Check(_ *pb.JobRequest) (SafetyDecisionRecord, error) {
-	time.Sleep(s.delay)
-	return SafetyDecisionRecord{Decision: SafetyAllow}, nil
+func (s *slowSafety) Check(ctx context.Context, _ *pb.JobRequest) (SafetyDecisionRecord, error) {
+	select {
+	case <-time.After(s.delay):
+		return SafetyDecisionRecord{Decision: SafetyAllow}, nil
+	case <-ctx.Done():
+		return SafetyDecisionRecord{}, ctx.Err()
+	}
 }
 
 // dlqSpy tracks IncDLQEmitFailure calls.
@@ -80,7 +84,7 @@ func (m *dlqSpy) IncDLQEmitFailure(string) {
 
 func TestAtomicOutputSafetyEnabled(t *testing.T) {
 	store := newFakeJobStore()
-	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
 
 	// Concurrent writes should not race (verified by -count=3).
 	var wg sync.WaitGroup
@@ -144,7 +148,7 @@ func TestReconcilerScheduledTimeout(t *testing.T) {
 func TestDLQEmitRetrySucceedsOnSecondAttempt(t *testing.T) {
 	bus := &failNBus{failCount: 1} // first Publish fails, second succeeds
 	store := newFakeJobStore()
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil)
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
 
 	err := engine.emitDLQWithRetry("job-retry", "job.test", pb.JobStatus_JOB_STATUS_FAILED, "test", "test_code")
 	if err != nil {
@@ -161,7 +165,7 @@ func TestDLQEmitRetryPermanentFailureMetric(t *testing.T) {
 	bus := &failNBus{failCount: 999} // always fail
 	store := newFakeJobStore()
 	metrics := newDLQSpy()
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil)
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
 	engine.metrics = metrics
 
 	err := engine.emitDLQWithRetry("job-perm", "job.test", pb.JobStatus_JOB_STATUS_FAILED, "test", "test_code")
@@ -177,7 +181,7 @@ func TestDLQEmitPersistsToSinkWhenBusUnavailable(t *testing.T) {
 	bus := &failNBus{failCount: 999} // always fail
 	store := newFakeJobStore()
 	sink := &dlqSinkSpy{}
-	engine := NewEngine(bus, NewSafetyBasic(), NewMemoryRegistry(), NewNaiveStrategy(), store, nil).WithDLQSink(sink)
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).WithDLQSink(sink)
 
 	err := engine.emitDLQWithRetry("job-denied", "job.test", pb.JobStatus_JOB_STATUS_DENIED, "blocked", "safety_denied")
 	if err == nil {
@@ -204,7 +208,7 @@ func TestDLQEmitPersistsToSinkWhenBusUnavailable(t *testing.T) {
 func TestSafetyCheckDefenseTimeout(t *testing.T) {
 	store := newFakeJobStore()
 	slow := &slowSafety{delay: 5 * time.Second}
-	engine := NewEngine(&fakeBus{}, slow, NewMemoryRegistry(), NewNaiveStrategy(), store, nil)
+	engine := NewEngine(&fakeBus{}, slow, newTestRegistry(t), NewNaiveStrategy(), store, nil)
 
 	start := time.Now()
 	record, err := engine.checkSafetyDecision(&pb.JobRequest{
@@ -223,5 +227,148 @@ func TestSafetyCheckDefenseTimeout(t *testing.T) {
 	// Should complete in ~3s (safetyCheckTimeout), not 5s.
 	if elapsed > 4*time.Second {
 		t.Fatalf("timeout took too long: %s (expected ~3s)", elapsed)
+	}
+}
+
+// ctxTrackingSafety records whether the context was cancelled during Check.
+type ctxTrackingSafety struct {
+	ctxCancelled atomic.Bool
+	delay        time.Duration
+}
+
+func (s *ctxTrackingSafety) Check(ctx context.Context, _ *pb.JobRequest) (SafetyDecisionRecord, error) {
+	select {
+	case <-time.After(s.delay):
+		return SafetyDecisionRecord{Decision: SafetyAllow}, nil
+	case <-ctx.Done():
+		s.ctxCancelled.Store(true)
+		return SafetyDecisionRecord{}, ctx.Err()
+	}
+}
+
+func TestSafetyCheck_TimeoutCancelsContext(t *testing.T) {
+	store := newFakeJobStore()
+	tracker := &ctxTrackingSafety{delay: 10 * time.Second}
+	engine := NewEngine(&fakeBus{}, tracker, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	start := time.Now()
+	record, _ := engine.checkSafetyDecision(&pb.JobRequest{
+		JobId:    "job-ctx-cancel",
+		Topic:    "job.test",
+		TenantId: "default",
+	})
+	elapsed := time.Since(start)
+
+	if record.Decision != SafetyUnavailable {
+		t.Fatalf("expected SafetyUnavailable, got %s", record.Decision)
+	}
+	// The timeout should have fired (~3s), not waited for the full 10s delay.
+	if elapsed > 5*time.Second {
+		t.Fatalf("timeout took too long: %s", elapsed)
+	}
+	// The context passed to Check should have been cancelled, ending the goroutine.
+	// Give a small window for the goroutine to observe cancellation.
+	time.Sleep(50 * time.Millisecond)
+	if !tracker.ctxCancelled.Load() {
+		t.Fatal("expected context cancellation to propagate to safety checker (goroutine leak)")
+	}
+}
+
+// failReleaseLockStore wraps fakeJobStore but fails ReleaseLock the first N times.
+type failReleaseLockStore struct {
+	*fakeJobStore
+	mu           sync.Mutex
+	releaseCount int
+	failCount    int
+}
+
+func (s *failReleaseLockStore) ReleaseLock(ctx context.Context, key string, token string) error {
+	s.mu.Lock()
+	s.releaseCount++
+	n := s.releaseCount
+	s.mu.Unlock()
+	if n <= s.failCount {
+		return errors.New("redis connection refused")
+	}
+	return s.fakeJobStore.ReleaseLock(ctx, key, token)
+}
+
+func TestWithJobLockReleaseRetry(t *testing.T) {
+	store := &failReleaseLockStore{
+		fakeJobStore: newFakeJobStore(),
+		failCount:    1, // first ReleaseLock fails, second succeeds
+	}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	called := false
+	err := engine.withJobLock("job-retry-release", 30*time.Second, func() error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withJobLock should not fail: %v", err)
+	}
+	if !called {
+		t.Fatal("expected fn to be called")
+	}
+
+	// Wait a moment for the deferred release goroutine to complete.
+	time.Sleep(100 * time.Millisecond)
+
+	// Lock should have been released on the retry (second call).
+	store.mu.Lock()
+	count := store.releaseCount
+	store.mu.Unlock()
+	if count < 2 {
+		t.Fatalf("expected at least 2 ReleaseLock calls (first fails, second retries), got %d", count)
+	}
+
+	// The lock should no longer be held.
+	store.fakeJobStore.mu.RLock()
+	_, locked := store.fakeJobStore.locks[jobLockKey("job-retry-release")]
+	store.fakeJobStore.mu.RUnlock()
+	if locked {
+		t.Fatal("expected lock to be released after retry")
+	}
+}
+
+func TestWithJobLockReleaseUsesBackgroundContext(t *testing.T) {
+	store := newFakeJobStore()
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	// Cancel the engine context before the deferred release runs.
+	engine.cancel()
+
+	called := false
+	// withJobLock acquires using e.ctx, which is cancelled, so TryAcquireLock
+	// should fail. But if we pre-seed the lock, we can test the release path.
+	// Instead, just verify that a normal flow still works when engine is stopped
+	// mid-operation by checking that the fn still executes.
+
+	// Create a fresh engine, run fn, then cancel — the deferred release
+	// should still succeed because it uses context.Background().
+	engine2 := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+	err := engine2.withJobLock("job-bg-ctx", 30*time.Second, func() error {
+		// Cancel the engine context while fn is running.
+		engine2.cancel()
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withJobLock should succeed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected fn to be called")
+	}
+
+	// Wait for deferred release.
+	time.Sleep(100 * time.Millisecond)
+
+	// Lock should be released despite engine context cancellation.
+	store.mu.RLock()
+	_, locked := store.locks[jobLockKey("job-bg-ctx")]
+	store.mu.RUnlock()
+	if locked {
+		t.Fatal("expected lock to be released even after engine context cancelled")
 	}
 }

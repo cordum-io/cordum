@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cordum/cordum/core/model"
@@ -24,7 +23,7 @@ type Engine struct {
 	store           *RedisStore
 	bus             model.Bus
 	mem             store.Store
-	runLocks        sync.Map // per-run locks to avoid global serialization
+	lockMgr         lockManager // per-run locks to avoid global serialization
 	maxForEachItems int
 	// optional callbacks for observability or hooks
 	OnStepDispatched func(runID, stepID, jobID string)
@@ -40,10 +39,59 @@ type Engine struct {
 	stopped       chan struct{} // closed by Stop(); nil until first use
 }
 
+// lockManager provides per-run mutual exclusion with safe cleanup.
+// The manager mutex guards the map and ref counts — it is held only for
+// map lookups and integer increments (nanoseconds), never during actual work.
+// Per-run mutexes provide per-run isolation.
+type lockManager struct {
+	mu    sync.Mutex
+	locks map[string]*runLock
+}
+
 type runLock struct {
 	mu       sync.Mutex
-	refs     atomic.Int32
-	terminal atomic.Bool
+	refs     int32
+	terminal bool
+}
+
+// acquire obtains the per-run lock for runID and returns a release function.
+// Multiple goroutines calling acquire for different runIDs proceed concurrently.
+// Multiple goroutines calling acquire for the same runID are serialized.
+func (lm *lockManager) acquire(runID string) func() {
+	lm.mu.Lock()
+	lock, ok := lm.locks[runID]
+	if !ok {
+		lock = &runLock{}
+		lm.locks[runID] = lock
+	}
+	lock.refs++
+	lm.mu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		lm.mu.Lock()
+		lock.refs--
+		if lock.refs == 0 && lock.terminal {
+			delete(lm.locks, runID)
+		}
+		lm.mu.Unlock()
+	}
+}
+
+// markTerminal flags a run as completed so its lock entry is cleaned up
+// once all active holders release.
+func (lm *lockManager) markTerminal(runID string) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	lock, ok := lm.locks[runID]
+	if !ok {
+		return
+	}
+	lock.terminal = true
+	if lock.refs == 0 {
+		delete(lm.locks, runID)
+	}
 }
 
 const (
@@ -60,7 +108,12 @@ type ConfigProvider interface {
 
 // NewEngine creates a workflow engine bound to a Redis workflow store and bus.
 func NewEngine(store *RedisStore, bus model.Bus) *Engine {
-	return &Engine{store: store, bus: bus, maxForEachItems: defaultMaxForEachItems}
+	return &Engine{
+		store:           store,
+		bus:             bus,
+		maxForEachItems: defaultMaxForEachItems,
+		lockMgr:         lockManager{locks: make(map[string]*runLock)},
+	}
 }
 
 // WithMemory sets an optional memory store used to persist per-step job context payloads.
@@ -99,16 +152,7 @@ func (e *Engine) WithMaxForEachItems(limit int) *Engine {
 // lockRun acquires a per-run mutex and returns an unlock function.
 // This replaces the global engine mutex so different runs don't block each other.
 func (e *Engine) lockRun(runID string) func() {
-	val, _ := e.runLocks.LoadOrStore(runID, &runLock{})
-	lock := val.(*runLock)
-	lock.refs.Add(1)
-	lock.mu.Lock()
-	return func() {
-		lock.mu.Unlock()
-		if lock.refs.Add(-1) == 0 && lock.terminal.Load() {
-			e.runLocks.Delete(runID)
-		}
-	}
+	return e.lockMgr.acquire(runID)
 }
 
 // HandleJobResult updates step/run state and dispatches next steps if ready.
@@ -374,7 +418,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 				continue
 			}
 		}
-		if !depsSatisfied(step, run) {
+		if !depsSatisfied(step, run, wfDef) {
 			continue
 		}
 		// on_error target steps are only dispatched when explicitly activated.
@@ -407,6 +451,10 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 				parentSR.StartedAt = &t
 				parentSR.CompletedAt = &t
 				run.Steps[stepID] = parentSR
+				e.appendTimeline(ctx, run, "step_condition_skipped", stepID, "", string(parentSR.Status), "", "condition false", nil)
+				if e.OnStepFinished != nil {
+					e.OnStepFinished(run.ID, stepID, parentSR.Status)
+				}
 				continue
 			}
 		}
@@ -1532,39 +1580,47 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 
 		// For-each fan-out.
 		if step.ForEach != "" {
-			items, err := evalForEach(step.ForEach, buildEvalScope(run, nil))
-			if err != nil {
-				logging.Error("workflow-engine", "for_each eval failed", "step_id", stepID, "error", err)
-				parentSR.Status = StepStatusFailed
-				if parentSR.StartedAt == nil {
-					parentSR.StartedAt = &now
+			// Evaluate the expression ONCE and store the resolved items to
+			// prevent index-shift bugs when scheduleReady is re-entered
+			// (e.g. after retries or max_parallel throttling).
+			items := parentSR.ResolvedItems
+			if items == nil {
+				var err error
+				items, err = evalForEach(step.ForEach, buildEvalScope(run, nil))
+				if err != nil {
+					logging.Error("workflow-engine", "for_each eval failed", "step_id", stepID, "error", err)
+					parentSR.Status = StepStatusFailed
+					if parentSR.StartedAt == nil {
+						parentSR.StartedAt = &now
+					}
+					parentSR.CompletedAt = &now
+					parentSR.Error = map[string]any{"message": err.Error()}
+					run.Steps[stepID] = parentSR
+					e.appendTimeline(ctx, run, "step_foreach_failed", stepID, "", string(parentSR.Status), "", err.Error(), nil)
+					if e.OnStepFinished != nil {
+						e.OnStepFinished(run.ID, stepID, parentSR.Status)
+					}
+					continue
 				}
-				parentSR.CompletedAt = &now
-				parentSR.Error = map[string]any{"message": err.Error()}
-				run.Steps[stepID] = parentSR
-				e.appendTimeline(ctx, run, "step_foreach_failed", stepID, "", string(parentSR.Status), "", err.Error(), nil)
-				if e.OnStepFinished != nil {
-					e.OnStepFinished(run.ID, stepID, parentSR.Status)
+				if e.maxForEachItems > 0 && len(items) > e.maxForEachItems {
+					msg := fmt.Sprintf("for_each fan-out exceeds limit (%d > %d)", len(items), e.maxForEachItems)
+					parentSR.Status = StepStatusFailed
+					if parentSR.StartedAt == nil {
+						parentSR.StartedAt = &now
+					}
+					parentSR.CompletedAt = &now
+					parentSR.Error = map[string]any{"message": msg}
+					run.Steps[stepID] = parentSR
+					e.appendTimeline(ctx, run, "step_foreach_failed", stepID, "", string(parentSR.Status), "", msg, map[string]any{
+						"count": len(items),
+						"limit": e.maxForEachItems,
+					})
+					if e.OnStepFinished != nil {
+						e.OnStepFinished(run.ID, stepID, parentSR.Status)
+					}
+					continue
 				}
-				continue
-			}
-			if e.maxForEachItems > 0 && len(items) > e.maxForEachItems {
-				msg := fmt.Sprintf("for_each fan-out exceeds limit (%d > %d)", len(items), e.maxForEachItems)
-				parentSR.Status = StepStatusFailed
-				if parentSR.StartedAt == nil {
-					parentSR.StartedAt = &now
-				}
-				parentSR.CompletedAt = &now
-				parentSR.Error = map[string]any{"message": msg}
-				run.Steps[stepID] = parentSR
-				e.appendTimeline(ctx, run, "step_foreach_failed", stepID, "", string(parentSR.Status), "", msg, map[string]any{
-					"count": len(items),
-					"limit": e.maxForEachItems,
-				})
-				if e.OnStepFinished != nil {
-					e.OnStepFinished(run.ID, stepID, parentSR.Status)
-				}
-				continue
+				parentSR.ResolvedItems = items
 			}
 			if parentSR.Children == nil {
 				parentSR.Children = make(map[string]*StepRun)
@@ -1573,7 +1629,12 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 				parentSR.Status = StepStatusSucceeded
 				parentSR.StartedAt = &now
 				parentSR.CompletedAt = &now
+				parentSR.Output = []any{}
 				run.Steps[stepID] = parentSR
+				e.appendTimeline(ctx, run, "step_completed", stepID, "", string(parentSR.Status), "", "", map[string]any{"items": 0})
+				if e.OnStepFinished != nil {
+					e.OnStepFinished(run.ID, stepID, parentSR.Status)
+				}
 				continue
 			}
 			// Pre-create children so the parent doesn't incorrectly aggregate to SUCCEEDED

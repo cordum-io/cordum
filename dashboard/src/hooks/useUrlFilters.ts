@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 
 // ---------------------------------------------------------------------------
@@ -36,11 +36,19 @@ type SetFilterDebounced<S extends FilterSchema> = <K extends keyof S & string>(
 ) => void;
 
 // ---------------------------------------------------------------------------
+// Safety limits — prevent DoS via crafted URL parameters
+// ---------------------------------------------------------------------------
+
+const MAX_PARAM_LENGTH = 1000;
+const MAX_FILTER_ITEMS = 50;
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function parseList(param: string | null): string[] {
-  return param?.split(",").filter(Boolean) ?? [];
+  if (!param || param.length > MAX_PARAM_LENGTH) return [];
+  return param.split(",").filter(Boolean).slice(0, MAX_FILTER_ITEMS);
 }
 
 function serializeValue(type: FilterType, value: unknown): string {
@@ -55,6 +63,9 @@ function serializeValue(type: FilterType, value: unknown): string {
 }
 
 function parseValue(type: FilterType, raw: string | null): unknown {
+  if (raw && raw.length > MAX_PARAM_LENGTH) {
+    return type === "string[]" ? [] : type === "number" ? undefined : "";
+  }
   if (type === "string[]") return parseList(raw);
   if (type === "number") {
     if (raw == null || raw === "") return undefined;
@@ -84,6 +95,16 @@ export function useUrlFilters<S extends FilterSchema>(
 
   // Stable refs for debounce timers keyed by filter name
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  // Clean up all pending debounce timers on unmount
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      for (const key of Object.keys(timers)) {
+        clearTimeout(timers[key]);
+      }
+    };
+  }, []);
 
   // Parse all filter values from URL
   const filters = useMemo(() => {

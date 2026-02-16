@@ -25,6 +25,67 @@ import (
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
 )
 
+// healthDeps holds references to scheduler dependencies for the /health endpoint.
+type healthDeps struct {
+	jobStore     *store.RedisJobStore
+	bus          *bus.NatsBus
+	safetyClient *scheduler.SafetyClient
+}
+
+func (h *healthDeps) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	type depStatus struct {
+		Status string `json:"status"`
+		Error  string `json:"error,omitempty"`
+	}
+	result := map[string]any{}
+	allOK := true
+
+	// Redis
+	if h.jobStore != nil {
+		if err := h.jobStore.Ping(ctx); err != nil {
+			result["redis"] = depStatus{Status: "error", Error: err.Error()}
+			allOK = false
+		} else {
+			result["redis"] = depStatus{Status: "ok"}
+		}
+	} else {
+		result["redis"] = depStatus{Status: "error", Error: "not initialized"}
+		allOK = false
+	}
+
+	// NATS
+	if h.bus != nil && h.bus.IsConnected() {
+		result["nats"] = depStatus{Status: "ok"}
+	} else {
+		result["nats"] = depStatus{Status: "error", Error: "disconnected"}
+		allOK = false
+	}
+
+	// Safety kernel (optional — degrade gracefully)
+	if h.safetyClient != nil {
+		result["safety"] = depStatus{Status: "ok"}
+	} else {
+		result["safety"] = depStatus{Status: "warn", Error: "not configured"}
+	}
+
+	if allOK {
+		result["status"] = "ok"
+	} else {
+		result["status"] = "degraded"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if allOK {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(result)
+}
+
 type redisDLQSink struct {
 	store    *store.DLQStore
 	jobStore scheduler.JobStore
@@ -62,6 +123,19 @@ func (s *redisDLQSink) Add(ctx context.Context, entry scheduler.DLQEntry) error 
 	})
 }
 
+// sanitizeLogValue strips newlines and control characters to prevent log injection.
+func sanitizeLogValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return ' '
+		}
+		if r < 0x20 && r != ' ' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func main() {
 	log.Println("cordum scheduler starting...")
 	buildinfo.Log("cordum-scheduler")
@@ -70,10 +144,19 @@ func main() {
 
 	timeoutsCfg, err := config.LoadTimeouts(cfg.TimeoutConfigPath)
 	if err != nil {
-		log.Printf("using default timeout config (could not load %s): %v", cfg.TimeoutConfigPath, err)
+		explicitPath := os.Getenv("TIMEOUT_CONFIG_PATH")
+		if env.IsProduction() && explicitPath != "" {
+			log.Fatalf("timeout config load failed (production mode, TIMEOUT_CONFIG_PATH=%s): %v", sanitizeLogValue(explicitPath), sanitizeLogValue(err.Error())) // #nosec G104 G706 -- sanitized values
+		}
+		log.Printf("using default timeout config (could not load %s): %v", sanitizeLogValue(cfg.TimeoutConfigPath), sanitizeLogValue(err.Error()))
 	}
 	if timeoutsCfg == nil {
-		timeoutsCfg, _ = config.LoadTimeouts("")
+		timeoutsCfg = config.DefaultTimeouts()
+	}
+	if err == nil && cfg.TimeoutConfigPath != "" {
+		log.Printf("timeout config loaded from %s", cfg.TimeoutConfigPath)
+	} else if err != nil {
+		log.Printf("timeout config: using built-in defaults")
 	}
 
 	metrics := infraMetrics.NewProm("cordum_scheduler")
@@ -88,6 +171,8 @@ func main() {
 	}
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
+	health := &healthDeps{}
+	metricsMux.Handle("/health", health)
 	metricsSrv := &http.Server{
 		Addr:              metricsAddr,
 		Handler:           metricsMux,
@@ -146,6 +231,11 @@ func main() {
 	defer safetyClient.Close()
 	sagaManager.WithSafety(safetyClient)
 
+	// Populate health check dependencies now that all critical deps are created.
+	health.jobStore = jobStore
+	health.bus = natsBus
+	health.safetyClient = safetyClient
+
 	var outputSafetyClient *scheduler.OutputSafetyClient
 	if cfg.OutputPolicyEnabled {
 		outputSafetyClient, err = scheduler.NewOutputSafetyClientWithRedis(cfg.SafetyKernelAddr, cfg.RedisURL)
@@ -169,6 +259,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	if err := configSvc.EnsureDefault(ctx); err != nil {
+		log.Printf("auto-bootstrap default config failed: %v", err)
+	}
 	if err := bootstrapConfig(ctx, configSvc, poolCfg, timeoutsCfg); err != nil {
 		log.Printf("config bootstrap failed: %v", err)
 	}

@@ -31,7 +31,7 @@ docker compose up -d
 
 ```bash
 cd examples/demo-guardrails/worker
-REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379} \
+REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD}@localhost:6379} \
 NATS_URL=${NATS_URL:-nats://localhost:4222} \
 go run .
 ```

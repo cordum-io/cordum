@@ -98,7 +98,7 @@ All config mounts are `:ro` (read-only).
 
 ```bash
 # Back up Redis data
-docker compose exec redis redis-cli -a "${REDIS_PASSWORD:-cordum-dev}" BGSAVE
+docker compose exec redis redis-cli -a "${REDIS_PASSWORD}" BGSAVE
 docker cp "$(docker compose ps -q redis)":/data/dump.rdb ./backup/
 
 # Back up NATS JetStream
@@ -237,7 +237,7 @@ healthcheck:
 #### Redis
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REDIS_PASSWORD` | `cordum-dev` | Redis AUTH password |
+| `REDIS_PASSWORD` | *(required)* | Redis AUTH password (generate with `openssl rand -hex 32`) |
 
 ### Control Plane Services
 
@@ -249,7 +249,7 @@ healthcheck:
 | `CORDUM_API_KEYS_PATH` | — | File path for hot-reloadable API keys |
 | `NATS_URL` | `nats://nats:4222` | NATS connection URL |
 | `NATS_USE_JETSTREAM` | `1` | Enable JetStream for durable messaging |
-| `REDIS_URL` | `redis://:cordum-dev@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `SAFETY_KERNEL_ADDR` | `safety-kernel:50051` | gRPC address of safety kernel |
 | `TENANT_ID` | `default` | Default tenant ID |
 | `API_RATE_LIMIT_RPS` | `2000` | Requests per second limit |
@@ -273,10 +273,10 @@ healthcheck:
 |----------|---------|-------------|
 | `NATS_URL` | `nats://nats:4222` | NATS connection URL |
 | `NATS_USE_JETSTREAM` | `1` | Enable JetStream |
-| `REDIS_URL` | `redis://:cordum-dev@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `SAFETY_KERNEL_ADDR` | `safety-kernel:50051` | gRPC address of safety kernel |
 | `POOL_CONFIG_PATH` | `/etc/cordum/pools.yaml` | Worker pool configuration |
-| `TIMEOUT_CONFIG_PATH` | `/etc/cordum/timeouts.yaml` | Job timeout configuration |
+| `TIMEOUT_CONFIG_PATH` | `/etc/cordum/timeouts.yaml` | Job timeout configuration. In production (`CORDUM_ENV=production`), load/parse failures are fatal. |
 | `JOB_META_TTL` | `168h` | TTL for job metadata |
 | `WORKER_SNAPSHOT_INTERVAL` | `5s` | How often to snapshot worker state |
 
@@ -284,7 +284,7 @@ healthcheck:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_URL` | `nats://nats:4222` | NATS connection URL |
-| `REDIS_URL` | `redis://:cordum-dev@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `SAFETY_KERNEL_ADDR` | `:50051` | Listen address for gRPC |
 | `SAFETY_POLICY_PATH` | `/etc/cordum/safety.yaml` | Safety policy file path |
 
@@ -293,7 +293,7 @@ healthcheck:
 |----------|---------|-------------|
 | `NATS_URL` | `nats://nats:4222` | NATS connection URL |
 | `NATS_USE_JETSTREAM` | `1` | Enable JetStream |
-| `REDIS_URL` | `redis://:cordum-dev@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `WORKFLOW_ENGINE_HTTP_ADDR` | `:9093` | HTTP listen address |
 | `WORKFLOW_ENGINE_SCAN_INTERVAL` | `5s` | How often to scan for pending runs |
 | `WORKFLOW_ENGINE_RUN_SCAN_LIMIT` | `200` | Max runs to process per scan |
@@ -301,7 +301,7 @@ healthcheck:
 #### Context Engine
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REDIS_URL` | `redis://:cordum-dev@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `CONTEXT_ENGINE_ADDR` | `:50070` | Listen address for gRPC |
 
 #### Dashboard
@@ -375,7 +375,7 @@ echo "node_modules" >> dashboard/.dockerignore
 
 **Fix**: Prefix commands with `MSYS_NO_PATHCONV=1`:
 ```bash
-MSYS_NO_PATHCONV=1 docker exec cordum-redis-1 redis-cli -a cordum-dev ping
+MSYS_NO_PATHCONV=1 docker exec cordum-redis-1 redis-cli -a "$REDIS_PASSWORD" ping
 ```
 
 ### Port Conflicts
@@ -408,7 +408,7 @@ docker compose logs redis
 
 **Fix**: Delete the cached key and restart:
 ```bash
-docker compose exec redis redis-cli -a cordum-dev DEL cfg:system:default
+docker compose exec redis redis-cli -a "$REDIS_PASSWORD" DEL cfg:system:default
 docker compose restart scheduler
 ```
 
@@ -463,7 +463,7 @@ docker compose up -d api-gateway
 
 ```bash
 # Run Go tests that connect to local Redis/NATS
-REDIS_URL=redis://:cordum-dev@localhost:6379 \
+REDIS_URL=redis://:$REDIS_PASSWORD@localhost:6379 \
 NATS_URL=nats://localhost:4222 \
 go test ./core/... -count=1
 
@@ -477,7 +477,7 @@ The Go services don't support hot reload inside Docker. For rapid iteration:
 
 1. Run infrastructure in Docker: `docker compose up -d nats redis`
 2. Run Go services locally with `go run ./cmd/cordum-api-gateway`
-3. Point local services at Docker infra: `NATS_URL=nats://localhost:4222 REDIS_URL=redis://:cordum-dev@localhost:6379`
+3. Point local services at Docker infra: `NATS_URL=nats://localhost:4222 REDIS_URL=redis://:$REDIS_PASSWORD@localhost:6379`
 
 For the dashboard, run `npm run dev` in `dashboard/` and configure `VITE_API_URL=http://localhost:8080/api/v1`.
 
@@ -540,6 +540,21 @@ docker compose down -v
 # Remove built images too
 docker compose down -v --rmi local
 ```
+
+---
+
+## Production Safety Checklist
+
+Before deploying to production, verify these critical configuration settings:
+
+- [ ] `config/safety.yaml` has `default_decision: deny` (fail-closed — unmatched jobs are denied)
+- [ ] `config/safety.yaml` has `output_policy.fail_mode: closed` (quarantine on scanner error)
+- [ ] `config/timeouts.yaml` has `running_timeout_seconds` set appropriately for your workload (default: 900s / 15 min)
+- [ ] Timeout values are consistent across `config/timeouts.yaml`, K8s ConfigMaps, and Helm values
+- [ ] `CORDUM_ENV=production` is set (enforces TLS, disables no-auth mode)
+- [ ] API keys are generated with `openssl rand -hex 32` (not weak/default values)
+- [ ] Redis password is set and not empty
+- [ ] `CORDUM_ALLOW_INSECURE_NO_AUTH` is **not** set
 
 ---
 

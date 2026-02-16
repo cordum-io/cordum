@@ -111,6 +111,8 @@ function patchRunInCache(
  */
 export function useRunStream(runId: string | null | undefined): void {
   const queryClient = useQueryClient();
+  const queryClientRef = useRef(queryClient);
+  queryClientRef.current = queryClient;
   const lastSeenRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -142,7 +144,7 @@ export function useRunStream(runId: string | null | undefined): void {
 
       // Step-level status change
       if (stepId && newStatus) {
-        patchRunInCache(queryClient, eventRunId, (run) => ({
+        patchRunInCache(queryClientRef.current, eventRunId, (run) => ({
           ...run,
           updatedAt: latest.timestamp,
           steps: run.steps.map((s) => {
@@ -166,7 +168,7 @@ export function useRunStream(runId: string | null | undefined): void {
 
       // Job result — map back to step via jobId match
       if (jobId && latest.type.startsWith("job.result") && newStatus) {
-        patchRunInCache(queryClient, eventRunId, (run) => ({
+        patchRunInCache(queryClientRef.current, eventRunId, (run) => ({
           ...run,
           updatedAt: latest.timestamp,
           steps: run.steps.map((s) => {
@@ -194,7 +196,7 @@ export function useRunStream(runId: string | null | undefined): void {
 
       // Run-level status change
       if (newStatus && !stepId) {
-        patchRunInCache(queryClient, eventRunId, (run) => ({
+        patchRunInCache(queryClientRef.current, eventRunId, (run) => ({
           ...run,
           status: newStatus,
           updatedAt: latest.timestamp,
@@ -208,7 +210,7 @@ export function useRunStream(runId: string | null | undefined): void {
     });
 
     return unsub;
-  }, [runId, queryClient]);
+  }, [runId]);
 }
 
 /** @internal exported for unit tests */

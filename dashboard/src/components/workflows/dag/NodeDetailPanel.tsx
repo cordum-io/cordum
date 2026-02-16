@@ -356,7 +356,7 @@ function ApprovalDetail({
   }
 
   const isWaiting =
-    runStep?.status === "waiting" || runStep?.status === "blocked" || runStep?.status === "pending";
+    runStep?.status === "waiting" || runStep?.status === "pending";
 
   const isPending = approveJob.isPending || rejectJob.isPending || approveStep.isPending;
 
@@ -592,7 +592,7 @@ function DelayDetail({
   }
 
   const isRunning =
-    runStep?.status === "running" || runStep?.status === "in_progress";
+    runStep?.status === "running";
 
   return (
     <div className="space-y-4">
@@ -799,10 +799,10 @@ function ParallelDetail({
 
   const runStepsByID = new Map((run?.steps ?? []).map((entry) => [entry.id, entry]));
   const childRuns = childStepIDs.map((childID) => runStepsByID.get(childID)).filter(Boolean) as WorkflowStep[];
-  const succeeded = childRuns.filter((entry) => entry.status === "succeeded" || entry.status === "completed").length;
+  const succeeded = childRuns.filter((entry) => entry.status === "succeeded").length;
   const failed = childRuns.filter((entry) => entry.status === "failed" || entry.status === "timed_out").length;
   const cancelled = childRuns.filter((entry) => entry.status === "cancelled").length;
-  const done = childRuns.filter((entry) => ["succeeded", "completed", "failed", "timed_out", "cancelled"].includes(entry.status ?? "")).length;
+  const done = childRuns.filter((entry) => ["succeeded", "failed", "timed_out", "cancelled"].includes(entry.status ?? "")).length;
   const total = childStepIDs.length;
   const progressPct = total > 0 ? Math.round((done / total) * 100) : 0;
 
@@ -907,13 +907,13 @@ function LoopDetail({
 
   const dispatchedIterations = childRuns.length;
   const terminalChildren = childRuns.filter((entry) =>
-    ["succeeded", "completed", "failed", "timed_out", "cancelled"].includes(entry.step.status ?? ""),
+    ["succeeded", "failed", "timed_out", "cancelled"].includes(entry.step.status ?? ""),
   ).length;
   const failedChildren = childRuns.filter((entry) =>
     ["failed", "timed_out", "cancelled"].includes(entry.step.status ?? ""),
   ).length;
   const activeChildren = childRuns.filter((entry) =>
-    ["pending", "running", "waiting", "in_progress", "blocked"].includes(entry.step.status ?? ""),
+    ["pending", "running", "waiting"].includes(entry.step.status ?? ""),
   ).length;
 
   const completedIterations = outputIterations ?? terminalChildren;

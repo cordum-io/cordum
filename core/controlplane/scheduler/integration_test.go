@@ -47,7 +47,7 @@ func (b *loopbackBus) Subscribe(subject, queue string, handler func(*pb.BusPacke
 // integration-flavored test: heartbeat registers worker, job routes to direct subject, result processed.
 func TestEngineDispatchesToDirectWorkerAndMarksSucceeded(t *testing.T) {
 	bus := newLoopbackBus()
-	reg := NewMemoryRegistry()
+	reg := newTestRegistry(t)
 	store := newFakeJobStore()
 
 	engine := NewEngine(bus, NewSafetyBasic(), reg, NewLeastLoadedStrategy(PoolRouting{Topics: map[string][]string{"job.default": {"default"}}}), store, nil)

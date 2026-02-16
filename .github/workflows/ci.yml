@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.23', '1.24']
+        go-version: ['1.24']
 
     steps:
     - uses: actions/checkout@v4
@@ -98,6 +98,9 @@ jobs:
         version: latest
         args: --timeout=5m
 
+    - name: Lint shell scripts for secret leaks
+      run: bash tools/scripts/lint_no_secret_log.sh
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -181,6 +184,13 @@ jobs:
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
+    - name: Generate TLS certificates
+      run: |
+        go run ./cmd/cordumctl generate-certs --dir ./certs
+        # Redis container runs as UID 999 — make certs world-readable
+        # (a+rX = read files + traverse directories).
+        chmod -R a+rX ./certs
+
     - name: Start services
       run: |
         docker compose up -d --build
@@ -202,6 +212,18 @@ jobs:
         done
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+
+    - name: Run Go integration tests
+      run: go test -v -tags=integration -timeout 5m ./...
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_URL: rediss://:cordum-dev@localhost:6379
+        REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        REDIS_TLS_INSECURE: "false"
+        NATS_URL: tls://localhost:4222
+        NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+        NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
 
     - name: Run production gates (2-4, 8-17)
       run: |

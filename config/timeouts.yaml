@@ -2,5 +2,6 @@ workflows: {}
 topics: {}
 reconciler:
   dispatch_timeout_seconds: 300
-  running_timeout_seconds: 240
+  # Per-topic overrides available via topics.<topic>.running_timeout_seconds
+  running_timeout_seconds: 900
   scan_interval_seconds: 30

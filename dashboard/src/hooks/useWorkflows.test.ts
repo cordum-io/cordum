@@ -206,7 +206,7 @@ describe("useWorkflows internals", () => {
       {
         id: "r3",
         workflowId: "wf",
-        status: "queued",
+        status: "pending",
         steps: [],
         startedAt: "2026-02-13T03:00:00.000Z",
       },
@@ -237,7 +237,7 @@ describe("useWorkflows internals", () => {
     const stats = __workflowsInternal.computeWorkflowStats(runs);
     expect(stats.successRate).toBe(100);
     expect(stats.lastRunStatus).toBe("running");
-    expect(stats.sparkline).toEqual(["running", "running", "queued", "succeeded"]);
+    expect(stats.sparkline).toEqual(["running", "running", "pending", "succeeded"]);
   });
 });
 

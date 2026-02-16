@@ -61,7 +61,7 @@ func TestSafetyClientAllow(t *testing.T) {
 	defer cleanup()
 
 	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn}
-	record, err := client.Check(&pb.JobRequest{JobId: "1", Topic: "job.default"})
+	record, err := client.Check(context.Background(), &pb.JobRequest{JobId: "1", Topic: "job.default"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestSafetyClientDeny(t *testing.T) {
 	defer cleanup()
 
 	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn}
-	record, err := client.Check(&pb.JobRequest{JobId: "1", Topic: "sys.destroy"})
+	record, err := client.Check(context.Background(), &pb.JobRequest{JobId: "1", Topic: "sys.destroy"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestSafetyClientCircuitOpens(t *testing.T) {
 	req := &pb.JobRequest{JobId: "1", Topic: "job.default"}
 
 	for i := 0; i < safetyCircuitFailBudget; i++ {
-		record, err := client.Check(req)
+		record, err := client.Check(context.Background(), req)
 		if err != nil {
 			t.Fatalf("check failed: %v", err)
 		}
@@ -142,7 +142,7 @@ func TestSafetyClientCircuitOpens(t *testing.T) {
 		}
 	}
 
-	record, err := client.Check(req)
+	record, err := client.Check(context.Background(), req)
 	if err != nil {
 		t.Fatalf("check failed: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 
 	// Trip the circuit open.
 	for i := 0; i < safetyCircuitFailBudget; i++ {
-		if _, err := client.Check(req); err != nil {
+		if _, err := client.Check(context.Background(), req); err != nil {
 			t.Fatalf("check failed: %v", err)
 		}
 	}
@@ -171,7 +171,7 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 	// Swap client to a successful responder to allow closing.
 	client.client = allowSafetyKernelClient{}
 
-	record, err := client.Check(req)
+	record, err := client.Check(context.Background(), req)
 	if err != nil {
 		t.Fatalf("check failed: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 		t.Fatalf("expected allow during half-open probe, got %v", record.Decision)
 	}
 	// Second success should close the circuit.
-	record, err = client.Check(req)
+	record, err = client.Check(context.Background(), req)
 	if err != nil {
 		t.Fatalf("check failed: %v", err)
 	}

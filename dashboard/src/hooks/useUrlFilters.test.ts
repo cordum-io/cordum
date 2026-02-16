@@ -34,6 +34,19 @@ describe("useUrlFilters internals", () => {
     expect(__urlFiltersInternal.parseList("a,b,,")).toEqual(["a", "b"]);
   });
 
+  it("parseList rejects params over 1000 chars", () => {
+    const oversized = "x".repeat(1001);
+    expect(__urlFiltersInternal.parseList(oversized)).toEqual([]);
+  });
+
+  it("parseList caps items at 50", () => {
+    const items = Array.from({ length: 80 }, (_, i) => `item${i}`).join(",");
+    const result = __urlFiltersInternal.parseList(items);
+    expect(result).toHaveLength(50);
+    expect(result[0]).toBe("item0");
+    expect(result[49]).toBe("item49");
+  });
+
   it("serializeValue handles string arrays, numbers, nullable numbers, and strings", () => {
     expect(__urlFiltersInternal.serializeValue("string[]", ["a", "b"])).toBe("a,b");
     expect(__urlFiltersInternal.serializeValue("number", 42)).toBe("42");
@@ -48,6 +61,13 @@ describe("useUrlFilters internals", () => {
     expect(__urlFiltersInternal.parseValue("number", "")).toBeUndefined();
     expect(__urlFiltersInternal.parseValue("string", "hello")).toBe("hello");
     expect(__urlFiltersInternal.parseValue("string", null)).toBe("");
+  });
+
+  it("parseValue returns type-appropriate defaults for oversized params", () => {
+    const oversized = "x".repeat(1001);
+    expect(__urlFiltersInternal.parseValue("string[]", oversized)).toEqual([]);
+    expect(__urlFiltersInternal.parseValue("number", oversized)).toBeUndefined();
+    expect(__urlFiltersInternal.parseValue("string", oversized)).toBe("");
   });
 });
 
@@ -143,6 +163,30 @@ describe("useUrlFilters hook", () => {
     expect(getParams().get("page")).toBeNull();
     expect(getParams().get("tab")).toBe("overview");
     hook.unmount();
+  });
+
+  it("clears pending debounce timers on unmount", () => {
+    vi.useFakeTimers();
+    resetParams("");
+
+    const hook = renderWithQueryClient(() =>
+      useUrlFilters({ q: "string" }, { resetPage: true }),
+    );
+
+    act(() => {
+      hook.result.current?.[2]("q", "pending-value", 500);
+    });
+
+    // Unmount before the timer fires
+    hook.unmount();
+
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    // The debounced setSearchParams should NOT have been called
+    expect(getParams().get("q")).toBeNull();
+    vi.useRealTimers();
   });
 
   it("activeCount counts non-empty schema params", () => {

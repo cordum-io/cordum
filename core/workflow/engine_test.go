@@ -1212,3 +1212,299 @@ func TestCrashRecovery_SuccessfulDispatchPersistsRunningState(t *testing.T) {
 		t.Fatalf("expected idempotency key %q, got %q", expected, req.Meta.IdempotencyKey)
 	}
 }
+
+// TestLockRunCommaOk verifies lockRun doesn't panic when the sync.Map contains
+// a value of the wrong type (e.g. a string instead of *runLock).
+// TestLockRunAcquireRelease verifies basic acquire/release cycle.
+func TestLockRunAcquireRelease(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	unlock := engine.lockRun("run-1")
+	unlock()
+
+	// Second call should work normally.
+	unlock2 := engine.lockRun("run-1")
+	unlock2()
+}
+
+// TestMarkRunTerminalCleanup verifies that markRunTerminal + last unlock
+// removes the entry from the lock map.
+func TestMarkRunTerminalCleanup(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	// Acquire the lock.
+	unlock := engine.lockRun("run-term")
+
+	// Mark terminal while still held — should NOT delete yet because refs > 0.
+	engine.markRunTerminal("run-term")
+
+	// Entry should still exist.
+	engine.lockMgr.mu.Lock()
+	_, exists := engine.lockMgr.locks["run-term"]
+	engine.lockMgr.mu.Unlock()
+	if !exists {
+		t.Fatal("expected entry to still exist while lock is held")
+	}
+
+	// Release lock — this decrements refs to 0 and terminal is set, so entry should be deleted.
+	unlock()
+
+	// Entry should be gone.
+	engine.lockMgr.mu.Lock()
+	_, exists = engine.lockMgr.locks["run-term"]
+	engine.lockMgr.mu.Unlock()
+	if exists {
+		t.Fatal("expected entry to be cleaned up after unlock with terminal flag")
+	}
+}
+
+// TestMarkRunTerminalNoEntry verifies markRunTerminal is safe when no lock exists.
+func TestMarkRunTerminalNoEntry(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	// Should not panic.
+	engine.markRunTerminal("nonexistent-run")
+	engine.markRunTerminal("")
+}
+
+func TestForEach_ExpressionEvaluatedOnce(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	// Limit to 1 parallel to force multiple scheduleReady calls.
+	wf := &Workflow{
+		ID:    "wf-foreach-once",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"fan": {
+				ID:          "fan",
+				Type:        StepTypeWorker,
+				Topic:       "job.default",
+				ForEach:     "input.items",
+				MaxParallel: 1,
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-foreach-once",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Input:      map[string]any{"items": []any{"a", "b", "c"}},
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	// MaxParallel=1 → only 1 dispatched.
+	if bus.Count() != 1 {
+		t.Fatalf("expected 1 dispatch (max_parallel=1), got %d", bus.Count())
+	}
+
+	// Verify ResolvedItems is stored.
+	afterStart, _ := store.GetRun(context.Background(), run.ID)
+	fanSR := afterStart.Steps["fan"]
+	if fanSR == nil {
+		t.Fatal("fan step run missing")
+	}
+	if len(fanSR.ResolvedItems) != 3 {
+		t.Fatalf("expected 3 resolved items, got %d", len(fanSR.ResolvedItems))
+	}
+
+	// Complete first child → triggers second dispatch via HandleJobResult.
+	engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:  "run-foreach-once:fan[0]@1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	})
+
+	// The second scheduleReady should use stored items, not re-evaluate.
+	afterSecond, _ := store.GetRun(context.Background(), run.ID)
+	fanSR2 := afterSecond.Steps["fan"]
+	if len(fanSR2.ResolvedItems) != 3 {
+		t.Fatalf("resolved items should persist, got %d", len(fanSR2.ResolvedItems))
+	}
+	// At least 2 dispatches now (initial + second child).
+	if bus.Count() < 2 {
+		t.Fatalf("expected at least 2 dispatches, got %d", bus.Count())
+	}
+}
+
+func TestForEach_EmptyList_EmitsEvents(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	var finishedSteps []string
+	engine.OnStepFinished = func(runID, stepID string, status StepStatus) {
+		finishedSteps = append(finishedSteps, stepID)
+	}
+
+	wf := &Workflow{
+		ID:    "wf-foreach-empty",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"fan": {
+				ID:      "fan",
+				Type:    StepTypeWorker,
+				Topic:   "job.default",
+				ForEach: "input.items",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-foreach-empty",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Input:      map[string]any{"items": []any{}},
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// No jobs should be dispatched.
+	if bus.Count() != 0 {
+		t.Fatalf("expected 0 dispatches for empty foreach, got %d", bus.Count())
+	}
+
+	// Step should auto-succeed.
+	final, _ := store.GetRun(context.Background(), run.ID)
+	fanSR := final.Steps["fan"]
+	if fanSR == nil || fanSR.Status != StepStatusSucceeded {
+		t.Fatalf("expected fan step succeeded, got %v", fanSR)
+	}
+
+	// Output should be empty list, not nil.
+	if fanSR.Output == nil {
+		t.Fatal("expected empty list output, got nil")
+	}
+	if items, ok := fanSR.Output.([]any); !ok || len(items) != 0 {
+		t.Fatalf("expected empty []any output, got %v (%T)", fanSR.Output, fanSR.Output)
+	}
+
+	// OnStepFinished should have fired.
+	if len(finishedSteps) == 0 || finishedSteps[len(finishedSteps)-1] != "fan" {
+		t.Fatalf("expected OnStepFinished for 'fan', got %v", finishedSteps)
+	}
+
+	// Timeline event should have been emitted.
+	if !hasTimelineEventForRun(t, store, run.ID, "step_completed") {
+		t.Fatal("expected step_completed timeline event for empty foreach")
+	}
+}
+
+func TestCondition_FalsePath_EmitsEvents(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	var finishedSteps []string
+	engine.OnStepFinished = func(runID, stepID string, status StepStatus) {
+		finishedSteps = append(finishedSteps, stepID)
+	}
+
+	wf := &Workflow{
+		ID:    "wf-cond-false",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"gate": {
+				ID:        "gate",
+				Type:      StepTypeWorker,
+				Topic:     "job.default",
+				Condition: "input.enabled == true",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-cond-false",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Input:      map[string]any{"enabled": false},
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// No jobs should be dispatched (condition is false).
+	if bus.Count() != 0 {
+		t.Fatalf("expected 0 dispatches for false condition, got %d", bus.Count())
+	}
+
+	// Step should auto-succeed.
+	final, _ := store.GetRun(context.Background(), run.ID)
+	gateSR := final.Steps["gate"]
+	if gateSR == nil || gateSR.Status != StepStatusSucceeded {
+		t.Fatalf("expected gate step succeeded, got %v", gateSR)
+	}
+
+	// OnStepFinished should have fired.
+	found := false
+	for _, s := range finishedSteps {
+		if s == "gate" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected OnStepFinished for 'gate', got %v", finishedSteps)
+	}
+
+	// Timeline event should have been emitted.
+	if !hasTimelineEventForRun(t, store, run.ID, "step_condition_skipped") {
+		t.Fatal("expected step_condition_skipped timeline event for false condition")
+	}
+}
