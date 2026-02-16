@@ -1723,10 +1723,11 @@ gate_11_streaming() {
   local sse_code decisions_code
 
   # --- WebSocket auth (upgrade must succeed) ---
-  # Use -m 2 timeout; write HTTP code to temp file since WS frames pollute stdout
+  # Use -m 2 timeout; write HTTP code to temp file since WS frames pollute stdout.
+  # Force HTTP/1.1: Connection/Upgrade headers are hop-by-hop and invalid in HTTP/2.
   local ws_tmp
   ws_tmp="$(mktemp)"
-  curl -s -o /dev/null -w "%{http_code}" -m 2 \
+  curl -s -o /dev/null -w "%{http_code}" -m 2 --http1.1 \
     "${CURL_TLS_OPTS[@]}" \
     -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Connection: Upgrade" -H "Upgrade: websocket" \
@@ -1745,7 +1746,7 @@ gate_11_streaming() {
 
   # --- WebSocket no-auth → rejected ---
   ws_tmp="$(mktemp)"
-  curl -s -o /dev/null -w "%{http_code}" -m 2 \
+  curl -s -o /dev/null -w "%{http_code}" -m 2 --http1.1 \
     "${CURL_TLS_OPTS[@]}" \
     -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Connection: Upgrade" -H "Upgrade: websocket" \
