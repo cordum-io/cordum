@@ -13,6 +13,12 @@ import (
 )
 
 func TestNATSTLSConfigFromEnvNone(t *testing.T) {
+	t.Setenv("NATS_TLS_CA", "")
+	t.Setenv("NATS_TLS_CERT", "")
+	t.Setenv("NATS_TLS_KEY", "")
+	t.Setenv("NATS_TLS_INSECURE", "")
+	t.Setenv("NATS_TLS_SERVER_NAME", "")
+
 	cfg, err := natsTLSConfigFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

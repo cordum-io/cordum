@@ -27,6 +27,12 @@ func TestParseBoolEnv(t *testing.T) {
 }
 
 func TestTLSConfigFromEnvErrors(t *testing.T) {
+	t.Setenv("REDIS_TLS_CA", "")
+	t.Setenv("REDIS_TLS_CERT", "")
+	t.Setenv("REDIS_TLS_KEY", "")
+	t.Setenv("REDIS_TLS_INSECURE", "")
+	t.Setenv("REDIS_TLS_SERVER_NAME", "")
+
 	t.Setenv("CORDUM_ENV", "production")
 	if _, err := tlsConfigFromEnv(nil); err == nil {
 		t.Fatalf("expected tls required error")
