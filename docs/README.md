@@ -62,6 +62,8 @@ variables from your shell.
 | [configuration-reference.md](configuration-reference.md) | Complete config schema reference — system.yaml fields, overlay system, env vars master table |
 | [output-policy.md](output-policy.md) | Output safety scanning operator guide — rules, scanners, quarantine runbook |
 | [production.md](production.md) | Production readiness guide — checklist, DR procedures, incident runbooks, scaling guide, monitoring alerts, security hardening |
+| [guides/production-deployment.md](guides/production-deployment.md) | Production deployment guide — Docker Compose, K8s, Helm with TLS |
+| [guides/tls-setup.md](guides/tls-setup.md) | TLS setup guide — architecture, cert generation, env vars, troubleshooting |
 | [production-gate.md](production-gate.md) | Production gate script and verification |
 | [DOCKER.md](DOCKER.md) | Docker Compose deployment — volumes, networking, health checks, env vars, multi-platform, troubleshooting |
 | [helm.md](helm.md) | Kubernetes Helm deployment |
@@ -79,7 +81,7 @@ variables from your shell.
 | [workflow-step-types.md](workflow-step-types.md) | Workflow step type reference — job, fan-out, condition, delay, approval, switch, parallel, loop, transform, storage, sub-workflow |
 | [output-policy.md](output-policy.md) | Output policy architecture — two-phase scanning, quarantine flow |
 | [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) | CAP bus protocol and pointer semantics |
-| [CORE.MD](CORE.MD) | Core libraries technical reference |
+| [CORE.md](CORE.md) | Core libraries technical reference |
 | [adr/](adr/) | Architecture Decision Records (ADRs) |
 | [adr/001-safety-before-dispatch.md](adr/001-safety-before-dispatch.md) | ADR: Policy-before-dispatch guarantee, <5ms p99 |
 | [adr/002-context-pointers.md](adr/002-context-pointers.md) | ADR: Context pointers vs inline payloads on bus |
@@ -125,7 +127,7 @@ variables from your shell.
 | Doc | Description |
 |-----|-------------|
 | [sdk-reference.md](sdk-reference.md) | SDK reference — gateway client, worker runtime, heartbeats, blob store, testing patterns |
-| [CORE.MD](CORE.MD) | Core libraries reference (safety, workflow, scheduler, bus, store) |
+| [CORE.md](CORE.md) | Core libraries reference (safety, workflow, scheduler, bus, store) |
 | [backend_capabilities.md](backend_capabilities.md) | Feature coverage matrix |
 | [backend_feature_matrix.md](backend_feature_matrix.md) | Feature/test matrix |
 | [dashboard/README.md](dashboard/README.md) | Dashboard developer runbook |
