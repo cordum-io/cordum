@@ -77,7 +77,7 @@ func NewRedisStore(url string) (*RedisStore, error) {
 		if err != nil {
 			slog.Warn("invalid "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "error", sanitizeLogValue(err.Error()), "default", defaultDataTTL) // #nosec -- structured log, sanitized
 		} else if parsed <= 0 {
-			slog.Warn("non-positive "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "default", defaultDataTTL) // #nosec G115 -- ttlEnv already sanitized above
+			slog.Warn("non-positive "+envRedisDataTTLFallback+", using default", "value", sanitizeLogValue(ttlEnv), "default", defaultDataTTL) // #nosec G115 G706 -- ttlEnv already sanitized above
 		} else {
 			ttl = parsed
 		}

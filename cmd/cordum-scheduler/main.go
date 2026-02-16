@@ -146,7 +146,7 @@ func main() {
 	if err != nil {
 		explicitPath := os.Getenv("TIMEOUT_CONFIG_PATH")
 		if env.IsProduction() && explicitPath != "" {
-			log.Fatalf("timeout config load failed (production mode, TIMEOUT_CONFIG_PATH=%s): %v", sanitizeLogValue(explicitPath), sanitizeLogValue(err.Error())) // #nosec G104 -- sanitized values
+			log.Fatalf("timeout config load failed (production mode, TIMEOUT_CONFIG_PATH=%s): %v", sanitizeLogValue(explicitPath), sanitizeLogValue(err.Error())) // #nosec G104 G706 -- sanitized values
 		}
 		log.Printf("using default timeout config (could not load %s): %v", sanitizeLogValue(cfg.TimeoutConfigPath), sanitizeLogValue(err.Error()))
 	}

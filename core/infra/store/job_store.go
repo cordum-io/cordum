@@ -279,7 +279,7 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 		if err != nil {
 			slog.Warn("invalid "+envJobMetaTTL+", using default", "value", sanitizeLogValue(v), "error", sanitizeLogValue(err.Error()), "default", defaultJobMetaTTL) // #nosec -- structured log, sanitized
 		} else if parsed <= 0 {
-			slog.Warn("non-positive "+envJobMetaTTL+", using default", "value", sanitizeLogValue(v), "default", defaultJobMetaTTL) // #nosec G115 -- v already sanitized above
+			slog.Warn("non-positive "+envJobMetaTTL+", using default", "value", sanitizeLogValue(v), "default", defaultJobMetaTTL) // #nosec G115 G706 -- v already sanitized above
 		} else {
 			ttl = parsed
 		}
