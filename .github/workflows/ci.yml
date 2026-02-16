@@ -187,8 +187,9 @@ jobs:
     - name: Generate TLS certificates
       run: |
         go run ./cmd/cordumctl generate-certs --dir ./certs
-        # Redis container runs as UID 999 — make certs world-readable.
-        chmod -R a+r ./certs
+        # Redis container runs as UID 999 — make certs world-readable
+        # (a+rX = read files + traverse directories).
+        chmod -R a+rX ./certs
 
     - name: Start services
       run: |
