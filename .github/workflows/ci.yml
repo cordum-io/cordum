@@ -218,12 +218,12 @@ jobs:
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_URL: rediss://:cordum-dev@localhost:6379
-        REDIS_TLS_CA: ./certs/ca/ca.crt
+        REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
         REDIS_TLS_INSECURE: "false"
         NATS_URL: tls://localhost:4222
-        NATS_TLS_CA: ./certs/ca/ca.crt
-        NATS_TLS_CERT: ./certs/client/tls.crt
-        NATS_TLS_KEY: ./certs/client/tls.key
+        NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+        NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
 
     - name: Run production gates (2-4, 8-17)
       run: |
