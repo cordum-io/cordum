@@ -341,6 +341,73 @@ func TestEngineHandleHeartbeatStoresWorker(t *testing.T) {
 	}
 }
 
+func TestHandleHandshakeRegistersWorker(t *testing.T) {
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	packet := &pb.BusPacket{
+		SenderId:        "worker-42",
+		TraceId:         "trace-hs",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_Handshake{
+			Handshake: &pb.Handshake{
+				ComponentId:       "worker-42",
+				Role:              pb.ComponentRole_COMPONENT_ROLE_WORKER,
+				SdkVersion:        "2.5.2",
+				SupportedVersions: []int32{1},
+				Capabilities:      map[string]bool{"cancel": true},
+			},
+		},
+	}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("handle handshake: %v", err)
+	}
+
+	// Worker-role handshake should be registered.
+	registry.mu.RLock()
+	entry, ok := registry.workers["worker-42"]
+	registry.mu.RUnlock()
+	if !ok {
+		t.Fatal("expected worker-42 in registry after handshake")
+	}
+	if entry.handshake == nil {
+		t.Fatal("expected handshake data in registry entry")
+	}
+	if entry.handshake.SdkVersion != "2.5.2" {
+		t.Fatalf("expected sdk_version 2.5.2, got %s", entry.handshake.SdkVersion)
+	}
+}
+
+func TestHandleHandshakeIgnoresNonWorker(t *testing.T) {
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	packet := &pb.BusPacket{
+		SenderId: "gateway-1",
+		Payload: &pb.BusPacket_Handshake{
+			Handshake: &pb.Handshake{
+				ComponentId: "gateway-1",
+				Role:        pb.ComponentRole_COMPONENT_ROLE_GATEWAY,
+			},
+		},
+	}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("handle handshake: %v", err)
+	}
+
+	registry.mu.RLock()
+	_, ok := registry.workers["gateway-1"]
+	registry.mu.RUnlock()
+	if ok {
+		t.Fatal("non-worker handshake should not be registered")
+	}
+}
+
 func TestProcessJobPublishesToSubject(t *testing.T) {
 	bus := &fakeBus{}
 	registry := newTestRegistry(t)
@@ -904,6 +971,7 @@ func (m *cancelMetricsSpy) SetActiveGoroutines(int)                           {}
 func (m *cancelMetricsSpy) SetStaleJobs(string, int)                          {}
 func (m *cancelMetricsSpy) IncDLQEmitFailure(string)                          {}
 func (m *cancelMetricsSpy) IncJobCancelFailures()                             { m.cancelFailures++ }
+func (m *cancelMetricsSpy) IncValidationRejections()                          {}
 
 func TestHandlePacket_CancelJob_ErrorPropagates(t *testing.T) {
 	store := &failCancelJobStore{
@@ -965,5 +1033,82 @@ func TestHandlePacket_CancelJob_SuccessReturnsNil(t *testing.T) {
 	}
 	if store.states["job-ok"] != JobStateCancelled {
 		t.Fatalf("expected CANCELLED state, got %s", store.states["job-ok"])
+	}
+}
+
+func TestMapStringToErrorCode(t *testing.T) {
+	tests := []struct {
+		code string
+		want pb.ErrorCode
+	}{
+		{"approval_rejected", pb.ErrorCode_ERROR_CODE_SAFETY_DENIED},
+		{"policy_denied", pb.ErrorCode_ERROR_CODE_SAFETY_DENIED},
+		{"policy_violation", pb.ErrorCode_ERROR_CODE_SAFETY_POLICY_VIOLATION},
+		{"max_scheduling_retries", pb.ErrorCode_ERROR_CODE_JOB_RESOURCE_EXHAUSTED},
+		{"timeout", pb.ErrorCode_ERROR_CODE_JOB_TIMEOUT},
+		{"permission_denied", pb.ErrorCode_ERROR_CODE_JOB_PERMISSION_DENIED},
+		{"unknown_code", pb.ErrorCode_ERROR_CODE_UNSPECIFIED},
+		{"", pb.ErrorCode_ERROR_CODE_UNSPECIFIED},
+	}
+	for _, tt := range tests {
+		if got := mapStringToErrorCode(tt.code); got != tt.want {
+			t.Errorf("mapStringToErrorCode(%q) = %v, want %v", tt.code, got, tt.want)
+		}
+	}
+}
+
+func TestInvalidJobRequestRejected(t *testing.T) {
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	// Empty topic should be rejected by validation.
+	packet := &pb.BusPacket{
+		SenderId:        "test",
+		TraceId:         "trace-invalid",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_JobRequest{
+			JobRequest: &pb.JobRequest{
+				JobId: "job-invalid",
+				Topic: "", // invalid: empty topic
+			},
+		},
+	}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("expected nil error for invalid request, got: %v", err)
+	}
+
+	// Should not have been dispatched.
+	msgs := bus.snapshotPublished()
+	if len(msgs) != 0 {
+		t.Fatalf("expected no published messages for invalid request, got %d", len(msgs))
+	}
+}
+
+func TestInvalidJobResultRejected(t *testing.T) {
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	store := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
+
+	// Empty worker_id should be rejected by validation.
+	packet := &pb.BusPacket{
+		SenderId:        "test",
+		TraceId:         "trace-invalid-result",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:    "job-result-invalid",
+				Status:   pb.JobStatus_JOB_STATUS_SUCCEEDED,
+				WorkerId: "", // invalid: empty worker_id
+			},
+		},
+	}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("expected nil error for invalid result, got: %v", err)
 	}
 }

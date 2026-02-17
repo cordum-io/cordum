@@ -16,6 +16,7 @@ import { JobActions } from "../components/jobs/JobActions";
 import { MemoryPanel } from "../components/jobs/MemoryPanel";
 import { ArtifactPanel } from "../components/jobs/ArtifactPanel";
 import { RemediateDrawer } from "../components/jobs/RemediateDrawer";
+import { ErrorCodeBadge } from "../components/jobs/ErrorCodeBadge";
 import { usePageTitle } from "../hooks/usePageTitle";
 
 // ---------------------------------------------------------------------------
@@ -252,6 +253,31 @@ export default function JobDetailPage() {
                 Safety Evaluation
               </h2>
               <SafetyExplainCard decision={safetyDecision} />
+            </section>
+          )}
+
+          {/* Error Info */}
+          {(job.errorCodeEnum || job.errorCode || job.errorMessage) && (
+            <section>
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
+                Error Details
+              </h2>
+              <Card>
+                <div className="space-y-2 p-4">
+                  {(job.errorCodeEnum || job.errorCode) && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-muted">Code:</span>
+                      <ErrorCodeBadge errorCodeEnum={job.errorCodeEnum} errorCode={job.errorCode} />
+                    </div>
+                  )}
+                  {job.errorMessage && (
+                    <div>
+                      <span className="text-xs font-semibold text-muted">Message:</span>
+                      <p className="mt-0.5 text-sm text-ink">{job.errorMessage}</p>
+                    </div>
+                  )}
+                </div>
+              </Card>
             </section>
           )}
 

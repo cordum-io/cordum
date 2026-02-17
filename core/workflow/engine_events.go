@@ -41,6 +41,8 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 	message := ""
 	code := ""
 	component := "workflow-engine"
+	traceID := ""
+	details := map[string]string{}
 
 	switch v := payload.(type) {
 	case map[string]any:
@@ -56,6 +58,23 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 		if val, ok := v["component"].(string); ok && strings.TrimSpace(val) != "" {
 			component = strings.TrimSpace(val)
 		}
+		if val, ok := v["trace_id"].(string); ok && strings.TrimSpace(val) != "" {
+			traceID = strings.TrimSpace(val)
+		}
+		if val, ok := v["details"].(map[string]any); ok {
+			for k, raw := range val {
+				if s, ok := raw.(string); ok {
+					details[k] = s
+				} else {
+					details[k] = fmt.Sprintf("%v", raw)
+				}
+			}
+		}
+		if val, ok := v["details"].(map[string]string); ok {
+			for k, s := range val {
+				details[k] = s
+			}
+		}
 	case map[string]string:
 		if val := strings.TrimSpace(v["level"]); val != "" {
 			level = strings.ToUpper(val)
@@ -69,6 +88,9 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 		if val := strings.TrimSpace(v["component"]); val != "" {
 			component = val
 		}
+		if val := strings.TrimSpace(v["trace_id"]); val != "" {
+			traceID = val
+		}
 	}
 
 	if message == "" && step != nil {
@@ -80,10 +102,31 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 	}
 
 	return &pb.SystemAlert{
+		// Deprecated fields (keep for backward compat)
 		Level:     level,
 		Message:   message,
 		Component: component,
 		Code:      code,
+		// New enhanced fields
+		Severity:        levelToSeverity(level),
+		SourceComponent: component,
+		Details:         details,
+		TraceId:         traceID,
+	}
+}
+
+func levelToSeverity(level string) pb.AlertSeverity {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "INFO":
+		return pb.AlertSeverity_ALERT_SEVERITY_INFO
+	case "WARN", "WARNING":
+		return pb.AlertSeverity_ALERT_SEVERITY_WARNING
+	case "ERROR":
+		return pb.AlertSeverity_ALERT_SEVERITY_ERROR
+	case "CRITICAL":
+		return pb.AlertSeverity_ALERT_SEVERITY_CRITICAL
+	default:
+		return pb.AlertSeverity_ALERT_SEVERITY_UNSPECIFIED
 	}
 }
 

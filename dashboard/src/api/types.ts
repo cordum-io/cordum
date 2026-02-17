@@ -98,6 +98,7 @@ export interface Job {
   errorMessage?: string;
   errorStatus?: string;
   errorCode?: string;
+  errorCodeEnum?: number;
   lastState?: string;
   output_safety?: OutputSafetyRecord;
   idempotencyKey?: string;
@@ -109,6 +110,82 @@ export interface Job {
   approvalAt?: number;
   approvalReason?: string;
   approvalNote?: string;
+}
+
+// ---------------------------------------------------------------------------
+// ErrorCode enum (matches CAP v2.5.2 protobuf ErrorCode)
+// ---------------------------------------------------------------------------
+
+export enum ErrorCode {
+  UNSPECIFIED = 0,
+  // Protocol (100-104)
+  PROTOCOL_VERSION_MISMATCH = 100,
+  PROTOCOL_INVALID_PACKET = 101,
+  PROTOCOL_SIGNATURE_INVALID = 102,
+  PROTOCOL_TIMEOUT = 103,
+  PROTOCOL_RATE_LIMITED = 104,
+  // Job (200-206)
+  JOB_NOT_FOUND = 200,
+  JOB_ALREADY_COMPLETED = 201,
+  JOB_TIMEOUT = 202,
+  JOB_CANCELLED = 203,
+  JOB_PERMISSION_DENIED = 204,
+  JOB_RESOURCE_EXHAUSTED = 205,
+  JOB_INVALID_INPUT = 206,
+  // Safety (300-302)
+  SAFETY_DENIED = 300,
+  SAFETY_POLICY_VIOLATION = 301,
+  SAFETY_OUTPUT_QUARANTINED = 302,
+  // Transport (400-402)
+  TRANSPORT_UNAVAILABLE = 400,
+  TRANSPORT_POOL_EXHAUSTED = 401,
+  TRANSPORT_DELIVERY_FAILED = 402,
+}
+
+/** Human-readable label for an ErrorCode value. */
+export function errorCodeLabel(code: number): string {
+  switch (code) {
+    case ErrorCode.PROTOCOL_VERSION_MISMATCH: return "Protocol: Version Mismatch";
+    case ErrorCode.PROTOCOL_INVALID_PACKET: return "Protocol: Invalid Packet";
+    case ErrorCode.PROTOCOL_SIGNATURE_INVALID: return "Protocol: Signature Invalid";
+    case ErrorCode.PROTOCOL_TIMEOUT: return "Protocol: Timeout";
+    case ErrorCode.PROTOCOL_RATE_LIMITED: return "Protocol: Rate Limited";
+    case ErrorCode.JOB_NOT_FOUND: return "Job: Not Found";
+    case ErrorCode.JOB_ALREADY_COMPLETED: return "Job: Already Completed";
+    case ErrorCode.JOB_TIMEOUT: return "Job: Timeout";
+    case ErrorCode.JOB_CANCELLED: return "Job: Cancelled";
+    case ErrorCode.JOB_PERMISSION_DENIED: return "Job: Permission Denied";
+    case ErrorCode.JOB_RESOURCE_EXHAUSTED: return "Job: Resource Exhausted";
+    case ErrorCode.JOB_INVALID_INPUT: return "Job: Invalid Input";
+    case ErrorCode.SAFETY_DENIED: return "Safety: Denied";
+    case ErrorCode.SAFETY_POLICY_VIOLATION: return "Safety: Policy Violation";
+    case ErrorCode.SAFETY_OUTPUT_QUARANTINED: return "Safety: Output Quarantined";
+    case ErrorCode.TRANSPORT_UNAVAILABLE: return "Transport: Unavailable";
+    case ErrorCode.TRANSPORT_POOL_EXHAUSTED: return "Transport: Pool Exhausted";
+    case ErrorCode.TRANSPORT_DELIVERY_FAILED: return "Transport: Delivery Failed";
+    default: return `Error ${code}`;
+  }
+}
+
+/** Category for an ErrorCode — used to pick badge color. */
+export function errorCodeCategory(code: number): "safety" | "job" | "protocol" | "transport" | "unknown" {
+  if (code >= 300 && code < 400) return "safety";
+  if (code >= 200 && code < 300) return "job";
+  if (code >= 100 && code < 200) return "protocol";
+  if (code >= 400 && code < 500) return "transport";
+  return "unknown";
+}
+
+// ---------------------------------------------------------------------------
+// AlertSeverity enum (matches CAP v2.5.2 protobuf AlertSeverity)
+// ---------------------------------------------------------------------------
+
+export enum AlertSeverity {
+  UNSPECIFIED = 0,
+  INFO = 1,
+  WARNING = 2,
+  ERROR = 3,
+  CRITICAL = 4,
 }
 
 export type JobPriority = "low" | "normal" | "high" | "critical";

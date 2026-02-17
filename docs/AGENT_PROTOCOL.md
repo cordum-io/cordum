@@ -18,6 +18,8 @@ This document describes how control-plane components and external workers commun
 - `sys.job.dlq` – dead-letter events (non-success results; used for debugging/retry workflows).
 - `sys.job.cancel` – cancellation notifications (workers cancel matching in-flight job IDs).
 - `sys.heartbeat` – worker heartbeats (fan-out, no queue group).
+- `sys.handshake` – component registration (Handshake messages on connect).
+- `sys.alert` – system alerts from any component.
 - `sys.workflow.event` – workflow engine event emissions (SystemAlert).
 - `job.*` – worker pools (map lives in `config/pools.yaml`, e.g., `job.default`, `job.batch`).
 - `worker.<worker_id>.jobs` – direct, worker-targeted delivery (used by the scheduler for least-loaded dispatch).
@@ -39,7 +41,7 @@ Because at-least-once delivery can redeliver, handlers must be idempotent:
 CAP is the canonical contract; Cordum does not duplicate these protos.
 - **Envelope: `BusPacket`**
   - `trace_id`, `sender_id`, `created_at`, `protocol_version` (current: `1`)
-  - `payload` oneof: `JobRequest`, `JobResult`, `Heartbeat`, `SystemAlert`, `JobProgress`, `JobCancel`.
+  - `payload` oneof: `JobRequest`, `JobResult`, `Heartbeat`, `SystemAlert`, `JobProgress`, `JobCancel`, `Handshake`.
   - `signature` is part of CAP but not enforced by Cordum yet.
 - **JobRequest**
   - `job_id` (UUID string), `topic` (e.g., `job.default`), `priority` (`INTERACTIVE|BATCH|CRITICAL`).
@@ -51,7 +53,7 @@ Priority semantics:
 - The scheduler treats `priority` as metadata only (no preemption or queue ordering today).
 - Workers may choose to use it for local ordering, but core does not enforce it.
 - **JobResult**
-  - `job_id`, `status` (`PENDING|SCHEDULED|DISPATCHED|RUNNING|SUCCEEDED|FAILED|FAILED_RETRYABLE|FAILED_FATAL|CANCELLED|DENIED|TIMEOUT`), `result_ptr`, `worker_id`, `execution_ms`, optional `error_code`/`error_message`.
+  - `job_id`, `status` (`PENDING|SCHEDULED|DISPATCHED|RUNNING|SUCCEEDED|FAILED|FAILED_RETRYABLE|FAILED_FATAL|CANCELLED|DENIED|TIMEOUT`), `result_ptr`, `worker_id`, `execution_ms`, optional `error_code`/`error_message`, `error_code_enum` (structured `ErrorCode`, preferred over string `error_code`).
   - `FAILED_RETRYABLE` is treated as a transient failure (no DLQ entry; workflow retry policy can re-dispatch).
   - `FAILED_FATAL` is treated as a terminal failure and triggers saga rollback.
 - **JobProgress**
@@ -99,3 +101,51 @@ Priority semantics:
   - `BuildWindow(memory_id, mode, logical_payload, max_input_tokens, max_output_tokens)` → list of `ModelMessage`.
   - `UpdateMemory(memory_id, logical_payload, model_response, mode)` → appends chat history or summaries.
 - Uses the same Redis instance; keys are namespaced under `mem:<memory_id>:*`.
+
+## Error Codes (CAP v2.5.2)
+
+The `ErrorCode` enum provides structured error classification, replacing ad-hoc string error codes. Both string `error_code` and numeric `error_code_enum` are populated during the transition period.
+
+| Range | Category | Examples |
+|-------|----------|---------|
+| 100-105 | Protocol | `VERSION_MISMATCH`, `MALFORMED_PACKET`, `SIGNATURE_INVALID`, `SIGNATURE_MISSING`, `UNKNOWN_PAYLOAD` |
+| 200-206 | Job | `NOT_FOUND`, `DUPLICATE`, `TIMEOUT`, `PERMISSION_DENIED`, `RESOURCE_EXHAUSTED`, `INVALID_INPUT`, `WORKER_UNAVAILABLE` |
+| 300-302 | Safety | `DENIED`, `POLICY_VIOLATION`, `RISK_TAG_BLOCKED` |
+| 400-402 | Transport | `PUBLISH_FAILED`, `SUBSCRIBE_FAILED`, `CONNECTION_LOST` |
+
+Usage: always use `pb.ErrorCode_ERROR_CODE_*` constants from `core/protocol/pb/v1`, never raw integers.
+
+## Handshake (Component Registration)
+
+On NATS connect, each service publishes a `BusPacket{Handshake}` to `sys.handshake` advertising its role and capabilities. The scheduler tracks these to maintain a component registry.
+
+- **Handshake fields**: `component_id`, `role` (`ComponentRole` enum), `supported_versions`, `capabilities` (map), `sdk_version`.
+- **ComponentRole values**: `GATEWAY`, `SCHEDULER`, `WORKER`, `ORCHESTRATOR`, `CONTROLLER`.
+- **Services that publish**: api-gateway (GATEWAY), scheduler (SCHEDULER), workflow-engine (ORCHESTRATOR), workers (WORKER via SDK runtime).
+- **Services that skip**: safety-kernel, context-engine (gRPC-only, no NATS connection).
+- Handshake failure is non-fatal — services log a warning and continue startup.
+
+## Enhanced SystemAlert (CAP v2.5.2)
+
+`SystemAlert` now carries structured fields alongside the deprecated string-based fields:
+
+| New Field | Type | Description |
+|-----------|------|-------------|
+| `severity` | `AlertSeverity` enum | `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `error_code_enum` | `ErrorCode` enum | Structured error classification |
+| `source_component` | string | Originating service instance (e.g., `scheduler-1`) |
+| `details` | `map<string,string>` | Key-value context (sender, subject, etc.) |
+| `trace_id` | string | Correlates alert to a job or workflow run |
+
+**Backward compatibility**: deprecated fields (`level`, `component`, `code`) are still populated during the transition.
+
+## Bus-Layer Validation
+
+Cordum validates incoming `BusPacket` payloads at the bus ingress using CAP SDK helpers:
+- `ValidateJobRequest`: rejects packets with empty `job_id` or `topic`.
+- `ValidateJobResult`: rejects packets with empty `job_id`, `worker_id`, or unspecified status.
+- Invalid packets are logged, counted (`validation_rejections_total` metric), and dropped silently.
+
+## Python Guard SDK
+
+The CAP repository includes a Python Guard SDK (`cordum-guard`) for integrating Cordum safety checks into LangChain and LlamaIndex pipelines. See `python-guard/` in the [CAP repository](https://github.com/cordum-io/cap).

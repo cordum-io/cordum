@@ -80,6 +80,7 @@ export interface BackendJobDetail extends BackendJobRecord {
   error_message?: string;
   error_status?: string;
   error_code?: string;
+  error_code_enum?: number;
   last_state?: string;
   workflow_id?: string;
   run_id?: string;
@@ -545,6 +546,9 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
     errorMessage: detail.error_message,
     errorStatus: detail.error_status,
     errorCode: detail.error_code,
+    errorCodeEnum: detail.error_code_enum && detail.error_code_enum !== 0
+      ? detail.error_code_enum
+      : undefined,
     lastState: detail.last_state,
     workflowRunId: detail.run_id || base.workflowRunId,
     workflowId: detail.workflow_id,

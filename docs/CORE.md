@@ -114,6 +114,12 @@ If no mapping exists: fail fast to DLQ with `no_pool_mapping`.
 - Workers come online in that pool.
 - Scheduler behavior remains unchanged.
 
+### CAP v2.5.2 Protocol Features (Scheduler)
+- **Handshake handling**: The scheduler subscribes to `sys.handshake` and processes `BusPacket{Handshake}` messages. Worker-role handshakes update the in-memory worker registry with component capabilities, enabling capability-aware routing.
+- **ErrorCode enum**: Job failures now carry a structured `error_code_enum` (`ErrorCode` enum) alongside the deprecated string `error_code`. The scheduler auto-populates `error_code_enum` from the string code when only the string is provided (e.g., `"timeout"` maps to `ERROR_CODE_JOB_TIMEOUT`). DLQ entries also carry the structured code.
+- **Bus-layer validation**: Incoming `JobRequest` and `JobResult` packets are validated using CAP SDK helpers (`ValidateJobRequest`/`ValidateJobResult`). Invalid packets are rejected, logged, and counted via the `validation_rejections_total` metric.
+- **Enhanced SystemAlert**: Alerts emitted by the workflow engine now include `severity` (enum), `source_component`, `details` (map), and `trace_id` alongside the deprecated string fields.
+
 ---
 
 ## 4) Safety Kernel as the single Policy Decision Point
