@@ -15,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/infra/logging"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	capvalidate "github.com/cordum-io/cap/v2/sdk/go"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -210,6 +211,10 @@ func (e *Engine) Start() error {
 	if err := e.bus.Subscribe(capsdk.SubjectCancel, schedulerQueue, e.HandlePacket); err != nil {
 		return fmt.Errorf("subscribe cancel: %w", err)
 	}
+	// Handshakes broadcast to all replicas (like heartbeats).
+	if err := e.bus.Subscribe(capsdk.SubjectHandshake, "", e.HandlePacket); err != nil {
+		return fmt.Errorf("subscribe handshake: %w", err)
+	}
 
 	// Periodic registry stats logging for diagnostics
 	type registryStatter interface {
@@ -279,6 +284,17 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 		if req == nil {
 			return nil
 		}
+		if err := capvalidate.ValidateJobRequest(req); err != nil {
+			logging.Warn("scheduler", "invalid job request rejected",
+				"job_id", req.GetJobId(),
+				"validation_error", err.Error(),
+				"trace_id", p.TraceId,
+			)
+			if e.metrics != nil {
+				e.metrics.IncValidationRejections()
+			}
+			return nil
+		}
 		tenant := ExtractTenant(req)
 		logging.Info("scheduler", "job request received",
 			"job_id", req.JobId,
@@ -291,6 +307,17 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 	case *pb.BusPacket_JobResult:
 		res := payload.JobResult
 		if res == nil {
+			return nil
+		}
+		if err := capvalidate.ValidateJobResult(res); err != nil {
+			logging.Warn("scheduler", "invalid job result rejected",
+				"job_id", res.GetJobId(),
+				"validation_error", err.Error(),
+				"trace_id", p.TraceId,
+			)
+			if e.metrics != nil {
+				e.metrics.IncValidationRejections()
+			}
 			return nil
 		}
 		logging.Info("scheduler", "job result received",
@@ -327,6 +354,21 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 		logging.Info("scheduler", "job cancelled",
 			"job_id", cancelReq.JobId,
 		)
+		return nil
+	case *pb.BusPacket_Handshake:
+		hs := payload.Handshake
+		if hs == nil {
+			return nil
+		}
+		logging.Info("scheduler", "handshake received",
+			"component_id", hs.ComponentId,
+			"role", hs.Role.String(),
+			"sdk_version", hs.SdkVersion,
+			"supported_versions", hs.SupportedVersions,
+		)
+		if hs.Role == pb.ComponentRole_COMPONENT_ROLE_WORKER {
+			e.registry.UpdateHandshake(hs)
+		}
 		return nil
 	default:
 		// Unknown payloads are ignored for now.
@@ -810,6 +852,11 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 	jobID := strings.TrimSpace(res.JobId)
 	if jobID == "" {
 		return nil
+	}
+	// Auto-populate structured ErrorCodeEnum from legacy string ErrorCode
+	// when the enum is unset but the string is present.
+	if res.ErrorCodeEnum == pb.ErrorCode_ERROR_CODE_UNSPECIFIED && res.ErrorCode != "" {
+		res.ErrorCodeEnum = mapStringToErrorCode(res.ErrorCode)
 	}
 	return e.withJobLock(jobID, jobLockTTL, func() error {
 		status := res.Status
@@ -1471,12 +1518,13 @@ func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string
 		ProtocolVersion: protocolVersionV1,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
-				JobId:        jobID,
-				Status:       status,
-				ErrorCode:    reasonCode,
-				ErrorMessage: reason,
-				ResultPtr:    "",
-				WorkerId:     "",
+				JobId:         jobID,
+				Status:        status,
+				ErrorCode:     reasonCode,
+				ErrorCodeEnum: mapStringToErrorCode(reasonCode),
+				ErrorMessage:  reason,
+				ResultPtr:     "",
+				WorkerId:      "",
 			},
 		},
 	}
@@ -1506,6 +1554,25 @@ func (e *Engine) emitDLQWithRetry(jobID, topic string, status pb.JobStatus, reas
 		}
 	}
 	return err
+}
+
+// mapStringToErrorCode converts legacy string error codes to the structured
+// ErrorCode enum. Returns ERROR_CODE_UNSPECIFIED for unknown codes.
+func mapStringToErrorCode(code string) pb.ErrorCode {
+	switch code {
+	case "approval_rejected", "policy_denied":
+		return pb.ErrorCode_ERROR_CODE_SAFETY_DENIED
+	case "policy_violation":
+		return pb.ErrorCode_ERROR_CODE_SAFETY_POLICY_VIOLATION
+	case "max_scheduling_retries":
+		return pb.ErrorCode_ERROR_CODE_JOB_RESOURCE_EXHAUSTED
+	case "timeout":
+		return pb.ErrorCode_ERROR_CODE_JOB_TIMEOUT
+	case "permission_denied":
+		return pb.ErrorCode_ERROR_CODE_JOB_PERMISSION_DENIED
+	default:
+		return pb.ErrorCode_ERROR_CODE_UNSPECIFIED
+	}
 }
 
 func (e *Engine) emitOutputAuditEvent(jobID, topic, code, reason string, decision OutputDecision) {

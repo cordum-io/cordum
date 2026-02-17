@@ -8,6 +8,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 func TestRerunFromCopiesDependencies(t *testing.T) {
@@ -290,6 +291,81 @@ func TestBuildEventAlert(t *testing.T) {
 	alert = buildEventAlert(&Step{ID: "step", Name: "Named"}, map[string]any{})
 	if alert.Message != "Named" {
 		t.Fatalf("expected step name fallback")
+	}
+}
+
+func TestLevelToSeverity(t *testing.T) {
+	tests := []struct {
+		level string
+		want  pb.AlertSeverity
+	}{
+		{"INFO", pb.AlertSeverity_ALERT_SEVERITY_INFO},
+		{"info", pb.AlertSeverity_ALERT_SEVERITY_INFO},
+		{"WARN", pb.AlertSeverity_ALERT_SEVERITY_WARNING},
+		{"WARNING", pb.AlertSeverity_ALERT_SEVERITY_WARNING},
+		{"warning", pb.AlertSeverity_ALERT_SEVERITY_WARNING},
+		{"ERROR", pb.AlertSeverity_ALERT_SEVERITY_ERROR},
+		{"CRITICAL", pb.AlertSeverity_ALERT_SEVERITY_CRITICAL},
+		{"unknown", pb.AlertSeverity_ALERT_SEVERITY_UNSPECIFIED},
+		{"", pb.AlertSeverity_ALERT_SEVERITY_UNSPECIFIED},
+	}
+	for _, tt := range tests {
+		if got := levelToSeverity(tt.level); got != tt.want {
+			t.Errorf("levelToSeverity(%q) = %v, want %v", tt.level, got, tt.want)
+		}
+	}
+}
+
+func TestBuildEventAlertEnhancedFields(t *testing.T) {
+	payload := map[string]any{
+		"level":     "error",
+		"message":   "disk full",
+		"code":      "DISK_FULL",
+		"component": "storage",
+		"trace_id":  "trace-abc",
+		"details":   map[string]any{"disk": "/dev/sda1", "usage_pct": "99"},
+	}
+	alert := buildEventAlert(&Step{ID: "step1"}, payload)
+
+	// Deprecated fields still populated
+	if alert.Level != "ERROR" {
+		t.Fatalf("expected Level ERROR, got %s", alert.Level)
+	}
+	if alert.Component != "storage" {
+		t.Fatalf("expected Component storage, got %s", alert.Component)
+	}
+	if alert.Code != "DISK_FULL" {
+		t.Fatalf("expected Code DISK_FULL, got %s", alert.Code)
+	}
+
+	// New enhanced fields
+	if alert.Severity != pb.AlertSeverity_ALERT_SEVERITY_ERROR {
+		t.Fatalf("expected severity ERROR, got %v", alert.Severity)
+	}
+	if alert.SourceComponent != "storage" {
+		t.Fatalf("expected source_component storage, got %s", alert.SourceComponent)
+	}
+	if alert.TraceId != "trace-abc" {
+		t.Fatalf("expected trace_id trace-abc, got %s", alert.TraceId)
+	}
+	if alert.Details["disk"] != "/dev/sda1" {
+		t.Fatalf("expected details disk /dev/sda1, got %s", alert.Details["disk"])
+	}
+	if alert.Details["usage_pct"] != "99" {
+		t.Fatalf("expected details usage_pct 99, got %s", alert.Details["usage_pct"])
+	}
+
+	// map[string]string payload variant
+	alertStr := buildEventAlert(&Step{ID: "s2"}, map[string]string{
+		"level":    "critical",
+		"message":  "oom",
+		"trace_id": "trace-xyz",
+	})
+	if alertStr.Severity != pb.AlertSeverity_ALERT_SEVERITY_CRITICAL {
+		t.Fatalf("expected severity CRITICAL, got %v", alertStr.Severity)
+	}
+	if alertStr.TraceId != "trace-xyz" {
+		t.Fatalf("expected trace_id trace-xyz, got %s", alertStr.TraceId)
 	}
 }
 

@@ -92,6 +92,11 @@ func TestComputeMsgID(t *testing.T) {
 		t.Fatalf("unexpected heartbeat msg id: %s", got)
 	}
 
+	packet = &pb.BusPacket{Payload: &pb.BusPacket_Handshake{Handshake: &pb.Handshake{ComponentId: "worker-99"}}}
+	if got := computeMsgID("sys.handshake", packet); got != "handshake:worker-99" {
+		t.Fatalf("unexpected handshake msg id: %s", got)
+	}
+
 	if computeMsgID(subject, nil) != "" {
 		t.Fatalf("expected empty msg id for nil packet")
 	}

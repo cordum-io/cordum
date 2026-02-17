@@ -6,10 +6,10 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.0.19
+	github.com/cordum-io/cap/v2 v2.5.2
 	github.com/nats-io/nats-server/v2 v2.12.4
 	github.com/nats-io/nats.go v1.48.0
-	google.golang.org/grpc v1.78.0
+	github.com/redis/go-redis/v9 v9.7.3
 	google.golang.org/protobuf v1.36.10
 )
 
@@ -23,7 +23,6 @@ require (
 	github.com/nats-io/jwt/v2 v2.8.0 // indirect
 	github.com/nats-io/nkeys v0.4.12 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
-	github.com/redis/go-redis/v9 v9.7.3 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
@@ -31,4 +30,5 @@ require (
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
+	google.golang.org/grpc v1.78.0 // indirect
 )

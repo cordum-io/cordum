@@ -4,7 +4,9 @@ import { Badge } from "../ui/Badge";
 import { Card } from "../ui/Card";
 import { HighlightText } from "../ui/HighlightText";
 import { cn } from "../../lib/utils";
+import { useState } from "react";
 import type { AuditEntry } from "../../api/types";
+import { AlertSeverity } from "../../api/types";
 
 // ---------------------------------------------------------------------------
 // Category classification
@@ -213,11 +215,32 @@ function HumanActionContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
   );
 }
 
+const alertSeverityVariant: Record<number, "info" | "warning" | "danger" | "default"> = {
+  [AlertSeverity.INFO]: "info",
+  [AlertSeverity.WARNING]: "warning",
+  [AlertSeverity.ERROR]: "danger",
+  [AlertSeverity.CRITICAL]: "danger",
+};
+
+const alertSeverityLabel: Record<number, string> = {
+  [AlertSeverity.INFO]: "INFO",
+  [AlertSeverity.WARNING]: "WARNING",
+  [AlertSeverity.ERROR]: "ERROR",
+  [AlertSeverity.CRITICAL]: "CRITICAL",
+};
+
 function SystemEventContent({ entry, searchQuery }: { entry: AuditEntry; searchQuery?: string }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const link = resourceLink(entry.resourceType, entry.resourceId);
+  const severity = typeof entry.payload?.severity === "number" ? entry.payload.severity as number : undefined;
+  const sourceComponent = typeof entry.payload?.source_component === "string" ? entry.payload.source_component as string : undefined;
+  const traceId = typeof entry.payload?.trace_id === "string" ? entry.payload.trace_id as string : undefined;
+  const details = entry.payload?.details != null && typeof entry.payload.details === "object"
+    ? entry.payload.details as Record<string, unknown>
+    : undefined;
 
   return (
-    <div className="space-y-1 opacity-80">
+    <div className="space-y-1.5 opacity-80">
       <div className="flex items-center gap-2 text-sm text-muted">
         {link ? (
           <Link to={link} className="text-accent hover:underline">
@@ -228,9 +251,51 @@ function SystemEventContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
         )}
         <ArrowRight className="h-3 w-3" />
         <Badge variant="default">{entry.action || entry.eventType}</Badge>
+        {severity != null && severity !== AlertSeverity.UNSPECIFIED && (
+          <Badge
+            variant={alertSeverityVariant[severity] ?? "default"}
+            className={severity === AlertSeverity.CRITICAL ? "font-bold" : undefined}
+          >
+            {alertSeverityLabel[severity] ?? `SEV-${severity}`}
+          </Badge>
+        )}
+        {sourceComponent && (
+          <span className="inline-flex items-center rounded border border-border/60 bg-surface2 px-1.5 py-0.5 text-[11px] font-mono text-muted">
+            {sourceComponent}
+          </span>
+        )}
       </div>
       {entry.message && (
         <p className="text-xs text-muted"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
+      )}
+      {traceId && (
+        <p className="text-[11px]">
+          <span className="text-muted">Trace: </span>
+          <Link to={`/jobs/${traceId}`} className="font-mono text-accent hover:underline">
+            {traceId.slice(0, 12)}...
+          </Link>
+        </p>
+      )}
+      {details && Object.keys(details).length > 0 && (
+        <div>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setDetailsOpen(!detailsOpen); }}
+            className="text-[11px] text-muted hover:text-accent transition-colors"
+          >
+            {detailsOpen ? "Hide details" : "Show details"}
+          </button>
+          {detailsOpen && (
+            <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
+              {Object.entries(details).map(([k, v]) => (
+                <div key={k} className="contents">
+                  <dt className="font-semibold text-muted">{k}</dt>
+                  <dd className="font-mono text-ink truncate">{String(v)}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
       )}
     </div>
   );

@@ -260,6 +260,12 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	}
 	defer natsBus.Close()
 
+	if err := bus.PublishHandshake(natsBus, "api-gateway", pb.ComponentRole_COMPONENT_ROLE_GATEWAY, map[string]bool{
+		"http": true, "grpc": true, "websocket": true, "mcp": true,
+	}); err != nil {
+		logging.Warn("api-gateway", "handshake publish failed", "error", err)
+	}
+
 	workflowStore, err := wf.NewRedisWorkflowStore(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis workflow store: %w", err)

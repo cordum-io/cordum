@@ -593,6 +593,9 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					continue
 				}
 				alert := buildEventAlert(step, payload)
+				if alert.TraceId == "" {
+					alert.TraceId = run.ID
+				}
 				packet := &pb.BusPacket{
 					TraceId:         run.ID,
 					SenderId:        "workflow-engine",

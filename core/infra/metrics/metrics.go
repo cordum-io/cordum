@@ -42,6 +42,7 @@ type Metrics interface {
 	DecSagaActive()
 	IncSagaUnmarshalError()
 	IncJobCancelFailures()
+	IncValidationRejections()
 }
 
 // GatewayMetrics captures request metrics for the API gateway.
@@ -88,6 +89,7 @@ func (Noop) IncSagaActive()                                    {}
 func (Noop) DecSagaActive()                                    {}
 func (Noop) IncSagaUnmarshalError()                            {}
 func (Noop) IncJobCancelFailures()                             {}
+func (Noop) IncValidationRejections()                          {}
 
 // Prom implements Metrics backed by Prometheus counters.
 type Prom struct {
@@ -119,6 +121,7 @@ type Prom struct {
 	sagaDuration            prometheus.Histogram
 	sagaUnmarshalErrors     prometheus.Counter
 	jobCancelFailures       prometheus.Counter
+	validationRejections    prometheus.Counter
 	once                    sync.Once
 }
 
@@ -269,6 +272,11 @@ func NewProm(namespace string) *Prom {
 			Name:      "job_cancel_failures_total",
 			Help:      "Job cancel operations that failed",
 		}),
+		validationRejections: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "validation_rejections_total",
+			Help:      "Messages rejected by CAP protocol validation",
+		}),
 	}
 	p.register()
 	return p
@@ -305,6 +313,7 @@ func (p *Prom) register() {
 			p.sagaDuration,
 			p.sagaUnmarshalErrors,
 			p.jobCancelFailures,
+			p.validationRejections,
 		)
 	})
 }
@@ -433,6 +442,10 @@ func (p *Prom) IncSagaUnmarshalError() {
 
 func (p *Prom) IncJobCancelFailures() {
 	p.jobCancelFailures.Inc()
+}
+
+func (p *Prom) IncValidationRejections() {
+	p.validationRejections.Inc()
 }
 
 // Handler returns an HTTP handler for /metrics.

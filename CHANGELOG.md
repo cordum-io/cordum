@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+#### CAP v2.5.2 Protocol Integration
+- Upgraded CAP protocol dependency from v2.0.19 to v2.5.2 (both `go.mod` and `sdk/go.mod`)
+- All NATS-connected services publish `Handshake` on `sys.handshake` at startup for capability discovery (gateway, scheduler, workflow-engine; workers via SDK runtime)
+- `SystemAlert` now includes `severity` enum, `error_code_enum`, `source_component`, `details` map, and `trace_id` (deprecated string fields still populated)
+- `JobResult` error codes use structured `ErrorCode` enum alongside string `error_code` for backward compatibility
+- Bus-layer validation rejects malformed `JobRequest`/`JobResult` messages using CAP SDK helpers (`validation_rejections_total` metric)
+- Scheduler handles `BusPacket{Handshake}` in its message switch, updating the worker registry with component capabilities
+- Dashboard displays structured error code badges on job detail page and enhanced alert severity in audit log
+- Added conformance test fixtures for all 8 CAP packet types with signature verification
+- SDK runtime exposes `ValidateJobRequest`, `ValidateJobResult`, `Handshake`, `ComponentRole`, `ErrorCode`, `AlertSeverity` types
+
 ### Added
 
 #### Output Policy System

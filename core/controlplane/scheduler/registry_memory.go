@@ -17,8 +17,9 @@ type MemoryRegistry struct {
 }
 
 type workerEntry struct {
-	hb       *pb.Heartbeat
-	lastSeen time.Time
+	hb        *pb.Heartbeat
+	handshake *pb.Handshake
+	lastSeen  time.Time
 }
 
 const defaultWorkerTTL = 30 * time.Second
@@ -49,6 +50,22 @@ func (r *MemoryRegistry) UpdateHeartbeat(hb *pb.Heartbeat) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.workers[hb.WorkerId] = &workerEntry{hb: hb, lastSeen: time.Now()}
+}
+
+func (r *MemoryRegistry) UpdateHandshake(hs *pb.Handshake) {
+	if hs == nil || hs.ComponentId == "" {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.workers[hs.ComponentId]
+	if ok {
+		entry.handshake = hs
+		entry.lastSeen = time.Now()
+	} else {
+		r.workers[hs.ComponentId] = &workerEntry{handshake: hs, lastSeen: time.Now()}
+	}
 }
 
 // WorkersForPool returns a slice of workers that belong to the given pool.

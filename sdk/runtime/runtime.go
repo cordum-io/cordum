@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	capruntime "github.com/cordum-io/cap/v2/sdk/go/runtime"
 	"github.com/redis/go-redis/v9"
 )
@@ -19,6 +20,12 @@ type (
 	JobOption                  = capruntime.JobOption
 	NATSConn                   = capruntime.NATSConn
 	RedisBlobStore             = capruntime.RedisBlobStore
+
+	// CAP v2.5.2 types
+	Handshake     = agentv1.Handshake
+	ComponentRole = agentv1.ComponentRole
+	ErrorCode     = agentv1.ErrorCode
+	AlertSeverity = agentv1.AlertSeverity
 )
 
 // Register wires a typed handler to a topic using the CAP runtime.
