@@ -188,6 +188,7 @@ func (m *spyMetrics) SetActiveGoroutines(int)                           {}
 func (m *spyMetrics) SetStaleJobs(string, int)                          {}
 func (m *spyMetrics) IncDLQEmitFailure(string)                          {}
 func (m *spyMetrics) IncJobCancelFailures()                             {}
+func (m *spyMetrics) IncValidationRejections()                          {}
 func (m *spyMetrics) IncOrphanReplayed(topic string) {
 	m.mu.Lock()
 	m.orphanReplayed[topic]++

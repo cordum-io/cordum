@@ -158,6 +158,7 @@ func (w *Worker) Run(ctx context.Context, handler func(context.Context, *agentv1
 		w.subsAppend(sub)
 	}
 
+	w.publishHandshake()
 	w.startHeartbeat(ctx)
 
 	<-ctx.Done()
@@ -370,6 +371,40 @@ func (w *Worker) startHeartbeat(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+func (w *Worker) publishHandshake() {
+	caps := make(map[string]bool, len(w.cfg.Capabilities))
+	for _, c := range w.cfg.Capabilities {
+		caps[c] = true
+	}
+	packet := &agentv1.BusPacket{
+		SenderId:        w.workerID,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &agentv1.BusPacket_Handshake{
+			Handshake: &agentv1.Handshake{
+				ComponentId:       w.workerID,
+				Role:              agentv1.ComponentRole_COMPONENT_ROLE_WORKER,
+				SupportedVersions: []int32{capsdk.DefaultProtocolVersion},
+				Capabilities:      caps,
+			},
+		},
+	}
+	if w.cfg.PrivateKey != nil {
+		if err := capsdk.SignPacket(packet, w.cfg.PrivateKey); err != nil {
+			w.logger.Printf("worker: sign handshake failed: %v", err)
+			return
+		}
+	}
+	data, err := capsdk.MarshalDeterministic(packet)
+	if err != nil {
+		w.logger.Printf("worker: marshal handshake failed: %v", err)
+		return
+	}
+	if err := w.conn.Publish(capsdk.SubjectHandshake, data); err != nil {
+		w.logger.Printf("worker: publish handshake failed: %v", err)
+	}
 }
 
 func (w *Worker) subjectsWithDirect() []string {

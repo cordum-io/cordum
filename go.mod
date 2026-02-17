@@ -6,10 +6,11 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.0.19
+	github.com/cordum-io/cap/v2 v2.5.2
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/nats-io/nats-server/v2 v2.12.4
 	github.com/nats-io/nats.go v1.48.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.17.3
@@ -19,7 +20,14 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/kylelemons/godebug v1.1.0 // indirect
+require (
+	github.com/antithesishq/antithesis-sdk-go v0.5.0-default-no-op // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
+	github.com/minio/highwayhash v1.0.4-0.20251030100505-070ab1a87a76 // indirect
+	github.com/nats-io/jwt/v2 v2.8.0 // indirect
+	golang.org/x/time v0.14.0 // indirect
+)
 
 replace github.com/cordum/cordum/sdk => ./sdk
 

@@ -560,6 +560,11 @@ func computeMsgID(subject string, packet *pb.BusPacket) string {
 		if payload.Heartbeat != nil {
 			id = payload.Heartbeat.WorkerId
 		}
+	case *pb.BusPacket_Handshake:
+		if payload.Handshake != nil {
+			id = payload.Handshake.ComponentId
+			prefix = "handshake:"
+		}
 	}
 	id = strings.TrimSpace(id)
 	if id == "" {

@@ -95,6 +95,12 @@ func Run(cfg *config.Config) error {
 	}
 	defer natsBus.Close()
 
+	if err := bus.PublishHandshake(natsBus, "workflow-engine", pb.ComponentRole_COMPONENT_ROLE_ORCHESTRATOR, map[string]bool{
+		"workflows": true, "approvals": true,
+	}); err != nil {
+		logging.Warn("workflow-engine", "handshake publish failed", "error", err)
+	}
+
 	engine := NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
 	if maxForEachItems > 0 {
 		engine = engine.WithMaxForEachItems(maxForEachItems)

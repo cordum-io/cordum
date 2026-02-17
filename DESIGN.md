@@ -40,7 +40,7 @@ CAP v2 is the canonical protocol; Cordum does not duplicate these definitions.
 `BusPacket` carries all bus traffic:
 - `trace_id`, `sender_id`, `created_at`, `protocol_version`
 - `payload` oneof: `JobRequest`, `JobResult`, `Heartbeat`, `SystemAlert`,
-  `JobProgress`, `JobCancel`
+  `JobProgress`, `JobCancel`, `Handshake`
 - `signature` (reserved for packet signing; present in the schema)
 
 ### 3.2 Heartbeat (Capacity Signal)
@@ -83,9 +83,31 @@ retry limits, concurrency caps).
 ### 3.5 JobResult / JobProgress / JobCancel
 
 - `JobResult`: `job_id`, `status`, `result_ptr`, `worker_id`, `execution_ms`,
-  optional `error_code`/`error_message`, `artifact_ptrs`
+  optional `error_code`/`error_message`, `error_code_enum` (structured `ErrorCode`), `artifact_ptrs`
 - `JobProgress`: `percent`, `message`, optional `result_ptr`/`artifact_ptrs`
 - `JobCancel`: `job_id`, `reason`, `requested_by`
+
+### 3.6 Handshake (CAP v2.5.2)
+
+Services publish `BusPacket{Handshake}` on `sys.handshake` at startup:
+- `component_id`, `role` (`ComponentRole` enum: GATEWAY, SCHEDULER, WORKER, ORCHESTRATOR, CONTROLLER)
+- `supported_versions` (protocol versions), `capabilities` (bool map), `sdk_version`
+
+The scheduler uses Handshake messages to maintain a component registry alongside the heartbeat-based worker registry.
+
+### 3.7 ErrorCode Enum (CAP v2.5.2)
+
+Structured error classification replacing ad-hoc string codes:
+- Protocol errors (100-105): version mismatch, malformed packet, signature issues
+- Job errors (200-206): not found, timeout, permission denied, resource exhausted
+- Safety errors (300-302): denied, policy violation, risk tag blocked
+- Transport errors (400-402): publish failed, connection lost
+
+### 3.8 Enhanced SystemAlert (CAP v2.5.2)
+
+`SystemAlert` now includes structured fields: `severity` (enum), `error_code_enum`,
+`source_component`, `details` (map), `trace_id`. Deprecated string fields (`level`,
+`component`, `code`) remain populated for backward compatibility.
 
 ## 4) Pointer-Based State Separation
 

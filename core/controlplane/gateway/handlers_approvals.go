@@ -411,10 +411,11 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
-				JobId:        jobID,
-				Status:       pb.JobStatus_JOB_STATUS_DENIED,
-				ErrorCode:    "approval_rejected",
-				ErrorMessage: errorMessage,
+				JobId:         jobID,
+				Status:        pb.JobStatus_JOB_STATUS_DENIED,
+				ErrorCode:     "approval_rejected",
+				ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
+				ErrorMessage:  errorMessage,
 			},
 		},
 	}

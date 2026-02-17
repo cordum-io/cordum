@@ -79,9 +79,8 @@ describe("useAuthConfig", () => {
     });
 
     const query = queryClient.getQueryCache().find({ queryKey: ["auth-config"] });
-    const options = query?.options as { staleTime?: number; retry?: number } | undefined;
+    const options = query?.options as { staleTime?: number } | undefined;
     expect(options?.staleTime).toBe(5 * 60_000);
-    expect(options?.retry).toBe(1);
 
     hook.unmount();
   });

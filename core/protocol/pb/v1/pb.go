@@ -11,7 +11,12 @@ type (
 	BusPacket_Alert                 = agentv1.BusPacket_Alert
 	BusPacket_JobProgress           = agentv1.BusPacket_JobProgress
 	BusPacket_JobCancel             = agentv1.BusPacket_JobCancel
+	BusPacket_Handshake             = agentv1.BusPacket_Handshake
 	SystemAlert                     = agentv1.SystemAlert
+	Handshake                       = agentv1.Handshake
+	ComponentRole                   = agentv1.ComponentRole
+	ErrorCode                       = agentv1.ErrorCode
+	AlertSeverity                   = agentv1.AlertSeverity
 	JobRequest                      = agentv1.JobRequest
 	JobResult                       = agentv1.JobResult
 	JobProgress                     = agentv1.JobProgress
@@ -71,6 +76,45 @@ const (
 	ActorType_ACTOR_TYPE_UNSPECIFIED = agentv1.ActorType_ACTOR_TYPE_UNSPECIFIED
 	ActorType_ACTOR_TYPE_HUMAN       = agentv1.ActorType_ACTOR_TYPE_HUMAN
 	ActorType_ACTOR_TYPE_SERVICE     = agentv1.ActorType_ACTOR_TYPE_SERVICE
+
+	// ErrorCode enum values — protocol errors (100-199)
+	ErrorCode_ERROR_CODE_UNSPECIFIED              = agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED
+	ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH
+	ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET
+	ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD  = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD
+	ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_INVALID = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_INVALID
+	ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_MISSING = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_MISSING
+	// ErrorCode — job errors (200-299)
+	ErrorCode_ERROR_CODE_JOB_TIMEOUT            = agentv1.ErrorCode_ERROR_CODE_JOB_TIMEOUT
+	ErrorCode_ERROR_CODE_JOB_RESOURCE_EXHAUSTED = agentv1.ErrorCode_ERROR_CODE_JOB_RESOURCE_EXHAUSTED
+	ErrorCode_ERROR_CODE_JOB_PERMISSION_DENIED  = agentv1.ErrorCode_ERROR_CODE_JOB_PERMISSION_DENIED
+	ErrorCode_ERROR_CODE_JOB_INVALID_INPUT      = agentv1.ErrorCode_ERROR_CODE_JOB_INVALID_INPUT
+	ErrorCode_ERROR_CODE_JOB_NOT_FOUND          = agentv1.ErrorCode_ERROR_CODE_JOB_NOT_FOUND
+	ErrorCode_ERROR_CODE_JOB_DUPLICATE          = agentv1.ErrorCode_ERROR_CODE_JOB_DUPLICATE
+	ErrorCode_ERROR_CODE_JOB_WORKER_UNAVAILABLE = agentv1.ErrorCode_ERROR_CODE_JOB_WORKER_UNAVAILABLE
+	// ErrorCode — safety errors (300-399)
+	ErrorCode_ERROR_CODE_SAFETY_DENIED           = agentv1.ErrorCode_ERROR_CODE_SAFETY_DENIED
+	ErrorCode_ERROR_CODE_SAFETY_POLICY_VIOLATION = agentv1.ErrorCode_ERROR_CODE_SAFETY_POLICY_VIOLATION
+	ErrorCode_ERROR_CODE_SAFETY_RISK_TAG_BLOCKED = agentv1.ErrorCode_ERROR_CODE_SAFETY_RISK_TAG_BLOCKED
+	// ErrorCode — transport errors (400-499)
+	ErrorCode_ERROR_CODE_TRANSPORT_PUBLISH_FAILED   = agentv1.ErrorCode_ERROR_CODE_TRANSPORT_PUBLISH_FAILED
+	ErrorCode_ERROR_CODE_TRANSPORT_SUBSCRIBE_FAILED = agentv1.ErrorCode_ERROR_CODE_TRANSPORT_SUBSCRIBE_FAILED
+	ErrorCode_ERROR_CODE_TRANSPORT_CONNECTION_LOST  = agentv1.ErrorCode_ERROR_CODE_TRANSPORT_CONNECTION_LOST
+
+	// AlertSeverity enum values
+	AlertSeverity_ALERT_SEVERITY_UNSPECIFIED = agentv1.AlertSeverity_ALERT_SEVERITY_UNSPECIFIED
+	AlertSeverity_ALERT_SEVERITY_INFO        = agentv1.AlertSeverity_ALERT_SEVERITY_INFO
+	AlertSeverity_ALERT_SEVERITY_WARNING     = agentv1.AlertSeverity_ALERT_SEVERITY_WARNING
+	AlertSeverity_ALERT_SEVERITY_ERROR       = agentv1.AlertSeverity_ALERT_SEVERITY_ERROR
+	AlertSeverity_ALERT_SEVERITY_CRITICAL    = agentv1.AlertSeverity_ALERT_SEVERITY_CRITICAL
+
+	// ComponentRole enum values
+	ComponentRole_COMPONENT_ROLE_UNSPECIFIED  = agentv1.ComponentRole_COMPONENT_ROLE_UNSPECIFIED
+	ComponentRole_COMPONENT_ROLE_GATEWAY      = agentv1.ComponentRole_COMPONENT_ROLE_GATEWAY
+	ComponentRole_COMPONENT_ROLE_SCHEDULER    = agentv1.ComponentRole_COMPONENT_ROLE_SCHEDULER
+	ComponentRole_COMPONENT_ROLE_WORKER       = agentv1.ComponentRole_COMPONENT_ROLE_WORKER
+	ComponentRole_COMPONENT_ROLE_ORCHESTRATOR = agentv1.ComponentRole_COMPONENT_ROLE_ORCHESTRATOR
+	ComponentRole_COMPONENT_ROLE_CONTROLLER   = agentv1.ComponentRole_COMPONENT_ROLE_CONTROLLER
 )
 
 var (

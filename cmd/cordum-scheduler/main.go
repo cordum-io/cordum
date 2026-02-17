@@ -17,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/store"
@@ -208,6 +209,12 @@ func main() {
 		log.Fatalf("failed to connect to NATS: %v", err)
 	}
 	defer natsBus.Close()
+
+	if err := bus.PublishHandshake(natsBus, "scheduler", pb.ComponentRole_COMPONENT_ROLE_SCHEDULER, map[string]bool{
+		"safety_check": true, "routing": true, "compensation": true,
+	}); err != nil {
+		log.Printf("handshake publish failed: %v", err)
+	}
 
 	sagaRedis, err := redisutil.NewClient(cfg.RedisURL)
 	if err != nil {

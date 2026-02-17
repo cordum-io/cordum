@@ -67,9 +67,10 @@ type OutputSafetyRecord = model.OutputSafetyRecord
 // OutputSafetyChecker evaluates job outputs against policy rules.
 type OutputSafetyChecker = model.OutputSafetyChecker
 
-// WorkerRegistry tracks worker heartbeats.
+// WorkerRegistry tracks worker heartbeats and handshakes.
 type WorkerRegistry interface {
 	UpdateHeartbeat(hb *pb.Heartbeat)
+	UpdateHandshake(hs *pb.Handshake)
 	Snapshot() map[string]*pb.Heartbeat
 }
 
@@ -106,6 +107,7 @@ type Metrics interface {
 	SetStaleJobs(state string, count int)
 	IncDLQEmitFailure(topic string)
 	IncJobCancelFailures()
+	IncValidationRejections()
 }
 
 // SagaMetrics captures metrics for saga rollbacks and compensation handling.

@@ -50,6 +50,7 @@ func TestNoopMetrics(t *testing.T) {
 	m.IncSagaActive()
 	m.DecSagaActive()
 	m.IncJobCancelFailures()
+	m.IncValidationRejections()
 }
 
 func TestPromMetrics(t *testing.T) {
@@ -80,6 +81,7 @@ func TestPromMetrics(t *testing.T) {
 	m.IncSagaActive()
 	m.DecSagaActive()
 	m.IncJobCancelFailures()
+	m.IncValidationRejections()
 
 	families, err := reg.Gather()
 	if err != nil {
