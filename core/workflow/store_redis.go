@@ -560,6 +560,65 @@ func runIdempotencyKey(key string) string {
 	return "wf:run:idempotency:" + key
 }
 
+// --- Durable delay timer methods ---
+
+const delayTimerKey = "cordum:wf:delay:timers"
+
+// AddDelayTimer persists a delay timer as a sorted set member with fire-time score.
+// Member format: workflowID:runID. Score is Unix seconds of the fire time.
+func (s *RedisStore) AddDelayTimer(ctx context.Context, workflowID, runID string, fireAt time.Time) error {
+	member := workflowID + ":" + runID
+	return s.client.ZAdd(ctx, delayTimerKey, redis.Z{
+		Score:  float64(fireAt.Unix()),
+		Member: member,
+	}).Err()
+}
+
+// RemoveDelayTimer removes a delay timer from the sorted set.
+func (s *RedisStore) RemoveDelayTimer(ctx context.Context, workflowID, runID string) error {
+	member := workflowID + ":" + runID
+	return s.client.ZRem(ctx, delayTimerKey, member).Err()
+}
+
+// ListFutureDelays returns all timers with fire time > now, as (member, score) pairs.
+// Members are in "workflowID:runID" format.
+func (s *RedisStore) ListFutureDelays(ctx context.Context, now time.Time) ([]redis.Z, error) {
+	return s.client.ZRangeByScoreWithScores(ctx, delayTimerKey, &redis.ZRangeBy{
+		Min: fmt.Sprintf("%d", now.Unix()+1),
+		Max: "+inf",
+	}).Result()
+}
+
+// popFiredDelaysScript atomically fetches and removes all timers with score <= now.
+var popFiredDelaysScript = redis.NewScript(`
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local members = redis.call('ZRANGEBYSCORE', key, '-inf', now)
+if #members > 0 then
+  redis.call('ZREM', key, unpack(members))
+end
+return members
+`)
+
+// PopFiredDelays atomically returns and removes all timers that have fired (score <= now).
+func (s *RedisStore) PopFiredDelays(ctx context.Context, now time.Time) ([]string, error) {
+	result, err := popFiredDelaysScript.Run(ctx, s.client, []string{delayTimerKey}, now.Unix()).StringSlice()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("pop fired delays: %w", err)
+	}
+	return result, nil
+}
+
+// CleanStaleDelays removes timer entries older than the given cutoff time.
+// This prevents unbounded ZSET growth from orphaned entries (e.g. run deleted
+// while timer was pending).
+func (s *RedisStore) CleanStaleDelays(ctx context.Context, cutoff time.Time) (int64, error) {
+	return s.client.ZRemRangeByScore(ctx, delayTimerKey, "-inf", fmt.Sprintf("%d", cutoff.Unix())).Result()
+}
+
 func isActiveRunStatus(status RunStatus) bool {
 	switch status {
 	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:

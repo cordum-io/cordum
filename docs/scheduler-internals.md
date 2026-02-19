@@ -445,6 +445,7 @@ The scheduler uses Redis-based distributed locks to ensure consistency:
 | `cordum:wf:run:lock:<runID>`  | 30s           | Explicit (defer) | Yes (ttl/3) | Per-run mutex for workflow steps     |
 | `saga:<workflow_id>:lock`     | 2 min         | Explicit         | No          | Per-workflow saga rollback mutex     |
 | `cordum:scheduler:snapshot:writer` | 10s      | Explicit         | No          | Single-writer snapshot writer        |
+| `cordum:wf:delay:poller`  | 10s           | TTL expiry       | No          | Single-writer delay timer poller     |
 
 ### Lock-Hold Pattern for Horizontal Scaling
 
@@ -548,6 +549,56 @@ design: avoids holding a distributed lock while waiting for a local resource).
 The workflow reconciler's `HandleJobResult` and `reconcileRun` also acquire
 `cordum:wf:run:lock:<runID>` via the job store, providing consistent
 cross-replica protection across both the engine and reconciler paths.
+
+### Durable Workflow Delay Timers
+
+Workflow delay steps (`delay_sec`, `delay_until`) and retry backoff use
+`time.AfterFunc` to schedule run resumption. These in-memory timers are lost
+if the engine crashes or restarts. Durable delay timers add a Redis sorted set
+as a persistence layer.
+
+**Redis key**: `cordum:wf:delay:timers` (sorted set)
+- **Member**: `workflowID:runID`
+- **Score**: Unix seconds of fire time
+
+**How it works**:
+1. `scheduleAfter()` persists delays ≥10s to the sorted set via `ZADD`, then
+   creates the in-memory `time.AfterFunc` as before.
+2. When the timer fires, the sorted set entry is removed via `ZREM` before
+   calling `StartRun`.
+3. Delays <10s skip Redis (fast path — not worth the round-trip for sub-10s).
+
+```
+scheduleAfter(30s):
+  ──ZADD(fireAt=now+30s)──AfterFunc(30s)──...30s...──ZREM──StartRun──
+```
+
+**Crash recovery** (`recoverDelayTimers`, called on startup):
+1. **Past-due timers**: Atomic Lua script (`ZRANGEBYSCORE + ZREM`) pops all
+   entries with score ≤ now. Each is fired immediately via `StartRun`.
+2. **Future timers**: `ZRANGEBYSCORE` fetches entries with score > now. Each is
+   re-scheduled via `scheduleAfter(remaining)`, which re-adds to the ZSET
+   (idempotent via `ZADD`).
+
+```
+Engine restart:
+  ──PopFiredDelays(now)──fire each──ListFutureDelays──reschedule each──
+```
+
+**Background poller** (`startDelayPoller`, runs every 5s):
+- Catches timers lost by crashed replicas that haven't restarted yet.
+- Uses distributed lock (`cordum:wf:delay:poller`, TTL 10s) so only one
+  replica polls at a time.
+- Every ~5 minutes, cleans stale entries (>1h past-due) to prevent unbounded
+  ZSET growth from orphaned timers (e.g. run deleted while timer was pending).
+
+| Lock Key                    | TTL  | Release    | Purpose                    |
+|-----------------------------|------|------------|----------------------------|
+| `cordum:wf:delay:poller`    | 10s  | TTL expiry | Single-writer delay poller  |
+
+**Graceful degradation**: If Redis is unavailable during `scheduleAfter`, the
+timer is still created in-memory (logged as warning). The reconciler provides
+eventual recovery for delay steps via `NextAttemptAt` checks.
 
 ---
 

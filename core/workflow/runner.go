@@ -109,6 +109,14 @@ func Run(cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Recover durable delay timers from Redis (fast — runs before accepting work).
+	recoverCtx, recoverCancel := context.WithTimeout(ctx, 5*time.Second)
+	engine.recoverDelayTimers(recoverCtx)
+	recoverCancel()
+
+	// Start background delay timer poller (catches timers lost by crashed replicas).
+	go engine.startDelayPoller(ctx)
+
 	rec := newReconciler(workflowStore, engine, jobStore, scanInterval, runScanLimit)
 	go rec.Start(ctx)
 
