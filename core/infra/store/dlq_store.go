@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -30,7 +32,11 @@ const (
 	defaultDLQEntryTTL = 30 * 24 * time.Hour
 	dlqEntryTTLDaysEnv = "CORDUM_DLQ_ENTRY_TTL_DAYS"
 	dlqMaxEntries      = 1000
+
+	dlqCleanupLockKey = "cordum:dlq:cleanup"
 )
+
+// releaseLockScript is declared in job_store.go — reused here for DLQ cleanup lock release.
 
 // DLQStore persists DLQ entries in Redis.
 type DLQStore struct {
@@ -364,12 +370,23 @@ func (s *DLQStore) CleanupStaleEntries(ctx context.Context) (int64, error) {
 	return totalRemoved, nil
 }
 
+// generateInstanceID returns a random 8-byte hex string for distributed lock ownership.
+func generateInstanceID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: use timestamp (less unique but non-blocking).
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
 // StartCleanupLoop runs CleanupStaleEntries periodically until ctx is cancelled.
-// The goroutine exits cleanly when the context is done.
+// A distributed lock ensures only one replica runs cleanup at a time.
 func (s *DLQStore) StartCleanupLoop(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = time.Hour
 	}
+	instanceID := generateInstanceID()
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -378,13 +395,37 @@ func (s *DLQStore) StartCleanupLoop(ctx context.Context, interval time.Duration)
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				removed, err := s.CleanupStaleEntries(ctx)
-				if err != nil {
-					slog.Warn("dlq-store: periodic cleanup error", "error", err)
-				} else if removed > 0 {
-					slog.Info("dlq-store: periodic cleanup completed", "removed", removed)
-				}
+				s.runCleanupWithLock(ctx, interval, instanceID)
 			}
 		}
 	}()
+}
+
+// runCleanupWithLock acquires a distributed lock, runs cleanup, then releases.
+func (s *DLQStore) runCleanupWithLock(ctx context.Context, lockTTL time.Duration, instanceID string) {
+	lockCtx, lockCancel := context.WithTimeout(ctx, 2*time.Second)
+	ok, err := s.client.SetNX(lockCtx, dlqCleanupLockKey, instanceID, lockTTL).Result()
+	lockCancel()
+	if err != nil {
+		slog.Warn("dlq-store: cleanup lock acquire error", "error", err)
+		return
+	}
+	if !ok {
+		slog.Debug("dlq-store: cleanup lock held by another replica, skipping")
+		return
+	}
+
+	removed, cleanupErr := s.CleanupStaleEntries(ctx)
+	if cleanupErr != nil {
+		slog.Warn("dlq-store: periodic cleanup error", "error", cleanupErr)
+	} else if removed > 0 {
+		slog.Info("dlq-store: periodic cleanup completed", "removed", removed)
+	}
+
+	// Release lock only if we still own it (prevents releasing another replica's lock).
+	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if _, relErr := releaseLockScript.Run(releaseCtx, s.client, []string{dlqCleanupLockKey}, instanceID).Result(); relErr != nil {
+		slog.Debug("dlq-store: cleanup lock release failed, will expire via TTL", "error", relErr)
+	}
+	releaseCancel()
 }

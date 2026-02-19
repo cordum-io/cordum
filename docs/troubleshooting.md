@@ -514,6 +514,28 @@ curl -X DELETE -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
   http://localhost:8081/api/v1/dlq/JOB_ID
 ```
 
+### DLQ cleanup leader election
+
+In multi-replica deployments, only one replica runs DLQ index cleanup per interval using a distributed lock (`cordum:dlq:cleanup`). The lock TTL matches the cleanup interval (default 1 hour), so leadership rotates naturally if a replica goes down.
+
+**Symptoms**: Stale DLQ index entries accumulate (index references expired data keys).
+
+**Diagnostic**:
+```bash
+# Check if the cleanup lock exists (indicates an active cleaner)
+redis-cli GET cordum:dlq:cleanup
+
+# Check index size vs actual entries
+redis-cli ZCARD dlq:index
+redis-cli --scan --pattern "dlq:entry:*" | wc -l
+# If ZCARD >> entry count, stale entries exist
+```
+
+**Fix**: If cleanup appears stalled, verify at least one replica is healthy and can reach Redis. The lock expires after one cleanup interval, so a new replica will take over automatically. To force immediate cleanup, delete the lock key:
+```bash
+redis-cli DEL cordum:dlq:cleanup
+```
+
 ---
 
 ## 10. NATS Issues
