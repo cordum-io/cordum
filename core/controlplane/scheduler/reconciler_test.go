@@ -201,6 +201,19 @@ func (s *fakeReconcileStore) ReleaseLock(_ context.Context, key string, _ string
 	return nil
 }
 
+func (s *fakeReconcileStore) RenewLock(_ context.Context, key, token string, ttl time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.locks == nil {
+		return fmt.Errorf("lock not owned")
+	}
+	if until, ok := s.locks[key]; ok && until.After(time.Now()) {
+		s.locks[key] = time.Now().Add(ttl)
+		return nil
+	}
+	return fmt.Errorf("lock not owned")
+}
+
 func (s *fakeReconcileStore) SetFailureReason(_ context.Context, jobID, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

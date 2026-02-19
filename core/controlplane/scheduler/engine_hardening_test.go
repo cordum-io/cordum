@@ -372,3 +372,69 @@ func TestWithJobLockReleaseUsesBackgroundContext(t *testing.T) {
 		t.Fatal("expected lock to be released even after engine context cancelled")
 	}
 }
+
+func TestWithJobLockRenewalKeepsLockAlive(t *testing.T) {
+	store := newFakeJobStore()
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	// Use a short TTL so the renewal goroutine must fire to keep the lock alive.
+	ttl := 150 * time.Millisecond
+
+	var fnDone atomic.Bool
+	err := engine.withJobLock("job-renewal", ttl, func() error {
+		// Sleep longer than the TTL. Without renewal, the lock would expire.
+		time.Sleep(400 * time.Millisecond)
+		fnDone.Store(true)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withJobLock should succeed: %v", err)
+	}
+	if !fnDone.Load() {
+		t.Fatal("expected fn to complete")
+	}
+
+	// Verify lock was released after fn completed.
+	store.mu.RLock()
+	_, locked := store.locks[jobLockKey("job-renewal")]
+	store.mu.RUnlock()
+	if locked {
+		t.Fatal("expected lock to be released after fn")
+	}
+}
+
+func TestWithJobLockRenewalStopsOnCompletion(t *testing.T) {
+	// Track renewal calls via a counting store.
+	store := &renewCountStore{fakeJobStore: newFakeJobStore()}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	ttl := 90 * time.Millisecond // renewal at ttl/3 = 30ms
+	err := engine.withJobLock("job-renew-stop", ttl, func() error {
+		// Return immediately.
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withJobLock should succeed: %v", err)
+	}
+
+	// Record how many renewals have occurred so far.
+	countAfterFn := store.renewCount.Load()
+
+	// Wait well past the renewal interval. No new renewals should happen.
+	time.Sleep(200 * time.Millisecond)
+	countLater := store.renewCount.Load()
+	if countLater > countAfterFn {
+		t.Fatalf("expected no renewals after fn completed, but got %d more", countLater-countAfterFn)
+	}
+}
+
+// renewCountStore wraps fakeJobStore and counts RenewLock calls.
+type renewCountStore struct {
+	*fakeJobStore
+	renewCount atomic.Int32
+}
+
+func (s *renewCountStore) RenewLock(ctx context.Context, key, token string, ttl time.Duration) error {
+	s.renewCount.Add(1)
+	return s.fakeJobStore.RenewLock(ctx, key, token, ttl)
+}

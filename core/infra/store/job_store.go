@@ -102,6 +102,13 @@ end
 return 0
 `)
 
+var renewLockScript = redis.NewScript(`
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('pexpire', KEYS[1], ARGV[2])
+end
+return 0
+`)
+
 const (
 	microsPerSecond      = int64(1_000_000)
 	microsPerMillisecond = int64(1_000)
@@ -258,6 +265,21 @@ func (s *RedisJobStore) ReleaseLock(ctx context.Context, key, token string) erro
 	}
 	if result == 0 {
 		slog.Warn("lock release skipped: token mismatch", "key", key)
+		return fmt.Errorf("lock not owned")
+	}
+	return nil
+}
+
+// RenewLock extends the TTL of a held lock. Returns nil if renewed, error if not owned or Redis fails.
+func (s *RedisJobStore) RenewLock(ctx context.Context, key, token string, ttl time.Duration) error {
+	if key == "" || token == "" {
+		return fmt.Errorf("lock key and token required")
+	}
+	result, err := renewLockScript.Run(ctx, s.client, []string{key}, token, ttl.Milliseconds()).Int()
+	if err != nil {
+		return fmt.Errorf("job store renew lock %s: %w", key, err)
+	}
+	if result == 0 {
 		return fmt.Errorf("lock not owned")
 	}
 	return nil

@@ -420,7 +420,7 @@ The env var takes precedence over the config file value.
 | Constant               | Value | Description                                     |
 |------------------------|-------|-------------------------------------------------|
 | `storeOpTimeout`       | 2s    | Timeout for Redis store operations              |
-| `jobLockTTL`           | 30s   | TTL for per-job distributed locks               |
+| `jobLockTTL`           | 60s   | TTL for per-job distributed locks (with renewal) |
 | `maxSchedulingRetries` | 50    | Max dispatch attempts before DLQ                |
 | `retryDelayBusy`       | 500ms | Delay when job lock is busy                     |
 | `retryDelayStore`      | 1s    | Delay after store operation failure             |
@@ -436,14 +436,14 @@ The env var takes precedence over the config file value.
 
 The scheduler uses Redis-based distributed locks to ensure consistency:
 
-| Lock Key                      | TTL           | Release          | Purpose                              |
-|-------------------------------|---------------|------------------|--------------------------------------|
-| `cordum:scheduler:job:<id>`   | 30s           | Explicit (defer) | Per-job mutex for state transitions  |
-| `cordum:reconciler:default`   | 2× poll interval | TTL expiry    | Single-writer reconciler             |
-| `cordum:replayer:pending`     | 2× poll interval | TTL expiry    | Single-writer pending replayer       |
-| `cordum:workflow-engine:reconciler:default` | 2× poll interval | TTL expiry | Single-writer workflow reconciler |
-| `cordum:wf:run:lock:<runID>`  | 30s           | Explicit (defer) | Per-run mutex for workflow steps     |
-| `saga:<workflow_id>:lock`     | 2 min         | Explicit         | Per-workflow saga rollback mutex     |
+| Lock Key                      | TTL           | Release          | Renewal     | Purpose                              |
+|-------------------------------|---------------|------------------|-------------|--------------------------------------|
+| `cordum:scheduler:job:<id>`   | 60s           | Explicit (defer) | Yes (ttl/3) | Per-job mutex for state transitions  |
+| `cordum:reconciler:default`   | 2× poll interval | TTL expiry    | No          | Single-writer reconciler             |
+| `cordum:replayer:pending`     | 2× poll interval | TTL expiry    | No          | Single-writer pending replayer       |
+| `cordum:workflow-engine:reconciler:default` | 2× poll interval | TTL expiry | No | Single-writer workflow reconciler |
+| `cordum:wf:run:lock:<runID>`  | 30s           | Explicit (defer) | No          | Per-run mutex for workflow steps     |
+| `saga:<workflow_id>:lock`     | 2 min         | Explicit         | No          | Per-workflow saga rollback mutex     |
 
 ### Lock-Hold Pattern for Horizontal Scaling
 
@@ -468,6 +468,31 @@ Replica B: ──(blocked)──────────────────
 `cordum:wf:run:lock:<runID>`) still use explicit `defer ReleaseLock` because
 they protect short, targeted operations (single state transition or single run
 reconciliation) rather than entire tick cycles.
+
+### Job Lock TTL Renewal
+
+Per-job locks (`cordum:scheduler:job:<id>`) use **TTL renewal** to prevent lock
+expiry during long-running operations (safety checks, routing, publish). The
+base TTL is 60s and a background goroutine renews the lock every `ttl/3` (20s).
+
+**How it works**:
+1. `withJobLock` acquires the lock with a 60s TTL via `TryAcquireLock`.
+2. A goroutine starts a `time.Ticker` at `ttl/3` (20s) and calls `RenewLock`
+   (Lua: `if GET key == token then PEXPIRE key ttl`).
+3. When `fn()` completes, the renewal goroutine is cancelled and drained
+   **before** `ReleaseLock` runs, preventing a renewal from racing with release.
+4. If a renewal fails (Redis error), the lock still has up to 60s of remaining
+   TTL as a safety margin.
+
+```
+withJobLock("job-123", 60s, fn):
+  ──acquire(60s)─┬──fn() runs────────────────────────┬──release──
+                 │                                    │
+  renewal:       ├──20s──renew──20s──renew──20s──renew│
+                 │          (each resets TTL to 60s)  │
+                 └────────────────────────────────────┘
+                                                cancel → drain → release
+```
 
 ---
 

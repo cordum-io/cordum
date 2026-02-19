@@ -246,6 +246,16 @@ func (s *fakeJobStore) ReleaseLock(_ context.Context, key string, _ string) erro
 	return nil
 }
 
+func (s *fakeJobStore) RenewLock(_ context.Context, key, token string, ttl time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if until, ok := s.locks[key]; ok && until.After(time.Now()) {
+		s.locks[key] = time.Now().Add(ttl)
+		return nil
+	}
+	return fmt.Errorf("lock not owned")
+}
+
 func (s *fakeJobStore) SetFailureReason(_ context.Context, jobID, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -972,6 +982,7 @@ func (m *cancelMetricsSpy) SetStaleJobs(string, int)                          {}
 func (m *cancelMetricsSpy) IncDLQEmitFailure(string)                          {}
 func (m *cancelMetricsSpy) IncJobCancelFailures()                             { m.cancelFailures++ }
 func (m *cancelMetricsSpy) IncValidationRejections()                          {}
+func (m *cancelMetricsSpy) IncInputFailOpen(string)                           {}
 
 func TestHandlePacket_CancelJob_ErrorPropagates(t *testing.T) {
 	store := &failCancelJobStore{
