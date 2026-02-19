@@ -444,6 +444,7 @@ The scheduler uses Redis-based distributed locks to ensure consistency:
 | `cordum:workflow-engine:reconciler:default` | 2× poll interval | TTL expiry | No | Single-writer workflow reconciler |
 | `cordum:wf:run:lock:<runID>`  | 30s           | Explicit (defer) | No          | Per-run mutex for workflow steps     |
 | `saga:<workflow_id>:lock`     | 2 min         | Explicit         | No          | Per-workflow saga rollback mutex     |
+| `cordum:scheduler:snapshot:writer` | 10s      | Explicit         | No          | Single-writer snapshot writer        |
 
 ### Lock-Hold Pattern for Horizontal Scaling
 
@@ -493,6 +494,27 @@ withJobLock("job-123", 60s, fn):
                  └────────────────────────────────────┘
                                                 cancel → drain → release
 ```
+
+### Snapshot Writer Lock
+
+The scheduler writes a worker snapshot (`sys:workers:snapshot`) to Redis every
+5 seconds. With multiple scheduler replicas, concurrent writes can produce
+corrupted or partial snapshots.
+
+**Solution**: Before each snapshot write, the scheduler acquires a Redis lock
+(`cordum:scheduler:snapshot:writer`, TTL 10s). Only the lock holder writes.
+Non-leader replicas skip silently (debug log). The lock is released immediately
+after the write completes, so failover is fast.
+
+```
+Replica A: ──acquire──write──release──────────────────────acquire──write──release──
+Replica B: ──(skip)───────────────────acquire──write──release──(skip)──────────────
+                      ◄── 5s tick ──►
+```
+
+**Leader crash recovery**: If the lock holder crashes without releasing, the
+lock expires via its 10s TTL. The next tick (5s later), another replica acquires
+the lock and resumes writing. Maximum snapshot staleness on crash: ~15s.
 
 ---
 
