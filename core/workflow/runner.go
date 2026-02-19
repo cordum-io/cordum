@@ -101,7 +101,7 @@ func Run(cfg *config.Config) error {
 		logging.Warn("workflow-engine", "handshake publish failed", "error", err)
 	}
 
-	engine := NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	engine := NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry).WithRunLocker(jobStore)
 	if maxForEachItems > 0 {
 		engine = engine.WithMaxForEachItems(maxForEachItems)
 	}

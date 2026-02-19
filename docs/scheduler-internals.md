@@ -442,7 +442,7 @@ The scheduler uses Redis-based distributed locks to ensure consistency:
 | `cordum:reconciler:default`   | 2× poll interval | TTL expiry    | No          | Single-writer reconciler             |
 | `cordum:replayer:pending`     | 2× poll interval | TTL expiry    | No          | Single-writer pending replayer       |
 | `cordum:workflow-engine:reconciler:default` | 2× poll interval | TTL expiry | No | Single-writer workflow reconciler |
-| `cordum:wf:run:lock:<runID>`  | 30s           | Explicit (defer) | No          | Per-run mutex for workflow steps     |
+| `cordum:wf:run:lock:<runID>`  | 30s           | Explicit (defer) | Yes (ttl/3) | Per-run mutex for workflow steps     |
 | `saga:<workflow_id>:lock`     | 2 min         | Explicit         | No          | Per-workflow saga rollback mutex     |
 | `cordum:scheduler:snapshot:writer` | 10s      | Explicit         | No          | Single-writer snapshot writer        |
 
@@ -515,6 +515,39 @@ Replica B: ──(skip)───────────────────
 **Leader crash recovery**: If the lock holder crashes without releasing, the
 lock expires via its 10s TTL. The next tick (5s later), another replica acquires
 the lock and resumes writing. Maximum snapshot staleness on crash: ~15s.
+
+### Distributed Workflow Run Locks
+
+Each workflow run is protected by a **two-layer locking** scheme for
+cross-replica mutual exclusion:
+
+1. **Local mutex** (fast): Per-run `sync.Mutex` prevents intra-process
+   contention and avoids unnecessary Redis round-trips.
+2. **Redis lock** (distributed): `cordum:wf:run:lock:<runID>` (TTL 30s) with
+   automatic renewal at `ttl/3` (10s) prevents cross-replica concurrent
+   modification of the same run.
+
+```
+Same-process goroutines:
+  G1: ──local.Lock──Redis.Lock──work──Redis.Unlock──local.Unlock──
+  G2: ──local.Lock(blocked)────────────────────────local.Lock──...──
+
+Cross-replica:
+  Replica A: ──Redis.Lock──work──Redis.Unlock──
+  Replica B: ──Redis.Lock(contended, local-only fallback)──work──
+```
+
+**Graceful degradation**: If Redis is unavailable or the lock is contended by
+another replica, the engine proceeds with local-only locking and logs a warning.
+This preserves single-replica backward compatibility and avoids blocking the
+workflow pipeline during transient Redis failures.
+
+**Release order**: Redis lock is released **before** the local mutex (per
+design: avoids holding a distributed lock while waiting for a local resource).
+
+The workflow reconciler's `HandleJobResult` and `reconcileRun` also acquire
+`cordum:wf:run:lock:<runID>` via the job store, providing consistent
+cross-replica protection across both the engine and reconciler paths.
 
 ---
 

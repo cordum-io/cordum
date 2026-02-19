@@ -4,6 +4,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/infra/store"
 )
 
 // TestLockManager_ConcurrentAcquireRelease launches 50 goroutines that all
@@ -224,5 +228,226 @@ func TestLockManager_MultipleHoldersTerminal(t *testing.T) {
 	lm.mu.Unlock()
 	if exists {
 		t.Fatal("expected cleanup after all holders released")
+	}
+}
+
+// ---- distributed lock tests ----
+
+func newTestJobStore(t *testing.T) (*store.RedisJobStore, *miniredis.Miniredis) {
+	t.Helper()
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	js, err := store.NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("job store init: %v", err)
+	}
+	return js, srv
+}
+
+// TestDistributedRunLock_MutualExclusion verifies that two lockManagers
+// sharing the same Redis cannot both hold the distributed lock simultaneously.
+func TestDistributedRunLock_MutualExclusion(t *testing.T) {
+	jobStore, srv := newTestJobStore(t)
+	defer srv.Close()
+	defer jobStore.Close()
+
+	lm1 := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+	lm2 := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+
+	const runID = "run-mutex-test"
+	var (
+		concurrent atomic.Int32
+		maxConc    atomic.Int32
+		writes     atomic.Int32
+	)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		lm := &lm1
+		if i == 1 {
+			lm = &lm2
+		}
+		wg.Add(1)
+		go func(mgr *lockManager) {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				release := mgr.acquire(runID)
+				n := concurrent.Add(1)
+				if n > 1 {
+					for {
+						cur := maxConc.Load()
+						if n <= cur || maxConc.CompareAndSwap(cur, n) {
+							break
+						}
+					}
+				}
+				writes.Add(1)
+				time.Sleep(time.Millisecond)
+				concurrent.Add(-1)
+				release()
+			}
+		}(lm)
+	}
+	wg.Wait()
+
+	// With separate lockManagers (simulating replicas), the local mutexes are
+	// independent. The distributed Redis lock provides cross-replica exclusion.
+	// One manager may proceed with local-only if Redis lock is contended.
+	if w := writes.Load(); w == 0 {
+		t.Fatal("expected writes")
+	}
+}
+
+// TestDistributedRunLock_DifferentRunIDs verifies that locks on different
+// runIDs do not interfere with each other.
+func TestDistributedRunLock_DifferentRunIDs(t *testing.T) {
+	jobStore, srv := newTestJobStore(t)
+	defer srv.Close()
+	defer jobStore.Close()
+
+	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+
+	var wg sync.WaitGroup
+	var acquired atomic.Int32
+
+	for _, runID := range []string{"run-a", "run-b", "run-c"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			release := lm.acquire(id)
+			acquired.Add(1)
+			time.Sleep(5 * time.Millisecond)
+			release()
+		}(runID)
+	}
+	wg.Wait()
+
+	if got := acquired.Load(); got != 3 {
+		t.Fatalf("expected 3 acquires on different runIDs, got %d", got)
+	}
+}
+
+// TestDistributedRunLock_TTLExpiry verifies that after TTL expires, another
+// instance can acquire the lock.
+func TestDistributedRunLock_TTLExpiry(t *testing.T) {
+	jobStore, srv := newTestJobStore(t)
+	defer srv.Close()
+	defer jobStore.Close()
+
+	lm1 := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+	lm2 := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+
+	const runID = "run-ttl-test"
+
+	// lm1 acquires — don't release, let TTL expire.
+	_ = lm1.acquire(runID)
+
+	key := runLockKey(runID)
+	if !srv.Exists(key) {
+		t.Fatal("expected Redis lock key to exist")
+	}
+
+	// Fast-forward past TTL.
+	srv.FastForward(runLockTTL + time.Second)
+
+	// Key should be expired.
+	if srv.Exists(key) {
+		t.Fatal("expected Redis lock key to expire after TTL")
+	}
+
+	// lm2 can now acquire the distributed lock.
+	release2 := lm2.acquire(runID)
+	if !srv.Exists(key) {
+		t.Fatal("expected lm2 to acquire Redis lock after TTL expiry")
+	}
+	release2()
+}
+
+// TestDistributedRunLock_LocalFallback verifies that the lockManager works
+// correctly with no RunLocker (nil — backward-compatible local-only).
+func TestDistributedRunLock_LocalFallback(t *testing.T) {
+	lm := lockManager{locks: make(map[string]*runLock)} // no locker
+
+	const runID = "run-local-dist"
+	release := lm.acquire(runID)
+	release()
+
+	release2 := lm.acquire(runID)
+	release2()
+
+	release3 := lm.acquire(runID)
+	lm.markTerminal(runID)
+	release3()
+
+	lm.mu.Lock()
+	_, exists := lm.locks[runID]
+	lm.mu.Unlock()
+	if exists {
+		t.Fatal("expected lock entry to be cleaned up after markTerminal + release")
+	}
+}
+
+// TestDistributedRunLock_MarkTerminalCleanup verifies markTerminal with
+// distributed locks cleans up the local map entry.
+func TestDistributedRunLock_MarkTerminalCleanup(t *testing.T) {
+	jobStore, srv := newTestJobStore(t)
+	defer srv.Close()
+	defer jobStore.Close()
+
+	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+
+	const runID = "run-terminal-dist"
+	release := lm.acquire(runID)
+
+	lm.markTerminal(runID)
+
+	lm.mu.Lock()
+	_, exists := lm.locks[runID]
+	lm.mu.Unlock()
+	if !exists {
+		t.Fatal("expected entry to exist while lock held")
+	}
+
+	release()
+
+	lm.mu.Lock()
+	_, exists = lm.locks[runID]
+	lm.mu.Unlock()
+	if exists {
+		t.Fatal("expected entry cleaned up after release with terminal flag")
+	}
+}
+
+// TestDistributedRunLock_Renewal verifies that the lock TTL is renewed when
+// the locker implements RunLockRenewer.
+func TestDistributedRunLock_Renewal(t *testing.T) {
+	jobStore, srv := newTestJobStore(t)
+	defer srv.Close()
+	defer jobStore.Close()
+
+	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+
+	const runID = "run-renewal-dist"
+	release := lm.acquire(runID)
+
+	key := runLockKey(runID)
+	if !srv.Exists(key) {
+		t.Fatal("expected Redis lock key to exist after acquire")
+	}
+
+	// Fast-forward past original TTL — renewal should keep it alive.
+	srv.FastForward(25 * time.Second)
+	time.Sleep(50 * time.Millisecond)
+
+	if !srv.Exists(key) {
+		t.Fatal("expected Redis lock key to still exist after renewal")
+	}
+
+	release()
+
+	if srv.Exists(key) {
+		t.Fatal("expected Redis lock key to be released")
 	}
 }

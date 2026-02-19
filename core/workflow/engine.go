@@ -39,13 +39,28 @@ type Engine struct {
 	stopped       chan struct{} // closed by Stop(); nil until first use
 }
 
+// RunLocker is an optional distributed lock provider for cross-replica
+// mutual exclusion on workflow runs. When nil, only in-process locking is used.
+type RunLocker interface {
+	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error)
+	ReleaseLock(ctx context.Context, key string, token string) error
+}
+
+// RunLockRenewer is an optional extension of RunLocker that supports TTL renewal.
+// If the RunLocker also implements this interface, locks are renewed periodically.
+type RunLockRenewer interface {
+	RenewLock(ctx context.Context, key, token string, ttl time.Duration) error
+}
+
+const runLockTTL = 30 * time.Second
+
 // lockManager provides per-run mutual exclusion with safe cleanup.
-// The manager mutex guards the map and ref counts — it is held only for
-// map lookups and integer increments (nanoseconds), never during actual work.
-// Per-run mutexes provide per-run isolation.
+// Two-layer locking: local mutex first (fast, prevents intra-process
+// contention and Redis round-trips), then optional Redis lock (distributed).
 type lockManager struct {
-	mu    sync.Mutex
-	locks map[string]*runLock
+	mu     sync.Mutex
+	locks  map[string]*runLock
+	locker RunLocker // optional distributed lock; nil = local-only
 }
 
 type runLock struct {
@@ -57,6 +72,7 @@ type runLock struct {
 // acquire obtains the per-run lock for runID and returns a release function.
 // Multiple goroutines calling acquire for different runIDs proceed concurrently.
 // Multiple goroutines calling acquire for the same runID are serialized.
+// If a distributed locker is set, a Redis lock is acquired after the local mutex.
 func (lm *lockManager) acquire(runID string) func() {
 	lm.mu.Lock()
 	lock, ok := lm.locks[runID]
@@ -67,8 +83,70 @@ func (lm *lockManager) acquire(runID string) func() {
 	lock.refs++
 	lm.mu.Unlock()
 
+	// Local mutex first (per task rail: local before Redis).
 	lock.mu.Lock()
+
+	// Distributed lock (best-effort — degrades to local-only on failure).
+	var redisToken string
+	var renewCancel context.CancelFunc
+	var renewDone chan struct{}
+	if lm.locker != nil {
+		key := runLockKey(runID)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		token, err := lm.locker.TryAcquireLock(ctx, key, runLockTTL)
+		cancel()
+		if err != nil {
+			logging.Warn("workflow-engine", "distributed run lock acquire failed, using local-only",
+				"run_id", runID, "error", err)
+		} else if token == "" {
+			// Another replica holds the lock. Log and proceed with local-only.
+			// The local mutex still provides same-process safety.
+			logging.Warn("workflow-engine", "distributed run lock contention, proceeding with local lock",
+				"run_id", runID)
+		} else {
+			redisToken = token
+			// Start renewal goroutine if the locker supports it.
+			if renewer, ok := lm.locker.(RunLockRenewer); ok {
+				var renewCtx context.Context
+				renewCtx, renewCancel = context.WithCancel(context.Background())
+				renewDone = make(chan struct{})
+				go func() {
+					defer close(renewDone)
+					ticker := time.NewTicker(runLockTTL / 3)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-renewCtx.Done():
+							return
+						case <-ticker.C:
+							rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+							if err := renewer.RenewLock(rCtx, key, token, runLockTTL); err != nil {
+								logging.Warn("workflow-engine", "run lock renewal failed",
+									"run_id", runID, "error", err)
+							}
+							rCancel()
+						}
+					}
+				}()
+			}
+		}
+	}
+
 	return func() {
+		// Stop renewal goroutine and wait for it to finish before releasing.
+		if renewCancel != nil {
+			renewCancel()
+			<-renewDone
+		}
+		// Release Redis lock BEFORE local mutex (per task rail).
+		if redisToken != "" && lm.locker != nil {
+			rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := lm.locker.ReleaseLock(rCtx, runLockKey(runID), redisToken); err != nil {
+				logging.Warn("workflow-engine", "distributed run lock release failed",
+					"run_id", runID, "error", err)
+			}
+			rCancel()
+		}
 		lock.mu.Unlock()
 		lm.mu.Lock()
 		lock.refs--
@@ -80,7 +158,8 @@ func (lm *lockManager) acquire(runID string) func() {
 }
 
 // markTerminal flags a run as completed so its lock entry is cleaned up
-// once all active holders release.
+// once all active holders release. The Redis lock key is released by the
+// acquire() release function; any stale keys expire via TTL.
 func (lm *lockManager) markTerminal(runID string) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
@@ -137,6 +216,13 @@ func (e *Engine) WithSchemaRegistry(registry *schemas.Registry) *Engine {
 // WithOutputSafety sets an optional output safety checker for inter-step policy enforcement.
 func (e *Engine) WithOutputSafety(c model.OutputSafetyChecker) *Engine {
 	e.outputSafety = c
+	return e
+}
+
+// WithRunLocker sets a distributed lock provider for cross-replica run locking.
+// When set, the engine acquires a Redis-backed lock in addition to the local mutex.
+func (e *Engine) WithRunLocker(locker RunLocker) *Engine {
+	e.lockMgr.locker = locker
 	return e
 }
 
