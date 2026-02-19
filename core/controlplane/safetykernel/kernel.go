@@ -835,11 +835,14 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 		return nil
 	}
 	out := &config.SafetyPolicy{
-		Version:       policy.Version,
-		DefaultTenant: policy.DefaultTenant,
-		Rules:         append([]config.PolicyRule{}, policy.Rules...),
-		OutputRules:   append([]config.OutputPolicyRule{}, policy.OutputRules...),
-		Tenants:       map[string]config.TenantPolicy{},
+		Version:         policy.Version,
+		DefaultTenant:   policy.DefaultTenant,
+		DefaultDecision: policy.DefaultDecision,
+		InputPolicy:     policy.InputPolicy,
+		OutputPolicy:    policy.OutputPolicy,
+		Rules:           append([]config.PolicyRule{}, policy.Rules...),
+		OutputRules:     append([]config.OutputPolicyRule{}, policy.OutputRules...),
+		Tenants:         map[string]config.TenantPolicy{},
 	}
 	if policy.Tenants != nil {
 		for k, v := range policy.Tenants {

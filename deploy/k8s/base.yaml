@@ -671,6 +671,8 @@ spec:
           value: redis://:$(REDIS_PASSWORD)@redis:6379
         - name: SAFETY_KERNEL_ADDR
           value: cordum-safety-kernel:50051
+        - name: POLICY_CHECK_FAIL_MODE
+          value: "closed"
         - name: POOL_CONFIG_PATH
           value: /etc/cordum/pools.yaml
         - name: TIMEOUT_CONFIG_PATH

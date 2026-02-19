@@ -71,6 +71,7 @@ const SettingsNotificationsPage = lazy(() => import("./pages/SettingsNotificatio
 const SettingsEnvironmentsPage = lazy(() => import("./pages/SettingsEnvironmentsPage"));
 const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
 const OutputSafetySettings = lazy(() => import("./pages/settings/OutputSafetySettings"));
+const InputSafetySettings = lazy(() => import("./pages/settings/InputSafetySettings"));
 const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
 const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
@@ -133,6 +134,7 @@ export default function App() {
                         <Route path="environments" element={<SettingsEnvironmentsPage />} />
                         <Route path="config" element={<SettingsConfigPage />} />
                         <Route path="output-safety" element={<OutputSafetySettings />} />
+                        <Route path="input-safety" element={<InputSafetySettings />} />
                         <Route path="mcp" element={<SettingsMcpPage />} />
                       </Route>
                       <Route path="/schemas" element={<SchemasPage />} />

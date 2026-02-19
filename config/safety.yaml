@@ -52,6 +52,9 @@ rules:
     decision: allow
     reason: "Read-only validation and notification jobs are auto-approved."
 
+input_policy:
+  fail_mode: closed  # "closed" = requeue when kernel down, "open" = allow through
+
 output_policy:
   enabled: true
   fail_mode: closed

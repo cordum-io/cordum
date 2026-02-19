@@ -277,7 +277,24 @@ Constants (`core/controlplane/scheduler/safety_client.go`):
 
 When open/half-open-throttled, scheduler receives `SafetyUnavailable` decisions instead of blocking on RPC.
 
-## 10. Environment Variables
+## 10. Input Policy Fail Mode
+
+When the safety kernel is unreachable during pre-dispatch policy checks, the scheduler's behavior is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
+
+| Mode | Behavior | Risk |
+|------|----------|------|
+| `closed` (default) | Job is requeued with exponential backoff until the safety kernel recovers | No unsafe jobs pass through; availability impact during outages |
+| `open` | Job is allowed through with a warning log and metric increment | Jobs bypass safety checks; use only when availability is prioritized over safety |
+
+**Risk implications of fail-open**: In `open` mode, jobs that would normally be denied or require approval are allowed through without evaluation. This should only be used in environments where safety violations are tolerable (e.g., staging) or where compensating controls exist downstream. Production deployments should use the default `closed` mode.
+
+**Configuration**:
+- Environment variable: `POLICY_CHECK_FAIL_MODE` (values: `closed`, `open`)
+- Config file: `config/safety.yaml` under `input_policy.fail_mode`
+
+**Prometheus metric**: `cordum_scheduler_input_fail_open_total` (counter, labels: `topic`) — incremented each time a job is allowed through under fail-open mode. Alert on this metric to detect safety kernel outages that are silently bypassing policy checks.
+
+## 11. Environment Variables
 
 | Variable | Component | Default | Purpose |
 | --- | --- | --- | --- |
@@ -311,7 +328,7 @@ Related (non-`SAFETY_*`) knobs:
 - `CORDUM_TLS_MIN_VERSION` for TLS minimum version
 - `CORDUM_GRPC_REFLECTION` to enable gRPC reflection
 
-## 11. Cross-References
+## 12. Cross-References
 
 - [Output Policy Guide](./output-policy.md)
 - [API Reference](./api-reference.md)

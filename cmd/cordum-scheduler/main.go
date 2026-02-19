@@ -317,6 +317,9 @@ func main() {
 			engine.WithAsyncFailMode(fm)
 		}
 	}
+	if fm := strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE")); fm != "" {
+		engine.WithInputFailMode(fm)
+	}
 
 	if err := engine.Start(); err != nil {
 		log.Fatalf("failed to start scheduler engine: %v", err)

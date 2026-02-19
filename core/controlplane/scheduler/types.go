@@ -108,6 +108,7 @@ type Metrics interface {
 	IncDLQEmitFailure(topic string)
 	IncJobCancelFailures()
 	IncValidationRejections()
+	IncInputFailOpen(topic string)
 }
 
 // SagaMetrics captures metrics for saga rollbacks and compensation handling.

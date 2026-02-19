@@ -13,11 +13,17 @@ import (
 type SafetyPolicy struct {
 	Version         string                  `yaml:"version"`
 	Rules           []PolicyRule            `yaml:"rules"`
+	InputPolicy     InputPolicyConfig       `yaml:"input_policy"`
 	OutputPolicy    OutputPolicyConfig      `yaml:"output_policy"`
 	OutputRules     []OutputPolicyRule      `yaml:"output_rules"`
 	DefaultTenant   string                  `yaml:"default_tenant,omitempty"`
 	DefaultDecision string                  `yaml:"default_decision,omitempty" json:"default_decision,omitempty"` // allow|deny (default: deny = fail-closed)
 	Tenants         map[string]TenantPolicy `yaml:"tenants"`
+}
+
+// InputPolicyConfig controls input-policy evaluation behavior.
+type InputPolicyConfig struct {
+	FailMode string `yaml:"fail_mode,omitempty"` // open|closed (default: closed = requeue when kernel down)
 }
 
 // OutputPolicyConfig controls output-policy evaluation behavior.
