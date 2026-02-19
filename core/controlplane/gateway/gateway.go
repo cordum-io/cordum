@@ -117,6 +117,9 @@ type server struct {
 
 	auditExporter *audit.BufferedExporter
 
+	apiRL    rateLimiter
+	publicRL rateLimiter
+
 	marketplaceMu    sync.Mutex
 	marketplaceCache marketplaceCache
 	stopBusTapsOnce  sync.Once
@@ -368,6 +371,18 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	}
 	defer s.Close()
 
+	// Wire distributed rate limiters. Use Redis-backed counters by default;
+	// fall back to in-memory when REDIS_RATE_LIMIT=false or Redis unavailable.
+	redisRL := strings.ToLower(strings.TrimSpace(os.Getenv("REDIS_RATE_LIMIT")))
+	if redisRL != "false" && redisRL != "0" && redisRL != "no" && jobStore != nil {
+		redisClient := jobStore.Client()
+		s.apiRL = newRedisRateLimiter(redisClient, defaultRateLimitRPS, defaultRateLimitBurst)
+		s.publicRL = newRedisRateLimiter(redisClient, defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
+	} else {
+		s.apiRL = defaultAPILimiter
+		s.publicRL = defaultPublicLimiter
+	}
+
 	if err := s.startBusTaps(); err != nil {
 		return fmt.Errorf("start bus taps: %w", err)
 	}
@@ -406,7 +421,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		grpc.Creds(grpcCreds),
 		grpc.ChainUnaryInterceptor(
 			apiKeyUnaryInterceptor(s.auth),
-			rateLimitUnaryInterceptor(s.auth),
+			rateLimitUnaryInterceptor(s.auth, s.apiRL, s.publicRL),
 		),
 	)
 	pb.RegisterCordumApiServer(grpcServer, s)
@@ -596,7 +611,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	}
 
 	// Middleware chain: CORS → auth → rate limit → tenant → body limit → mux
-	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))))
+	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))

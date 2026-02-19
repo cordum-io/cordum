@@ -718,10 +718,16 @@ scanners:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `API_RATE_LIMIT_RPS` | — | Per-tenant rate limit (requests/sec) |
-| `API_RATE_LIMIT_BURST` | — | Per-tenant burst size |
-| `API_PUBLIC_RATE_LIMIT_RPS` | — | Public (unauthenticated) rate limit |
-| `API_PUBLIC_RATE_LIMIT_BURST` | — | Public burst size |
+| `API_RATE_LIMIT_RPS` | `2000` | Per-tenant rate limit (requests/sec) |
+| `API_RATE_LIMIT_BURST` | `4000` | Per-tenant burst size |
+| `API_PUBLIC_RATE_LIMIT_RPS` | `20` | Public (unauthenticated) rate limit |
+| `API_PUBLIC_RATE_LIMIT_BURST` | `40` | Public burst size |
+| `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false` or Redis unavailable, falls back to per-process in-memory token buckets (effective limit = N × configured limit with N replicas). |
+
+> **Horizontal scaling note**: With multiple gateway replicas, Redis-backed rate
+> limiting (`REDIS_RATE_LIMIT=true`) is strongly recommended. Without it, each
+> replica maintains its own in-memory token bucket, so the effective rate limit
+> is multiplied by the number of replicas.
 
 ### Gateway — CORS
 
@@ -789,6 +795,7 @@ scanners:
 | `JOB_META_TTL_SECONDS` | — | Job metadata TTL in seconds (takes precedence) |
 | `WORKER_SNAPSHOT_INTERVAL` | — | Worker state snapshot interval |
 | `OUTPUT_POLICY_ENABLED` | `false` | Enable output policy: `true`, `1` |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when safety kernel is unreachable during pre-dispatch input policy checks. `closed` (default): requeue with backoff. `open`: allow through with warning log and metric. See [safety-kernel.md](safety-kernel.md) for risk implications. |
 
 ### Workflow Engine
 

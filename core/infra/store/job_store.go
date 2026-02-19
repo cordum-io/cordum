@@ -140,6 +140,12 @@ type RedisJobStore struct {
 	metaTTL time.Duration
 }
 
+// Client returns the underlying Redis client for use by other subsystems
+// (e.g., distributed rate limiting) that need shared Redis access.
+func (s *RedisJobStore) Client() redis.UniversalClient {
+	return s.client
+}
+
 // ApprovalRecord captures approval audit metadata stored on a job.
 type ApprovalRecord struct {
 	ApprovedBy     string
