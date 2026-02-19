@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
@@ -41,17 +42,18 @@ import (
 type server struct {
 	pb.UnimplementedSafetyKernelServer
 	pb.UnimplementedOutputPolicyServiceServer
-	mu           sync.RWMutex
-	policy       *config.SafetyPolicy
-	outputRules  []compiledOutputRule
-	scanners     map[string]OutputScanner
-	snapshot     string
-	snapshots    []string
-	resultClient redis.UniversalClient
-	cacheMu      sync.Mutex
-	cacheTTL     time.Duration
-	cache        map[string]cacheEntry
-	cacheMaxSize int
+	mu            sync.RWMutex
+	policy        *config.SafetyPolicy
+	outputRules   []compiledOutputRule
+	scanners      map[string]OutputScanner
+	snapshot      string
+	snapshots     []string
+	resultClient  redis.UniversalClient
+	policyVersion atomic.Uint64
+	cacheMu       sync.Mutex
+	cacheTTL      time.Duration
+	cache         map[string]cacheEntry
+	cacheMaxSize  int
 }
 
 const (
@@ -65,8 +67,9 @@ const (
 )
 
 type cacheEntry struct {
-	resp    *pb.PolicyCheckResponse
-	expires time.Time
+	resp          *pb.PolicyCheckResponse
+	expires       time.Time
+	policyVersion uint64
 }
 
 // policyLookupIP allows tests to override DNS resolution for policy URL validation.
@@ -348,6 +351,7 @@ func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 }
 
 func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
+	currentVersion := s.policyVersion.Load()
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if s.cache == nil {
@@ -355,6 +359,10 @@ func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
 	}
 	entry, ok := s.cache[key]
 	if !ok {
+		return nil
+	}
+	if entry.policyVersion != currentVersion {
+		delete(s.cache, key)
 		return nil
 	}
 	if time.Now().After(entry.expires) {
@@ -397,7 +405,11 @@ func (s *server) setCachedDecision(key string, resp *pb.PolicyCheckResponse) {
 			delete(s.cache, oldestKey)
 		}
 	}
-	s.cache[key] = cacheEntry{resp: resp, expires: time.Now().Add(s.cacheTTL)}
+	s.cache[key] = cacheEntry{
+		resp:          resp,
+		expires:       time.Now().Add(s.cacheTTL),
+		policyVersion: s.policyVersion.Load(),
+	}
 }
 
 func clonePolicyResponse(resp *pb.PolicyCheckResponse) *pb.PolicyCheckResponse {
@@ -626,8 +638,9 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader) {
 }
 
 func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
+	newVersion := s.policyVersion.Add(1)
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.policy = policy
 	s.outputRules = compileOutputRules(policy)
 	s.snapshot = snapshot
@@ -637,6 +650,14 @@ func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
 			s.snapshots = s.snapshots[:10]
 		}
 	}
+	s.mu.Unlock()
+
+	// Clear decision cache — all entries were created under a previous policy version.
+	s.cacheMu.Lock()
+	s.cache = map[string]cacheEntry{}
+	s.cacheMu.Unlock()
+
+	log.Printf("safety-kernel: policy updated, cache invalidated (version=%d)", newVersion)
 }
 
 type policyLoader struct {

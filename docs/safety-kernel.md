@@ -151,7 +151,10 @@ Cache semantics:
 Reload invalidation:
 
 - Snapshot is part of the key, so policy reload naturally causes misses against old snapshot keys.
-- Old entries remain until TTL expiry/eviction.
+- Additionally, a `policyVersion` counter (atomic uint64) tags every cache entry with the version active when it was created.
+- When `setPolicy()` is called, the version counter increments and the entire cache is cleared immediately.
+- On cache lookup, if the entry's `policyVersion` does not match the current version, the entry is treated as a miss and deleted — this is a belt-and-suspenders guard in addition to the cache clear.
+- In multi-replica deployments, each replica independently invalidates its cache when it receives the policy update (e.g., via NATS config notification or file watcher). No Redis is involved — cache management is purely local per-replica.
 
 ## 6. Policy Signature Verification (Ed25519)
 
