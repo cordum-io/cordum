@@ -686,7 +686,103 @@ func TestFullPipeline(t *testing.T) {
 
 ---
 
-## 8. Performance Tuning
+## 8. CAP v2.5.3 Re-exported Types
+
+The `sdk/runtime` package re-exports several types from the CAP v2.5.3 SDK for convenience. These are available under the `runtime` package without importing CAP directly.
+
+### MetricsHook
+
+Interface for job lifecycle observability. Implement this to collect custom metrics from worker execution:
+
+```go
+type MetricsHook interface {
+    OnJobReceived(jobID, topic string)
+    OnJobCompleted(jobID, topic string, duration time.Duration)
+    OnJobFailed(jobID, topic string, err error)
+    OnHeartbeatSent(workerID string)
+}
+```
+
+### NoopMetrics
+
+A zero-overhead `MetricsHook` implementation that does nothing. Use as a default when no metrics collection is needed:
+
+```go
+worker, _ := runtime.NewWorker(runtime.Config{
+    Metrics: runtime.NoopMetrics{},
+    // ...
+})
+```
+
+### Middleware / HandlerFunc
+
+Middleware chain support for worker handlers. `HandlerFunc` is the base handler type, and `Middleware` wraps it:
+
+```go
+type HandlerFunc func(ctx context.Context, req *agentv1.JobRequest) (*agentv1.JobResult, error)
+type Middleware func(HandlerFunc) HandlerFunc
+```
+
+Apply middleware to a handler:
+
+```go
+handler := runtime.Chain(baseHandler, loggingMW, metricsMW, recoveryMW)
+worker.Run(ctx, handler)
+```
+
+### LoggingMiddleware
+
+Built-in middleware that logs job start, completion, and failure with structured fields:
+
+```go
+logger := log.New(os.Stderr, "[worker] ", log.LstdFlags)
+mw := runtime.LoggingMiddleware(logger)
+handler := runtime.Chain(baseHandler, mw)
+```
+
+### InMemoryBus / NewInMemoryBus
+
+Test utility for unit testing handlers without a running NATS server. Implements the bus interface in-memory:
+
+```go
+func TestMyHandler(t *testing.T) {
+    bus := runtime.NewInMemoryBus()
+
+    // Publish and subscribe without NATS
+    bus.Subscribe("job.test", func(msg []byte) {
+        // handle message
+    })
+    bus.Publish("job.test", payload)
+}
+```
+
+### Updated Worker Config Fields
+
+The `Config` struct now accepts two additional fields from CAP v2.5.3:
+
+```go
+type Config struct {
+    // ... existing fields ...
+    Logger  *log.Logger        // Optional logger for worker internals (default: discard)
+    Metrics capsdk.MetricsHook // Optional metrics hook (default: NoopMetrics)
+}
+```
+
+Example:
+
+```go
+worker, _ := runtime.NewWorker(runtime.Config{
+    Pool:     "my-pool",
+    Subjects: []string{"job.my-pack.*"},
+    NatsURL:  os.Getenv("NATS_URL"),
+    Logger:   log.New(os.Stderr, "[worker] ", log.LstdFlags),
+    Metrics:  myPrometheusHook,
+})
+```
+
+---
+
+## 9. Performance Tuning
 
 ### Concurrency
 
@@ -718,7 +814,7 @@ c.HTTPClient = &http.Client{
 
 ---
 
-## 9. Environment Variables
+## 10. Environment Variables
 
 | Variable | Used By | Description |
 |----------|---------|-------------|

@@ -44,6 +44,11 @@ type Config struct {
 	// NATSTLSConfig is an optional TLS configuration for the NATS connection.
 	// When nil, NewWorker attempts to build one from NATS_TLS_* env vars.
 	NATSTLSConfig *tls.Config
+	// Logger overrides the default stdout logger. When nil, a standard log.Logger is used.
+	Logger *log.Logger
+	// Metrics receives job lifecycle events for observability (Prometheus, OTel, etc.).
+	// When nil, no metrics callbacks are fired.
+	Metrics capsdk.MetricsHook
 }
 
 // Worker subscribes to subjects and publishes job results.
@@ -63,6 +68,7 @@ type Worker struct {
 	cancelMu sync.Mutex
 	cancel   context.CancelFunc
 	logger   *log.Logger
+	metrics  capsdk.MetricsHook
 
 	consecutiveHBFailures int32 // tracks consecutive heartbeat publish failures
 }
@@ -116,6 +122,11 @@ func NewWorker(cfg Config) (*Worker, error) {
 		maxParallel = defaultMaxParallel
 	}
 
+	lgr := cfg.Logger
+	if lgr == nil {
+		lgr = log.New(os.Stdout, "cordum-runtime ", log.LstdFlags)
+	}
+
 	w := &Worker{
 		cfg:      cfg,
 		conn:     conn,
@@ -123,7 +134,8 @@ func NewWorker(cfg Config) (*Worker, error) {
 		queue:    strings.TrimSpace(cfg.Queue),
 		workerID: workerID,
 		pool:     pool,
-		logger:   log.New(os.Stdout, "cordum-runtime ", log.LstdFlags),
+		logger:   lgr,
+		metrics:  cfg.Metrics,
 	}
 	if maxParallel > 0 {
 		w.sem = make(chan struct{}, maxParallel)
@@ -222,6 +234,9 @@ func (w *Worker) dispatch(ctx context.Context, msg *nats.Msg, handler func(conte
 		if req == nil || req.GetJobId() == "" {
 			return
 		}
+		if w.metrics != nil {
+			w.metrics.OnJobReceived(req.GetJobId(), req.GetTopic())
+		}
 
 		start := time.Now()
 		panicRecovered := false
@@ -263,6 +278,14 @@ func (w *Worker) dispatch(ctx context.Context, msg *nats.Msg, handler func(conte
 		}
 		if res.ExecutionMs == 0 {
 			res.ExecutionMs = execMs
+		}
+		if w.metrics != nil {
+			status := res.Status.String()
+			if res.Status == agentv1.JobStatus_JOB_STATUS_FAILED {
+				w.metrics.OnJobFailed(req.GetJobId(), res.ErrorMessage)
+			} else {
+				w.metrics.OnJobCompleted(req.GetJobId(), execMs, status)
+			}
 		}
 
 		out := &agentv1.BusPacket{
@@ -355,6 +378,9 @@ func (w *Worker) startHeartbeat(ctx context.Context) {
 			return
 		}
 		atomic.StoreInt32(&w.consecutiveHBFailures, 0)
+		if w.metrics != nil {
+			w.metrics.OnHeartbeatSent(w.workerID)
+		}
 	}
 
 	publishHeartbeat()

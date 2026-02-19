@@ -643,6 +643,12 @@ docker compose logs scheduler 2>&1 | jq -r 'select(.level == "ERROR")'
 
 ---
 
+## 12. CAP SDK Issues
+
+For CAP SDK-level issues (worker connection, protocol errors, handler panics), see the [CAP Troubleshooting Guide](https://github.com/cordum-io/cap/blob/main/docs/troubleshooting.md).
+
+---
+
 ## Related Docs
 
 - [production.md](production.md) — Production readiness guide with incident runbooks
