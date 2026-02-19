@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/registry"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -222,6 +224,155 @@ func TestHandleWorkersFiltersStaleEntries(t *testing.T) {
 		t.Fatalf("expected workers count=1, got %#v", status["workers"])
 	}
 }
+
+func TestHandleGetWorkersFromRedisSnapshot(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	// Populate Redis with a worker snapshot (2 workers).
+	snap := registry.Snapshot{
+		CapturedAt: time.Now().UTC().Format(time.RFC3339),
+		Workers: []registry.WorkerSummary{
+			{WorkerID: "snap-w1", Pool: "pool-a", ActiveJobs: 1, MaxParallelJobs: 4},
+			{WorkerID: "snap-w2", Pool: "pool-b", ActiveJobs: 0, MaxParallelJobs: 2, Capabilities: []string{"gpu"}},
+		},
+	}
+	snapJSON, _ := json.Marshal(snap)
+	if err := s.memStore.PutResult(context.Background(), registry.SnapshotKey, snapJSON); err != nil {
+		t.Fatalf("put snapshot: %v", err)
+	}
+
+	// Also add a local in-memory worker to verify snapshot takes priority.
+	s.workerMu.Lock()
+	s.workers["local-w"] = &pb.Heartbeat{WorkerId: "local-w"}
+	s.workerMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	rec := httptest.NewRecorder()
+	s.handleGetWorkers(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var workers []*pb.Heartbeat
+	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(workers) != 2 {
+		t.Fatalf("expected 2 workers from snapshot, got %d", len(workers))
+	}
+	ids := map[string]bool{}
+	for _, w := range workers {
+		ids[w.WorkerId] = true
+	}
+	if !ids["snap-w1"] || !ids["snap-w2"] {
+		t.Fatalf("expected snap-w1 and snap-w2, got %v", ids)
+	}
+}
+
+func TestHandleGetWorkersFallbackOnRedisError(t *testing.T) {
+	// Use stubMemStore that returns error on GetResult.
+	s := &server{
+		memStore: &errorMemStore{},
+		workers:  map[string]*pb.Heartbeat{"local-w1": {WorkerId: "local-w1"}},
+		workerSeen: map[string]time.Time{"local-w1": time.Now()},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	rec := httptest.NewRecorder()
+	s.handleGetWorkers(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var workers []*pb.Heartbeat
+	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(workers) != 1 || workers[0].WorkerId != "local-w1" {
+		t.Fatalf("expected fallback to in-memory worker, got %+v", workers)
+	}
+}
+
+func TestHandleGetWorkersColdStart(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	// Populate Redis snapshot with 3 workers, but leave in-memory workers empty.
+	snap := registry.Snapshot{
+		CapturedAt: time.Now().UTC().Format(time.RFC3339),
+		Workers: []registry.WorkerSummary{
+			{WorkerID: "w1", Pool: "pool-a"},
+			{WorkerID: "w2", Pool: "pool-a"},
+			{WorkerID: "w3", Pool: "pool-b"},
+		},
+	}
+	snapJSON, _ := json.Marshal(snap)
+	if err := s.memStore.PutResult(context.Background(), registry.SnapshotKey, snapJSON); err != nil {
+		t.Fatalf("put snapshot: %v", err)
+	}
+	// In-memory workers is empty (simulating cold start).
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	rec := httptest.NewRecorder()
+	s.handleGetWorkers(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var workers []*pb.Heartbeat
+	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(workers) != 3 {
+		t.Fatalf("expected 3 workers from snapshot on cold start, got %d", len(workers))
+	}
+}
+
+func TestHandleStatusWorkerCountFromSnapshot(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	// Populate Redis snapshot with 2 workers.
+	snap := registry.Snapshot{
+		CapturedAt: time.Now().UTC().Format(time.RFC3339),
+		Workers: []registry.WorkerSummary{
+			{WorkerID: "snap-w1", Pool: "pool-a"},
+			{WorkerID: "snap-w2", Pool: "pool-b"},
+		},
+	}
+	snapJSON, _ := json.Marshal(snap)
+	if err := s.memStore.PutResult(context.Background(), registry.SnapshotKey, snapJSON); err != nil {
+		t.Fatalf("put snapshot: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	workersInfo, ok := status["workers"].(map[string]any)
+	if !ok || workersInfo["count"].(float64) != 2 {
+		t.Fatalf("expected workers count=2 from snapshot, got %#v", status["workers"])
+	}
+}
+
+// errorMemStore returns errors on all operations, used to test fallback paths.
+type errorMemStore struct{}
+
+func (e *errorMemStore) PutContext(context.Context, string, []byte) error {
+	return fmt.Errorf("store unavailable")
+}
+func (e *errorMemStore) GetContext(context.Context, string) ([]byte, error) {
+	return nil, fmt.Errorf("store unavailable")
+}
+func (e *errorMemStore) PutResult(context.Context, string, []byte) error {
+	return fmt.Errorf("store unavailable")
+}
+func (e *errorMemStore) GetResult(context.Context, string) ([]byte, error) {
+	return nil, fmt.Errorf("store unavailable")
+}
+func (e *errorMemStore) Close() error { return nil }
 
 type stubLicenseAuth struct {
 	info *LicenseInfo

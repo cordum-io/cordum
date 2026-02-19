@@ -54,6 +54,17 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 		writeForbidden(w, r, err)
 		return
 	}
+	// Prefer Redis snapshot (consistent across all replicas).
+	workers, err := s.workersFromRedisSnapshot()
+	if err == nil && workers != nil {
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(w, workerSummariesToHeartbeats(workers))
+		return
+	}
+	if err != nil {
+		logging.Warn("api-gateway", "worker snapshot read failed, falling back to in-memory", "error", err)
+	}
+	// Fallback: in-memory heartbeat map (local replica only).
 	out := s.activeWorkersSnapshot(time.Now().UTC())
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, out)
@@ -97,7 +108,13 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		uptimeSeconds = int64(now.Sub(s.started).Seconds())
 	}
 
-	workersCount := len(s.activeWorkersSnapshot(now))
+	// Prefer Redis snapshot count (consistent across replicas).
+	workersCount := 0
+	if snapWorkers, snapErr := s.workersFromRedisSnapshot(); snapErr == nil && snapWorkers != nil {
+		workersCount = len(snapWorkers)
+	} else {
+		workersCount = len(s.activeWorkersSnapshot(now))
+	}
 
 	natsConnected := false
 	natsStatus := "UNKNOWN"

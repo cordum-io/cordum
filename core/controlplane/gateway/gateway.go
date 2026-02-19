@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -26,6 +27,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/schema"
@@ -128,6 +130,46 @@ type server struct {
 
 	workerExpireStop chan struct{}
 	workerExpireOnce sync.Once
+}
+
+// workersFromRedisSnapshot reads the scheduler's worker snapshot from Redis.
+// Returns nil, nil if the snapshot key is missing (cold Redis).
+func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
+	if s.memStore == nil {
+		return nil, fmt.Errorf("mem store unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	data, err := s.memStore.GetResult(ctx, registry.SnapshotKey)
+	if err != nil {
+		return nil, fmt.Errorf("read worker snapshot: %w", err)
+	}
+	if data == nil || len(data) == 0 {
+		return nil, nil
+	}
+	var snap registry.Snapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, fmt.Errorf("unmarshal worker snapshot: %w", err)
+	}
+	return snap.Workers, nil
+}
+
+// workerSummariesToHeartbeats converts snapshot summaries to the Heartbeat
+// protobuf format used by the workers API, preserving the API contract.
+func workerSummariesToHeartbeats(workers []registry.WorkerSummary) []*pb.Heartbeat {
+	out := make([]*pb.Heartbeat, len(workers))
+	for i, w := range workers {
+		out[i] = &pb.Heartbeat{
+			WorkerId:        w.WorkerID,
+			Pool:            w.Pool,
+			ActiveJobs:      w.ActiveJobs,
+			MaxParallelJobs: w.MaxParallelJobs,
+			Capabilities:    w.Capabilities,
+			CpuLoad:         w.CpuLoad,
+			GpuUtilization:  w.GpuUtilization,
+		}
+	}
+	return out
 }
 
 // Close releases resources owned by the server, notably the user store
