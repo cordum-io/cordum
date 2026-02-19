@@ -1700,7 +1700,7 @@ type configDoc struct {
 }
 
 func (c *restClient) getConfig(ctx context.Context, scope, scopeID string) (*configDoc, error) {
-	path := "/api/v1/config?scope=" + url.QueryEscape(scope) + "&scope_id=" + url.QueryEscape(scopeID)
+	path := "/api/v1/config?scope=" + url.QueryEscape(scope) + "&scope_id=" + url.QueryEscape(scopeID) + "&envelope=true"
 	var doc configDoc
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &doc); err != nil {
 		return nil, err

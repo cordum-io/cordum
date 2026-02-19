@@ -944,20 +944,16 @@ gate_7_security() {
   attempt_parallel="${parallel}"
   rate_limited=0
   for attempt in 1 2 3; do
-    tmp_codes="$(mktemp)"
-    for _ in $(seq 1 "${attempt_burst}"); do
-      (
-        curl -sS -o /dev/null -w "%{http_code}" \
-          "${CURL_TLS_OPTS[@]}" "${API_BASE}/health" >>"${tmp_codes}"
-        echo >>"${tmp_codes}"
-      ) &
-      while (( $(jobs -pr | wc -l) >= attempt_parallel )); do
-        wait -n || true
-      done
-    done
-    wait || true
-    rate_limited="$(grep -c '^429$' "${tmp_codes}" || true)"
-    rm -f "${tmp_codes}"
+    # Use xargs -P for efficient parallelism and per-request files to avoid
+    # the shell jobs/wait-n throttle overhead that is too slow on MSYS/Windows.
+    tmp_dir="$(mktemp -d)"
+    local _curl_tls_args=""
+    local _i
+    for _i in "${CURL_TLS_OPTS[@]}"; do _curl_tls_args="${_curl_tls_args} ${_i}"; done
+    seq 1 "${attempt_burst}" | xargs -I{} -P"${attempt_parallel}" \
+      sh -c "curl -sS -o /dev/null -w '%{http_code}' ${_curl_tls_args} '${API_BASE}/health' > '${tmp_dir}/{}'"
+    rate_limited="$(grep -rl '^429$' "${tmp_dir}" 2>/dev/null | wc -l)"
+    rm -rf "${tmp_dir}"
     [[ "${rate_limited}" =~ ^[0-9]+$ ]] || rate_limited=0
     if (( rate_limited > 0 )); then
       break
