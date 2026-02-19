@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -29,10 +31,17 @@ type NatsBus struct {
 	subsMu sync.Mutex
 	subs   []*nats.Subscription
 
-	// OnMessageTerminated is called when a message is permanently terminated
-	// (poison pill or corrupt payload). Callers can use this to route the
-	// message to a dead-letter queue.
-	OnMessageTerminated func(subject string, data []byte, numDelivered uint64)
+	// redis is an optional Redis client for crash-safe message processing.
+	// When set, durable JetStream subscriptions use Redis for idempotency
+	// guards and in-flight tracking. When nil, degrades to JetStream-only semantics.
+	redis redis.UniversalClient
+
+	// OnMessageTerminated is called when a message is about to be permanently
+	// terminated (poison pill or corrupt payload). Callers should use this to
+	// route the message to a dead-letter queue. If the callback returns an error
+	// (e.g. DLQ write failed), the message is Nak'd for retry instead of
+	// terminated, preventing permanent data loss.
+	OnMessageTerminated func(subject string, data []byte, numDelivered uint64) error
 }
 
 const (
@@ -106,6 +115,42 @@ func NewNatsBus(url string) (*NatsBus, error) {
 	b := &NatsBus{nc: nc, ackWait: defaultAckWait}
 	b.initJetStreamFromEnv()
 	return b, nil
+}
+
+// WithRedis sets an optional Redis client for crash-safe message processing.
+// When set, durable JetStream subscriptions use Redis-backed idempotency guards
+// to prevent duplicate processing after crash/restart. Call before Subscribe.
+func (b *NatsBus) WithRedis(client redis.UniversalClient) *NatsBus {
+	b.redis = client
+	return b
+}
+
+const (
+	// processedKeyPrefix is the Redis key prefix for idempotency tracking.
+	// Key format: cordum:bus:processed:<stream>:<seq>
+	processedKeyPrefix = "cordum:bus:processed:"
+
+	// processedKeyTTL matches JetStream AckWait — after this, NATS won't
+	// redeliver anyway, so the dedup key can expire.
+	processedKeyTTL = 10 * time.Minute
+
+	// inflightKeyPrefix tracks messages currently being processed.
+	// Key format: cordum:bus:inflight:<stream>:<seq>
+	inflightKeyPrefix = "cordum:bus:inflight:"
+
+	// inflightKeyTTL is a safety bound — if a replica crashes mid-processing,
+	// the key expires and stops polluting the keyspace.
+	inflightKeyTTL = 2 * time.Minute
+)
+
+// processedKey returns the Redis key for tracking a processed message.
+func processedKey(stream string, seq uint64) string {
+	return processedKeyPrefix + stream + ":" + strconv.FormatUint(seq, 10)
+}
+
+// inflightKey returns the Redis key for tracking an in-flight message.
+func inflightKey(stream string, seq uint64) string {
+	return inflightKeyPrefix + stream + ":" + strconv.FormatUint(seq, 10)
 }
 
 // Drain unsubscribes all tracked subscriptions, allowing in-flight messages
@@ -190,18 +235,27 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		cb := func(msg *nats.Msg) {
 			var numDelivered uint64
+			var streamName string
+			var streamSeq uint64
 			if meta, metaErr := msg.Metadata(); metaErr == nil {
 				numDelivered = meta.NumDelivered
+				streamName = meta.Stream
+				streamSeq = meta.Sequence.Stream
 				// Terminate messages that have reached max delivery — they are poison pills
 				// blocking the queue for all messages behind them.
 				if numDelivered >= uint64(maxJSRedeliveries) {
 					log.Printf("nats bus: TERMINATING poison message on %s after %d deliveries (stream_seq=%d consumer_seq=%d)",
 						subject, numDelivered, meta.Sequence.Stream, meta.Sequence.Consumer)
+					// DLQ write BEFORE Term — prevents data loss if we crash between Term and DLQ write.
+					if b.OnMessageTerminated != nil {
+						if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
+							log.Printf("nats bus: DLQ write failed, nak-ing for retry: %v", dlqErr)
+							_ = msg.NakWithDelay(5 * time.Second)
+							return
+						}
+					}
 					if termErr := msg.Term(); termErr != nil {
 						log.Printf("nats bus: term failed: %v", termErr)
-					}
-					if b.OnMessageTerminated != nil {
-						b.OnMessageTerminated(subject, msg.Data, numDelivered)
 					}
 					return
 				}
@@ -209,15 +263,56 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 					log.Printf("nats bus: message on %s redelivered %d times (max=%d)", subject, numDelivered, maxJSRedeliveries)
 				}
 			}
+
+			// Idempotency guard: skip processing if already handled by another replica.
+			// This covers the crash window: replica A processes → crash before Ack → redelivery to B.
+			if b.redis != nil && streamSeq > 0 {
+				pKey := processedKey(streamName, streamSeq)
+				rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				exists, err := b.redis.Exists(rCtx, pKey).Result()
+				rCancel()
+				if err != nil {
+					log.Printf("nats bus: idempotency check failed (degrading): %v", err)
+				} else if exists > 0 {
+					// Already processed — just Ack and skip.
+					if ackErr := msg.Ack(); ackErr != nil {
+						log.Printf("nats bus: ack (dedup) failed: %v", ackErr)
+					}
+					return
+				}
+			}
+
+			// Mark in-flight for observability.
+			if b.redis != nil && streamSeq > 0 {
+				iKey := inflightKey(streamName, streamSeq)
+				rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = b.redis.Set(rCtx, iKey, "1", inflightKeyTTL).Err()
+				rCancel()
+			}
+
 			action, delay := processBusMsg(msg.Data, handler, numDelivered)
+
+			// Clear in-flight tracking after processing.
+			if b.redis != nil && streamSeq > 0 {
+				iKey := inflightKey(streamName, streamSeq)
+				rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = b.redis.Del(rCtx, iKey).Err()
+				rCancel()
+			}
+
 			switch action {
 			case msgActionTerm:
 				log.Printf("nats bus: terminating non-retryable message on %s (deliveries=%d)", subject, numDelivered)
+				// DLQ write BEFORE Term — prevents data loss if we crash between Term and DLQ write.
+				if b.OnMessageTerminated != nil {
+					if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
+						log.Printf("nats bus: DLQ write failed, nak-ing for retry: %v", dlqErr)
+						_ = msg.NakWithDelay(5 * time.Second)
+						break
+					}
+				}
 				if termErr := msg.Term(); termErr != nil {
 					log.Printf("nats bus: term failed: %v", termErr)
-				}
-				if b.OnMessageTerminated != nil {
-					b.OnMessageTerminated(subject, msg.Data, numDelivered)
 				}
 			case msgActionNakDelay:
 				log.Printf("nats bus: nak-with-delay on %s (delay=%v)", subject, delay)
@@ -229,6 +324,15 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 					log.Printf("nats bus: nak failed: %v", nakErr)
 				}
 			default:
+				// Mark as processed BEFORE Ack so redelivery finds the guard.
+				if b.redis != nil && streamSeq > 0 {
+					pKey := processedKey(streamName, streamSeq)
+					rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+					if setErr := b.redis.Set(rCtx, pKey, "1", processedKeyTTL).Err(); setErr != nil {
+						log.Printf("nats bus: idempotency set failed: %v", setErr)
+					}
+					rCancel()
+				}
 				if ackErr := msg.Ack(); ackErr != nil {
 					log.Printf("nats bus: ack failed: %v", ackErr)
 				}

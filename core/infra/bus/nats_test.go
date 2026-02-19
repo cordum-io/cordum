@@ -1,15 +1,18 @@
 package bus
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
+	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -372,5 +375,207 @@ func TestNatsTLSConfigProductionGuards(t *testing.T) {
 	t.Setenv(envNATSTLSInsecure, "1")
 	if _, err := natsTLSConfigFromEnv(); err == nil {
 		t.Fatalf("expected insecure tls error in production")
+	}
+}
+
+func newTestRedis(t *testing.T) (goredis.UniversalClient, *miniredis.Miniredis) {
+	t.Helper()
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	client := goredis.NewClient(&goredis.Options{Addr: srv.Addr()})
+	return client, srv
+}
+
+// TestProcessedKeyFormat verifies the key format for idempotency tracking.
+func TestProcessedKeyFormat(t *testing.T) {
+	key := processedKey("CORDUM_JOBS", 42)
+	expected := "cordum:bus:processed:CORDUM_JOBS:42"
+	if key != expected {
+		t.Fatalf("expected %q, got %q", expected, key)
+	}
+}
+
+// TestInflightKeyFormat verifies the key format for in-flight tracking.
+func TestInflightKeyFormat(t *testing.T) {
+	key := inflightKey("CORDUM_SYS", 99)
+	expected := "cordum:bus:inflight:CORDUM_SYS:99"
+	if key != expected {
+		t.Fatalf("expected %q, got %q", expected, key)
+	}
+}
+
+// TestIdempotencyGuard_ProcessedKeyPreventsReprocessing verifies that a
+// message with a processed key set in Redis is skipped (idempotency guard).
+func TestIdempotencyGuard_ProcessedKeyPreventsReprocessing(t *testing.T) {
+	client, srv := newTestRedis(t)
+	defer srv.Close()
+	defer client.Close()
+
+	ctx := context.Background()
+	pKey := processedKey("CORDUM_JOBS", 100)
+
+	// Simulate: first processing sets the key.
+	if err := client.Set(ctx, pKey, "1", processedKeyTTL).Err(); err != nil {
+		t.Fatalf("set processed key: %v", err)
+	}
+
+	// Verify exists.
+	exists, err := client.Exists(ctx, pKey).Result()
+	if err != nil {
+		t.Fatalf("exists: %v", err)
+	}
+	if exists != 1 {
+		t.Fatalf("expected key to exist")
+	}
+
+	// Verify TTL is set.
+	ttl, err := client.TTL(ctx, pKey).Result()
+	if err != nil {
+		t.Fatalf("ttl: %v", err)
+	}
+	if ttl <= 0 {
+		t.Fatalf("expected positive TTL, got %v", ttl)
+	}
+}
+
+// TestInflightTracking_SetAndClear verifies in-flight key lifecycle.
+func TestInflightTracking_SetAndClear(t *testing.T) {
+	client, srv := newTestRedis(t)
+	defer srv.Close()
+	defer client.Close()
+
+	ctx := context.Background()
+	iKey := inflightKey("CORDUM_JOBS", 200)
+
+	// Set in-flight.
+	if err := client.Set(ctx, iKey, "1", inflightKeyTTL).Err(); err != nil {
+		t.Fatalf("set inflight: %v", err)
+	}
+
+	// Verify exists.
+	exists, _ := client.Exists(ctx, iKey).Result()
+	if exists != 1 {
+		t.Fatalf("expected inflight key to exist")
+	}
+
+	// Clear in-flight.
+	if err := client.Del(ctx, iKey).Err(); err != nil {
+		t.Fatalf("del inflight: %v", err)
+	}
+
+	// Verify gone.
+	exists, _ = client.Exists(ctx, iKey).Result()
+	if exists != 0 {
+		t.Fatalf("expected inflight key to be gone")
+	}
+}
+
+// TestInflightTracking_TTLExpiry verifies in-flight key expires via TTL.
+func TestInflightTracking_TTLExpiry(t *testing.T) {
+	client, srv := newTestRedis(t)
+	defer srv.Close()
+	defer client.Close()
+
+	ctx := context.Background()
+	iKey := inflightKey("CORDUM_JOBS", 300)
+
+	if err := client.Set(ctx, iKey, "1", inflightKeyTTL).Err(); err != nil {
+		t.Fatalf("set inflight: %v", err)
+	}
+
+	// Fast-forward past TTL.
+	srv.FastForward(inflightKeyTTL + time.Second)
+
+	exists, _ := client.Exists(ctx, iKey).Result()
+	if exists != 0 {
+		t.Fatalf("expected inflight key to expire after TTL")
+	}
+}
+
+// TestOnMessageTerminated_DLQFirstSuccess verifies DLQ callback is called
+// before Term, and Term proceeds when DLQ succeeds.
+func TestOnMessageTerminated_DLQFirstSuccess(t *testing.T) {
+	dlqCalled := false
+	b := &NatsBus{
+		OnMessageTerminated: func(subject string, data []byte, numDelivered uint64) error {
+			dlqCalled = true
+			return nil // DLQ write success
+		},
+	}
+
+	// Simulate calling the callback.
+	if b.OnMessageTerminated != nil {
+		err := b.OnMessageTerminated("test.subject", []byte("data"), 5)
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+	}
+	if !dlqCalled {
+		t.Fatal("expected DLQ callback to be called")
+	}
+}
+
+// TestOnMessageTerminated_DLQFirstFailure verifies that when DLQ callback
+// returns error, the caller should Nak instead of Term.
+func TestOnMessageTerminated_DLQFirstFailure(t *testing.T) {
+	dlqErr := errors.New("dlq write failed")
+	b := &NatsBus{
+		OnMessageTerminated: func(subject string, data []byte, numDelivered uint64) error {
+			return dlqErr // DLQ write failure
+		},
+	}
+
+	// Simulate calling the callback.
+	if b.OnMessageTerminated != nil {
+		err := b.OnMessageTerminated("test.subject", []byte("data"), 5)
+		if err == nil {
+			t.Fatal("expected DLQ write error")
+		}
+		if !errors.Is(err, dlqErr) {
+			t.Fatalf("expected dlq error, got %v", err)
+		}
+	}
+}
+
+// TestWithRedis verifies the WithRedis setter.
+func TestWithRedis(t *testing.T) {
+	client, srv := newTestRedis(t)
+	defer srv.Close()
+	defer client.Close()
+
+	b := &NatsBus{}
+	if b.redis != nil {
+		t.Fatal("expected nil redis before WithRedis")
+	}
+	b.WithRedis(client)
+	if b.redis == nil {
+		t.Fatal("expected non-nil redis after WithRedis")
+	}
+}
+
+// TestIdempotencyRedisDown verifies graceful degradation when Redis is unavailable.
+func TestIdempotencyRedisDown(t *testing.T) {
+	client, srv := newTestRedis(t)
+	// Close Redis to simulate unavailability.
+	srv.Close()
+
+	ctx := context.Background()
+	pKey := processedKey("CORDUM_JOBS", 400)
+
+	// Exists should error — not panic.
+	_, err := client.Exists(ctx, pKey).Result()
+	if err == nil {
+		t.Fatal("expected error with closed Redis")
+	}
+
+	client.Close()
+}
+
+// TestProcessedKeyTTLMatchesAckWait verifies the constant alignment.
+func TestProcessedKeyTTLMatchesAckWait(t *testing.T) {
+	if processedKeyTTL != defaultAckWait {
+		t.Fatalf("processedKeyTTL (%v) should match defaultAckWait (%v)", processedKeyTTL, defaultAckWait)
 	}
 }

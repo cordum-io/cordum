@@ -602,7 +602,71 @@ eventual recovery for delay steps via `NextAttemptAt` checks.
 
 ---
 
-## 9. Metrics
+## 9. Crash-Safe Message Processing
+
+NATS JetStream provides **at-least-once delivery** with AckWait (10min) and
+MaxDeliver (100). However, there are crash windows between processing and
+acknowledgment that can cause duplicate work or data loss. The bus layer adds
+Redis-backed guards to close these gaps.
+
+### Idempotency Guard
+
+When `NatsBus.WithRedis(client)` is set, every durable JetStream subscription
+checks a processed-message key before invoking the handler:
+
+```
+Message arrives (stream=CORDUM_JOBS, seq=42):
+  ──EXISTS cordum:bus:processed:CORDUM_JOBS:42──
+     │                                │
+     │ exists → Ack (skip handler)    │ not exists → process
+     │                                │
+     └────────────────────────────────┘
+                                      │
+                                ──handler()──SET processed──Ack──
+```
+
+| Redis Key                                      | TTL   | Purpose                         |
+|------------------------------------------------|-------|---------------------------------|
+| `cordum:bus:processed:<stream>:<seq>`           | 10min | Idempotency dedup (= AckWait)   |
+| `cordum:bus:inflight:<stream>:<seq>`            | 2min  | Observability (in-flight msgs)  |
+
+**Crash scenario covered**: Replica A processes a message, crashes before Ack.
+NATS redelivers to Replica B after AckWait. B finds the processed key in Redis
+and skips processing (just Acks). Without the guard, B would double-process.
+
+### In-Flight Tracking
+
+Before calling the handler, the bus sets a short-lived inflight key
+(`cordum:bus:inflight:<stream>:<seq>`, TTL 2min). This key is deleted after the
+handler completes. If the replica crashes mid-processing, the key expires via
+TTL. This is informational only — the actual retry mechanism is JetStream's
+redelivery.
+
+### DLQ-First Termination
+
+When a message reaches permanent failure (poison pill or corrupt payload), the
+bus calls `OnMessageTerminated` (DLQ write) **before** calling `msg.Term()`.
+If the DLQ callback returns an error (e.g. Redis unavailable), the message is
+**Nak'd with 5s delay** instead of terminated. This prevents the scenario where
+`Term()` succeeds, the replica crashes, and the DLQ entry is never written —
+permanently losing the message.
+
+```
+Before (unsafe):  msg.Term() → OnMessageTerminated() → (crash = message lost)
+After  (safe):    OnMessageTerminated() → success? → msg.Term()
+                                        → error?  → msg.NakWithDelay(5s) (retry)
+```
+
+### Graceful Degradation
+
+If Redis is unavailable (connection error, timeout), the idempotency check and
+inflight tracking are silently skipped. Processing continues with JetStream-only
+semantics (at-least-once with AckWait-based redelivery). A warning is logged on
+the first Redis failure per message.
+
+---
+
+## 10. Metrics
 
 The scheduler exposes the following metrics:
 
@@ -644,7 +708,7 @@ The scheduler exposes the following metrics:
 
 ---
 
-## 10. Source Files
+## 11. Source Files
 
 | File                            | Purpose                                |
 |---------------------------------|----------------------------------------|
