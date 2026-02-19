@@ -63,7 +63,8 @@ func (r *reconciler) Start(ctx context.Context) {
 				continue
 			}
 			r.tick(ctx)
-			_ = r.jobStore.ReleaseLock(ctx, reconcilerLockKey, token)
+			// Lock held until TTL expiry (pollInterval * 2) — intentional for
+			// horizontal scaling. Only one replica may run tick() per TTL window.
 		}
 	}
 }
@@ -273,4 +274,3 @@ func jobStatusFromState(state model.JobState) pb.JobStatus {
 func runLockKey(runID string) string {
 	return "cordum:wf:run:lock:" + runID
 }
-

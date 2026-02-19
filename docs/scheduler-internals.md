@@ -386,6 +386,24 @@ All safety checks return `SafetyUnavailable` with reason `"safety kernel
 circuit open"`. The scheduler treats `SafetyUnavailable` as a retryable
 condition — the job is requeued with a 5-second delay.
 
+### Input Policy Fail Mode
+
+The scheduler's behavior when the safety kernel is unreachable (circuit open or
+gRPC timeout) is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
+
+- **Fail-closed (default)**: The job is requeued with exponential backoff. This
+  is the safe default — no job passes through without a policy decision.
+- **Fail-open**: The job is allowed through with a warning log
+  (`"input policy fail-open: safety kernel unreachable"`) and the
+  `cordum_scheduler_input_fail_open_total` Prometheus counter is incremented
+  (labeled by `topic`). This trades safety guarantees for availability.
+
+Configuration:
+- **Env var**: `POLICY_CHECK_FAIL_MODE` — values: `closed` (default), `open`
+- **Config file**: `config/safety.yaml` under `input_policy.fail_mode`
+
+The env var takes precedence over the config file value.
+
 ---
 
 ## 7. Environment Variables
@@ -418,12 +436,38 @@ condition — the job is requeued with a 5-second delay.
 
 The scheduler uses Redis-based distributed locks to ensure consistency:
 
-| Lock Key                      | TTL           | Purpose                              |
-|-------------------------------|---------------|--------------------------------------|
-| `cordum:scheduler:job:<id>`   | 30s           | Per-job mutex for state transitions  |
-| `cordum:reconciler:default`   | 2× poll interval | Single-writer reconciler         |
-| `cordum:replayer:pending`     | 2× poll interval | Single-writer pending replayer   |
-| `saga:<workflow_id>:lock`     | 2 min         | Per-workflow saga rollback mutex     |
+| Lock Key                      | TTL           | Release          | Purpose                              |
+|-------------------------------|---------------|------------------|--------------------------------------|
+| `cordum:scheduler:job:<id>`   | 30s           | Explicit (defer) | Per-job mutex for state transitions  |
+| `cordum:reconciler:default`   | 2× poll interval | TTL expiry    | Single-writer reconciler             |
+| `cordum:replayer:pending`     | 2× poll interval | TTL expiry    | Single-writer pending replayer       |
+| `cordum:workflow-engine:reconciler:default` | 2× poll interval | TTL expiry | Single-writer workflow reconciler |
+| `cordum:wf:run:lock:<runID>`  | 30s           | Explicit (defer) | Per-run mutex for workflow steps     |
+| `saga:<workflow_id>:lock`     | 2 min         | Explicit         | Per-workflow saga rollback mutex     |
+
+### Lock-Hold Pattern for Horizontal Scaling
+
+The reconciler, pending replayer, and workflow reconciler use a **TTL-based
+lock-hold pattern** instead of explicit release. After acquiring the lock and
+running `tick()`, they do **not** call `ReleaseLock`. The lock expires naturally
+after its TTL (2× poll interval).
+
+**Why**: If the lock is acquired, tick runs (~10–100ms), and then immediately
+released, a second replica can grab the lock within the same poll cycle and
+double-process the same jobs. By holding the lock until TTL expiry, only one
+replica can run `tick()` per TTL window, preventing duplicate dispatch,
+duplicate timeout transitions, and duplicate orphan replays.
+
+```
+Replica A: ──acquire──tick()──────────────────TTL expires──
+Replica B: ──(blocked)────────────────────────acquire──tick()──
+                    ◄── TTL window (2× poll) ──►
+```
+
+**Per-job and per-run locks** (`cordum:scheduler:job:<id>`,
+`cordum:wf:run:lock:<runID>`) still use explicit `defer ReleaseLock` because
+they protect short, targeted operations (single state transition or single run
+reconciliation) rather than entire tick cycles.
 
 ---
 

@@ -61,9 +61,8 @@ func (r *Reconciler) Start(ctx context.Context) {
 					continue
 				}
 				r.tick(ctx)
-				if err := r.store.ReleaseLock(ctx, r.lockKey, token); err != nil {
-					logging.Warn("reconciler", "failed to release lock", "key", r.lockKey, "error", err)
-				}
+				// Lock held until TTL expiry (pollInterval * 2) — intentional for
+				// horizontal scaling. Only one replica may run tick() per TTL window.
 			} else {
 				r.tick(ctx)
 			}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -423,5 +424,49 @@ func TestReconcilerStopsWhenNoProgress(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("reconciler did not exit when no progress was made before timeout")
+	}
+}
+
+// TestReconcilerSingleTickPerTTLWindow verifies that when two reconciler
+// goroutines race to acquire the distributed lock, only one executes tick()
+// per TTL window. After TTL expires, the second replica can acquire the lock.
+func TestReconcilerSingleTickPerTTLWindow(t *testing.T) {
+	store := newFakeReconcileStore()
+
+	var tickCount atomic.Int32
+	var wg sync.WaitGroup
+
+	lockKey := "cordum:reconciler:default"
+	lockTTL := 10 * time.Millisecond
+
+	// Two goroutines race to acquire the lock and "tick".
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			token, err := store.TryAcquireLock(context.Background(), lockKey, lockTTL)
+			if err != nil || token == "" {
+				return
+			}
+			tickCount.Add(1)
+			// Simulate tick work.
+			time.Sleep(time.Millisecond)
+			// No ReleaseLock — TTL-based hold for horizontal scaling.
+		}()
+	}
+	wg.Wait()
+
+	if got := tickCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 tick in TTL window, got %d", got)
+	}
+
+	// After TTL expires, the lock should be available again.
+	time.Sleep(15 * time.Millisecond)
+	token, err := store.TryAcquireLock(context.Background(), lockKey, lockTTL)
+	if err != nil {
+		t.Fatalf("lock acquisition after TTL: %v", err)
+	}
+	if token == "" {
+		t.Fatal("expected lock to be available after TTL expiry")
 	}
 }

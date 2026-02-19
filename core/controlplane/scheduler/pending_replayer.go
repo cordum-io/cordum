@@ -64,7 +64,8 @@ func (r *PendingReplayer) Start(ctx context.Context) {
 					continue
 				}
 				r.tick(ctx)
-				_ = r.store.ReleaseLock(ctx, r.lockKey, token)
+				// Lock held until TTL expiry (pollInterval * 2) — intentional for
+				// horizontal scaling. Only one replica may run tick() per TTL window.
 			} else {
 				r.tick(ctx)
 			}
