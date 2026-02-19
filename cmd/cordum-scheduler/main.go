@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -266,6 +269,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	hostname, _ := os.Hostname()
+	instanceID := hostname + "-" + uuid.NewString()[:8]
+	slog.Info("scheduler instance", "instance_id", instanceID)
+
 	if err := configSvc.EnsureDefault(ctx); err != nil {
 		log.Printf("auto-bootstrap default config failed: %v", err)
 	}
@@ -338,6 +345,8 @@ func main() {
 				log.Printf("invalid WORKER_SNAPSHOT_INTERVAL=%q, using default %s", raw, snapshotInterval) // #nosec -- value is config input for diagnostics.
 			}
 		}
+		const snapshotLockKey = "cordum:scheduler:snapshot:writer"
+		const snapshotLockTTL = 10 * time.Second
 		go func() {
 			ticker := time.NewTicker(snapshotInterval)
 			defer ticker.Stop()
@@ -346,16 +355,37 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
+					lockCtx, lockCancel := context.WithTimeout(ctx, 2*time.Second)
+					token, err := jobStore.TryAcquireLock(lockCtx, snapshotLockKey, snapshotLockTTL)
+					lockCancel()
+					if err != nil {
+						slog.Warn("snapshot writer lock acquire failed", "instance_id", instanceID, "error", err)
+						continue
+					}
+					if token == "" {
+						slog.Debug("snapshot writer lock held by another replica, skipping", "instance_id", instanceID)
+						continue
+					}
+
 					current := strategy.CurrentRouting()
 					snap := agentregistry.BuildSnapshot(registry.Snapshot(), current.TopicToPool())
 					data, err := json.Marshal(snap)
 					if err != nil {
 						log.Printf("worker snapshot marshal failed: %v", err)
+						releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
+						_ = jobStore.ReleaseLock(releaseCtx, snapshotLockKey, token)
+						releaseCancel()
 						continue
 					}
 					if err := snapshotStore.PutResult(ctx, agentregistry.SnapshotKey, data); err != nil {
 						log.Printf("worker snapshot write failed: %v", err)
 					}
+
+					releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
+					if err := jobStore.ReleaseLock(releaseCtx, snapshotLockKey, token); err != nil {
+						slog.Debug("snapshot writer lock release failed, will expire via TTL", "instance_id", instanceID, "error", err)
+					}
+					releaseCancel()
 				}
 			}
 		}()
