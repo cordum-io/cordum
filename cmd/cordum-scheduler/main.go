@@ -337,6 +337,19 @@ func main() {
 		log.Printf("worker snapshot disabled: failed to connect to Redis: %v", err)
 	} else {
 		defer snapshotStore.Close()
+
+		// Warm-start: hydrate registry from last-written snapshot to avoid 0–30s cold-start window.
+		hydrateCtx, hydrateCancel := context.WithTimeout(ctx, 5*time.Second)
+		snapData, snapErr := snapshotStore.GetResult(hydrateCtx, agentregistry.SnapshotKey)
+		hydrateCancel()
+		if snapErr != nil {
+			slog.Warn("registry warm-start: failed to read snapshot", "error", snapErr)
+		} else if len(snapData) == 0 {
+			slog.Info("registry warm-start: no snapshot found, starting cold")
+		} else if hydrateErr := registry.HydrateFromSnapshot(snapData); hydrateErr != nil {
+			slog.Warn("registry warm-start: failed to hydrate", "error", hydrateErr)
+		}
+
 		snapshotInterval := 5 * time.Second
 		if raw := os.Getenv("WORKER_SNAPSHOT_INTERVAL"); raw != "" {
 			if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {

@@ -708,7 +708,38 @@ The scheduler exposes the following metrics:
 
 ---
 
-## 11. Source Files
+## 11. Registry Warm-Start from Redis Snapshot
+
+New scheduler replicas start with an empty `MemoryRegistry`. Without warm-start,
+it takes up to 30s for heartbeats to fill the registry, causing `ErrNoWorkers`
+for any job submitted in that window.
+
+**Solution**: On startup, the scheduler reads `sys:workers:snapshot` from Redis
+(the same snapshot written every 5s by the snapshot writer) and hydrates the
+registry with `HydrateFromSnapshot()`.
+
+```
+Cold start (before):
+  Replica B starts ──(0-30s empty registry)──heartbeats fill──ready
+
+Warm start (after):
+  Replica B starts ──read snapshot──hydrate──ready (< 1s)
+                                              ↑ heartbeats refresh within seconds
+```
+
+**Behavior**:
+- Snapshot read has a 5s timeout — never blocks startup
+- Workers from the snapshot are inserted with `lastSeen = time.Now()`, so normal
+  30s TTL expiry applies (stale workers evicted if no live heartbeat follows)
+- If Redis is unavailable, snapshot is missing, or data is corrupt: log warning
+  and continue with cold start (heartbeats fill the registry as before)
+- Live heartbeats always take precedence over snapshot data (last-write-wins)
+
+**Redis key**: `sys:workers:snapshot` (same key used by snapshot writer)
+
+---
+
+## 12. Source Files
 
 | File                            | Purpose                                |
 |---------------------------------|----------------------------------------|
