@@ -1,0 +1,104 @@
+<svg width="800" height="450" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="800" height="450" fill="#f8f9fa" rx="4"/>
+
+  <!-- Sidebar -->
+  <rect width="200" height="450" fill="#343a40" rx="4 0 0 4"/>
+  <text x="20" y="40" font-family="Arial" font-size="20" font-weight="bold" fill="#fff">CORDUM</text>
+  <line x1="20" y1="50" x2="180" y2="50" stroke="#6c757d"/>
+  
+  <!-- Sidebar Items -->
+  <g transform="translate(20, 80)">
+    <text y="0" font-family="Arial" font-size="14" fill="#ced4da">Overview</text>
+    <rect x="-10" y="20" width="180" height="30" rx="4" fill="#495057"/>
+    <text y="40" font-family="Arial" font-size="14" font-weight="bold" fill="#fff">Policy Studio</text>
+    <text y="80" font-family="Arial" font-size="14" fill="#ced4da">Agent Fleet</text>
+    <text y="120" font-family="Arial" font-size="14" fill="#ced4da">Workflows</text>
+    <text y="160" font-family="Arial" font-size="14" fill="#ced4da">Audit Logs</text>
+    <text y="200" font-family="Arial" font-size="14" fill="#ced4da">Settings</text>
+  </g>
+
+  <!-- Main Content Area -->
+  <g transform="translate(220, 20)">
+    <!-- Header -->
+    <text x="0" y="20" font-family="Arial" font-size="24" font-weight="bold" fill="#343a40">Policy Studio</text>
+    <line x1="0" y1="35" x2="560" y2="35" stroke="#dee2e6"/>
+
+    <!-- Metrics Row -->
+    <g transform="translate(0, 50)">
+      <!-- Card 1: Active Policies -->
+      <rect width="170" height="100" rx="8" fill="#fff" stroke="#dee2e6" filter="url(#shadow)"/>
+      <text x="20" y="30" font-family="Arial" font-size="12" fill="#6c757d">ACTIVE POLICIES</text>
+      <text x="20" y="70" font-family="Arial" font-size="32" font-weight="bold" fill="#28a745">12</text>
+      <text x="140" y="30" font-family="Arial" font-size="16" fill="#28a745">●</text>
+
+      <!-- Card 2: Risky Jobs Blocked -->
+      <g transform="translate(190, 0)">
+        <rect width="170" height="100" rx="8" fill="#fff" stroke="#dee2e6" filter="url(#shadow)"/>
+        <text x="20" y="30" font-family="Arial" font-size="12" fill="#6c757d">BLOCKED (24h)</text>
+        <text x="20" y="70" font-family="Arial" font-size="32" font-weight="bold" fill="#dc3545">34</text>
+        <path d="M 140 20 L 160 40 L 140 40 Z" fill="#dc3545" transform="rotate(180 150 30)"/>
+      </g>
+      
+      <!-- Card 3: Pending Approval -->
+      <g transform="translate(380, 0)">
+        <rect width="170" height="100" rx="8" fill="#fff" stroke="#dee2e6" filter="url(#shadow)"/>
+        <text x="20" y="30" font-family="Arial" font-size="12" fill="#6c757d">PENDING APPROVAL</text>
+        <text x="20" y="70" font-family="Arial" font-size="32" font-weight="bold" fill="#ffc107">3</text>
+        <circle cx="150" cy="30" r="4" fill="#ffc107"/>
+      </g>
+    </g>
+
+    <!-- Recent Alerts / Policy Log -->
+    <g transform="translate(0, 180)">
+      <text x="0" y="0" font-family="Arial" font-size="18" font-weight="bold" fill="#343a40">Recent Interventions</text>
+      <rect y="15" width="560" height="230" rx="8" fill="#fff" stroke="#dee2e6"/>
+      
+      <!-- Table Header -->
+      <rect y="15" width="560" height="40" rx="8 8 0 0" fill="#f8f9fa"/>
+      <text x="20" y="40" font-family="Arial" font-size="12" font-weight="bold" fill="#6c757d">TIMESTAMP</text>
+      <text x="120" y="40" font-family="Arial" font-size="12" font-weight="bold" fill="#6c757d">AGENT</text>
+      <text x="240" y="40" font-family="Arial" font-size="12" font-weight="bold" fill="#6c757d">ACTION</text>
+      <text x="400" y="40" font-family="Arial" font-size="12" font-weight="bold" fill="#6c757d">STATUS</text>
+
+      <!-- Row 1 -->
+      <line x1="0" y1="55" x2="560" y2="55" stroke="#dee2e6"/>
+      <text x="20" y="80" font-family="Arial" font-size="12" fill="#343a40">10:42:15</text>
+      <text x="120" y="80" font-family="Arial" font-size="12" fill="#343a40">dev-agent-01</text>
+      <text x="240" y="80" font-family="Arial" font-size="12" fill="#343a40">delete_s3_bucket</text>
+      <rect x="400" y="65" width="80" height="20" rx="10" fill="#dc3545" opacity="0.2"/>
+      <text x="440" y="80" text-anchor="middle" font-family="Arial" font-size="10" font-weight="bold" fill="#dc3545">BLOCKED</text>
+
+       <!-- Row 2 -->
+      <line x1="0" y1="95" x2="560" y2="95" stroke="#dee2e6"/>
+      <text x="20" y="120" font-family="Arial" font-size="12" fill="#343a40">10:40:02</text>
+      <text x="120" y="120" font-family="Arial" font-size="12" fill="#343a40">finance-bot</text>
+      <text x="240" y="120" font-family="Arial" font-size="12" fill="#343a40">transfer_funds</text>
+      <rect x="400" y="105" width="80" height="20" rx="10" fill="#ffc107" opacity="0.2"/>
+      <text x="440" y="120" text-anchor="middle" font-family="Arial" font-size="10" font-weight="bold" fill="#d39e00">PENDING</text>
+
+       <!-- Row 3 -->
+      <line x1="0" y1="135" x2="560" y2="135" stroke="#dee2e6"/>
+      <text x="20" y="160" font-family="Arial" font-size="12" fill="#343a40">10:38:55</text>
+      <text x="120" y="160" font-family="Arial" font-size="12" fill="#343a40">support-ai</text>
+      <text x="240" y="160" font-family="Arial" font-size="12" fill="#343a40">read_ticket</text>
+      <rect x="400" y="145" width="80" height="20" rx="10" fill="#28a745" opacity="0.2"/>
+      <text x="440" y="160" text-anchor="middle" font-family="Arial" font-size="10" font-weight="bold" fill="#28a745">ALLOWED</text>
+    </g>
+  </g>
+
+  <!-- Shadow Filter -->
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
+      <feOffset dx="1" dy="1" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.2"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+</svg>
