@@ -128,6 +128,7 @@ Reload behavior:
 - Watch interval defaults to `30s`.
 - Override with `SAFETY_POLICY_RELOAD_INTERVAL` (duration string, for example `10s`, `1m`).
 - When snapshot changes, in-memory policy is replaced and recent snapshots are tracked.
+- Snapshot history is stored in Redis list `cordum:safety:snapshots` (LPUSH + LTRIM to 10). All replicas share a single history, so the `ListSnapshots` gRPC call returns consistent results regardless of which replica handles it. If Redis is unavailable, the safety kernel falls back to a per-process in-memory list.
 
 ## 5. Decision Cache
 

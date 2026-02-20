@@ -66,6 +66,8 @@ const (
 	envPolicyMaxBytes           = "SAFETY_POLICY_MAX_BYTES"
 	defaultPolicyMaxBytes       = 2 * 1024 * 1024
 	defaultDecisionCacheMaxSize = 10000
+	snapshotHistoryKey          = "cordum:safety:snapshots"
+	snapshotHistoryMax          = 10
 )
 
 type cacheEntry struct {
@@ -223,6 +225,16 @@ func (s *server) Simulate(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.
 }
 
 func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) (*pb.ListSnapshotsResponse, error) {
+	// Prefer Redis for cross-replica consistency.
+	if s.resultClient != nil {
+		rCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		vals, err := s.resultClient.LRange(rCtx, snapshotHistoryKey, 0, -1).Result()
+		cancel()
+		if err == nil && len(vals) > 0 {
+			return &pb.ListSnapshotsResponse{Snapshots: vals}, nil
+		}
+	}
+	// Fallback to local slice if Redis unavailable or empty.
 	s.mu.RLock()
 	snapshots := append([]string{}, s.snapshots...)
 	s.mu.RUnlock()
@@ -675,11 +687,22 @@ func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
 	s.snapshot = snapshot
 	if snapshot != "" {
 		s.snapshots = append([]string{snapshot}, s.snapshots...)
-		if len(s.snapshots) > 10 {
-			s.snapshots = s.snapshots[:10]
+		if len(s.snapshots) > snapshotHistoryMax {
+			s.snapshots = s.snapshots[:snapshotHistoryMax]
 		}
 	}
 	s.mu.Unlock()
+
+	// Persist snapshot to Redis for cross-replica consistency.
+	if snapshot != "" && s.resultClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := s.resultClient.LPush(ctx, snapshotHistoryKey, snapshot).Err(); err != nil {
+			log.Printf("safety-kernel: snapshot redis LPUSH failed: %v", err)
+		} else if err := s.resultClient.LTrim(ctx, snapshotHistoryKey, 0, snapshotHistoryMax-1).Err(); err != nil {
+			log.Printf("safety-kernel: snapshot redis LTRIM failed: %v", err)
+		}
+	}
 
 	// Clear decision cache — all entries were created under a previous policy version.
 	s.cacheMu.Lock()
