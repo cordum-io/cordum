@@ -50,3 +50,12 @@ When adding a new NATS subject:
 3. For broadcast subjects on durable streams, ephemeral consumers are used automatically — no special configuration needed.
 4. Add the subject to this matrix table.
 5. If the subject should be durable (at-least-once delivery), add it to `isDurableSubject()` in `core/infra/bus/nats.go`.
+
+## PodDisruptionBudgets
+
+Infrastructure StatefulSets have PDBs using `minAvailable` to preserve quorum during node drains:
+
+- **NATS** (`minAvailable: 2`): A 3-node NATS cluster requires 2 nodes for Raft quorum. Draining 2 nodes simultaneously would break consensus and halt message delivery.
+- **Redis** (`minAvailable: 4`): A 6-node Redis cluster (3 primary + 3 replica) needs at least 4 nodes to maintain data availability during rolling upgrades.
+
+Application services use `maxUnavailable: 1` PDBs. See [K8s Deployment Guide](./k8s-deployment.md#poddisruptionbudgets) for the full list.

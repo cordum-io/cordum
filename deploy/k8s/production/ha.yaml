@@ -156,3 +156,28 @@ spec:
       target:
         type: Utilization
         averageUtilization: 80
+---
+# NATS cluster: 3 nodes, minAvailable 2 maintains quorum during node drains.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cordum-nats-pdb
+  namespace: cordum
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: nats
+---
+# Redis cluster: 6 nodes (3 primary + 3 replica), minAvailable 4 maintains
+# data availability during rolling upgrades and node maintenance.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cordum-redis-pdb
+  namespace: cordum
+spec:
+  minAvailable: 4
+  selector:
+    matchLabels:
+      app: redis

@@ -596,6 +596,16 @@ All critical services have PDBs with `maxUnavailable: 1`:
 - `cordum-scheduler`
 - `cordum-workflow-engine`
 - `cordum-safety-kernel`
+- `cordum-dashboard`
+
+Infrastructure StatefulSets use `minAvailable` to preserve quorum and data availability:
+
+| StatefulSet | `minAvailable` | Rationale |
+|-------------|---------------|-----------|
+| NATS (3 nodes) | 2 | Maintains Raft quorum during node drains — losing 2 of 3 nodes would break consensus |
+| Redis (6 nodes: 3 primary + 3 replica) | 4 | Ensures at least 2 primary + 2 replica survive, maintaining data availability during rolling upgrades |
+
+See [Horizontal Scaling Guide](./horizontal-scaling.md) for NATS delivery semantics and multi-replica considerations.
 
 ---
 
