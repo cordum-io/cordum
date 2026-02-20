@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 const (
 	defaultGatewayAddr = "http://localhost:8081"
+	defaultHTTPAddr    = ":8090"
 )
 
 func main() {
@@ -28,7 +30,18 @@ func main() {
 	requestTimeout := flag.Duration("request-timeout", 30*time.Second, "per-request MCP handler timeout")
 	flag.Parse()
 
-	transport := mcp.NewStdioTransport()
+	transportMode, httpAddr, cfgErr := resolveTransportConfig()
+	if cfgErr != nil {
+		log.Fatalf("transport config: %v", cfgErr)
+	}
+
+	var transport mcp.Transport
+	switch transportMode {
+	case "stdio":
+		transport = mcp.NewStdioTransport()
+	case "http":
+		transport = mcp.NewHTTPTransport(0, *requestTimeout)
+	}
 	defer func() {
 		if err := transport.Close(); err != nil {
 			log.Printf("mcp transport close failed: %v", err)
@@ -59,7 +72,27 @@ func main() {
 		ProtocolVersion: mcp.DefaultProtocolVersion,
 		RequestTimeout:  *requestTimeout,
 	})
-	log.Printf("cordum-mcp listening on stdio (gateway=%s)", strings.TrimSpace(*gatewayAddr))
+
+	if transportMode == "http" {
+		httpTransport := transport.(*mcp.HTTPTransport)
+		mux := http.NewServeMux()
+		mux.HandleFunc("/sse", httpTransport.HandleSSE)
+		mux.HandleFunc("/message", httpTransport.HandleMessage)
+		httpSrv := &http.Server{
+			Addr:              httpAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			log.Printf("cordum-mcp listening on http %s (gateway=%s)", httpAddr, strings.TrimSpace(*gatewayAddr))
+			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("mcp http server failed: %v", err)
+			}
+		}()
+	} else {
+		log.Printf("cordum-mcp listening on stdio (gateway=%s)", strings.TrimSpace(*gatewayAddr))
+	}
+
 	if err := server.Serve(); err != nil {
 		log.Fatalf("mcp server failed: %v", err)
 	}
@@ -84,6 +117,22 @@ func envBoolOrDefault(key string, fallback bool) bool {
 		return false
 	default:
 		return fallback
+	}
+}
+
+// resolveTransportConfig reads MCP_TRANSPORT and MCP_HTTP_ADDR from env vars
+// and returns the validated transport mode and HTTP listen address.
+func resolveTransportConfig() (mode string, httpAddr string, err error) {
+	mode = strings.ToLower(strings.TrimSpace(envOrDefault("MCP_TRANSPORT", "stdio")))
+	httpAddr = envOrDefault("MCP_HTTP_ADDR", defaultHTTPAddr)
+	switch mode {
+	case "stdio", "", "http":
+		if mode == "" {
+			mode = "stdio"
+		}
+		return mode, httpAddr, nil
+	default:
+		return "", "", fmt.Errorf("unsupported MCP_TRANSPORT=%q (valid: stdio, http)", mode)
 	}
 }
 

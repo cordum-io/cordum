@@ -890,6 +890,13 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 |----------|---------|-------------|
 | `CORDUM_API_KEY` | — | API key for gateway-backed MCP handlers |
 | `CORDUM_TENANT_ID` | — | Tenant ID for MCP bridge/resource operations |
+| `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` (default) or `http` |
+| `MCP_HTTP_ADDR` | `:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
+
+**HA note — HTTP transport**: Set `MCP_TRANSPORT=http` to enable HTTP mode, which exposes
+`/sse` (SSE stream) and `/message` (POST JSON-RPC) endpoints. This allows running multiple
+MCP server replicas behind a load balancer. The default `stdio` mode supports only a single
+instance and is intended for local CLI integrations.
 
 ### Audit Export
 
