@@ -5,12 +5,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	natsserver "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
@@ -61,15 +64,16 @@ func TestIsDurableSubject(t *testing.T) {
 
 func TestDurableName(t *testing.T) {
 	if durableName("", "") != "" {
-		t.Fatalf("expected empty durable name")
+		t.Fatalf("expected empty durable name for empty subject")
 	}
 	name := durableName("job.test.*", "q")
 	if name == "" || name == "dur_" {
 		t.Fatalf("unexpected durable name: %s", name)
 	}
-	name = durableName("job.test.*", "")
-	if name == "" || name == "dur_" {
-		t.Fatalf("unexpected durable name for empty queue: %s", name)
+	// Broadcast subscriptions (empty queue) must return "" for ephemeral consumers
+	// so each replica gets its own consumer under JetStream.
+	if got := durableName("job.test.*", ""); got != "" {
+		t.Fatalf("expected empty durable name for broadcast (empty queue), got %s", got)
 	}
 }
 
@@ -577,5 +581,275 @@ func TestIdempotencyRedisDown(t *testing.T) {
 func TestProcessedKeyTTLMatchesAckWait(t *testing.T) {
 	if processedKeyTTL != defaultAckWait {
 		t.Fatalf("processedKeyTTL (%v) should match defaultAckWait (%v)", processedKeyTTL, defaultAckWait)
+	}
+}
+
+// startTestNATSServer starts an in-process NATS server for testing.
+func startTestNATSServer(t *testing.T, enableJS bool) *natsserver.Server {
+	t.Helper()
+	opts := &natsserver.Options{Port: -1, NoLog: true, NoSigs: true}
+	if enableJS {
+		storeDir := t.TempDir()
+		opts.JetStream = true
+		opts.StoreDir = storeDir
+	}
+	ns, err := natsserver.NewServer(opts)
+	if err != nil {
+		t.Fatalf("start test nats: %v", err)
+	}
+	go ns.Start()
+	if !ns.ReadyForConnections(5 * time.Second) {
+		t.Fatal("nats server not ready")
+	}
+	t.Cleanup(ns.Shutdown)
+	return ns
+}
+
+// newTestNatsBus creates a NatsBus connected to the given server.
+func newTestNatsBus(t *testing.T, ns *natsserver.Server, enableJS bool) *NatsBus {
+	t.Helper()
+	nc, err := nats.Connect(ns.ClientURL())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { nc.Close() })
+	b := &NatsBus{nc: nc}
+	if enableJS {
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatalf("jetstream: %v", err)
+		}
+		b.js = js
+		b.jsEnabled = true
+		b.ackWait = 30 * time.Second
+	}
+	return b
+}
+
+// TestBroadcastFanout_BothReplicasReceive verifies that 2 NatsBus instances
+// both receive broadcast messages (empty queue group) via core NATS.
+func TestBroadcastFanout_BothReplicasReceive(t *testing.T) {
+	ns := startTestNATSServer(t, false)
+	bus1 := newTestNatsBus(t, ns, false)
+	bus2 := newTestNatsBus(t, ns, false)
+
+	var count1, count2 atomic.Int32
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	if err := bus1.Subscribe(capsdk.SubjectHeartbeat, "", func(p *pb.BusPacket) error {
+		count1.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("bus1 subscribe: %v", err)
+	}
+	if err := bus2.Subscribe(capsdk.SubjectHeartbeat, "", func(p *pb.BusPacket) error {
+		count2.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("bus2 subscribe: %v", err)
+	}
+
+	// Allow subscriptions to propagate.
+	bus1.nc.Flush()
+	bus2.nc.Flush()
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish a heartbeat.
+	if err := bus1.Publish(capsdk.SubjectHeartbeat, &pb.BusPacket{
+		Payload: &pb.BusPacket_Heartbeat{Heartbeat: &pb.Heartbeat{WorkerId: "w1"}},
+	}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	bus1.nc.Flush()
+
+	// Wait for delivery.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if count1.Load() >= 1 && count2.Load() >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if count1.Load() < 1 {
+		t.Fatal("bus1 did not receive broadcast message")
+	}
+	if count2.Load() < 1 {
+		t.Fatal("bus2 did not receive broadcast message")
+	}
+}
+
+// TestQueueGroup_OnlyOneReceives verifies that with a queue group, only one
+// of 2 subscribers receives each message.
+func TestQueueGroup_OnlyOneReceives(t *testing.T) {
+	ns := startTestNATSServer(t, false)
+	bus1 := newTestNatsBus(t, ns, false)
+	bus2 := newTestNatsBus(t, ns, false)
+
+	var count1, count2 atomic.Int32
+	queue := "test-queue"
+
+	if err := bus1.Subscribe(capsdk.SubjectSubmit, queue, func(p *pb.BusPacket) error {
+		count1.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("bus1 subscribe: %v", err)
+	}
+	if err := bus2.Subscribe(capsdk.SubjectSubmit, queue, func(p *pb.BusPacket) error {
+		count2.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("bus2 subscribe: %v", err)
+	}
+
+	bus1.nc.Flush()
+	bus2.nc.Flush()
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish multiple messages.
+	for i := 0; i < 10; i++ {
+		if err := bus1.Publish(capsdk.SubjectSubmit, &pb.BusPacket{
+			Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-q"}},
+		}); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+	}
+	bus1.nc.Flush()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if count1.Load()+count2.Load() >= 10 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	total := count1.Load() + count2.Load()
+	if total != 10 {
+		t.Fatalf("expected 10 total messages, got %d", total)
+	}
+	// With queue group, messages should be distributed, not duplicated.
+	// Each message delivered to exactly one subscriber.
+	if count1.Load() == 10 && count2.Load() == 0 {
+		// All went to one — acceptable for small N with NATS round-robin
+	} else if count1.Load() == 0 && count2.Load() == 10 {
+		// Same
+	}
+	// Key assertion: no duplication — total == 10, not 20.
+}
+
+// TestBroadcastWithJetStream verifies that broadcast subscriptions (empty queue)
+// use ephemeral consumers under JetStream, so both replicas receive all messages.
+func TestBroadcastWithJetStream(t *testing.T) {
+	ns := startTestNATSServer(t, true)
+	bus1 := newTestNatsBus(t, ns, true)
+	bus2 := newTestNatsBus(t, ns, true)
+
+	// Create stream covering DLQ subject (a durable subject that uses broadcast).
+	_, err := bus1.js.AddStream(&nats.StreamConfig{
+		Name:     "TEST_SYS",
+		Subjects: []string{"sys.>"},
+	})
+	if err != nil {
+		t.Fatalf("add stream: %v", err)
+	}
+
+	var count1, count2 atomic.Int32
+
+	// Both subscribe to DLQ with empty queue (broadcast).
+	if err := bus1.Subscribe(capsdk.SubjectDLQ, "", func(p *pb.BusPacket) error {
+		count1.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("bus1 subscribe: %v", err)
+	}
+	if err := bus2.Subscribe(capsdk.SubjectDLQ, "", func(p *pb.BusPacket) error {
+		count2.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("bus2 subscribe: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Publish a DLQ message.
+	if err := bus1.Publish(capsdk.SubjectDLQ, &pb.BusPacket{
+		Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: "dlq-1"}},
+	}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if count1.Load() >= 1 && count2.Load() >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if count1.Load() < 1 {
+		t.Fatal("bus1 did not receive JetStream broadcast DLQ message")
+	}
+	if count2.Load() < 1 {
+		t.Fatal("bus2 did not receive JetStream broadcast DLQ message")
+	}
+}
+
+// TestQueueGroupWithJetStream verifies that queue group subscriptions under
+// JetStream still deliver each message to only one consumer.
+func TestQueueGroupWithJetStream(t *testing.T) {
+	ns := startTestNATSServer(t, true)
+	bus1 := newTestNatsBus(t, ns, true)
+	bus2 := newTestNatsBus(t, ns, true)
+
+	_, err := bus1.js.AddStream(&nats.StreamConfig{
+		Name:     "TEST_JOBS",
+		Subjects: []string{"sys.>"},
+	})
+	if err != nil {
+		t.Fatalf("add stream: %v", err)
+	}
+
+	var count1, count2 atomic.Int32
+	queue := "cordum-scheduler"
+
+	if err := bus1.Subscribe(capsdk.SubjectSubmit, queue, func(p *pb.BusPacket) error {
+		count1.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("bus1 subscribe: %v", err)
+	}
+	if err := bus2.Subscribe(capsdk.SubjectSubmit, queue, func(p *pb.BusPacket) error {
+		count2.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("bus2 subscribe: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Publish 5 messages with unique IDs (JetStream deduplicates by MsgId).
+	for i := 0; i < 5; i++ {
+		if err := bus1.Publish(capsdk.SubjectSubmit, &pb.BusPacket{
+			Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{
+				JobId: "job-js-q-" + time.Now().Format("150405.000") + "-" + string(rune('a'+i)),
+			}},
+		}); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if count1.Load()+count2.Load() >= 5 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	total := count1.Load() + count2.Load()
+	if total != 5 {
+		t.Fatalf("expected 5 total messages with queue group, got %d (bus1=%d, bus2=%d)", total, count1.Load(), count2.Load())
 	}
 }

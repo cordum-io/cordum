@@ -627,7 +627,10 @@ func durableName(subject, queue string) string {
 		return ""
 	}
 	if queue == "" {
-		return "dur_" + name
+		// Broadcast subscriptions must use ephemeral consumers so each replica
+		// gets its own consumer and receives all messages. A shared durable name
+		// would make JetStream deliver each message to only one replica.
+		return ""
 	}
 	q := strings.ReplaceAll(queue, ".", "_")
 	q = strings.ReplaceAll(q, "*", "STAR")
