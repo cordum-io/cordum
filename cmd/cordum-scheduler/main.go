@@ -388,6 +388,7 @@ func main() {
 
 					current := strategy.CurrentRouting()
 					snap := agentregistry.BuildSnapshot(registry.Snapshot(), current.TopicToPool())
+					snap.WriterID = instanceID
 					data, err := json.Marshal(snap)
 					if err != nil {
 						log.Printf("worker snapshot marshal failed: %v", err)

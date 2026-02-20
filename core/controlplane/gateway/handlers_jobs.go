@@ -209,6 +209,14 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	resp["ha_env"] = haEnv
 
+	// Worker snapshot metadata (writer ID + age).
+	if snap, snapErr := s.snapshotFromRedis(); snapErr == nil && snap != nil {
+		resp["snapshot_meta"] = map[string]any{
+			"writer_id":  snap.WriterID,
+			"captured_at": snap.CapturedAt,
+		}
+	}
+
 	// Replica registry from Redis SCAN.
 	if s.instanceRegistry != nil && s.jobStore != nil {
 		replicas, err := registry.ListAllInstances(r.Context(), s.jobStore.Client())

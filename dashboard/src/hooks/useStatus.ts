@@ -72,6 +72,10 @@ export interface GatewayStatus {
     redis_min_idle_conns: string;
     audit_transport: string;
   };
+  snapshot_meta?: {
+    writer_id: string;
+    captured_at: string;
+  };
 }
 
 type PipelineMetrics = NonNullable<GatewayStatus["pipeline"]>;

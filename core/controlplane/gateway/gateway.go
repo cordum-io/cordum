@@ -137,9 +137,9 @@ type server struct {
 	workerExpireOnce sync.Once
 }
 
-// workersFromRedisSnapshot reads the scheduler's worker snapshot from Redis.
+// snapshotFromRedis reads the full scheduler worker snapshot from Redis.
 // Returns nil, nil if the snapshot key is missing (cold Redis).
-func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
+func (s *server) snapshotFromRedis() (*registry.Snapshot, error) {
 	if s.memStore == nil {
 		return nil, fmt.Errorf("mem store unavailable")
 	}
@@ -155,6 +155,16 @@ func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
 	var snap registry.Snapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return nil, fmt.Errorf("unmarshal worker snapshot: %w", err)
+	}
+	return &snap, nil
+}
+
+// workersFromRedisSnapshot reads the scheduler's worker snapshot from Redis.
+// Returns nil, nil if the snapshot key is missing (cold Redis).
+func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
+	snap, err := s.snapshotFromRedis()
+	if err != nil || snap == nil {
+		return nil, err
 	}
 	return snap.Workers, nil
 }
