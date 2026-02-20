@@ -17,6 +17,7 @@ patches:
   - path: patches/tls-env.yaml
   - path: patches/service-labels.yaml
   - path: patches/pod-anti-affinity.yaml
+  - path: patches/gateway-session-affinity.yaml
 
 images:
   - name: cordum-context-engine
@@ -38,4 +39,8 @@ replicas:
   - name: cordum-safety-kernel
     count: 2
   - name: cordum-scheduler
+    count: 2
+  - name: cordum-workflow-engine
+    count: 2
+  - name: cordum-context-engine
     count: 2

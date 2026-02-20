@@ -142,6 +142,8 @@ spec:
           value: redis
         - name: REDIS_CLUSTER_ADDRESSES
           value: cordum-redis-0.cordum-redis.cordum.svc:6379,cordum-redis-1.cordum-redis.cordum.svc:6379,cordum-redis-2.cordum-redis.cordum.svc:6379,cordum-redis-3.cordum-redis.cordum.svc:6379,cordum-redis-4.cordum-redis.cordum.svc:6379,cordum-redis-5.cordum-redis.cordum.svc:6379
+        - name: REDIS_POOL_SIZE
+          value: "50"
         volumeMounts:
         - name: cordum-client-tls
           mountPath: /etc/cordum/tls/client

@@ -53,7 +53,7 @@ spec:
     kind: Deployment
     name: cordum-api-gateway
   minReplicas: 2
-  maxReplicas: 10
+  maxReplicas: 6
   metrics:
   - type: Resource
     resource:
@@ -90,7 +90,7 @@ spec:
     kind: Deployment
     name: cordum-scheduler
   minReplicas: 2
-  maxReplicas: 10
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:
@@ -116,7 +116,7 @@ spec:
     kind: Deployment
     name: cordum-workflow-engine
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 4
   metrics:
   - type: Resource
     resource:
@@ -157,6 +157,47 @@ spec:
         type: Utilization
         averageUtilization: 80
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cordum-context-engine
+  namespace: cordum
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: cordum-context-engine
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cordum-context-engine
+  namespace: cordum
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cordum-context-engine
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+# NOTE: NATS routes are hardcoded for 3 nodes (cordum-nats-{0,1,2}) in nats.yaml.
+# Scaling NATS beyond 3 nodes requires updating the route list in
+# deploy/k8s/production/nats.yaml to include additional peer addresses.
+#
 # NATS cluster: 3 nodes, minAvailable 2 maintains quorum during node drains.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
