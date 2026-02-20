@@ -59,3 +59,21 @@ Infrastructure StatefulSets have PDBs using `minAvailable` to preserve quorum du
 - **Redis** (`minAvailable: 4`): A 6-node Redis cluster (3 primary + 3 replica) needs at least 4 nodes to maintain data availability during rolling upgrades.
 
 Application services use `maxUnavailable: 1` PDBs. See [K8s Deployment Guide](./k8s-deployment.md#poddisruptionbudgets) for the full list.
+
+## HA Validation Suite
+
+An end-to-end acceptance suite verifies multi-replica correctness before deployment. It runs 5 scenarios against a 2-replica docker-compose topology:
+
+1. **Duplicate dispatch guard** — jobs submitted round-robin across gateways reach terminal state exactly once
+2. **Global rate limit** — distributed rate limiter enforces shared limit across replicas
+3. **Worker snapshot consistency** — both gateways return identical worker sets
+4. **Config propagation** — config reads match across gateways (shared Redis)
+5. **Lock-holder failover** — scheduler takeover after replica crash without duplicate processing
+
+```bash
+# Start HA stack and run validation
+docker compose -f docker-compose.yml -f docker-compose.ha.yaml up -d --build
+bash tests/e2e/ha_validation.sh
+```
+
+See [tests/e2e/README.md](../tests/e2e/README.md) for full instructions.
