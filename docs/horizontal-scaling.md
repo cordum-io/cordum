@@ -20,6 +20,7 @@ Every NATS subject in Cordum uses one of two delivery modes:
 | `sys.job.dlq` | Broadcast | (none) | Ephemeral | DLQ events — all gateways persist + forward to WS | Gateway |
 | `sys.job.>` | Broadcast | (none) | No | Job event tap — all gateways forward to WS clients | Gateway |
 | `sys.audit.>` | Broadcast | (none) | No | Audit event tap — all gateways forward to WS clients | Gateway |
+| `sys.audit.export` | Queue | `audit-exporters` | Yes (`dur_audit-exporters__sys_audit_export`) | NATS-backed audit export — one replica exports each event to SIEM | Gateway |
 | `job.<topic>` | Queue | per-topic | Yes | Job dispatch to workers — load-balanced per topic pool | Workers (SDK) |
 | `worker.<id>.jobs` | Queue | per-worker | Yes | Direct dispatch to specific worker | Workers (SDK) |
 

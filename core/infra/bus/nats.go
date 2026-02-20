@@ -606,7 +606,7 @@ func (b *NatsBus) initJetStreamFromEnv() {
 
 func isDurableSubject(subject string) bool {
 	switch subject {
-	case capsdk.SubjectSubmit, capsdk.SubjectResult, capsdk.SubjectDLQ:
+	case capsdk.SubjectSubmit, capsdk.SubjectResult, capsdk.SubjectDLQ, capsdk.SubjectAuditExport:
 		return true
 	}
 	if strings.HasPrefix(subject, "job.") {

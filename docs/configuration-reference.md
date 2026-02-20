@@ -889,6 +889,21 @@ scanners:
 | `AWS_REGION` | — | AWS region for CloudWatch |
 | `AWS_ACCESS_KEY_ID` | — | AWS credentials |
 | `AWS_SECRET_ACCESS_KEY` | — | AWS credentials |
+| `AUDIT_TRANSPORT` | `buffer` | Audit transport: `buffer` (in-memory) or `nats` (NATS-backed, recommended for multi-replica) |
+| `CORDUM_AUDIT_BUFFER_SIZE` | `1000` | In-memory audit buffer size (events) |
+| `CORDUM_AUDIT_EXPORT_MAX_RETRIES` | `3` | Max retries before dropping a batch |
+
+#### NATS-Backed Audit Pipeline
+
+When `AUDIT_TRANSPORT=nats`, audit events are published to the NATS subject `sys.audit.export` instead of being buffered in per-process memory. A consumer subscribes with queue group `audit-exporters` so exactly one replica handles each event. This provides:
+
+- **Crash resilience** — events survive process restarts when JetStream is enabled (at-least-once delivery)
+- **Stateless replicas** — audit events are no longer tied to the process that generated them
+- **Automatic fallback** — if NATS publish fails, events fall back to the local in-memory buffer
+
+The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for each event. Failed exports trigger NATS redelivery (nak). Malformed messages are acked to prevent poison pill loops.
+
+> **Note**: For production HA deployments, enable JetStream on the `sys` stream to get durable audit delivery. Without JetStream, audit events use core NATS (at-most-once).
 
 ### DLQ
 

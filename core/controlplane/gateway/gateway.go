@@ -117,7 +117,7 @@ type server struct {
 	userStore      UserStore
 	keyStore       KeyStore
 
-	auditExporter *audit.BufferedExporter
+	auditExporter audit.AuditSender
 
 	apiRL    rateLimiter
 	publicRL rateLimiter
@@ -380,9 +380,23 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		}
 	}
 
-	auditExporter, err := audit.NewExporterFromEnv()
+	var auditSender audit.AuditSender
+	bufExporter, err := audit.NewExporterFromEnv()
 	if err != nil {
 		return fmt.Errorf("init audit exporter: %w", err)
+	}
+	if bufExporter != nil {
+		transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
+		if transport == "nats" && natsBus != nil {
+			auditSender = audit.NewNATSAuditPublisher(natsBus, bufExporter)
+			// Start consumer in the same process — queue group ensures only
+			// one replica across the cluster handles each event.
+			if _, err := audit.NewNATSAuditConsumer(natsBus, bufExporter.Backend()); err != nil {
+				logging.Warn("api-gateway", "audit NATS consumer failed to start, falling back to local buffer", "error", err)
+			}
+		} else {
+			auditSender = bufExporter
+		}
 	}
 
 	s := &server{
@@ -408,7 +422,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		safetyClient:   safetyClient,
 		userStore:      userStore,
 		keyStore:       keyStore,
-		auditExporter:  auditExporter,
+		auditExporter:  auditSender,
 		shutdownCh:     make(chan struct{}),
 	}
 	defer s.Close()
