@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useStatus } from "../../hooks/useStatus";
 import { ReplicaTable } from "./ReplicaTable";
+import { LockInspector } from "./LockInspector";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -516,6 +517,9 @@ export function SystemHealthTab() {
 
       {/* Service replicas (hidden gracefully in single-replica mode) */}
       <ReplicaTable replicas={statusData?.replicas} />
+
+      {/* Distributed lock inspector */}
+      <LockInspector />
 
       <p className="text-[11px] text-muted">
         Auto-refreshes every 30 seconds.
