@@ -826,9 +826,23 @@ c.HTTPClient = &http.Client{
 
 ---
 
+## 11. Horizontal Scaling
+
+The SDK and worker runtime are fully compatible with multi-replica Cordum deployments. Key points for SDK users:
+
+- **Job dispatch is load-balanced** — NATS queue groups ensure each job is delivered to exactly one worker, regardless of how many scheduler or gateway replicas are running.
+- **Heartbeats are broadcast** — Every scheduler replica receives every worker heartbeat, so workers are visible across all replicas immediately.
+- **No SDK changes required** — Workers connect to NATS as before. The platform handles distributed locking, rate limiting, and failover transparently.
+- **Idempotency keys** — If your job submission includes an idempotency key, it is enforced globally via Redis (not per-replica). Duplicate submissions across different gateway replicas are correctly deduplicated.
+
+For details on platform-side HA configuration, see [horizontal-scaling.md](horizontal-scaling.md).
+
+---
+
 ## Related Docs
 
 - [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — CAP bus protocol and pointer semantics
 - [api-reference.md](api-reference.md) — REST endpoint reference
 - [configuration.md](configuration.md) — Environment variables and config files
 - [SCHEDULER_POOL_SPEC.md](SCHEDULER_POOL_SPEC.md) — Pool routing specification
+- [horizontal-scaling.md](horizontal-scaling.md) — Multi-replica deployment guide

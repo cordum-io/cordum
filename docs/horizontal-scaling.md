@@ -1,80 +1,310 @@
 # Horizontal Scaling Guide
 
-This document covers multi-replica deployment considerations for Cordum services.
+Cordum supports running 2–6 replicas of every service for high availability and increased throughput. All coordination happens via Redis distributed locks and NATS messaging — no additional infrastructure is required beyond what a standard Cordum deployment already uses.
 
-## NATS Subject Delivery Matrix
+## Prerequisites
 
-Every NATS subject in Cordum uses one of two delivery modes:
+| Component | Minimum for HA | Notes |
+|-----------|---------------|-------|
+| Redis | 1 node (dev), 6-node cluster (prod) | Single source of truth for all state |
+| NATS | 1 node (dev), 3-node cluster (prod) | JetStream enabled for durable subjects |
+| Docker Compose / K8s | Required | HA overlay or K8s Deployments with `replicas > 1` |
 
-- **Broadcast**: All replicas receive every message (empty queue group). Used for state synchronization where every replica needs the same view.
-- **Queue group**: Each message is delivered to exactly one replica in the group. Used for work distribution where processing should happen once.
+Redis is the **single source of truth** for jobs, workflows, contexts, results, configuration, DLQ entries, schemas, and locks. Every service connects to the same Redis instance or cluster.
 
-| Subject | Delivery | Queue Group | JetStream Durable | Purpose | Subscriber(s) |
-|---------|----------|-------------|-------------------|---------|---------------|
-| `sys.heartbeat` | Broadcast | (none) | No | Worker heartbeats — all replicas maintain registry | Scheduler, Gateway |
-| `sys.handshake` | Broadcast | (none) | No | CAP protocol handshake — all replicas track components | Scheduler |
-| `sys.job.submit` | Queue | `cordum-scheduler` | Yes (`dur_cordum-scheduler__sys_job_submit`) | Job submission — load-balanced across scheduler replicas | Scheduler |
-| `sys.job.result` | Queue | `cordum-scheduler` | Yes (`dur_cordum-scheduler__sys_job_result`) | Job results — load-balanced across scheduler replicas | Scheduler |
-| `sys.job.result` | Queue | `cordum-workflow-engine` | Yes (`dur_cordum-workflow-engine__sys_job_result`) | Job results — load-balanced across workflow replicas | Workflow Engine |
-| `sys.job.cancel` | Queue | `cordum-scheduler` | Yes (`dur_cordum-scheduler__sys_job_cancel`) | Job cancellation — load-balanced across scheduler replicas | Scheduler |
-| `sys.job.dlq` | Broadcast | (none) | Ephemeral | DLQ events — all gateways persist + forward to WS | Gateway |
-| `sys.job.>` | Broadcast | (none) | No | Job event tap — all gateways forward to WS clients | Gateway |
-| `sys.audit.>` | Broadcast | (none) | No | Audit event tap — all gateways forward to WS clients | Gateway |
-| `sys.audit.export` | Queue | `audit-exporters` | Yes (`dur_audit-exporters__sys_audit_export`) | NATS-backed audit export — one replica exports each event to SIEM | Gateway |
-| `job.<topic>` | Queue | per-topic | Yes | Job dispatch to workers — load-balanced per topic pool | Workers (SDK) |
-| `worker.<id>.jobs` | Queue | per-worker | Yes | Direct dispatch to specific worker | Workers (SDK) |
+## Per-Service Scaling Guide
+
+| Service | Min | Max | Coordination Mechanism | Notes |
+|---------|-----|-----|----------------------|-------|
+| api-gateway | 1 | 6 | Redis rate limiter, NATS queue groups | WebSocket clients need session affinity (cookie or IP hash) |
+| scheduler | 1 | 3 | Redis job locks, leader election for reconciler/replayer | Only one replica runs the reconciler and pending replayer at a time |
+| safety-kernel | 1 | 4 | gRPC load balancing, per-replica decision cache | Decision cache is local; versioned invalidation prevents staleness |
+| workflow-engine | 1 | 4 | Redis per-run locks, leader election for reconciler/delay-poller | Only one replica processes each workflow run |
+| context-engine | 1 | 4 | Stateless gRPC service backed by Redis | Scales horizontally with no coordination needed |
+| cordum-mcp | 1 | 2 | Set `MCP_TRANSPORT=http` for multi-replica | Stdio mode is single-process only |
+| cordumctl | N/A | N/A | CLI tool, not a long-running service | — |
+
+## Configuration Reference
+
+### Environment Variables for Horizontal Scaling
+
+| Variable | Default | Service | Purpose |
+|----------|---------|---------|---------|
+| `REDIS_POOL_SIZE` | `20` | All | Max Redis connections per replica |
+| `REDIS_MIN_IDLE_CONNS` | `5` | All | Warm connections kept in the pool |
+| `REDIS_RATE_LIMIT` | `true` | api-gateway | Enable Redis-backed distributed rate limiting |
+| `MCP_TRANSPORT` | `stdio` | cordum-mcp | Transport mode: `stdio` or `http` |
+| `MCP_HTTP_ADDR` | `:8090` | cordum-mcp | Listen address when `MCP_TRANSPORT=http` |
+| `AUDIT_TRANSPORT` | (local buffer) | api-gateway | Set to `nats` for durable cross-replica audit export |
+| `CORDUM_INSTANCE_ID` | `os.Hostname()` | All | Pod/instance label for Prometheus metrics |
+| `SAFETY_DECISION_CACHE_TTL` | `0` (disabled) | safety-kernel | Per-replica decision cache TTL (e.g. `30s`) |
+| `SAFETY_DECISION_CACHE_MAX_SIZE` | `10000` | safety-kernel | Max cached decisions per replica |
+
+### Redis Connection Pool Sizing
+
+Each replica maintains its own connection pool. For a 3-replica deployment with `REDIS_POOL_SIZE=20`, the total connections to Redis is up to 60. Sizing guidance:
+
+- **api-gateway**: High connection usage (rate limiter, job store, config, DLQ). Recommend `20–40`.
+- **scheduler**: Moderate usage (job locks, reconciler, snapshot writer). Recommend `15–25`.
+- **safety-kernel**: Low usage (snapshot history, circuit breaker counters). Recommend `10–15`.
+- **workflow-engine**: Moderate usage (run locks, delay timers, workflow store). Recommend `15–25`.
+
+Set `REDIS_MIN_IDLE_CONNS` to ~25% of `REDIS_POOL_SIZE` to reduce connection churn under bursty load.
+
+## Lock Coordination
+
+All distributed locks use the existing `TryAcquireLock`/`ReleaseLock` pattern in `core/infra/store/job_store.go`. Locks are Redis keys with TTLs — if a replica crashes, the lock expires and another replica takes over.
+
+### Redis Lock Keys
+
+| Key Pattern | TTL | Service | Purpose |
+|-------------|-----|---------|---------|
+| `cordum:scheduler:job:<jobID>` | 30s | scheduler | Per-job processing lock (prevents duplicate dispatch) |
+| `cordum:reconciler:default` | 2× poll interval | scheduler | Leader election for reconciler |
+| `cordum:replayer:pending` | 2× poll interval | scheduler | Leader election for pending replayer |
+| `cordum:wf:run:lock:<runID>` | 30s | workflow-engine, gateway | Per-workflow-run exclusive processing |
+| `cordum:workflow-engine:reconciler:default` | 2× scan interval | workflow-engine | Leader election for workflow reconciler |
+| `cordum:wf:delay:poller` | 2× poll interval | workflow-engine | Leader election for delay timer poller |
+| `cordum:dlq:cleanup` | cleanup interval | api-gateway | Leader election for DLQ eviction |
+| `cordum:rl:<key>:<unix_second>` | 2s | api-gateway | Sliding-window rate limit counter |
+| `cordum:cache:marketplace` | configurable | api-gateway | Marketplace pack listing cache |
+| `cordum:auth:jwks:<issuerHash>` | 1h | api-gateway | OIDC JWKS cross-replica cache |
+| `cordum:cb:safety:failures` | configurable | scheduler | Input safety circuit breaker state |
+| `cordum:cb:safety:output:failures` | configurable | scheduler | Output safety circuit breaker state |
+| `cordum:safety:snapshots` | — | safety-kernel | Last 10 policy snapshot hashes (sorted set) |
+| `cordum:bus:processed:<stream>:<seq>` | short | bus layer | JetStream message deduplication |
+| `cordum:bus:inflight:<stream>:<seq>` | short | bus layer | In-flight message tracking |
+
+### Lock TTL Rules
+
+- Lock TTLs must be `pollInterval × 2` or use explicit renewal — never hold indefinitely.
+- Job locks (30s) are renewed by a background goroutine at `TTL/3` cadence while the job is being processed.
+- If a replica crashes mid-processing, the lock expires after the TTL and another replica picks up the work via the reconciler.
+
+## NATS Subject Matrix
+
+### Queue Group Subjects (Load-Balanced)
+
+Only **one** replica receives each message. Used for work distribution.
+
+| Subject | Queue Group | Consumer | JetStream |
+|---------|-------------|----------|-----------|
+| `sys.job.submit` | `cordum-scheduler` | Scheduler | Yes |
+| `sys.job.result` | `cordum-scheduler` | Scheduler | Yes |
+| `sys.job.cancel` | `cordum-scheduler` | Scheduler | Yes |
+| `sys.job.result` | `cordum-workflow-engine` | Workflow engine | Yes |
+| `sys.job.dlq` | `cordum-gateway` | Gateway (DLQ write dedup) | Ephemeral |
+| `sys.audit.export` | `audit-exporters` | Audit consumer | Yes |
+| `job.<topic>` | per-topic | Workers (SDK) | Yes |
+| `worker.<id>.jobs` | per-worker | Workers (SDK) | Yes |
+
+### Broadcast Subjects (Fan-Out)
+
+**Every** replica receives every message. Used for state synchronization.
+
+| Subject | Subscribers | JetStream |
+|---------|------------|-----------|
+| `sys.heartbeat` | All scheduler + all gateway replicas | No |
+| `sys.handshake` | All scheduler replicas | No |
+| `sys.config.changed` | All scheduler replicas | No |
+| `sys.alert` | All gateway replicas | No |
+| `sys.job.progress` | All gateway replicas | No |
+| `sys.workflow.event` | All gateway replicas | No |
+
+**Key insight**: Heartbeats are broadcast so every replica independently tracks worker liveness. Job submissions are queue-grouped so only one scheduler processes each job.
 
 ### JetStream Durable Consumer Naming
 
-When JetStream is enabled (`NATS_USE_JETSTREAM=true`), durable subjects use explicit consumer names for reliable delivery:
+When JetStream is enabled (`NATS_USE_JETSTREAM=true`), queue group subscriptions use shared durable consumer names: `dur_<queue>__<subject>`. All replicas in the same queue group share a single JetStream consumer, ensuring each message is delivered to exactly one replica.
 
-- **Queue group subscriptions** use shared durable names: `dur_<queue>__<subject>`. All replicas in the same queue group share a single JetStream consumer, ensuring each message is delivered to exactly one replica.
-- **Broadcast subscriptions** use ephemeral consumers (no durable name). Each replica gets its own JetStream consumer, ensuring all replicas receive every message.
+Broadcast subscriptions on durable streams use ephemeral consumers — each replica gets its own consumer, ensuring all replicas receive every message.
 
-This distinction is critical for correctness. A shared durable name on a broadcast subscription would cause JetStream to deliver each message to only one replica, breaking state synchronization.
-
-### Streams
-
-Two JetStream streams cover all durable subjects:
+### JetStream Streams
 
 | Stream | Subjects | Purpose |
 |--------|----------|---------|
-| `CORDUM_SYS` | `sys.>` | System events (submit, result, cancel, DLQ) |
+| `CORDUM_SYS` | `sys.>` | System events (submit, result, cancel, DLQ, audit) |
 | `CORDUM_JOBS` | `job.>`, `worker.*.jobs` | Job dispatch to worker pools |
 
-### Adding New Subjects
+## Monitoring
 
-When adding a new NATS subject:
+### Per-Replica Metrics
 
-1. Determine delivery mode: Does every replica need the message (broadcast) or should only one handle it (queue group)?
-2. For queue group subjects on durable streams, the `durableName()` function in `core/infra/bus/nats.go` automatically generates shared consumer names.
-3. For broadcast subjects on durable streams, ephemeral consumers are used automatically — no special configuration needed.
-4. Add the subject to this matrix table.
-5. If the subject should be durable (at-least-once delivery), add it to `isDurableSubject()` in `core/infra/bus/nats.go`.
+Set `CORDUM_INSTANCE_ID` to the pod name so Prometheus metrics include a `pod` label:
+
+```yaml
+env:
+  - name: CORDUM_INSTANCE_ID
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+```
+
+This enables per-replica dashboarding in Grafana — filter by `pod` label to see individual replica performance.
+
+### Key Metrics to Watch
+
+- `cordum_jobs_total` — per-replica job throughput
+- `cordum_rate_limit_hits_total` — rate limit enforcement across replicas
+- Redis connection pool usage (via `redis_exporter`)
+- NATS consumer lag (via NATS monitoring endpoints)
 
 ## PodDisruptionBudgets
 
-Infrastructure StatefulSets have PDBs using `minAvailable` to preserve quorum during node drains:
+To prevent quorum loss during rolling updates or node maintenance:
 
-- **NATS** (`minAvailable: 2`): A 3-node NATS cluster requires 2 nodes for Raft quorum. Draining 2 nodes simultaneously would break consensus and halt message delivery.
-- **Redis** (`minAvailable: 4`): A 6-node Redis cluster (3 primary + 3 replica) needs at least 4 nodes to maintain data availability during rolling upgrades.
+| StatefulSet | `minAvailable` | Rationale |
+|------------|---------------|-----------|
+| NATS | 2 (of 3) | NATS requires majority for Raft leader election |
+| Redis | 4 (of 6) | Redis Cluster needs majority of primaries for writes |
 
-Application services use `maxUnavailable: 1` PDBs. See [K8s Deployment Guide](./k8s-deployment.md#poddisruptionbudgets) for the full list.
+Application services (gateway, scheduler, etc.) use `maxUnavailable: 1` PDBs. PDB manifests are in `deploy/k8s/base.yaml`.
+
+## Graceful Shutdown
+
+All services use a **15-second shutdown timeout**. On `SIGINT`/`SIGTERM`:
+
+1. Stop accepting new requests (HTTP `Shutdown()`, gRPC `GracefulStop()`)
+2. Drain in-flight work (finish current jobs, flush buffers)
+3. Release distributed locks (or let TTL expire)
+4. Close Redis/NATS connections
+
+**K8s configuration**: Set `terminationGracePeriodSeconds: 30` in pod spec (default). The 15s service timeout fits within the 30s K8s window, leaving headroom for SIGTERM delivery delay and final cleanup.
+
+### Per-Service Shutdown Sequence
+
+| Service | Sequence |
+|---------|----------|
+| api-gateway | Stop bus taps → HTTP drain → gRPC drain → close stores |
+| scheduler | Metrics drain → engine stop → cancel context (stops reconciler/replayer) |
+| safety-kernel | gRPC drain → cancel policy watch → wait for goroutines |
+| context-engine | gRPC drain → metrics drain |
+| workflow-engine | Cancel context → HTTP drain (reconciler/poller stop via context) |
+
+## NATS Route Limitation
+
+The production NATS configuration hardcodes routes for 3 nodes (`cordum-nats-{0,1,2}`). To scale NATS beyond 3 nodes:
+
+1. Update the `routes` list in the NATS StatefulSet configuration
+2. Add the new node addresses to all existing nodes
+3. Rolling-restart the NATS cluster
+
+This is a known limitation — NATS does not auto-discover new peers in a static route configuration.
+
+## Troubleshooting
+
+### Duplicate Job Dispatch
+
+**Symptoms**: Same job appears multiple times in terminal state, or job processed by multiple schedulers simultaneously.
+
+**Diagnosis**:
+```bash
+# Check job lock in Redis
+redis-cli GET "cordum:scheduler:job:<jobID>"
+
+# Check reconciler lock
+redis-cli GET "cordum:reconciler:default"
+```
+
+**Resolution**: Verify all scheduler replicas are using the same Redis instance. Check that job lock TTL (30s) is not too short for your job processing time.
+
+### Rate Limit Bypass
+
+**Symptoms**: Combined request rate exceeds the configured limit across replicas.
+
+**Diagnosis**:
+```bash
+# Check if Redis rate limiting is enabled
+# Look for REDIS_RATE_LIMIT env var in gateway config
+
+# Check rate limit counters
+redis-cli KEYS "cordum:rl:*"
+```
+
+**Resolution**: Ensure `REDIS_RATE_LIMIT` is not set to `false`/`0`/`no`. If Redis is unreachable, each replica falls back to per-replica in-memory rate limiting (effectively multiplying the limit by replica count).
+
+### Stale Worker List
+
+**Symptoms**: Different gateway replicas show different worker sets.
+
+**Diagnosis**:
+```bash
+# Check snapshot writer lock
+redis-cli GET "cordum:scheduler:snapshot:writer"
+
+# Check snapshot data
+redis-cli GET "sys:workers:snapshot"
+```
+
+**Resolution**: The scheduler snapshot writer runs every 5s under a distributed lock. If the lock holder crashes, the lock expires after 10s and another replica takes over. Wait up to 15s for convergence.
+
+### Config Drift Between Replicas
+
+**Symptoms**: Replicas have different system configuration after a config update.
+
+**Resolution**: Check `sys.config.changed` NATS subscription. All scheduler replicas receive config change notifications instantly. Fallback poll interval is 30s if NATS is unavailable.
+
+### DLQ Cleanup Stalled
+
+**Symptoms**: DLQ entries accumulate beyond the configured retention.
+
+**Diagnosis**:
+```bash
+redis-cli GET "cordum:dlq:cleanup"
+```
+
+**Resolution**: If the lock is held by a crashed replica, wait for TTL expiry. The next live replica will acquire the lock and resume cleanup.
+
+### Circuit Breaker Stuck Open
+
+**Symptoms**: All safety checks fail immediately with circuit breaker open error.
+
+**Diagnosis**:
+```bash
+redis-cli GET "cordum:cb:safety:failures"
+redis-cli GET "cordum:cb:safety:output:failures"
+```
+
+**Resolution**: Circuit breaker state is shared across replicas via Redis. If the safety kernel recovers, the circuit breaker will close after the configured recovery window. Delete the Redis key to force-reset (use with caution).
+
+### Safety Cache Staleness
+
+**Symptoms**: Policy changes not reflected in safety decisions.
+
+**Resolution**: The decision cache TTL (`SAFETY_DECISION_CACHE_TTL`) controls the maximum staleness window. Each policy update increments the version, which invalidates all cached decisions. During rolling deployments, replicas may briefly serve stale decisions until their cache expires.
+
+## Docker Compose HA Testing
+
+For local HA testing, use the `docker-compose.ha.yaml` overlay:
+
+```bash
+# Start 2-replica topology
+docker compose -f docker-compose.yml -f docker-compose.ha.yaml up -d --build
+
+# Gateway-1: localhost:8081 (HTTP API)
+# Gateway-2: localhost:8083 (HTTP API)
+
+# Verify both gateways are healthy
+curl http://localhost:8081/api/v1/status
+curl http://localhost:8083/api/v1/status
+
+# Run the HA production gate
+./tools/scripts/production_gate.sh --gate 19
+
+# Tear down
+docker compose -f docker-compose.yml -f docker-compose.ha.yaml down
+```
+
+The production gate script (Gate 19) automatically validates no-duplicate dispatch, distributed rate limiting, worker snapshot consistency, and scheduler failover.
 
 ## HA Validation Suite
 
-An end-to-end acceptance suite verifies multi-replica correctness before deployment. It runs 5 scenarios against a 2-replica docker-compose topology:
+Gate 19 in `tools/scripts/production_gate.sh` runs 5 scenarios against a 2-replica docker-compose topology:
 
-1. **Duplicate dispatch guard** — jobs submitted round-robin across gateways reach terminal state exactly once
-2. **Global rate limit** — distributed rate limiter enforces shared limit across replicas
-3. **Worker snapshot consistency** — both gateways return identical worker sets
-4. **Config propagation** — config reads match across gateways (shared Redis)
-5. **Lock-holder failover** — scheduler takeover after replica crash without duplicate processing
+1. **Two-replica deploy + health check** — both gateways and both schedulers are running and healthy
+2. **No duplicate dispatch** — 40 jobs submitted across 2 gateways, each reaches terminal state exactly once
+3. **Distributed rate limit** — burst of concurrent requests split across gateways, 429s observed from global limit
+4. **Worker snapshot consistency** — both gateways return identical sorted worker sets
+5. **Scheduler failover** — stop scheduler-2, submit jobs via gateway, verify all complete via scheduler-1, restart and verify no duplicates
 
-```bash
-# Start HA stack and run validation
-docker compose -f docker-compose.yml -f docker-compose.ha.yaml up -d --build
-bash tests/e2e/ha_validation.sh
-```
-
-See [tests/e2e/README.md](../tests/e2e/README.md) for full instructions.
+Gate 19 is ADVISORY by default and promoted to BLOCKING in `--strict` mode.

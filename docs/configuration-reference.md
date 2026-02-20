@@ -975,3 +975,4 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 - [DOCKER.md](DOCKER.md) — Docker Compose deployment and NATS JetStream durability
 - [mcp-server.md](mcp-server.md) — MCP server configuration
 - [api-reference.md](api-reference.md) — REST API documentation
+- [horizontal-scaling.md](horizontal-scaling.md) — Multi-replica deployment, Redis lock keys, NATS subject matrix

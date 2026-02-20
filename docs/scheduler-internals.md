@@ -380,6 +380,23 @@ breaker to prevent cascading failures.
 | `safetyCircuitHalfOpenMax` | 3 | Max probe requests in half-open state   |
 | `safetyCircuitCloseAfter` | 2  | Successes needed to close from half-open |
 
+### Multi-Replica State (Redis-Backed)
+
+Circuit breaker state is shared across all scheduler replicas via Redis:
+
+| Redis Key | Purpose |
+|-----------|---------|
+| `cordum:cb:safety:failures` | Input safety circuit breaker failure counter |
+| `cordum:cb:safety:output:failures` | Output safety circuit breaker failure counter |
+
+When any replica records a failure, the shared counter increments. When the
+threshold is reached, all replicas observe the open state simultaneously. This
+prevents the scenario where one replica's circuit is open while another
+continues sending requests to a degraded safety kernel.
+
+If Redis is unavailable, each replica falls back to local-only circuit breaker
+tracking (per-process counters).
+
 ### Behavior When Circuit Is Open
 
 All safety checks return `SafetyUnavailable` with reason `"safety kernel
@@ -429,6 +446,7 @@ The env var takes precedence over the config file value.
 | `safetyThrottleDelay`  | 5s    | Delay when safety kernel throttles              |
 | `backoffBase`          | 1s    | Exponential backoff base for scheduling retries |
 | `backoffMax`           | 30s   | Maximum backoff delay                           |
+| `maxRenewalFailures`   | 3     | Consecutive renewal failures before abandon     |
 
 ---
 
@@ -485,6 +503,9 @@ base TTL is 60s and a background goroutine renews the lock every `ttl/3` (20s).
    **before** `ReleaseLock` runs, preventing a renewal from racing with release.
 4. If a renewal fails (Redis error), the lock still has up to 60s of remaining
    TTL as a safety margin.
+5. If `RenewLock` fails **3 consecutive times** (`maxRenewalFailures`), the
+   renewal goroutine logs an error and exits. The lock is allowed to expire
+   via its 60s TTL. The operation (`fn()`) continues — only renewal stops.
 
 ```
 withJobLock("job-123", 60s, fn):
@@ -495,6 +516,13 @@ withJobLock("job-123", 60s, fn):
                  └────────────────────────────────────┘
                                                 cancel → drain → release
 ```
+
+**Renewal abandon (3-strike rule)**: Under Redis pressure, each job's renewal
+goroutine self-limits to at most 3 failed attempts before stopping. This
+prevents renewal storms from many locked jobs across replicas generating
+excessive Redis load and log noise. Intermittent failures do not trigger
+abandon — the consecutive failure counter resets to zero on each successful
+renewal. With a 60s TTL, the lock expires safely even without renewal.
 
 ### Snapshot Writer Lock
 
@@ -773,3 +801,5 @@ Warm start (after):
   cancellation, and DLQ management.
 - **[gRPC Services](grpc-services.md)** — `SafetyKernel.Check`,
   `OutputPolicyService.CheckOutput`, and other service definitions.
+- **[Horizontal Scaling Guide](horizontal-scaling.md)** — Multi-replica
+  deployment, all Redis lock keys, NATS subject matrix, and troubleshooting.
