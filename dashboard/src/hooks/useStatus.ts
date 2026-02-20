@@ -67,6 +67,11 @@ export interface GatewayStatus {
     mode: "redis" | "memory";
   };
   replicas?: Record<string, ReplicaInfo[]>;
+  ha_env?: {
+    redis_pool_size: string;
+    redis_min_idle_conns: string;
+    audit_transport: string;
+  };
 }
 
 type PipelineMetrics = NonNullable<GatewayStatus["pipeline"]>;

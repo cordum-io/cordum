@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -199,6 +200,14 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
 		"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
 	}
+
+	// HA environment variables (read-only, startup-only).
+	haEnv := map[string]any{
+		"redis_pool_size":      os.Getenv("REDIS_POOL_SIZE"),
+		"redis_min_idle_conns": os.Getenv("REDIS_MIN_IDLE_CONNS"),
+		"audit_transport":      os.Getenv("AUDIT_TRANSPORT"),
+	}
+	resp["ha_env"] = haEnv
 
 	// Replica registry from Redis SCAN.
 	if s.instanceRegistry != nil && s.jobStore != nil {
