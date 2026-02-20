@@ -696,6 +696,17 @@ scanners:
 | `REDIS_DATA_TTL_SECONDS` | — | Data TTL in seconds (takes precedence) |
 | `REDIS_DATA_TTL` | — | Data TTL as Go duration (e.g., `24h`) |
 
+### Redis Connection Pool
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_POOL_SIZE` | `20` | Max connections per Redis node. Each service replica opens up to this many connections. |
+| `REDIS_MIN_IDLE_CONNS` | `5` | Minimum idle connections kept warm per Redis node. Reduces cold-start latency for bursty traffic. |
+
+**Sizing guidance**: With N service replicas × P pool size × M Redis nodes, total connections ≈ N×P×M. For example, 3 scheduler replicas × 50 pool × 1 Redis = 150 connections. Redis default `maxclients` is 10000, so pool sizes up to 100 are safe for typical deployments. The scheduler benefits from higher pool sizes (recommend 50) due to concurrent job dispatch; other services can use the default 20.
+
+Invalid values (non-numeric, zero, negative) are silently replaced with defaults and a warning is logged.
+
 ### Gateway
 
 | Variable | Default | Description |
