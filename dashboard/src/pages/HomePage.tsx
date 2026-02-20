@@ -11,6 +11,7 @@ import { EventTimeline } from "../components/home/EventTimeline";
 import { ActiveWorkflowCards } from "../components/home/ActiveWorkflowCards";
 import { DLQSummary } from "../components/home/DLQSummary";
 import { CircuitBreakerCard } from "../components/home/CircuitBreakerCard";
+import { RateLimiterModeBadge } from "../components/home/RateLimiterModeBadge";
 import { QuickActions } from "../components/home/QuickActions";
 import { usePageTitle } from "../hooks/usePageTitle";
 
@@ -117,6 +118,8 @@ export default function HomePage() {
 
       {/* Circuit breaker status (hidden when HA fields absent) */}
       <CircuitBreakerCard circuitBreakers={status?.circuit_breakers} />
+
+      <RateLimiterModeBadge mode={status?.rate_limiter?.mode} />
 
       {/* Quick actions */}
       <QuickActions />
