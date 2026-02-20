@@ -16,17 +16,27 @@
 set -euo pipefail
 
 # ── Configuration ──
-GW1="https://127.0.0.1:9080"
-GW2="https://127.0.0.1:9081"
+GW1="${HA_GW1:-https://127.0.0.1:8081}"
+GW2="${HA_GW2:-https://127.0.0.1:8083}"
 API_KEY="${CORDUM_API_KEY:?CORDUM_API_KEY must be set}"
 CERT_DIR="${CERT_DIR:-./certs}"
-CURL_OPTS="--cacert ${CERT_DIR}/ca/ca.crt --silent --show-error"
+CURL_OPTS="--cacert ${CERT_DIR}/ca/ca.crt --silent --show-error --connect-timeout 10 --max-time 30"
+# Windows Schannel: --cacert is ignored; fall back to -k (insecure) for local testing
+if curl --version 2>/dev/null | grep -qi schannel; then
+  CURL_OPTS="-k --silent --show-error --connect-timeout 10 --max-time 30 --ssl-no-revoke"
+fi
 
 PASS=0
 FAIL=0
 RESULTS=()
 
 # ── Helpers ──
+# Get HTTP status code without -o /dev/null (MSYS path conversion breaks it)
+http_code() {
+  local _raw
+  _raw=$(curl $CURL_OPTS -w "%{http_code}" "$@" 2>/dev/null) || true
+  printf '%s' "${_raw: -3}"
+}
 log()  { echo "[$(date +%H:%M:%S)] $*"; }
 pass() { PASS=$((PASS + 1)); RESULTS+=("[PASS] $1"); log "PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); RESULTS+=("[FAIL] $1 — $2"); log "FAIL: $1 — $2"; }
@@ -34,10 +44,20 @@ fail() { FAIL=$((FAIL + 1)); RESULTS+=("[FAIL] $1 — $2"); log "FAIL: $1 — $2
 api() {
   local method="$1" url="$2"
   shift 2
-  curl $CURL_OPTS -X "$method" "$url" \
-    -H "X-API-Key: ${API_KEY}" \
-    -H "Content-Type: application/json" \
-    "$@"
+  local _attempt _out _rc
+  for _attempt in 1 2 3; do
+    _out=$(curl $CURL_OPTS -X "$method" "$url" \
+      -H "X-API-Key: ${API_KEY}" \
+      -H "X-Tenant-ID: ${TENANT_ID:-default}" \
+      -H "Content-Type: application/json" \
+      "$@" 2>/dev/null) && { printf '%s' "$_out"; return 0; }
+    _rc=$?
+    if [[ $_rc -eq 7 || $_rc -eq 35 || $_rc -eq 56 || $_rc -eq 28 ]]; then
+      sleep 1; continue
+    fi
+    printf '%s' "$_out"; return $_rc
+  done
+  printf '%s' "$_out"; return ${_rc:-1}
 }
 
 wait_for_services() {
@@ -46,8 +66,11 @@ wait_for_services() {
   local waited=0
   while [ $waited -lt $max_wait ]; do
     local gw1_ok=0 gw2_ok=0
-    curl $CURL_OPTS -o /dev/null -w "%{http_code}" "${GW1}/health" 2>/dev/null | grep -q "200" && gw1_ok=1
-    curl $CURL_OPTS -o /dev/null -w "%{http_code}" "${GW2}/health" 2>/dev/null | grep -q "200" && gw2_ok=1
+    local gw1_code gw2_code
+    gw1_code=$(http_code "${GW1}/health") || true
+    gw2_code=$(http_code "${GW2}/health") || true
+    [[ "$gw1_code" == "200" ]] && gw1_ok=1
+    [[ "$gw2_code" == "200" ]] && gw2_ok=1
     if [ $gw1_ok -eq 1 ] && [ $gw2_ok -eq 1 ]; then
       log "Both gateways healthy after ${waited}s."
       return 0
@@ -75,7 +98,7 @@ test_duplicate_dispatch() {
       \"topic\": \"job.default\"
     }" 2>/dev/null) || true
     local jid
-    jid=$(echo "$resp" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    jid=$(echo "$resp" | grep -o '"job_id":"[^"]*"' | head -1 | cut -d'"' -f4) || true
     if [ -n "$jid" ]; then
       job_ids+=("$jid")
     fi
@@ -102,7 +125,7 @@ test_duplicate_dispatch() {
 
     # Check if job reached terminal state
     local state
-    state=$(echo "$resp" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)
+    state=$(echo "$resp" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4) || true
     if [ -z "$state" ]; then
       continue
     fi
@@ -114,8 +137,8 @@ test_duplicate_dispatch() {
     local resp1 resp2 state1 state2
     resp1=$(api GET "${GW1}/api/v1/jobs/${jid}" 2>/dev/null) || continue
     resp2=$(api GET "${GW2}/api/v1/jobs/${jid}" 2>/dev/null) || continue
-    state1=$(echo "$resp1" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)
-    state2=$(echo "$resp2" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)
+    state1=$(echo "$resp1" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4) || true
+    state2=$(echo "$resp2" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4) || true
     if [ "$state1" != "$state2" ]; then
       mismatches=$((mismatches + 1))
     fi
@@ -141,11 +164,12 @@ test_rate_limit() {
     local gw="$GW1"
     [ $((i % 2)) -eq 0 ] && gw="$GW2"
     local status
-    status=$(curl $CURL_OPTS -o /dev/null -w "%{http_code}" \
+    status=$(http_code \
       -X POST "${gw}/api/v1/jobs" \
       -H "X-API-Key: ${API_KEY}" \
+      -H "X-Tenant-ID: ${TENANT_ID:-default}" \
       -H "Content-Type: application/json" \
-      -d "{\"prompt\":\"ratelimit-test-${i}\",\"topic\":\"job.default\"}" 2>/dev/null) || status="000"
+      -d "{\"prompt\":\"ratelimit-test-${i}\",\"topic\":\"job.default\"}") || status="000"
     if [ "$status" = "429" ]; then
       rejected=$((rejected + 1))
     elif [ "$status" = "200" ] || [ "$status" = "201" ] || [ "$status" = "202" ]; then
@@ -182,8 +206,8 @@ test_worker_snapshot() {
 
   # Extract worker IDs and sort for comparison
   local ids1 ids2
-  ids1=$(echo "$workers1" | grep -o '"id":"[^"]*"' | sort)
-  ids2=$(echo "$workers2" | grep -o '"id":"[^"]*"' | sort)
+  ids1=$(echo "$workers1" | grep -o '"id":"[^"]*"' | sort) || true
+  ids2=$(echo "$workers2" | grep -o '"id":"[^"]*"' | sort) || true
 
   if [ "$ids1" = "$ids2" ]; then
     local count
@@ -236,7 +260,7 @@ test_failover() {
   }' 2>/dev/null) || resp=""
 
   local jid
-  jid=$(echo "$resp" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+  jid=$(echo "$resp" | grep -o '"job_id":"[^"]*"' | head -1 | cut -d'"' -f4) || true
 
   if [ -z "$jid" ]; then
     fail "Lock-holder failover" "Could not submit test job"
@@ -258,7 +282,7 @@ test_failover() {
     waited=$((waited + 5))
     local resp2
     resp2=$(api GET "${GW1}/api/v1/jobs/${jid}" 2>/dev/null || api GET "${GW2}/api/v1/jobs/${jid}" 2>/dev/null) || continue
-    final_state=$(echo "$resp2" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)
+    final_state=$(echo "$resp2" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4) || true
     case "$final_state" in
       SUCCEEDED|FAILED|TIMEOUT|DENIED)
         log "Job reached terminal state: ${final_state} after ${waited}s"
