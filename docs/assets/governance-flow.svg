@@ -1,0 +1,66 @@
+<svg width="800" height="400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
+      <feOffset dx="2" dy="2" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.3"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="400" fill="#f8f9fa" rx="10"/>
+
+  <!-- Agent Node (Left) -->
+  <g transform="translate(50, 150)">
+    <rect width="120" height="100" rx="8" fill="#e9ecef" stroke="#ced4da" filter="url(#shadow)"/>
+    <text x="60" y="40" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold" fill="#495057">Autonomous</text>
+    <text x="60" y="60" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold" fill="#495057">Agent</text>
+    <circle cx="60" cy="80" r="4" fill="#28a745"/> <!-- Active indicator -->
+  </g>
+
+  <!-- Connection: Risky Action -->
+  <path d="M 170 200 L 300 200" stroke="#dc3545" stroke-width="4" marker-end="url(#arrowhead)"/>
+  <text x="235" y="190" text-anchor="middle" font-family="Arial" font-size="12" fill="#dc3545" font-weight="bold">Exec: DROP TABLE users</text>
+
+  <!-- Safety Kernel Node (Center) -->
+  <g transform="translate(300, 120)">
+    <path d="M 0 0 L 160 0 L 160 160 L 0 160 Z" fill="#fff" stroke="#6c757d" stroke-width="2" filter="url(#shadow)" rx="8"/>
+    <!-- Shield Icon -->
+    <path d="M 80 30 L 130 50 L 130 90 C 130 130 80 150 80 150 C 80 150 30 130 30 90 L 30 50 Z" fill="#007bff"/>
+    <text x="80" y="20" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold" fill="#343a40">Safety Kernel</text>
+    <text x="80" y="100" text-anchor="middle" font-family="Arial" font-size="24" font-weight="bold" fill="#fff">🛡️</text>
+  </g>
+
+  <!-- Blocked Action Stamp -->
+  <g transform="translate(340, 200) rotate(-15)">
+    <rect x="-40" y="-15" width="80" height="30" rx="4" fill="#dc3545" opacity="0.9"/>
+    <text x="0" y="5" text-anchor="middle" font-family="Arial" font-size="16" font-weight="bold" fill="#fff">BLOCKED</text>
+  </g>
+
+  <!-- Connection: Alert -->
+  <path d="M 460 200 L 600 200" stroke="#ffc107" stroke-width="3" stroke-dasharray="5,5"/>
+  <text x="530" y="190" text-anchor="middle" font-family="Arial" font-size="12" fill="#856404">Security Alert</text>
+
+  <!-- Admin/Dashboard Node (Right) -->
+  <g transform="translate(600, 150)">
+    <rect width="120" height="100" rx="8" fill="#e9ecef" stroke="#ced4da" filter="url(#shadow)"/>
+    <text x="60" y="40" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold" fill="#495057">Admin</text>
+    <text x="60" y="60" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold" fill="#495057">Dashboard</text>
+    <!-- Notification Badge -->
+    <circle cx="100" cy="20" r="12" fill="#dc3545"/>
+    <text x="100" y="25" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="#fff">1</text>
+  </g>
+
+  <!-- Definitions for markers -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#dc3545"/>
+    </marker>
+  </defs>
+</svg>
