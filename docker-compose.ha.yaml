@@ -65,7 +65,7 @@ services:
     ports:
       - "9081:8080"
       - "8083:8081"
-      - "9093:9092"
+      - "9094:9092"
     deploy:
       resources:
         limits:

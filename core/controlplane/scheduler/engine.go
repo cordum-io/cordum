@@ -35,6 +35,7 @@ const (
 	retryDelayNoWorkers = 2 * time.Second
 	safetyThrottleDelay = 5 * time.Second
 	safetyCheckTimeout  = 3 * time.Second
+	maxRenewalFailures  = 3
 
 	// maxSchedulingRetries caps the number of scheduling attempts before
 	// a job is moved to FAILED + DLQ. With exponential backoff (1s→30s max)
@@ -124,6 +125,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func() error) e
 		defer close(renewDone)
 		ticker := time.NewTicker(ttl / 3)
 		defer ticker.Stop()
+		consecutiveFailures := 0
 		for {
 			select {
 			case <-renewCtx.Done():
@@ -131,7 +133,17 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func() error) e
 			case <-ticker.C:
 				rCtx, rCancel := context.WithTimeout(context.Background(), storeOpTimeout)
 				if err := e.jobStore.RenewLock(rCtx, key, token, ttl); err != nil {
-					logging.Warn("scheduler", "job lock renewal failed", "job_id", jobID, "error", err)
+					consecutiveFailures++
+					if consecutiveFailures >= maxRenewalFailures {
+						logging.Error("scheduler", "lock renewal abandoned after consecutive failures",
+							"job_id", jobID, "failures", consecutiveFailures, "error", err)
+						rCancel()
+						return
+					}
+					logging.Warn("scheduler", "job lock renewal failed",
+						"job_id", jobID, "attempt", consecutiveFailures, "error", err)
+				} else {
+					consecutiveFailures = 0
 				}
 				rCancel()
 			}

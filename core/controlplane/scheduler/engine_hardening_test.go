@@ -438,3 +438,111 @@ func (s *renewCountStore) RenewLock(ctx context.Context, key, token string, ttl 
 	s.renewCount.Add(1)
 	return s.fakeJobStore.RenewLock(ctx, key, token, ttl)
 }
+
+// alwaysFailRenewStore wraps fakeJobStore and always fails RenewLock.
+type alwaysFailRenewStore struct {
+	*fakeJobStore
+	renewCount atomic.Int32
+}
+
+func (s *alwaysFailRenewStore) RenewLock(_ context.Context, _, _ string, _ time.Duration) error {
+	s.renewCount.Add(1)
+	return errors.New("redis connection refused")
+}
+
+func TestWithJobLock_RenewalAbandonAfterConsecutiveFailures(t *testing.T) {
+	store := &alwaysFailRenewStore{fakeJobStore: newFakeJobStore()}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	ttl := 150 * time.Millisecond // renewal every 50ms
+
+	var fnDone atomic.Bool
+	err := engine.withJobLock("job-abandon", ttl, func() error {
+		// Sleep long enough for well more than 3 renewal ticks to fire.
+		time.Sleep(500 * time.Millisecond)
+		fnDone.Store(true)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withJobLock should succeed: %v", err)
+	}
+	if !fnDone.Load() {
+		t.Fatal("expected fn to complete despite renewal abandon")
+	}
+
+	// After 3 consecutive failures the goroutine should have stopped.
+	// Record count right after fn returns, then wait and verify no more.
+	countAtReturn := store.renewCount.Load()
+	time.Sleep(200 * time.Millisecond)
+	countLater := store.renewCount.Load()
+
+	if countAtReturn < 3 {
+		t.Fatalf("expected at least 3 renewal attempts, got %d", countAtReturn)
+	}
+	if countLater > countAtReturn {
+		t.Fatalf("expected no renewals after abandon, but got %d more", countLater-countAtReturn)
+	}
+	// Exactly 3 failures should have been made (goroutine exits on the 3rd).
+	if countAtReturn != 3 {
+		t.Fatalf("expected exactly 3 renewal attempts (abandon on 3rd), got %d", countAtReturn)
+	}
+
+	// Lock should still be released by the defer.
+	store.fakeJobStore.mu.RLock()
+	_, locked := store.fakeJobStore.locks[jobLockKey("job-abandon")]
+	store.fakeJobStore.mu.RUnlock()
+	if locked {
+		t.Fatal("expected lock to be released after fn despite renewal abandon")
+	}
+}
+
+// intermittentRenewStore fails on odd-numbered calls, succeeds on even.
+type intermittentRenewStore struct {
+	*fakeJobStore
+	renewCount atomic.Int32
+}
+
+func (s *intermittentRenewStore) RenewLock(ctx context.Context, key, token string, ttl time.Duration) error {
+	n := s.renewCount.Add(1)
+	if n%2 == 1 { // odd calls fail
+		return errors.New("redis timeout")
+	}
+	return s.fakeJobStore.RenewLock(ctx, key, token, ttl)
+}
+
+func TestWithJobLock_RenewalIntermittentFailureNoAbandon(t *testing.T) {
+	store := &intermittentRenewStore{fakeJobStore: newFakeJobStore()}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	ttl := 90 * time.Millisecond // renewal every 30ms
+
+	var fnDone atomic.Bool
+	err := engine.withJobLock("job-intermittent", ttl, func() error {
+		// Sleep long enough for 6+ renewal ticks.
+		time.Sleep(300 * time.Millisecond)
+		fnDone.Store(true)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withJobLock should succeed: %v", err)
+	}
+	if !fnDone.Load() {
+		t.Fatal("expected fn to complete")
+	}
+
+	// With alternating fail/succeed, consecutive failures never reach 3.
+	// The goroutine should still be running throughout fn execution,
+	// meaning we should have more than 3 total renewal attempts.
+	count := store.renewCount.Load()
+	if count < 6 {
+		t.Fatalf("expected at least 6 renewal attempts (intermittent), got %d", count)
+	}
+
+	// Lock should be released.
+	store.fakeJobStore.mu.RLock()
+	_, locked := store.fakeJobStore.locks[jobLockKey("job-intermittent")]
+	store.fakeJobStore.mu.RUnlock()
+	if locked {
+		t.Fatal("expected lock to be released")
+	}
+}
