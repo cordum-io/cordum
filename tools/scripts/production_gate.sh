@@ -2615,7 +2615,7 @@ gate_19_ha() {
 
   # --- Phase A: Deploy 2-replica topology ---
   log "gate 19: deploying HA overlay..."
-  "${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" up -d --build 2>&1 | tail -5
+  "${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" up -d --no-recreate --build api-gateway-2 scheduler-2 workflow-engine-2 2>&1 | tail -5
 
   # Wait for gateway-1 (existing API_BASE)
   wait_for_status_ready 90 || {
@@ -2789,8 +2789,8 @@ gate_19_ha() {
       wait "${pid}" 2>/dev/null || true
     done
 
-    rate_codes_200="$(grep -c '^20[0-9]$' "${rate_tmpfile}" 2>/dev/null || echo "0")"
-    rate_codes_429="$(grep -c '^429$' "${rate_tmpfile}" 2>/dev/null || echo "0")"
+    rate_codes_200="$(grep -c '^20[0-9]$' "${rate_tmpfile}" 2>/dev/null || true)"
+    rate_codes_429="$(grep -c '^429$' "${rate_tmpfile}" 2>/dev/null || true)"
     rm -f "${rate_tmpfile}"
 
     log "gate 19: rate burst results — ${rate_codes_200} accepted, ${rate_codes_429} rate-limited (429)"
@@ -2838,7 +2838,9 @@ gate_19_ha() {
 
     # Stop scheduler-2
     "${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" stop scheduler-2 2>/dev/null || true
+    sleep 5  # Allow NATS queue group rebalance to scheduler-1
     log "gate 19: scheduler-2 stopped"
+    ensure_mock_bank_worker || true
 
     # Submit 5 more jobs — scheduler-1 should handle them
     local post_body

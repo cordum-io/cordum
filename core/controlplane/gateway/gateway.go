@@ -457,8 +457,10 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	redisRL := strings.ToLower(strings.TrimSpace(os.Getenv("REDIS_RATE_LIMIT")))
 	if redisRL != "false" && redisRL != "0" && redisRL != "no" && jobStore != nil {
 		redisClient := jobStore.Client()
-		s.apiRL = newRedisRateLimiter(redisClient, defaultRateLimitRPS, defaultRateLimitBurst)
-		s.publicRL = newRedisRateLimiter(redisClient, defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
+		apiRPS, apiBurst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRateLimitRPS, defaultRateLimitBurst)
+		pubRPS, pubBurst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
+		s.apiRL = newRedisRateLimiter(redisClient, apiRPS, apiBurst)
+		s.publicRL = newRedisRateLimiter(redisClient, pubRPS, pubBurst)
 	} else {
 		s.apiRL = defaultAPILimiter
 		s.publicRL = defaultPublicLimiter

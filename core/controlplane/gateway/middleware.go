@@ -52,35 +52,30 @@ func newKeyedRateLimiter(rps, burst int) *keyedRateLimiter {
 	}
 }
 
-func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
-	rps := defaultRateLimitRPS
-	burst := defaultRateLimitBurst
-	if val := os.Getenv("API_RATE_LIMIT_RPS"); val != "" {
+// rateLimitFromEnv reads rate limit values from environment variables, falling
+// back to the provided defaults when the env vars are unset or invalid.
+func rateLimitFromEnv(rpsEnv, burstEnv string, defaultRPS, defaultBurst int) (int, int) {
+	rps, burst := defaultRPS, defaultBurst
+	if val := os.Getenv(rpsEnv); val != "" {
 		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
 			rps = parsed
 		}
 	}
-	if val := os.Getenv("API_RATE_LIMIT_BURST"); val != "" {
+	if val := os.Getenv(burstEnv); val != "" {
 		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
 			burst = parsed
 		}
 	}
+	return rps, burst
+}
+
+func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
+	rps, burst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRateLimitRPS, defaultRateLimitBurst)
 	return newKeyedRateLimiter(rps, burst)
 }
 
 func newPublicRateLimiterFromEnv() *keyedRateLimiter {
-	rps := defaultPublicRateLimitRPS
-	burst := defaultPublicRateLimitBurst
-	if val := os.Getenv("API_PUBLIC_RATE_LIMIT_RPS"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			rps = parsed
-		}
-	}
-	if val := os.Getenv("API_PUBLIC_RATE_LIMIT_BURST"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			burst = parsed
-		}
-	}
+	rps, burst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
 	return newKeyedRateLimiter(rps, burst)
 }
 

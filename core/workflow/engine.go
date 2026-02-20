@@ -494,7 +494,16 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 	parallelChildOwners := collectParallelChildOwners(wfDef)
 	loopBodyOwners := collectLoopBodyOwners(wfDef)
 
-	for stepID, step := range wfDef.Steps {
+	// Multi-pass: inline-completing steps (condition, switch, transform, etc.)
+	// may unblock dependents already iterated in the same pass (Go map order
+	// is random). Re-iterate until no new inline completions occur.
+	maxPasses := len(wfDef.Steps)
+	if maxPasses < 1 {
+		maxPasses = 1
+	}
+	for pass := 0; pass < maxPasses; pass++ {
+		terminalBefore := countTerminalSteps(run)
+		for stepID, step := range wfDef.Steps {
 		if ownerID, managed := parallelChildOwners[stepID]; managed && ownerID != stepID {
 			// Child definitions listed by a parallel step are orchestrated by the parent handler.
 			continue
@@ -2043,6 +2052,10 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 				e.OnStepDispatched(run.ID, stepID, jobID)
 			}
 		}
+		}
+		if countTerminalSteps(run) <= terminalBefore {
+			break
+		}
 	}
 
 	updateRunStatus(run, wfDef, now)
@@ -2057,6 +2070,19 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 		e.markRunTerminal(run.ID)
 	}
 	return nil
+}
+
+// countTerminalSteps returns the number of steps in a run that have reached a
+// terminal status (succeeded, failed, cancelled, timed_out). Used by the
+// multi-pass loop in scheduleReady to detect inline completions.
+func countTerminalSteps(run *WorkflowRun) int {
+	count := 0
+	for _, sr := range run.Steps {
+		if sr != nil && isTerminalStepStatus(sr.Status) {
+			count++
+		}
+	}
+	return count
 }
 
 type switchCase struct {
