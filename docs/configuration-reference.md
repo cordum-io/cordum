@@ -287,12 +287,19 @@ On scheduler startup, `bootstrapConfig()` syncs file-based config into Redis:
 
 ### Config Reload
 
-The scheduler watches for config changes on a configurable interval:
+Config changes propagate to all replicas through two mechanisms:
+
+1. **NATS notification (immediate)** — When `PUT /api/v1/config` writes to Redis, the API gateway publishes a lightweight notification to `sys.config.changed` (broadcast, empty queue group). All scheduler replicas subscribe and reload config from Redis immediately on receipt.
+
+2. **Polling fallback (30s)** — Each scheduler replica polls Redis for config changes on a configurable interval. This catches any notifications missed due to transient NATS issues.
 
 - **Env var**: `SCHEDULER_CONFIG_RELOAD_INTERVAL` (default `30s`)
-- On each tick, it reads `cfg:system:default` and compares hashes
+- **NATS subject**: `sys.config.changed` — broadcast to all replicas
+- On each reload (notification or poll), it reads `cfg:system:default` and compares hashes
 - If pools changed: updates routing table live
 - If timeouts changed: updates reconciler timeouts live
+
+> **Note**: The NATS message is a notification only — it does not contain the config data itself. Replicas always reload from Redis to ensure consistency.
 
 ### Resetting Cached Config
 

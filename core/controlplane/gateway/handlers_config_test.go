@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 )
 
 func TestDeleteSchemaForbiddenWithoutAdmin(t *testing.T) {
@@ -216,5 +217,68 @@ func TestSetConfig_ThenGet_Roundtrip(t *testing.T) {
 	}
 	if result["maintenanceMode"] != true {
 		t.Fatalf("expected maintenanceMode=true, got %v", result["maintenanceMode"])
+	}
+}
+
+// TestConfigWritePublishesNotification verifies that handleSetConfig publishes
+// a sys.config.changed NATS notification after a successful config write.
+func TestConfigWritePublishesNotification(t *testing.T) {
+	s, stubBus, _ := newTestGateway(t)
+
+	payload := map[string]any{"testKey": "testValue"}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleSetConfig(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify NATS notification was published.
+	stubBus.mu.Lock()
+	var found bool
+	for _, msg := range stubBus.published {
+		if msg.subject == capsdk.SubjectConfigChanged {
+			found = true
+			alert := msg.packet.GetAlert()
+			if alert == nil {
+				t.Fatalf("expected Alert payload in config change notification")
+			}
+			if alert.Message != "config changed" {
+				t.Fatalf("expected message='config changed', got %q", alert.Message)
+			}
+			if alert.Details["scope"] != "system" {
+				t.Fatalf("expected scope=system, got %q", alert.Details["scope"])
+			}
+			if alert.Details["scope_id"] != "default" {
+				t.Fatalf("expected scope_id=default, got %q", alert.Details["scope_id"])
+			}
+			break
+		}
+	}
+	stubBus.mu.Unlock()
+
+	if !found {
+		t.Fatalf("expected sys.config.changed notification to be published")
+	}
+}
+
+// TestConfigWritePublishesNotification_NilBus verifies that handleSetConfig
+// works gracefully when bus is nil (no NATS available).
+func TestConfigWritePublishesNotification_NilBus(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.bus = nil // simulate no NATS
+
+	payload := map[string]any{"noBus": true}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleSetConfig(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 even without bus, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
