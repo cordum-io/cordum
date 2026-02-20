@@ -260,25 +260,50 @@ TLS for clients (scheduler/gateway dialing Safety Kernel):
 - `SAFETY_KERNEL_TLS_REQUIRED`
 - `SAFETY_KERNEL_INSECURE` (for non-production/testing)
 
-## 9. Scheduler Circuit Breaker (Safety Client)
+## 9. Distributed Circuit Breakers (Safety Client)
 
-Scheduler safety client circuit states:
+Both the input safety client (`SafetyClient`) and output safety client (`OutputSafetyClient`) use a Redis-backed distributed circuit breaker (`RedisCircuitBreaker` in `core/controlplane/scheduler/circuit_breaker.go`). When one scheduler replica detects safety kernel failures, all replicas see the open circuit immediately via shared Redis state.
+
+### State Machine
 
 ```text
-CLOSED --(3 failures)--> OPEN --(30s elapsed)--> HALF_OPEN
+CLOSED --(3 failures)--> OPEN --(30s TTL expires)--> HALF_OPEN
 HALF_OPEN --(2 successes)--> CLOSED
 HALF_OPEN --(failure)------> OPEN
 ```
 
-Constants (`core/controlplane/scheduler/safety_client.go`):
+### Redis Keys
 
-- Request timeout: `2s`
-- Open duration: `30s`
-- Fail budget to open: `3`
-- Half-open max probe requests: `3`
-- Half-open successes to close: `2`
+| Circuit | Key Pattern | Purpose |
+|---------|-------------|---------|
+| Input safety | `cordum:cb:safety:failures` | Shared failure counter for `SafetyClient.Check()` |
+| Output safety | `cordum:cb:safety:output:failures` | Shared failure counter for `OutputSafetyClient.EvaluateOutput()` |
 
-When open/half-open-throttled, scheduler receives `SafetyUnavailable` decisions instead of blocking on RPC.
+### How It Works
+
+- **Failure recording**: Atomic Lua script (`INCR` + `EXPIRE`) increments the failure counter and sets a TTL equal to the open duration on first failure.
+- **Open detection**: `GET` on the failures key — if count >= threshold, circuit is open.
+- **Half-open transition**: When the TTL expires, the failures key is deleted by Redis. The next `IsOpen()` check returns false, allowing a probe request through.
+- **Success recording**: `DEL` on the failures key resets the counter, closing the circuit.
+- **Local fallback**: If Redis is unavailable, the circuit breaker falls back to a per-replica in-memory state machine with the same thresholds. This is fail-open — requests are allowed through to avoid blocking jobs when Redis is down.
+
+### Constants
+
+| Parameter | Input Safety | Output Safety |
+|-----------|-------------|--------------|
+| Request timeout | `2s` | `100ms` (meta), `30s` (content) |
+| Open duration | `30s` | `30s` |
+| Fail budget to open | `3` | `3` |
+| Half-open max probes | `3` | `3` |
+| Successes to close | `2` | `2` |
+
+### Wiring
+
+In `cmd/cordum-scheduler/main.go`:
+- `SafetyClient` is created with a local-only breaker, then upgraded to Redis-backed via `safetyClient.WithRedis(sagaRedis)`.
+- `OutputSafetyClient` uses its internal Redis connection (`resultClient`) for the distributed breaker automatically.
+
+When the input circuit is open, the scheduler receives `SafetyUnavailable` decisions instead of blocking on RPC. The input fail mode (`POLICY_CHECK_FAIL_MODE`) then determines whether the job is requeued or allowed through.
 
 ## 10. Input Policy Fail Mode
 

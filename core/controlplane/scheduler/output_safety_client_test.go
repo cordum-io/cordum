@@ -49,6 +49,15 @@ func (f *fakeOutputPolicyClient) CheckOutput(ctx context.Context, req *pb.Output
 	return &pb.OutputCheckResponse{Decision: pb.OutputDecision_OUTPUT_DECISION_ALLOW}, nil
 }
 
+func newOutputTestCB() *RedisCircuitBreaker {
+	return NewRedisCircuitBreaker(nil, "cordum:cb:safety:output:test", CircuitBreakerOpts{
+		FailThreshold: outputCircuitFailBudget,
+		OpenDuration:  outputCircuitOpenFor,
+		HalfOpenMax:   outputCircuitHalfOpenMax,
+		CloseAfter:    outputCircuitCloseAfter,
+	})
+}
+
 func (f *fakeOutputPolicyClient) lastRequest() *pb.OutputCheckRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -63,7 +72,7 @@ func (f *fakeOutputPolicyClient) lastRequest() *pb.OutputCheckRequest {
 
 func TestOutputClientMetadataModeExcludesContent(t *testing.T) {
 	fake := &fakeOutputPolicyClient{}
-	client := &OutputSafetyClient{client: fake}
+	client := &OutputSafetyClient{client: fake, cb: newOutputTestCB()}
 
 	_, err := client.CheckOutputMeta(
 		&pb.JobResult{JobId: "job-meta", ResultPtr: "redis://res:job-meta"},
@@ -155,6 +164,7 @@ func TestOutputClientContentModeLoadsResultFromRedis(t *testing.T) {
 	client := &OutputSafetyClient{
 		client:       fake,
 		resultClient: resultClient,
+		cb:           newOutputTestCB(),
 	}
 
 	_, err = client.CheckOutputContent(
@@ -207,6 +217,7 @@ func TestOutputClientContentModeRetriesMissingResultFromRedis(t *testing.T) {
 	client := &OutputSafetyClient{
 		client:       fake,
 		resultClient: resultClient,
+		cb:           newOutputTestCB(),
 	}
 
 	_, err = client.CheckOutputContent(
@@ -232,7 +243,7 @@ func TestOutputClientContentModeRetriesMissingResultFromRedis(t *testing.T) {
 
 func TestEvaluateOutputUsesProvidedContextFields(t *testing.T) {
 	fake := &fakeOutputPolicyClient{}
-	client := &OutputSafetyClient{client: fake}
+	client := &OutputSafetyClient{client: fake, cb: newOutputTestCB()}
 
 	_, err := client.EvaluateOutput(context.Background(), &OutputEvaluateRequest{
 		JobID:          "job-direct",
@@ -278,7 +289,7 @@ func TestEvaluateOutputUsesProvidedContextFields(t *testing.T) {
 
 func TestOutputClientFailOpenErrorSurface(t *testing.T) {
 	fake := &fakeOutputPolicyClient{err: fmt.Errorf("output backend unavailable")}
-	client := &OutputSafetyClient{client: fake}
+	client := &OutputSafetyClient{client: fake, cb: newOutputTestCB()}
 
 	_, err := client.CheckOutputMeta(
 		&pb.JobResult{JobId: "job-fail-open"},
@@ -291,7 +302,7 @@ func TestOutputClientFailOpenErrorSurface(t *testing.T) {
 
 func TestOutputClientCircuitBreaker(t *testing.T) {
 	fake := &fakeOutputPolicyClient{err: fmt.Errorf("forced failure")}
-	client := &OutputSafetyClient{client: fake}
+	client := &OutputSafetyClient{client: fake, cb: newOutputTestCB()}
 	res := &pb.JobResult{JobId: "job-circuit"}
 	req := &pb.JobRequest{JobId: "job-circuit", Topic: "job.demo", TenantId: "tenant-a"}
 
@@ -309,7 +320,7 @@ func TestOutputClientCircuitBreaker(t *testing.T) {
 
 func TestOutputClientTimeout(t *testing.T) {
 	fake := &fakeOutputPolicyClient{waitForCtx: true}
-	client := &OutputSafetyClient{client: fake}
+	client := &OutputSafetyClient{client: fake, cb: newOutputTestCB()}
 
 	_, err := client.CheckOutputMeta(
 		&pb.JobResult{JobId: "job-timeout"},
@@ -365,6 +376,7 @@ func TestOutputClientContentModeStoresRedactedOutput(t *testing.T) {
 	client := &OutputSafetyClient{
 		client:       fake,
 		resultClient: resultClient,
+		cb:           newOutputTestCB(),
 	}
 
 	record, err := client.CheckOutputContent(
@@ -408,7 +420,7 @@ func TestEvaluateOutputRedactionFallsBackToQuarantineWhenStoreUnavailable(t *tes
 			},
 		},
 	}
-	client := &OutputSafetyClient{client: fake}
+	client := &OutputSafetyClient{client: fake, cb: newOutputTestCB()}
 
 	record, err := client.EvaluateOutput(context.Background(), &OutputEvaluateRequest{
 		JobID:         "job-no-store",

@@ -239,6 +239,7 @@ func main() {
 		log.Fatalf("failed to connect to safety kernel: %v", err)
 	}
 	defer safetyClient.Close()
+	safetyClient.WithRedis(sagaRedis)
 	sagaManager.WithSafety(safetyClient)
 
 	// Populate health check dependencies now that all critical deps are created.
