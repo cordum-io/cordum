@@ -4,11 +4,32 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+// resolvePodName returns a stable pod identifier for metric labelling.
+// Precedence: CORDUM_INSTANCE_ID env → os.Hostname() → "unknown".
+func resolvePodName() string {
+	if id := strings.TrimSpace(os.Getenv("CORDUM_INSTANCE_ID")); id != "" {
+		return id
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "unknown"
+}
+
+// podRegisterer wraps the default Prometheus registerer with a const "pod"
+// label so every metric emitted by Cordum carries a per-replica identifier.
+// This allows Prometheus queries to distinguish replicas in HA deployments.
+var podRegisterer = prometheus.WrapRegistererWith(
+	prometheus.Labels{"pod": resolvePodName()},
+	prometheus.DefaultRegisterer,
 )
 
 // Metrics defines counters for scheduler and workers.
@@ -292,7 +313,7 @@ func NewProm(namespace string) *Prom {
 
 func (p *Prom) register() {
 	p.once.Do(func() {
-		prometheus.MustRegister(
+		podRegisterer.MustRegister(
 			p.jobsReceived,
 			p.jobsDispatched,
 			p.jobsCompleted,
@@ -530,7 +551,7 @@ func NewGatewayProm(namespace string) GatewayMetrics {
 		}, []string{"method", "route"}),
 	}
 	g.once.Do(func() {
-		prometheus.MustRegister(g.requests, g.latency)
+		podRegisterer.MustRegister(g.requests, g.latency)
 	})
 	return g
 }
@@ -569,7 +590,7 @@ func NewWorkflowProm(namespace string) WorkflowMetrics {
 		}, []string{"workflow"}),
 	}
 	w.once.Do(func() {
-		prometheus.MustRegister(w.started, w.completed, w.duration)
+		podRegisterer.MustRegister(w.started, w.completed, w.duration)
 	})
 	return w
 }

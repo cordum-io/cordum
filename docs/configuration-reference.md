@@ -656,6 +656,9 @@ scanners:
 | `CONTEXT_ENGINE_ADDR` | `:50070` | No | Context engine gRPC address |
 | `OUTPUT_POLICY_ENABLED` | `false` | No | Enable output policy scanning: `true`, `1` |
 | `CORDUM_TENANT_ID` | — | No | Default tenant ID for SDK/MCP clients |
+| `CORDUM_INSTANCE_ID` | `os.Hostname()` | No | Override pod name used in Prometheus `pod` label. Defaults to hostname; falls back to `"unknown"` |
+
+> **Prometheus pod label**: All Cordum metrics include a `pod` const label (`os.Hostname()` or `CORDUM_INSTANCE_ID`) so Prometheus can distinguish replicas in HA deployments. Use `sum by (pod) (cordum_scheduler_jobs_received_total)` for per-replica breakdown.
 
 ### NATS TLS
 

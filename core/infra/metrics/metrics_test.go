@@ -3,6 +3,7 @@ package metrics
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -13,12 +14,18 @@ func withTestRegistry(t *testing.T) *prometheus.Registry {
 	t.Helper()
 	origReg := prometheus.DefaultRegisterer
 	origGather := prometheus.DefaultGatherer
+	origPodReg := podRegisterer
 	reg := prometheus.NewRegistry()
 	prometheus.DefaultRegisterer = reg
 	prometheus.DefaultGatherer = reg
+	podRegisterer = prometheus.WrapRegistererWith(
+		prometheus.Labels{"pod": resolvePodName()},
+		reg,
+	)
 	t.Cleanup(func() {
 		prometheus.DefaultRegisterer = origReg
 		prometheus.DefaultGatherer = origGather
+		podRegisterer = origPodReg
 	})
 	return reg
 }
@@ -267,4 +274,104 @@ func matchLabels(pairs []*dto.LabelPair, labels map[string]string) bool {
 		}
 	}
 	return found == len(labels)
+}
+
+func TestMetricsPodLabel(t *testing.T) {
+	reg := withTestRegistry(t)
+	m := NewProm("cordum")
+	m.IncJobsReceived("job.pod-test")
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+
+	// Every metric family should have a "pod" label on its metrics.
+	podName := resolvePodName()
+	for _, fam := range families {
+		for _, metric := range fam.GetMetric() {
+			var found bool
+			for _, lp := range metric.GetLabel() {
+				if lp.GetName() == "pod" {
+					found = true
+					if lp.GetValue() != podName {
+						t.Fatalf("metric %s: expected pod=%q, got %q", fam.GetName(), podName, lp.GetValue())
+					}
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("metric %s missing pod label", fam.GetName())
+			}
+		}
+	}
+}
+
+func TestMetricsPodLabelGateway(t *testing.T) {
+	reg := withTestRegistry(t)
+	m := NewGatewayProm("cordum")
+	m.ObserveRequest("GET", "/health", "200", 0.01)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+
+	podName := resolvePodName()
+	for _, fam := range families {
+		for _, metric := range fam.GetMetric() {
+			if !hasLabel(metric.GetLabel(), "pod", podName) {
+				t.Fatalf("gateway metric %s missing pod=%s label", fam.GetName(), podName)
+			}
+		}
+	}
+}
+
+func TestMetricsPodLabelWorkflow(t *testing.T) {
+	reg := withTestRegistry(t)
+	m := NewWorkflowProm("cordum")
+	m.IncWorkflowStarted("wf-test")
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+
+	podName := resolvePodName()
+	for _, fam := range families {
+		for _, metric := range fam.GetMetric() {
+			if !hasLabel(metric.GetLabel(), "pod", podName) {
+				t.Fatalf("workflow metric %s missing pod=%s label", fam.GetName(), podName)
+			}
+		}
+	}
+}
+
+func TestResolvePodNameEnvOverride(t *testing.T) {
+	t.Setenv("CORDUM_INSTANCE_ID", "custom-pod-42")
+	got := resolvePodName()
+	if got != "custom-pod-42" {
+		t.Fatalf("expected custom-pod-42, got %s", got)
+	}
+}
+
+func TestResolvePodNameHostnameFallback(t *testing.T) {
+	t.Setenv("CORDUM_INSTANCE_ID", "")
+	got := resolvePodName()
+	hostname, _ := os.Hostname()
+	if hostname != "" && got != hostname {
+		t.Fatalf("expected hostname %q, got %q", hostname, got)
+	}
+	if got == "" {
+		t.Fatalf("expected non-empty pod name")
+	}
+}
+
+func hasLabel(pairs []*dto.LabelPair, name, value string) bool {
+	for _, lp := range pairs {
+		if lp.GetName() == name && lp.GetValue() == value {
+			return true
+		}
+	}
+	return false
 }
