@@ -17,6 +17,8 @@ import { AuditIntegrityPanel } from "../components/audit/AuditIntegrityPanel";
 import { useEventStore } from "../state/events";
 import { cn } from "../lib/utils";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { useStatus } from "../hooks/useStatus";
+import { AuditTransportBadge } from "../components/audit/AuditTransportBadge";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -54,6 +56,8 @@ function formatGap(ms: number): string {
 
 export default function AuditLogPage() {
   usePageTitle("Audit Log");
+  const { data: statusData } = useStatus();
+
   // Pagination state
   const [page, setPage] = useState(0);
   const [perPage, setPerPage] = useState<number>(25);
@@ -383,6 +387,7 @@ export default function AuditLogPage() {
           <p className="text-sm text-muted">
             Policy audit events from the control plane.
           </p>
+          <AuditTransportBadge transport={statusData?.ha_env?.audit_transport} />
           {stats.total > 0 && (
             <p className="mt-1 text-xs text-muted">
               {stats.total} events
