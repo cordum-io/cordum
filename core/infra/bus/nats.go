@@ -604,6 +604,19 @@ func (b *NatsBus) initJetStreamFromEnv() {
 	log.Printf("[BUS] jetstream enabled ack_wait=%s replicas=%d", ackWait, replicas) // #nosec -- values are derived from configuration.
 }
 
+// isDurableSubject returns true for subjects that need JetStream persistence.
+//
+// Broadcast subjects (sys.heartbeat, sys.handshake, sys.config.changed, sys.alert,
+// sys.job.progress, sys.workflow.event) intentionally use core NATS, NOT JetStream.
+// Each has built-in resilience that makes at-most-once delivery safe:
+//   - sys.heartbeat: workers re-heartbeat every 5-10s, so a missed message self-heals.
+//   - sys.config.changed: 30s poll fallback in config_overlay.go catches missed notifications.
+//   - sys.handshake: workers re-register on the next heartbeat cycle.
+//   - sys.alert, sys.job.progress, sys.workflow.event: informational, no state dependency.
+//
+// If a new JetStream broadcast subject is added, consider ephemeral consumer behavior
+// during rolling restarts: ephemeral consumers are deleted when disconnected, so messages
+// published between disconnect and reconnect are lost.
 func isDurableSubject(subject string) bool {
 	switch subject {
 	case capsdk.SubjectSubmit, capsdk.SubjectResult, capsdk.SubjectDLQ, capsdk.SubjectAuditExport:

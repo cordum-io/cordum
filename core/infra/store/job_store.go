@@ -1075,6 +1075,10 @@ func (s *RedisJobStore) GetFailureReason(ctx context.Context, jobID string) (str
 // SetNX on the scoped key in a single round-trip, preventing the TOCTOU
 // race between the legacy GET and the scoped SetNX.
 //
+// TODO(cluster): CROSSSLOT — needs hash tags or pipeline split for Redis Cluster.
+// KEYS[1] and KEYS[2] may hash to different slots; the dynamic HGET on
+// ARGV[4]..legacyID adds a third slot. Medium risk (job submit path).
+//
 // KEYS[1] = legacy key, KEYS[2] = scoped key
 // ARGV[1] = jobID, ARGV[2] = ttl in ms, ARGV[3] = tenant, ARGV[4] = meta key prefix
 var idempotencyScopedScript = redis.NewScript(`

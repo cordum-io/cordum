@@ -12,7 +12,8 @@ import (
 
 // durableDelayThreshold is the minimum delay duration for Redis-backed durable timers.
 // Delays shorter than this use in-memory time.AfterFunc only (fast, no Redis round-trip).
-const durableDelayThreshold = 10 * time.Second
+// Set to 3s to limit the data-loss window on crash while avoiding Redis round-trips for trivial delays.
+const durableDelayThreshold = 3 * time.Second
 
 func delayForStep(step *Step, now time.Time) (time.Duration, error) {
 	if step == nil {

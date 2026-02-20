@@ -274,6 +274,11 @@ func main() {
 	instanceID := hostname + "-" + uuid.NewString()[:8]
 	slog.Info("scheduler instance", "instance_id", instanceID)
 
+	// Instance registry: self-register this scheduler replica in Redis.
+	instReg := agentregistry.NewInstanceRegistry(sagaRedis, "scheduler", instanceID, buildinfo.Version, buildinfo.Commit)
+	instReg.Start(ctx)
+	defer instReg.Stop()
+
 	if err := configSvc.EnsureDefault(ctx); err != nil {
 		log.Printf("auto-bootstrap default config failed: %v", err)
 	}
@@ -360,7 +365,7 @@ func main() {
 			}
 		}
 		const snapshotLockKey = "cordum:scheduler:snapshot:writer"
-		const snapshotLockTTL = 10 * time.Second
+		const snapshotLockTTL = 30 * time.Second
 		go func() {
 			ticker := time.NewTicker(snapshotInterval)
 			defer ticker.Stop()
@@ -391,9 +396,11 @@ func main() {
 						releaseCancel()
 						continue
 					}
-					if err := snapshotStore.PutResult(ctx, agentregistry.SnapshotKey, data); err != nil {
+					writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
+					if err := snapshotStore.PutResult(writeCtx, agentregistry.SnapshotKey, data); err != nil {
 						log.Printf("worker snapshot write failed: %v", err)
 					}
+					writeCancel()
 
 					releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
 					if err := jobStore.ReleaseLock(releaseCtx, snapshotLockKey, token); err != nil {

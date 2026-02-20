@@ -236,7 +236,7 @@ redis-cli GET "cordum:scheduler:snapshot:writer"
 redis-cli GET "sys:workers:snapshot"
 ```
 
-**Resolution**: The scheduler snapshot writer runs every 5s under a distributed lock. If the lock holder crashes, the lock expires after 10s and another replica takes over. Wait up to 15s for convergence.
+**Resolution**: The scheduler snapshot writer runs every 5s under a distributed lock. If the lock holder crashes, the lock expires after 30s and another replica takes over. Wait up to 35s for convergence.
 
 ### Config Drift Between Replicas
 
@@ -308,3 +308,44 @@ Gate 19 in `tools/scripts/production_gate.sh` runs 5 scenarios against a 2-repli
 5. **Scheduler failover** — stop scheduler-2, submit jobs via gateway, verify all complete via scheduler-1, restart and verify no duplicates
 
 Gate 19 is ADVISORY by default and promoted to BLOCKING in `--strict` mode.
+
+## NATS Delivery Semantics
+
+Cordum uses two distinct delivery patterns over NATS, each chosen to match the reliability requirements of the subject:
+
+### Queue Group Subjects (Exactly-Once Delivery)
+
+Queue group subscriptions ensure each message is delivered to **exactly one** replica within the group. When JetStream is enabled, these use shared durable consumer names (`dur_<queue>__<subject>`), providing persistence and redelivery on failure. Used for all work-distribution subjects: `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.audit.export`, `job.<topic>`, and `worker.<id>.jobs`.
+
+### Broadcast Subjects (Fire-and-Forget)
+
+Broadcast subscriptions deliver each message to **every** replica. These use core NATS (not JetStream) and have no persistence — if a replica is disconnected during a broadcast, it misses the message. This is safe because every broadcast subject has a built-in self-healing mechanism:
+
+| Subject | Self-Healing Mechanism |
+|---------|----------------------|
+| `sys.heartbeat` | Workers re-heartbeat every 5-10s; missed heartbeat self-corrects on next cycle |
+| `sys.handshake` | Workers re-register on their next heartbeat |
+| `sys.config.changed` | 30s poll fallback in `config_overlay.go` catches missed notifications |
+| `sys.alert` | Informational only; no state dependency |
+| `sys.job.progress` | Dashboard re-fetches on reconnect; stale progress is harmless |
+| `sys.workflow.event` | Dashboard re-fetches on reconnect; stale events are harmless |
+
+### Rolling Restart Implications
+
+During rolling restarts, broadcast subjects may miss messages while a replica is shutting down and its replacement is starting. This is a deliberate trade-off — the self-healing mechanisms above ensure convergence within seconds. If a new JetStream broadcast subject is added in the future, its ephemeral consumer behavior must be evaluated: ephemeral consumers are deleted on disconnect, so messages published between disconnect and reconnect would be lost.
+
+## Redis Cluster Limitations
+
+When running Redis in cluster mode, Lua scripts that touch keys in different hash slots will fail with `CROSSSLOT` errors. Cordum has 12 Lua scripts; 9 are single-key (safe for cluster mode). Three scripts touch multiple keys across slots:
+
+| Script | File | Keys | Risk | Status |
+|--------|------|------|------|--------|
+| `updateRunScript` | `core/workflow/store_redis.go` | 4 KEYS + dynamic index keys | High (every step completion) | Refactored — index updates moved to Go pipeline |
+| `idempotencyScopedScript` | `core/infra/store/job_store.go` | 2 KEYS + dynamic `job:meta:` | Medium (job submit) | Documented; use hash tags or pipeline split for cluster |
+| `createUserLua` | `core/controlplane/gateway/auth/userstore_redis.go` | 2 KEYS + dynamic `user:id:`, `user:tenant:` | Low (admin operation) | Documented; use hash tags or pipeline split for cluster |
+
+### Remediation for Redis Cluster
+
+**`updateRunScript` (refactored):** The hot-path Lua script has been split: the atomic GET+SET of the run document stays in Lua (single key), while ZADD/ZREM index updates are performed in a Go pipeline afterward. Index operations are idempotent (ZADD is upsert, ZREM is no-op if missing), so eventual consistency is safe.
+
+**`idempotencyScopedScript` and `createUserLua`:** These remain as multi-key Lua scripts. For Redis Cluster deployments, use hash tags (e.g., `{tenant}:user:...`) to colocate related keys in the same slot, or refactor to pipeline-based approaches similar to `updateRunScript`.

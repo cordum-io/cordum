@@ -416,8 +416,9 @@ func (p *OIDCProvider) refreshJWKS() error {
 func (p *OIDCProvider) backgroundRefresh() {
 	defer close(p.done)
 
-	// Initial jitter: 0-30s to desynchronize replicas that start together.
-	if jitter := cryptoRandJitter(30); jitter > 0 {
+	// Initial jitter: 0-10s to desynchronize replicas that start together.
+	// Kept short to minimize auth cold-start latency; collision risk is low with 2-6 replicas.
+	if jitter := cryptoRandJitter(10); jitter > 0 {
 		select {
 		case <-p.stopCh:
 			return

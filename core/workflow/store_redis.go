@@ -203,11 +203,13 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	return nil
 }
 
-// updateRunScript atomically reads prev status, writes new run, and updates all indexes.
-// This prevents TOCTOU races when concurrent goroutines update the same run.
+// updateRunScript atomically reads the previous status and writes the new run document.
+// Only touches a single key (KEYS[1] = runKey) to avoid CROSSSLOT errors on Redis Cluster.
+// Index updates (ZADD/ZREM/SADD/SREM) are performed in a separate Go pipeline — they are
+// idempotent (ZADD is upsert, ZREM is no-op if missing) so eventual consistency is safe.
 //
-// KEYS: [1]=runKey [2]=workflowIndexKey [3]=allIndexKey [4]=newStatusIndexKey
-// ARGV: [1]=payload [2]=score [3]=runID [4]=newStatus [5]=orgActiveKey [6]=isActive
+// KEYS: [1]=runKey
+// ARGV: [1]=payload
 var updateRunScript = redis.NewScript(`
 local prev = redis.call('GET', KEYS[1])
 local prevStatus = ''
@@ -219,27 +221,14 @@ if prev then
 end
 
 redis.call('SET', KEYS[1], ARGV[1])
-redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
-redis.call('ZADD', KEYS[3], ARGV[2], ARGV[3])
-redis.call('ZADD', KEYS[4], ARGV[2], ARGV[3])
-
-if prevStatus ~= '' and prevStatus ~= ARGV[4] then
-  redis.call('ZREM', 'wf:runs:status:' .. prevStatus, ARGV[3])
-end
-
-if ARGV[5] ~= '' then
-  if ARGV[6] == '1' then
-    redis.call('SADD', ARGV[5], ARGV[3])
-  else
-    redis.call('SREM', ARGV[5], ARGV[3])
-  end
-end
 
 return prevStatus
 `)
 
 // UpdateRun atomically overwrites an existing run document and updates all indexes.
-// Uses a Lua script to prevent TOCTOU races on concurrent step completions.
+// The Lua script handles the atomic GET+SET on the run key (single slot).
+// Index updates are performed in a pipeline afterward — they are idempotent so
+// eventual consistency is acceptable if the pipeline partially fails.
 func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	if run == nil || run.ID == "" || run.WorkflowID == "" {
 		return fmt.Errorf("run id and workflow id required")
@@ -252,33 +241,35 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 		return fmt.Errorf("marshal run: %w", err)
 	}
 
-	score := fmt.Sprintf("%d", now.Unix())
-	orgActiveKey := ""
-	isActive := "0"
+	// Atomic GET prev status + SET new run doc (single key — cluster-safe).
+	keys := []string{runKey(run.ID)}
+	prevStatus, err := updateRunScript.Run(ctx, s.client, keys, string(payload)).Text()
+	if err != nil {
+		return fmt.Errorf("update run: %w", err)
+	}
+
+	// Idempotent index updates in a pipeline (ZADD is upsert, ZREM is no-op if missing).
+	score := float64(now.Unix())
+	pipe := s.client.Pipeline()
+	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: score, Member: run.ID})
+	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: score, Member: run.ID})
+	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: score, Member: run.ID})
+
+	if prevStatus != "" && prevStatus != string(run.Status) {
+		pipe.ZRem(ctx, runStatusIndexKey(RunStatus(prevStatus)), run.ID)
+	}
+
 	if run.OrgID != "" {
-		orgActiveKey = runOrgActiveKey(run.OrgID)
+		orgKey := runOrgActiveKey(run.OrgID)
 		if isActiveRunStatus(run.Status) {
-			isActive = "1"
+			pipe.SAdd(ctx, orgKey, run.ID)
+		} else {
+			pipe.SRem(ctx, orgKey, run.ID)
 		}
 	}
 
-	keys := []string{
-		runKey(run.ID),
-		runIndexKey(run.WorkflowID),
-		runAllIndexKey(),
-		runStatusIndexKey(run.Status),
-	}
-	args := []interface{}{
-		string(payload),
-		score,
-		run.ID,
-		string(run.Status),
-		orgActiveKey,
-		isActive,
-	}
-
-	if _, err := updateRunScript.Run(ctx, s.client, keys, args...).Result(); err != nil {
-		return fmt.Errorf("update run: %w", err)
+	if _, err := pipe.Exec(ctx); err != nil {
+		slog.Warn("update run: index pipeline failed (idempotent, will self-heal)", "run_id", run.ID, "error", err)
 	}
 	return nil
 }

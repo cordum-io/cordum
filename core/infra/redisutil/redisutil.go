@@ -188,8 +188,26 @@ func getEnvInt(key string, defaultVal int) int {
 	}
 	v, err := strconv.Atoi(raw)
 	if err != nil || v <= 0 {
-		slog.Warn("invalid int env var, using default", "key", key, "value", raw, "default", defaultVal)
+		slog.Warn("invalid int env var, using default", "key", key, "value", sanitizeLogValue(raw), "default", defaultVal)
 		return defaultVal
 	}
 	return v
+}
+
+// sanitizeLogValue truncates and strips control characters from a string before
+// logging to prevent log injection via newlines, carriage returns, or ANSI escapes.
+func sanitizeLogValue(s string) string {
+	const maxLen = 64
+	if len(s) > maxLen {
+		s = s[:maxLen] + "..."
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\n' || r == '\r' || r < 0x20 || r == 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
