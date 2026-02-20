@@ -84,26 +84,6 @@ graph LR
 - **DURING (Safety)**: Real-time visibility into active agent runs. Monitor progress, handle step-level approvals, and enforce timeouts or circuit breakers on the fly.
 - **ACROSS (Observability)**: Manage your entire fleet from a single control plane. Aggregate audit trails, track capability-based routing, and observe agent pool health in real-time.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Cordum                                  │
-│                                                                 │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────────┐ │
-│  │   API    │──▶│ Scheduler│──▶│  Safety  │──▶│ Worker Pools │ │
-│  │ Gateway  │   │          │   │  Kernel  │   │              │ │
-│  └──────────┘   └──────────┘   └──────────┘   └──────────────┘ │
-│       │              │              │                │         │
-│       ▼              ▼              ▼                ▼         │
-│  [Dashboard]    [Workflows]    [Policies]      [Your Agents]   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**The Agent Control Plane in Action:**
-
-- **Safety Kernel (BEFORE)** — Evaluate declarative policies (allow/deny/throttle) before any agent action.
-- **Workflow Engine (DURING)** — Orchestrate multi-step **Autonomous AI Agent** workflows with real-time human-in-the-loop approvals.
-- **Fleet Management (ACROSS)** — Capability-based routing, health monitoring, and exhaustive audit trails across all agent pools.
-
 ## Quickstart
 
 **Prerequisites:** Docker, Docker Compose, Go 1.24+
@@ -131,28 +111,6 @@ export CORDUM_API_KEY="$(openssl rand -hex 32)"
 ```
 
 That's it. You have a running Cordum instance with API, scheduler, safety kernel, dashboard, and TLS enabled by default. System configuration is auto-bootstrapped on first startup.
-
-## How It Works: The Governed Agent Lifecycle
-
-Cordum operates as a deterministic gatekeeper for **Autonomous AI Agents**, ensuring every action is governed before it happens.
-
-1. **Submit** — A job is submitted via the **Agent Control Plane** API.
-2. **Safety Gating (BEFORE)** — The Scheduler consults the **Safety Kernel**. Policies are evaluated: Is the agent authorized? Is the task too risky? Is human approval needed?
-3. **Deterministic Dispatch** — Approved jobs are routed to specific **Agent Pools** based on their verified capabilities.
-4. **Governed Execution (DURING)** — Agents execute jobs (using MCP, LangChain, or custom frameworks) while the control plane maintains real-time observability.
-5. **Output Verification** — Results are evaluated against output safety policies (e.g., PII detection, secret leaks) before being released back to the client.
-
-```
-Client ──▶ API ──▶ Scheduler ──▶ Safety Kernel ──▶ NATS ──▶ Agent Pool
-                       │                              │
-                       ▼                              ▼
-                  [Redis State]                 [Your Agents]
-```
-
-**Key design choices:**
-- **Payloads stay off the bus** — `context_ptr` and `result_ptr` reference Redis/S3, keeping the message bus lean
-- **Protocol-first** — CAP is an independent spec; Cordum is the reference implementation
-- **Workers are external** — Cordum is the control plane; your agents run wherever you want
 
 ## Key Features
 
