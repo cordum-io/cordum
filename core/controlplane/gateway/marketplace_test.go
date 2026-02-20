@@ -370,3 +370,196 @@ func TestMarketplaceDialContextRejectsPrivateIP(t *testing.T) {
 		t.Fatalf("expected dial to reject private IP")
 	}
 }
+
+// ---------- Redis L2 cache tests ----------
+
+// seedCatalogUpstream creates a httptest server serving a single catalog with one
+// pack entry and seeds configsvc so marketplaceSnapshot can fetch from it.
+func seedCatalogUpstream(t *testing.T, s *server) *httptest.Server {
+	t.Helper()
+	catalog := marketplaceCatalogFile{
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		Packs: []marketplaceCatalogPack{
+			{
+				ID:          "cache-test-pack",
+				Version:     "1.0.0",
+				Title:       "Cache Test",
+				Description: "For Redis cache tests",
+				URL:         "", // filled below
+				Sha256:      "deadbeef",
+			},
+		},
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "catalog.json") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(catalog)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(upstream.Close)
+
+	catalog.Packs[0].URL = upstream.URL + "/cache-test-pack.tgz"
+	ctx := context.Background()
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: packCatalogID,
+		Data: map[string]any{
+			"catalogs": []any{
+				map[string]any{
+					"id":      "official",
+					"title":   "Official",
+					"url":     upstream.URL + "/catalog.json",
+					"enabled": true,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed catalog config: %v", err)
+	}
+	return upstream
+}
+
+func TestMarketplaceCacheRedisHit(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	// Pre-populate Redis with a cached marketplace response.
+	want := marketplaceResponse{
+		Catalogs: []marketplaceCatalogStatus{
+			{ID: "official", URL: "https://example.com/catalog.json", Enabled: true},
+		},
+		Items: []marketplacePackItem{
+			{ID: "redis-cached-pack", Version: "2.0.0", Title: "Redis Cached"},
+		},
+		FetchedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	rc := s.jobStore.Client()
+	if err := rc.Set(ctx, marketplaceRedisCacheKey, data, marketplaceRedisCacheTTL).Err(); err != nil {
+		t.Fatalf("seed redis cache: %v", err)
+	}
+
+	// Ensure L1 is empty (no in-memory cache).
+	s.marketplaceMu.Lock()
+	s.marketplaceCache = marketplaceCache{}
+	s.marketplaceMu.Unlock()
+
+	// Call marketplaceSnapshot — should hit L2 (Redis) without calling upstream.
+	got, err := s.marketplaceSnapshot(ctx, false)
+	if err != nil {
+		t.Fatalf("marketplaceSnapshot: %v", err)
+	}
+	if !got.Cached {
+		t.Fatalf("expected Cached=true from Redis L2 hit")
+	}
+	if len(got.Items) != 1 || got.Items[0].ID != "redis-cached-pack" {
+		t.Fatalf("expected redis-cached-pack, got %+v", got.Items)
+	}
+
+	// Verify L1 was populated from Redis.
+	s.marketplaceMu.Lock()
+	l1 := s.marketplaceCache
+	s.marketplaceMu.Unlock()
+	if l1.FetchedAt.IsZero() {
+		t.Fatalf("L1 cache should be populated after Redis hit")
+	}
+	if len(l1.Response.Items) != 1 || l1.Response.Items[0].ID != "redis-cached-pack" {
+		t.Fatalf("L1 cache has wrong data: %+v", l1.Response.Items)
+	}
+}
+
+func TestMarketplaceCacheMiss(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	upstream := seedCatalogUpstream(t, s)
+	_ = upstream // kept alive by t.Cleanup
+
+	// Ensure both L1 and L2 are empty.
+	s.marketplaceMu.Lock()
+	s.marketplaceCache = marketplaceCache{}
+	s.marketplaceMu.Unlock()
+
+	rc := s.jobStore.Client()
+	rc.Del(ctx, marketplaceRedisCacheKey)
+
+	// Should fetch from upstream (L3) and populate both L1 and L2.
+	got, err := s.marketplaceSnapshot(ctx, false)
+	if err != nil {
+		t.Fatalf("marketplaceSnapshot: %v", err)
+	}
+	if got.Cached {
+		t.Fatalf("first fetch should not be marked Cached")
+	}
+	if len(got.Items) == 0 {
+		t.Fatalf("expected at least one pack from upstream")
+	}
+
+	// Verify L2 (Redis) was populated.
+	data, err := rc.Get(ctx, marketplaceRedisCacheKey).Bytes()
+	if err != nil {
+		t.Fatalf("redis cache should be populated after miss: %v", err)
+	}
+	var cached marketplaceResponse
+	if err := json.Unmarshal(data, &cached); err != nil {
+		t.Fatalf("unmarshal redis cache: %v", err)
+	}
+	if len(cached.Items) == 0 {
+		t.Fatalf("redis cache should contain items")
+	}
+}
+
+func TestMarketplaceCacheRedisFallback(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	upstream := seedCatalogUpstream(t, s)
+	_ = upstream
+
+	// Clear L1.
+	s.marketplaceMu.Lock()
+	s.marketplaceCache = marketplaceCache{}
+	s.marketplaceMu.Unlock()
+
+	// Write invalid data to the Redis cache key to simulate corrupt cache.
+	rc := s.jobStore.Client()
+	rc.Set(ctx, marketplaceRedisCacheKey, "not-valid-json", marketplaceRedisCacheTTL)
+
+	// marketplaceSnapshot should fall through to upstream (L3) gracefully.
+	got, err := s.marketplaceSnapshot(ctx, false)
+	if err != nil {
+		t.Fatalf("marketplaceSnapshot should fallback to upstream: %v", err)
+	}
+	if len(got.Items) == 0 {
+		t.Fatalf("expected items from upstream fallback")
+	}
+}
+
+func TestMarketplaceCacheTTL(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	// Write a response to Redis via the helper.
+	resp := marketplaceResponse{
+		Items:     []marketplacePackItem{{ID: "ttl-test", Version: "1.0.0"}},
+		FetchedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	s.marketplaceToRedis(ctx, resp)
+
+	// Verify the key exists with a positive TTL.
+	rc := s.jobStore.Client()
+	ttl := rc.TTL(ctx, marketplaceRedisCacheKey).Val()
+	if ttl <= 0 {
+		t.Fatalf("expected positive TTL, got %v", ttl)
+	}
+	// TTL should be close to marketplaceRedisCacheTTL (30min), at least > 29min.
+	if ttl < 29*time.Minute {
+		t.Fatalf("TTL too short: %v, expected ~30min", ttl)
+	}
+}

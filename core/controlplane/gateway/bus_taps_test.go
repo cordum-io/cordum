@@ -98,6 +98,79 @@ func waitFor(t *testing.T, timeout, interval time.Duration, cond func() bool, ms
 	t.Fatalf("timed out waiting: %s", msg)
 }
 
+func TestDLQSubscriptionUsesQueueGroup(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.shutdownCh = make(chan struct{})
+
+	if err := s.startBusTaps(); err != nil {
+		t.Fatalf("start bus taps: %v", err)
+	}
+	t.Cleanup(func() {
+		close(s.shutdownCh)
+		s.stopBusTaps()
+		s.stopWorkerExpiry()
+	})
+
+	// Verify DLQ subscription uses queue group "cordum-gateway" for write dedup.
+	bus.mu.Lock()
+	dlqGroups := bus.queueGroups[capsdk.SubjectDLQ]
+	bus.mu.Unlock()
+
+	if len(dlqGroups) != 1 {
+		t.Fatalf("expected 1 DLQ subscription, got %d", len(dlqGroups))
+	}
+	if dlqGroups[0] != "cordum-gateway" {
+		t.Fatalf("expected DLQ queue group 'cordum-gateway', got %q", dlqGroups[0])
+	}
+
+	// Verify sys.job.> (WS forwarding) uses broadcast (empty queue group).
+	bus.mu.Lock()
+	jobGroups := bus.queueGroups["sys.job.>"]
+	bus.mu.Unlock()
+
+	if len(jobGroups) != 1 {
+		t.Fatalf("expected 1 sys.job.> subscription, got %d", len(jobGroups))
+	}
+	if jobGroups[0] != "" {
+		t.Fatalf("expected sys.job.> broadcast (empty queue group), got %q", jobGroups[0])
+	}
+}
+
+func TestDLQWriteOnlyOneReplicaViaQueueGroup(t *testing.T) {
+	// Verify that DLQ persistence works through the queue-grouped subscription.
+	s, bus, _ := newTestGateway(t)
+	s.shutdownCh = make(chan struct{})
+	ctx := context.Background()
+
+	jobID := "job-dlq-qg-1"
+	jobReq := &pb.JobRequest{JobId: jobID, Topic: "job.default", TenantId: "default"}
+	if err := s.jobStore.SetJobMeta(ctx, jobReq); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetTopic(ctx, jobID, "job.default"); err != nil {
+		t.Fatalf("set topic: %v", err)
+	}
+
+	if err := s.startBusTaps(); err != nil {
+		t.Fatalf("start bus taps: %v", err)
+	}
+	t.Cleanup(func() {
+		close(s.shutdownCh)
+		s.stopBusTaps()
+		s.stopWorkerExpiry()
+	})
+
+	// Emit DLQ event — in a real multi-replica scenario, only one gateway gets it.
+	bus.emit(capsdk.SubjectDLQ, &pb.BusPacket{Payload: &pb.BusPacket_JobResult{
+		JobResult: &pb.JobResult{JobId: jobID, Status: pb.JobStatus_JOB_STATUS_FAILED, ErrorMessage: "test-fail"},
+	}})
+
+	waitFor(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		entry, err := s.dlqStore.Get(ctx, jobID)
+		return err == nil && entry != nil
+	}, "expected DLQ entry persisted via queue-grouped subscription")
+}
+
 func TestStartBusTapsStartsWorkerExpiry(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.shutdownCh = make(chan struct{})

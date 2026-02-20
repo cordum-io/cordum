@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/cordum/cordum/core/model"
@@ -226,8 +225,6 @@ func TestServerCloseNilUserStoreNoPanic(t *testing.T) {
 	s.Close()
 }
 
-// apiLimiterMu guards mutation of the global rate limiters in tests.
-var apiLimiterMu sync.Mutex
 
 func TestAllowedOriginsFromEnv(t *testing.T) {
 	t.Setenv("CORDUM_ALLOWED_ORIGINS", "")
@@ -370,19 +367,10 @@ func TestCorsMiddlewareAllowsPUT(t *testing.T) {
 }
 
 func TestRateLimitMiddleware(t *testing.T) {
-	apiLimiterMu.Lock()
-	origAPI := apiLimiter
-	origPublic := publicLimiter
-	defer func() {
-		apiLimiter = origAPI
-		publicLimiter = origPublic
-		apiLimiterMu.Unlock()
-	}()
-
-	apiLimiter = newKeyedRateLimiter(1, 1)
-	publicLimiter = newKeyedRateLimiter(1, 1)
+	apiRL := newKeyedRateLimiter(1, 1)
+	publicRL := newKeyedRateLimiter(1, 1)
 	auth := newBasicAuthForTest(t, nil)
-	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, apiRL, publicRL, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})))
 
@@ -418,19 +406,10 @@ func TestRateLimitMiddleware(t *testing.T) {
 }
 
 func TestRateLimitAuthOrdering(t *testing.T) {
-	apiLimiterMu.Lock()
-	origAPI := apiLimiter
-	origPublic := publicLimiter
-	defer func() {
-		apiLimiter = origAPI
-		publicLimiter = origPublic
-		apiLimiterMu.Unlock()
-	}()
-
-	apiLimiter = newKeyedRateLimiter(1, 1)
-	publicLimiter = newKeyedRateLimiter(1, 1)
+	apiRL := newKeyedRateLimiter(1, 1)
+	publicRL := newKeyedRateLimiter(1, 1)
 	auth := newBasicAuthForTest(t, nil)
-	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, tenantMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, apiRL, publicRL, tenantMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))))
 
@@ -492,19 +471,10 @@ func TestRateLimitKeyTenantBased(t *testing.T) {
 func TestRateLimitTenantSharedAcrossIPs(t *testing.T) {
 	// With rate=1, burst=1: first request succeeds, second from a
 	// different IP but the same tenant should still be rate-limited.
-	apiLimiterMu.Lock()
-	origAPI := apiLimiter
-	origPublic := publicLimiter
-	defer func() {
-		apiLimiter = origAPI
-		publicLimiter = origPublic
-		apiLimiterMu.Unlock()
-	}()
-
-	apiLimiter = newKeyedRateLimiter(1, 1)
-	publicLimiter = newKeyedRateLimiter(1, 1)
+	apiRL := newKeyedRateLimiter(1, 1)
+	publicRL := newKeyedRateLimiter(1, 1)
 	auth := newBasicAuthForTest(t, nil)
-	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := apiKeyMiddleware(auth, rateLimitMiddleware(auth, apiRL, publicRL, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})))
 
@@ -532,19 +502,10 @@ func TestRateLimitTenantSharedAcrossIPs(t *testing.T) {
 }
 
 func TestMCPRoutes_RateLimited(t *testing.T) {
-	apiLimiterMu.Lock()
-	origAPI := apiLimiter
-	origPublic := publicLimiter
-	defer func() {
-		apiLimiter = origAPI
-		publicLimiter = origPublic
-		apiLimiterMu.Unlock()
-	}()
-
-	apiLimiter = newKeyedRateLimiter(1, 1)
-	publicLimiter = newKeyedRateLimiter(1, 1)
+	apiRL := newKeyedRateLimiter(1, 1)
+	publicRL := newKeyedRateLimiter(1, 1)
 	auth := newBasicAuthForTest(t, nil)
-	handler := rateLimitMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := rateLimitMiddleware(auth, apiRL, publicRL, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

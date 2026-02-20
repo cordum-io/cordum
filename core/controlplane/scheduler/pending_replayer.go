@@ -46,6 +46,17 @@ func (r *PendingReplayer) Start(ctx context.Context) {
 	if r == nil || r.store == nil || r.engine == nil {
 		return
 	}
+
+	// Immediate recovery scan on startup so stale jobs are replayed without
+	// waiting for the first poll interval (up to 30s).
+	if r.lockKey != "" && r.lockTTL > 0 {
+		if token, err := r.store.TryAcquireLock(ctx, r.lockKey, r.lockTTL); err == nil && token != "" {
+			r.tick(ctx)
+		}
+	} else {
+		r.tick(ctx)
+	}
+
 	ticker := time.NewTicker(r.pollInterval)
 	defer ticker.Stop()
 
@@ -64,7 +75,8 @@ func (r *PendingReplayer) Start(ctx context.Context) {
 					continue
 				}
 				r.tick(ctx)
-				_ = r.store.ReleaseLock(ctx, r.lockKey, token)
+				// Lock held until TTL expiry (pollInterval * 2) — intentional for
+				// horizontal scaling. Only one replica may run tick() per TTL window.
 			} else {
 				r.tick(ctx)
 			}
@@ -79,6 +91,7 @@ func (r *PendingReplayer) tick(ctx context.Context) {
 	cutoff := time.Now().Add(-r.pendingAge)
 	r.replayPending(ctx, cutoff)
 	r.replayApproved(ctx, cutoff)
+	r.replayScheduled(ctx, cutoff)
 }
 
 func (r *PendingReplayer) replayPending(ctx context.Context, cutoff time.Time) {
@@ -161,5 +174,49 @@ func (r *PendingReplayer) replayApproved(ctx context.Context, cutoff time.Time) 
 	}
 	if replayed > 0 {
 		logging.Info("pending-replayer", "replayed approved jobs", "count", replayed)
+	}
+}
+
+// replayScheduled replays jobs stuck in SCHEDULED state after a scheduler
+// restart. These jobs were scheduled but the old scheduler died before
+// dispatching them. Without replay they would only be marked TIMEOUT by the
+// reconciler rather than re-dispatched.
+func (r *PendingReplayer) replayScheduled(ctx context.Context, cutoff time.Time) {
+	store, ok := r.store.(interface {
+		GetJobRequest(context.Context, string) (*pb.JobRequest, error)
+	})
+	if !ok {
+		return
+	}
+
+	cutoffMicros := cutoff.UnixNano() / int64(time.Microsecond)
+	records, err := r.store.ListJobsByState(ctx, JobStateScheduled, cutoffMicros, 200)
+	if err != nil {
+		logging.Error("pending-replayer", "list scheduled jobs failed", "error", err)
+		return
+	}
+	if len(records) == 0 {
+		return
+	}
+
+	logging.Info("pending-replayer", "replaying stuck scheduled jobs", "count", len(records))
+	replayed := 0
+	for _, rec := range records {
+		req, err := store.GetJobRequest(ctx, rec.ID)
+		if err != nil || req == nil {
+			logging.Error("pending-replayer", "load scheduled job request failed", "job_id", rec.ID, "error", err)
+			continue
+		}
+		if err := r.engine.handleJobRequest(req, rec.TraceID); err != nil {
+			logging.Error("pending-replayer", "replay scheduled job failed", "job_id", rec.ID, "error", err)
+		} else {
+			replayed++
+			if r.metrics != nil {
+				r.metrics.IncOrphanReplayed(req.Topic)
+			}
+		}
+	}
+	if replayed > 0 {
+		logging.Info("pending-replayer", "replayed stuck scheduled jobs", "count", replayed, "total", len(records))
 	}
 }

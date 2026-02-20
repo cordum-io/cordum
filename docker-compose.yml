@@ -166,6 +166,7 @@ services:
       - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - CONTEXT_ENGINE_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
+      - POLICY_CHECK_FAIL_MODE=${POLICY_CHECK_FAIL_MODE:-closed}
       - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
       - TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml
       - JOB_META_TTL=168h

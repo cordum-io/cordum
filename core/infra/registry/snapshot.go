@@ -11,6 +11,7 @@ const SnapshotKey = "sys:workers:snapshot"
 // Snapshot captures a point-in-time view of worker availability.
 type Snapshot struct {
 	CapturedAt string                   `json:"captured_at"`
+	WriterID   string                   `json:"writer_id,omitempty"`
 	Pools      map[string]PoolSnapshot  `json:"pools,omitempty"`
 	Topics     map[string]TopicSnapshot `json:"topics,omitempty"`
 	Workers    []WorkerSummary          `json:"workers,omitempty"`

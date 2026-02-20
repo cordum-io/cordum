@@ -2,6 +2,8 @@ package redisutil
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseAddrListEnv(t *testing.T) {
@@ -24,6 +26,37 @@ func TestParseBoolEnv(t *testing.T) {
 	if parseBoolEnv(envRedisTLSInsecure) {
 		t.Fatalf("expected false")
 	}
+}
+
+func TestGetEnvIntDefault(t *testing.T) {
+	// No env var set — should return default.
+	t.Setenv(envRedisPoolSize, "")
+	assert.Equal(t, 20, getEnvInt(envRedisPoolSize, 20))
+}
+
+func TestGetEnvIntCustomValue(t *testing.T) {
+	t.Setenv(envRedisPoolSize, "50")
+	assert.Equal(t, 50, getEnvInt(envRedisPoolSize, 20))
+}
+
+func TestGetEnvIntBadValue(t *testing.T) {
+	t.Setenv(envRedisPoolSize, "abc")
+	assert.Equal(t, 20, getEnvInt(envRedisPoolSize, 20))
+}
+
+func TestGetEnvIntZeroFallsBack(t *testing.T) {
+	t.Setenv(envRedisPoolSize, "0")
+	assert.Equal(t, 20, getEnvInt(envRedisPoolSize, 20))
+}
+
+func TestGetEnvIntNegativeFallsBack(t *testing.T) {
+	t.Setenv(envRedisPoolSize, "-5")
+	assert.Equal(t, 20, getEnvInt(envRedisPoolSize, 20))
+}
+
+func TestRedisMinIdleFromEnv(t *testing.T) {
+	t.Setenv(envRedisMinIdleConns, "10")
+	assert.Equal(t, 10, getEnvInt(envRedisMinIdleConns, 5))
 }
 
 func TestTLSConfigFromEnvErrors(t *testing.T) {

@@ -56,11 +56,20 @@ func startTestSafetyServer(t *testing.T, decision pb.DecisionType, reason string
 	return conn, cleanup
 }
 
+func newTestCB() *RedisCircuitBreaker {
+	return NewRedisCircuitBreaker(nil, "cordum:cb:safety:test", CircuitBreakerOpts{
+		FailThreshold: safetyCircuitFailBudget,
+		OpenDuration:  safetyCircuitOpenFor,
+		HalfOpenMax:   safetyCircuitHalfOpenMax,
+		CloseAfter:    safetyCircuitCloseAfter,
+	})
+}
+
 func TestSafetyClientAllow(t *testing.T) {
 	conn, cleanup := startTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
 	defer cleanup()
 
-	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn}
+	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}
 	record, err := client.Check(context.Background(), &pb.JobRequest{JobId: "1", Topic: "job.default"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -74,7 +83,7 @@ func TestSafetyClientDeny(t *testing.T) {
 	conn, cleanup := startTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_DENY, "blocked")
 	defer cleanup()
 
-	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn}
+	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}
 	record, err := client.Check(context.Background(), &pb.JobRequest{JobId: "1", Topic: "sys.destroy"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -129,7 +138,7 @@ func (a allowSafetyKernelClient) ListSnapshots(context.Context, *pb.ListSnapshot
 }
 
 func TestSafetyClientCircuitOpens(t *testing.T) {
-	client := &SafetyClient{client: failingSafetyKernelClient{}}
+	client := &SafetyClient{client: failingSafetyKernelClient{}, cb: newTestCB()}
 	req := &pb.JobRequest{JobId: "1", Topic: "job.default"}
 
 	for i := 0; i < safetyCircuitFailBudget; i++ {
@@ -152,7 +161,7 @@ func TestSafetyClientCircuitOpens(t *testing.T) {
 }
 
 func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
-	client := &SafetyClient{client: failingSafetyKernelClient{}}
+	client := &SafetyClient{client: failingSafetyKernelClient{}, cb: newTestCB()}
 	req := &pb.JobRequest{JobId: "1", Topic: "job.default"}
 
 	// Trip the circuit open.
@@ -162,11 +171,11 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 		}
 	}
 
-	// Force transition into half-open state.
-	client.mu.Lock()
-	client.openUntil = time.Now().Add(-time.Second)
-	client.state = circuitOpen
-	client.mu.Unlock()
+	// Force transition into half-open state via the local breaker.
+	client.cb.mu.Lock()
+	client.cb.localOpenUntil = time.Now().Add(-time.Second)
+	client.cb.localState = circuitOpen
+	client.cb.mu.Unlock()
 
 	// Swap client to a successful responder to allow closing.
 	client.client = allowSafetyKernelClient{}
@@ -187,13 +196,13 @@ func TestSafetyClientHalfOpenClosesAfterSuccesses(t *testing.T) {
 		t.Fatalf("expected allow during half-open probe, got %v", record.Decision)
 	}
 
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.state != circuitClosed {
-		t.Fatalf("expected circuit to close after two successes, state=%v", client.state)
+	client.cb.mu.Lock()
+	defer client.cb.mu.Unlock()
+	if client.cb.localState != circuitClosed {
+		t.Fatalf("expected circuit to close after two successes, state=%v", client.cb.localState)
 	}
-	if client.failures != 0 || client.successes != 0 {
-		t.Fatalf("expected counters reset, failures=%d successes=%d", client.failures, client.successes)
+	if client.cb.localFailures != 0 || client.cb.localSuccesses != 0 {
+		t.Fatalf("expected counters reset, failures=%d successes=%d", client.cb.localFailures, client.cb.localSuccesses)
 	}
 }
 

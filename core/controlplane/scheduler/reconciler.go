@@ -60,10 +60,31 @@ func (r *Reconciler) Start(ctx context.Context) {
 					// Another reconciler is active.
 					continue
 				}
+
+				// Renew lock during tick() to prevent expiry on slow ticks.
+				renewCtx, renewCancel := context.WithCancel(ctx)
+				renewDone := make(chan struct{})
+				go func() {
+					defer close(renewDone)
+					t := time.NewTicker(r.lockTTL / 3)
+					defer t.Stop()
+					for {
+						select {
+						case <-renewCtx.Done():
+							return
+						case <-t.C:
+							rCtx, rc := context.WithTimeout(ctx, 2*time.Second)
+							if err := r.store.RenewLock(rCtx, r.lockKey, token, r.lockTTL); err != nil {
+								logging.Warn("reconciler", "lock renewal failed", "error", err)
+							}
+							rc()
+						}
+					}
+				}()
+
 				r.tick(ctx)
-				if err := r.store.ReleaseLock(ctx, r.lockKey, token); err != nil {
-					logging.Warn("reconciler", "failed to release lock", "key", r.lockKey, "error", err)
-				}
+				renewCancel()
+				<-renewDone
 			} else {
 				r.tick(ctx)
 			}

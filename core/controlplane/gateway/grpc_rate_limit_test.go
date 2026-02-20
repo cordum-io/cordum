@@ -12,18 +12,9 @@ import (
 )
 
 func TestGRPCRateLimitUsesTenantKey(t *testing.T) {
-	apiLimiterMu.Lock()
-	origAPI := apiLimiter
-	origPublic := publicLimiter
-	defer func() {
-		apiLimiter = origAPI
-		publicLimiter = origPublic
-		apiLimiterMu.Unlock()
-	}()
-
-	apiLimiter = newKeyedRateLimiter(1, 1)
-	publicLimiter = newKeyedRateLimiter(1, 1)
-	interceptor := rateLimitUnaryInterceptor(nil)
+	apiRL := newKeyedRateLimiter(1, 1)
+	publicRL := newKeyedRateLimiter(1, 1)
+	interceptor := rateLimitUnaryInterceptor(nil, apiRL, publicRL)
 	info := &grpc.UnaryServerInfo{FullMethod: "/cordum.api.v1.CordumApi/SubmitJob"}
 	handler := func(ctx context.Context, req any) (any, error) { return "ok", nil }
 
@@ -39,18 +30,9 @@ func TestGRPCRateLimitUsesTenantKey(t *testing.T) {
 }
 
 func TestGRPCRateLimitFallsBackToIP(t *testing.T) {
-	apiLimiterMu.Lock()
-	origAPI := apiLimiter
-	origPublic := publicLimiter
-	defer func() {
-		apiLimiter = origAPI
-		publicLimiter = origPublic
-		apiLimiterMu.Unlock()
-	}()
-
-	apiLimiter = newKeyedRateLimiter(1, 1)
-	publicLimiter = newKeyedRateLimiter(1, 1)
-	interceptor := rateLimitUnaryInterceptor(nil)
+	apiRL := newKeyedRateLimiter(1, 1)
+	publicRL := newKeyedRateLimiter(1, 1)
+	interceptor := rateLimitUnaryInterceptor(nil, apiRL, publicRL)
 	info := &grpc.UnaryServerInfo{FullMethod: "/cordum.api.v1.CordumApi/SubmitJob"}
 	handler := func(ctx context.Context, req any) (any, error) { return "ok", nil }
 

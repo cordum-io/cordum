@@ -686,7 +686,103 @@ func TestFullPipeline(t *testing.T) {
 
 ---
 
-## 8. Performance Tuning
+## 8. CAP v2.5.3 Re-exported Types
+
+The `sdk/runtime` package re-exports several types from the CAP v2.5.3 SDK for convenience. These are available under the `runtime` package without importing CAP directly.
+
+### MetricsHook
+
+Interface for job lifecycle observability. Implement this to collect custom metrics from worker execution:
+
+```go
+type MetricsHook interface {
+    OnJobReceived(jobID, topic string)
+    OnJobCompleted(jobID, topic string, duration time.Duration)
+    OnJobFailed(jobID, topic string, err error)
+    OnHeartbeatSent(workerID string)
+}
+```
+
+### NoopMetrics
+
+A zero-overhead `MetricsHook` implementation that does nothing. Use as a default when no metrics collection is needed:
+
+```go
+worker, _ := runtime.NewWorker(runtime.Config{
+    Metrics: runtime.NoopMetrics{},
+    // ...
+})
+```
+
+### Middleware / HandlerFunc
+
+Middleware chain support for worker handlers. `HandlerFunc` is the base handler type, and `Middleware` wraps it:
+
+```go
+type HandlerFunc func(ctx context.Context, req *agentv1.JobRequest) (*agentv1.JobResult, error)
+type Middleware func(HandlerFunc) HandlerFunc
+```
+
+Apply middleware to a handler:
+
+```go
+handler := runtime.Chain(baseHandler, loggingMW, metricsMW, recoveryMW)
+worker.Run(ctx, handler)
+```
+
+### LoggingMiddleware
+
+Built-in middleware that logs job start, completion, and failure with structured fields:
+
+```go
+logger := log.New(os.Stderr, "[worker] ", log.LstdFlags)
+mw := runtime.LoggingMiddleware(logger)
+handler := runtime.Chain(baseHandler, mw)
+```
+
+### InMemoryBus / NewInMemoryBus
+
+Test utility for unit testing handlers without a running NATS server. Implements the bus interface in-memory:
+
+```go
+func TestMyHandler(t *testing.T) {
+    bus := runtime.NewInMemoryBus()
+
+    // Publish and subscribe without NATS
+    bus.Subscribe("job.test", func(msg []byte) {
+        // handle message
+    })
+    bus.Publish("job.test", payload)
+}
+```
+
+### Updated Worker Config Fields
+
+The `Config` struct now accepts two additional fields from CAP v2.5.3:
+
+```go
+type Config struct {
+    // ... existing fields ...
+    Logger  *log.Logger        // Optional logger for worker internals (default: discard)
+    Metrics capsdk.MetricsHook // Optional metrics hook (default: NoopMetrics)
+}
+```
+
+Example:
+
+```go
+worker, _ := runtime.NewWorker(runtime.Config{
+    Pool:     "my-pool",
+    Subjects: []string{"job.my-pack.*"},
+    NatsURL:  os.Getenv("NATS_URL"),
+    Logger:   log.New(os.Stderr, "[worker] ", log.LstdFlags),
+    Metrics:  myPrometheusHook,
+})
+```
+
+---
+
+## 9. Performance Tuning
 
 ### Concurrency
 
@@ -718,7 +814,7 @@ c.HTTPClient = &http.Client{
 
 ---
 
-## 9. Environment Variables
+## 10. Environment Variables
 
 | Variable | Used By | Description |
 |----------|---------|-------------|
@@ -730,9 +826,23 @@ c.HTTPClient = &http.Client{
 
 ---
 
+## 11. Horizontal Scaling
+
+The SDK and worker runtime are fully compatible with multi-replica Cordum deployments. Key points for SDK users:
+
+- **Job dispatch is load-balanced** — NATS queue groups ensure each job is delivered to exactly one worker, regardless of how many scheduler or gateway replicas are running.
+- **Heartbeats are broadcast** — Every scheduler replica receives every worker heartbeat, so workers are visible across all replicas immediately.
+- **No SDK changes required** — Workers connect to NATS as before. The platform handles distributed locking, rate limiting, and failover transparently.
+- **Idempotency keys** — If your job submission includes an idempotency key, it is enforced globally via Redis (not per-replica). Duplicate submissions across different gateway replicas are correctly deduplicated.
+
+For details on platform-side HA configuration, see [horizontal-scaling.md](horizontal-scaling.md).
+
+---
+
 ## Related Docs
 
 - [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — CAP bus protocol and pointer semantics
 - [api-reference.md](api-reference.md) — REST endpoint reference
 - [configuration.md](configuration.md) — Environment variables and config files
 - [SCHEDULER_POOL_SPEC.md](SCHEDULER_POOL_SPEC.md) — Pool routing specification
+- [horizontal-scaling.md](horizontal-scaling.md) — Multi-replica deployment guide

@@ -6,7 +6,7 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.5.2
+	github.com/cordum-io/cap/v2 v2.5.3
 	github.com/nats-io/nats-server/v2 v2.12.4
 	github.com/nats-io/nats.go v1.48.0
 	github.com/redis/go-redis/v9 v9.7.3

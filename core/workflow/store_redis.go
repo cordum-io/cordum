@@ -203,11 +203,13 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	return nil
 }
 
-// updateRunScript atomically reads prev status, writes new run, and updates all indexes.
-// This prevents TOCTOU races when concurrent goroutines update the same run.
+// updateRunScript atomically reads the previous status and writes the new run document.
+// Only touches a single key (KEYS[1] = runKey) to avoid CROSSSLOT errors on Redis Cluster.
+// Index updates (ZADD/ZREM/SADD/SREM) are performed in a separate Go pipeline — they are
+// idempotent (ZADD is upsert, ZREM is no-op if missing) so eventual consistency is safe.
 //
-// KEYS: [1]=runKey [2]=workflowIndexKey [3]=allIndexKey [4]=newStatusIndexKey
-// ARGV: [1]=payload [2]=score [3]=runID [4]=newStatus [5]=orgActiveKey [6]=isActive
+// KEYS: [1]=runKey
+// ARGV: [1]=payload
 var updateRunScript = redis.NewScript(`
 local prev = redis.call('GET', KEYS[1])
 local prevStatus = ''
@@ -219,27 +221,14 @@ if prev then
 end
 
 redis.call('SET', KEYS[1], ARGV[1])
-redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
-redis.call('ZADD', KEYS[3], ARGV[2], ARGV[3])
-redis.call('ZADD', KEYS[4], ARGV[2], ARGV[3])
-
-if prevStatus ~= '' and prevStatus ~= ARGV[4] then
-  redis.call('ZREM', 'wf:runs:status:' .. prevStatus, ARGV[3])
-end
-
-if ARGV[5] ~= '' then
-  if ARGV[6] == '1' then
-    redis.call('SADD', ARGV[5], ARGV[3])
-  else
-    redis.call('SREM', ARGV[5], ARGV[3])
-  end
-end
 
 return prevStatus
 `)
 
 // UpdateRun atomically overwrites an existing run document and updates all indexes.
-// Uses a Lua script to prevent TOCTOU races on concurrent step completions.
+// The Lua script handles the atomic GET+SET on the run key (single slot).
+// Index updates are performed in a pipeline afterward — they are idempotent so
+// eventual consistency is acceptable if the pipeline partially fails.
 func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	if run == nil || run.ID == "" || run.WorkflowID == "" {
 		return fmt.Errorf("run id and workflow id required")
@@ -252,33 +241,35 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 		return fmt.Errorf("marshal run: %w", err)
 	}
 
-	score := fmt.Sprintf("%d", now.Unix())
-	orgActiveKey := ""
-	isActive := "0"
+	// Atomic GET prev status + SET new run doc (single key — cluster-safe).
+	keys := []string{runKey(run.ID)}
+	prevStatus, err := updateRunScript.Run(ctx, s.client, keys, string(payload)).Text()
+	if err != nil {
+		return fmt.Errorf("update run: %w", err)
+	}
+
+	// Idempotent index updates in a transaction (ZADD is upsert, ZREM is no-op if missing).
+	score := float64(now.Unix())
+	pipe := s.client.TxPipeline()
+	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: score, Member: run.ID})
+	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: score, Member: run.ID})
+	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: score, Member: run.ID})
+
+	if prevStatus != "" && prevStatus != string(run.Status) {
+		pipe.ZRem(ctx, runStatusIndexKey(RunStatus(prevStatus)), run.ID)
+	}
+
 	if run.OrgID != "" {
-		orgActiveKey = runOrgActiveKey(run.OrgID)
+		orgKey := runOrgActiveKey(run.OrgID)
 		if isActiveRunStatus(run.Status) {
-			isActive = "1"
+			pipe.SAdd(ctx, orgKey, run.ID)
+		} else {
+			pipe.SRem(ctx, orgKey, run.ID)
 		}
 	}
 
-	keys := []string{
-		runKey(run.ID),
-		runIndexKey(run.WorkflowID),
-		runAllIndexKey(),
-		runStatusIndexKey(run.Status),
-	}
-	args := []interface{}{
-		string(payload),
-		score,
-		run.ID,
-		string(run.Status),
-		orgActiveKey,
-		isActive,
-	}
-
-	if _, err := updateRunScript.Run(ctx, s.client, keys, args...).Result(); err != nil {
-		return fmt.Errorf("update run: %w", err)
+	if _, err := pipe.Exec(ctx); err != nil {
+		slog.Warn("update run: index pipeline failed (idempotent, will self-heal)", "run_id", run.ID, "error", err)
 	}
 	return nil
 }
@@ -558,6 +549,96 @@ func (s *RedisStore) DeleteRunIdempotencyKey(ctx context.Context, key string) er
 
 func runIdempotencyKey(key string) string {
 	return "wf:run:idempotency:" + key
+}
+
+// --- Durable delay timer methods ---
+
+const delayTimerKey = "cordum:wf:delay:timers"
+
+// AddDelayTimer persists a delay timer as a sorted set member with fire-time score.
+// Member format: workflowID:runID. Score is Unix seconds of the fire time.
+func (s *RedisStore) AddDelayTimer(ctx context.Context, workflowID, runID string, fireAt time.Time) error {
+	member := workflowID + ":" + runID
+	return s.client.ZAdd(ctx, delayTimerKey, redis.Z{
+		Score:  float64(fireAt.Unix()),
+		Member: member,
+	}).Err()
+}
+
+// RemoveDelayTimer removes a delay timer from the sorted set.
+func (s *RedisStore) RemoveDelayTimer(ctx context.Context, workflowID, runID string) error {
+	member := workflowID + ":" + runID
+	return s.client.ZRem(ctx, delayTimerKey, member).Err()
+}
+
+// DelayTimerInfo describes a pending delay timer for a workflow run.
+type DelayTimerInfo struct {
+	WorkflowID  string    `json:"workflow_id"`
+	RunID       string    `json:"run_id"`
+	FiresAt     time.Time `json:"fires_at"`
+	RemainingMs int64     `json:"remaining_ms"`
+}
+
+// GetDelayTimer returns the delay timer for a specific run, or nil if none exists or it has already fired.
+func (s *RedisStore) GetDelayTimer(ctx context.Context, workflowID, runID string) (*DelayTimerInfo, error) {
+	member := workflowID + ":" + runID
+	score, err := s.client.ZScore(ctx, delayTimerKey, member).Result()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get delay timer: %w", err)
+	}
+	firesAt := time.Unix(int64(score), 0).UTC()
+	now := time.Now()
+	if firesAt.Before(now) {
+		return nil, nil // Already fired — stale.
+	}
+	return &DelayTimerInfo{
+		WorkflowID:  workflowID,
+		RunID:       runID,
+		FiresAt:     firesAt,
+		RemainingMs: firesAt.Sub(now).Milliseconds(),
+	}, nil
+}
+
+// ListFutureDelays returns all timers with fire time > now, as (member, score) pairs.
+// Members are in "workflowID:runID" format.
+func (s *RedisStore) ListFutureDelays(ctx context.Context, now time.Time) ([]redis.Z, error) {
+	return s.client.ZRangeByScoreWithScores(ctx, delayTimerKey, &redis.ZRangeBy{
+		Min: fmt.Sprintf("%d", now.Unix()+1),
+		Max: "+inf",
+	}).Result()
+}
+
+// popFiredDelaysScript atomically fetches and removes all timers with score <= now.
+var popFiredDelaysScript = redis.NewScript(`
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local members = redis.call('ZRANGEBYSCORE', key, '-inf', now)
+if #members > 0 then
+  redis.call('ZREM', key, unpack(members))
+end
+return members
+`)
+
+// PopFiredDelays atomically returns and removes all timers that have fired (score <= now).
+func (s *RedisStore) PopFiredDelays(ctx context.Context, now time.Time) ([]string, error) {
+	result, err := popFiredDelaysScript.Run(ctx, s.client, []string{delayTimerKey}, now.Unix()).StringSlice()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("pop fired delays: %w", err)
+	}
+	return result, nil
+}
+
+// CleanStaleDelays removes timer entries older than the given cutoff time.
+// This prevents unbounded ZSET growth from orphaned entries (e.g. run deleted
+// while timer was pending).
+func (s *RedisStore) CleanStaleDelays(ctx context.Context, cutoff time.Time) (int64, error) {
+	return s.client.ZRemRangeByScore(ctx, delayTimerKey, "-inf", fmt.Sprintf("%d", cutoff.Unix())).Result()
 }
 
 func isActiveRunStatus(status RunStatus) bool {

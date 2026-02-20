@@ -7,9 +7,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Config handlers
@@ -85,6 +90,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "config update failed")
 		return
 	}
+
+	// Broadcast config-changed notification so all replicas reload immediately.
+	s.publishConfigChanged(scopeStr, scopeID)
+
 	if mcpConfigTouched(data) {
 		s.reloadMCPConfig(r.Context())
 	}
@@ -176,6 +185,39 @@ func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, snap)
+}
+
+// publishConfigChanged publishes a lightweight NATS notification after a config
+// write so that all replicas (gateway, scheduler, workflow-engine) can reload
+// immediately instead of waiting for the 30s poll. Fire-and-forget: a publish
+// failure is logged but does not fail the config write.
+func (s *server) publishConfigChanged(scope, scopeID string) {
+	if s.bus == nil {
+		return
+	}
+	packet := &pb.BusPacket{
+		TraceId:         uuid.New().String(),
+		SenderId:        "api-gateway",
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_Alert{
+			Alert: &pb.SystemAlert{
+				Level:           "INFO",
+				Severity:        pb.AlertSeverity_ALERT_SEVERITY_INFO,
+				Message:         "config changed",
+				Component:       "api-gateway",
+				SourceComponent: "api-gateway",
+				Details: map[string]string{
+					"scope":      scope,
+					"scope_id":   scopeID,
+					"changed_at": time.Now().UTC().Format(time.RFC3339),
+				},
+			},
+		},
+	}
+	if err := s.bus.Publish(capsdk.SubjectConfigChanged, packet); err != nil {
+		slog.Warn("config change notification publish failed", "error", err)
+	}
 }
 
 // Schema handlers

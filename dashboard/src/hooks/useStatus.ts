@@ -15,6 +15,20 @@ import {
 // System status
 // ---------------------------------------------------------------------------
 
+export interface CircuitBreakerState {
+  state: "CLOSED" | "OPEN" | "HALF_OPEN" | "unknown";
+  failures: number;
+  fail_threshold: number;
+  cooldown_remaining_ms: number;
+}
+
+export interface ReplicaInfo {
+  id: string;
+  uptime: string;
+  version: string;
+  last_seen: string;
+}
+
 export interface GatewayStatus {
   time?: string;
   uptime_seconds?: number;
@@ -43,6 +57,26 @@ export interface GatewayStatus {
     succeeded?: number;
     failed?: number;
   };
+  // HA fields (absent when running single-replica / old backend)
+  instance_id?: string;
+  circuit_breakers?: {
+    input: CircuitBreakerState;
+    output: CircuitBreakerState;
+  };
+  rate_limiter?: {
+    mode: "redis" | "memory";
+  };
+  replicas?: Record<string, ReplicaInfo[]>;
+  ha_env?: {
+    redis_pool_size: string;
+    redis_min_idle_conns: string;
+    audit_transport: string;
+  };
+  snapshot_meta?: {
+    writer_id: string;
+    captured_at: string;
+  };
+  input_fail_open_total?: number;
 }
 
 type PipelineMetrics = NonNullable<GatewayStatus["pipeline"]>;

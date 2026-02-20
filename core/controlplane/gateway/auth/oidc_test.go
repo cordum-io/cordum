@@ -13,9 +13,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -654,5 +657,282 @@ func TestParseJWKRSA_InvalidBase64(t *testing.T) {
 	_, err := parseJWKRSA("!!!invalid!!!", "AQAB")
 	if err == nil {
 		t.Fatal("expected error for invalid base64")
+	}
+}
+
+// ---------- JWKS jitter + Redis cache tests ----------
+
+func TestCryptoRandJitter(t *testing.T) {
+	// Verify jitter returns values in [0, maxSeconds).
+	for i := 0; i < 20; i++ {
+		d := cryptoRandJitter(30)
+		if d < 0 || d >= 30*time.Second {
+			t.Fatalf("jitter out of range: %v", d)
+		}
+	}
+
+	// Verify zero/negative maxSeconds returns 0.
+	if d := cryptoRandJitter(0); d != 0 {
+		t.Fatalf("expected 0 for maxSeconds=0, got %v", d)
+	}
+	if d := cryptoRandJitter(-1); d != 0 {
+		t.Fatalf("expected 0 for maxSeconds=-1, got %v", d)
+	}
+
+	// Verify some variance exists (not all the same).
+	seen := make(map[time.Duration]bool)
+	for i := 0; i < 50; i++ {
+		seen[cryptoRandJitter(30)] = true
+	}
+	if len(seen) < 2 {
+		t.Fatal("jitter produced no variance over 50 samples")
+	}
+}
+
+func TestIssuerCacheKey(t *testing.T) {
+	p := &OIDCProvider{cfg: OIDCConfig{IssuerURL: "https://auth.example.com"}}
+	key := p.issuerCacheKey()
+	if !strings.HasPrefix(key, "cordum:auth:jwks:") {
+		t.Fatalf("expected cordum:auth:jwks: prefix, got %q", key)
+	}
+	// sha256[:16] = 32 hex chars
+	suffix := strings.TrimPrefix(key, "cordum:auth:jwks:")
+	if len(suffix) != 32 {
+		t.Fatalf("expected 32 hex chars after prefix, got %d: %q", len(suffix), suffix)
+	}
+
+	// Different issuers produce different keys.
+	p2 := &OIDCProvider{cfg: OIDCConfig{IssuerURL: "https://other.example.com"}}
+	if p.issuerCacheKey() == p2.issuerCacheKey() {
+		t.Fatal("expected different cache keys for different issuers")
+	}
+}
+
+// mockOIDCServerWithCounter wraps mockOIDCServer and counts JWKS requests.
+type mockOIDCServerWithCounter struct {
+	*httptest.Server
+	key       *rsa.PrivateKey
+	kid       string
+	issuer    string
+	jwksHits  atomic.Int64
+}
+
+func newMockOIDCServerWithCounter(t *testing.T) *mockOIDCServerWithCounter {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate RSA key: %v", err)
+	}
+
+	m := &mockOIDCServerWithCounter{key: key, kid: "test-kid-cache"}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		doc := map[string]string{
+			"issuer":   m.issuer,
+			"jwks_uri": m.issuer + "/keys",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(doc)
+	})
+	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
+		m.jwksHits.Add(1)
+		n := base64.RawURLEncoding.EncodeToString(m.key.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(m.key.E)).Bytes())
+		jwks := fmt.Sprintf(`{"keys":[{"kty":"RSA","kid":"%s","use":"sig","alg":"RS256","n":"%s","e":"%s"}]}`,
+			m.kid, n, e)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jwks))
+	})
+
+	m.Server = httptest.NewServer(mux)
+	m.issuer = m.Server.URL
+	return m
+}
+
+func TestJWKSRedisCacheHit(t *testing.T) {
+	// Populate Redis cache, then refresh — should NOT hit the IdP.
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer srv.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	defer rdb.Close()
+
+	m := newMockOIDCServerWithCounter(t)
+	defer m.Close()
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: m.issuer,
+		Audience:  "cordum-api",
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	// Initial fetch happened during construction — record the count.
+	initialHits := m.jwksHits.Load()
+	if initialHits < 1 {
+		t.Fatalf("expected at least 1 JWKS fetch during init, got %d", initialHits)
+	}
+
+	// Attach Redis and pre-populate the cache.
+	provider.WithRedis(rdb)
+	cacheKey := provider.issuerCacheKey()
+
+	n := base64.RawURLEncoding.EncodeToString(m.key.N.Bytes())
+	e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(m.key.E)).Bytes())
+	cachedJWKS := fmt.Sprintf(`{"keys":[{"kty":"RSA","kid":"%s","use":"sig","alg":"RS256","n":"%s","e":"%s"}]}`,
+		m.kid, n, e)
+	if err := rdb.Set(context.Background(), cacheKey, cachedJWKS, time.Hour).Err(); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	// Trigger refresh — should hit cache, not IdP.
+	if err := provider.refreshJWKS(); err != nil {
+		t.Fatalf("refreshJWKS: %v", err)
+	}
+
+	if m.jwksHits.Load() != initialHits {
+		t.Fatalf("expected no additional JWKS fetches (cache hit), got %d total", m.jwksHits.Load())
+	}
+
+	// Verify the provider actually loaded the keys from cache.
+	provider.mu.RLock()
+	hasKey := len(provider.rsaKeys) > 0
+	provider.mu.RUnlock()
+	if !hasKey {
+		t.Fatal("expected RSA keys loaded from cache")
+	}
+}
+
+func TestJWKSRedisCacheMiss(t *testing.T) {
+	// Empty Redis cache — should fetch from IdP and write to Redis.
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer srv.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	defer rdb.Close()
+
+	m := newMockOIDCServerWithCounter(t)
+	defer m.Close()
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: m.issuer,
+		Audience:  "cordum-api",
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	provider.WithRedis(rdb)
+	cacheKey := provider.issuerCacheKey()
+
+	// Verify cache is empty.
+	if val, err := rdb.Get(context.Background(), cacheKey).Result(); err == nil {
+		t.Fatalf("expected empty cache, got: %s", val)
+	}
+
+	hitsBefore := m.jwksHits.Load()
+
+	// Trigger refresh — should fetch from IdP and write cache.
+	if err := provider.refreshJWKS(); err != nil {
+		t.Fatalf("refreshJWKS: %v", err)
+	}
+
+	if m.jwksHits.Load() <= hitsBefore {
+		t.Fatal("expected IdP JWKS fetch on cache miss")
+	}
+
+	// Verify cache was populated.
+	cached, err := rdb.Get(context.Background(), cacheKey).Result()
+	if err != nil {
+		t.Fatalf("expected cache populated after fetch, got error: %v", err)
+	}
+	if !strings.Contains(cached, "keys") {
+		t.Fatalf("cached value doesn't look like JWKS: %s", cached)
+	}
+
+	// Verify TTL is approximately 1h.
+	ttl := srv.TTL(cacheKey)
+	if ttl < 59*time.Minute || ttl > 61*time.Minute {
+		t.Fatalf("expected ~1h TTL, got %v", ttl)
+	}
+}
+
+func TestJWKSRedisFallback(t *testing.T) {
+	// Redis is unavailable — should fall back to direct IdP fetch.
+	m := newMockOIDCServerWithCounter(t)
+	defer m.Close()
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: m.issuer,
+		Audience:  "cordum-api",
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	// Use a Redis client with fast failure — non-routable address, zero retries,
+	// short dial timeout. Avoids port exhaustion on Windows/MSYS.
+	brokenRdb := redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1", // unlikely to have a server
+		MaxRetries:  0,
+		DialTimeout: 100 * time.Millisecond,
+	})
+	defer brokenRdb.Close()
+
+	provider.WithRedis(brokenRdb)
+
+	hitsBefore := m.jwksHits.Load()
+
+	// Should fall back to HTTP fetch despite broken Redis.
+	if err := provider.refreshJWKS(); err != nil {
+		t.Fatalf("refreshJWKS should succeed with broken Redis: %v", err)
+	}
+
+	if m.jwksHits.Load() <= hitsBefore {
+		t.Fatal("expected IdP fetch as fallback when Redis unavailable")
+	}
+
+	// Verify keys were loaded.
+	provider.mu.RLock()
+	hasKey := len(provider.rsaKeys) > 0
+	provider.mu.RUnlock()
+	if !hasKey {
+		t.Fatal("expected RSA keys loaded via fallback fetch")
+	}
+}
+
+func TestJWKSWithRedisNil(t *testing.T) {
+	// No Redis attached — should work exactly like before (direct fetch).
+	m := newMockOIDCServerWithCounter(t)
+	defer m.Close()
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: m.issuer,
+		Audience:  "cordum-api",
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	hitsBefore := m.jwksHits.Load()
+
+	if err := provider.refreshJWKS(); err != nil {
+		t.Fatalf("refreshJWKS: %v", err)
+	}
+
+	if m.jwksHits.Load() <= hitsBefore {
+		t.Fatal("expected IdP JWKS fetch when no Redis configured")
 	}
 }

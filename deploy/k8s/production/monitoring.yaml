@@ -182,3 +182,64 @@ spec:
       annotations:
         summary: Cordum context engine is down
         description: No targets for cordum-context-engine have been reachable for 1m. Memory and context retrieval will fail.
+    # --- Redis Cluster Health Alerts ---
+    - alert: CordumRedisClusterDegraded
+      expr: min(redis_cluster_state{namespace="cordum"}) == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: Redis cluster is in degraded state
+        description: >
+          Redis cluster reports cluster_state:fail. Hash slots are not fully covered
+          and the cluster cannot serve writes. Check CLUSTER INFO on each node.
+    - alert: CordumRedisClusterNodeDown
+      expr: count(up{namespace="cordum", service="cordum-redis"} == 1) < 6
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Redis cluster has fewer than 6 nodes
+        description: >
+          Only {{ $value }} of 6 Redis nodes are reachable.
+          Check pod status and node health.
+    - alert: CordumRedisClusterSlotsIncomplete
+      expr: min(redis_cluster_slots_ok{namespace="cordum"}) < 16384
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: Redis cluster has incomplete slot coverage
+        description: >
+          Only {{ $value }} of 16384 hash slots are assigned and healthy.
+          Keys mapping to unassigned slots will fail. Run CLUSTER NODES to diagnose.
+    - alert: CordumRedisMemoryHigh
+      expr: max(redis_memory_used_bytes{namespace="cordum"} / redis_memory_max_bytes{namespace="cordum"}) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: Redis memory usage exceeds 80%
+        description: >
+          A Redis node is using more than 80% of its maxmemory limit.
+          Consider increasing memory limits or reviewing key eviction policies.
+    - alert: CordumRedisReplicationBroken
+      expr: min(redis_connected_slaves{namespace="cordum", role="master"}) < 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Redis primary has no connected replicas
+        description: >
+          A Redis primary node has zero connected replicas for 5 minutes.
+          Data is not being replicated and failover is unsafe.
+    - alert: CordumRedisBackupFailed
+      expr: kube_job_status_failed{namespace="cordum", job_name=~"cordum-redis-backup.*"} > 0
+      for: 1h
+      labels:
+        severity: warning
+      annotations:
+        summary: Redis backup job has failed
+        description: >
+          The cordum-redis-backup CronJob has a failed job.
+          Check job logs: kubectl logs -l job-name=cordum-redis-backup -n cordum.

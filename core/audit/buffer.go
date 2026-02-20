@@ -104,6 +104,9 @@ func (b *BufferedExporter) Send(event SIEMEvent) {
 	}
 }
 
+// Backend returns the underlying SIEM exporter wrapped by this buffer.
+func (b *BufferedExporter) Backend() Exporter { return b.exporter }
+
 // Close drains remaining events and shuts down the exporter.
 func (b *BufferedExporter) Close() error {
 	close(b.done)

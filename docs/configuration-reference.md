@@ -287,12 +287,19 @@ On scheduler startup, `bootstrapConfig()` syncs file-based config into Redis:
 
 ### Config Reload
 
-The scheduler watches for config changes on a configurable interval:
+Config changes propagate to all replicas through two mechanisms:
+
+1. **NATS notification (immediate)** — When `PUT /api/v1/config` writes to Redis, the API gateway publishes a lightweight notification to `sys.config.changed` (broadcast, empty queue group). All scheduler replicas subscribe and reload config from Redis immediately on receipt.
+
+2. **Polling fallback (30s)** — Each scheduler replica polls Redis for config changes on a configurable interval. This catches any notifications missed due to transient NATS issues.
 
 - **Env var**: `SCHEDULER_CONFIG_RELOAD_INTERVAL` (default `30s`)
-- On each tick, it reads `cfg:system:default` and compares hashes
+- **NATS subject**: `sys.config.changed` — broadcast to all replicas
+- On each reload (notification or poll), it reads `cfg:system:default` and compares hashes
 - If pools changed: updates routing table live
 - If timeouts changed: updates reconciler timeouts live
+
+> **Note**: The NATS message is a notification only — it does not contain the config data itself. Replicas always reload from Redis to ensure consistency.
 
 ### Resetting Cached Config
 
@@ -649,6 +656,9 @@ scanners:
 | `CONTEXT_ENGINE_ADDR` | `:50070` | No | Context engine gRPC address |
 | `OUTPUT_POLICY_ENABLED` | `false` | No | Enable output policy scanning: `true`, `1` |
 | `CORDUM_TENANT_ID` | — | No | Default tenant ID for SDK/MCP clients |
+| `CORDUM_INSTANCE_ID` | `os.Hostname()` | No | Override pod name used in Prometheus `pod` label. Defaults to hostname; falls back to `"unknown"` |
+
+> **Prometheus pod label**: All Cordum metrics include a `pod` const label (`os.Hostname()` or `CORDUM_INSTANCE_ID`) so Prometheus can distinguish replicas in HA deployments. Use `sum by (pod) (cordum_scheduler_jobs_received_total)` for per-replica breakdown.
 
 ### NATS TLS
 
@@ -686,6 +696,17 @@ scanners:
 | `REDIS_DATA_TTL_SECONDS` | — | Data TTL in seconds (takes precedence) |
 | `REDIS_DATA_TTL` | — | Data TTL as Go duration (e.g., `24h`) |
 
+### Redis Connection Pool
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_POOL_SIZE` | `20` | Max connections per Redis node. Each service replica opens up to this many connections. |
+| `REDIS_MIN_IDLE_CONNS` | `5` | Minimum idle connections kept warm per Redis node. Reduces cold-start latency for bursty traffic. |
+
+**Sizing guidance**: With N service replicas × P pool size × M Redis nodes, total connections ≈ N×P×M. For example, 3 scheduler replicas × 50 pool × 1 Redis = 150 connections. Redis default `maxclients` is 10000, so pool sizes up to 100 are safe for typical deployments. The scheduler benefits from higher pool sizes (recommend 50) due to concurrent job dispatch; other services can use the default 20.
+
+Invalid values (non-numeric, zero, negative) are silently replaced with defaults and a warning is logged.
+
 ### Gateway
 
 | Variable | Default | Description |
@@ -718,10 +739,16 @@ scanners:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `API_RATE_LIMIT_RPS` | — | Per-tenant rate limit (requests/sec) |
-| `API_RATE_LIMIT_BURST` | — | Per-tenant burst size |
-| `API_PUBLIC_RATE_LIMIT_RPS` | — | Public (unauthenticated) rate limit |
-| `API_PUBLIC_RATE_LIMIT_BURST` | — | Public burst size |
+| `API_RATE_LIMIT_RPS` | `2000` | Per-tenant rate limit (requests/sec) |
+| `API_RATE_LIMIT_BURST` | `4000` | Per-tenant burst size |
+| `API_PUBLIC_RATE_LIMIT_RPS` | `20` | Public (unauthenticated) rate limit |
+| `API_PUBLIC_RATE_LIMIT_BURST` | `40` | Public burst size |
+| `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false` or Redis unavailable, falls back to per-process in-memory token buckets (effective limit = N × configured limit with N replicas). |
+
+> **Horizontal scaling note**: With multiple gateway replicas, Redis-backed rate
+> limiting (`REDIS_RATE_LIMIT=true`) is strongly recommended. Without it, each
+> replica maintains its own in-memory token bucket, so the effective rate limit
+> is multiplied by the number of replicas.
 
 ### Gateway — CORS
 
@@ -758,6 +785,13 @@ scanners:
 | `CORDUM_OIDC_ALLOW_PRIVATE` | — | Allow private/loopback issuer URLs |
 | `CORDUM_OIDC_ALLOW_HTTP` | — | Allow HTTP (non-TLS) issuer URLs |
 
+**HA note — JWKS coordination**: When running multiple gateway replicas, the OIDC provider
+automatically coordinates JWKS fetches via Redis. The first replica to refresh fetches from
+the IdP and writes the JWKS to `cordum:auth:jwks:<issuerHash>` (TTL 1h). Other replicas read
+from this cache, reducing IdP load from N requests to 1 per refresh cycle. Each replica also
+applies random jitter (0–30s initial, 0–15s per tick) to prevent thundering-herd requests.
+If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior as single-replica).
+
 ### Gateway — User Authentication
 
 | Variable | Default | Description |
@@ -789,6 +823,7 @@ scanners:
 | `JOB_META_TTL_SECONDS` | — | Job metadata TTL in seconds (takes precedence) |
 | `WORKER_SNAPSHOT_INTERVAL` | — | Worker state snapshot interval |
 | `OUTPUT_POLICY_ENABLED` | `false` | Enable output policy: `true`, `1` |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when safety kernel is unreachable during pre-dispatch input policy checks. `closed` (default): requeue with backoff. `open`: allow through with warning log and metric. See [safety-kernel.md](safety-kernel.md) for risk implications. |
 
 ### Workflow Engine
 
@@ -855,6 +890,13 @@ scanners:
 |----------|---------|-------------|
 | `CORDUM_API_KEY` | — | API key for gateway-backed MCP handlers |
 | `CORDUM_TENANT_ID` | — | Tenant ID for MCP bridge/resource operations |
+| `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` (default) or `http` |
+| `MCP_HTTP_ADDR` | `:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
+
+**HA note — HTTP transport**: Set `MCP_TRANSPORT=http` to enable HTTP mode, which exposes
+`/sse` (SSE stream) and `/message` (POST JSON-RPC) endpoints. This allows running multiple
+MCP server replicas behind a load balancer. The default `stdio` mode supports only a single
+instance and is intended for local CLI integrations.
 
 ### Audit Export
 
@@ -872,6 +914,21 @@ scanners:
 | `AWS_REGION` | — | AWS region for CloudWatch |
 | `AWS_ACCESS_KEY_ID` | — | AWS credentials |
 | `AWS_SECRET_ACCESS_KEY` | — | AWS credentials |
+| `AUDIT_TRANSPORT` | `buffer` | Audit transport: `buffer` (in-memory) or `nats` (NATS-backed, recommended for multi-replica) |
+| `CORDUM_AUDIT_BUFFER_SIZE` | `1000` | In-memory audit buffer size (events) |
+| `CORDUM_AUDIT_EXPORT_MAX_RETRIES` | `3` | Max retries before dropping a batch |
+
+#### NATS-Backed Audit Pipeline
+
+When `AUDIT_TRANSPORT=nats`, audit events are published to the NATS subject `sys.audit.export` instead of being buffered in per-process memory. A consumer subscribes with queue group `audit-exporters` so exactly one replica handles each event. This provides:
+
+- **Crash resilience** — events survive process restarts when JetStream is enabled (at-least-once delivery)
+- **Stateless replicas** — audit events are no longer tied to the process that generated them
+- **Automatic fallback** — if NATS publish fails, events fall back to the local in-memory buffer
+
+The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for each event. Failed exports trigger NATS redelivery (nak). Malformed messages are acked to prevent poison pill loops.
+
+> **Note**: For production HA deployments, enable JetStream on the `sys` stream to get durable audit delivery. Without JetStream, audit events use core NATS (at-most-once).
 
 ### DLQ
 
@@ -918,3 +975,4 @@ scanners:
 - [DOCKER.md](DOCKER.md) — Docker Compose deployment and NATS JetStream durability
 - [mcp-server.md](mcp-server.md) — MCP server configuration
 - [api-reference.md](api-reference.md) — REST API documentation
+- [horizontal-scaling.md](horizontal-scaling.md) — Multi-replica deployment, Redis lock keys, NATS subject matrix

@@ -427,7 +427,7 @@ metadata:
   name: cordum-context-engine
   namespace: cordum
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels: {app: cordum-context-engine}
   template:
@@ -521,7 +521,7 @@ metadata:
   name: cordum-safety-kernel
   namespace: cordum
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels: {app: cordum-safety-kernel}
   template:
@@ -619,7 +619,7 @@ metadata:
   name: cordum-scheduler
   namespace: cordum
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels: {app: cordum-scheduler}
   template:
@@ -671,6 +671,8 @@ spec:
           value: redis://:$(REDIS_PASSWORD)@redis:6379
         - name: SAFETY_KERNEL_ADDR
           value: cordum-safety-kernel:50051
+        - name: POLICY_CHECK_FAIL_MODE
+          value: "closed"
         - name: POOL_CONFIG_PATH
           value: /etc/cordum/pools.yaml
         - name: TIMEOUT_CONFIG_PATH
@@ -731,7 +733,7 @@ metadata:
   name: cordum-api-gateway
   namespace: cordum
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels: {app: cordum-api-gateway}
   template:
@@ -879,7 +881,7 @@ metadata:
   name: cordum-workflow-engine
   namespace: cordum
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels: {app: cordum-workflow-engine}
   template:
@@ -975,7 +977,7 @@ metadata:
   name: cordum-dashboard
   namespace: cordum
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels: {app: cordum-dashboard}
   template:

@@ -3,11 +3,14 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	capruntime "github.com/cordum-io/cap/v2/sdk/go/runtime"
+	captesting "github.com/cordum-io/cap/v2/sdk/go/testing"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -26,7 +29,26 @@ type (
 	ComponentRole = agentv1.ComponentRole
 	ErrorCode     = agentv1.ErrorCode
 	AlertSeverity = agentv1.AlertSeverity
+
+	// CAP v2.5.3 — observability, testing, middleware
+	MetricsHook  = capsdk.MetricsHook
+	Middleware   = capruntime.Middleware
+	HandlerFunc  = capruntime.HandlerFunc
+	InMemoryBus  = captesting.InMemoryBus
 )
+
+// NoopMetrics is a zero-overhead MetricsHook that discards all events.
+var NoopMetrics MetricsHook = capsdk.NoopMetrics
+
+// LoggingMiddleware returns a Middleware that logs job ID, topic, and duration.
+func LoggingMiddleware(logger *log.Logger) Middleware {
+	return capruntime.LoggingMiddleware(logger)
+}
+
+// NewInMemoryBus creates an in-memory bus for testing without NATS.
+func NewInMemoryBus() *InMemoryBus {
+	return captesting.NewInMemoryBus()
+}
 
 // Register wires a typed handler to a topic using the CAP runtime.
 func Register[TIn any, TOut any](agent *Agent, topic string, handler Handler[TIn, TOut], opts ...JobOption) {

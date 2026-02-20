@@ -6,8 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/logging"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
+
+// durableDelayThreshold is the minimum delay duration for Redis-backed durable timers.
+// Delays shorter than this use in-memory time.AfterFunc only (fast, no Redis round-trip).
+// Set to 3s to limit the data-loss window on crash while avoiding Redis round-trips for trivial delays.
+const durableDelayThreshold = 3 * time.Second
 
 func delayForStep(step *Step, now time.Time) (time.Duration, error) {
 	if step == nil {
@@ -177,6 +183,17 @@ func (e *Engine) scheduleAfter(delay time.Duration, workflowID, runID string) {
 	}
 	stopped := e.stopped
 
+	// Persist to Redis sorted set for crash recovery (delays > threshold only).
+	if delay >= durableDelayThreshold && e.store != nil {
+		fireAt := time.Now().Add(delay)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := e.store.AddDelayTimer(ctx, workflowID, runID, fireAt); err != nil {
+			logging.Warn("workflow-engine", "failed to persist delay timer",
+				"workflow_id", workflowID, "run_id", runID, "error", err)
+		}
+		cancel()
+	}
+
 	var t *time.Timer
 	t = time.AfterFunc(delay, func() {
 		// Atomically check stopped under timerMu to eliminate TOCTOU race.
@@ -197,10 +214,167 @@ func (e *Engine) scheduleAfter(delay time.Duration, workflowID, runID string) {
 			}
 		}
 		e.timerMu.Unlock()
+
+		// Remove durable timer entry before resuming the run.
+		if e.store != nil {
+			rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := e.store.RemoveDelayTimer(rCtx, workflowID, runID); err != nil {
+				logging.Warn("workflow-engine", "failed to remove delay timer",
+					"workflow_id", workflowID, "run_id", runID, "error", err)
+			}
+			rCancel()
+		}
+
 		_ = e.StartRun(context.Background(), workflowID, runID)
 	})
 	e.pendingTimers = append(e.pendingTimers, t)
 	e.timerMu.Unlock()
+}
+
+// recoverDelayTimers recovers durable delay timers from Redis on engine startup.
+// Past-due timers are fired immediately via PopFiredDelays (atomic Lua).
+// Future timers are re-scheduled via scheduleAfter (which re-adds to ZSET — idempotent).
+func (e *Engine) recoverDelayTimers(ctx context.Context) {
+	if e.store == nil {
+		return
+	}
+	now := time.Now()
+
+	// 1. Pop and fire all past-due timers atomically.
+	fired, err := e.store.PopFiredDelays(ctx, now)
+	if err != nil {
+		logging.Warn("workflow-engine", "failed to pop fired delay timers", "error", err)
+	}
+	for _, member := range fired {
+		wfID, rID := splitDelayMember(member)
+		if wfID == "" || rID == "" {
+			continue
+		}
+		logging.Info("workflow-engine", "recovering past-due delay timer",
+			"workflow_id", wfID, "run_id", rID)
+		_ = e.StartRun(ctx, wfID, rID)
+	}
+
+	// 2. Re-schedule future timers with remaining delay.
+	future, err := e.store.ListFutureDelays(ctx, now)
+	if err != nil {
+		logging.Warn("workflow-engine", "failed to list future delay timers", "error", err)
+		return
+	}
+	for _, z := range future {
+		member, ok := z.Member.(string)
+		if !ok {
+			continue
+		}
+		wfID, rID := splitDelayMember(member)
+		if wfID == "" || rID == "" {
+			continue
+		}
+		fireAt := time.Unix(int64(z.Score), 0)
+		remaining := fireAt.Sub(now)
+		if remaining <= 0 {
+			remaining = time.Millisecond // fire immediately
+		}
+		logging.Info("workflow-engine", "re-scheduling future delay timer",
+			"workflow_id", wfID, "run_id", rID, "remaining", remaining.String())
+		// scheduleAfter will re-ZADD (idempotent via ZADD) and set up time.AfterFunc.
+		e.scheduleAfter(remaining, wfID, rID)
+	}
+
+	total := len(fired) + len(future)
+	if total > 0 {
+		logging.Info("workflow-engine", "delay timer recovery complete",
+			"fired", len(fired), "rescheduled", len(future))
+	}
+}
+
+// splitDelayMember parses "workflowID:runID" from a sorted set member.
+// Returns empty strings if the format is invalid.
+func splitDelayMember(member string) (workflowID, runID string) {
+	idx := strings.Index(member, ":")
+	if idx <= 0 || idx >= len(member)-1 {
+		return "", ""
+	}
+	return member[:idx], member[idx+1:]
+}
+
+// delayPollerInterval is how often the background poller checks for fired durable timers.
+const delayPollerInterval = 5 * time.Second
+
+// delayPollerLockKey is the distributed lock for the delay timer poller.
+// Only one replica should poll at a time.
+const delayPollerLockKey = "cordum:wf:delay:poller"
+
+// staleDelayAge is the age threshold for stale timer cleanup.
+// Entries older than this are removed to prevent unbounded ZSET growth.
+const staleDelayAge = 1 * time.Hour
+
+// staleCleanupEveryNTicks controls how often stale cleanup runs relative to the poller.
+// With delayPollerInterval=5s and N=60, cleanup runs every ~5 minutes.
+const staleCleanupEveryNTicks = 60
+
+// startDelayPoller runs a background goroutine that periodically pops fired
+// durable delay timers from Redis. This catches timers where the local
+// time.AfterFunc was lost (crash, restart, rebalance). Uses a distributed lock
+// so only one replica polls at a time. Also periodically cleans stale entries.
+func (e *Engine) startDelayPoller(ctx context.Context) {
+	if e.store == nil {
+		return
+	}
+
+	ticker := time.NewTicker(delayPollerInterval)
+	defer ticker.Stop()
+
+	tickCount := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tickCount++
+
+			// Acquire distributed lock (best-effort).
+			if e.lockMgr.locker != nil {
+				lockCtx, lockCancel := context.WithTimeout(ctx, 2*time.Second)
+				token, err := e.lockMgr.locker.TryAcquireLock(lockCtx, delayPollerLockKey, delayPollerInterval*2)
+				lockCancel()
+				if err != nil || token == "" {
+					continue // another replica is polling
+				}
+				// Lock acquired — proceed. Lock expires after 2*interval (no explicit release).
+			}
+
+			popCtx, popCancel := context.WithTimeout(ctx, 5*time.Second)
+			fired, err := e.store.PopFiredDelays(popCtx, time.Now())
+			popCancel()
+			if err != nil {
+				logging.Warn("workflow-engine", "delay poller: pop failed", "error", err)
+				continue
+			}
+			for _, member := range fired {
+				wfID, rID := splitDelayMember(member)
+				if wfID == "" || rID == "" {
+					continue
+				}
+				logging.Info("workflow-engine", "delay poller: firing recovered timer",
+					"workflow_id", wfID, "run_id", rID)
+				_ = e.StartRun(ctx, wfID, rID)
+			}
+
+			// Periodic stale entry cleanup.
+			if tickCount%staleCleanupEveryNTicks == 0 {
+				cutoff := time.Now().Add(-staleDelayAge)
+				cleanCtx, cleanCancel := context.WithTimeout(ctx, 2*time.Second)
+				removed, err := e.store.CleanStaleDelays(cleanCtx, cutoff)
+				cleanCancel()
+				if err != nil {
+					logging.Warn("workflow-engine", "delay poller: stale cleanup failed", "error", err)
+				} else if removed > 0 {
+					logging.Info("workflow-engine", "delay poller: cleaned stale timers", "removed", removed)
+				}
+			}
+		}
+	}
 }
 
 func (e *Engine) appendTimeline(ctx context.Context, run *WorkflowRun, eventType, stepID, jobID, status, resultPtr, message string, data map[string]any) {

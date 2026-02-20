@@ -8,7 +8,13 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	gnats "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestReconcilerTimeoutsDefaults(t *testing.T) {
@@ -301,11 +307,169 @@ func TestWatchConfigChangesUpdatesRouting(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go watchConfigChanges(ctx, svc, nil, nil, strategy, reconciler)
+	go watchConfigChanges(ctx, svc, nil, nil, strategy, reconciler, nil)
 	time.Sleep(20 * time.Millisecond)
 
 	routing := strategy.CurrentRouting()
 	if len(routing.Topics) == 0 || routing.Topics["job.test"][0] != "pool-a" {
 		t.Fatalf("expected routing update, got %#v", routing.Topics)
+	}
+}
+
+func startEmbeddedNATS(t *testing.T) *gnats.Server {
+	t.Helper()
+	opts := &gnats.Options{
+		Host:           "127.0.0.1",
+		Port:           -1,
+		NoLog:          true,
+		NoSigs:         true,
+		JetStream:      true,
+		StoreDir:       t.TempDir(),
+		MaxPayload:     4 * 1024 * 1024,
+		MaxControlLine: 4096,
+	}
+	ns, err := gnats.NewServer(opts)
+	if err != nil {
+		t.Fatalf("embedded NATS: %v", err)
+	}
+	go ns.Start()
+	if !ns.ReadyForConnections(5 * time.Second) {
+		t.Fatal("NATS not ready")
+	}
+	t.Cleanup(ns.Shutdown)
+	return ns
+}
+
+func TestWatchConfigChangesNotificationTriggersReload(t *testing.T) {
+	ns := startEmbeddedNATS(t)
+
+	redisSrv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer redisSrv.Close()
+
+	svc, err := configsvc.New("redis://" + redisSrv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	defer svc.Close()
+
+	// Seed config with pools data.
+	doc := &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"pools": map[string]any{
+				"topics": map[string]any{"job.notify-test": []any{"pool-notify"}},
+			},
+		},
+	}
+	if err := svc.Set(context.Background(), doc); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	strategy := scheduler.NewLeastLoadedStrategy(scheduler.PoolRouting{})
+	reconciler := scheduler.NewReconciler(nil, time.Second, time.Second, time.Second)
+
+	// Use a very long poll interval so poll can't trigger the reload — only notifications will.
+	t.Setenv("SCHEDULER_CONFIG_RELOAD_INTERVAL", "1h")
+
+	natsBus, err := bus.NewNatsBus(ns.ClientURL())
+	if err != nil {
+		t.Fatalf("connect NATS: %v", err)
+	}
+	defer natsBus.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go watchConfigChanges(ctx, svc, nil, nil, strategy, reconciler, natsBus)
+
+	// Give the subscriber time to establish.
+	time.Sleep(100 * time.Millisecond)
+
+	// Publish a config-changed notification (simulating what the gateway does).
+	nc, err := nats.Connect(ns.ClientURL())
+	if err != nil {
+		t.Fatalf("direct NATS connect: %v", err)
+	}
+	defer nc.Close()
+
+	packet := &pb.BusPacket{
+		TraceId:  "test-notify",
+		SenderId: "test-gateway",
+		Payload: &pb.BusPacket_Alert{
+			Alert: &pb.SystemAlert{
+				Message: "config changed",
+			},
+		},
+	}
+	data, err := proto.Marshal(packet)
+	if err != nil {
+		t.Fatalf("marshal packet: %v", err)
+	}
+	if err := nc.Publish(capsdk.SubjectConfigChanged, data); err != nil {
+		t.Fatalf("publish notification: %v", err)
+	}
+	nc.Flush()
+
+	// Wait for the notification to trigger reload.
+	deadline := time.After(3 * time.Second)
+	for {
+		routing := strategy.CurrentRouting()
+		if len(routing.Topics) > 0 && routing.Topics["job.notify-test"] != nil {
+			// Notification triggered config reload successfully.
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for notification-triggered config reload, topics=%v", strategy.CurrentRouting().Topics)
+		default:
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+}
+
+func TestWatchConfigChangesFallbackPoll(t *testing.T) {
+	redisSrv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer redisSrv.Close()
+
+	svc, err := configsvc.New("redis://" + redisSrv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	defer svc.Close()
+
+	doc := &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"pools": map[string]any{
+				"topics": map[string]any{"job.fallback": []any{"pool-fb"}},
+			},
+		},
+	}
+	if err := svc.Set(context.Background(), doc); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	strategy := scheduler.NewLeastLoadedStrategy(scheduler.PoolRouting{})
+	reconciler := scheduler.NewReconciler(nil, time.Second, time.Second, time.Second)
+
+	// Very short poll interval, nil bus (no NATS).
+	t.Setenv("SCHEDULER_CONFIG_RELOAD_INTERVAL", "10ms")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go watchConfigChanges(ctx, svc, nil, nil, strategy, reconciler, nil)
+	time.Sleep(50 * time.Millisecond)
+
+	routing := strategy.CurrentRouting()
+	if len(routing.Topics) == 0 || routing.Topics["job.fallback"] == nil {
+		t.Fatalf("expected poll-based config reload, got %#v", routing.Topics)
 	}
 }

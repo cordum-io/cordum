@@ -128,6 +128,7 @@ Reload behavior:
 - Watch interval defaults to `30s`.
 - Override with `SAFETY_POLICY_RELOAD_INTERVAL` (duration string, for example `10s`, `1m`).
 - When snapshot changes, in-memory policy is replaced and recent snapshots are tracked.
+- Snapshot history is stored in Redis list `cordum:safety:snapshots` (LPUSH + LTRIM to 10). All replicas share a single history, so the `ListSnapshots` gRPC call returns consistent results regardless of which replica handles it. If Redis is unavailable, the safety kernel falls back to a per-process in-memory list.
 
 ## 5. Decision Cache
 
@@ -151,7 +152,10 @@ Cache semantics:
 Reload invalidation:
 
 - Snapshot is part of the key, so policy reload naturally causes misses against old snapshot keys.
-- Old entries remain until TTL expiry/eviction.
+- Additionally, a `policyVersion` counter (atomic uint64) tags every cache entry with the version active when it was created.
+- When `setPolicy()` is called, the version counter increments and the entire cache is cleared immediately.
+- On cache lookup, if the entry's `policyVersion` does not match the current version, the entry is treated as a miss and deleted — this is a belt-and-suspenders guard in addition to the cache clear.
+- In multi-replica deployments, each replica independently invalidates its cache when it receives the policy update (e.g., via NATS config notification or file watcher). No Redis is involved — cache management is purely local per-replica.
 
 ## 6. Policy Signature Verification (Ed25519)
 
@@ -257,27 +261,69 @@ TLS for clients (scheduler/gateway dialing Safety Kernel):
 - `SAFETY_KERNEL_TLS_REQUIRED`
 - `SAFETY_KERNEL_INSECURE` (for non-production/testing)
 
-## 9. Scheduler Circuit Breaker (Safety Client)
+## 9. Distributed Circuit Breakers (Safety Client)
 
-Scheduler safety client circuit states:
+Both the input safety client (`SafetyClient`) and output safety client (`OutputSafetyClient`) use a Redis-backed distributed circuit breaker (`RedisCircuitBreaker` in `core/controlplane/scheduler/circuit_breaker.go`). When one scheduler replica detects safety kernel failures, all replicas see the open circuit immediately via shared Redis state.
+
+### State Machine
 
 ```text
-CLOSED --(3 failures)--> OPEN --(30s elapsed)--> HALF_OPEN
+CLOSED --(3 failures)--> OPEN --(30s TTL expires)--> HALF_OPEN
 HALF_OPEN --(2 successes)--> CLOSED
 HALF_OPEN --(failure)------> OPEN
 ```
 
-Constants (`core/controlplane/scheduler/safety_client.go`):
+### Redis Keys
 
-- Request timeout: `2s`
-- Open duration: `30s`
-- Fail budget to open: `3`
-- Half-open max probe requests: `3`
-- Half-open successes to close: `2`
+| Circuit | Key Pattern | Purpose |
+|---------|-------------|---------|
+| Input safety | `cordum:cb:safety:failures` | Shared failure counter for `SafetyClient.Check()` |
+| Output safety | `cordum:cb:safety:output:failures` | Shared failure counter for `OutputSafetyClient.EvaluateOutput()` |
 
-When open/half-open-throttled, scheduler receives `SafetyUnavailable` decisions instead of blocking on RPC.
+### How It Works
 
-## 10. Environment Variables
+- **Failure recording**: Atomic Lua script (`INCR` + `EXPIRE`) increments the failure counter and sets a TTL equal to the open duration on first failure.
+- **Open detection**: `GET` on the failures key — if count >= threshold, circuit is open.
+- **Half-open transition**: When the TTL expires, the failures key is deleted by Redis. The next `IsOpen()` check returns false, allowing a probe request through.
+- **Success recording**: `DEL` on the failures key resets the counter, closing the circuit.
+- **Local fallback**: If Redis is unavailable, the circuit breaker falls back to a per-replica in-memory state machine with the same thresholds. This is fail-open — requests are allowed through to avoid blocking jobs when Redis is down.
+
+### Constants
+
+| Parameter | Input Safety | Output Safety |
+|-----------|-------------|--------------|
+| Request timeout | `2s` | `100ms` (meta), `30s` (content) |
+| Open duration | `30s` | `30s` |
+| Fail budget to open | `3` | `3` |
+| Half-open max probes | `3` | `3` |
+| Successes to close | `2` | `2` |
+
+### Wiring
+
+In `cmd/cordum-scheduler/main.go`:
+- `SafetyClient` is created with a local-only breaker, then upgraded to Redis-backed via `safetyClient.WithRedis(sagaRedis)`.
+- `OutputSafetyClient` uses its internal Redis connection (`resultClient`) for the distributed breaker automatically.
+
+When the input circuit is open, the scheduler receives `SafetyUnavailable` decisions instead of blocking on RPC. The input fail mode (`POLICY_CHECK_FAIL_MODE`) then determines whether the job is requeued or allowed through.
+
+## 10. Input Policy Fail Mode
+
+When the safety kernel is unreachable during pre-dispatch policy checks, the scheduler's behavior is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
+
+| Mode | Behavior | Risk |
+|------|----------|------|
+| `closed` (default) | Job is requeued with exponential backoff until the safety kernel recovers | No unsafe jobs pass through; availability impact during outages |
+| `open` | Job is allowed through with a warning log and metric increment | Jobs bypass safety checks; use only when availability is prioritized over safety |
+
+**Risk implications of fail-open**: In `open` mode, jobs that would normally be denied or require approval are allowed through without evaluation. This should only be used in environments where safety violations are tolerable (e.g., staging) or where compensating controls exist downstream. Production deployments should use the default `closed` mode.
+
+**Configuration**:
+- Environment variable: `POLICY_CHECK_FAIL_MODE` (values: `closed`, `open`)
+- Config file: `config/safety.yaml` under `input_policy.fail_mode`
+
+**Prometheus metric**: `cordum_scheduler_input_fail_open_total` (counter, labels: `topic`) — incremented each time a job is allowed through under fail-open mode. Alert on this metric to detect safety kernel outages that are silently bypassing policy checks.
+
+## 11. Environment Variables
 
 | Variable | Component | Default | Purpose |
 | --- | --- | --- | --- |
@@ -311,7 +357,7 @@ Related (non-`SAFETY_*`) knobs:
 - `CORDUM_TLS_MIN_VERSION` for TLS minimum version
 - `CORDUM_GRPC_REFLECTION` to enable gRPC reflection
 
-## 11. Cross-References
+## 12. Cross-References
 
 - [Output Policy Guide](./output-policy.md)
 - [API Reference](./api-reference.md)

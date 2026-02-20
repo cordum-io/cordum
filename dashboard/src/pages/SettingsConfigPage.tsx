@@ -9,9 +9,11 @@ import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { ProgressBar } from "../components/ProgressBar";
 import { MaintenanceModeSection } from "../components/settings/MaintenanceModeSection";
+import { HAConfigSection } from "../components/settings/HAConfigSection";
 import { cn } from "../lib/utils";
 import type { GeneralConfig } from "../api/types";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { useStatus } from "../hooks/useStatus";
 import { RequireRole } from "../components/RequireRole";
 
 const EffectiveConfigPanel = lazy(() => import("../components/settings/EffectiveConfigPanel"));
@@ -140,6 +142,7 @@ export default function SettingsConfigPage() {
   usePageTitle("Settings - Configuration");
   const [tab, setTab] = useState<ConfigTab>("configuration");
   const { data: config, isLoading, isError, refetch } = useGeneralConfig();
+  const { data: statusData } = useStatus();
   const saveConfig = useSetGeneralConfig();
 
   const {
@@ -243,6 +246,9 @@ export default function SettingsConfigPage() {
       <>
       {/* Maintenance Mode — first for high-urgency visibility */}
       <MaintenanceModeSection />
+
+      {/* HA env vars — read-only, startup-only */}
+      <HAConfigSection status={statusData} />
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
       {/* Safety Defaults */}

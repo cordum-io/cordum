@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/registry"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -223,6 +225,155 @@ func TestHandleWorkersFiltersStaleEntries(t *testing.T) {
 	}
 }
 
+func TestHandleGetWorkersFromRedisSnapshot(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	// Populate Redis with a worker snapshot (2 workers).
+	snap := registry.Snapshot{
+		CapturedAt: time.Now().UTC().Format(time.RFC3339),
+		Workers: []registry.WorkerSummary{
+			{WorkerID: "snap-w1", Pool: "pool-a", ActiveJobs: 1, MaxParallelJobs: 4},
+			{WorkerID: "snap-w2", Pool: "pool-b", ActiveJobs: 0, MaxParallelJobs: 2, Capabilities: []string{"gpu"}},
+		},
+	}
+	snapJSON, _ := json.Marshal(snap)
+	if err := s.memStore.PutResult(context.Background(), registry.SnapshotKey, snapJSON); err != nil {
+		t.Fatalf("put snapshot: %v", err)
+	}
+
+	// Also add a local in-memory worker to verify snapshot takes priority.
+	s.workerMu.Lock()
+	s.workers["local-w"] = &pb.Heartbeat{WorkerId: "local-w"}
+	s.workerMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	rec := httptest.NewRecorder()
+	s.handleGetWorkers(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var workers []*pb.Heartbeat
+	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(workers) != 2 {
+		t.Fatalf("expected 2 workers from snapshot, got %d", len(workers))
+	}
+	ids := map[string]bool{}
+	for _, w := range workers {
+		ids[w.WorkerId] = true
+	}
+	if !ids["snap-w1"] || !ids["snap-w2"] {
+		t.Fatalf("expected snap-w1 and snap-w2, got %v", ids)
+	}
+}
+
+func TestHandleGetWorkersFallbackOnRedisError(t *testing.T) {
+	// Use stubMemStore that returns error on GetResult.
+	s := &server{
+		memStore: &errorMemStore{},
+		workers:  map[string]*pb.Heartbeat{"local-w1": {WorkerId: "local-w1"}},
+		workerSeen: map[string]time.Time{"local-w1": time.Now()},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	rec := httptest.NewRecorder()
+	s.handleGetWorkers(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var workers []*pb.Heartbeat
+	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(workers) != 1 || workers[0].WorkerId != "local-w1" {
+		t.Fatalf("expected fallback to in-memory worker, got %+v", workers)
+	}
+}
+
+func TestHandleGetWorkersColdStart(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	// Populate Redis snapshot with 3 workers, but leave in-memory workers empty.
+	snap := registry.Snapshot{
+		CapturedAt: time.Now().UTC().Format(time.RFC3339),
+		Workers: []registry.WorkerSummary{
+			{WorkerID: "w1", Pool: "pool-a"},
+			{WorkerID: "w2", Pool: "pool-a"},
+			{WorkerID: "w3", Pool: "pool-b"},
+		},
+	}
+	snapJSON, _ := json.Marshal(snap)
+	if err := s.memStore.PutResult(context.Background(), registry.SnapshotKey, snapJSON); err != nil {
+		t.Fatalf("put snapshot: %v", err)
+	}
+	// In-memory workers is empty (simulating cold start).
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	rec := httptest.NewRecorder()
+	s.handleGetWorkers(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var workers []*pb.Heartbeat
+	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(workers) != 3 {
+		t.Fatalf("expected 3 workers from snapshot on cold start, got %d", len(workers))
+	}
+}
+
+func TestHandleStatusWorkerCountFromSnapshot(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	// Populate Redis snapshot with 2 workers.
+	snap := registry.Snapshot{
+		CapturedAt: time.Now().UTC().Format(time.RFC3339),
+		Workers: []registry.WorkerSummary{
+			{WorkerID: "snap-w1", Pool: "pool-a"},
+			{WorkerID: "snap-w2", Pool: "pool-b"},
+		},
+	}
+	snapJSON, _ := json.Marshal(snap)
+	if err := s.memStore.PutResult(context.Background(), registry.SnapshotKey, snapJSON); err != nil {
+		t.Fatalf("put snapshot: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	workersInfo, ok := status["workers"].(map[string]any)
+	if !ok || workersInfo["count"].(float64) != 2 {
+		t.Fatalf("expected workers count=2 from snapshot, got %#v", status["workers"])
+	}
+}
+
+// errorMemStore returns errors on all operations, used to test fallback paths.
+type errorMemStore struct{}
+
+func (e *errorMemStore) PutContext(context.Context, string, []byte) error {
+	return fmt.Errorf("store unavailable")
+}
+func (e *errorMemStore) GetContext(context.Context, string) ([]byte, error) {
+	return nil, fmt.Errorf("store unavailable")
+}
+func (e *errorMemStore) PutResult(context.Context, string, []byte) error {
+	return fmt.Errorf("store unavailable")
+}
+func (e *errorMemStore) GetResult(context.Context, string) ([]byte, error) {
+	return nil, fmt.Errorf("store unavailable")
+}
+func (e *errorMemStore) Close() error { return nil }
+
 type stubLicenseAuth struct {
 	info *LicenseInfo
 }
@@ -248,3 +399,186 @@ func (s stubLicenseAuth) ResolvePrincipal(_ *http.Request, requested string) (st
 }
 
 func (s stubLicenseAuth) LicenseInfo() *LicenseInfo { return s.info }
+
+func TestHandleStatusHAFields(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.instanceID = "gw-test-123"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+
+	// instance_id
+	if id, ok := status["instance_id"].(string); !ok || id != "gw-test-123" {
+		t.Fatalf("expected instance_id=gw-test-123, got %v", status["instance_id"])
+	}
+
+	// rate_limiter
+	rl, ok := status["rate_limiter"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected rate_limiter in status")
+	}
+	if mode, ok := rl["mode"].(string); !ok || mode != "memory" {
+		t.Fatalf("expected rate_limiter.mode=memory (no redis RL in test), got %v", rl["mode"])
+	}
+
+	// circuit_breakers
+	cb, ok := status["circuit_breakers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected circuit_breakers in status")
+	}
+	inputCB, ok := cb["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected circuit_breakers.input")
+	}
+	// With miniredis and no failures written, state should be CLOSED.
+	if state := inputCB["state"].(string); state != "CLOSED" {
+		t.Fatalf("expected input CB state=CLOSED, got %s", state)
+	}
+	if failures := inputCB["failures"].(float64); failures != 0 {
+		t.Fatalf("expected input CB failures=0, got %v", failures)
+	}
+	outputCB, ok := cb["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected circuit_breakers.output")
+	}
+	if state := outputCB["state"].(string); state != "CLOSED" {
+		t.Fatalf("expected output CB state=CLOSED, got %s", state)
+	}
+
+	// Backward compat: existing fields still present.
+	if _, ok := status["build"].(map[string]any); !ok {
+		t.Fatal("expected build info still present")
+	}
+	if _, ok := status["workers"].(map[string]any); !ok {
+		t.Fatal("expected workers info still present")
+	}
+	if _, ok := status["pipeline"].(map[string]any); !ok {
+		t.Fatal("expected pipeline info still present")
+	}
+}
+
+func TestHandleStatusHAFieldsWithCircuitBreakerOpen(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.instanceID = "gw-cb-test"
+	ctx := context.Background()
+
+	// Simulate an open circuit breaker by writing failures to Redis.
+	rdb := s.jobStore.Client()
+	rdb.Set(ctx, "cordum:cb:safety:failures", "5", 30*time.Second)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	cb := status["circuit_breakers"].(map[string]any)
+	inputCB := cb["input"].(map[string]any)
+	if state := inputCB["state"].(string); state != "OPEN" {
+		t.Fatalf("expected input CB state=OPEN with 5 failures, got %s", state)
+	}
+	if failures := inputCB["failures"].(float64); failures != 5 {
+		t.Fatalf("expected failures=5, got %v", failures)
+	}
+	if cooldown := inputCB["cooldown_remaining_ms"].(float64); cooldown <= 0 {
+		t.Fatalf("expected positive cooldown, got %v", cooldown)
+	}
+
+	// Output CB should still be CLOSED (no failures written).
+	outputCB := cb["output"].(map[string]any)
+	if state := outputCB["state"].(string); state != "CLOSED" {
+		t.Fatalf("expected output CB state=CLOSED, got %s", state)
+	}
+}
+
+func TestHandleStatusHAFieldsWithReplicas(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.instanceID = "gw-replica-test"
+	ctx := context.Background()
+
+	// Register a fake instance in Redis.
+	rdb := s.jobStore.Client()
+	instReg := registry.NewInstanceRegistry(rdb, "api-gateway", "gw-1", "v0.2.0", "abc123")
+	instReg.Start(ctx)
+	defer instReg.Stop()
+
+	// The gateway also needs an instanceRegistry to trigger the replicas section.
+	s.instanceRegistry = registry.NewInstanceRegistry(rdb, "api-gateway", "gw-replica-test", "v0.2.0", "def456")
+	s.instanceRegistry.Start(ctx)
+	defer s.instanceRegistry.Stop()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	replicas, ok := status["replicas"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected replicas map in status, got %T: %v", status["replicas"], status["replicas"])
+	}
+	gwReplicas, ok := replicas["api-gateway"].([]any)
+	if !ok {
+		t.Fatalf("expected api-gateway replicas array, got %T", replicas["api-gateway"])
+	}
+	if len(gwReplicas) != 2 {
+		t.Fatalf("expected 2 api-gateway replicas, got %d", len(gwReplicas))
+	}
+}
+
+func TestHandleStatusHAFieldsNilRegistry(t *testing.T) {
+	// Verify no crash when instanceRegistry is nil (single-replica mode).
+	s := &server{
+		memStore:   &errorMemStore{},
+		workers:    map[string]*pb.Heartbeat{},
+		workerSeen: map[string]time.Time{},
+		instanceID: "standalone",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// instance_id should be present.
+	if status["instance_id"] != "standalone" {
+		t.Fatalf("expected instance_id=standalone, got %v", status["instance_id"])
+	}
+	// replicas should be absent (no registry).
+	if _, ok := status["replicas"]; ok {
+		t.Fatal("expected replicas to be absent when registry is nil")
+	}
+	// circuit_breakers should show UNKNOWN (nil Redis).
+	cb := status["circuit_breakers"].(map[string]any)
+	inputCB := cb["input"].(map[string]any)
+	if state := inputCB["state"].(string); state != "UNKNOWN" {
+		t.Fatalf("expected UNKNOWN CB state with nil Redis, got %s", state)
+	}
+}

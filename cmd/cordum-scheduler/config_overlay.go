@@ -6,18 +6,22 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"log/slog"
+	"os"
 	"sort"
 	"time"
 
-	"errors"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
-	"os"
 )
 
 type configSnapshot struct {
@@ -138,7 +142,7 @@ func loadConfigSnapshot(ctx context.Context, svc *configsvc.Service, fallbackPoo
 	return snap, nil
 }
 
-func watchConfigChanges(ctx context.Context, svc *configsvc.Service, fallbackPools *config.PoolsConfig, fallbackTimeouts *config.TimeoutsConfig, strategy *scheduler.LeastLoadedStrategy, reconciler *scheduler.Reconciler) {
+func watchConfigChanges(ctx context.Context, svc *configsvc.Service, fallbackPools *config.PoolsConfig, fallbackTimeouts *config.TimeoutsConfig, strategy *scheduler.LeastLoadedStrategy, reconciler *scheduler.Reconciler, natsBus *bus.NatsBus) {
 	if svc == nil || strategy == nil || reconciler == nil {
 		return
 	}
@@ -150,32 +154,59 @@ func watchConfigChanges(ctx context.Context, svc *configsvc.Service, fallbackPoo
 			log.Printf("scheduler: invalid SCHEDULER_CONFIG_RELOAD_INTERVAL=%q, using default %s", raw, interval) // #nosec -- value is config input for diagnostics.
 		}
 	}
+
+	// Subscribe to sys.config.changed (broadcast, empty queue group) for
+	// immediate reload when any gateway writes config. The 30s poll remains
+	// as a fallback in case the notification is missed.
+	notifyCh := make(chan struct{}, 1)
+	if natsBus != nil {
+		if err := natsBus.Subscribe(capsdk.SubjectConfigChanged, "", func(_ *pb.BusPacket) error {
+			select {
+			case notifyCh <- struct{}{}:
+			default: // coalesce rapid notifications
+			}
+			return nil
+		}); err != nil {
+			slog.Warn("scheduler: failed to subscribe to config change notifications, relying on poll", "error", err)
+		} else {
+			slog.Info("scheduler: subscribed to config change notifications", "subject", capsdk.SubjectConfigChanged)
+		}
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	var lastPoolsHash string
 	var lastTimeoutsHash string
+
+	reload := func(trigger string) {
+		snap, err := loadConfigSnapshot(ctx, svc, fallbackPools, fallbackTimeouts)
+		if err != nil {
+			log.Printf("scheduler: config reload failed (%s): %v", trigger, err)
+			return
+		}
+		if snap.Pools != nil && snap.PoolsHash != "" && snap.PoolsHash != lastPoolsHash {
+			routing := buildRouting(snap.Pools)
+			strategy.UpdateRouting(routing)
+			lastPoolsHash = snap.PoolsHash
+			log.Printf("scheduler: routing updated (%d topics, trigger=%s)", len(routing.Topics), trigger)
+		}
+		if snap.Timeouts != nil && snap.TimeoutsHash != "" && snap.TimeoutsHash != lastTimeoutsHash {
+			dispatch, running, _ := reconcilerTimeouts(snap.Timeouts)
+			reconciler.UpdateTimeouts(dispatch, running)
+			lastTimeoutsHash = snap.TimeoutsHash
+			log.Printf("scheduler: reconciler timeouts updated (dispatch=%s, running=%s, trigger=%s)", dispatch, running, trigger)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			snap, err := loadConfigSnapshot(ctx, svc, fallbackPools, fallbackTimeouts)
-			if err != nil {
-				log.Printf("scheduler: config reload failed: %v", err)
-				continue
-			}
-			if snap.Pools != nil && snap.PoolsHash != "" && snap.PoolsHash != lastPoolsHash {
-				routing := buildRouting(snap.Pools)
-				strategy.UpdateRouting(routing)
-				lastPoolsHash = snap.PoolsHash
-				log.Printf("scheduler: routing updated (%d topics)", len(routing.Topics))
-			}
-			if snap.Timeouts != nil && snap.TimeoutsHash != "" && snap.TimeoutsHash != lastTimeoutsHash {
-				dispatch, running, _ := reconcilerTimeouts(snap.Timeouts)
-				reconciler.UpdateTimeouts(dispatch, running)
-				lastTimeoutsHash = snap.TimeoutsHash
-				log.Printf("scheduler: reconciler timeouts updated (dispatch=%s, running=%s)", dispatch, running)
-			}
+			reload("poll")
+		case <-notifyCh:
+			slog.Info("scheduler: config change notification received, reloading")
+			reload("notification")
 		}
 	}
 }

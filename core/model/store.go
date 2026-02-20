@@ -33,6 +33,7 @@ type JobStore interface {
 	CountActiveByTenant(ctx context.Context, tenant string) (int, error)
 	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error)
 	ReleaseLock(ctx context.Context, key string, token string) error
+	RenewLock(ctx context.Context, key, token string, ttl time.Duration) error
 	CancelJob(ctx context.Context, jobID string) (JobState, error)
 	SetFailureReason(ctx context.Context, jobID, reason string) error
 	GetFailureReason(ctx context.Context, jobID string) (string, error)

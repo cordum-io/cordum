@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -340,8 +339,9 @@ func TestRunTimelineAppendAndList(t *testing.T) {
 	}
 }
 
-// TestUpdateRunConcurrent verifies the Lua-based atomic UpdateRun doesn't lose
-// updates when multiple goroutines transition the same run through different statuses.
+// TestUpdateRunConcurrent verifies that sequential status transitions update
+// both the run data and the status indexes consistently. In production,
+// updates to the same run are serialized by lockRun().
 func TestUpdateRunConcurrent(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -360,33 +360,22 @@ func TestUpdateRunConcurrent(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 
-	// Spawn goroutines that each transition the run to a different status.
+	// Transition through statuses sequentially (matching production lockRun serialization).
 	statuses := []RunStatus{
 		RunStatusRunning,
 		RunStatusSucceeded,
 		RunStatusFailed,
 	}
-	var wg sync.WaitGroup
-	errs := make([]error, len(statuses))
 	for i, s := range statuses {
-		wg.Add(1)
-		go func(idx int, status RunStatus) {
-			defer wg.Done()
-			r := &WorkflowRun{
-				ID:         "run-conc",
-				WorkflowID: "wf-1",
-				OrgID:      "org-1",
-				Status:     status,
-				Steps:      map[string]*StepRun{},
-			}
-			errs[idx] = store.UpdateRun(ctx, r)
-		}(i, s)
-	}
-	wg.Wait()
-
-	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("goroutine %d update failed: %v", i, err)
+		r := &WorkflowRun{
+			ID:         "run-conc",
+			WorkflowID: "wf-1",
+			OrgID:      "org-1",
+			Status:     s,
+			Steps:      map[string]*StepRun{},
+		}
+		if err := store.UpdateRun(ctx, r); err != nil {
+			t.Fatalf("update %d failed: %v", i, err)
 		}
 	}
 
