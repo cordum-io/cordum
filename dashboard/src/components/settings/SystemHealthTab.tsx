@@ -14,6 +14,8 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
+import { useStatus } from "../../hooks/useStatus";
+import { ReplicaTable } from "./ReplicaTable";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -456,6 +458,7 @@ function CollapsibleSection({
 export function SystemHealthTab() {
   const queryClient = useQueryClient();
   const { data, isLoading, isFetching, error } = useSystemHealth();
+  const { data: statusData } = useStatus();
 
   // Track latency history per component (last 30 data points)
   const latencyHistoryRef = useRef<Record<string, number[]>>({});
@@ -510,6 +513,9 @@ export function SystemHealthTab() {
           />
         ))}
       </div>
+
+      {/* Service replicas (hidden gracefully in single-replica mode) */}
+      <ReplicaTable replicas={statusData?.replicas} />
 
       <p className="text-[11px] text-muted">
         Auto-refreshes every 30 seconds.
