@@ -1223,11 +1223,17 @@ func TestLockRunAcquireRelease(t *testing.T) {
 	bus := &recordingBus{}
 	engine := NewEngine(store, bus)
 
-	unlock := engine.lockRun("run-1")
+	unlock, ok := engine.lockRun("run-1")
+	if !ok {
+		t.Fatal("expected lock acquisition to succeed")
+	}
 	unlock()
 
 	// Second call should work normally.
-	unlock2 := engine.lockRun("run-1")
+	unlock2, ok := engine.lockRun("run-1")
+	if !ok {
+		t.Fatal("expected second lock acquisition to succeed")
+	}
 	unlock2()
 }
 
@@ -1241,7 +1247,10 @@ func TestMarkRunTerminalCleanup(t *testing.T) {
 	engine := NewEngine(store, bus)
 
 	// Acquire the lock.
-	unlock := engine.lockRun("run-term")
+	unlock, ok := engine.lockRun("run-term")
+	if !ok {
+		t.Fatal("expected lock acquisition to succeed")
+	}
 
 	// Mark terminal while still held — should NOT delete yet because refs > 0.
 	engine.markRunTerminal("run-term")

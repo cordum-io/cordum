@@ -127,19 +127,19 @@ api_code() {
   local method="$1"
   local path="$2"
   shift 2
-  local _attempt _out _rc
+  local _attempt _raw _rc
   for _attempt in 1 2 3; do
-    _out="$(curl -sS -o /dev/null -w "%{http_code}" -X "${method}" \
-      "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && { printf '%s' "${_out}"; return 0; }
+    _raw="$(curl -sS -w $'\n%{http_code}' -X "${method}" \
+      "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && { printf '%s' "${_raw##*$'\n'}"; return 0; }
     _rc=$?
     if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || ${_rc} -eq 56 ]]; then
       sleep 1
       continue
     fi
-    printf '%s' "${_out}"
+    printf '%s' "${_raw##*$'\n'}"
     return ${_rc}
   done
-  printf '%s' "${_out}"
+  printf '%s' "${_raw##*$'\n'}"
   return ${_rc:-1}
 }
 
@@ -178,18 +178,18 @@ http_code() {
   local method="$1"
   local url="$2"
   shift 2
-  local _attempt _out _rc
+  local _attempt _raw _rc
   for _attempt in 1 2 3; do
-    _out="$(curl -s -o /dev/null -w "%{http_code}" -X "${method}" "${CURL_TLS_OPTS[@]}" "$@" "${url}" 2>/dev/null)" && { printf '%s' "${_out}"; return 0; }
+    _raw="$(curl -s -w $'\n%{http_code}' -X "${method}" "${CURL_TLS_OPTS[@]}" "$@" "${url}" 2>/dev/null)" && { printf '%s' "${_raw##*$'\n'}"; return 0; }
     _rc=$?
     if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || ${_rc} -eq 56 ]]; then
       sleep 1
       continue
     fi
-    printf '%s' "${_out}"
+    printf '%s' "${_raw##*$'\n'}"
     return ${_rc}
   done
-  printf '%s' "${_out}"
+  printf '%s' "${_raw##*$'\n'}"
   return ${_rc:-1}
 }
 
@@ -979,7 +979,7 @@ gate_7_security() {
     local _i
     for _i in "${CURL_TLS_OPTS[@]}"; do _curl_tls_args="${_curl_tls_args} ${_i}"; done
     seq 1 "${attempt_burst}" | xargs -I{} -P"${attempt_parallel}" \
-      sh -c "curl -sS -o /dev/null -w '%{http_code}' ${_curl_tls_args} '${API_BASE}/health' > '${tmp_dir}/{}'"
+      sh -c "_raw=\$(curl -sS -w '\n%{http_code}' ${_curl_tls_args} '${API_BASE}/health' 2>/dev/null); printf '%s' \"\${_raw##*\$'\\n'}\" > '${tmp_dir}/{}'"
     rate_limited="$(grep -rl '^429$' "${tmp_dir}" 2>/dev/null | wc -l)"
     rm -rf "${tmp_dir}"
     [[ "${rate_limited}" =~ ^[0-9]+$ ]] || rate_limited=0
@@ -1056,16 +1056,17 @@ gate_7_security() {
   large_file="$(mktemp)"
   {
     printf '{"prompt":"'
-    head -c 2100000 /dev/zero | tr '\0' 'A'
+    python -c "import sys; sys.stdout.buffer.write(b'A' * 2100000)"
     printf '","topic":"job.default"}'
   } >"${large_file}"
-  large_code="$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+  large_raw="$(curl -sS -w $'\n%{http_code}' -X POST \
     "${CURL_TLS_OPTS[@]}" \
     -H "X-API-Key: ${API_KEY}" \
     -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Content-Type: application/json" \
     --data-binary @"${large_file}" \
-    "$(api_url /jobs)")"
+    "$(api_url /jobs)" 2>/dev/null)" || true
+  large_code="${large_raw##*$'\n'}"
   rm -f "${large_file}"
   if [[ "${large_code}" != "400" && "${large_code}" != "413" ]]; then
     echo "oversized payload expected 400/413, got ${large_code}" >&2
@@ -1652,13 +1653,14 @@ gate_10_data_lifecycle() {
   oversize_file="$(mktemp)"
   {
     printf '{"content":"'
-    head -c 10500000 /dev/zero | tr '\0' 'B'
+    python -c "import sys; sys.stdout.buffer.write(b'B' * 10500000)"
     printf '"}'
   } >"${oversize_file}"
-  code="$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+  oversize_raw="$(curl -sS -w $'\n%{http_code}' -X POST \
     "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     --data-binary @"${oversize_file}" \
-    "$(api_url /artifacts)")"
+    "$(api_url /artifacts)" 2>/dev/null)" || true
+  code="${oversize_raw##*$'\n'}"
   rm -f "${oversize_file}"
   [[ "${code}" == "400" || "${code}" == "413" ]] || {
     echo "oversized artifact expected 400/413, got ${code}" >&2
@@ -2585,8 +2587,10 @@ api_code_2() {
   local method="$1"
   local path="$2"
   shift 2
-  curl -sS -o /dev/null -w "%{http_code}" -X "${method}" \
-    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url_2 "${path}")"
+  local _raw
+  _raw="$(curl -sS -w $'\n%{http_code}' -X "${method}" \
+    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url_2 "${path}")" 2>/dev/null)" || true
+  printf '%s' "${_raw##*$'\n'}"
 }
 
 # ── Gate 19: Horizontal Scaling HA ──
@@ -2623,10 +2627,11 @@ gate_19_ha() {
   if [[ "${ha_failed}" == "0" ]]; then
     local gw2_ready=0
     for _ in $(seq 1 45); do
-      local gw2_code
-      gw2_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+      local gw2_code _gw2_raw
+      _gw2_raw="$(curl -sS -w $'\n%{http_code}' \
         "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
-        "$(api_url_2 "/status")" 2>/dev/null || echo "000")"
+        "$(api_url_2 "/status")" 2>/dev/null)" || _gw2_raw="000"
+      gw2_code="${_gw2_raw##*$'\n'}"
       if [[ "${gw2_code}" == "200" ]]; then
         gw2_ready=1
         break

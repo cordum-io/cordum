@@ -91,9 +91,10 @@ func TestRedisRateLimiterFallback(t *testing.T) {
 	// Close miniredis to simulate Redis failure.
 	srv.Close()
 
-	// Should fall back to in-memory limiter without panic.
-	if !rl.Allow("fallback-key") {
-		t.Fatal("expected allow via in-memory fallback")
+	// Should fail-secure (deny) when Redis is unavailable — rate limiting is
+	// a security control, so we reject rather than allow unbounded traffic.
+	if rl.Allow("fallback-key") {
+		t.Fatal("expected deny when Redis unavailable (fail-secure)")
 	}
 }
 

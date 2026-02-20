@@ -26,7 +26,7 @@ func TestLockManager_ConcurrentAcquireRelease(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
-			release := lm.acquire(runID)
+			release, _ := lm.acquire(runID)
 			defer release()
 
 			// Inside the critical section — increment and check.
@@ -76,7 +76,7 @@ func TestLockManager_ConcurrentDifferentRuns(t *testing.T) {
 		runID := "run-" + string(rune('A'+i))
 		go func() {
 			defer wg.Done()
-			release := lm.acquire(runID)
+			release, _ := lm.acquire(runID)
 			defer release()
 
 			cur := active.Add(1)
@@ -110,7 +110,7 @@ func TestLockManager_RaceWithTerminal(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
-			release := lm.acquire(runID)
+			release, _ := lm.acquire(runID)
 			release()
 		}()
 	}
@@ -123,7 +123,7 @@ func TestLockManager_RaceWithTerminal(t *testing.T) {
 
 	// Phase 2: after everything settles, acquire should still work
 	// (it creates a fresh entry if the old one was cleaned up).
-	release := lm.acquire(runID)
+	release, _ := lm.acquire(runID)
 	release()
 	lm.markTerminal(runID)
 
@@ -141,7 +141,7 @@ func TestLockManager_TerminalWhileHeld(t *testing.T) {
 	lm := lockManager{locks: make(map[string]*runLock)}
 	const runID = "run-held"
 
-	release := lm.acquire(runID)
+	release, _ := lm.acquire(runID)
 
 	lm.markTerminal(runID)
 
@@ -170,7 +170,7 @@ func TestLockManager_MultipleHoldersTerminal(t *testing.T) {
 	const runID = "run-multi"
 
 	// Acquire from goroutine A.
-	releaseA := lm.acquire(runID)
+	releaseA, _ := lm.acquire(runID)
 
 	// Ensure B has called acquire (and thus incremented refs) before we proceed.
 	// B will block on lock.mu until A releases, but refs is already incremented.
@@ -180,7 +180,7 @@ func TestLockManager_MultipleHoldersTerminal(t *testing.T) {
 		// We need B to increment refs before markTerminal runs.
 		// acquire increments refs under lm.mu, then blocks on lock.mu.
 		// Since A holds lock.mu, B will block there after incrementing refs.
-		releaseB := lm.acquire(runID)
+		releaseB, _ := lm.acquire(runID)
 		close(bReady) // Signal: B has the lock now (A must have released)
 		done <- releaseB
 	}()
@@ -273,7 +273,11 @@ func TestDistributedRunLock_MutualExclusion(t *testing.T) {
 		go func(mgr *lockManager) {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
-				release := mgr.acquire(runID)
+				release, ok := mgr.acquire(runID)
+				if !ok {
+					// Another replica holds the lock — skip (expected behavior).
+					continue
+				}
 				n := concurrent.Add(1)
 				if n > 1 {
 					for {
@@ -292,11 +296,14 @@ func TestDistributedRunLock_MutualExclusion(t *testing.T) {
 	}
 	wg.Wait()
 
-	// With separate lockManagers (simulating replicas), the local mutexes are
-	// independent. The distributed Redis lock provides cross-replica exclusion.
-	// One manager may proceed with local-only if Redis lock is contended.
+	// With separate lockManagers (simulating replicas), the losing manager
+	// skips when the distributed lock is contended. At least one manager
+	// must make progress.
 	if w := writes.Load(); w == 0 {
 		t.Fatal("expected writes")
+	}
+	if mc := maxConc.Load(); mc > 1 {
+		t.Errorf("expected mutual exclusion, got max concurrent = %d", mc)
 	}
 }
 
@@ -316,7 +323,10 @@ func TestDistributedRunLock_DifferentRunIDs(t *testing.T) {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			release := lm.acquire(id)
+			release, ok := lm.acquire(id)
+			if !ok {
+				return
+			}
 			acquired.Add(1)
 			time.Sleep(5 * time.Millisecond)
 			release()
@@ -342,7 +352,7 @@ func TestDistributedRunLock_TTLExpiry(t *testing.T) {
 	const runID = "run-ttl-test"
 
 	// lm1 acquires — don't release, let TTL expire.
-	_ = lm1.acquire(runID)
+	_, _ = lm1.acquire(runID)
 
 	key := runLockKey(runID)
 	if !srv.Exists(key) {
@@ -358,7 +368,10 @@ func TestDistributedRunLock_TTLExpiry(t *testing.T) {
 	}
 
 	// lm2 can now acquire the distributed lock.
-	release2 := lm2.acquire(runID)
+	release2, ok := lm2.acquire(runID)
+	if !ok {
+		t.Fatal("expected lm2 to acquire lock after TTL expiry")
+	}
 	if !srv.Exists(key) {
 		t.Fatal("expected lm2 to acquire Redis lock after TTL expiry")
 	}
@@ -371,13 +384,13 @@ func TestDistributedRunLock_LocalFallback(t *testing.T) {
 	lm := lockManager{locks: make(map[string]*runLock)} // no locker
 
 	const runID = "run-local-dist"
-	release := lm.acquire(runID)
+	release, _ := lm.acquire(runID)
 	release()
 
-	release2 := lm.acquire(runID)
+	release2, _ := lm.acquire(runID)
 	release2()
 
-	release3 := lm.acquire(runID)
+	release3, _ := lm.acquire(runID)
 	lm.markTerminal(runID)
 	release3()
 
@@ -399,7 +412,10 @@ func TestDistributedRunLock_MarkTerminalCleanup(t *testing.T) {
 	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore}
 
 	const runID = "run-terminal-dist"
-	release := lm.acquire(runID)
+	release, ok := lm.acquire(runID)
+	if !ok {
+		t.Fatal("expected lock acquisition to succeed")
+	}
 
 	lm.markTerminal(runID)
 
@@ -430,7 +446,10 @@ func TestDistributedRunLock_Renewal(t *testing.T) {
 	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore}
 
 	const runID = "run-renewal-dist"
-	release := lm.acquire(runID)
+	release, ok := lm.acquire(runID)
+	if !ok {
+		t.Fatal("expected lock acquisition to succeed")
+	}
 
 	key := runLockKey(runID)
 	if !srv.Exists(key) {

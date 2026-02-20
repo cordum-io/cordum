@@ -272,7 +272,9 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				exists, err := b.redis.Exists(rCtx, pKey).Result()
 				rCancel()
 				if err != nil {
-					log.Printf("nats bus: idempotency check failed (degrading): %v", err)
+					log.Printf("nats bus: idempotency check failed, nak-ing for retry: %v", err)
+					_ = msg.NakWithDelay(2 * time.Second)
+					return
 				} else if exists > 0 {
 					// Already processed — just Ack and skip.
 					if ackErr := msg.Ack(); ackErr != nil {
@@ -329,7 +331,10 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 					pKey := processedKey(streamName, streamSeq)
 					rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
 					if setErr := b.redis.Set(rCtx, pKey, "1", processedKeyTTL).Err(); setErr != nil {
-						log.Printf("nats bus: idempotency set failed: %v", setErr)
+						log.Printf("nats bus: idempotency set failed, nak-ing for retry: %v", setErr)
+						rCancel()
+						_ = msg.NakWithDelay(2 * time.Second)
+						return
 					}
 					rCancel()
 				}

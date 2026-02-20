@@ -181,8 +181,8 @@ func (rl *redisRateLimiter) Allow(key string) bool {
 
 	count, err := rateLimitScript.Run(ctx, rl.client, []string{redisKey}, rateLimitTTLSec).Int64()
 	if err != nil {
-		logging.Warn("rate-limiter", "redis rate limit failed, falling back to in-memory", "error", err)
-		return rl.fallback.Allow(key)
+		logging.Warn("rate-limiter", "redis rate limit unavailable, denying request", "error", err)
+		return false
 	}
 	return count <= int64(rl.burst)
 }

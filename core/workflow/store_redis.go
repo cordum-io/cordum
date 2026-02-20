@@ -248,9 +248,9 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 		return fmt.Errorf("update run: %w", err)
 	}
 
-	// Idempotent index updates in a pipeline (ZADD is upsert, ZREM is no-op if missing).
+	// Idempotent index updates in a transaction (ZADD is upsert, ZREM is no-op if missing).
 	score := float64(now.Unix())
-	pipe := s.client.Pipeline()
+	pipe := s.client.TxPipeline()
 	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: score, Member: run.ID})
 	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: score, Member: run.ID})
 	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: score, Member: run.ID})

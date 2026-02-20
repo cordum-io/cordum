@@ -70,10 +70,13 @@ type runLock struct {
 }
 
 // acquire obtains the per-run lock for runID and returns a release function.
-// Multiple goroutines calling acquire for different runIDs proceed concurrently.
-// Multiple goroutines calling acquire for the same runID are serialized.
+// The bool return indicates whether the lock was acquired (true) or another
+// replica holds the distributed lock and the caller should skip (false).
+// When ok is false, the release function is nil and no cleanup is needed.
 // If a distributed locker is set, a Redis lock is acquired after the local mutex.
-func (lm *lockManager) acquire(runID string) func() {
+// On Redis error (unreachable), degrades to local-only lock.
+// On lock contention (another replica holds it), returns (nil, false) to skip.
+func (lm *lockManager) acquire(runID string) (func(), bool) {
 	lm.mu.Lock()
 	lock, ok := lm.locks[runID]
 	if !ok {
@@ -86,7 +89,7 @@ func (lm *lockManager) acquire(runID string) func() {
 	// Local mutex first (per task rail: local before Redis).
 	lock.mu.Lock()
 
-	// Distributed lock (best-effort — degrades to local-only on failure).
+	// Distributed lock — skip on contention, degrade to local-only on error.
 	var redisToken string
 	var renewCancel context.CancelFunc
 	var renewDone chan struct{}
@@ -99,10 +102,15 @@ func (lm *lockManager) acquire(runID string) func() {
 			logging.Warn("workflow-engine", "distributed run lock acquire failed, using local-only",
 				"run_id", runID, "error", err)
 		} else if token == "" {
-			// Another replica holds the lock. Log and proceed with local-only.
-			// The local mutex still provides same-process safety.
-			logging.Warn("workflow-engine", "distributed run lock contention, proceeding with local lock",
-				"run_id", runID)
+			// Another replica holds the lock — skip this run.
+			lock.mu.Unlock()
+			lm.mu.Lock()
+			lock.refs--
+			if lock.refs == 0 && lock.terminal {
+				delete(lm.locks, runID)
+			}
+			lm.mu.Unlock()
+			return nil, false
 		} else {
 			redisToken = token
 			// Start renewal goroutine if the locker supports it.
@@ -154,7 +162,7 @@ func (lm *lockManager) acquire(runID string) func() {
 			delete(lm.locks, runID)
 		}
 		lm.mu.Unlock()
-	}
+	}, true
 }
 
 // markTerminal flags a run as completed so its lock entry is cleaned up
@@ -236,8 +244,9 @@ func (e *Engine) WithMaxForEachItems(limit int) *Engine {
 }
 
 // lockRun acquires a per-run mutex and returns an unlock function.
-// This replaces the global engine mutex so different runs don't block each other.
-func (e *Engine) lockRun(runID string) func() {
+// The bool return indicates whether the lock was acquired. When false, the
+// caller should skip processing — another replica owns this run.
+func (e *Engine) lockRun(runID string) (func(), bool) {
 	return e.lockMgr.acquire(runID)
 }
 
@@ -251,7 +260,11 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 		return
 	}
 
-	defer e.lockRun(runID)()
+	unlock, ok := e.lockRun(runID)
+	if !ok {
+		return // Another replica owns this run.
+	}
+	defer unlock()
 
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
