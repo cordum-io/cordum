@@ -188,7 +188,7 @@ func getEnvInt(key string, defaultVal int) int {
 	}
 	v, err := strconv.Atoi(raw)
 	if err != nil || v <= 0 {
-		slog.Warn("invalid int env var, using default", "key", key, "value", sanitizeLogValue(raw), "default", defaultVal)
+		slog.Warn("invalid int env var, using default", "key", sanitizeLogValue(key), "value", sanitizeLogValue(raw), "default", defaultVal)
 		return defaultVal
 	}
 	return v

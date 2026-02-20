@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Shield, ShieldCheck, ShieldOff } from "lucide-react";
-import { ApiError, get, post, put } from "../../api/client";
+import { ApiError, post, put } from "../../api/client";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card, CardDescription, CardHeader, CardTitle } from "../../components/ui/Card";
