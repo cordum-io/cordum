@@ -605,6 +605,12 @@ func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// runDetailResponse embeds a WorkflowRun with an optional timers field.
+type runDetailResponse struct {
+	*wf.WorkflowRun
+	Timers []wf.DelayTimerInfo `json:"timers,omitempty"`
+}
+
 func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
@@ -624,8 +630,16 @@ func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 		return
 	}
+
+	resp := runDetailResponse{WorkflowRun: run}
+
+	// Best-effort: attach any pending delay timer for this run.
+	if timer, err := s.workflowStore.GetDelayTimer(r.Context(), run.WorkflowID, run.ID); err == nil && timer != nil {
+		resp.Timers = []wf.DelayTimerInfo{*timer}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, run)
+	writeJSON(w, resp)
 }
 
 func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {

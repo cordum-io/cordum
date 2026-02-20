@@ -685,7 +685,26 @@ The remaining groups (workflows, policy bundles, config, packs/marketplace, lock
 ### GET `/api/v1/workflow-runs/{id}`
 
 - Auth: required + tenant access
-- Response: run object
+- Response: run object enriched with active delay timers (if any)
+
+```json
+{
+  "id": "run-id",
+  "workflow_id": "wf-id",
+  "status": "RUNNING",
+  "timers": [
+    {
+      "workflow_id": "wf-id",
+      "run_id": "run-id",
+      "fires_at": "2026-02-20T12:30:00Z",
+      "remaining_ms": 28500
+    }
+  ]
+}
+```
+
+The `timers` array is omitted when no active delay timers exist for the run. Timer lookup is best-effort — failures are silently ignored to avoid degrading the endpoint.
+
 - Errors: `400`, `403`, `404`, `503`
 
 ### GET `/api/v1/workflow-runs/{id}/timeline`

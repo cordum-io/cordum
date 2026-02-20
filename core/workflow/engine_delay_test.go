@@ -281,6 +281,74 @@ func TestSplitDelayMember(t *testing.T) {
 	}
 }
 
+// TestGetDelayTimerFuture verifies that GetDelayTimer returns timer info for a future fire time.
+func TestGetDelayTimerFuture(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer store.Close()
+
+	ctx := context.Background()
+	fireAt := time.Now().Add(30 * time.Second)
+
+	if err := store.AddDelayTimer(ctx, "wf-1", "run-1", fireAt); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := store.GetDelayTimer(ctx, "wf-1", "run-1")
+	if err != nil {
+		t.Fatalf("GetDelayTimer: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected timer info, got nil")
+	}
+	if info.WorkflowID != "wf-1" || info.RunID != "run-1" {
+		t.Fatalf("unexpected IDs: %s, %s", info.WorkflowID, info.RunID)
+	}
+	if info.RemainingMs <= 0 {
+		t.Fatalf("expected positive remaining_ms, got %d", info.RemainingMs)
+	}
+	if info.FiresAt.Unix() != fireAt.Unix() {
+		t.Fatalf("expected fires_at %d, got %d", fireAt.Unix(), info.FiresAt.Unix())
+	}
+}
+
+// TestGetDelayTimerNotFound verifies nil return when no timer exists.
+func TestGetDelayTimerNotFound(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer store.Close()
+
+	info, err := store.GetDelayTimer(context.Background(), "wf-none", "run-none")
+	if err != nil {
+		t.Fatalf("GetDelayTimer: %v", err)
+	}
+	if info != nil {
+		t.Fatalf("expected nil for missing timer, got %+v", info)
+	}
+}
+
+// TestGetDelayTimerStale verifies nil return when timer has already fired.
+func TestGetDelayTimerStale(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer store.Close()
+
+	ctx := context.Background()
+	pastTime := time.Now().Add(-10 * time.Second)
+
+	if err := store.AddDelayTimer(ctx, "wf-1", "run-stale", pastTime); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := store.GetDelayTimer(ctx, "wf-1", "run-stale")
+	if err != nil {
+		t.Fatalf("GetDelayTimer: %v", err)
+	}
+	if info != nil {
+		t.Fatalf("expected nil for stale timer, got %+v", info)
+	}
+}
+
 // TestDelayTimerIdempotent verifies ZADD is idempotent (same member updates score).
 func TestDelayTimerIdempotent(t *testing.T) {
 	store, srv := newTestStoreWithServer(t)

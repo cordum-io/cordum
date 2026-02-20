@@ -571,6 +571,37 @@ func (s *RedisStore) RemoveDelayTimer(ctx context.Context, workflowID, runID str
 	return s.client.ZRem(ctx, delayTimerKey, member).Err()
 }
 
+// DelayTimerInfo describes a pending delay timer for a workflow run.
+type DelayTimerInfo struct {
+	WorkflowID  string    `json:"workflow_id"`
+	RunID       string    `json:"run_id"`
+	FiresAt     time.Time `json:"fires_at"`
+	RemainingMs int64     `json:"remaining_ms"`
+}
+
+// GetDelayTimer returns the delay timer for a specific run, or nil if none exists or it has already fired.
+func (s *RedisStore) GetDelayTimer(ctx context.Context, workflowID, runID string) (*DelayTimerInfo, error) {
+	member := workflowID + ":" + runID
+	score, err := s.client.ZScore(ctx, delayTimerKey, member).Result()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get delay timer: %w", err)
+	}
+	firesAt := time.Unix(int64(score), 0).UTC()
+	now := time.Now()
+	if firesAt.Before(now) {
+		return nil, nil // Already fired — stale.
+	}
+	return &DelayTimerInfo{
+		WorkflowID:  workflowID,
+		RunID:       runID,
+		FiresAt:     firesAt,
+		RemainingMs: firesAt.Sub(now).Milliseconds(),
+	}, nil
+}
+
 // ListFutureDelays returns all timers with fire time > now, as (member, score) pairs.
 // Members are in "workflowID:runID" format.
 func (s *RedisStore) ListFutureDelays(ctx context.Context, now time.Time) ([]redis.Z, error) {
