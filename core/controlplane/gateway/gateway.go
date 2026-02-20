@@ -22,6 +22,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/artifacts"
+	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
@@ -123,6 +124,9 @@ type server struct {
 	apiRL    rateLimiter
 	publicRL rateLimiter
 
+	instanceRegistry *registry.InstanceRegistry
+	instanceID       string
+
 	marketplaceMu    sync.Mutex
 	marketplaceCache marketplaceCache
 	stopBusTapsOnce  sync.Once
@@ -176,6 +180,9 @@ func workerSummariesToHeartbeats(workers []registry.WorkerSummary) []*pb.Heartbe
 // Close releases resources owned by the server, notably the user store
 // connection. It is safe to call with a nil userStore.
 func (s *server) Close() {
+	if s.instanceRegistry != nil {
+		s.instanceRegistry.Stop()
+	}
 	s.stopBusTaps()
 	s.stopWorkerExpiry()
 	// Close safety kernel gRPC connection AFTER HTTP shutdown completes so
@@ -447,6 +454,17 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		s.publicRL = defaultPublicLimiter
 	}
 
+	// Instance registry: self-register this gateway replica in Redis.
+	instanceID := registry.ResolveInstanceID()
+	s.instanceID = instanceID
+	if jobStore != nil {
+		s.instanceRegistry = registry.NewInstanceRegistry(
+			jobStore.Client(), "api-gateway", instanceID,
+			buildinfo.Version, buildinfo.Commit,
+		)
+		s.instanceRegistry.Start(context.Background())
+	}
+
 	if err := s.startBusTaps(); err != nil {
 		return fmt.Errorf("start bus taps: %w", err)
 	}
@@ -560,6 +578,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 2.5 Status snapshot (Redis/NATS/workers/uptime)
 	mux.HandleFunc("GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))
+
+	// 2.6 Admin endpoints (read-only, admin auth required)
+	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
 
 	// 3. Jobs (Redis ZSet)
 	mux.HandleFunc("GET /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleListJobs))

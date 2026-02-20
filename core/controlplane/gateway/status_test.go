@@ -399,3 +399,186 @@ func (s stubLicenseAuth) ResolvePrincipal(_ *http.Request, requested string) (st
 }
 
 func (s stubLicenseAuth) LicenseInfo() *LicenseInfo { return s.info }
+
+func TestHandleStatusHAFields(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.instanceID = "gw-test-123"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+
+	// instance_id
+	if id, ok := status["instance_id"].(string); !ok || id != "gw-test-123" {
+		t.Fatalf("expected instance_id=gw-test-123, got %v", status["instance_id"])
+	}
+
+	// rate_limiter
+	rl, ok := status["rate_limiter"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected rate_limiter in status")
+	}
+	if mode, ok := rl["mode"].(string); !ok || mode != "memory" {
+		t.Fatalf("expected rate_limiter.mode=memory (no redis RL in test), got %v", rl["mode"])
+	}
+
+	// circuit_breakers
+	cb, ok := status["circuit_breakers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected circuit_breakers in status")
+	}
+	inputCB, ok := cb["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected circuit_breakers.input")
+	}
+	// With miniredis and no failures written, state should be CLOSED.
+	if state := inputCB["state"].(string); state != "CLOSED" {
+		t.Fatalf("expected input CB state=CLOSED, got %s", state)
+	}
+	if failures := inputCB["failures"].(float64); failures != 0 {
+		t.Fatalf("expected input CB failures=0, got %v", failures)
+	}
+	outputCB, ok := cb["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected circuit_breakers.output")
+	}
+	if state := outputCB["state"].(string); state != "CLOSED" {
+		t.Fatalf("expected output CB state=CLOSED, got %s", state)
+	}
+
+	// Backward compat: existing fields still present.
+	if _, ok := status["build"].(map[string]any); !ok {
+		t.Fatal("expected build info still present")
+	}
+	if _, ok := status["workers"].(map[string]any); !ok {
+		t.Fatal("expected workers info still present")
+	}
+	if _, ok := status["pipeline"].(map[string]any); !ok {
+		t.Fatal("expected pipeline info still present")
+	}
+}
+
+func TestHandleStatusHAFieldsWithCircuitBreakerOpen(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.instanceID = "gw-cb-test"
+	ctx := context.Background()
+
+	// Simulate an open circuit breaker by writing failures to Redis.
+	rdb := s.jobStore.Client()
+	rdb.Set(ctx, "cordum:cb:safety:failures", "5", 30*time.Second)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	cb := status["circuit_breakers"].(map[string]any)
+	inputCB := cb["input"].(map[string]any)
+	if state := inputCB["state"].(string); state != "OPEN" {
+		t.Fatalf("expected input CB state=OPEN with 5 failures, got %s", state)
+	}
+	if failures := inputCB["failures"].(float64); failures != 5 {
+		t.Fatalf("expected failures=5, got %v", failures)
+	}
+	if cooldown := inputCB["cooldown_remaining_ms"].(float64); cooldown <= 0 {
+		t.Fatalf("expected positive cooldown, got %v", cooldown)
+	}
+
+	// Output CB should still be CLOSED (no failures written).
+	outputCB := cb["output"].(map[string]any)
+	if state := outputCB["state"].(string); state != "CLOSED" {
+		t.Fatalf("expected output CB state=CLOSED, got %s", state)
+	}
+}
+
+func TestHandleStatusHAFieldsWithReplicas(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.instanceID = "gw-replica-test"
+	ctx := context.Background()
+
+	// Register a fake instance in Redis.
+	rdb := s.jobStore.Client()
+	instReg := registry.NewInstanceRegistry(rdb, "api-gateway", "gw-1", "v0.2.0", "abc123")
+	instReg.Start(ctx)
+	defer instReg.Stop()
+
+	// The gateway also needs an instanceRegistry to trigger the replicas section.
+	s.instanceRegistry = registry.NewInstanceRegistry(rdb, "api-gateway", "gw-replica-test", "v0.2.0", "def456")
+	s.instanceRegistry.Start(ctx)
+	defer s.instanceRegistry.Stop()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	replicas, ok := status["replicas"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected replicas map in status, got %T: %v", status["replicas"], status["replicas"])
+	}
+	gwReplicas, ok := replicas["api-gateway"].([]any)
+	if !ok {
+		t.Fatalf("expected api-gateway replicas array, got %T", replicas["api-gateway"])
+	}
+	if len(gwReplicas) != 2 {
+		t.Fatalf("expected 2 api-gateway replicas, got %d", len(gwReplicas))
+	}
+}
+
+func TestHandleStatusHAFieldsNilRegistry(t *testing.T) {
+	// Verify no crash when instanceRegistry is nil (single-replica mode).
+	s := &server{
+		memStore:   &errorMemStore{},
+		workers:    map[string]*pb.Heartbeat{},
+		workerSeen: map[string]time.Time{},
+		instanceID: "standalone",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// instance_id should be present.
+	if status["instance_id"] != "standalone" {
+		t.Fatalf("expected instance_id=standalone, got %v", status["instance_id"])
+	}
+	// replicas should be absent (no registry).
+	if _, ok := status["replicas"]; ok {
+		t.Fatal("expected replicas to be absent when registry is nil")
+	}
+	// circuit_breakers should show UNKNOWN (nil Redis).
+	cb := status["circuit_breakers"].(map[string]any)
+	inputCB := cb["input"].(map[string]any)
+	if state := inputCB["state"].(string); state != "UNKNOWN" {
+		t.Fatalf("expected UNKNOWN CB state with nil Redis, got %s", state)
+	}
+}

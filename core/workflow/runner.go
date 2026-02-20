@@ -13,9 +13,11 @@ import (
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -108,6 +110,12 @@ func Run(cfg *config.Config) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Instance registry: self-register this workflow-engine replica in Redis.
+	instanceID := registry.ResolveInstanceID()
+	instReg := registry.NewInstanceRegistry(jobStore.Client(), "workflow-engine", instanceID, buildinfo.Version, buildinfo.Commit)
+	instReg.Start(ctx)
+	defer instReg.Stop()
 
 	// Recover durable delay timers from Redis (fast — runs before accepting work).
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 5*time.Second)

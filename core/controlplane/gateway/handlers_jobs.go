@@ -18,6 +18,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/secrets"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -180,6 +181,30 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if provider, ok := s.auth.(LicenseInfoProvider); ok {
 		if info := provider.LicenseInfo(); info != nil {
 			resp["license"] = info
+		}
+	}
+
+	// HA-aware fields (additive — existing consumers ignore unknown fields).
+	resp["instance_id"] = s.instanceID
+	resp["rate_limiter"] = map[string]any{
+		"mode": rateLimiterMode(s.apiRL),
+	}
+
+	// Circuit breaker status from Redis (read-only).
+	var cbRedis redis.UniversalClient
+	if s.jobStore != nil {
+		cbRedis = s.jobStore.Client()
+	}
+	resp["circuit_breakers"] = map[string]any{
+		"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
+		"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
+	}
+
+	// Replica registry from Redis SCAN.
+	if s.instanceRegistry != nil && s.jobStore != nil {
+		replicas, err := registry.ListAllInstances(r.Context(), s.jobStore.Client())
+		if err == nil {
+			resp["replicas"] = replicas
 		}
 	}
 
