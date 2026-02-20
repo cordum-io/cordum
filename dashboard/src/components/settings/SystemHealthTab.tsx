@@ -17,6 +17,7 @@ import {
 import { useStatus } from "../../hooks/useStatus";
 import { ReplicaTable } from "./ReplicaTable";
 import { LockInspector } from "./LockInspector";
+import { CircuitBreakerPanel } from "./CircuitBreakerPanel";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -517,6 +518,9 @@ export function SystemHealthTab() {
 
       {/* Service replicas (hidden gracefully in single-replica mode) */}
       <ReplicaTable replicas={statusData?.replicas} />
+
+      {/* Circuit breaker detail (hidden when HA fields absent) */}
+      <CircuitBreakerPanel circuitBreakers={statusData?.circuit_breakers} />
 
       {/* Distributed lock inspector */}
       <LockInspector />
