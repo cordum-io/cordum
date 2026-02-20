@@ -785,6 +785,13 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `CORDUM_OIDC_ALLOW_PRIVATE` | — | Allow private/loopback issuer URLs |
 | `CORDUM_OIDC_ALLOW_HTTP` | — | Allow HTTP (non-TLS) issuer URLs |
 
+**HA note — JWKS coordination**: When running multiple gateway replicas, the OIDC provider
+automatically coordinates JWKS fetches via Redis. The first replica to refresh fetches from
+the IdP and writes the JWKS to `cordum:auth:jwks:<issuerHash>` (TTL 1h). Other replicas read
+from this cache, reducing IdP load from N requests to 1 per refresh cycle. Each replica also
+applies random jitter (0–30s initial, 0–15s per tick) to prevent thundering-herd requests.
+If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior as single-replica).
+
 ### Gateway — User Authentication
 
 | Variable | Default | Description |

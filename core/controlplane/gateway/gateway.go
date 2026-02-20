@@ -27,6 +27,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
@@ -269,6 +270,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		}
 		if oidcProvider != nil {
 			defer oidcProvider.Close()
+			// Attach Redis client for cross-replica JWKS cache (best effort).
+			if oidcRedis, rErr := redisutil.NewClient(cfg.RedisURL); rErr == nil {
+				oidcProvider.WithRedis(oidcRedis)
+				defer func() { _ = oidcRedis.Close() }()
+			} else {
+				logging.Error("api-gateway", "oidc redis cache unavailable, continuing without", "error", rErr)
+			}
 			oidcAdapter := NewOIDCAuthAdapter(oidcProvider, tenantID)
 			composite, err := NewCompositeAuthProvider(basic, oidcAdapter)
 			if err != nil {
