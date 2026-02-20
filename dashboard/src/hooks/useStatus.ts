@@ -76,6 +76,7 @@ export interface GatewayStatus {
     writer_id: string;
     captured_at: string;
   };
+  input_fail_open_total?: number;
 }
 
 type PipelineMetrics = NonNullable<GatewayStatus["pipeline"]>;

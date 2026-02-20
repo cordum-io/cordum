@@ -9,6 +9,7 @@ import { Select } from "../../components/ui/Select";
 import { usePageTitle } from "../../hooks/usePageTitle";
 import { useConfig } from "../../hooks/useSettings";
 import { useStatus } from "../../hooks/useStatus";
+import { FailOpenCounter } from "../../components/settings/FailOpenCounter";
 import { logger } from "../../lib/logger";
 import { useToastStore } from "../../state/toast";
 
@@ -207,6 +208,12 @@ export default function InputSafetySettings() {
               Runtime: fail-{inputStatus?.fail_mode || form.failMode}
             </Badge>
           </div>
+
+          <FailOpenCounter
+            count={status?.input_fail_open_total}
+            failMode={form.failMode}
+            inputCB={status?.circuit_breakers?.input}
+          />
 
           <div className="flex items-center gap-3">
             <Button

@@ -201,6 +201,13 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
 	}
 
+	// Input fail-open counter from Redis (incremented by scheduler).
+	if cbRedis != nil {
+		if val, err := cbRedis.Get(r.Context(), "cordum:scheduler:input_fail_open_total").Int64(); err == nil {
+			resp["input_fail_open_total"] = val
+		}
+	}
+
 	// HA environment variables (read-only, startup-only).
 	haEnv := map[string]any{
 		"redis_pool_size":      os.Getenv("REDIS_POOL_SIZE"),

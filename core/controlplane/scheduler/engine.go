@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/redis/go-redis/v9"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	capvalidate "github.com/cordum-io/cap/v2/sdk/go"
@@ -61,6 +62,7 @@ type Engine struct {
 	metrics             Metrics
 	config              ConfigProvider
 	saga                *SagaManager
+	counterClient       redis.UniversalClient // optional, for operational counters shared across services
 	stopped             atomic.Bool
 	activeHandlers      atomic.Int64
 	wg                  sync.WaitGroup
@@ -218,6 +220,13 @@ func (e *Engine) WithOutputChecker(c OutputSafetyChecker) *Engine {
 // WithOutputSafetyEnabled toggles output safety checks.
 func (e *Engine) WithOutputSafetyEnabled(enabled bool) *Engine {
 	e.outputSafetyEnabled.Store(enabled)
+	return e
+}
+
+// WithCounterClient wires an optional Redis client for operational counters
+// shared across services (e.g., fail-open count visible to gateway).
+func (e *Engine) WithCounterClient(c redis.UniversalClient) *Engine {
+	e.counterClient = c
 	return e
 }
 
@@ -612,6 +621,9 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) error {
 				"trace_id", traceID, "input_fail_mode", "open")
 			if e.metrics != nil {
 				e.metrics.IncInputFailOpen(topic)
+			}
+			if e.counterClient != nil {
+				e.counterClient.Incr(e.ctx, "cordum:scheduler:input_fail_open_total")
 			}
 			record.Decision = SafetyAllow
 			record.Reason = "fail-open: safety unavailable — " + record.Reason
