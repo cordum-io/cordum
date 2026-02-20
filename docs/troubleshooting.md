@@ -671,6 +671,27 @@ For CAP SDK-level issues (worker connection, protocol errors, handler panics), s
 
 ---
 
+## Rolling Restarts & Graceful Shutdown
+
+All Cordum services shut down gracefully within **15 seconds** when receiving SIGTERM (the default signal K8s sends during rolling restarts). This is well under the default `terminationGracePeriodSeconds` of 30s.
+
+| Service | Shutdown Behavior |
+|---------|-------------------|
+| API Gateway | Drains HTTP + gRPC, stops WebSocket taps, shuts down metrics (15s timeout) |
+| Context Engine | `GracefulStop()` drains in-flight gRPC RPCs, fallback to forced `Stop()` after 15s |
+| Safety Kernel | `GracefulStop()` drains in-flight gRPC RPCs, stops policy watcher, fallback to `Stop()` after 15s |
+| Workflow Engine | Drains NATS subscriptions, waits for in-flight workflow step handlers to return (15s timeout) |
+| Scheduler | Stops engine (drains NATS), releases job locks via context cancellation, stops snapshot writer (15s timeout) |
+
+**If pods are killed during rolling restarts**:
+
+1. Check `terminationGracePeriodSeconds` in the Deployment spec is >= 30s (the default). If it's too low, pods receive SIGKILL before graceful shutdown completes.
+2. Check PodDisruptionBudgets are in place to prevent draining too many replicas simultaneously.
+3. In-flight gRPC calls (to context-engine or safety-kernel) will receive a `CANCELLED` or `UNAVAILABLE` status code — clients should retry.
+4. The scheduler's job locks have a 60s TTL. If a scheduler replica is killed without releasing locks, the surviving replica takes over within 60s.
+
+---
+
 ## Related Docs
 
 - [production.md](production.md) — Production readiness guide with incident runbooks

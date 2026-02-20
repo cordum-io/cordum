@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -107,6 +110,38 @@ func main() {
 	}
 
 	log.Printf("context engine listening on %s (redis=%s)", addr, cfg.RedisURL)
+
+	// Graceful shutdown: on SIGINT/SIGTERM, drain in-flight RPCs then stop.
+	sigCtx, sigStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer sigStop()
+
+	go func() {
+		<-sigCtx.Done()
+		log.Println("context-engine shutting down gracefully...")
+
+		const shutdownTimeout = 15 * time.Second
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		// GracefulStop drains in-flight RPCs. Force-stop if it takes too long.
+		grpcDone := make(chan struct{})
+		go func() {
+			server.GracefulStop()
+			close(grpcDone)
+		}()
+		select {
+		case <-grpcDone:
+			log.Println("context-engine gRPC server drained")
+		case <-shutdownCtx.Done():
+			log.Println("context-engine gRPC graceful stop timed out, forcing")
+			server.Stop()
+		}
+
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("context-engine metrics shutdown error: %v", err)
+		}
+	}()
+
 	if err := server.Serve(lis); err != nil {
 		log.Fatalf("context engine server error: %v", err)
 	}

@@ -15,12 +15,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
@@ -168,6 +170,33 @@ func Run(cfg *config.Config) error {
 	}
 
 	log.Printf("safety-kernel: listening on %s", cfg.SafetyKernelAddr)
+
+	// Graceful shutdown: on SIGINT/SIGTERM, drain in-flight RPCs then stop.
+	sigCtx, sigStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer sigStop()
+
+	go func() {
+		<-sigCtx.Done()
+		log.Println("safety-kernel: shutting down gracefully...")
+
+		const shutdownTimeout = 15 * time.Second
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		grpcDone := make(chan struct{})
+		go func() {
+			grpcServer.GracefulStop()
+			close(grpcDone)
+		}()
+		select {
+		case <-grpcDone:
+			log.Println("safety-kernel: gRPC server drained")
+		case <-shutdownCtx.Done():
+			log.Println("safety-kernel: gRPC graceful stop timed out, forcing")
+			grpcServer.Stop()
+		}
+	}()
+
 	serveErr := grpcServer.Serve(lis)
 	lifecycleCancel()
 	wg.Wait()

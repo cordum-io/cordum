@@ -26,7 +26,7 @@ const (
 	defaultReadTimeout     = 5 * time.Second
 	defaultWriteTimeout    = 5 * time.Second
 	defaultIdleTimeout     = 60 * time.Second
-	defaultShutdownTimeout = 3 * time.Second
+	defaultShutdownTimeout = 15 * time.Second
 	workflowEngineQueue    = "cordum-workflow-engine"
 )
 
@@ -136,6 +136,7 @@ func Run(cfg *config.Config) error {
 
 	<-ctx.Done()
 
+	logging.Info("workflow-engine", "shutting down gracefully", "timeout", defaultShutdownTimeout.String())
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)

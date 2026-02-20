@@ -417,8 +417,10 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	log.Println("scheduler shutting down")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	const shutdownTimeout = 15 * time.Second
+	log.Printf("scheduler shutting down gracefully (timeout=%s)", shutdownTimeout)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("metrics server shutdown error: %v", err)
