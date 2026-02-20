@@ -191,6 +191,12 @@ export interface BackendWorkflowRun {
   rerun_of?: string;
   rerun_step?: string;
   dry_run?: boolean;
+  timers?: Array<{
+    workflow_id: string;
+    run_id: string;
+    fires_at: string;
+    remaining_ms: number;
+  }>;
 }
 
 export interface BackendApprovalItem {
@@ -913,6 +919,7 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
     rerunOf: run.rerun_of,
     rerunStep: run.rerun_step,
     dryRun: run.dry_run,
+    timers: run.timers,
   };
 }
 

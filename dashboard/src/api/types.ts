@@ -367,6 +367,12 @@ export interface WorkflowRun {
   rerunOf?: string;
   rerunStep?: string;
   dryRun?: boolean;
+  timers?: Array<{
+    workflow_id: string;
+    run_id: string;
+    fires_at: string;
+    remaining_ms: number;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
