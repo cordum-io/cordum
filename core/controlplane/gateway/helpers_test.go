@@ -20,9 +20,10 @@ import (
 )
 
 type stubBus struct {
-	mu        sync.Mutex
-	published []publishedMessage
-	subs      map[string][]func(*pb.BusPacket) error
+	mu          sync.Mutex
+	published   []publishedMessage
+	subs        map[string][]func(*pb.BusPacket) error
+	queueGroups map[string][]string // subject -> queue groups used
 }
 
 type publishedMessage struct {
@@ -37,7 +38,7 @@ func (b *stubBus) Publish(subject string, packet *pb.BusPacket) error {
 	return nil
 }
 
-func (b *stubBus) Subscribe(subject, _ string, handler func(*pb.BusPacket) error) error {
+func (b *stubBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
 	if handler == nil {
 		return nil
 	}
@@ -45,7 +46,11 @@ func (b *stubBus) Subscribe(subject, _ string, handler func(*pb.BusPacket) error
 	if b.subs == nil {
 		b.subs = map[string][]func(*pb.BusPacket) error{}
 	}
+	if b.queueGroups == nil {
+		b.queueGroups = map[string][]string{}
+	}
 	b.subs[subject] = append(b.subs[subject], handler)
+	b.queueGroups[subject] = append(b.queueGroups[subject], queue)
 	b.mu.Unlock()
 	return nil
 }

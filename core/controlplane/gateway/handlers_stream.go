@@ -123,9 +123,11 @@ func (s *server) startBusTaps() error {
 		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectHeartbeat, err)
 	}
 
-	// DLQ tap to persist entries
+	// DLQ tap to persist entries. Uses queue group so only one gateway replica
+	// writes to Redis per DLQ event (N replicas → 1 write instead of N).
+	// WS forwarding is handled separately by the sys.job.> broadcast subscription.
 	if s.dlqStore != nil {
-		if err := s.bus.Subscribe(capsdk.SubjectDLQ, "", func(p *pb.BusPacket) error {
+		if err := s.bus.Subscribe(capsdk.SubjectDLQ, "cordum-gateway", func(p *pb.BusPacket) error {
 			if jr := p.GetJobResult(); jr != nil {
 				jobID := strings.TrimSpace(jr.JobId)
 				topic := ""
