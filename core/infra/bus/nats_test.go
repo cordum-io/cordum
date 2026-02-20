@@ -731,11 +731,8 @@ func TestQueueGroup_OnlyOneReceives(t *testing.T) {
 	}
 	// With queue group, messages should be distributed, not duplicated.
 	// Each message delivered to exactly one subscriber.
-	if count1.Load() == 10 && count2.Load() == 0 {
-		// All went to one — acceptable for small N with NATS round-robin
-	} else if count1.Load() == 0 && count2.Load() == 10 {
-		// Same
-	}
+	// With queue group, all messages may go to one subscriber — acceptable for small N.
+	// Key assertion: no duplication — total == 10, not 20.
 	// Key assertion: no duplication — total == 10, not 20.
 }
 

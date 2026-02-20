@@ -145,7 +145,7 @@ func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read worker snapshot: %w", err)
 	}
-	if data == nil || len(data) == 0 {
+	if len(data) == 0 {
 		return nil, nil
 	}
 	var snap registry.Snapshot
