@@ -1,6 +1,6 @@
 # Cordum Roadmap
 
-> **Last Updated:** February 13, 2026
+> **Last Updated:** February 20, 2026
 
 This roadmap outlines our vision for Cordum's evolution. Priorities may shift based on community feedback and production learnings.
 
@@ -68,6 +68,27 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 - [x] **Password policy** — minimum complexity requirements
 - [x] **Brute-force protection** — login attempt rate limiting
 
+### Horizontal Scaling & High Availability
+- [x] **Multi-replica coordination** — Redis distributed locks, NATS queue groups for all services
+- [x] **HA Docker overlay** — `docker-compose.ha.yaml` with 2-replica topology
+- [x] **Production gate** — Gate 19 validates no-duplicate dispatch, distributed rate limiting, snapshot consistency, scheduler failover
+- [x] **Distributed circuit breaker** — Redis-backed circuit breaker (Lua atomic counters) for input safety and output policy
+
+### MCP Server
+- [x] **Stdio transport** — newline-delimited JSON-RPC over stdin/stdout
+- [x] **HTTP/SSE transport** — HTTP POST + Server-Sent Events with session management
+- [x] **Tools catalog** — 6 tools (submit/cancel job, trigger workflow, approve/reject, query policy)
+- [x] **Resources catalog** — 7 resources (jobs, workflows, runs, audit, health, policies)
+
+### Input Safety Fail Modes
+- [x] **Configurable fail modes** — `open` (allow through) and `closed` (requeue/quarantine) for input and output safety
+- [x] **Dashboard settings** — InputSafetySettings and OutputSafetySettings pages
+- [x] **Metrics instrumentation** — `cordum_input_fail_open_total` and `cordum_output_policy_skipped_total` counters
+
+### CAP Protocol & Go SDK
+- [x] **CAP v2.5.2 integration** — Handshake, ErrorCode enum, AlertSeverity, MetricsHook
+- [x] **Go Worker SDK** — `sdk/runtime/` with typed handler registration, TLS blob store, heartbeat, panic recovery, ECDSA verification
+
 ### Bug Fixes — System Audit (25 tasks)
 - [x] Concurrency fixes in scheduler engine (per-run mutex)
 - [x] Error handling gaps in gateway and workflow engine
@@ -89,18 +110,18 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 - [x] Output policy gRPC contract (`output_policy.proto`)
 - [x] Safety kernel output scanners (content patterns, detectors)
 - [x] Scheduler output safety client integration
-- [ ] MCP server stdio + HTTP/SSE modes
-- [ ] MCP tools and resources catalog
+- [x] MCP server stdio + HTTP/SSE modes
+- [x] MCP tools and resources catalog (6 tools, 7 resources)
 - [ ] Dashboard output quarantine UX
 - [ ] Dashboard remediation drawer
 
 ### Workflow Step Types (6 tasks)
 - [x] **Switch** — multi-branch condition evaluation
 - [x] **Transform** — inline expression evaluation with `${ }` syntax
-- [ ] **Parallel** — concurrent branch execution
-- [ ] **Loop** — iterative execution with break conditions
-- [ ] **Storage** — read/write workflow context paths
-- [ ] **Sub-workflow** — nested workflow invocation
+- [x] **Parallel** — concurrent branch execution (all/any/n_of_m strategies)
+- [x] **Loop** — iterative execution with break conditions (while/until/fixed count)
+- [x] **Storage** — read/write/delete workflow context paths
+- [x] **Sub-workflow** — nested workflow invocation (input/output mapping, circular detection)
 
 ### Dashboard Feature Gaps (11 tasks)
 - [x] Workflow run deletion (single + bulk)
@@ -141,7 +162,7 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 - [x] **Notify steps** — emit system alerts from workflows
 - [x] **Switch steps** — multi-branch condition routing
 - [x] **Transform steps** — inline expression evaluation
-- [ ] **Loop constructs** — iterative loops within workflows
+- [x] **Loop constructs** — iterative loops within workflows (while/until/fixed count)
 - [ ] **Workflow templates** — parameterized workflow definitions
 
 ### Observability
@@ -345,5 +366,5 @@ We track these metrics to measure progress:
 
 ---
 
-**Last updated:** February 2026
+**Last updated:** February 20, 2026
 **Next review:** April 2026

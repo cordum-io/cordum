@@ -5,7 +5,7 @@ import "time"
 // StepType identifies the kind of step in a workflow.
 type StepType string
 
-// Implemented step types — these have dedicated handlers in engine.go.
+// Core step types — dedicated handlers in engine.go.
 const (
 	StepTypeWorker    StepType = "worker"    // Default job dispatch
 	StepTypeApproval  StepType = "approval"  // Human-in-the-loop gate
@@ -14,19 +14,23 @@ const (
 	StepTypeNotify    StepType = "notify"    // System alert emission
 )
 
-// Planned step types — no engine handler yet, dispatched as generic jobs.
+// Step types with dedicated engine handlers.
 const (
-	StepTypeLLM         StepType = "llm"
-	StepTypeHTTP        StepType = "http"
-	StepTypeContainer   StepType = "container"
-	StepTypeScript      StepType = "script"
-	StepTypeInput       StepType = "input"
-	StepTypeSwitch      StepType = "switch"
-	StepTypeParallel    StepType = "parallel"
-	StepTypeLoop        StepType = "loop"
-	StepTypeTransform   StepType = "transform"
-	StepTypeStorage     StepType = "storage"
-	StepTypeSubWorkflow StepType = "subworkflow"
+	StepTypeSwitch      StepType = "switch"      // Multi-branch condition routing
+	StepTypeParallel    StepType = "parallel"     // Concurrent branch execution (all/any/n_of_m)
+	StepTypeLoop        StepType = "loop"         // Iterative execution (while/until/fixed count)
+	StepTypeTransform   StepType = "transform"    // Inline expression evaluation
+	StepTypeStorage     StepType = "storage"      // Read/write/delete workflow context
+	StepTypeSubWorkflow StepType = "subworkflow"  // Nested workflow invocation
+)
+
+// Generic step types — dispatched as jobs to worker pools, no dedicated engine handler.
+const (
+	StepTypeLLM       StepType = "llm"
+	StepTypeHTTP      StepType = "http"
+	StepTypeContainer StepType = "container"
+	StepTypeScript    StepType = "script"
+	StepTypeInput     StepType = "input"
 )
 
 // RunStatus captures the lifecycle of a workflow run.
