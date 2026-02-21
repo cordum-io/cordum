@@ -1,15 +1,14 @@
 # Cordum Roadmap
 
-> **Last Updated:** February 13, 2026
+> **Last Updated:** February 20, 2026
 
 This roadmap outlines our vision for Cordum's evolution. Priorities may shift based on community feedback and production learnings.
 
 ## Current Focus: v0.9.0 → v1.0.0 (Q1-Q2 2026)
 
-The path to v1.0.0 focuses on **production hardening** and **API stability**.
+The path to v1.0.0 focuses on **production hardening** and **API stability**. Backend services, horizontal scaling, and documentation are complete. Remaining work is dashboard UX gaps, observability, and enterprise features.
 
 ### Stability & Reliability
-- [ ] Zero memory leaks over 72h continuous operation (no endurance test yet)
 - [x] Scheduler reconciler for timeouts/deadlines
 - [x] Pending job replayer for stalled/missed dispatches
 - [x] Dead-letter queue (DLQ) capture + retry/inspection endpoints
@@ -17,21 +16,24 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 - [x] Complete API documentation with OpenAPI spec
 - [x] Comprehensive error handling guide
 - [x] Disaster recovery playbook
+- [x] Horizontal scaling (2-6 replicas of every service)
+- [ ] Zero memory leaks over 72h continuous operation (no endurance test yet)
 
 ### Performance
-- [ ] 15k ops/sec policy evaluation throughput (target — no benchmark yet)
-- [ ] <5ms p99 end-to-end latency (target — no benchmark yet)
 - [x] gRPC API option
 - [x] Policy caching layer
+- [x] Redis connection pool tuning for multi-replica
+- [ ] 15k ops/sec policy evaluation throughput (target — no benchmark yet)
+- [ ] <5ms p99 end-to-end latency (target — no benchmark yet)
 - [ ] ARM64 optimization (15% efficiency target)
 
 ### Enterprise Features
-- [x] OIDC/SSO integration
-- [ ] SAML support
+- [x] OIDC/SSO integration (with JWKS Redis cache + refresh jitter)
 - [x] User/password authentication (separate from API keys)
 - [x] Basic role-based access (admin/user)
+- [x] Audit event capture (with NATS-backed durable buffer)
+- [ ] SAML support
 - [ ] Advanced RBAC (resource-level permissions, inheritance)
-- [x] Audit event capture
 - [ ] Audit export (JSON, CSV, SIEM)
 - [ ] Air-gapped deployment guide
 - [ ] FIPS 140-2 compliance mode
@@ -68,6 +70,28 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 - [x] **Password policy** — minimum complexity requirements
 - [x] **Brute-force protection** — login attempt rate limiting
 
+### Horizontal Scaling & High Availability (30 tasks)
+- [x] **Multi-replica coordination** — all 7 services run 2-6 replicas with Redis distributed locks, NATS queue groups, graceful shutdown
+- [x] **Distributed state** — rate limiter, circuit breakers, delay timers, caches, audit buffer migrated from in-memory to Redis/NATS
+- [x] **K8s production manifests** — HPA, PodDisruptionBudgets, session affinity, Redis cluster ops
+- [x] **HA Docker overlay** — `docker-compose.ha.yaml` with 2-replica topology
+- [x] **Validation & gate** — Gate 19 acceptance suite (no duplicate dispatch, no drift, failover)
+
+### MCP Server
+- [x] **Stdio transport** — newline-delimited JSON-RPC over stdin/stdout
+- [x] **HTTP/SSE transport** — HTTP POST + Server-Sent Events with session management
+- [x] **Tools catalog** — 6 tools (submit/cancel job, trigger workflow, approve/reject, query policy)
+- [x] **Resources catalog** — 7 resources (jobs, workflows, runs, audit, health, policies)
+
+### Input Safety Fail Modes
+- [x] **Configurable fail modes** — `open` (allow through) and `closed` (requeue/quarantine) for input and output safety
+- [x] **Dashboard settings** — InputSafetySettings and OutputSafetySettings pages
+- [x] **Metrics instrumentation** — `cordum_input_fail_open_total` and `cordum_output_policy_skipped_total` counters
+
+### CAP Protocol & Go SDK
+- [x] **CAP v2.5.2 integration** — Handshake, ErrorCode enum, AlertSeverity, MetricsHook
+- [x] **Go Worker SDK** — `sdk/runtime/` with typed handler registration, TLS blob store, heartbeat, panic recovery, ECDSA verification
+
 ### Bug Fixes — System Audit (25 tasks)
 - [x] Concurrency fixes in scheduler engine (per-run mutex)
 - [x] Error handling gaps in gateway and workflow engine
@@ -81,51 +105,58 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 - [x] **User CRUD** — GET/PUT/DELETE /users + password change
 - [x] **Config shape alignment** — backend {scope,data} wrapper → frontend flat transform
 
----
-
-## In Progress — Q1 2026
-
-### Output Policy + MCP Server (10 tasks)
-- [x] Output policy gRPC contract (`output_policy.proto`)
-- [x] Safety kernel output scanners (content patterns, detectors)
-- [x] Scheduler output safety client integration
-- [ ] MCP server stdio + HTTP/SSE modes
-- [ ] MCP tools and resources catalog
-- [ ] Dashboard output quarantine UX
-- [ ] Dashboard remediation drawer
-
 ### Workflow Step Types (6 tasks)
 - [x] **Switch** — multi-branch condition evaluation
 - [x] **Transform** — inline expression evaluation with `${ }` syntax
-- [ ] **Parallel** — concurrent branch execution
-- [ ] **Loop** — iterative execution with break conditions
-- [ ] **Storage** — read/write workflow context paths
-- [ ] **Sub-workflow** — nested workflow invocation
+- [x] **Parallel** — concurrent branch execution (all/any/n_of_m strategies)
+- [x] **Loop** — iterative execution with break conditions (while/until/fixed count)
+- [x] **Storage** — read/write/delete workflow context paths
+- [x] **Sub-workflow** — nested workflow invocation (input/output mapping, circular detection)
 
-### Dashboard Feature Gaps (11 tasks)
-- [x] Workflow run deletion (single + bulk)
-- [x] Policy snapshot capture with name/label
-- [x] Policy explain UI
-- [ ] Memory panel for job context
-- [ ] Job submit drawer enhancements
-- [ ] Workflow builder improvements
-- [ ] Settings MCP configuration page
-
-### Documentation Gaps (10 tasks)
+### Documentation (22 tasks)
 - [x] Output policy operator guide (`docs/output-policy.md`)
 - [x] Workflow step types reference (`docs/workflow-step-types.md`)
-- [x] API reference (`docs/api-reference.md`)
+- [x] API reference (`docs/api-reference.md`) + OpenAPI spec
 - [x] Safety kernel deep reference (`docs/safety-kernel.md`)
 - [x] MCP server guide (`docs/mcp-server.md`)
 - [x] Scheduler internals (`docs/scheduler-internals.md`)
 - [x] Dashboard guide (`docs/dashboard-guide.md`)
 - [x] Configuration reference (`docs/configuration-reference.md`)
 - [x] CLI reference (`docs/cli-reference.md`)
-- [x] Architecture Decision Records (`docs/adr/`)
+- [x] Architecture Decision Records (`docs/adr/` — 7 ADRs)
+- [x] gRPC services reference (`docs/grpc-services.md`)
+- [x] K8s deployment guide (`docs/k8s-deployment.md`)
+- [x] SDK reference (`docs/sdk-reference.md`)
+- [x] WebSocket streaming protocol (`docs/websocket-streaming.md`)
+- [x] Production guide with DR/incident runbooks (`docs/production.md`)
+- [x] Pack development guide (`docs/pack.md`)
+- [x] Docker guide (`docs/DOCKER.md`)
+- [x] Troubleshooting cookbook (`docs/troubleshooting.md`)
+- [x] CHANGELOG (`CHANGELOG.md`)
 
 ---
 
-## Q1 2026: Remaining Production Readiness
+## In Progress — Q1 2026
+
+### Output Policy Dashboard
+- [x] Output policy gRPC contract (`output_policy.proto`)
+- [x] Safety kernel output scanners (content patterns, detectors)
+- [x] Scheduler output safety client integration
+- [ ] Dashboard output quarantine UX — quarantined job list, detail view, release/delete actions
+- [ ] Dashboard remediation drawer — review quarantined output, apply redaction, re-approve
+
+### Dashboard Feature Gaps
+- [x] Workflow run deletion (single + bulk)
+- [x] Policy snapshot capture with name/label
+- [x] Policy explain UI
+- [ ] Memory panel for job context — view/edit context window in job detail
+- [ ] Job submit drawer enhancements — template selection, validation preview
+- [ ] Workflow builder improvements — copy/paste nodes, undo/redo, mini-map
+- [ ] Settings MCP configuration page — configure MCP server from dashboard
+
+---
+
+## Remaining for v1.0.0
 
 ### Safety Kernel Enhancements
 - [x] **Policy hot-reload** — update policies without restart
@@ -137,11 +168,11 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 - [x] **Fan-out step execution** — for_each over datasets with parallel dispatch
 - [x] **Conditional branching** — if/else logic in workflows
 - [x] **Approval steps** — human-in-the-loop workflow gating
-- [x] **Delay/timer steps** — scheduled waits and retries
+- [x] **Delay/timer steps** — scheduled waits and retries (durable Redis-backed timers)
 - [x] **Notify steps** — emit system alerts from workflows
 - [x] **Switch steps** — multi-branch condition routing
 - [x] **Transform steps** — inline expression evaluation
-- [ ] **Loop constructs** — iterative loops within workflows
+- [x] **Loop constructs** — iterative loops within workflows (while/until/fixed count)
 - [ ] **Workflow templates** — parameterized workflow definitions
 
 ### Observability
@@ -152,9 +183,9 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 
 ### Documentation
 - [x] Architecture deep-dive (ADRs)
+- [x] Troubleshooting cookbook
 - [ ] Migration guide (from Temporal, Airflow)
 - [ ] Best practices guide
-- [x] Troubleshooting cookbook
 
 ---
 
@@ -169,9 +200,9 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**.
 
 #### Distributed Scheduler
 - [ ] **Multi-region support** — deploy across regions
-- [ ] **Sharded job queue** — horizontal scaling
-- [ ] **Worker affinity** — sticky routing for stateful jobs
-- [ ] **Auto-scaling** — dynamic worker pool management
+- [ ] **Sharded job queue** — partitioned streams for higher throughput
+- [x] **Worker affinity** — sticky routing via `preferred_worker_id` label
+- [ ] **Auto-scaling** — dynamic worker pool management (HPA-driven)
 
 #### Pack Ecosystem
 - [ ] **Public pack registry** — discover and share packs
@@ -345,5 +376,5 @@ We track these metrics to measure progress:
 
 ---
 
-**Last updated:** February 2026
+**Last updated:** February 20, 2026
 **Next review:** April 2026

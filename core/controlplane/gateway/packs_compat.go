@@ -74,8 +74,11 @@ const (
 // Time-based constants cannot use const alias; use var.
 var (
 	marketplaceCacheTTL           = packs.MarketplaceCacheTTL
+	marketplaceRedisCacheTTL      = packs.MarketplaceRedisCacheTTL
 	defaultMarketplaceHTTPTimeout = packs.DefaultMarketplaceHTTPTimeout
 )
+
+const marketplaceRedisCacheKey = packs.MarketplaceRedisCacheKey
 
 // ---------- function re-exports (validate.go) ----------
 

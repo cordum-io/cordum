@@ -39,13 +39,28 @@ type Engine struct {
 	stopped       chan struct{} // closed by Stop(); nil until first use
 }
 
+// RunLocker is an optional distributed lock provider for cross-replica
+// mutual exclusion on workflow runs. When nil, only in-process locking is used.
+type RunLocker interface {
+	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error)
+	ReleaseLock(ctx context.Context, key string, token string) error
+}
+
+// RunLockRenewer is an optional extension of RunLocker that supports TTL renewal.
+// If the RunLocker also implements this interface, locks are renewed periodically.
+type RunLockRenewer interface {
+	RenewLock(ctx context.Context, key, token string, ttl time.Duration) error
+}
+
+const runLockTTL = 30 * time.Second
+
 // lockManager provides per-run mutual exclusion with safe cleanup.
-// The manager mutex guards the map and ref counts — it is held only for
-// map lookups and integer increments (nanoseconds), never during actual work.
-// Per-run mutexes provide per-run isolation.
+// Two-layer locking: local mutex first (fast, prevents intra-process
+// contention and Redis round-trips), then optional Redis lock (distributed).
 type lockManager struct {
-	mu    sync.Mutex
-	locks map[string]*runLock
+	mu     sync.Mutex
+	locks  map[string]*runLock
+	locker RunLocker // optional distributed lock; nil = local-only
 }
 
 type runLock struct {
@@ -55,9 +70,13 @@ type runLock struct {
 }
 
 // acquire obtains the per-run lock for runID and returns a release function.
-// Multiple goroutines calling acquire for different runIDs proceed concurrently.
-// Multiple goroutines calling acquire for the same runID are serialized.
-func (lm *lockManager) acquire(runID string) func() {
+// The bool return indicates whether the lock was acquired (true) or another
+// replica holds the distributed lock and the caller should skip (false).
+// When ok is false, the release function is nil and no cleanup is needed.
+// If a distributed locker is set, a Redis lock is acquired after the local mutex.
+// On Redis error (unreachable), degrades to local-only lock.
+// On lock contention (another replica holds it), returns (nil, false) to skip.
+func (lm *lockManager) acquire(runID string) (func(), bool) {
 	lm.mu.Lock()
 	lock, ok := lm.locks[runID]
 	if !ok {
@@ -67,8 +86,75 @@ func (lm *lockManager) acquire(runID string) func() {
 	lock.refs++
 	lm.mu.Unlock()
 
+	// Local mutex first (per task rail: local before Redis).
 	lock.mu.Lock()
+
+	// Distributed lock — skip on contention, degrade to local-only on error.
+	var redisToken string
+	var renewCancel context.CancelFunc
+	var renewDone chan struct{}
+	if lm.locker != nil {
+		key := runLockKey(runID)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		token, err := lm.locker.TryAcquireLock(ctx, key, runLockTTL)
+		cancel()
+		if err != nil {
+			logging.Warn("workflow-engine", "distributed run lock acquire failed, using local-only",
+				"run_id", runID, "error", err)
+		} else if token == "" {
+			// Another replica holds the lock — skip this run.
+			lock.mu.Unlock()
+			lm.mu.Lock()
+			lock.refs--
+			if lock.refs == 0 && lock.terminal {
+				delete(lm.locks, runID)
+			}
+			lm.mu.Unlock()
+			return nil, false
+		} else {
+			redisToken = token
+			// Start renewal goroutine if the locker supports it.
+			if renewer, ok := lm.locker.(RunLockRenewer); ok {
+				var renewCtx context.Context
+				renewCtx, renewCancel = context.WithCancel(context.Background())
+				renewDone = make(chan struct{})
+				go func() {
+					defer close(renewDone)
+					ticker := time.NewTicker(runLockTTL / 3)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-renewCtx.Done():
+							return
+						case <-ticker.C:
+							rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+							if err := renewer.RenewLock(rCtx, key, token, runLockTTL); err != nil {
+								logging.Warn("workflow-engine", "run lock renewal failed",
+									"run_id", runID, "error", err)
+							}
+							rCancel()
+						}
+					}
+				}()
+			}
+		}
+	}
+
 	return func() {
+		// Stop renewal goroutine and wait for it to finish before releasing.
+		if renewCancel != nil {
+			renewCancel()
+			<-renewDone
+		}
+		// Release Redis lock BEFORE local mutex (per task rail).
+		if redisToken != "" && lm.locker != nil {
+			rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := lm.locker.ReleaseLock(rCtx, runLockKey(runID), redisToken); err != nil {
+				logging.Warn("workflow-engine", "distributed run lock release failed",
+					"run_id", runID, "error", err)
+			}
+			rCancel()
+		}
 		lock.mu.Unlock()
 		lm.mu.Lock()
 		lock.refs--
@@ -76,11 +162,12 @@ func (lm *lockManager) acquire(runID string) func() {
 			delete(lm.locks, runID)
 		}
 		lm.mu.Unlock()
-	}
+	}, true
 }
 
 // markTerminal flags a run as completed so its lock entry is cleaned up
-// once all active holders release.
+// once all active holders release. The Redis lock key is released by the
+// acquire() release function; any stale keys expire via TTL.
 func (lm *lockManager) markTerminal(runID string) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
@@ -140,6 +227,13 @@ func (e *Engine) WithOutputSafety(c model.OutputSafetyChecker) *Engine {
 	return e
 }
 
+// WithRunLocker sets a distributed lock provider for cross-replica run locking.
+// When set, the engine acquires a Redis-backed lock in addition to the local mutex.
+func (e *Engine) WithRunLocker(locker RunLocker) *Engine {
+	e.lockMgr.locker = locker
+	return e
+}
+
 // WithMaxForEachItems sets the maximum number of items allowed in for_each fan-out.
 // Values <= 0 are ignored and the default remains in effect.
 func (e *Engine) WithMaxForEachItems(limit int) *Engine {
@@ -150,8 +244,9 @@ func (e *Engine) WithMaxForEachItems(limit int) *Engine {
 }
 
 // lockRun acquires a per-run mutex and returns an unlock function.
-// This replaces the global engine mutex so different runs don't block each other.
-func (e *Engine) lockRun(runID string) func() {
+// The bool return indicates whether the lock was acquired. When false, the
+// caller should skip processing — another replica owns this run.
+func (e *Engine) lockRun(runID string) (func(), bool) {
 	return e.lockMgr.acquire(runID)
 }
 
@@ -165,7 +260,11 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 		return
 	}
 
-	defer e.lockRun(runID)()
+	unlock, ok := e.lockRun(runID)
+	if !ok {
+		return // Another replica owns this run.
+	}
+	defer unlock()
 
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
@@ -395,7 +494,16 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 	parallelChildOwners := collectParallelChildOwners(wfDef)
 	loopBodyOwners := collectLoopBodyOwners(wfDef)
 
-	for stepID, step := range wfDef.Steps {
+	// Multi-pass: inline-completing steps (condition, switch, transform, etc.)
+	// may unblock dependents already iterated in the same pass (Go map order
+	// is random). Re-iterate until no new inline completions occur.
+	maxPasses := len(wfDef.Steps)
+	if maxPasses < 1 {
+		maxPasses = 1
+	}
+	for pass := 0; pass < maxPasses; pass++ {
+		terminalBefore := countTerminalSteps(run)
+		for stepID, step := range wfDef.Steps {
 		if ownerID, managed := parallelChildOwners[stepID]; managed && ownerID != stepID {
 			// Child definitions listed by a parallel step are orchestrated by the parent handler.
 			continue
@@ -1944,6 +2052,10 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 				e.OnStepDispatched(run.ID, stepID, jobID)
 			}
 		}
+		}
+		if countTerminalSteps(run) <= terminalBefore {
+			break
+		}
 	}
 
 	updateRunStatus(run, wfDef, now)
@@ -1958,6 +2070,19 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 		e.markRunTerminal(run.ID)
 	}
 	return nil
+}
+
+// countTerminalSteps returns the number of steps in a run that have reached a
+// terminal status (succeeded, failed, cancelled, timed_out). Used by the
+// multi-pass loop in scheduleReady to detect inline completions.
+func countTerminalSteps(run *WorkflowRun) int {
+	count := 0
+	for _, sr := range run.Steps {
+		if sr != nil && isTerminalStepStatus(sr.Status) {
+			count++
+		}
+	}
+	return count
 }
 
 type switchCase struct {

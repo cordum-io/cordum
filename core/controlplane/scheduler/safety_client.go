@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -22,13 +22,7 @@ import (
 type SafetyClient struct {
 	client pb.SafetyKernelClient
 	conn   *grpc.ClientConn
-
-	mu              sync.Mutex
-	state           circuitState
-	failures        int
-	successes       int
-	openUntil       time.Time
-	halfOpenAllowed int
+	cb     *RedisCircuitBreaker
 }
 
 const (
@@ -60,7 +54,27 @@ func NewSafetyClient(addr string) (*SafetyClient, error) {
 	return &SafetyClient{
 		client: pb.NewSafetyKernelClient(conn),
 		conn:   conn,
+		cb: NewRedisCircuitBreaker(nil, "cordum:cb:safety", CircuitBreakerOpts{
+			FailThreshold: safetyCircuitFailBudget,
+			OpenDuration:  safetyCircuitOpenFor,
+			HalfOpenMax:   safetyCircuitHalfOpenMax,
+			CloseAfter:    safetyCircuitCloseAfter,
+		}),
 	}, nil
+}
+
+// WithRedis enables the distributed circuit breaker backed by Redis.
+// Without this, the circuit breaker operates locally per-replica.
+func (c *SafetyClient) WithRedis(rdb redis.UniversalClient) *SafetyClient {
+	if rdb != nil {
+		c.cb = NewRedisCircuitBreaker(rdb, "cordum:cb:safety", CircuitBreakerOpts{
+			FailThreshold: safetyCircuitFailBudget,
+			OpenDuration:  safetyCircuitOpenFor,
+			HalfOpenMax:   safetyCircuitHalfOpenMax,
+			CloseAfter:    safetyCircuitCloseAfter,
+		})
+	}
+	return c
 }
 
 // Close releases the underlying connection.
@@ -73,12 +87,8 @@ func (c *SafetyClient) Close() error {
 
 // Check forwards the request to the safety kernel; denies on error/timeout.
 func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
-	if c.isCircuitOpen() {
+	if c.cb.IsOpen(ctx) {
 		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "safety kernel circuit open"}, nil
-	}
-
-	if !c.allowHalfOpenRequest() {
-		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "safety kernel circuit half-open (throttled)"}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, safetyTimeout)
@@ -103,10 +113,10 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 
 	resp, err := c.client.Check(ctx, checkReq)
 	if err != nil {
-		c.recordFailure()
+		c.cb.RecordFailure(ctx)
 		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: fmt.Sprintf("safety kernel error: %v", err)}, nil
 	}
-	c.recordSuccess()
+	c.cb.RecordSuccess(ctx)
 
 	record := SafetyDecisionRecord{
 		Decision:         decisionFromProto(resp.GetDecision()),
@@ -135,69 +145,6 @@ func decisionFromProto(dec pb.DecisionType) SafetyDecision {
 		return SafetyAllowWithConstraints
 	default:
 		return SafetyDeny
-	}
-}
-
-func (c *SafetyClient) isCircuitOpen() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := time.Now()
-	if c.state == circuitOpen && c.openUntil.Before(now) {
-		c.state = circuitHalfOpen
-		c.successes = 0
-		c.halfOpenAllowed = safetyCircuitHalfOpenMax
-	}
-	return c.state == circuitOpen
-}
-
-func (c *SafetyClient) allowHalfOpenRequest() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.state != circuitHalfOpen {
-		return true
-	}
-	if c.halfOpenAllowed > 0 {
-		c.halfOpenAllowed--
-		return true
-	}
-	return false
-}
-
-func (c *SafetyClient) recordFailure() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	switch c.state {
-	case circuitClosed:
-		c.failures++
-		if c.failures >= safetyCircuitFailBudget {
-			c.state = circuitOpen
-			c.openUntil = time.Now().Add(safetyCircuitOpenFor)
-			c.failures = 0
-		}
-	case circuitHalfOpen:
-		c.state = circuitOpen
-		c.openUntil = time.Now().Add(safetyCircuitOpenFor)
-		c.failures = 0
-	}
-}
-
-func (c *SafetyClient) recordSuccess() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	switch c.state {
-	case circuitClosed:
-		c.failures = 0
-	case circuitHalfOpen:
-		c.successes++
-		if c.successes >= safetyCircuitCloseAfter {
-			c.state = circuitClosed
-			c.failures = 0
-			c.successes = 0
-			c.halfOpenAllowed = 0
-		}
-	default:
-		c.failures = 0
 	}
 }
 

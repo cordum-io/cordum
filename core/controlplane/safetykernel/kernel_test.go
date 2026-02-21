@@ -13,6 +13,7 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -441,5 +442,116 @@ func TestWatchPolicy_ContextCancel(t *testing.T) {
 		// Success: goroutine exited.
 	case <-time.After(2 * time.Second):
 		t.Fatal("watchPolicy did not exit after context cancellation (goroutine leak)")
+	}
+}
+
+func newTestRedisServer(t *testing.T) (*server, *miniredis.Miniredis) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rc, err := redisutil.NewClient("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("new redis client: %v", err)
+	}
+	t.Cleanup(func() { rc.Close() })
+	return &server{resultClient: rc}, mr
+}
+
+func TestSnapshotHistoryRedis(t *testing.T) {
+	srv, mr := newTestRedisServer(t)
+
+	srv.setPolicy(nil, "snap-a")
+	srv.setPolicy(nil, "snap-b")
+	srv.setPolicy(nil, "snap-c")
+
+	// Verify Redis has 3 entries in newest-first order.
+	vals, err := mr.List(snapshotHistoryKey)
+	if err != nil {
+		t.Fatalf("redis LRANGE: %v", err)
+	}
+	if len(vals) != 3 {
+		t.Fatalf("expected 3 snapshots in Redis, got %d", len(vals))
+	}
+	if vals[0] != "snap-c" || vals[1] != "snap-b" || vals[2] != "snap-a" {
+		t.Fatalf("unexpected order: %v", vals)
+	}
+
+	// Verify ListSnapshots reads from Redis.
+	resp, err := srv.ListSnapshots(context.Background(), &pb.ListSnapshotsRequest{})
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(resp.Snapshots) != 3 {
+		t.Fatalf("expected 3 snapshots from ListSnapshots, got %d", len(resp.Snapshots))
+	}
+	if resp.Snapshots[0] != "snap-c" {
+		t.Fatalf("expected newest first, got %s", resp.Snapshots[0])
+	}
+}
+
+func TestSnapshotHistoryTrim(t *testing.T) {
+	srv, mr := newTestRedisServer(t)
+
+	for i := 0; i < 12; i++ {
+		srv.setPolicy(nil, fmt.Sprintf("snap-%d", i))
+	}
+
+	// Verify Redis list trimmed to 10.
+	vals, err := mr.List(snapshotHistoryKey)
+	if err != nil {
+		t.Fatalf("redis LRANGE: %v", err)
+	}
+	if len(vals) != 10 {
+		t.Fatalf("expected 10 snapshots in Redis after LTRIM, got %d", len(vals))
+	}
+	// Newest (snap-11) should be first, oldest kept (snap-2) last.
+	if vals[0] != "snap-11" {
+		t.Fatalf("expected snap-11 first, got %s", vals[0])
+	}
+	if vals[9] != "snap-2" {
+		t.Fatalf("expected snap-2 last, got %s", vals[9])
+	}
+}
+
+func TestSnapshotHistoryRedisFallback(t *testing.T) {
+	// No Redis — local slice is the fallback.
+	srv := &server{}
+	srv.setPolicy(nil, "local-a")
+	srv.setPolicy(nil, "local-b")
+
+	resp, err := srv.ListSnapshots(context.Background(), &pb.ListSnapshotsRequest{})
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(resp.Snapshots) != 2 {
+		t.Fatalf("expected 2 snapshots from local fallback, got %d", len(resp.Snapshots))
+	}
+	if resp.Snapshots[0] != "local-b" {
+		t.Fatalf("expected newest first in fallback, got %s", resp.Snapshots[0])
+	}
+}
+
+func TestSnapshotHistoryOrder(t *testing.T) {
+	srv, _ := newTestRedisServer(t)
+
+	srv.setPolicy(nil, "first")
+	srv.setPolicy(nil, "second")
+	srv.setPolicy(nil, "third")
+
+	resp, err := srv.ListSnapshots(context.Background(), &pb.ListSnapshotsRequest{})
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	expected := []string{"third", "second", "first"}
+	if len(resp.Snapshots) != len(expected) {
+		t.Fatalf("expected %d snapshots, got %d", len(expected), len(resp.Snapshots))
+	}
+	for i, want := range expected {
+		if resp.Snapshots[i] != want {
+			t.Fatalf("snapshot[%d] = %q, want %q", i, resp.Snapshots[i], want)
+		}
 	}
 }

@@ -30,5 +30,7 @@ const (
 	MaxCatalogBytes          = 8 << 20
 
 	MarketplaceCacheTTL           = 30 * time.Second
+	MarketplaceRedisCacheTTL      = 30 * time.Minute
+	MarketplaceRedisCacheKey      = "cordum:cache:marketplace"
 	DefaultMarketplaceHTTPTimeout = 15 * time.Second
 )

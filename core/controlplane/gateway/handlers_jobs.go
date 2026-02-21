@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/secrets"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -54,6 +56,17 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 		writeForbidden(w, r, err)
 		return
 	}
+	// Prefer Redis snapshot (consistent across all replicas).
+	workers, err := s.workersFromRedisSnapshot()
+	if err == nil && workers != nil {
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(w, workerSummariesToHeartbeats(workers))
+		return
+	}
+	if err != nil {
+		logging.Warn("api-gateway", "worker snapshot read failed, falling back to in-memory", "error", err)
+	}
+	// Fallback: in-memory heartbeat map (local replica only).
 	out := s.activeWorkersSnapshot(time.Now().UTC())
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, out)
@@ -97,7 +110,13 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		uptimeSeconds = int64(now.Sub(s.started).Seconds())
 	}
 
-	workersCount := len(s.activeWorkersSnapshot(now))
+	// Prefer Redis snapshot count (consistent across replicas).
+	workersCount := 0
+	if snapWorkers, snapErr := s.workersFromRedisSnapshot(); snapErr == nil && snapWorkers != nil {
+		workersCount = len(snapWorkers)
+	} else {
+		workersCount = len(s.activeWorkersSnapshot(now))
+	}
 
 	natsConnected := false
 	natsStatus := "UNKNOWN"
@@ -163,6 +182,53 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if provider, ok := s.auth.(LicenseInfoProvider); ok {
 		if info := provider.LicenseInfo(); info != nil {
 			resp["license"] = info
+		}
+	}
+
+	// HA-aware fields (additive — existing consumers ignore unknown fields).
+	resp["instance_id"] = s.instanceID
+	resp["rate_limiter"] = map[string]any{
+		"mode": rateLimiterMode(s.apiRL),
+	}
+
+	// Circuit breaker status from Redis (read-only).
+	var cbRedis redis.UniversalClient
+	if s.jobStore != nil {
+		cbRedis = s.jobStore.Client()
+	}
+	resp["circuit_breakers"] = map[string]any{
+		"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
+		"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
+	}
+
+	// Input fail-open counter from Redis (incremented by scheduler).
+	if cbRedis != nil {
+		if val, err := cbRedis.Get(r.Context(), "cordum:scheduler:input_fail_open_total").Int64(); err == nil {
+			resp["input_fail_open_total"] = val
+		}
+	}
+
+	// HA environment variables (read-only, startup-only).
+	haEnv := map[string]any{
+		"redis_pool_size":      os.Getenv("REDIS_POOL_SIZE"),
+		"redis_min_idle_conns": os.Getenv("REDIS_MIN_IDLE_CONNS"),
+		"audit_transport":      os.Getenv("AUDIT_TRANSPORT"),
+	}
+	resp["ha_env"] = haEnv
+
+	// Worker snapshot metadata (writer ID + age).
+	if snap, snapErr := s.snapshotFromRedis(); snapErr == nil && snap != nil {
+		resp["snapshot_meta"] = map[string]any{
+			"writer_id":  snap.WriterID,
+			"captured_at": snap.CapturedAt,
+		}
+	}
+
+	// Replica registry from Redis SCAN.
+	if s.instanceRegistry != nil && s.jobStore != nil {
+		replicas, err := registry.ListAllInstances(r.Context(), s.jobStore.Client())
+		if err == nil {
+			resp["replicas"] = replicas
 		}
 	}
 

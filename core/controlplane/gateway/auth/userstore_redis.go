@@ -34,6 +34,11 @@ const (
 // createUserLua atomically checks that the username key (KEYS[1]) and
 // optional email key (KEYS[2]) don't exist, then creates all user records.
 // Returns 1 on success, 0 if username or email already exists.
+//
+// TODO(cluster): CROSSSLOT — needs hash tags or pipeline split for Redis Cluster.
+// KEYS[1], KEYS[2], and ARGV[2]/ARGV[5] keys may hash to different slots.
+// Low risk (admin operation, not hot path).
+//
 // ARGV: 1=userData, 2=idKey, 3=idVal, 4=emailVal, 5=tenantIdx, 6=userID
 var createUserLua = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end

@@ -1141,6 +1141,7 @@ func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketp
 		return marketplaceResponse{}, errors.New("marketplace unavailable")
 	}
 	if !refresh {
+		// L1: in-memory cache (30s TTL, per-replica).
 		s.marketplaceMu.Lock()
 		cache := s.marketplaceCache
 		if !cache.FetchedAt.IsZero() && time.Since(cache.FetchedAt) < marketplaceCacheTTL {
@@ -1153,7 +1154,19 @@ func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketp
 			return resp, nil
 		}
 		s.marketplaceMu.Unlock()
+
+		// L2: Redis cache (30min TTL, shared across replicas).
+		if resp, err := s.marketplaceFromRedis(ctx); err == nil {
+			// Populate L1 from Redis hit.
+			s.marketplaceMu.Lock()
+			s.marketplaceCache = marketplaceCache{Response: resp, FetchedAt: time.Now().UTC()}
+			s.marketplaceMu.Unlock()
+			resp.Cached = true
+			return resp, nil
+		}
 	}
+
+	// L3: upstream fetch (catalogs + HTTP).
 	catalogs, entries, err := s.loadMarketplaceEntries(ctx)
 	if err != nil {
 		return marketplaceResponse{}, err
@@ -1164,10 +1177,53 @@ func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketp
 	}
 	fetchedAt := time.Now().UTC()
 	resp.FetchedAt = fetchedAt.Format(time.RFC3339)
+
+	// Populate L1.
 	s.marketplaceMu.Lock()
 	s.marketplaceCache = marketplaceCache{Response: resp, FetchedAt: fetchedAt}
 	s.marketplaceMu.Unlock()
+
+	// Populate L2 (best-effort, don't block on failure).
+	s.marketplaceToRedis(ctx, resp)
+
 	return resp, nil
+}
+
+// marketplaceFromRedis reads the shared marketplace cache from Redis.
+func (s *server) marketplaceFromRedis(ctx context.Context) (marketplaceResponse, error) {
+	if s.jobStore == nil {
+		return marketplaceResponse{}, errors.New("no redis client")
+	}
+	rc := s.jobStore.Client()
+	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	data, err := rc.Get(readCtx, marketplaceRedisCacheKey).Bytes()
+	if err != nil {
+		return marketplaceResponse{}, err
+	}
+	var resp marketplaceResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return marketplaceResponse{}, err
+	}
+	return resp, nil
+}
+
+// marketplaceToRedis writes the marketplace response to the shared Redis cache.
+func (s *server) marketplaceToRedis(ctx context.Context, resp marketplaceResponse) {
+	if s.jobStore == nil {
+		return
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		slog.Warn("marketplace redis cache marshal failed", "error", err)
+		return
+	}
+	rc := s.jobStore.Client()
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := rc.Set(writeCtx, marketplaceRedisCacheKey, data, marketplaceRedisCacheTTL).Err(); err != nil {
+		slog.Warn("marketplace redis cache write failed", "error", err)
+	}
 }
 
 func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatalogStatus, []marketplaceCatalogEntry, error) {

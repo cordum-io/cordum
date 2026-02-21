@@ -396,11 +396,40 @@ The init job:
 1. Waits for all 6 nodes to respond to `PING`
 2. Runs `redis-cli --cluster create ... --cluster-replicas 1 --cluster-yes`
 
+### Pre-Flight Checks
+
+Before running or re-running the init job, verify:
+
+```bash
+# All 6 pods must be Running and Ready
+kubectl get pods -l app=redis -n cordum
+# Expected: 6/6 pods in Running state with READY 2/2 (redis + exporter)
+
+# TLS secret must exist
+kubectl get secret cordum-client-tls -n cordum
+kubectl get secret cordum-redis-server-tls -n cordum
+
+# Password secret must be non-empty
+kubectl get secret cordum-redis-secret -n cordum -o jsonpath='{.data.REDIS_PASSWORD}' | base64 -d | wc -c
+# Expected: non-zero length
+```
+
+### Troubleshooting Init Failures
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Job stuck in `Pending` | Missing TLS secret | Create `cordum-client-tls` secret |
+| `Could not connect to Redis` | Pods not ready | Wait for all 6 pods, check startup probes |
+| `ERR Invalid node address` | DNS not resolving | Verify headless service `cordum-redis` exists |
+| `ERR Nodes don't agree about configuration` | Partial previous init | Delete all pods (`kubectl delete pods -l app=redis -n cordum`), wait for restart, re-run |
+
 **Re-running**: Delete the job and re-create it if you need to re-initialize:
 ```bash
 kubectl delete job cordum-redis-cluster-init -n cordum
 kubectl apply -k deploy/k8s/production
 ```
+
+For a complete key inventory, DR runbooks, and base-to-production migration, see [Redis Operations Guide](./redis-operations.md).
 
 ### Client Connection
 
@@ -596,6 +625,16 @@ All critical services have PDBs with `maxUnavailable: 1`:
 - `cordum-scheduler`
 - `cordum-workflow-engine`
 - `cordum-safety-kernel`
+- `cordum-dashboard`
+
+Infrastructure StatefulSets use `minAvailable` to preserve quorum and data availability:
+
+| StatefulSet | `minAvailable` | Rationale |
+|-------------|---------------|-----------|
+| NATS (3 nodes) | 2 | Maintains Raft quorum during node drains — losing 2 of 3 nodes would break consensus |
+| Redis (6 nodes: 3 primary + 3 replica) | 4 | Ensures at least 2 primary + 2 replica survive, maintaining data availability during rolling upgrades |
+
+See [Horizontal Scaling Guide](./horizontal-scaling.md) for NATS delivery semantics and multi-replica considerations.
 
 ---
 

@@ -102,6 +102,13 @@ end
 return 0
 `)
 
+var renewLockScript = redis.NewScript(`
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('pexpire', KEYS[1], ARGV[2])
+end
+return 0
+`)
+
 const (
 	microsPerSecond      = int64(1_000_000)
 	microsPerMillisecond = int64(1_000)
@@ -138,6 +145,12 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 type RedisJobStore struct {
 	client  redis.UniversalClient
 	metaTTL time.Duration
+}
+
+// Client returns the underlying Redis client for use by other subsystems
+// (e.g., distributed rate limiting) that need shared Redis access.
+func (s *RedisJobStore) Client() redis.UniversalClient {
+	return s.client
 }
 
 // ApprovalRecord captures approval audit metadata stored on a job.
@@ -252,6 +265,21 @@ func (s *RedisJobStore) ReleaseLock(ctx context.Context, key, token string) erro
 	}
 	if result == 0 {
 		slog.Warn("lock release skipped: token mismatch", "key", key)
+		return fmt.Errorf("lock not owned")
+	}
+	return nil
+}
+
+// RenewLock extends the TTL of a held lock. Returns nil if renewed, error if not owned or Redis fails.
+func (s *RedisJobStore) RenewLock(ctx context.Context, key, token string, ttl time.Duration) error {
+	if key == "" || token == "" {
+		return fmt.Errorf("lock key and token required")
+	}
+	result, err := renewLockScript.Run(ctx, s.client, []string{key}, token, ttl.Milliseconds()).Int()
+	if err != nil {
+		return fmt.Errorf("job store renew lock %s: %w", key, err)
+	}
+	if result == 0 {
 		return fmt.Errorf("lock not owned")
 	}
 	return nil
@@ -1046,6 +1074,10 @@ func (s *RedisJobStore) GetFailureReason(ctx context.Context, jobID string) (str
 // idempotencyScopedScript atomically checks the legacy key and performs
 // SetNX on the scoped key in a single round-trip, preventing the TOCTOU
 // race between the legacy GET and the scoped SetNX.
+//
+// TODO(cluster): CROSSSLOT — needs hash tags or pipeline split for Redis Cluster.
+// KEYS[1] and KEYS[2] may hash to different slots; the dynamic HGET on
+// ARGV[4]..legacyID adds a third slot. Medium risk (job submit path).
 //
 // KEYS[1] = legacy key, KEYS[2] = scoped key
 // ARGV[1] = jobID, ARGV[2] = ttl in ms, ARGV[3] = tenant, ARGV[4] = meta key prefix

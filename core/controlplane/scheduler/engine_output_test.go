@@ -342,6 +342,10 @@ func TestHandleJobResultSecretContentEventuallyQuarantined(t *testing.T) {
 	checker := &OutputSafetyClient{
 		client:       fakePolicy,
 		resultClient: resultClient,
+		cb: NewRedisCircuitBreaker(nil, "cordum:cb:safety:output:test", CircuitBreakerOpts{
+			FailThreshold: outputCircuitFailBudget,
+			OpenDuration:  outputCircuitOpenFor,
+		}),
 	}
 
 	jobID := "job-real-secret"
@@ -410,6 +414,10 @@ func TestHandleJobResultCleanContentRemainsAllowed(t *testing.T) {
 	checker := &OutputSafetyClient{
 		client:       fakePolicy,
 		resultClient: resultClient,
+		cb: NewRedisCircuitBreaker(nil, "cordum:cb:safety:output:test", CircuitBreakerOpts{
+			FailThreshold: outputCircuitFailBudget,
+			OpenDuration:  outputCircuitOpenFor,
+		}),
 	}
 
 	jobID := "job-real-clean"

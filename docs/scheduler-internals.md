@@ -380,11 +380,46 @@ breaker to prevent cascading failures.
 | `safetyCircuitHalfOpenMax` | 3 | Max probe requests in half-open state   |
 | `safetyCircuitCloseAfter` | 2  | Successes needed to close from half-open |
 
+### Multi-Replica State (Redis-Backed)
+
+Circuit breaker state is shared across all scheduler replicas via Redis:
+
+| Redis Key | Purpose |
+|-----------|---------|
+| `cordum:cb:safety:failures` | Input safety circuit breaker failure counter |
+| `cordum:cb:safety:output:failures` | Output safety circuit breaker failure counter |
+
+When any replica records a failure, the shared counter increments. When the
+threshold is reached, all replicas observe the open state simultaneously. This
+prevents the scenario where one replica's circuit is open while another
+continues sending requests to a degraded safety kernel.
+
+If Redis is unavailable, each replica falls back to local-only circuit breaker
+tracking (per-process counters).
+
 ### Behavior When Circuit Is Open
 
 All safety checks return `SafetyUnavailable` with reason `"safety kernel
 circuit open"`. The scheduler treats `SafetyUnavailable` as a retryable
 condition — the job is requeued with a 5-second delay.
+
+### Input Policy Fail Mode
+
+The scheduler's behavior when the safety kernel is unreachable (circuit open or
+gRPC timeout) is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
+
+- **Fail-closed (default)**: The job is requeued with exponential backoff. This
+  is the safe default — no job passes through without a policy decision.
+- **Fail-open**: The job is allowed through with a warning log
+  (`"input policy fail-open: safety kernel unreachable"`) and the
+  `cordum_scheduler_input_fail_open_total` Prometheus counter is incremented
+  (labeled by `topic`). This trades safety guarantees for availability.
+
+Configuration:
+- **Env var**: `POLICY_CHECK_FAIL_MODE` — values: `closed` (default), `open`
+- **Config file**: `config/safety.yaml` under `input_policy.fail_mode`
+
+The env var takes precedence over the config file value.
 
 ---
 
@@ -402,7 +437,7 @@ condition — the job is requeued with a 5-second delay.
 | Constant               | Value | Description                                     |
 |------------------------|-------|-------------------------------------------------|
 | `storeOpTimeout`       | 2s    | Timeout for Redis store operations              |
-| `jobLockTTL`           | 30s   | TTL for per-job distributed locks               |
+| `jobLockTTL`           | 60s   | TTL for per-job distributed locks (with renewal) |
 | `maxSchedulingRetries` | 50    | Max dispatch attempts before DLQ                |
 | `retryDelayBusy`       | 500ms | Delay when job lock is busy                     |
 | `retryDelayStore`      | 1s    | Delay after store operation failure             |
@@ -411,6 +446,7 @@ condition — the job is requeued with a 5-second delay.
 | `safetyThrottleDelay`  | 5s    | Delay when safety kernel throttles              |
 | `backoffBase`          | 1s    | Exponential backoff base for scheduling retries |
 | `backoffMax`           | 30s   | Maximum backoff delay                           |
+| `maxRenewalFailures`   | 3     | Consecutive renewal failures before abandon     |
 
 ---
 
@@ -418,16 +454,247 @@ condition — the job is requeued with a 5-second delay.
 
 The scheduler uses Redis-based distributed locks to ensure consistency:
 
-| Lock Key                      | TTL           | Purpose                              |
-|-------------------------------|---------------|--------------------------------------|
-| `cordum:scheduler:job:<id>`   | 30s           | Per-job mutex for state transitions  |
-| `cordum:reconciler:default`   | 2× poll interval | Single-writer reconciler         |
-| `cordum:replayer:pending`     | 2× poll interval | Single-writer pending replayer   |
-| `saga:<workflow_id>:lock`     | 2 min         | Per-workflow saga rollback mutex     |
+| Lock Key                      | TTL           | Release          | Renewal     | Purpose                              |
+|-------------------------------|---------------|------------------|-------------|--------------------------------------|
+| `cordum:scheduler:job:<id>`   | 60s           | Explicit (defer) | Yes (ttl/3) | Per-job mutex for state transitions  |
+| `cordum:reconciler:default`   | 2× poll interval | TTL expiry    | No          | Single-writer reconciler             |
+| `cordum:replayer:pending`     | 2× poll interval | TTL expiry    | No          | Single-writer pending replayer       |
+| `cordum:workflow-engine:reconciler:default` | 2× poll interval | TTL expiry | No | Single-writer workflow reconciler |
+| `cordum:wf:run:lock:<runID>`  | 30s           | Explicit (defer) | Yes (ttl/3) | Per-run mutex for workflow steps     |
+| `saga:<workflow_id>:lock`     | 2 min         | Explicit         | No          | Per-workflow saga rollback mutex     |
+| `cordum:scheduler:snapshot:writer` | 10s      | Explicit         | No          | Single-writer snapshot writer        |
+| `cordum:wf:delay:poller`  | 10s           | TTL expiry       | No          | Single-writer delay timer poller     |
+
+### Lock-Hold Pattern for Horizontal Scaling
+
+The reconciler, pending replayer, and workflow reconciler use a **TTL-based
+lock-hold pattern** instead of explicit release. After acquiring the lock and
+running `tick()`, they do **not** call `ReleaseLock`. The lock expires naturally
+after its TTL (2× poll interval).
+
+**Why**: If the lock is acquired, tick runs (~10–100ms), and then immediately
+released, a second replica can grab the lock within the same poll cycle and
+double-process the same jobs. By holding the lock until TTL expiry, only one
+replica can run `tick()` per TTL window, preventing duplicate dispatch,
+duplicate timeout transitions, and duplicate orphan replays.
+
+```
+Replica A: ──acquire──tick()──────────────────TTL expires──
+Replica B: ──(blocked)────────────────────────acquire──tick()──
+                    ◄── TTL window (2× poll) ──►
+```
+
+**Per-job and per-run locks** (`cordum:scheduler:job:<id>`,
+`cordum:wf:run:lock:<runID>`) still use explicit `defer ReleaseLock` because
+they protect short, targeted operations (single state transition or single run
+reconciliation) rather than entire tick cycles.
+
+### Job Lock TTL Renewal
+
+Per-job locks (`cordum:scheduler:job:<id>`) use **TTL renewal** to prevent lock
+expiry during long-running operations (safety checks, routing, publish). The
+base TTL is 60s and a background goroutine renews the lock every `ttl/3` (20s).
+
+**How it works**:
+1. `withJobLock` acquires the lock with a 60s TTL via `TryAcquireLock`.
+2. A goroutine starts a `time.Ticker` at `ttl/3` (20s) and calls `RenewLock`
+   (Lua: `if GET key == token then PEXPIRE key ttl`).
+3. When `fn()` completes, the renewal goroutine is cancelled and drained
+   **before** `ReleaseLock` runs, preventing a renewal from racing with release.
+4. If a renewal fails (Redis error), the lock still has up to 60s of remaining
+   TTL as a safety margin.
+5. If `RenewLock` fails **3 consecutive times** (`maxRenewalFailures`), the
+   renewal goroutine logs an error and exits. The lock is allowed to expire
+   via its 60s TTL. The operation (`fn()`) continues — only renewal stops.
+
+```
+withJobLock("job-123", 60s, fn):
+  ──acquire(60s)─┬──fn() runs────────────────────────┬──release──
+                 │                                    │
+  renewal:       ├──20s──renew──20s──renew──20s──renew│
+                 │          (each resets TTL to 60s)  │
+                 └────────────────────────────────────┘
+                                                cancel → drain → release
+```
+
+**Renewal abandon (3-strike rule)**: Under Redis pressure, each job's renewal
+goroutine self-limits to at most 3 failed attempts before stopping. This
+prevents renewal storms from many locked jobs across replicas generating
+excessive Redis load and log noise. Intermittent failures do not trigger
+abandon — the consecutive failure counter resets to zero on each successful
+renewal. With a 60s TTL, the lock expires safely even without renewal.
+
+### Snapshot Writer Lock
+
+The scheduler writes a worker snapshot (`sys:workers:snapshot`) to Redis every
+5 seconds. With multiple scheduler replicas, concurrent writes can produce
+corrupted or partial snapshots.
+
+**Solution**: Before each snapshot write, the scheduler acquires a Redis lock
+(`cordum:scheduler:snapshot:writer`, TTL 10s). Only the lock holder writes.
+Non-leader replicas skip silently (debug log). The lock is released immediately
+after the write completes, so failover is fast.
+
+```
+Replica A: ──acquire──write──release──────────────────────acquire──write──release──
+Replica B: ──(skip)───────────────────acquire──write──release──(skip)──────────────
+                      ◄── 5s tick ──►
+```
+
+**Leader crash recovery**: If the lock holder crashes without releasing, the
+lock expires via its 10s TTL. The next tick (5s later), another replica acquires
+the lock and resumes writing. Maximum snapshot staleness on crash: ~15s.
+
+### Distributed Workflow Run Locks
+
+Each workflow run is protected by a **two-layer locking** scheme for
+cross-replica mutual exclusion:
+
+1. **Local mutex** (fast): Per-run `sync.Mutex` prevents intra-process
+   contention and avoids unnecessary Redis round-trips.
+2. **Redis lock** (distributed): `cordum:wf:run:lock:<runID>` (TTL 30s) with
+   automatic renewal at `ttl/3` (10s) prevents cross-replica concurrent
+   modification of the same run.
+
+```
+Same-process goroutines:
+  G1: ──local.Lock──Redis.Lock──work──Redis.Unlock──local.Unlock──
+  G2: ──local.Lock(blocked)────────────────────────local.Lock──...──
+
+Cross-replica:
+  Replica A: ──Redis.Lock──work──Redis.Unlock──
+  Replica B: ──Redis.Lock(contended, local-only fallback)──work──
+```
+
+**Graceful degradation**: If Redis is unavailable or the lock is contended by
+another replica, the engine proceeds with local-only locking and logs a warning.
+This preserves single-replica backward compatibility and avoids blocking the
+workflow pipeline during transient Redis failures.
+
+**Release order**: Redis lock is released **before** the local mutex (per
+design: avoids holding a distributed lock while waiting for a local resource).
+
+The workflow reconciler's `HandleJobResult` and `reconcileRun` also acquire
+`cordum:wf:run:lock:<runID>` via the job store, providing consistent
+cross-replica protection across both the engine and reconciler paths.
+
+### Durable Workflow Delay Timers
+
+Workflow delay steps (`delay_sec`, `delay_until`) and retry backoff use
+`time.AfterFunc` to schedule run resumption. These in-memory timers are lost
+if the engine crashes or restarts. Durable delay timers add a Redis sorted set
+as a persistence layer.
+
+**Redis key**: `cordum:wf:delay:timers` (sorted set)
+- **Member**: `workflowID:runID`
+- **Score**: Unix seconds of fire time
+
+**How it works**:
+1. `scheduleAfter()` persists delays ≥10s to the sorted set via `ZADD`, then
+   creates the in-memory `time.AfterFunc` as before.
+2. When the timer fires, the sorted set entry is removed via `ZREM` before
+   calling `StartRun`.
+3. Delays <10s skip Redis (fast path — not worth the round-trip for sub-10s).
+
+```
+scheduleAfter(30s):
+  ──ZADD(fireAt=now+30s)──AfterFunc(30s)──...30s...──ZREM──StartRun──
+```
+
+**Crash recovery** (`recoverDelayTimers`, called on startup):
+1. **Past-due timers**: Atomic Lua script (`ZRANGEBYSCORE + ZREM`) pops all
+   entries with score ≤ now. Each is fired immediately via `StartRun`.
+2. **Future timers**: `ZRANGEBYSCORE` fetches entries with score > now. Each is
+   re-scheduled via `scheduleAfter(remaining)`, which re-adds to the ZSET
+   (idempotent via `ZADD`).
+
+```
+Engine restart:
+  ──PopFiredDelays(now)──fire each──ListFutureDelays──reschedule each──
+```
+
+**Background poller** (`startDelayPoller`, runs every 5s):
+- Catches timers lost by crashed replicas that haven't restarted yet.
+- Uses distributed lock (`cordum:wf:delay:poller`, TTL 10s) so only one
+  replica polls at a time.
+- Every ~5 minutes, cleans stale entries (>1h past-due) to prevent unbounded
+  ZSET growth from orphaned timers (e.g. run deleted while timer was pending).
+
+| Lock Key                    | TTL  | Release    | Purpose                    |
+|-----------------------------|------|------------|----------------------------|
+| `cordum:wf:delay:poller`    | 10s  | TTL expiry | Single-writer delay poller  |
+
+**Graceful degradation**: If Redis is unavailable during `scheduleAfter`, the
+timer is still created in-memory (logged as warning). The reconciler provides
+eventual recovery for delay steps via `NextAttemptAt` checks.
 
 ---
 
-## 9. Metrics
+## 9. Crash-Safe Message Processing
+
+NATS JetStream provides **at-least-once delivery** with AckWait (10min) and
+MaxDeliver (100). However, there are crash windows between processing and
+acknowledgment that can cause duplicate work or data loss. The bus layer adds
+Redis-backed guards to close these gaps.
+
+### Idempotency Guard
+
+When `NatsBus.WithRedis(client)` is set, every durable JetStream subscription
+checks a processed-message key before invoking the handler:
+
+```
+Message arrives (stream=CORDUM_JOBS, seq=42):
+  ──EXISTS cordum:bus:processed:CORDUM_JOBS:42──
+     │                                │
+     │ exists → Ack (skip handler)    │ not exists → process
+     │                                │
+     └────────────────────────────────┘
+                                      │
+                                ──handler()──SET processed──Ack──
+```
+
+| Redis Key                                      | TTL   | Purpose                         |
+|------------------------------------------------|-------|---------------------------------|
+| `cordum:bus:processed:<stream>:<seq>`           | 10min | Idempotency dedup (= AckWait)   |
+| `cordum:bus:inflight:<stream>:<seq>`            | 2min  | Observability (in-flight msgs)  |
+
+**Crash scenario covered**: Replica A processes a message, crashes before Ack.
+NATS redelivers to Replica B after AckWait. B finds the processed key in Redis
+and skips processing (just Acks). Without the guard, B would double-process.
+
+### In-Flight Tracking
+
+Before calling the handler, the bus sets a short-lived inflight key
+(`cordum:bus:inflight:<stream>:<seq>`, TTL 2min). This key is deleted after the
+handler completes. If the replica crashes mid-processing, the key expires via
+TTL. This is informational only — the actual retry mechanism is JetStream's
+redelivery.
+
+### DLQ-First Termination
+
+When a message reaches permanent failure (poison pill or corrupt payload), the
+bus calls `OnMessageTerminated` (DLQ write) **before** calling `msg.Term()`.
+If the DLQ callback returns an error (e.g. Redis unavailable), the message is
+**Nak'd with 5s delay** instead of terminated. This prevents the scenario where
+`Term()` succeeds, the replica crashes, and the DLQ entry is never written —
+permanently losing the message.
+
+```
+Before (unsafe):  msg.Term() → OnMessageTerminated() → (crash = message lost)
+After  (safe):    OnMessageTerminated() → success? → msg.Term()
+                                        → error?  → msg.NakWithDelay(5s) (retry)
+```
+
+### Graceful Degradation
+
+If Redis is unavailable (connection error, timeout), the idempotency check and
+inflight tracking are silently skipped. Processing continues with JetStream-only
+semantics (at-least-once with AckWait-based redelivery). A warning is logged on
+the first Redis failure per message.
+
+---
+
+## 10. Metrics
 
 The scheduler exposes the following metrics:
 
@@ -469,7 +736,38 @@ The scheduler exposes the following metrics:
 
 ---
 
-## 10. Source Files
+## 11. Registry Warm-Start from Redis Snapshot
+
+New scheduler replicas start with an empty `MemoryRegistry`. Without warm-start,
+it takes up to 30s for heartbeats to fill the registry, causing `ErrNoWorkers`
+for any job submitted in that window.
+
+**Solution**: On startup, the scheduler reads `sys:workers:snapshot` from Redis
+(the same snapshot written every 5s by the snapshot writer) and hydrates the
+registry with `HydrateFromSnapshot()`.
+
+```
+Cold start (before):
+  Replica B starts ──(0-30s empty registry)──heartbeats fill──ready
+
+Warm start (after):
+  Replica B starts ──read snapshot──hydrate──ready (< 1s)
+                                              ↑ heartbeats refresh within seconds
+```
+
+**Behavior**:
+- Snapshot read has a 5s timeout — never blocks startup
+- Workers from the snapshot are inserted with `lastSeen = time.Now()`, so normal
+  30s TTL expiry applies (stale workers evicted if no live heartbeat follows)
+- If Redis is unavailable, snapshot is missing, or data is corrupt: log warning
+  and continue with cold start (heartbeats fill the registry as before)
+- Live heartbeats always take precedence over snapshot data (last-write-wins)
+
+**Redis key**: `sys:workers:snapshot` (same key used by snapshot writer)
+
+---
+
+## 12. Source Files
 
 | File                            | Purpose                                |
 |---------------------------------|----------------------------------------|
@@ -503,3 +801,5 @@ The scheduler exposes the following metrics:
   cancellation, and DLQ management.
 - **[gRPC Services](grpc-services.md)** — `SafetyKernel.Check`,
   `OutputPolicyService.CheckOutput`, and other service definitions.
+- **[Horizontal Scaling Guide](horizontal-scaling.md)** — Multi-replica
+  deployment, all Redis lock keys, NATS subject matrix, and troubleshooting.

@@ -15,11 +15,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
@@ -41,17 +44,18 @@ import (
 type server struct {
 	pb.UnimplementedSafetyKernelServer
 	pb.UnimplementedOutputPolicyServiceServer
-	mu           sync.RWMutex
-	policy       *config.SafetyPolicy
-	outputRules  []compiledOutputRule
-	scanners     map[string]OutputScanner
-	snapshot     string
-	snapshots    []string
-	resultClient redis.UniversalClient
-	cacheMu      sync.Mutex
-	cacheTTL     time.Duration
-	cache        map[string]cacheEntry
-	cacheMaxSize int
+	mu            sync.RWMutex
+	policy        *config.SafetyPolicy
+	outputRules   []compiledOutputRule
+	scanners      map[string]OutputScanner
+	snapshot      string
+	snapshots     []string
+	resultClient  redis.UniversalClient
+	policyVersion atomic.Uint64
+	cacheMu       sync.Mutex
+	cacheTTL      time.Duration
+	cache         map[string]cacheEntry
+	cacheMaxSize  int
 }
 
 const (
@@ -62,11 +66,14 @@ const (
 	envPolicyMaxBytes           = "SAFETY_POLICY_MAX_BYTES"
 	defaultPolicyMaxBytes       = 2 * 1024 * 1024
 	defaultDecisionCacheMaxSize = 10000
+	snapshotHistoryKey          = "cordum:safety:snapshots"
+	snapshotHistoryMax          = 10
 )
 
 type cacheEntry struct {
-	resp    *pb.PolicyCheckResponse
-	expires time.Time
+	resp          *pb.PolicyCheckResponse
+	expires       time.Time
+	policyVersion uint64
 }
 
 // policyLookupIP allows tests to override DNS resolution for policy URL validation.
@@ -165,6 +172,33 @@ func Run(cfg *config.Config) error {
 	}
 
 	log.Printf("safety-kernel: listening on %s", cfg.SafetyKernelAddr)
+
+	// Graceful shutdown: on SIGINT/SIGTERM, drain in-flight RPCs then stop.
+	sigCtx, sigStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer sigStop()
+
+	go func() {
+		<-sigCtx.Done()
+		log.Println("safety-kernel: shutting down gracefully...")
+
+		const shutdownTimeout = 15 * time.Second
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		grpcDone := make(chan struct{})
+		go func() {
+			grpcServer.GracefulStop()
+			close(grpcDone)
+		}()
+		select {
+		case <-grpcDone:
+			log.Println("safety-kernel: gRPC server drained")
+		case <-shutdownCtx.Done():
+			log.Println("safety-kernel: gRPC graceful stop timed out, forcing")
+			grpcServer.Stop()
+		}
+	}()
+
 	serveErr := grpcServer.Serve(lis)
 	lifecycleCancel()
 	wg.Wait()
@@ -191,6 +225,16 @@ func (s *server) Simulate(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.
 }
 
 func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) (*pb.ListSnapshotsResponse, error) {
+	// Prefer Redis for cross-replica consistency.
+	if s.resultClient != nil {
+		rCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		vals, err := s.resultClient.LRange(rCtx, snapshotHistoryKey, 0, -1).Result()
+		cancel()
+		if err == nil && len(vals) > 0 {
+			return &pb.ListSnapshotsResponse{Snapshots: vals}, nil
+		}
+	}
+	// Fallback to local slice if Redis unavailable or empty.
 	s.mu.RLock()
 	snapshots := append([]string{}, s.snapshots...)
 	s.mu.RUnlock()
@@ -348,6 +392,7 @@ func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 }
 
 func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
+	currentVersion := s.policyVersion.Load()
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if s.cache == nil {
@@ -355,6 +400,10 @@ func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
 	}
 	entry, ok := s.cache[key]
 	if !ok {
+		return nil
+	}
+	if entry.policyVersion != currentVersion {
+		delete(s.cache, key)
 		return nil
 	}
 	if time.Now().After(entry.expires) {
@@ -397,7 +446,11 @@ func (s *server) setCachedDecision(key string, resp *pb.PolicyCheckResponse) {
 			delete(s.cache, oldestKey)
 		}
 	}
-	s.cache[key] = cacheEntry{resp: resp, expires: time.Now().Add(s.cacheTTL)}
+	s.cache[key] = cacheEntry{
+		resp:          resp,
+		expires:       time.Now().Add(s.cacheTTL),
+		policyVersion: s.policyVersion.Load(),
+	}
 }
 
 func clonePolicyResponse(resp *pb.PolicyCheckResponse) *pb.PolicyCheckResponse {
@@ -626,17 +679,37 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader) {
 }
 
 func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
+	newVersion := s.policyVersion.Add(1)
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.policy = policy
 	s.outputRules = compileOutputRules(policy)
 	s.snapshot = snapshot
 	if snapshot != "" {
 		s.snapshots = append([]string{snapshot}, s.snapshots...)
-		if len(s.snapshots) > 10 {
-			s.snapshots = s.snapshots[:10]
+		if len(s.snapshots) > snapshotHistoryMax {
+			s.snapshots = s.snapshots[:snapshotHistoryMax]
 		}
 	}
+	s.mu.Unlock()
+
+	// Persist snapshot to Redis for cross-replica consistency.
+	if snapshot != "" && s.resultClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := s.resultClient.LPush(ctx, snapshotHistoryKey, snapshot).Err(); err != nil {
+			log.Printf("safety-kernel: snapshot redis LPUSH failed: %v", err)
+		} else if err := s.resultClient.LTrim(ctx, snapshotHistoryKey, 0, snapshotHistoryMax-1).Err(); err != nil {
+			log.Printf("safety-kernel: snapshot redis LTRIM failed: %v", err)
+		}
+	}
+
+	// Clear decision cache — all entries were created under a previous policy version.
+	s.cacheMu.Lock()
+	s.cache = map[string]cacheEntry{}
+	s.cacheMu.Unlock()
+
+	log.Printf("safety-kernel: policy updated, cache invalidated (version=%d)", newVersion)
 }
 
 type policyLoader struct {
@@ -835,11 +908,14 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 		return nil
 	}
 	out := &config.SafetyPolicy{
-		Version:       policy.Version,
-		DefaultTenant: policy.DefaultTenant,
-		Rules:         append([]config.PolicyRule{}, policy.Rules...),
-		OutputRules:   append([]config.OutputPolicyRule{}, policy.OutputRules...),
-		Tenants:       map[string]config.TenantPolicy{},
+		Version:         policy.Version,
+		DefaultTenant:   policy.DefaultTenant,
+		DefaultDecision: policy.DefaultDecision,
+		InputPolicy:     policy.InputPolicy,
+		OutputPolicy:    policy.OutputPolicy,
+		Rules:           append([]config.PolicyRule{}, policy.Rules...),
+		OutputRules:     append([]config.OutputPolicyRule{}, policy.OutputRules...),
+		Tenants:         map[string]config.TenantPolicy{},
 	}
 	if policy.Tenants != nil {
 		for k, v := range policy.Tenants {

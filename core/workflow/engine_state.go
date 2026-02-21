@@ -15,7 +15,11 @@ import (
 
 // StartRun loads the workflow/run and dispatches any ready steps.
 func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
-	defer e.lockRun(runID)()
+	unlock, ok := e.lockRun(runID)
+	if !ok {
+		return nil // Another replica owns this run.
+	}
+	defer unlock()
 	wfDef, err := e.store.GetWorkflow(ctx, workflowID)
 	if err != nil {
 		return fmt.Errorf("get workflow: %w", err)
@@ -33,7 +37,11 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 
 // RerunFrom creates a new run that reuses inputs and optionally resumes from a step.
 func (e *Engine) RerunFrom(ctx context.Context, runID, stepID string, dryRun bool) (string, error) {
-	defer e.lockRun(runID)()
+	unlock, ok := e.lockRun(runID)
+	if !ok {
+		return "", fmt.Errorf("run %s is being processed by another replica", runID)
+	}
+	defer unlock()
 	if runID == "" {
 		return "", fmt.Errorf("run id required")
 	}
@@ -100,7 +108,11 @@ func (e *Engine) RerunFrom(ctx context.Context, runID, stepID string, dryRun boo
 }
 
 func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved bool) error {
-	defer e.lockRun(runID)()
+	unlock, ok := e.lockRun(runID)
+	if !ok {
+		return fmt.Errorf("run %s is being processed by another replica", runID)
+	}
+	defer unlock()
 
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
@@ -180,7 +192,11 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 
 // CancelRun marks a run and all non-terminal steps as cancelled to prevent further dispatch.
 func (e *Engine) CancelRun(ctx context.Context, runID string) error {
-	defer e.lockRun(runID)()
+	unlock, ok := e.lockRun(runID)
+	if !ok {
+		return fmt.Errorf("run %s is being processed by another replica", runID)
+	}
+	defer unlock()
 
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {

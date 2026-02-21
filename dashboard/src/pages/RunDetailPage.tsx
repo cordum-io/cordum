@@ -20,6 +20,7 @@ import { RunStatusBadge } from "../components/StatusBadge";
 import { GanttTimeline } from "../components/workflow/GanttTimeline";
 import { RunVisualization } from "../components/workflow/RunVisualization";
 import { useRun, useRerunRun, useCancelRun, useDeleteRun } from "../hooks/useWorkflows";
+import { DelayTimerBadge } from "../components/workflows/DelayTimerBadge";
 import type { WorkflowStep } from "../api/types";
 import { usePageTitle } from "../hooks/usePageTitle";
 
@@ -277,6 +278,9 @@ export default function RunDetailPage() {
               </span>
             )}
             {run.dryRun && <Badge variant="warning">Dry Run</Badge>}
+            {run.timers?.map((timer) => (
+              <DelayTimerBadge key={`${timer.workflow_id}:${timer.run_id}`} timer={timer} runId={run.id} />
+            ))}
           </div>
         </div>
 

@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -236,6 +239,7 @@ func main() {
 		log.Fatalf("failed to connect to safety kernel: %v", err)
 	}
 	defer safetyClient.Close()
+	safetyClient.WithRedis(sagaRedis)
 	sagaManager.WithSafety(safetyClient)
 
 	// Populate health check dependencies now that all critical deps are created.
@@ -265,6 +269,15 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	hostname, _ := os.Hostname()
+	instanceID := hostname + "-" + uuid.NewString()[:8]
+	slog.Info("scheduler instance", "instance_id", instanceID)
+
+	// Instance registry: self-register this scheduler replica in Redis.
+	instReg := agentregistry.NewInstanceRegistry(sagaRedis, "scheduler", instanceID, buildinfo.Version, buildinfo.Commit)
+	instReg.Start(ctx)
+	defer instReg.Stop()
 
 	if err := configSvc.EnsureDefault(ctx); err != nil {
 		log.Printf("auto-bootstrap default config failed: %v", err)
@@ -317,6 +330,10 @@ func main() {
 			engine.WithAsyncFailMode(fm)
 		}
 	}
+	if fm := strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE")); fm != "" {
+		engine.WithInputFailMode(fm)
+	}
+	engine.WithCounterClient(jobStore.Client())
 
 	if err := engine.Start(); err != nil {
 		log.Fatalf("failed to start scheduler engine: %v", err)
@@ -327,6 +344,19 @@ func main() {
 		log.Printf("worker snapshot disabled: failed to connect to Redis: %v", err)
 	} else {
 		defer snapshotStore.Close()
+
+		// Warm-start: hydrate registry from last-written snapshot to avoid 0–30s cold-start window.
+		hydrateCtx, hydrateCancel := context.WithTimeout(ctx, 5*time.Second)
+		snapData, snapErr := snapshotStore.GetResult(hydrateCtx, agentregistry.SnapshotKey)
+		hydrateCancel()
+		if snapErr != nil {
+			slog.Warn("registry warm-start: failed to read snapshot", "error", snapErr)
+		} else if len(snapData) == 0 {
+			slog.Info("registry warm-start: no snapshot found, starting cold")
+		} else if hydrateErr := registry.HydrateFromSnapshot(snapData); hydrateErr != nil {
+			slog.Warn("registry warm-start: failed to hydrate", "error", hydrateErr)
+		}
+
 		snapshotInterval := 5 * time.Second
 		if raw := os.Getenv("WORKER_SNAPSHOT_INTERVAL"); raw != "" {
 			if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
@@ -335,6 +365,8 @@ func main() {
 				log.Printf("invalid WORKER_SNAPSHOT_INTERVAL=%q, using default %s", raw, snapshotInterval) // #nosec -- value is config input for diagnostics.
 			}
 		}
+		const snapshotLockKey = "cordum:scheduler:snapshot:writer"
+		const snapshotLockTTL = 30 * time.Second
 		go func() {
 			ticker := time.NewTicker(snapshotInterval)
 			defer ticker.Stop()
@@ -343,16 +375,40 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
+					lockCtx, lockCancel := context.WithTimeout(ctx, 2*time.Second)
+					token, err := jobStore.TryAcquireLock(lockCtx, snapshotLockKey, snapshotLockTTL)
+					lockCancel()
+					if err != nil {
+						slog.Warn("snapshot writer lock acquire failed", "instance_id", instanceID, "error", err)
+						continue
+					}
+					if token == "" {
+						slog.Debug("snapshot writer lock held by another replica, skipping", "instance_id", instanceID)
+						continue
+					}
+
 					current := strategy.CurrentRouting()
 					snap := agentregistry.BuildSnapshot(registry.Snapshot(), current.TopicToPool())
+					snap.WriterID = instanceID
 					data, err := json.Marshal(snap)
 					if err != nil {
 						log.Printf("worker snapshot marshal failed: %v", err)
+						releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
+						_ = jobStore.ReleaseLock(releaseCtx, snapshotLockKey, token)
+						releaseCancel()
 						continue
 					}
-					if err := snapshotStore.PutResult(ctx, agentregistry.SnapshotKey, data); err != nil {
+					writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
+					if err := snapshotStore.PutResult(writeCtx, agentregistry.SnapshotKey, data); err != nil {
 						log.Printf("worker snapshot write failed: %v", err)
 					}
+					writeCancel()
+
+					releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
+					if err := jobStore.ReleaseLock(releaseCtx, snapshotLockKey, token); err != nil {
+						slog.Debug("snapshot writer lock release failed, will expire via TTL", "instance_id", instanceID, "error", err)
+					}
+					releaseCancel()
 				}
 			}
 		}()
@@ -364,14 +420,16 @@ func main() {
 	pendingReplayer := scheduler.NewPendingReplayer(engine, jobStore, dispatchTimeout, scanInterval)
 	go pendingReplayer.Start(ctx)
 
-	go watchConfigChanges(ctx, configSvc, poolCfg, timeoutsCfg, strategy, reconciler)
+	go watchConfigChanges(ctx, configSvc, poolCfg, timeoutsCfg, strategy, reconciler, natsBus)
 
 	log.Println("scheduler running. waiting for signals...")
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	log.Println("scheduler shutting down")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	const shutdownTimeout = 15 * time.Second
+	log.Printf("scheduler shutting down gracefully (timeout=%s)", shutdownTimeout)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("metrics server shutdown error: %v", err)

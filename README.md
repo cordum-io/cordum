@@ -18,43 +18,71 @@
 
 ---
 
-## The Problem
+## The Problem: The Agent Risk Gap
 
-AI agents are powerful. They're also unpredictable.
+Enterprises are rushing to deploy **Autonomous AI Agents**, but they're hitting a wall of risk. According to Gartner, **74% of enterprises see AI agents as a new attack vector**, and over 40% of agentic AI projects will be canceled due to inadequate risk controls.
 
-Teams deploying agents in production face the **Trust Gap**: the distance between what an agent *can* do and what you're *confident* letting it do unsupervised.
+The current landscape leaves teams with a choice:
+1. **Restrict agents** to simple, low-value read-only tasks.
+2. **Accept the risk** of autonomous agents taking destructive, unmonitored actions.
 
-Without governance, you're flying blind:
-- No visibility into what agents are doing
-- No safety rails before dangerous actions
-- No audit trail when things go wrong
-- No way to require human approval for sensitive operations
+Without a dedicated governance layer, you're flying blind:
+- **No visibility**: You don't know what your agents are doing until *after* they do it.
+- **No safety rails**: There's no way to intercept dangerous operations before they execute.
+- **No human-in-the-loop**: Sensitive actions happen without manual oversight.
+- **No audit trail**: When things go wrong, you can't reconstruct the chain of thought.
 
-## The Solution
+## The Solution: Cordum Agent Control Plane
 
-Cordum is a **control plane for AI agents** that closes the Trust Gap.
+Cordum is an **Agent Control Plane** that provides a deterministic governance layer for probabilistic AI minds. It allows you to define, enforce, and audit the behavior of your **Autonomous AI Agents** across any framework or model.
 
+```mermaid
+graph TB
+    subgraph CP [AGENT CONTROL PLANE]
+        direction LR
+        G[API Gateway] --- S[Scheduler] --- SK[Safety Kernel]
+        S --- WE[Workflow Engine]
+    end
+    
+    subgraph AGENTS [AUTONOMOUS AGENT POOLS]
+        direction LR
+        A1[Financial Ops]
+        A2[Data Science]
+        A3[Customer Service]
+    end
+    
+    CP -->|Governed Jobs| AGENTS
+    AGENTS -->|Audit Trail| CP
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Cordum                                  │
-│                                                                 │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────────┐ │
-│  │   API    │──▶│ Scheduler│──▶│  Safety  │──▶│ Worker Pools │ │
-│  │ Gateway  │   │          │   │  Kernel  │   │              │ │
-│  └──────────┘   └──────────┘   └──────────┘   └──────────────┘ │
-│       │              │              │                │         │
-│       ▼              ▼              ▼                ▼         │
-│  [Dashboard]    [Workflows]    [Policies]      [Your Agents]   │
-└─────────────────────────────────────────────────────────────────┘
+
+<!-- Replace with a high-impact GIF showing a risky agent action being caught by Cordum -->
+![Governed Agent Approval Lifecycle](docs/assets/governance-flow.svg)
+
+### Governance Across the Lifecycle
+
+Cordum's **Before/During/Across** framework provides exhaustive control over your agent operations:
+
+```mermaid
+graph LR
+    subgraph BEFORE [1. BEFORE - Governance]
+        P[Policy Evaluation] --> S[Safety Gating]
+        S --> H[Human Approval]
+    end
+    subgraph DURING [2. DURING - Safety]
+        M[Real-time Monitoring] --> C[Circuit Breakers]
+        C --> A[Live Approvals]
+    end
+    subgraph ACROSS [3. ACROSS - Observability]
+        F[Fleet Health] --> T[Audit Trail]
+        T --> O[Optimization]
+    end
+    BEFORE --> DURING
+    DURING --> ACROSS
 ```
 
-**What Cordum does:**
-
-- **Safety Kernel** — Policy checks (allow/deny/throttle/human-approve) before any job runs
-- **Workflow Engine** — Orchestrate multi-step agent workflows with retries, approvals, and timeouts
-- **Job Routing** — Distribute work across agent pools with capability-based routing
-- **Observability** — Full audit trail, traces, and real-time dashboard
-- **Human-in-the-Loop** — Require approval for sensitive operations
+- **BEFORE (Governance)**: Define declarative policies that evaluate job requests *before* an agent executes. Trigger safety kernel checks, throttle risky actions, or flag operations for human approval.
+- **DURING (Safety)**: Real-time visibility into active agent runs. Monitor progress, handle step-level approvals, and enforce timeouts or circuit breakers on the fly.
+- **ACROSS (Observability)**: Manage your entire fleet from a single control plane. Aggregate audit trails, track capability-based routing, and observe agent pool health in real-time.
 
 ## Quickstart
 
@@ -88,41 +116,20 @@ open http://localhost:8082
 | Stale config after pool changes | Delete Redis key: `redis-cli DEL cfg:system:default` |
 | TLS cert errors on retry | Remove `./certs/` directory and re-run — certs auto-regenerate |
 
-## How It Works
-
-Cordum uses [CAP (Cordum Agent Protocol)](https://github.com/cordum-io/cap) for all agent communication:
-
-1. **Submit** — Client submits a job via API
-2. **Safety Check** — Scheduler asks Safety Kernel: allow, deny, throttle, or require approval?
-3. **Dispatch** — Approved jobs route to the right worker pool via NATS
-4. **Execute** — Your agent runs the job (using MCP, LangChain, whatever)
-5. **Result** — Agent returns result; Cordum updates state and notifies client
-
-```
-Client ──▶ API ──▶ Scheduler ──▶ Safety Kernel ──▶ NATS ──▶ Agent Pool
-                       │                              │
-                       ▼                              ▼
-                  [Redis State]                 [Your Agents]
-```
-
-**Key design choices:**
-- **Payloads stay off the bus** — `context_ptr` and `result_ptr` reference Redis/S3, keeping the message bus lean
-- **Protocol-first** — CAP is an independent spec; Cordum is the reference implementation
-- **Workers are external** — Cordum is the control plane; your agents run wherever you want
-
 ## Key Features
 
-| Feature | Description |
-|---------|-------------|
-| **Safety Policies** | Define rules for what agents can/can't do. Enforce before execution. |
-| **Output Safety** | Evaluate completed job outputs and allow, redact, or quarantine unsafe results. |
-| **Human Approval** | Flag sensitive jobs for manual review before they run. |
-| **Workflows** | Multi-step DAGs with fan-out, retries, delays, and conditions. |
-| **Pool Routing** | Route jobs by capability, region, or custom tags. |
-| **Heartbeats** | Know which agents are alive, their capacity, and load. |
-| **Audit Trail** | Every job, decision, and result logged and queryable. |
-| **Dashboard** | Real-time UI for workflows, jobs, approvals, and policies. |
-| **Multi-tenant** | API keys with RBAC for teams and environments. |
+<!-- Replace with a visual showing the Policy Studio and Safety Kernel in action -->
+![Policy Studio and Safety Kernel](docs/assets/dashboard-ui.svg)
+
+| Governance Feature | Why It Matters for Enterprise |
+|--------------------|--------------------------------|
+| **Safety Gating** | Prevents agents from executing destructive or unauthorized actions *before* they occur. |
+| **Output Quarantine** | Automatically blocks PII leaks, secrets, or hallucinated results from reaching the client. |
+| **Human-in-the-Loop** | Mandates human oversight for high-risk operations (e.g., financial transfers, prod access). |
+| **Pool Segmentation** | Ensures sensitive data only reaches agents in trusted environments. |
+| **Deterministic Audit** | Prove exactly *why* a decision was made with a full chain-of-thought audit trail. |
+| **Governance Policies** | Declarative YAML-based rules that map enterprise risk to agent behavior. |
+| **Policy Simulator** | Test your governance rules against historical data before rolling them out to production. |
 
 ## Architecture
 
@@ -161,17 +168,25 @@ cordum/
 | [Local E2E](docs/LOCAL_E2E.md) | Full local walkthrough |
 | [Production Guide](docs/production.md) | TLS, HA, backups, incident runbooks |
 
-## Protocol: CAP
+## Protocol: CAP — The Open Standard for Agent Governance
 
-Cordum implements [CAP (Cordum Agent Protocol)](https://github.com/cordum-io/cap) — an open protocol for distributed AI agent orchestration.
+Cordum implements [CAP (Cordum Agent Protocol)](https://github.com/cordum-io/cap), an open protocol specifically designed for distributed AI agent governance. CAP provides a unified interface for defining agent capabilities, submitting jobs, and enforcing safety policies across heterogeneous agent pools.
 
-**CAP vs MCP:**
-- **MCP** = tool-calling protocol for a single model
-- **CAP** = job protocol for distributed agent clusters
+### CAP vs. MCP: Why You Need Both
 
-They're complementary. Use CAP for orchestration, MCP inside your agents for tools.
+While both are essential, they solve different parts of the agent stack:
 
-Read more: [MCP vs CAP: Why Your AI Agents Need Both Protocols](https://dev.to/yaron_torgeman_104570d968/-mcp-vs-cap-why-your-ai-agents-need-both-protocols-3g4l)
+| Protocol | Focus | Level | Responsibility |
+|----------|-------|-------|----------------|
+| **MCP** (Model Context Protocol) | **Tool Calling** | Local | How a model interacts with a tool. |
+| **CAP** (Cordum Agent Protocol) | **Governance** | Network | How an agent is governed within an enterprise. |
+
+- **MCP** is for *within* the agent — it defines how a model calls local tools.
+- **CAP** is for *above* the agent — it defines the governance control plane for the entire agent fleet.
+
+Use CAP for high-level orchestration and safety gating, and MCP inside your agents for fine-grained tool integration.
+
+[Read the full deep dive: MCP vs CAP: Why Your AI Agents Need Both Protocols](https://dev.to/yaron_torgeman_104570d968/-mcp-vs-cap-why-your-ai-agents-need-both-protocols-3g4l)
 
 ## MCP Server
 

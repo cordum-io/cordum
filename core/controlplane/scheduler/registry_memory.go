@@ -1,9 +1,12 @@
 package scheduler
 
 import (
+	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/registry"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -145,6 +148,45 @@ func (r *MemoryRegistry) Stats() (total int, byPool map[string]int) {
 		byPool[pool]++
 	}
 	return total, byPool
+}
+
+// HydrateFromSnapshot populates the registry from a JSON-encoded worker snapshot.
+// This provides instant warm-start on new replicas instead of waiting up to 30s
+// for heartbeats. Workers are inserted with lastSeen=time.Now() so normal TTL
+// expiry applies. Returns nil for nil/empty data (no-op).
+func (r *MemoryRegistry) HydrateFromSnapshot(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	var snap registry.Snapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return err
+	}
+	if len(snap.Workers) == 0 {
+		slog.Warn("registry warm-start: snapshot has no workers")
+		return nil
+	}
+
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, w := range snap.Workers {
+		if w.WorkerID == "" {
+			continue
+		}
+		hb := &pb.Heartbeat{
+			WorkerId:        w.WorkerID,
+			Pool:            w.Pool,
+			ActiveJobs:      w.ActiveJobs,
+			MaxParallelJobs: w.MaxParallelJobs,
+			Capabilities:    w.Capabilities,
+			CpuLoad:         w.CpuLoad,
+			GpuUtilization:  w.GpuUtilization,
+		}
+		r.workers[w.WorkerID] = &workerEntry{hb: hb, lastSeen: now}
+	}
+	slog.Info("registry hydrated from snapshot", "workers", len(snap.Workers))
+	return nil
 }
 
 // Close stops background expiry loop. It is safe to call multiple times.

@@ -1,6 +1,7 @@
 package safetykernel
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"testing"
@@ -227,5 +228,210 @@ func TestDecisionCacheTTLPreservedWithBound(t *testing.T) {
 	}
 	if got := srv.getCachedDecision(key); got != nil {
 		t.Fatalf("expected cached decision to expire with bounded cache")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Versioned cache invalidation tests
+// ---------------------------------------------------------------------------
+
+func TestCacheInvalidatedOnPolicyChange(t *testing.T) {
+	// Policy A: allow everything (default allow).
+	policyA := &config.SafetyPolicy{
+		Version:         "v1",
+		DefaultDecision: "allow",
+	}
+	// Policy B: deny topic "job.test".
+	policyB := &config.SafetyPolicy{
+		Version:         "v2",
+		DefaultDecision: "allow",
+		Rules: []config.PolicyRule{
+			{Match: config.PolicyMatch{Topics: []string{"job.test"}}, Decision: "deny", Reason: "blocked by v2"},
+		},
+	}
+
+	srv := &server{
+		cacheTTL:     5 * time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	srv.setPolicy(policyA, "snapA")
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.test",
+		Tenant: "default",
+	}
+
+	// First evaluation under policy A — should allow.
+	resp1, err := srv.evaluate(context.Background(), req, "check")
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if resp1.Decision != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("expected ALLOW under policy A, got %v", resp1.Decision)
+	}
+
+	// Change to policy B — should invalidate cache.
+	srv.setPolicy(policyB, "snapB")
+
+	// Second evaluation with same request — must see DENY (not stale cache).
+	resp2, err := srv.evaluate(context.Background(), req, "check")
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if resp2.Decision != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("expected DENY under policy B, got %v (stale cache served)", resp2.Decision)
+	}
+	if resp2.Reason != "blocked by v2" {
+		t.Fatalf("expected reason from policy B, got %q", resp2.Reason)
+	}
+}
+
+func TestCacheHitSamePolicyVersion(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		Version:         "v1",
+		DefaultDecision: "allow",
+	}
+	srv := &server{
+		cacheTTL:     5 * time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	srv.setPolicy(policy, "snap1")
+
+	key := "test-key"
+	resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}
+	srv.setCachedDecision(key, resp)
+
+	// Same policy version — should return cached entry.
+	got := srv.getCachedDecision(key)
+	if got == nil {
+		t.Fatal("expected cache hit for same policy version")
+	}
+	if got.Decision != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("expected ALLOW, got %v", got.Decision)
+	}
+}
+
+func TestSetPolicyBumpsVersion(t *testing.T) {
+	srv := &server{
+		cacheTTL:     time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+
+	// Initial version is 0 (zero value).
+	if v := srv.policyVersion.Load(); v != 0 {
+		t.Fatalf("expected initial version 0, got %d", v)
+	}
+
+	// Each setPolicy call bumps version by 1.
+	for i := uint64(1); i <= 5; i++ {
+		srv.setPolicy(nil, fmt.Sprintf("snap%d", i))
+		if v := srv.policyVersion.Load(); v != i {
+			t.Fatalf("expected version %d after %d calls, got %d", i, i, v)
+		}
+	}
+}
+
+func TestCacheEntriesCarryVersion(t *testing.T) {
+	srv := &server{
+		cacheTTL:     5 * time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	srv.setPolicy(nil, "snap1") // version = 1
+
+	key := "versioned-key"
+	resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}
+	srv.setCachedDecision(key, resp)
+
+	// Verify entry has version 1.
+	srv.cacheMu.Lock()
+	entry, ok := srv.cache[key]
+	srv.cacheMu.Unlock()
+	if !ok {
+		t.Fatal("expected cache entry")
+	}
+	if entry.policyVersion != 1 {
+		t.Fatalf("expected entry version 1, got %d", entry.policyVersion)
+	}
+
+	// Bump to version 2.
+	srv.setPolicy(nil, "snap2") // version = 2, cache cleared
+
+	// The cache was cleared by setPolicy, so the entry should be gone.
+	if got := srv.getCachedDecision(key); got != nil {
+		t.Fatal("expected cache miss after policy change (cache cleared)")
+	}
+
+	// Re-add under version 2 and verify it's served.
+	srv.setCachedDecision(key, resp)
+	if got := srv.getCachedDecision(key); got == nil {
+		t.Fatal("expected cache hit for current version")
+	}
+}
+
+func TestCacheClearedOnSetPolicy(t *testing.T) {
+	srv := &server{
+		cacheTTL:     5 * time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	srv.setPolicy(nil, "snap1") // version = 1
+
+	// Populate cache.
+	for i := 0; i < 10; i++ {
+		srv.setCachedDecision(
+			fmt.Sprintf("key-%d", i),
+			&pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		)
+	}
+
+	srv.cacheMu.Lock()
+	size := len(srv.cache)
+	srv.cacheMu.Unlock()
+	if size != 10 {
+		t.Fatalf("expected 10 cached entries, got %d", size)
+	}
+
+	// Policy change should clear cache entirely.
+	srv.setPolicy(nil, "snap2")
+
+	srv.cacheMu.Lock()
+	size = len(srv.cache)
+	srv.cacheMu.Unlock()
+	if size != 0 {
+		t.Fatalf("expected 0 cached entries after policy change, got %d", size)
+	}
+}
+
+func TestCacheVersionMismatchDeletesEntry(t *testing.T) {
+	srv := &server{
+		cacheTTL:     5 * time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	srv.setPolicy(nil, "snap1") // version = 1
+
+	key := "stale-key"
+	resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}
+	srv.setCachedDecision(key, resp)
+
+	// Manually bump version without clearing cache (simulate a race window).
+	srv.policyVersion.Add(1) // version = 2, but cache NOT cleared
+
+	// getCachedDecision should detect version mismatch and delete the entry.
+	if got := srv.getCachedDecision(key); got != nil {
+		t.Fatal("expected cache miss for version mismatch")
+	}
+
+	// Entry should be deleted from the map.
+	srv.cacheMu.Lock()
+	_, exists := srv.cache[key]
+	srv.cacheMu.Unlock()
+	if exists {
+		t.Fatal("expected stale entry to be deleted from cache map")
 	}
 }

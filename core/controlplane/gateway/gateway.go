@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -21,11 +22,14 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/artifacts"
+	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/schema"
@@ -115,7 +119,13 @@ type server struct {
 	userStore      UserStore
 	keyStore       KeyStore
 
-	auditExporter *audit.BufferedExporter
+	auditExporter audit.AuditSender
+
+	apiRL    rateLimiter
+	publicRL rateLimiter
+
+	instanceRegistry *registry.InstanceRegistry
+	instanceID       string
 
 	marketplaceMu    sync.Mutex
 	marketplaceCache marketplaceCache
@@ -127,9 +137,62 @@ type server struct {
 	workerExpireOnce sync.Once
 }
 
+// snapshotFromRedis reads the full scheduler worker snapshot from Redis.
+// Returns nil, nil if the snapshot key is missing (cold Redis).
+func (s *server) snapshotFromRedis() (*registry.Snapshot, error) {
+	if s.memStore == nil {
+		return nil, fmt.Errorf("mem store unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	data, err := s.memStore.GetResult(ctx, registry.SnapshotKey)
+	if err != nil {
+		return nil, fmt.Errorf("read worker snapshot: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var snap registry.Snapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, fmt.Errorf("unmarshal worker snapshot: %w", err)
+	}
+	return &snap, nil
+}
+
+// workersFromRedisSnapshot reads the scheduler's worker snapshot from Redis.
+// Returns nil, nil if the snapshot key is missing (cold Redis).
+func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
+	snap, err := s.snapshotFromRedis()
+	if err != nil || snap == nil {
+		return nil, err
+	}
+	return snap.Workers, nil
+}
+
+// workerSummariesToHeartbeats converts snapshot summaries to the Heartbeat
+// protobuf format used by the workers API, preserving the API contract.
+func workerSummariesToHeartbeats(workers []registry.WorkerSummary) []*pb.Heartbeat {
+	out := make([]*pb.Heartbeat, len(workers))
+	for i, w := range workers {
+		out[i] = &pb.Heartbeat{
+			WorkerId:        w.WorkerID,
+			Pool:            w.Pool,
+			ActiveJobs:      w.ActiveJobs,
+			MaxParallelJobs: w.MaxParallelJobs,
+			Capabilities:    w.Capabilities,
+			CpuLoad:         w.CpuLoad,
+			GpuUtilization:  w.GpuUtilization,
+		}
+	}
+	return out
+}
+
 // Close releases resources owned by the server, notably the user store
 // connection. It is safe to call with a nil userStore.
 func (s *server) Close() {
+	if s.instanceRegistry != nil {
+		s.instanceRegistry.Stop()
+	}
 	s.stopBusTaps()
 	s.stopWorkerExpiry()
 	// Close safety kernel gRPC connection AFTER HTTP shutdown completes so
@@ -224,6 +287,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		}
 		if oidcProvider != nil {
 			defer oidcProvider.Close()
+			// Attach Redis client for cross-replica JWKS cache (best effort).
+			if oidcRedis, rErr := redisutil.NewClient(cfg.RedisURL); rErr == nil {
+				oidcProvider.WithRedis(oidcRedis)
+				defer func() { _ = oidcRedis.Close() }()
+			} else {
+				logging.Error("api-gateway", "oidc redis cache unavailable, continuing without", "error", rErr)
+			}
 			oidcAdapter := NewOIDCAuthAdapter(oidcProvider, tenantID)
 			composite, err := NewCompositeAuthProvider(basic, oidcAdapter)
 			if err != nil {
@@ -335,9 +405,23 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		}
 	}
 
-	auditExporter, err := audit.NewExporterFromEnv()
+	var auditSender audit.AuditSender
+	bufExporter, err := audit.NewExporterFromEnv()
 	if err != nil {
 		return fmt.Errorf("init audit exporter: %w", err)
+	}
+	if bufExporter != nil {
+		transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
+		if transport == "nats" && natsBus != nil {
+			auditSender = audit.NewNATSAuditPublisher(natsBus, bufExporter)
+			// Start consumer in the same process — queue group ensures only
+			// one replica across the cluster handles each event.
+			if _, err := audit.NewNATSAuditConsumer(natsBus, bufExporter.Backend()); err != nil {
+				logging.Warn("api-gateway", "audit NATS consumer failed to start, falling back to local buffer", "error", err)
+			}
+		} else {
+			auditSender = bufExporter
+		}
 	}
 
 	s := &server{
@@ -363,10 +447,35 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		safetyClient:   safetyClient,
 		userStore:      userStore,
 		keyStore:       keyStore,
-		auditExporter:  auditExporter,
+		auditExporter:  auditSender,
 		shutdownCh:     make(chan struct{}),
 	}
 	defer s.Close()
+
+	// Wire distributed rate limiters. Use Redis-backed counters by default;
+	// fall back to in-memory when REDIS_RATE_LIMIT=false or Redis unavailable.
+	redisRL := strings.ToLower(strings.TrimSpace(os.Getenv("REDIS_RATE_LIMIT")))
+	if redisRL != "false" && redisRL != "0" && redisRL != "no" && jobStore != nil {
+		redisClient := jobStore.Client()
+		apiRPS, apiBurst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRateLimitRPS, defaultRateLimitBurst)
+		pubRPS, pubBurst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
+		s.apiRL = newRedisRateLimiter(redisClient, apiRPS, apiBurst)
+		s.publicRL = newRedisRateLimiter(redisClient, pubRPS, pubBurst)
+	} else {
+		s.apiRL = defaultAPILimiter
+		s.publicRL = defaultPublicLimiter
+	}
+
+	// Instance registry: self-register this gateway replica in Redis.
+	instanceID := registry.ResolveInstanceID()
+	s.instanceID = instanceID
+	if jobStore != nil {
+		s.instanceRegistry = registry.NewInstanceRegistry(
+			jobStore.Client(), "api-gateway", instanceID,
+			buildinfo.Version, buildinfo.Commit,
+		)
+		s.instanceRegistry.Start(context.Background())
+	}
 
 	if err := s.startBusTaps(); err != nil {
 		return fmt.Errorf("start bus taps: %w", err)
@@ -406,7 +515,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		grpc.Creds(grpcCreds),
 		grpc.ChainUnaryInterceptor(
 			apiKeyUnaryInterceptor(s.auth),
-			rateLimitUnaryInterceptor(s.auth),
+			rateLimitUnaryInterceptor(s.auth, s.apiRL, s.publicRL),
 		),
 	)
 	pb.RegisterCordumApiServer(grpcServer, s)
@@ -481,6 +590,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 2.5 Status snapshot (Redis/NATS/workers/uptime)
 	mux.HandleFunc("GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))
+
+	// 2.6 Admin endpoints (read-only, admin auth required)
+	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
 
 	// 3. Jobs (Redis ZSet)
 	mux.HandleFunc("GET /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleListJobs))
@@ -596,7 +708,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	}
 
 	// Middleware chain: CORS → auth → rate limit → tenant → body limit → mux
-	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))))
+	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))

@@ -1,0 +1,181 @@
+# HA override — adds second replicas for gateway, scheduler, and workflow-engine.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.ha.yaml up -d --build
+#
+# Infrastructure (Redis, NATS) remains single-instance (shared state store).
+# Each replica pair shares the same env vars but binds different host ports.
+
+name: cordum
+
+services:
+  # ── Second API Gateway replica ──
+  api-gateway-2:
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-api-gateway
+    networks:
+      default:
+        aliases:
+          - cordum-api-gateway-2
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+      safety-kernel:
+        condition: service_healthy
+    environment:
+      - NATS_URL=tls://nats:4222
+      - NATS_USE_JETSTREAM=1
+      - NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - NATS_TLS_SERVER_NAME=nats
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - REDIS_TLS_SERVER_NAME=redis
+      - SAFETY_KERNEL_ADDR=safety-kernel:50051
+      - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - CONTEXT_ENGINE_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - GATEWAY_HTTP_TLS_CERT=/etc/cordum/tls/server/tls.crt
+      - GATEWAY_HTTP_TLS_KEY=/etc/cordum/tls/server/tls.key
+      - GRPC_TLS_CERT=/etc/cordum/tls/server/tls.crt
+      - GRPC_TLS_KEY=/etc/cordum/tls/server/tls.key
+      - "CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
+      - TENANT_ID=default
+      - API_RATE_LIMIT_RPS=2000
+      - API_RATE_LIMIT_BURST=4000
+      - REDIS_DATA_TTL=24h
+      - JOB_META_TTL=168h
+      - CORDUM_USER_AUTH_ENABLED=${CORDUM_USER_AUTH_ENABLED:-false}
+      - CORDUM_ADMIN_USERNAME=${CORDUM_ADMIN_USERNAME:-admin}
+      - CORDUM_ADMIN_PASSWORD=${CORDUM_ADMIN_PASSWORD:-}
+      - CORDUM_ADMIN_EMAIL=${CORDUM_ADMIN_EMAIL:-}
+    volumes:
+      - ./certs:/etc/cordum/tls:ro
+    ports:
+      - "9081:8080"
+      - "8083:8081"
+      - "9094:9092"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://127.0.0.1:8081/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ── Second Scheduler replica ──
+  scheduler-2:
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-scheduler
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      safety-kernel:
+        condition: service_healthy
+    environment:
+      - NATS_URL=tls://nats:4222
+      - NATS_USE_JETSTREAM=1
+      - NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - NATS_TLS_SERVER_NAME=nats
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - REDIS_TLS_SERVER_NAME=redis
+      - SAFETY_KERNEL_ADDR=safety-kernel:50051
+      - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - CONTEXT_ENGINE_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
+      - POLICY_CHECK_FAIL_MODE=${POLICY_CHECK_FAIL_MODE:-closed}
+      - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
+      - TIMEOUT_CONFIG_PATH=/etc/cordum/timeouts.yaml
+      - JOB_META_TTL=168h
+      - WORKER_SNAPSHOT_INTERVAL=5s
+    volumes:
+      - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
+      - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
+      - ./certs:/etc/cordum/tls:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ── Second Workflow Engine replica ──
+  workflow-engine-2:
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-workflow-engine
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+    environment:
+      - NATS_URL=tls://nats:4222
+      - NATS_USE_JETSTREAM=1
+      - NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - NATS_TLS_SERVER_NAME=nats
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - REDIS_TLS_SERVER_NAME=redis
+      - WORKFLOW_ENGINE_HTTP_ADDR=:9093
+      - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
+      - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200
+    volumes:
+      - ./certs:/etc/cordum/tls:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9093/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

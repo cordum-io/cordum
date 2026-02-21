@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	crand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -54,6 +56,7 @@ type OIDCProvider struct {
 	ecKeys      map[string]*ecdsa.PublicKey
 	lastRefresh time.Time
 	allowedAlgs map[string]struct{}
+	redisClient redis.UniversalClient // optional — used for cross-replica JWKS cache
 
 	stopCh chan struct{}
 	done   chan struct{}
@@ -62,6 +65,34 @@ type OIDCProvider struct {
 // Config returns the OIDC configuration.
 func (p *OIDCProvider) Config() OIDCConfig {
 	return p.cfg
+}
+
+// WithRedis attaches an optional Redis client for cross-replica JWKS caching.
+// Must be called before the first background refresh tick (safe if called
+// immediately after NewOIDCProvider, since the first tick fires after
+// JWKSRefreshInterval which defaults to 6h).
+func (p *OIDCProvider) WithRedis(rdb redis.UniversalClient) {
+	p.mu.Lock()
+	p.redisClient = rdb
+	p.mu.Unlock()
+}
+
+// issuerCacheKey returns the Redis key for the JWKS cache: cordum:auth:jwks:<hash>.
+func (p *OIDCProvider) issuerCacheKey() string {
+	h := sha256.Sum256([]byte(p.cfg.IssuerURL))
+	return fmt.Sprintf("cordum:auth:jwks:%x", h[:16])
+}
+
+// cryptoRandJitter returns a random duration in [0, maxSeconds) using crypto/rand.
+func cryptoRandJitter(maxSeconds int) time.Duration {
+	if maxSeconds <= 0 {
+		return 0
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(int64(maxSeconds)))
+	if err != nil {
+		return 0
+	}
+	return time.Duration(n.Int64()) * time.Second
 }
 
 // NewOIDCProvider creates an OIDCProvider by performing OIDC discovery and
@@ -267,24 +298,58 @@ func (p *OIDCProvider) discover() (string, error) {
 }
 
 // refreshJWKS fetches keys from the JWKS endpoint and caches them.
+// When a Redis client is configured, it checks the cross-replica cache first
+// and only falls back to the IdP HTTP call on cache miss.
 func (p *OIDCProvider) refreshJWKS() error {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.jwksURI, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := p.httpClient.Do(req) // #nosec -- JWKS URL is validated during discovery.
-	if err != nil {
-		return fmt.Errorf("fetch jwks: %w", err)
-	}
-	defer resp.Body.Close()
+	p.mu.RLock()
+	rdb := p.redisClient
+	p.mu.RUnlock()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("jwks endpoint returned %d", resp.StatusCode)
+	var body []byte
+
+	// Try Redis cache first (cross-replica dedup).
+	if rdb != nil {
+		cacheKey := p.issuerCacheKey()
+		cacheCtx, cacheCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cached, err := rdb.Get(cacheCtx, cacheKey).Bytes()
+		cacheCancel()
+		if err == nil && len(cached) > 0 {
+			body = cached
+			logging.Info("oidc", "jwks cache hit", "key", cacheKey)
+		}
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return fmt.Errorf("read jwks: %w", err)
+	// If no cache hit, fetch from IdP.
+	if body == nil {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.jwksURI, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := p.httpClient.Do(req) // #nosec -- JWKS URL is validated during discovery.
+		if err != nil {
+			return fmt.Errorf("fetch jwks: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("jwks endpoint returned %d", resp.StatusCode)
+		}
+
+		var readErr error
+		body, readErr = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if readErr != nil {
+			return fmt.Errorf("read jwks: %w", readErr)
+		}
+
+		// Write to Redis cache (best effort, 1h TTL).
+		if rdb != nil {
+			cacheKey := p.issuerCacheKey()
+			setCtx, setCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := rdb.Set(setCtx, cacheKey, body, time.Hour).Err(); err != nil {
+				logging.Error("oidc", "jwks cache write failed", "error", err)
+			}
+			setCancel()
+		}
 	}
 
 	var jwks struct {
@@ -346,9 +411,21 @@ func (p *OIDCProvider) refreshJWKS() error {
 	return nil
 }
 
-// backgroundRefresh periodically refreshes the JWKS cache.
+// backgroundRefresh periodically refreshes the JWKS cache with jitter to
+// prevent thundering-herd requests to the IdP across N gateway replicas.
 func (p *OIDCProvider) backgroundRefresh() {
 	defer close(p.done)
+
+	// Initial jitter: 0-10s to desynchronize replicas that start together.
+	// Kept short to minimize auth cold-start latency; collision risk is low with 2-6 replicas.
+	if jitter := cryptoRandJitter(10); jitter > 0 {
+		select {
+		case <-p.stopCh:
+			return
+		case <-time.After(jitter):
+		}
+	}
+
 	ticker := time.NewTicker(p.cfg.JWKSRefreshInterval)
 	defer ticker.Stop()
 	for {
@@ -356,6 +433,14 @@ func (p *OIDCProvider) backgroundRefresh() {
 		case <-p.stopCh:
 			return
 		case <-ticker.C:
+			// Per-tick jitter: 0-15s to stagger subsequent refreshes.
+			if jitter := cryptoRandJitter(15); jitter > 0 {
+				select {
+				case <-p.stopCh:
+					return
+				case <-time.After(jitter):
+				}
+			}
 			if err := p.refreshJWKS(); err != nil {
 				logging.Error("oidc", "background jwks refresh failed", "error", err)
 			}

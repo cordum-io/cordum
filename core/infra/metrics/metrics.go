@@ -4,11 +4,32 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+// resolvePodName returns a stable pod identifier for metric labelling.
+// Precedence: CORDUM_INSTANCE_ID env → os.Hostname() → "unknown".
+func resolvePodName() string {
+	if id := strings.TrimSpace(os.Getenv("CORDUM_INSTANCE_ID")); id != "" {
+		return id
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "unknown"
+}
+
+// podRegisterer wraps the default Prometheus registerer with a const "pod"
+// label so every metric emitted by Cordum carries a per-replica identifier.
+// This allows Prometheus queries to distinguish replicas in HA deployments.
+var podRegisterer = prometheus.WrapRegistererWith(
+	prometheus.Labels{"pod": resolvePodName()},
+	prometheus.DefaultRegisterer,
 )
 
 // Metrics defines counters for scheduler and workers.
@@ -43,6 +64,7 @@ type Metrics interface {
 	IncSagaUnmarshalError()
 	IncJobCancelFailures()
 	IncValidationRejections()
+	IncInputFailOpen(topic string)
 }
 
 // GatewayMetrics captures request metrics for the API gateway.
@@ -90,6 +112,7 @@ func (Noop) DecSagaActive()                                    {}
 func (Noop) IncSagaUnmarshalError()                            {}
 func (Noop) IncJobCancelFailures()                             {}
 func (Noop) IncValidationRejections()                          {}
+func (Noop) IncInputFailOpen(string)                           {}
 
 // Prom implements Metrics backed by Prometheus counters.
 type Prom struct {
@@ -122,6 +145,7 @@ type Prom struct {
 	sagaUnmarshalErrors     prometheus.Counter
 	jobCancelFailures       prometheus.Counter
 	validationRejections    prometheus.Counter
+	inputFailOpen           *prometheus.CounterVec
 	once                    sync.Once
 }
 
@@ -277,6 +301,11 @@ func NewProm(namespace string) *Prom {
 			Name:      "validation_rejections_total",
 			Help:      "Messages rejected by CAP protocol validation",
 		}),
+		inputFailOpen: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "input_fail_open_total",
+			Help:      "Jobs allowed through when safety kernel is unavailable (fail-open mode) per topic",
+		}, []string{"topic"}),
 	}
 	p.register()
 	return p
@@ -284,7 +313,7 @@ func NewProm(namespace string) *Prom {
 
 func (p *Prom) register() {
 	p.once.Do(func() {
-		prometheus.MustRegister(
+		podRegisterer.MustRegister(
 			p.jobsReceived,
 			p.jobsDispatched,
 			p.jobsCompleted,
@@ -314,6 +343,7 @@ func (p *Prom) register() {
 			p.sagaUnmarshalErrors,
 			p.jobCancelFailures,
 			p.validationRejections,
+			p.inputFailOpen,
 		)
 	})
 }
@@ -448,6 +478,10 @@ func (p *Prom) IncValidationRejections() {
 	p.validationRejections.Inc()
 }
 
+func (p *Prom) IncInputFailOpen(topic string) {
+	p.inputFailOpen.WithLabelValues(topic).Inc()
+}
+
 // Handler returns an HTTP handler for /metrics.
 func Handler() http.Handler {
 	return promhttp.Handler()
@@ -517,7 +551,7 @@ func NewGatewayProm(namespace string) GatewayMetrics {
 		}, []string{"method", "route"}),
 	}
 	g.once.Do(func() {
-		prometheus.MustRegister(g.requests, g.latency)
+		podRegisterer.MustRegister(g.requests, g.latency)
 	})
 	return g
 }
@@ -556,7 +590,7 @@ func NewWorkflowProm(namespace string) WorkflowMetrics {
 		}, []string{"workflow"}),
 	}
 	w.once.Do(func() {
-		prometheus.MustRegister(w.started, w.completed, w.duration)
+		podRegisterer.MustRegister(w.started, w.completed, w.duration)
 	})
 	return w
 }

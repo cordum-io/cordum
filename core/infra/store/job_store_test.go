@@ -763,6 +763,100 @@ func TestRedisJobStoreLockRejectsWrongOwner(t *testing.T) {
 	}
 }
 
+func TestRedisJobStoreRenewLockSuccess(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	token, err := store.TryAcquireLock(ctx, "renew-test", 200*time.Millisecond)
+	if err != nil || token == "" {
+		t.Fatalf("expected lock acquired, token=%q err=%v", token, err)
+	}
+
+	// Renew should succeed with the correct token.
+	if err := store.RenewLock(ctx, "renew-test", token, 500*time.Millisecond); err != nil {
+		t.Fatalf("expected renew to succeed: %v", err)
+	}
+
+	// After renewal, fast-forward past the original TTL — lock should still be held.
+	srv.FastForward(300 * time.Millisecond)
+	token2, err := store.TryAcquireLock(ctx, "renew-test", time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token2 != "" {
+		t.Fatal("expected lock still held after renewal, but was reacquired")
+	}
+}
+
+func TestRedisJobStoreRenewLockWrongToken(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	token, err := store.TryAcquireLock(ctx, "renew-wrong", time.Second)
+	if err != nil || token == "" {
+		t.Fatalf("expected lock acquired")
+	}
+
+	// Renew with wrong token should fail.
+	if err := store.RenewLock(ctx, "renew-wrong", "wrong-token", time.Second); err == nil {
+		t.Fatal("expected renew with wrong token to fail")
+	}
+}
+
+func TestRedisJobStoreRenewLockExpiredKey(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	// Try renewing a key that doesn't exist.
+	if err := store.RenewLock(ctx, "nonexistent-key", "some-token", time.Second); err == nil {
+		t.Fatal("expected renew of nonexistent key to fail")
+	}
+}
+
+func TestRedisJobStoreRenewLockEmptyParams(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.RenewLock(ctx, "", "token", time.Second); err == nil {
+		t.Fatal("expected error for empty key")
+	}
+	if err := store.RenewLock(ctx, "key", "", time.Second); err == nil {
+		t.Fatal("expected error for empty token")
+	}
+}
+
 func TestRedisJobStoreTraceAndPrincipal(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {

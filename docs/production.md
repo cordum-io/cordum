@@ -408,22 +408,39 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 3. For Redis Cluster, check cluster health:
    ```bash
    redis-cli --tls ... CLUSTER INFO
-   # Look for: cluster_state:ok, cluster_slots_assigned:16384
+   # Key fields:
+   #   cluster_state:ok        — cluster is healthy
+   #   cluster_slots_ok:16384  — all hash slots assigned
+   #   cluster_known_nodes:6   — all nodes visible
    ```
 
-4. If nodes are down, check PVC status:
+4. Check individual node roles and replication:
+   ```bash
+   redis-cli --tls ... CLUSTER NODES
+   # Each line shows: <id> <ip>:<port> <flags> <master-id> <ping-sent> <pong-recv> <epoch> <link-state> <slot-range>
+   # Look for: 3 lines with "master", 3 with "slave", no "fail" or "fail?" flags
+   ```
+
+5. Check for stuck slot migrations:
+   ```bash
+   redis-cli --tls ... CLUSTER NODES | grep -E "migrating|importing"
+   # Should return empty — any output means a rebalance is stuck
+   ```
+
+6. If nodes are down, check PVC status:
    ```bash
    kubectl get pvc -l app=redis -n cordum
    ```
 
-5. **In-flight job impact**: Jobs in DISPATCHED or RUNNING state cannot transition. The reconciler will mark them as timed out once Redis is restored. Workers holding these jobs will see stale state.
+7. **In-flight job impact**: Jobs in DISPATCHED or RUNNING state cannot transition. The reconciler will mark them as timed out once Redis is restored. Workers holding these jobs will see stale state.
 
-6. **Data loss assessment**: Check the last successful backup timestamp:
+8. **Data loss assessment**: Check the last successful backup timestamp:
    ```bash
    kubectl get jobs -l job-name=cordum-redis-backup -n cordum --sort-by=.status.startTime
    ```
+   The backup CronJob backs up all primaries (not just node-0). Each backup produces per-shard files: `redis-{timestamp}-node{N}.rdb`.
 
-7. **Recovery**: If a single Redis node is lost, the cluster auto-heals. For full cluster loss, restore from the latest RDB backup (see Backup + Restore section above).
+9. **Recovery**: If a single Redis node is lost, the cluster auto-heals via automatic failover within 5s (`cluster-node-timeout`). For multi-node or full cluster loss, see the detailed DR runbooks in [Redis Operations Guide](./redis-operations.md#4-disaster-recovery-runbooks).
 
 ### Runbook: NATS Partition or Failure
 

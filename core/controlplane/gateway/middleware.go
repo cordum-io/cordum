@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
@@ -50,35 +52,30 @@ func newKeyedRateLimiter(rps, burst int) *keyedRateLimiter {
 	}
 }
 
-func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
-	rps := defaultRateLimitRPS
-	burst := defaultRateLimitBurst
-	if val := os.Getenv("API_RATE_LIMIT_RPS"); val != "" {
+// rateLimitFromEnv reads rate limit values from environment variables, falling
+// back to the provided defaults when the env vars are unset or invalid.
+func rateLimitFromEnv(rpsEnv, burstEnv string, defaultRPS, defaultBurst int) (int, int) {
+	rps, burst := defaultRPS, defaultBurst
+	if val := os.Getenv(rpsEnv); val != "" {
 		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
 			rps = parsed
 		}
 	}
-	if val := os.Getenv("API_RATE_LIMIT_BURST"); val != "" {
+	if val := os.Getenv(burstEnv); val != "" {
 		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
 			burst = parsed
 		}
 	}
+	return rps, burst
+}
+
+func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
+	rps, burst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRateLimitRPS, defaultRateLimitBurst)
 	return newKeyedRateLimiter(rps, burst)
 }
 
 func newPublicRateLimiterFromEnv() *keyedRateLimiter {
-	rps := defaultPublicRateLimitRPS
-	burst := defaultPublicRateLimitBurst
-	if val := os.Getenv("API_PUBLIC_RATE_LIMIT_RPS"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			rps = parsed
-		}
-	}
-	if val := os.Getenv("API_PUBLIC_RATE_LIMIT_BURST"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			burst = parsed
-		}
-	}
+	rps, burst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
 	return newKeyedRateLimiter(rps, burst)
 }
 
@@ -125,8 +122,77 @@ func (rl *keyedRateLimiter) Allow(key string) bool {
 	return true
 }
 
-var apiLimiter = newKeyedRateLimiterFromEnv()
-var publicLimiter = newPublicRateLimiterFromEnv()
+// rateLimitScript is an atomic Lua sliding-window counter.
+// INCR the key; if it's the first increment, set an expiry.
+// Returns the current count for the window.
+var rateLimitScript = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return count
+`)
+
+// redisRateLimiter enforces distributed rate limits via Redis sliding-window
+// counters. Falls back to an in-memory keyedRateLimiter when Redis is
+// unavailable.
+type redisRateLimiter struct {
+	client   redis.UniversalClient
+	burst    int
+	fallback *keyedRateLimiter
+}
+
+const (
+	rateLimitRedisTimeout = 200 * time.Millisecond
+	rateLimitKeyPrefix    = "cordum:rl:"
+	rateLimitWindowSec    = 1  // 1-second sliding window
+	rateLimitTTLSec       = 2  // 2× window for clock-skew safety
+)
+
+func newRedisRateLimiter(client redis.UniversalClient, rps, burst int) *redisRateLimiter {
+	return &redisRateLimiter{
+		client:   client,
+		burst:    burst,
+		fallback: newKeyedRateLimiter(rps, burst),
+	}
+}
+
+// Allow checks whether the given key is within the rate limit. It runs a Lua
+// script against Redis; if Redis is unavailable, it falls back to the
+// in-memory token bucket.
+func (rl *redisRateLimiter) Allow(key string) bool {
+	if rl == nil {
+		return true
+	}
+	if rl.client == nil {
+		return rl.fallback.Allow(key)
+	}
+
+	now := time.Now().Unix()
+	redisKey := fmt.Sprintf("%s%s:%d", rateLimitKeyPrefix, key, now)
+
+	ctx, cancel := context.WithTimeout(context.Background(), rateLimitRedisTimeout)
+	defer cancel()
+
+	count, err := rateLimitScript.Run(ctx, rl.client, []string{redisKey}, rateLimitTTLSec).Int64()
+	if err != nil {
+		logging.Warn("rate-limiter", "redis rate limit unavailable, denying request", "error", err)
+		return false
+	}
+	return count <= int64(rl.burst)
+}
+
+// rateLimiter is the interface satisfied by both redisRateLimiter and
+// keyedRateLimiter, used by the middleware/interceptor functions.
+type rateLimiter interface {
+	Allow(key string) bool
+}
+
+// defaultAPILimiter and defaultPublicLimiter are in-memory fallbacks used when
+// Redis-backed rate limiting is not wired up (e.g. during tests or before
+// RunWithAuth completes).
+var defaultAPILimiter rateLimiter = newKeyedRateLimiterFromEnv()
+var defaultPublicLimiter rateLimiter = newPublicRateLimiterFromEnv()
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -248,21 +314,21 @@ var grpcPublicMethods = map[string]bool{
 	"/grpc.health.v1.Health/Watch": true,
 }
 
-func rateLimitUnaryInterceptor(auth AuthProvider) grpc.UnaryServerInterceptor {
+func rateLimitUnaryInterceptor(auth AuthProvider, apiRL, publicRL rateLimiter) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if apiLimiter == nil && publicLimiter == nil {
+		if apiRL == nil && publicRL == nil {
 			return handler(ctx, req)
 		}
 		if info == nil {
 			return handler(ctx, req)
 		}
 		if grpcPublicMethods[info.FullMethod] {
-			if publicLimiter != nil && !publicLimiter.Allow(grpcPublicRateLimitKey(ctx)) {
+			if publicRL != nil && !publicRL.Allow(grpcPublicRateLimitKey(ctx)) {
 				return nil, status.Error(codes.ResourceExhausted, "rate limited")
 			}
 			return handler(ctx, req)
 		}
-		if apiLimiter != nil && !apiLimiter.Allow(grpcRateLimitKey(ctx)) {
+		if apiRL != nil && !apiRL.Allow(grpcRateLimitKey(ctx)) {
 			return nil, status.Error(codes.ResourceExhausted, "rate limited")
 		}
 		return handler(ctx, req)
@@ -305,8 +371,8 @@ func grpcClientIP(ctx context.Context) string {
 	return strings.TrimSpace(peerInfo.Addr.String())
 }
 
-func rateLimitMiddleware(auth AuthProvider, next http.Handler) http.Handler {
-	if apiLimiter == nil && publicLimiter == nil {
+func rateLimitMiddleware(auth AuthProvider, apiRL, publicRL rateLimiter, next http.Handler) http.Handler {
+	if apiRL == nil && publicRL == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +381,7 @@ func rateLimitMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			return
 		}
 		if r.URL.Path == "/health" {
-			if publicLimiter != nil && !publicLimiter.Allow(publicRateLimitKey(r)) {
+			if publicRL != nil && !publicRL.Allow(publicRateLimitKey(r)) {
 				writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
 				return
 			}
@@ -327,14 +393,14 @@ func rateLimitMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			return
 		}
 		if isAllowedPublicPath(auth, r.URL.Path) {
-			if publicLimiter != nil && !publicLimiter.Allow(publicRateLimitKey(r)) {
+			if publicRL != nil && !publicRL.Allow(publicRateLimitKey(r)) {
 				writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
 				return
 			}
 			next.ServeHTTP(w, r)
 			return
 		}
-		if apiLimiter != nil && !apiLimiter.Allow(rateLimitKey(r)) {
+		if apiRL != nil && !apiRL.Allow(rateLimitKey(r)) {
 			writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}

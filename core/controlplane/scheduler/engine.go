@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/redis/go-redis/v9"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	capvalidate "github.com/cordum-io/cap/v2/sdk/go"
@@ -28,13 +29,14 @@ const (
 	storeOpTimeout      = 2 * time.Second
 	dlqSubject          = capsdk.SubjectDLQ
 	jobLockPrefix       = "cordum:scheduler:job:"
-	jobLockTTL          = 30 * time.Second
+	jobLockTTL          = 60 * time.Second
 	retryDelayBusy      = 500 * time.Millisecond
 	retryDelayStore     = 1 * time.Second
 	retryDelayPublish   = 2 * time.Second
 	retryDelayNoWorkers = 2 * time.Second
 	safetyThrottleDelay = 5 * time.Second
 	safetyCheckTimeout  = 3 * time.Second
+	maxRenewalFailures  = 3
 
 	// maxSchedulingRetries caps the number of scheduling attempts before
 	// a job is moved to FAILED + DLQ. With exponential backoff (1s→30s max)
@@ -52,6 +54,7 @@ type Engine struct {
 	outputSafety        OutputSafetyChecker
 	outputSafetyEnabled atomic.Bool
 	asyncFailMode       string // "closed" (default, quarantine on error) or "open" (allow on error)
+	inputFailMode       string // "closed" (default, requeue when kernel down) or "open" (allow through)
 	registry            WorkerRegistry
 	strategy            SchedulingStrategy
 	jobStore            JobStore
@@ -59,6 +62,7 @@ type Engine struct {
 	metrics             Metrics
 	config              ConfigProvider
 	saga                *SagaManager
+	counterClient       redis.UniversalClient // optional, for operational counters shared across services
 	stopped             atomic.Bool
 	activeHandlers      atomic.Int64
 	wg                  sync.WaitGroup
@@ -115,7 +119,44 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func() error) e
 	if e.metrics != nil {
 		e.metrics.ObserveJobLockWait(time.Since(lockStart).Seconds())
 	}
+	// Start lock renewal goroutine at ttl/3 interval to prevent expiry
+	// during long-running safety checks or routing decisions.
+	renewCtx, renewCancel := context.WithCancel(e.ctx)
+	renewDone := make(chan struct{})
+	go func() {
+		defer close(renewDone)
+		ticker := time.NewTicker(ttl / 3)
+		defer ticker.Stop()
+		consecutiveFailures := 0
+		for {
+			select {
+			case <-renewCtx.Done():
+				return
+			case <-ticker.C:
+				rCtx, rCancel := context.WithTimeout(context.Background(), storeOpTimeout)
+				if err := e.jobStore.RenewLock(rCtx, key, token, ttl); err != nil {
+					consecutiveFailures++
+					if consecutiveFailures >= maxRenewalFailures {
+						logging.Error("scheduler", "lock renewal abandoned after consecutive failures",
+							"job_id", jobID, "failures", consecutiveFailures, "error", err)
+						rCancel()
+						return
+					}
+					logging.Warn("scheduler", "job lock renewal failed",
+						"job_id", jobID, "attempt", consecutiveFailures, "error", err)
+				} else {
+					consecutiveFailures = 0
+				}
+				rCancel()
+			}
+		}
+	}()
 	defer func() {
+		// Stop renewal goroutine BEFORE releasing lock to avoid
+		// renewing a released lock. Wait for goroutine to exit to
+		// ensure no in-flight renewal races with release.
+		renewCancel()
+		<-renewDone
 		ctx, cancel := context.WithTimeout(context.Background(), storeOpTimeout)
 		defer cancel()
 		if err := e.jobStore.ReleaseLock(ctx, key, token); err != nil {
@@ -182,6 +223,13 @@ func (e *Engine) WithOutputSafetyEnabled(enabled bool) *Engine {
 	return e
 }
 
+// WithCounterClient wires an optional Redis client for operational counters
+// shared across services (e.g., fail-open count visible to gateway).
+func (e *Engine) WithCounterClient(c redis.UniversalClient) *Engine {
+	e.counterClient = c
+	return e
+}
+
 // WithAsyncFailMode sets the behavior when async output checks fail/timeout.
 // "closed" (default) quarantines on error; "open" allows on error with a warning.
 func (e *Engine) WithAsyncFailMode(mode string) *Engine {
@@ -193,6 +241,19 @@ func (e *Engine) WithAsyncFailMode(mode string) *Engine {
 
 func (e *Engine) isAsyncFailClosed() bool {
 	return e.asyncFailMode != "open"
+}
+
+// WithInputFailMode sets the behavior when the safety kernel is unreachable.
+// "closed" (default) requeues the job; "open" allows the job through with a warning.
+func (e *Engine) WithInputFailMode(mode string) *Engine {
+	if mode == "open" || mode == "closed" {
+		e.inputFailMode = mode
+	}
+	return e
+}
+
+func (e *Engine) isInputFailOpen() bool {
+	return e.inputFailMode == "open"
 }
 
 // Start registers subscriptions for the scheduler.
@@ -551,16 +612,28 @@ func (e *Engine) processJob(req *pb.JobRequest, traceID string) error {
 		}
 		return RetryAfter(fmt.Errorf("%s", msg), safetyThrottleDelay)
 	case SafetyUnavailable:
-		logging.Warn("safety", "safety kernel unavailable, requeueing job",
-			"job_id", jobID,
-			"topic", topic,
-			"reason", record.Reason,
-			"trace_id", traceID,
-		)
 		if e.metrics != nil {
 			e.metrics.IncSafetyUnavailable(topic)
 		}
-		return RetryAfter(fmt.Errorf("safety unavailable: %s", record.Reason), safetyThrottleDelay)
+		if e.isInputFailOpen() {
+			logging.Warn("safety", "safety kernel unavailable — FAIL-OPEN: allowing job",
+				"job_id", jobID, "topic", topic, "reason", record.Reason,
+				"trace_id", traceID, "input_fail_mode", "open")
+			if e.metrics != nil {
+				e.metrics.IncInputFailOpen(topic)
+			}
+			if e.counterClient != nil {
+				e.counterClient.Incr(e.ctx, "cordum:scheduler:input_fail_open_total")
+			}
+			record.Decision = SafetyAllow
+			record.Reason = "fail-open: safety unavailable — " + record.Reason
+			// Fall through to allow
+		} else {
+			logging.Warn("safety", "safety kernel unavailable, requeueing job",
+				"job_id", jobID, "topic", topic, "reason", record.Reason,
+				"trace_id", traceID, "input_fail_mode", "closed")
+			return RetryAfter(fmt.Errorf("safety unavailable: %s", record.Reason), safetyThrottleDelay)
+		}
 	case SafetyRequireApproval:
 		logging.Info("safety", "job requires human approval",
 			"job_id", jobID,

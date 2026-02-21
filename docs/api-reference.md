@@ -685,7 +685,26 @@ The remaining groups (workflows, policy bundles, config, packs/marketplace, lock
 ### GET `/api/v1/workflow-runs/{id}`
 
 - Auth: required + tenant access
-- Response: run object
+- Response: run object enriched with active delay timers (if any)
+
+```json
+{
+  "id": "run-id",
+  "workflow_id": "wf-id",
+  "status": "RUNNING",
+  "timers": [
+    {
+      "workflow_id": "wf-id",
+      "run_id": "run-id",
+      "fires_at": "2026-02-20T12:30:00Z",
+      "remaining_ms": 28500
+    }
+  ]
+}
+```
+
+The `timers` array is omitted when no active delay timers exist for the run. Timer lookup is best-effort — failures are silently ignored to avoid degrading the endpoint.
+
 - Errors: `400`, `403`, `404`, `503`
 
 ### GET `/api/v1/workflow-runs/{id}/timeline`
@@ -1450,6 +1469,32 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
   },
   "license": {
     "plan": "enterprise"
+  },
+  "instance_id": "gw-abc123",
+  "rate_limiter": {
+    "mode": "redis"
+  },
+  "circuit_breakers": {
+    "input": {
+      "state": "CLOSED",
+      "failures": 0,
+      "fail_threshold": 3,
+      "cooldown_remaining_ms": 0
+    },
+    "output": {
+      "state": "CLOSED",
+      "failures": 0,
+      "fail_threshold": 3,
+      "cooldown_remaining_ms": 0
+    }
+  },
+  "replicas": {
+    "api-gateway": [
+      {"id": "gw-abc123", "service": "api-gateway", "version": "0.2.0", "commit": "abc123", "started_at": "2026-02-20T12:00:00Z"}
+    ],
+    "scheduler": [
+      {"id": "sched-def456", "service": "scheduler", "version": "0.2.0", "commit": "def456", "started_at": "2026-02-20T12:00:01Z"}
+    ]
   }
 }
 ```
@@ -1458,6 +1503,10 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
   - `nats.url` is only included for admin callers.
   - `redis.error` is only included for admin callers when Redis health check fails.
   - `license` is optional and only present when auth provider exposes license info.
+  - `instance_id` identifies the specific gateway replica that served this request.
+  - `rate_limiter.mode` is `"redis"` when using distributed rate limiting, `"memory"` when per-replica.
+  - `circuit_breakers` shows input (pre-dispatch safety) and output (post-execution safety) circuit breaker state. Possible states: `CLOSED` (healthy), `OPEN` (failures exceeded threshold), `UNKNOWN` (Redis unavailable).
+  - `replicas` is a map of service name to array of registered instance info. Only present when the instance registry is active (HA mode with Redis). Each entry includes TTL information for liveness monitoring.
 - Errors: auth/tenant middleware errors (`401`, `403`).
 
 ### GET `/api/v1/workers`
@@ -1618,6 +1667,60 @@ curl -sS -X POST http://localhost:8081/mcp/message \
 
 ---
 
+## 16. Admin Endpoints
+
+### `GET /api/v1/admin/locks` — List Active Distributed Locks
+
+Returns all active distributed locks held in Redis. This is a read-only diagnostic endpoint for operators to inspect lock state across scheduler, workflow engine, and gateway services.
+
+**Auth:** Admin role required.
+
+**Response:**
+
+```json
+{
+  "locks": [
+    {
+      "key": "cordum:scheduler:job:job-abc123",
+      "holder": "scheduler-1a2b3c",
+      "ttl_remaining_ms": 24500,
+      "type": "job"
+    },
+    {
+      "key": "cordum:reconciler:default",
+      "holder": "scheduler-1a2b3c",
+      "ttl_remaining_ms": 28000,
+      "type": "reconciler"
+    }
+  ]
+}
+```
+
+**Lock types:**
+
+| Type | Key prefix | Description |
+|------|-----------|-------------|
+| `reconciler` | `cordum:reconciler:` | Scheduler reconciliation loop leader lock |
+| `replayer` | `cordum:replayer:` | Replayer leader lock |
+| `job` | `cordum:scheduler:job:` | Per-job dispatch lock |
+| `snapshot` | `cordum:scheduler:snapshot:` | Snapshot writer lock |
+| `dlq_cleanup` | `cordum:dlq:cleanup` | DLQ cleanup leader lock |
+| `workflow_run` | `cordum:wf:run:lock:` | Per-workflow-run execution lock |
+| `delay_poller` | `cordum:wf:delay:poller` | Delay timer poller leader lock |
+| `workflow_reconciler` | `cordum:workflow-engine:reconciler:` | Workflow engine reconciler leader lock |
+| `rate_limit` | `cordum:rl:` | Rate limiter window keys |
+| `jwks_cache` | `cordum:auth:jwks:` | OIDC/JWT key set cache entries |
+| `circuit_breaker` | `cordum:cb:` | Circuit breaker state keys |
+| `marketplace_cache` | `cordum:cache:marketplace` | Marketplace pack list cache |
+
+**Notes:**
+- Results are capped at 500 entries to prevent oversized responses.
+- Uses Redis `SCAN` (never `KEYS`) so it is safe to call in production.
+- Keys that expire between the scan and the value read are silently skipped.
+- A `ttl_remaining_ms` of `0` means the key has no expiry or expiry could not be read.
+
+---
+
 ## Endpoint Index (Registered Routes)
 
 The following routes are registered in gateway route setup.
@@ -1707,6 +1810,7 @@ The following routes are registered in gateway route setup.
 | POST | `/api/v1/policy/publish` |
 | POST | `/api/v1/policy/rollback` |
 | GET | `/api/v1/policy/audit` |
+| GET | `/api/v1/admin/locks` |
 | GET | `/api/v1/stream` (websocket upgrade) |
 | GET | `/mcp/sse` |
 | POST | `/mcp/message` |

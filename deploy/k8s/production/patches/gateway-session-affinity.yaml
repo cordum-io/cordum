@@ -1,0 +1,12 @@
+# Session affinity for WebSocket connections. Without this, LB round-robin
+# breaks mid-session when clients reconnect to /api/v1/stream.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-api-gateway
+  namespace: cordum
+spec:
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600

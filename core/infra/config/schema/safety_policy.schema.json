@@ -19,6 +19,9 @@
       "type": "array",
       "items": {"$ref": "#/definitions/outputRule"}
     },
+    "input_policy": {
+      "$ref": "#/definitions/inputPolicy"
+    },
     "output_policy": {
       "$ref": "#/definitions/outputPolicy"
     },
@@ -63,6 +66,16 @@
           "enum": ["allow", "deny", "quarantine", "redact"]
         },
         "reason": {"type": "string"}
+      }
+    },
+    "inputPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fail_mode": {
+          "type": "string",
+          "enum": ["open", "closed"]
+        }
       }
     },
     "outputPolicy": {

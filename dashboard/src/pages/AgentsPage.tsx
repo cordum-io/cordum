@@ -6,10 +6,12 @@ import { useWorkers } from "../hooks/useWorkers";
 import { useUiStore } from "../state/ui";
 import { PoolGroupedView } from "../components/agents/PoolGroupedView";
 import { WorkerDetailDrawer } from "../components/agents/WorkerDetailDrawer";
+import { SnapshotWriterBadge } from "../components/agents/SnapshotWriterBadge";
 import { cn } from "../lib/utils";
 import type { Worker } from "../api/types";
 import { DataFreshness } from "../components/ui/DataFreshness";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { useStatus } from "../hooks/useStatus";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,6 +143,7 @@ function SortHeader({
 export default function AgentsPage() {
   usePageTitle("Agent Fleet");
   const { data: workers = [], isLoading, error, dataUpdatedAt, refetch, isRefetching } = useWorkers();
+  const { data: statusData } = useStatus();
   const agentsView = useUiStore((s) => s.agentsView);
   const setAgentsView = useUiStore((s) => s.setAgentsView);
 
@@ -220,6 +223,8 @@ export default function AgentsPage() {
           </button>
         </div>
       </div>
+
+      <SnapshotWriterBadge snapshotMeta={statusData?.snapshot_meta} />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">

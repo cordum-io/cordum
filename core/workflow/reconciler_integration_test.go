@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -98,5 +99,59 @@ func TestReconcilerReconcileRun(t *testing.T) {
 	}
 	if updated.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded, got %s", updated.Status)
+	}
+}
+
+// TestWorkflowReconcilerSingleTickPerTTLWindow verifies that when two workflow
+// reconciler goroutines race to acquire the distributed lock via real Redis
+// (miniredis), only one executes tick() per TTL window.
+func TestWorkflowReconcilerSingleTickPerTTLWindow(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	redisURL := "redis://" + srv.Addr()
+	jobStore, err := store.NewRedisJobStore(redisURL)
+	if err != nil {
+		t.Fatalf("job store: %v", err)
+	}
+	defer jobStore.Close()
+
+	lockTTL := 50 * time.Millisecond
+	var tickCount atomic.Int32
+	var wg sync.WaitGroup
+
+	// Two goroutines race to acquire the reconciler lock.
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			token, err := jobStore.TryAcquireLock(context.Background(), reconcilerLockKey, lockTTL)
+			if err != nil || token == "" {
+				return
+			}
+			tickCount.Add(1)
+			// Simulate tick work.
+			time.Sleep(2 * time.Millisecond)
+			// No ReleaseLock — TTL-based hold for horizontal scaling.
+		}()
+	}
+	wg.Wait()
+
+	if got := tickCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 tick in TTL window, got %d", got)
+	}
+
+	// Fast-forward miniredis time to expire the lock TTL.
+	srv.FastForward(lockTTL + 10*time.Millisecond)
+
+	token, err := jobStore.TryAcquireLock(context.Background(), reconcilerLockKey, lockTTL)
+	if err != nil {
+		t.Fatalf("lock acquisition after TTL: %v", err)
+	}
+	if token == "" {
+		t.Fatal("expected lock to be available after TTL expiry")
 	}
 }

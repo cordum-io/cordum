@@ -13,9 +13,11 @@ import (
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -26,7 +28,7 @@ const (
 	defaultReadTimeout     = 5 * time.Second
 	defaultWriteTimeout    = 5 * time.Second
 	defaultIdleTimeout     = 60 * time.Second
-	defaultShutdownTimeout = 3 * time.Second
+	defaultShutdownTimeout = 15 * time.Second
 	workflowEngineQueue    = "cordum-workflow-engine"
 )
 
@@ -101,13 +103,27 @@ func Run(cfg *config.Config) error {
 		logging.Warn("workflow-engine", "handshake publish failed", "error", err)
 	}
 
-	engine := NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	engine := NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry).WithRunLocker(jobStore)
 	if maxForEachItems > 0 {
 		engine = engine.WithMaxForEachItems(maxForEachItems)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Instance registry: self-register this workflow-engine replica in Redis.
+	instanceID := registry.ResolveInstanceID()
+	instReg := registry.NewInstanceRegistry(jobStore.Client(), "workflow-engine", instanceID, buildinfo.Version, buildinfo.Commit)
+	instReg.Start(ctx)
+	defer instReg.Stop()
+
+	// Recover durable delay timers from Redis (fast — runs before accepting work).
+	recoverCtx, recoverCancel := context.WithTimeout(ctx, 5*time.Second)
+	engine.recoverDelayTimers(recoverCtx)
+	recoverCancel()
+
+	// Start background delay timer poller (catches timers lost by crashed replicas).
+	go engine.startDelayPoller(ctx)
 
 	rec := newReconciler(workflowStore, engine, jobStore, scanInterval, runScanLimit)
 	go rec.Start(ctx)
@@ -128,6 +144,7 @@ func Run(cfg *config.Config) error {
 
 	<-ctx.Done()
 
+	logging.Info("workflow-engine", "shutting down gracefully", "timeout", defaultShutdownTimeout.String())
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)

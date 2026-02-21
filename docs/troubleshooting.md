@@ -514,6 +514,28 @@ curl -X DELETE -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
   http://localhost:8081/api/v1/dlq/JOB_ID
 ```
 
+### DLQ cleanup leader election
+
+In multi-replica deployments, only one replica runs DLQ index cleanup per interval using a distributed lock (`cordum:dlq:cleanup`). The lock TTL matches the cleanup interval (default 1 hour), so leadership rotates naturally if a replica goes down.
+
+**Symptoms**: Stale DLQ index entries accumulate (index references expired data keys).
+
+**Diagnostic**:
+```bash
+# Check if the cleanup lock exists (indicates an active cleaner)
+redis-cli GET cordum:dlq:cleanup
+
+# Check index size vs actual entries
+redis-cli ZCARD dlq:index
+redis-cli --scan --pattern "dlq:entry:*" | wc -l
+# If ZCARD >> entry count, stale entries exist
+```
+
+**Fix**: If cleanup appears stalled, verify at least one replica is healthy and can reach Redis. The lock expires after one cleanup interval, so a new replica will take over automatically. To force immediate cleanup, delete the lock key:
+```bash
+redis-cli DEL cordum:dlq:cleanup
+```
+
 ---
 
 ## 10. NATS Issues
@@ -643,6 +665,184 @@ docker compose logs scheduler 2>&1 | jq -r 'select(.level == "ERROR")'
 
 ---
 
+## 12. CAP SDK Issues
+
+For CAP SDK-level issues (worker connection, protocol errors, handler panics), see the [CAP Troubleshooting Guide](https://github.com/cordum-io/cap/blob/main/docs/troubleshooting.md).
+
+---
+
+## Rolling Restarts & Graceful Shutdown
+
+All Cordum services shut down gracefully within **15 seconds** when receiving SIGTERM (the default signal K8s sends during rolling restarts). This is well under the default `terminationGracePeriodSeconds` of 30s.
+
+| Service | Shutdown Behavior |
+|---------|-------------------|
+| API Gateway | Drains HTTP + gRPC, stops WebSocket taps, shuts down metrics (15s timeout) |
+| Context Engine | `GracefulStop()` drains in-flight gRPC RPCs, fallback to forced `Stop()` after 15s |
+| Safety Kernel | `GracefulStop()` drains in-flight gRPC RPCs, stops policy watcher, fallback to `Stop()` after 15s |
+| Workflow Engine | Drains NATS subscriptions, waits for in-flight workflow step handlers to return (15s timeout) |
+| Scheduler | Stops engine (drains NATS), releases job locks via context cancellation, stops snapshot writer (15s timeout) |
+
+**If pods are killed during rolling restarts**:
+
+1. Check `terminationGracePeriodSeconds` in the Deployment spec is >= 30s (the default). If it's too low, pods receive SIGKILL before graceful shutdown completes.
+2. Check PodDisruptionBudgets are in place to prevent draining too many replicas simultaneously.
+3. In-flight gRPC calls (to context-engine or safety-kernel) will receive a `CANCELLED` or `UNAVAILABLE` status code — clients should retry.
+4. The scheduler's job locks have a 60s TTL. If a scheduler replica is killed without releasing locks, the surviving replica takes over within 60s.
+
+---
+
+## 13. Multi-Replica / Horizontal Scaling
+
+> For a full HA deployment guide, see [horizontal-scaling.md](horizontal-scaling.md).
+
+### Duplicate job dispatch
+
+**Symptoms**: Same job processed multiple times, or job appears in multiple terminal states.
+
+**Cause**: Job locks not being acquired (Redis connectivity issue) or lock TTL too short.
+
+**Diagnostic**:
+```bash
+# Check if job lock exists
+redis-cli GET "cordum:scheduler:job:JOB_ID"
+
+# Check reconciler lock (should be held by one replica)
+redis-cli GET "cordum:reconciler:default"
+
+# Check pending replayer lock
+redis-cli GET "cordum:replayer:pending"
+```
+
+**Fix**: Verify all scheduler replicas connect to the same Redis. The job lock TTL is 60s with renewal at 20s intervals — if jobs take longer than 60s without renewal, increase the timeout or investigate Redis latency.
+
+### Rate limit bypass with multiple gateways
+
+**Symptoms**: Combined request rate exceeds the configured limit. Each gateway allows the full limit independently.
+
+**Cause**: Redis-backed rate limiting is disabled or Redis is unreachable (each replica falls back to in-memory token bucket).
+
+**Diagnostic**:
+```bash
+# Check rate limit keys in Redis
+redis-cli KEYS "cordum:rl:*"
+# Should show keys like cordum:rl:default:1708444800
+
+# Check gateway env
+docker compose exec api-gateway env | grep REDIS_RATE_LIMIT
+```
+
+**Fix**: Ensure `REDIS_RATE_LIMIT` is not set to `false`/`0`/`no`. If Redis is unreachable, the effective rate limit = N × configured limit (where N = replica count).
+
+### Worker snapshot mismatch across gateways
+
+**Symptoms**: Different gateway replicas show different worker sets via `GET /api/v1/workers`.
+
+**Cause**: Snapshot writer lock held by a crashed replica, or snapshot not yet written.
+
+**Diagnostic**:
+```bash
+# Check snapshot writer lock
+redis-cli GET "cordum:scheduler:snapshot:writer"
+
+# Check snapshot freshness
+redis-cli OBJECT IDLETIME "sys:workers:snapshot"
+# Idle time > 15s indicates the writer may be stalled
+```
+
+**Fix**: The snapshot writer runs every 5s with a 10s lock TTL. If a replica crashes, the lock expires and another takes over within ~15s. If the lock appears stuck, delete it:
+```bash
+redis-cli DEL "cordum:scheduler:snapshot:writer"
+```
+
+### Config drift between replicas
+
+**Symptoms**: Replicas behave differently after a config update (e.g., different routing rules).
+
+**Cause**: NATS notification missed and polling interval hasn't elapsed yet.
+
+**Diagnostic**:
+```bash
+# Check NATS connectivity for config notifications
+docker compose logs scheduler 2>&1 | grep "config.changed"
+
+# Force config reload by restarting
+docker compose restart scheduler
+```
+
+**Fix**: Config changes propagate via `sys.config.changed` NATS broadcast (instant) with a 30s polling fallback. If NATS is partitioned, wait up to 30s for the polling cycle. All replicas always reload from Redis (not from the NATS message), so consistency is guaranteed once the poll fires.
+
+### Circuit breaker stuck open across all replicas
+
+**Symptoms**: All safety checks fail immediately with "circuit open" error, even though the safety kernel is healthy.
+
+**Cause**: Redis-backed circuit breaker failure counter exceeded the threshold and hasn't reset.
+
+**Diagnostic**:
+```bash
+# Check circuit breaker state
+redis-cli GET "cordum:cb:safety:failures"
+redis-cli GET "cordum:cb:safety:output:failures"
+
+# Check safety kernel health
+grpcurl -plaintext safety-kernel:50051 grpc.health.v1.Health/Check
+```
+
+**Fix**: The circuit breaker enters half-open state after 30s and allows probe requests. If the safety kernel is healthy, the circuit closes after 2 successful probes. To force-reset:
+```bash
+redis-cli DEL "cordum:cb:safety:failures"
+redis-cli DEL "cordum:cb:safety:output:failures"
+```
+
+### Safety decision cache staleness
+
+**Symptoms**: Policy changes not reflected in safety decisions across replicas.
+
+**Cause**: Per-replica decision cache still serving old decisions within the TTL window.
+
+**Diagnostic**: Check `SAFETY_DECISION_CACHE_TTL` — each replica caches decisions locally for this duration. Policy version changes invalidate the cache, but during a rolling deploy, new and old replicas may briefly disagree.
+
+**Fix**: Reduce `SAFETY_DECISION_CACHE_TTL` for faster propagation (at the cost of more gRPC calls). Setting it to `0` disables caching entirely.
+
+### Workflow run processed by multiple replicas
+
+**Symptoms**: Workflow steps execute twice or produce inconsistent state.
+
+**Cause**: Redis per-run lock (`cordum:wf:run:lock:<runID>`) not being acquired.
+
+**Diagnostic**:
+```bash
+# Check run lock
+redis-cli GET "cordum:wf:run:lock:RUN_ID"
+
+# Check workflow reconciler lock
+redis-cli GET "cordum:workflow-engine:reconciler:default"
+```
+
+**Fix**: Verify workflow engine replicas connect to the same Redis. The per-run lock has a 30s TTL with 10s renewal. If Redis is unreachable, the engine falls back to local-only locking (safe for single-replica but not cross-replica).
+
+### Delay timers lost after restart
+
+**Symptoms**: Workflow delay steps don't fire after a replica restart.
+
+**Cause**: In-memory timers were lost, and the delay poller hasn't picked them up yet.
+
+**Diagnostic**:
+```bash
+# Check durable delay timers in Redis
+redis-cli ZRANGE "cordum:wf:delay:timers" 0 -1 WITHSCORES
+
+# Check delay poller lock
+redis-cli GET "cordum:wf:delay:poller"
+```
+
+**Fix**: Delays ≥10s are persisted to Redis sorted set. The delay poller runs every 5s and fires past-due timers. On restart, `recoverDelayTimers` fires all past-due entries immediately. If the poller lock is stuck, delete it:
+```bash
+redis-cli DEL "cordum:wf:delay:poller"
+```
+
+---
+
 ## Related Docs
 
 - [production.md](production.md) — Production readiness guide with incident runbooks
@@ -651,3 +851,4 @@ docker compose logs scheduler 2>&1 | jq -r 'select(.level == "ERROR")'
 - [DOCKER.md](DOCKER.md) — Docker Compose setup and JetStream durability
 - [k8s-deployment.md](k8s-deployment.md) — Kubernetes deployment guide
 - [websocket-streaming.md](websocket-streaming.md) — WebSocket protocol reference
+- [horizontal-scaling.md](horizontal-scaling.md) — Multi-replica deployment guide

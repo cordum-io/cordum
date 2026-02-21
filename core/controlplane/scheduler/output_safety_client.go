@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -38,13 +37,7 @@ type OutputSafetyClient struct {
 	client       pb.OutputPolicyServiceClient
 	conn         *grpc.ClientConn
 	resultClient redis.UniversalClient
-
-	mu              sync.Mutex
-	state           circuitState
-	failures        int
-	successes       int
-	openUntil       time.Time
-	halfOpenAllowed int
+	cb           *RedisCircuitBreaker
 }
 
 var _ OutputSafetyChecker = (*OutputSafetyClient)(nil)
@@ -84,6 +77,12 @@ func NewOutputSafetyClientWithRedis(addr, redisURL string) (*OutputSafetyClient,
 		client:       pb.NewOutputPolicyServiceClient(conn),
 		conn:         conn,
 		resultClient: resultClient,
+		cb: NewRedisCircuitBreaker(resultClient, "cordum:cb:safety:output", CircuitBreakerOpts{
+			FailThreshold: outputCircuitFailBudget,
+			OpenDuration:  outputCircuitOpenFor,
+			HalfOpenMax:   outputCircuitHalfOpenMax,
+			CloseAfter:    outputCircuitCloseAfter,
+		}),
 	}, nil
 }
 
@@ -142,18 +141,15 @@ func (c *OutputSafetyClient) EvaluateOutput(ctx context.Context, req *OutputEval
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if c.isCircuitOpen() {
+	if c.cb.IsOpen(ctx) {
 		return OutputSafetyRecord{}, fmt.Errorf("output safety circuit open")
-	}
-	if !c.allowHalfOpenRequest() {
-		return OutputSafetyRecord{}, fmt.Errorf("output safety circuit half-open (throttled)")
 	}
 
 	checkReq := outputCheckRequestFromEvaluateRequest(req)
 	if len(checkReq.GetOutputContent()) == 0 && strings.TrimSpace(checkReq.GetResultPtr()) != "" {
 		content, err := c.loadOutputContent(ctx, checkReq.ResultPtr)
 		if err != nil {
-			c.recordFailure()
+			c.cb.RecordFailure(ctx)
 			return OutputSafetyRecord{}, fmt.Errorf("load output content: %w", err)
 		}
 		checkReq.OutputContent = content
@@ -172,12 +168,12 @@ func (c *OutputSafetyClient) EvaluateOutput(ctx context.Context, req *OutputEval
 
 	resp, err := c.client.CheckOutput(ctx, checkReq)
 	if err != nil {
-		c.recordFailure()
+		c.cb.RecordFailure(ctx)
 		return OutputSafetyRecord{}, err
 	}
 	record := outputRecordFromProto(resp)
 	record = c.materializeRedaction(ctx, checkReq, record)
-	c.recordSuccess()
+	c.cb.RecordSuccess(ctx)
 	return record, nil
 }
 
@@ -313,69 +309,6 @@ func outputContentHash(content []byte) string {
 	}
 	sum := sha256.Sum256(content)
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func (c *OutputSafetyClient) isCircuitOpen() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := time.Now()
-	if c.state == circuitOpen && c.openUntil.Before(now) {
-		c.state = circuitHalfOpen
-		c.successes = 0
-		c.halfOpenAllowed = outputCircuitHalfOpenMax
-	}
-	return c.state == circuitOpen
-}
-
-func (c *OutputSafetyClient) allowHalfOpenRequest() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.state != circuitHalfOpen {
-		return true
-	}
-	if c.halfOpenAllowed > 0 {
-		c.halfOpenAllowed--
-		return true
-	}
-	return false
-}
-
-func (c *OutputSafetyClient) recordFailure() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	switch c.state {
-	case circuitClosed:
-		c.failures++
-		if c.failures >= outputCircuitFailBudget {
-			c.state = circuitOpen
-			c.openUntil = time.Now().Add(outputCircuitOpenFor)
-			c.failures = 0
-		}
-	case circuitHalfOpen:
-		c.state = circuitOpen
-		c.openUntil = time.Now().Add(outputCircuitOpenFor)
-		c.failures = 0
-	}
-}
-
-func (c *OutputSafetyClient) recordSuccess() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	switch c.state {
-	case circuitClosed:
-		c.failures = 0
-	case circuitHalfOpen:
-		c.successes++
-		if c.successes >= outputCircuitCloseAfter {
-			c.state = circuitClosed
-			c.failures = 0
-			c.successes = 0
-			c.halfOpenAllowed = 0
-		}
-	default:
-		c.failures = 0
-	}
 }
 
 func outputRecordFromProto(resp *pb.OutputCheckResponse) OutputSafetyRecord {
