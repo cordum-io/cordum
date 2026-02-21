@@ -87,6 +87,9 @@ var (
 )
 
 // NewNatsBus dials NATS at the provided URL.
+// TLS env vars (NATS_TLS_CA, etc.) are only applied when the URL uses the
+// tls:// scheme, so plain nats:// connections (e.g. embedded NATS in tests)
+// are not affected by ambient TLS environment variables.
 func NewNatsBus(url string) (*NatsBus, error) {
 	opts := []nats.Option{
 		nats.Name("cordum-bus"),
@@ -102,10 +105,12 @@ func NewNatsBus(url string) (*NatsBus, error) {
 			log.Printf("[BUS] connection closed")
 		}),
 	}
-	if tlsConfig, err := natsTLSConfigFromEnv(); err != nil {
-		return nil, fmt.Errorf("nats tls config: %w", err)
-	} else if tlsConfig != nil {
-		opts = append(opts, nats.Secure(tlsConfig))
+	if strings.HasPrefix(url, "tls://") {
+		if tlsConfig, err := natsTLSConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("nats tls config: %w", err)
+		} else if tlsConfig != nil {
+			opts = append(opts, nats.Secure(tlsConfig))
+		}
 	}
 
 	nc, err := nats.Connect(url, opts...)
