@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Cordum is a deterministic control plane for autonomous workflows with governance built in. This document outlines how the project is governed, how decisions are made, and how contributors can participate.
+Cordum is a deterministic control plane for autonomous AI agents with governance built in. This document outlines how the project is governed, how decisions are made, and how contributors can participate.
 
 ## Protocol Stability Pledge
 
