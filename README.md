@@ -6,13 +6,13 @@
 
 <p align="center">
   <strong>Know What Your AI Agents Are Doing. Before They Do It.</strong><br/>
-  The Open Source <strong>Agent Control Plane</strong> for Governance, Safety, and Trust.
+  The Source-Available <strong>Agent Control Plane</strong> for Governance, Safety, and Trust.
 </p>
 
 <p align="center">
   <a href="https://github.com/cordum-io/cordum/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License"/></a>
   <a href="https://github.com/cordum-io/cordum/releases"><img src="https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver" alt="Release"/></a>
-  <a href="https://discord.gg/U4NpXtjP"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
+  <a href="https://discord.gg/nvHzPCcWWt"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
   <a href="https://github.com/cordum-io/cap"><img src="https://img.shields.io/badge/protocol-CAP%20v2-green" alt="CAP Protocol"/></a>
 </p>
 
@@ -89,28 +89,32 @@ graph LR
 **Prerequisites:** Docker, Docker Compose, Go 1.24+
 
 ```bash
-# Clone the repo
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
-
-# Set an API key
-export CORDUM_API_KEY="$(openssl rand -hex 32)"
-
-# Start everything (auto-generates TLS certs on first run)
-go run ./cmd/cordumctl up
-
-# Open dashboard
-open http://localhost:8082
-```
-
-Or use the quickstart script:
-
-```bash
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
 ./tools/scripts/quickstart.sh
 ```
 
-That's it. You have a running Cordum instance with API, scheduler, safety kernel, dashboard, and TLS enabled by default. System configuration is auto-bootstrapped on first startup.
+Dashboard opens at **http://localhost:8082**. API, scheduler, safety kernel, and TLS are all running.
+
+<details>
+<summary>Manual setup (without quickstart script)</summary>
+
+```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+go run ./cmd/cordumctl up
+open http://localhost:8082
+```
+</details>
+
+### Common Pitfalls
+
+| Issue | Fix |
+|-------|-----|
+| Port 4222/6379/8082 already in use | Stop existing NATS/Redis/web services or change ports in `docker-compose.yml` |
+| Docker out of memory | Allocate at least 4 GB RAM to Docker Desktop |
+| Stale config after pool changes | Delete Redis key: `redis-cli DEL cfg:system:default` |
+| TLS cert errors on retry | Remove `./certs/` directory and re-run — certs auto-regenerate |
 
 ## Key Features
 
@@ -162,6 +166,7 @@ cordum/
 | [MCP Server](docs/mcp-server.md) | MCP stdio + HTTP/SSE integration |
 | [Pack Format](docs/pack.md) | How to package agent capabilities |
 | [Local E2E](docs/LOCAL_E2E.md) | Full local walkthrough |
+| [Production Guide](docs/production.md) | TLS, HA, backups, incident runbooks |
 
 ## Protocol: CAP — The Open Standard for Agent Governance
 
@@ -230,9 +235,9 @@ SDKs: **Go** (stable) | [**Python**](https://github.com/cordum-io/cap) | [**Node
 
 ## Community
 
-- **Discord:** [Join the conversation](https://discord.gg/HGGHbU26)
+- **Discord:** [Join the conversation](https://discord.gg/nvHzPCcWWt)
 - **GitHub Discussions:** [Ask questions](https://github.com/cordum-io/cordum/discussions)
-- **Twitter/X:** [@coraboratedai](https://x.com/Cordum_io)
+- **Twitter/X:** [@Cordum_io](https://x.com/Cordum_io)
 - **Email:** [admin@cordum.io](mailto:admin@cordum.io)
 
 ## Enterprise
@@ -267,15 +272,20 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-Licensed under [Business Source License 1.1 (BUSL-1.1)](LICENSE). 
+Licensed under [Business Source License 1.1 (BUSL-1.1)](LICENSE).
 
-Free for self-hosted and internal use. Not permitted for competing hosted/managed offerings. See LICENSE for details and Change Date.
+- **Self-host and use internally**: Permitted
+- **Modify and contribute back**: Permitted
+- **Offer as a competing hosted service**: Not permitted
+- **Change Date**: January 1, 2029 — automatically converts to Apache License 2.0
+
+See [LICENSE](LICENSE) for full terms.
 
 ---
 
 <p align="center">
   <strong>Ready to govern your AI agents?</strong><br/>
-  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://discord.gg/U4NpXtjP">Discord</a>
+  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a>
 </p>
 
 <p align="center">
