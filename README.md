@@ -199,13 +199,15 @@ See [docs/mcp-server.md](docs/mcp-server.md) for setup, auth headers, and client
 
 ## SDK
 
-The Go SDK makes it easy to build CAP-compatible workers:
+Cordum uses the [CAP protocol](https://github.com/cordum-io/cap) — an open-source agent orchestration protocol with SDKs for Go, Python, Node.js, and C++.
+
+### Go Worker
 
 ```go
 import (
     "log"
 
-    "github.com/cordum/cordum/sdk/runtime"
+    "github.com/cordum-io/cap/v2/sdk/go/runtime"
 )
 
 type Input struct {
@@ -220,7 +222,6 @@ func main() {
     agent := &runtime.Agent{Retries: 2}
 
     runtime.Register(agent, "job.summarize", func(ctx runtime.Context, input Input) (Output, error) {
-        // Your agent logic here
         return Output{Summary: input.Prompt}, nil
     })
 
@@ -231,7 +232,15 @@ func main() {
 }
 ```
 
-SDKs: **Go** (stable) | [**Python**](https://github.com/cordum-io/cap) | [**Node**](https://github.com/cordum-io/cap)
+### Gateway Client
+
+```go
+import "github.com/cordum/cordum/sdk/client"
+
+c := client.New("http://localhost:8081", os.Getenv("CORDUM_API_KEY"))
+```
+
+SDKs: [**Go**](https://github.com/cordum-io/cap) | [**Python**](https://github.com/cordum-io/cap) | [**Node**](https://github.com/cordum-io/cap) | [**C++**](https://github.com/cordum-io/cap)
 
 ## Community
 

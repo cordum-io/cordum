@@ -1,7 +1,8 @@
 # SDK Reference
 
-Complete reference for the Cordum Go SDK — worker runtime, gateway client, bus helpers, and testing patterns.
+Complete reference for the Cordum SDK — worker runtime (via [CAP](https://github.com/cordum-io/cap)), gateway client, bus helpers, and testing patterns.
 
+> The worker runtime is part of [CAP](https://github.com/cordum-io/cap), the open-source Cordum Agent Protocol.
 > For the CAP bus protocol and pointer semantics, see [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md).
 > For the REST API endpoint reference, see [api-reference.md](api-reference.md).
 
@@ -10,15 +11,20 @@ Complete reference for the Cordum Go SDK — worker runtime, gateway client, bus
 ## Installation
 
 ```bash
+# Worker runtime (CAP SDK)
+go get github.com/cordum-io/cap/v2@latest
+
+# Gateway client (Cordum SDK)
 go get github.com/cordum/cordum/sdk@latest
 ```
 
-The SDK has two main packages:
+The SDK spans two modules:
 
 | Package | Import | Purpose |
 |---------|--------|---------|
 | `sdk/client` | `github.com/cordum/cordum/sdk/client` | HTTP client for the API gateway |
-| `sdk/runtime` | `github.com/cordum/cordum/sdk/runtime` | Worker runtime (NATS subscriptions, heartbeats, blob store) |
+| `runtime` | `github.com/cordum-io/cap/v2/sdk/go/runtime` | Worker runtime (NATS subscriptions, heartbeats, blob store) |
+| `worker` | `github.com/cordum-io/cap/v2/sdk/go/worker` | Heartbeats, direct addressing, managed worker |
 
 Generated protobuf types live in `core/protocol/pb/v1/`.
 
@@ -287,7 +293,7 @@ import (
     "os/signal"
     "syscall"
 
-    "github.com/cordum/cordum/sdk/runtime"
+    "github.com/cordum-io/cap/v2/sdk/go/runtime"
 )
 
 type EchoInput struct {
@@ -326,14 +332,17 @@ Key points:
 - The blob store (Redis) handles context pointer dereferencing
 - Use `runtime.WithRetries(3)` as an option to override retry count
 
-### Worker Model (Low-Level)
+### Managed Worker Model (Low-Level)
 
-For full control over protobuf messages:
+For full control over protobuf messages, use the `worker.ManagedWorker` from the CAP `worker` package:
 
 ```go
-import agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+import (
+    agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+    "github.com/cordum-io/cap/v2/sdk/go/worker"
+)
 
-worker, err := runtime.NewWorker(runtime.Config{
+w, err := worker.NewManagedWorker(worker.ManagedConfig{
     Pool:            "my-pool",
     Subjects:        []string{"job.my-pack.*"},
     NatsURL:         os.Getenv("NATS_URL"),
@@ -344,7 +353,7 @@ worker, err := runtime.NewWorker(runtime.Config{
     HeartbeatEvery:  10 * time.Second,
 })
 
-err = worker.Run(ctx, func(ctx context.Context, req *agentv1.JobRequest) (*agentv1.JobResult, error) {
+err = w.Run(ctx, func(ctx context.Context, req *agentv1.JobRequest) (*agentv1.JobResult, error) {
     return &agentv1.JobResult{
         JobId:    req.GetJobId(),
         Status:   agentv1.JobStatus_JOB_STATUS_SUCCEEDED,
@@ -353,10 +362,10 @@ err = worker.Run(ctx, func(ctx context.Context, req *agentv1.JobRequest) (*agent
 })
 ```
 
-### Worker Config Reference
+### ManagedConfig Reference
 
 ```go
-type Config struct {
+type ManagedConfig struct {
     Pool            string                        // Pool name for heartbeats
     Subjects        []string                      // NATS subjects to subscribe to
     Queue           string                        // Queue group (defaults to subject)
@@ -387,7 +396,7 @@ Worker ID is resolved in order:
 
 ```go
 // Allow up to 8 parallel jobs
-worker, _ := runtime.NewWorker(runtime.Config{
+worker, _ := worker.NewManagedWorker(worker.ManagedConfig{
     MaxParallelJobs: 8,
     // ...
 })
@@ -431,21 +440,21 @@ Workers must emit periodic heartbeats so the scheduler knows they are alive.
 
 The Agent model handles heartbeats automatically via its internal loop.
 
-### Worker Model
+### Managed Worker Model
 
-The Worker model starts heartbeats automatically in `Run()`. Configure the interval via `Config.HeartbeatEvery`.
+The ManagedWorker starts heartbeats automatically in `Run()`. Configure the interval via `ManagedConfig.HeartbeatEvery`.
 
 ### Manual Heartbeats
 
 For custom workers or sidecar processes:
 
 ```go
-import "github.com/cordum/cordum/sdk/runtime"
+import "github.com/cordum-io/cap/v2/sdk/go/worker"
 
 nc, _ := nats.Connect("nats://localhost:4222")
 
 // Build heartbeat payload
-payload, _ := runtime.HeartbeatPayload(
+payload, _ := worker.HeartbeatPayload(
     "my-worker",  // workerID
     "my-pool",    // pool name
     2,            // active jobs
@@ -454,11 +463,11 @@ payload, _ := runtime.HeartbeatPayload(
 )
 
 // Emit once
-runtime.EmitHeartbeat(nc, payload)
+worker.EmitHeartbeat(nc, payload)
 
 // Or run a loop
-go runtime.HeartbeatLoop(ctx, nc, func() ([]byte, error) {
-    return runtime.HeartbeatPayload("my-worker", "my-pool", activeJobs, 8, cpuLoad)
+go worker.HeartbeatLoop(ctx, nc, func() ([]byte, error) {
+    return worker.HeartbeatPayload("my-worker", "my-pool", activeJobs, 8, cpuLoad)
 })
 ```
 
@@ -481,7 +490,7 @@ Heartbeats are published to `sys.heartbeat`. The scheduler uses them to:
 
 ## 4. Bus Helpers
 
-The `runtime` package exports bus subject constants and helper functions.
+The CAP SDK exports bus subject constants (in the root `capsdk` package) and helper functions (in the `worker` package).
 
 ### Subject Constants
 
@@ -500,7 +509,7 @@ const (
 ### Cancel a Job
 
 ```go
-err := runtime.PublishCancel(nc, &agentv1.JobCancel{
+err := worker.PublishCancel(nc, &agentv1.JobCancel{
     JobId:  "job-abc123",
     Reason: "user requested cancellation",
 }, "trace-id", "my-service", privateKey)
@@ -509,7 +518,7 @@ err := runtime.PublishCancel(nc, &agentv1.JobCancel{
 ### Direct Subject
 
 ```go
-subject := runtime.DirectSubject("worker-abc")
+subject := worker.DirectSubject("worker-abc")
 // "worker.worker-abc.jobs"
 ```
 
@@ -562,7 +571,7 @@ Workers can sign outgoing packets and verify incoming ones using ECDSA keys.
 ### Signing Results
 
 ```go
-worker, _ := runtime.NewWorker(runtime.Config{
+worker, _ := worker.NewManagedWorker(worker.ManagedConfig{
     PrivateKey: myECDSAPrivateKey,
     // ...
 })
@@ -573,7 +582,7 @@ All outgoing `BusPacket` envelopes (results, heartbeats) are signed automaticall
 ### Verifying Incoming Jobs
 
 ```go
-worker, _ := runtime.NewWorker(runtime.Config{
+worker, _ := worker.NewManagedWorker(worker.ManagedConfig{
     PublicKeys: map[string]*ecdsa.PublicKey{
         "cordum-scheduler": schedulerPublicKey,
     },
@@ -686,9 +695,9 @@ func TestFullPipeline(t *testing.T) {
 
 ---
 
-## 8. CAP v2.5.3 Re-exported Types
+## 8. CAP Types Reference
 
-The `sdk/runtime` package re-exports several types from the CAP v2.5.3 SDK for convenience. These are available under the `runtime` package without importing CAP directly.
+The CAP `runtime` package provides several types for worker development. These are available from `github.com/cordum-io/cap/v2/sdk/go/runtime`.
 
 ### MetricsHook
 
@@ -708,7 +717,7 @@ type MetricsHook interface {
 A zero-overhead `MetricsHook` implementation that does nothing. Use as a default when no metrics collection is needed:
 
 ```go
-worker, _ := runtime.NewWorker(runtime.Config{
+worker, _ := worker.NewManagedWorker(worker.ManagedConfig{
     Metrics: runtime.NoopMetrics{},
     // ...
 })
@@ -771,7 +780,7 @@ type Config struct {
 Example:
 
 ```go
-worker, _ := runtime.NewWorker(runtime.Config{
+worker, _ := worker.NewManagedWorker(worker.ManagedConfig{
     Pool:     "my-pool",
     Subjects: []string{"job.my-pack.*"},
     NatsURL:  os.Getenv("NATS_URL"),

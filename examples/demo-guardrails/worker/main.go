@@ -9,7 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cordum/cordum/sdk/runtime"
+	"github.com/cordum-io/cap/v2/sdk/go/runtime"
+	"github.com/cordum-io/cap/v2/sdk/go/worker"
 	"github.com/nats-io/nats.go"
 )
 
@@ -60,7 +61,7 @@ func main() {
 
 	runtime.Register(agent, "job.demo-guardrails.write", handler)
 	runtime.Register(agent, "job.demo-guardrails.safe", handler)
-	runtime.Register(agent, runtime.DirectSubject(workerID), handler)
+	runtime.Register(agent, worker.DirectSubject(workerID), handler)
 
 	if err := agent.Start(); err != nil {
 		log.Fatalf("runtime start: %v", err)
@@ -82,12 +83,12 @@ func main() {
 	}()
 
 	heartbeatFn := func() ([]byte, error) {
-		return runtime.HeartbeatPayload(workerID, "demo-guardrails", 0, 2, 0)
+		return worker.HeartbeatPayload(workerID, "demo-guardrails", 0, 2, 0)
 	}
 	if payload, err := heartbeatFn(); err == nil {
-		_ = runtime.EmitHeartbeat(nc, payload)
+		_ = worker.EmitHeartbeat(nc, payload)
 	}
-	go runtime.HeartbeatLoop(ctx, nc, heartbeatFn)
+	go worker.HeartbeatLoop(ctx, nc, heartbeatFn)
 
 	log.Printf("guardrails worker ready (topics=%s, worker_id=%s)", "job.demo-guardrails.write, job.demo-guardrails.safe", workerID)
 

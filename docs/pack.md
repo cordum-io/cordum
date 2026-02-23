@@ -613,11 +613,12 @@ Pack workers must register with the platform via heartbeats and topic subscripti
 
 ### Runtime Lifecycle
 
-Using the Go SDK (`sdk/runtime`):
+Using the CAP Go SDK:
 
 ```go
 import (
-    "github.com/cordum/cordum/sdk/runtime"
+    "github.com/cordum-io/cap/v2/sdk/go/runtime"
+    "github.com/cordum-io/cap/v2/sdk/go/worker"
     "github.com/nats-io/nats.go"
 )
 
@@ -632,7 +633,7 @@ agent := &runtime.Agent{
 runtime.Register(agent, "job.my-pack.analyze", analyzeHandler)
 runtime.Register(agent, "job.my-pack.summarize", summarizeHandler)
 // Direct-address handler (for targeted dispatch)
-runtime.Register(agent, runtime.DirectSubject("my-worker"), analyzeHandler)
+runtime.Register(agent, worker.DirectSubject("my-worker"), analyzeHandler)
 
 // 3. Start the agent (subscribes to NATS topics)
 agent.Start()
@@ -641,7 +642,7 @@ defer agent.Close()
 // 4. Start heartbeat loop
 nc, _ := nats.Connect("nats://nats:4222")
 heartbeatFn := func() ([]byte, error) {
-    return runtime.HeartbeatPayload(
+    return worker.HeartbeatPayload(
         "my-worker",   // worker ID
         "my-pack",     // pool name (must match pools.yaml mapping)
         0,             // active jobs
@@ -649,7 +650,7 @@ heartbeatFn := func() ([]byte, error) {
         0,             // reserved
     )
 }
-go runtime.HeartbeatLoop(ctx, nc, heartbeatFn)
+go worker.HeartbeatLoop(ctx, nc, heartbeatFn)
 ```
 
 ### Heartbeat Protocol

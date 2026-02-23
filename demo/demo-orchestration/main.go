@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cordum/cordum/sdk/runtime"
+	capworker "github.com/cordum-io/cap/v2/sdk/go/worker"
 	"github.com/nats-io/nats.go"
 )
 
@@ -87,12 +87,12 @@ func main() {
 		go func() {
 			heartbeatFn := func() ([]byte, error) {
 				active := randInt(worker.Capacity / 2)
-				return runtime.HeartbeatPayload(worker.ID, worker.PackID, active, worker.Capacity, 0)
+				return capworker.HeartbeatPayload(worker.ID, worker.PackID, active, worker.Capacity, 0)
 			}
 			if payload, err := heartbeatFn(); err == nil {
-				_ = runtime.EmitHeartbeat(nc, payload)
+				_ = capworker.EmitHeartbeat(nc, payload)
 			}
-			runtime.HeartbeatLoop(ctx, nc, heartbeatFn)
+			capworker.HeartbeatLoop(ctx, nc, heartbeatFn)
 		}()
 		log.Printf("[demo] started worker %s (%s)", worker.ID, worker.Name)
 	}

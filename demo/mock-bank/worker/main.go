@@ -14,7 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cordum/cordum/sdk/runtime"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
+	"github.com/cordum-io/cap/v2/sdk/go/runtime"
+	capworker "github.com/cordum-io/cap/v2/sdk/go/worker"
 	"github.com/nats-io/nats.go"
 )
 
@@ -171,12 +173,12 @@ func main() {
 		go func() {
 			heartbeatFn := func() ([]byte, error) {
 				active := randInt(max(worker.Capacity/4, 1))
-				return runtime.HeartbeatPayload(worker.ID, worker.Pool, active, worker.Capacity, randFloat32()*0.3)
+				return capworker.HeartbeatPayload(worker.ID, worker.Pool, active, worker.Capacity, randFloat32()*0.3)
 			}
 			if payload, err := heartbeatFn(); err == nil {
-				_ = runtime.EmitHeartbeat(nc, payload)
+				_ = capworker.EmitHeartbeat(nc, payload)
 			}
-			runtime.HeartbeatLoop(ctx, nc, heartbeatFn)
+			capworker.HeartbeatLoop(ctx, nc, heartbeatFn)
 		}()
 
 		log.Printf("[mock-bank]   started %-25s pool=%-22s topics=%v cap=%d",
@@ -312,10 +314,10 @@ func randFloat32() float32 {
 }
 
 // connectNATSWithTLS creates a NATS connection, adding TLS if NATS_TLS_* env
-// vars are set (via sdk/runtime.NATSTLSConfigFromEnv).
+// vars are set (via sdk/capsdk.NATSTLSConfigFromEnv).
 func connectNATSWithTLS(natsURL string) (*nats.Conn, error) {
 	opts := []nats.Option{nats.Name("mock-bank-fleet"), nats.Timeout(5 * time.Second)}
-	tlsCfg, err := runtime.NATSTLSConfigFromEnv()
+	tlsCfg, err := capsdk.NATSTLSConfigFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("nats tls config: %w", err)
 	}

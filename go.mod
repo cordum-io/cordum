@@ -35,6 +35,10 @@ require (
 
 replace github.com/cordum/cordum/sdk => ./sdk
 
+// Local development: point to local CAP checkout until new version is tagged.
+// Remove this replace directive after CAP v2.6.0 is published.
+replace github.com/cordum-io/cap/v2 => ../cap
+
 // Use published CAP module
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
