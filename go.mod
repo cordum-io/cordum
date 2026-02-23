@@ -6,7 +6,7 @@ toolchain go1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.5.3
+	github.com/cordum-io/cap/v2 v2.6.0
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/expr-lang/expr v1.17.8
 	github.com/google/uuid v1.6.0
@@ -34,10 +34,6 @@ require (
 )
 
 replace github.com/cordum/cordum/sdk => ./sdk
-
-// Local development: point to local CAP checkout until new version is tagged.
-// Remove this replace directive after CAP v2.6.0 is published.
-replace github.com/cordum-io/cap/v2 => ../cap
 
 // Use published CAP module
 require (
