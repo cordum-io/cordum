@@ -39,6 +39,9 @@ jobs:
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
+    - name: Generate TLS certificates
+      run: go run ./cmd/cordumctl generate-certs
+
     - name: Start services
       run: |
         docker compose up -d --build
@@ -116,6 +119,9 @@ jobs:
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
+    - name: Generate TLS certificates
+      run: go run ./cmd/cordumctl generate-certs
+
     - name: Start services
       run: |
         docker compose up -d --build
@@ -190,6 +196,9 @@ jobs:
 
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
+    - name: Generate TLS certificates
+      run: go run ./cmd/cordumctl generate-certs
 
     - name: Start services
       run: |
