@@ -248,8 +248,6 @@ Cordum Enterprise adds:
 - SIEM export
 - Priority support
 
-[Contact us](mailto:admin@cordum.io) for pricing.
-
 ## Governance
 
 Cordum follows a transparent governance model with a protocol stability pledge, maintainer structure, and clear decision-making process. See [GOVERNANCE.md](GOVERNANCE.md) for details including:
