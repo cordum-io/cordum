@@ -119,9 +119,10 @@ jobs:
         run: |
           IMAGE="ghcr.io/cordum-io/cordum/dashboard:${{ github.ref_name }}"
           echo "Verifying $IMAGE responds on port 8080..."
-          docker run -d --name dash-verify -p 18080:8080 "$IMAGE"
+          # Add fake host so nginx can resolve the upstream at startup (no real gateway in CI).
+          docker run -d --name dash-verify -p 18080:8080 --add-host cordum-api-gateway:127.0.0.1 "$IMAGE"
           sleep 3
-          if curl -sf http://localhost:18080/ > /dev/null 2>&1; then
+          if curl -sf http://localhost:18080/healthz > /dev/null 2>&1; then
             echo "Dashboard image verified"
           else
             echo "Dashboard image failed health check"
