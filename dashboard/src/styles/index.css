@@ -6,64 +6,50 @@
 
 :root {
   color-scheme: light;
-  --bg: #f5efe6;
-  --surface: #fffaf2;
-  --surface-2: #eef4f1;
-  --text: #1f2a2e;
-  --muted: #5a6a70;
+  --bg: #f8f9fa;
+  --surface: #ffffff;
+  --surface-2: #f1f3f5;
+  --text: #111827;
+  --muted: #6b7280;
   --accent: #0f7f7a;
   --accent-2: #d4833a;
-  --success: #1f7a57;
-  --warning: #c58a1c;
-  --danger: #b83a3a;
-  --border: rgba(25, 36, 40, 0.12);
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --border: rgba(0, 0, 0, 0.08);
   --ring: rgba(15, 127, 122, 0.35);
-  --shadow: rgba(18, 25, 28, 0.12);
-  --surface-glass: rgba(255, 252, 245, 0.7);
-  --bg-radial-1: rgba(15, 127, 122, 0.18);
-  --bg-radial-2: rgba(212, 131, 58, 0.16);
-  --bg-linear-1: #f6f1e8;
-  --bg-linear-2: #eef3f1;
-  --bg-linear-3: #f5efe5;
-  --overlay-1: rgba(0, 0, 0, 0.03);
-  --overlay-2: rgba(0, 0, 0, 0.02);
+  --shadow: rgba(0, 0, 0, 0.06);
+  --surface-glass: rgba(255, 255, 255, 0.85);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0f1416;
-  --surface: #141b1e;
-  --surface-2: #1b2529;
-  --text: #e5efec;
-  --muted: #a7b6b3;
-  --accent: #27b3a8;
+  --bg: #09090b;
+  --surface: #111113;
+  --surface-2: #1a1a1e;
+  --text: #fafafa;
+  --muted: #a1a1aa;
+  --accent: #2dd4bf;
   --accent-2: #e49a52;
-  --success: #36b67c;
-  --warning: #d6a23e;
-  --danger: #e26a6a;
-  --border: rgba(229, 239, 236, 0.12);
-  --ring: rgba(39, 179, 168, 0.4);
-  --shadow: rgba(0, 0, 0, 0.45);
-  --surface-glass: rgba(20, 27, 30, 0.75);
-  --bg-radial-1: rgba(39, 179, 168, 0.2);
-  --bg-radial-2: rgba(228, 154, 82, 0.12);
-  --bg-linear-1: #0b1012;
-  --bg-linear-2: #0f171a;
-  --bg-linear-3: #111a1d;
-  --overlay-1: rgba(255, 255, 255, 0.04);
-  --overlay-2: rgba(255, 255, 255, 0.03);
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --border: rgba(255, 255, 255, 0.08);
+  --ring: rgba(45, 212, 191, 0.4);
+  --shadow: rgba(0, 0, 0, 0.5);
+  --surface-glass: rgba(17, 17, 19, 0.85);
 }
 
 :root[data-theme="dark"] .bg-white\/70 {
-  background-color: rgba(20, 27, 30, 0.82);
+  background-color: rgba(17, 17, 19, 0.82);
 }
 
 :root[data-theme="dark"] .bg-white\/80 {
-  background-color: rgba(20, 27, 30, 0.88);
+  background-color: rgba(17, 17, 19, 0.88);
 }
 
 :root[data-theme="dark"] .bg-white\/95 {
-  background-color: rgba(20, 27, 30, 0.96);
+  background-color: rgba(17, 17, 19, 0.96);
 }
 
 * {
@@ -75,34 +61,13 @@ body {
   min-height: 100vh;
   font-family: "IBM Plex Sans", sans-serif;
   color: var(--text);
-  background:
-    radial-gradient(900px circle at 10% -10%, var(--bg-radial-1), transparent 55%),
-    radial-gradient(700px circle at 90% 0%, var(--bg-radial-2), transparent 45%),
-    linear-gradient(120deg, var(--bg-linear-1) 0%, var(--bg-linear-2) 55%, var(--bg-linear-3) 100%);
-  position: relative;
+  background: var(--bg);
 }
 
 pre {
   font-family: "IBM Plex Mono", monospace;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-image:
-    linear-gradient(120deg, var(--overlay-1) 0%, transparent 40%),
-    linear-gradient(90deg, var(--overlay-2) 0%, transparent 35%);
-  opacity: 0.25;
-  pointer-events: none;
-  z-index: 0;
-}
-
-#root {
-  position: relative;
-  z-index: 1;
 }
 
 ::selection {
@@ -234,132 +199,123 @@ body::before {
 /* Shadow utilities */
 .shadow-glow {
   box-shadow:
-    0 1px 2px rgba(15, 127, 122, 0.1),
-    0 4px 12px rgba(15, 127, 122, 0.15),
-    0 0 0 1px rgba(15, 127, 122, 0.05);
+    0 0 0 1px rgba(15, 127, 122, 0.1),
+    0 1px 3px rgba(15, 127, 122, 0.08);
 }
 
 .shadow-glow:hover {
   box-shadow:
-    0 2px 4px rgba(15, 127, 122, 0.12),
-    0 8px 20px rgba(15, 127, 122, 0.2),
-    0 0 0 1px rgba(15, 127, 122, 0.08);
+    0 0 0 1px rgba(15, 127, 122, 0.15),
+    0 2px 8px rgba(15, 127, 122, 0.12);
 }
 
 .shadow-lift {
   box-shadow:
-    0 1px 2px rgba(184, 58, 58, 0.1),
-    0 4px 12px rgba(184, 58, 58, 0.15);
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .shadow-lift:hover {
   box-shadow:
-    0 2px 4px rgba(184, 58, 58, 0.12),
-    0 8px 20px rgba(184, 58, 58, 0.2);
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .shadow-soft {
   box-shadow:
-    0 1px 3px rgba(18, 25, 28, 0.06),
-    0 6px 16px rgba(18, 25, 28, 0.08);
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 :root[data-theme="dark"] .shadow-glow {
   box-shadow:
-    0 1px 2px rgba(39, 179, 168, 0.15),
-    0 4px 12px rgba(39, 179, 168, 0.2),
-    0 0 0 1px rgba(39, 179, 168, 0.1);
+    0 0 0 1px rgba(45, 212, 191, 0.15),
+    0 1px 3px rgba(45, 212, 191, 0.1);
 }
 
 :root[data-theme="dark"] .shadow-glow:hover {
   box-shadow:
-    0 2px 4px rgba(39, 179, 168, 0.2),
-    0 8px 20px rgba(39, 179, 168, 0.28),
-    0 0 0 1px rgba(39, 179, 168, 0.15);
+    0 0 0 1px rgba(45, 212, 191, 0.2),
+    0 2px 8px rgba(45, 212, 191, 0.15);
 }
 
 :root[data-theme="dark"] .shadow-lift {
   box-shadow:
-    0 1px 2px rgba(226, 106, 106, 0.15),
-    0 4px 12px rgba(226, 106, 106, 0.2);
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 :root[data-theme="dark"] .shadow-lift:hover {
   box-shadow:
-    0 2px 4px rgba(226, 106, 106, 0.2),
-    0 8px 20px rgba(226, 106, 106, 0.28);
+    0 1px 3px rgba(0, 0, 0, 0.4),
+    0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
 :root[data-theme="dark"] .shadow-soft {
   box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.2),
-    0 6px 16px rgba(0, 0, 0, 0.35);
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 .glass-panel {
-  background: var(--surface-glass);
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 10px 30px rgba(18, 25, 28, 0.08);
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 .surface-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  box-shadow: 0 12px 30px rgba(18, 25, 28, 0.08);
+  box-shadow: 0 1px 2px var(--shadow);
   transition:
-    box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .surface-card:hover {
-  box-shadow: 0 16px 40px rgba(18, 25, 28, 0.1);
+  box-shadow: 0 2px 8px var(--shadow);
 }
 
 :root[data-theme="dark"] .surface-card:hover {
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 .attention-card {
-  border-radius: 24px;
+  border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--surface-glass);
-  padding: 18px 20px;
-  box-shadow: 0 18px 35px rgba(18, 25, 28, 0.12);
+  background: var(--surface);
+  padding: 16px;
+  box-shadow: 0 1px 3px var(--shadow);
   transition:
-    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .attention-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 22px 45px rgba(18, 25, 28, 0.14);
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px var(--shadow);
 }
 
 :root[data-theme="dark"] .attention-card:hover {
-  box-shadow: 0 22px 45px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 .list-row {
-  border-radius: 20px;
+  border-radius: 10px;
   border: 1px solid var(--border);
-  background: var(--surface-glass);
-  padding: 14px 16px;
+  background: var(--surface);
+  padding: 12px 16px;
   transition:
-    border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .list-row:hover {
   border-color: var(--accent);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(18, 25, 28, 0.1);
+  background: var(--surface-2);
 }
 
 :root[data-theme="dark"] .list-row:hover {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--surface-2);
 }
 
 .gradient-border {
@@ -384,10 +340,10 @@ body::before {
 
 .workflow-canvas {
   position: relative;
-  border-radius: 24px;
+  border-radius: 12px;
   border: 1px solid var(--border);
-  background: #f7f9fb;
-  box-shadow: 0 14px 30px rgba(18, 25, 28, 0.08);
+  background: var(--surface-2);
+  box-shadow: 0 1px 3px var(--shadow);
   overflow: hidden;
 }
 
@@ -399,9 +355,9 @@ body::before {
 
 .workflow-canvas__empty {
   padding: 16px 20px;
-  border-radius: 16px;
+  border-radius: 8px;
   border: 1px dashed var(--border);
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--surface);
   color: var(--muted);
   font-size: 13px;
 }
@@ -411,18 +367,18 @@ body::before {
 }
 
 .workflow-canvas .react-flow__controls {
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 1px 3px var(--shadow);
+  padding: 2px;
 }
 
 .workflow-canvas .react-flow__controls button {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text);
 }
@@ -437,10 +393,10 @@ body::before {
 
 .workflow-node {
   width: 220px;
-  border-radius: 18px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  background: #ffffff;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.1);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 1px 3px var(--shadow);
   padding: 12px 14px;
 }
 
@@ -453,7 +409,7 @@ body::before {
 .workflow-node__icon {
   width: 28px;
   height: 28px;
-  border-radius: 10px;
+  border-radius: 6px;
   background: rgba(15, 127, 122, 0.12);
   color: var(--accent);
   display: flex;
@@ -564,21 +520,21 @@ body::before {
 }
 
 :root[data-theme="dark"] .workflow-canvas {
-  background: #0f1518;
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+  background: var(--surface-2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 :root[data-theme="dark"] .workflow-canvas__empty {
-  background: rgba(20, 27, 30, 0.85);
+  background: var(--surface);
 }
 
 :root[data-theme="dark"] .workflow-canvas .react-flow__controls {
-  border-color: rgba(229, 239, 236, 0.12);
-  background: rgba(20, 27, 30, 0.9);
+  border-color: var(--border);
+  background: var(--surface);
 }
 
 :root[data-theme="dark"] .workflow-canvas .react-flow__background circle {
-  fill: rgba(229, 239, 236, 0.15);
+  fill: rgba(255, 255, 255, 0.08);
 }
 
 :root[data-theme="dark"] .workflow-canvas .react-flow__controls button {
@@ -586,19 +542,19 @@ body::before {
 }
 
 :root[data-theme="dark"] .workflow-node {
-  border-color: rgba(229, 239, 236, 0.12);
-  background: #141b1e;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 :root[data-theme="dark"] .workflow-node__icon {
-  background: rgba(39, 179, 168, 0.18);
+  background: rgba(45, 212, 191, 0.15);
   color: var(--accent);
 }
 
 :root[data-theme="dark"] .workflow-handle {
-  background: #141b1e;
-  border-color: rgba(229, 239, 236, 0.2);
+  background: var(--surface);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -622,16 +578,16 @@ body::before {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 12px 16px;
-  border-radius: 16px;
-  background: var(--surface-glass);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface);
   border: 1px solid var(--border);
 }
 
 .workflow-builder__content {
   display: flex;
   gap: 0;
-  border-radius: 24px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--surface);
   overflow: hidden;
@@ -640,7 +596,7 @@ body::before {
 .workflow-builder__canvas {
   flex: 1;
   position: relative;
-  background: #f7f9fb;
+  background: var(--surface-2);
   min-height: 500px;
 }
 
