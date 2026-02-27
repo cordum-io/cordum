@@ -137,29 +137,26 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
       <div className="flex min-h-screen">
-        <aside className="hidden h-screen w-64 shrink-0 flex-col gap-6 border-r border-border bg-[color:var(--surface-glass)] px-6 py-8 backdrop-blur-xl lg:sticky lg:top-0 lg:flex">
-          <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-9 w-auto object-contain dark:brightness-0 dark:invert" />
-              <div>
-                <div className="text-xs uppercase tracking-[0.25em] text-muted">Cordum</div>
-                <h1 className="font-display text-2xl font-semibold text-ink">Control Plane</h1>
-              </div>
+<aside className="hidden h-screen w-60 shrink-0 flex-col gap-4 border-r border-border bg-surface px-5 py-6 lg:sticky lg:top-0 lg:flex">
+          <div className="flex items-center gap-3">
+            <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-8 w-auto object-contain dark:brightness-0 dark:invert" />
+            <div>
+              <h1 className="font-display text-lg font-semibold text-ink">Cordum</h1>
+              <p className="text-[11px] text-muted">Control Plane</p>
             </div>
-            <p className="text-xs text-muted">AI orchestration, safety, and runtime clarity.</p>
           </div>
-          <div className="rounded-2xl border border-border bg-white/70 p-4 text-xs text-muted">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="font-semibold text-ink">Bus stream</span>
+          <div className="rounded-lg border border-border bg-surface2 p-3 text-xs text-muted">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="font-medium text-ink">Connection</span>
               <ConnectionIndicator />
             </div>
-            <div className="flex items-center gap-2 text-[11px]">
+            <div className="flex items-center gap-2 text-[10px]">
               <Network className="h-3 w-3" />
               <span className="truncate">{apiBaseUrl || "same origin"}</span>
             </div>
           </div>
-          <nav className="mt-6 flex min-h-0 flex-1 flex-col gap-1 overflow-hidden">
-            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
+          <nav className="mt-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const badge = navBadges[item.path];
@@ -170,10 +167,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                     to={item.path}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition",
+                        "flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
                         isActive
-                          ? "bg-[color:rgba(15,127,122,0.16)] text-accent"
-                          : "text-ink hover:bg-[color:rgba(15,127,122,0.08)]"
+                          ? "bg-accent/10 text-accent"
+                          : "text-ink hover:bg-surface2"
                       )
                     }
                   >
@@ -182,10 +179,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                     {badgeText ? (
                       <span
                         className={cn(
-                          "ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          "ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium",
                           badge.variant === "danger"
-                            ? "bg-[color:rgba(184,58,58,0.14)] text-danger"
-                            : "bg-[color:rgba(197,138,28,0.18)] text-warning"
+                            ? "bg-danger/10 text-danger"
+                            : "bg-warning/10 text-warning"
                         )}
                       >
                         {badgeText}
@@ -199,18 +196,16 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
         <div className="flex flex-1 flex-col">
           <EnvironmentBorder />
-          <header className="sticky top-0 z-10 border-b border-border bg-[color:var(--surface-glass)] px-4 py-4 backdrop-blur-xl lg:px-10">
+<header className="sticky top-0 z-10 border-b border-border bg-surface px-4 py-3 lg:px-8">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <Breadcrumbs />
                 <div className="flex items-center gap-2">
-                  <img src="/assets/cordum-logo.png" alt="Cordum logo" className="h-6 w-auto object-contain dark:brightness-0 dark:invert" />
-                  <h2 className="font-display text-xl font-semibold text-ink">Cordum Console</h2>
                   <EnvironmentBadge />
                 </div>
               </div>
-              <div className="flex flex-1 flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
-                <div className="relative flex-1 lg:max-w-md">
+              <div className="flex flex-1 flex-col gap-2 lg:flex-row lg:items-center lg:justify-end">
+                <div className="relative flex-1 lg:max-w-sm">
                   <Input
                     value={globalSearch}
                     onChange={(event) => setGlobalSearch(event.target.value)}
@@ -220,28 +215,28 @@ export function AppShell({ children }: { children: ReactNode }) {
                         navigate(next ? `/search?q=${encodeURIComponent(next)}` : "/search");
                       }
                     }}
-                    placeholder="Search runs, workflows, packs, jobs..."
+                    placeholder="Search..."
                   />
                 </div>
                 <Button variant="outline" size="sm" type="button" onClick={toggleTheme}>
                   {theme === "light" && <Sun className="h-4 w-4" />}
                   {theme === "dark" && <Moon className="h-4 w-4" />}
                   {theme === "system" && <Monitor className="h-4 w-4" />}
-                  {theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System"}
                 </Button>
                 <button
                   onClick={() => setCommandOpen(true)}
-                  className="rounded-full border border-border bg-white/70 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-ink transition hover:border-accent"
+                  className="hidden items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted transition hover:border-accent hover:text-ink lg:flex"
                   type="button"
                 >
-                  Command
+                  <span>Search</span>
+                  <kbd className="rounded bg-surface2 px-1.5 py-0.5 text-[10px] font-medium">Cmd+K</kbd>
                 </button>
-                {requiresAuth && apiKey ? (
+{requiresAuth && apiKey ? (
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 rounded-full border border-border bg-white/70 px-3 py-2 text-xs text-ink">
-                      <UserCircle className="h-4 w-4" />
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-ink">
+                      <UserCircle className="h-4 w-4 text-muted" />
                       <div className="leading-tight">
-                        <div className="text-xs font-semibold">{displayName}</div>
+                        <div className="text-xs font-medium">{displayName}</div>
                         <div className="text-[10px] text-muted">
                           {tenantLabel}
                           {roleLabel ? ` · ${roleLabel}` : ""}
@@ -250,13 +245,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                     </div>
                     <Button variant="outline" size="sm" type="button" onClick={onLogout} disabled={loggingOut}>
                       <LogOut className="h-4 w-4" />
-                      {loggingOut ? "Logging out" : "Logout"}
                     </Button>
                   </div>
                 ) : null}
               </div>
             </div>
-            <nav className="mt-4 flex gap-2 overflow-x-auto pb-2 lg:hidden">
+<nav className="mt-3 flex gap-1.5 overflow-x-auto pb-2 lg:hidden">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const badge = navBadges[item.path];
@@ -267,20 +261,20 @@ export function AppShell({ children }: { children: ReactNode }) {
                     to={item.path}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]",
-                        isActive ? "bg-[color:rgba(15,127,122,0.16)] text-accent" : "border border-border text-ink"
+                        "flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium",
+                        isActive ? "bg-accent/10 text-accent" : "border border-border text-ink"
                       )
                     }
                   >
-                    <Icon className="h-3 w-3" />
+                    <Icon className="h-3.5 w-3.5" />
                     {item.label}
                     {badgeText ? (
                       <span
                         className={cn(
-                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          "rounded px-1.5 py-0.5 text-[10px] font-medium",
                           badge.variant === "danger"
-                            ? "bg-[color:rgba(184,58,58,0.14)] text-danger"
-                            : "bg-[color:rgba(197,138,28,0.18)] text-warning"
+                            ? "bg-danger/10 text-danger"
+                            : "bg-warning/10 text-warning"
                         )}
                       >
                         {badgeText}
@@ -292,7 +286,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </nav>
           </header>
           <MaintenanceBanner />
-          <main className="flex-1 px-4 py-8 lg:px-10">{children}</main>
+          <main className="flex-1 px-4 py-6 lg:px-8">{children}</main>
         </div>
       </div>
     </div>

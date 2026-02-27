@@ -101,9 +101,9 @@ function ApprovalCard({ approval, onClick, selected, onToggleSelect }: { approva
 function MiniCard({ approval, active, onClick }: { approval: Approval; active: boolean; onClick: () => void }) {
   const urgency = urgencyToVariant(approval.urgencyLevel);
   return (
-    <button type="button" onClick={onClick} className={cn("w-full text-left rounded-xl border px-3 py-2.5 transition-colors", active ? "border-accent bg-accent/5" : "border-border bg-surface hover:bg-surface2/50")}>
+    <button type="button" onClick={onClick} className={cn("w-full text-left rounded-lg border px-3 py-2 transition-colors", active ? "border-accent bg-accent/5" : "border-border bg-surface hover:bg-surface2/50")}>
       <div className="flex items-center gap-2">
-        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", urgencyDotColor[urgency])} />
+        <span className={cn("h-2 w-2 shrink-0 rounded-full", urgencyDotColor[urgency])} />
         <p className="min-w-0 flex-1 truncate text-xs font-medium text-ink">{approval.humanSummary || `Job ${approval.jobId.slice(0, 8)}`}</p>
         <span className="shrink-0 font-mono text-[10px] text-muted">{formatWait(approval.waitMs ?? 0)}</span>
       </div>
@@ -177,21 +177,21 @@ export default function ApprovalsPage() {
   const handleApprove = useCallback((id: string, comment?: string) => approveJob.mutateAsync({ id, comment }), [approveJob]);
   const handleReject = useCallback((id: string, reason: string) => rejectJob.mutateAsync({ id, reason }), [rejectJob]);
 
-  return (
+return (
     <div className="space-y-4 pb-20">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="font-display text-2xl font-bold text-ink">Approvals</h1>
+          <h1 className="font-display text-xl font-semibold text-ink">Approvals</h1>
           <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
         </div>
         {sorted.length > 0 && <Badge variant="warning">{sorted.length} pending</Badge>}
       </div>
       <StatsStrip approvals={approvals} resolvedToday={resolvedToday} selectedCount={selectedIds.size} totalCount={sorted.length} onSelectAll={selectAll} />
-      <div className="flex gap-1 rounded-full border border-border p-1 w-fit" role="tablist" aria-label="Approval views">
-        <button type="button" role="tab" aria-selected={activeTab === "queue"} aria-controls="tabpanel-queue" id="tab-queue" className={cn("flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition", activeTab === "queue" ? "bg-accent/15 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("queue")}>
+<div className="flex gap-1 rounded-lg border border-border p-1 w-fit" role="tablist" aria-label="Approval views">
+        <button type="button" role="tab" aria-selected={activeTab === "queue"} aria-controls="tabpanel-queue" id="tab-queue" className={cn("flex items-center gap-2 rounded-md px-4 py-1.5 text-xs font-medium transition", activeTab === "queue" ? "bg-accent/10 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("queue")}>
           <Clock className="h-3.5 w-3.5" />Queue{sorted.length > 0 ? ` (${sorted.length})` : ""}
         </button>
-        <button type="button" role="tab" aria-selected={activeTab === "history"} aria-controls="tabpanel-history" id="tab-history" className={cn("flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition", activeTab === "history" ? "bg-accent/15 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("history")}>
+        <button type="button" role="tab" aria-selected={activeTab === "history"} aria-controls="tabpanel-history" id="tab-history" className={cn("flex items-center gap-2 rounded-md px-4 py-1.5 text-xs font-medium transition", activeTab === "history" ? "bg-accent/10 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("history")}>
           <History className="h-3.5 w-3.5" />History
         </button>
       </div>

@@ -95,16 +95,16 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md p-8">
-        <div className="mb-8 text-center">
+<div className="mb-6 text-center">
           <img
             src="/assets/cordum-logo.png"
             alt="Cordum logo"
-            className="mx-auto mb-4 h-12 w-auto object-contain dark:brightness-0 dark:invert"
+            className="mx-auto mb-3 h-10 w-auto object-contain dark:brightness-0 dark:invert"
           />
-          <h1 className="font-display text-2xl font-semibold text-ink">
-            Cordum Control Plane
+          <h1 className="font-display text-xl font-semibold text-ink">
+            Cordum
           </h1>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-0.5 text-sm text-muted">
             Sign in to continue
           </p>
         </div>
@@ -124,12 +124,12 @@ export default function LoginPage() {
           </div>
         ) : effectiveMode === "user" ? (
           <form onSubmit={handlePasswordLogin} className="space-y-4">
-            {showModeToggle && (
-              <div className="flex rounded-full border border-border p-1">
+{showModeToggle && (
+              <div className="flex rounded-lg border border-border p-1">
                 <button
                   type="button"
-                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
-                    mode === "user" ? "bg-accent/15 text-accent" : "text-muted"
+                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${
+                    mode === "user" ? "bg-accent/10 text-accent" : "text-muted"
                   }`}
                   onClick={() => setMode("user")}
                 >
@@ -137,8 +137,8 @@ export default function LoginPage() {
                 </button>
                 <button
                   type="button"
-                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
-                    mode === "apiKey" ? "bg-accent/15 text-accent" : "text-muted"
+                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${
+                    mode === "apiKey" ? "bg-accent/10 text-accent" : "text-muted"
                   }`}
                   onClick={() => setMode("apiKey")}
                 >
@@ -184,11 +184,11 @@ export default function LoginPage() {
                 value={tenantInput}
                 onChange={(e) => setTenantInput(e.target.value)}
                 placeholder={defaultTenant}
-                autoComplete="organization"
+autoComplete="organization"
               />
             </div>
             {error && (
-              <div className="rounded-xl bg-[color:rgba(184,58,58,0.1)] px-4 py-2.5 text-sm text-danger">
+              <div className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
                 {error}
               </div>
             )}

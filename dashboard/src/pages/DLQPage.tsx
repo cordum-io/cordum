@@ -166,9 +166,9 @@ function RetryAttemptsPanel({ attempts }: { attempts: RetryAttempt[] }) {
       </h4>
       <div className="space-y-1.5">
         {attempts.map((a, i) => (
-          <div
+<div
             key={i}
-            className="flex items-start gap-3 rounded-xl bg-surface2/40 px-3 py-2 text-xs"
+            className="flex items-start gap-3 rounded-lg bg-surface2/40 px-3 py-2 text-xs"
           >
             <span className="shrink-0 font-mono text-muted">#{i + 1}</span>
             <div className="min-w-0 flex-1">

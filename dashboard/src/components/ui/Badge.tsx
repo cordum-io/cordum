@@ -3,11 +3,11 @@ import { cn } from "../../lib/utils";
 
 const variants: Record<string, string> = {
   default: "bg-surface2 text-ink",
-  success: "bg-[color:rgba(31,122,87,0.12)] text-success",
-  warning: "bg-[color:rgba(197,138,28,0.18)] text-warning",
-  danger: "bg-[color:rgba(184,58,58,0.14)] text-danger",
-  info: "bg-[color:rgba(15,127,122,0.12)] text-accent",
-  enterprise: "bg-gradient-to-r from-purple-500/10 to-indigo-500/10 text-purple-600 border border-purple-200",
+  success: "bg-success/10 text-success",
+  warning: "bg-warning/15 text-warning",
+  danger: "bg-danger/10 text-danger",
+  info: "bg-accent/10 text-accent",
+  enterprise: "bg-purple-500/10 text-purple-600 border border-purple-200/50",
 };
 
 export function Badge({
@@ -18,7 +18,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold transition-colors duration-200",
+        "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
         variants[variant],
         className
       )}

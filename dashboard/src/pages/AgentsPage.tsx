@@ -187,11 +187,11 @@ export default function AgentsPage() {
     />
   );
 
-  return (
-    <div className="space-y-6">
+return (
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="font-display text-2xl font-bold text-ink">Agents</h1>
+          <h1 className="font-display text-xl font-semibold text-ink">Agent Fleet</h1>
           <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
         </div>
         <div className="flex rounded-lg border border-border">
@@ -262,25 +262,25 @@ export default function AgentsPage() {
         </p>
       )}
 
-      {!isLoading && !error && workers.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border py-16 text-center">
-          <Users className="mb-3 h-10 w-10 text-muted" />
+{!isLoading && !error && workers.length === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-12 text-center">
+          <Users className="mb-3 h-8 w-8 text-muted" />
           <p className="text-sm text-muted">No workers registered.</p>
         </div>
       )}
 
       {!isLoading && !error && workers.length > 0 && filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border py-12 text-center">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
           <p className="text-sm text-muted">
             No workers match the current filters.
           </p>
         </div>
       )}
 
-      {filtered.length > 0 && agentsView === "table" && (
-        <div className="overflow-x-auto rounded-2xl border border-border">
+{filtered.length > 0 && agentsView === "table" && (
+        <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full text-sm">
-            <thead className="border-b border-border bg-surface2/50">
+            <thead className="border-b border-border bg-surface2/40">
               <tr>
                 {sh("Name", "name")}
                 {sh("Pool", "pool")}

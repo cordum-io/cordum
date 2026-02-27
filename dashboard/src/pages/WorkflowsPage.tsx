@@ -74,17 +74,17 @@ export default function WorkflowsPage() {
     startRun.mutate({ workflowId });
   };
 
-  return (
-    <div className="space-y-6">
+return (
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="font-display text-2xl font-bold text-ink">Workflows</h1>
+          <h1 className="font-display text-xl font-semibold text-ink">Workflows</h1>
           <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
         </div>
-        <Button onClick={() => navigate("/workflows/new")}>
-          <Plus className="h-4 w-4" />
-          Create Workflow
+        <Button onClick={() => navigate("/workflows/new")} size="sm">
+          <Plus className="h-3.5 w-3.5" />
+          Create
         </Button>
       </div>
 
@@ -160,9 +160,9 @@ export default function WorkflowsPage() {
         )}
       </section>
 
-      {/* Loading indicator for Run Now */}
+{/* Loading indicator for Run Now */}
       {startRun.isPending && (
-        <div className="fixed bottom-4 right-4 flex items-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-lg">
+        <div className="fixed bottom-4 right-4 flex items-center gap-2 rounded-lg bg-ink px-3 py-2 text-sm text-white shadow-lg">
           <Loader className="h-4 w-4 animate-spin" />
           Starting run...
         </div>

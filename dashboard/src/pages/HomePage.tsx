@@ -64,10 +64,10 @@ export default function HomePage() {
   const natsConnected = status?.nats?.connected;
   const redisOk = status?.redis?.ok;
 
-  return (
-    <div className="space-y-6">
-      <h1 className="font-display text-2xl font-bold text-ink">
-        Command Center
+return (
+    <div className="space-y-5">
+      <h1 className="font-display text-xl font-semibold text-ink">
+        Overview
       </h1>
 
       {isLoading && <SkeletonGrid />}
@@ -124,8 +124,8 @@ export default function HomePage() {
       {/* Quick actions */}
       <QuickActions />
 
-      {/* Two-column: Safety Feed + Pipeline Funnel */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+{/* Two-column: Safety Feed + Pipeline Funnel */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <SafetyDecisionFeed />
         <JobPipelineFunnel />
       </div>
@@ -137,7 +137,7 @@ export default function HomePage() {
       <DLQSummary />
 
       {/* Two-column: Event Timeline + Active Workflows */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <EventTimeline />
         <ActiveWorkflowCards />
       </div>

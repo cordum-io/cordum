@@ -269,10 +269,10 @@ export default function JobsPage() {
     navigate(`/jobs/${result.job_id}`);
   }, [addToast, navigate]);
 
-  return (
+return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="font-display text-2xl font-bold text-ink">Jobs</h1>
+        <h1 className="font-display text-xl font-semibold text-ink">Jobs</h1>
         <div className="flex items-center gap-2">
           <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
           <Button size="sm" onClick={() => setShowSubmitDrawer(true)}>
@@ -296,7 +296,7 @@ export default function JobsPage() {
         }}
       />
 
-      <div className="surface-card overflow-hidden rounded-2xl">
+      <div className="surface-card overflow-hidden rounded-xl">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-border">
