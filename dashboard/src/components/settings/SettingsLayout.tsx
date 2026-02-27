@@ -37,9 +37,9 @@ export default function SettingsLayout() {
 
   return (
     <div className="flex min-h-0 gap-0">
-      {/* Sidebar — desktop */}
-      <nav className="hidden md:flex w-56 shrink-0 flex-col border-r border-border pr-4 sticky top-0 self-start">
-        <h1 className="mb-4 font-display text-2xl font-bold text-ink">Settings</h1>
+{/* Sidebar — desktop */}
+      <nav className="hidden md:flex w-52 shrink-0 flex-col border-r border-border pr-4 sticky top-0 self-start">
+        <h1 className="mb-3 font-display text-lg font-semibold text-ink">Settings</h1>
         <ul className="space-y-0.5">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
@@ -49,10 +49,10 @@ export default function SettingsLayout() {
                   to={item.path}
                   className={({ isActive }) =>
                     cn(
-                      "flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+                      "flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
                       isActive
                         ? "bg-accent/10 text-accent"
-                        : "text-muted hover:bg-surface2/60 hover:text-ink",
+                        : "text-muted hover:bg-surface2 hover:text-ink",
                     )
                   }
                 >
@@ -68,22 +68,22 @@ export default function SettingsLayout() {
         {showSetupLink && (
           <button
             type="button"
-            className="mt-auto flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10"
+            className="mt-auto flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-accent transition-colors hover:bg-accent/10"
             onClick={() => setDrawerOpen(true)}
           >
             <span className="relative">
               <Rocket className="h-4 w-4 shrink-0" />
-              <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-accent animate-pulse" />
+              <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
             </span>
             Setup Guide
-            <span className="ml-auto rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-bold">
+            <span className="ml-auto rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium">
               {setup.completedCount}/{setup.totalRequired}
             </span>
           </button>
         )}
       </nav>
 
-      {/* Sidebar — mobile (horizontal scroll) */}
+{/* Sidebar — mobile (horizontal scroll) */}
       <nav className="md:hidden -mx-4 mb-4 overflow-x-auto border-b border-border px-4 pb-2">
         <div className="flex items-center gap-1">
           {NAV_ITEMS.map((item) => {
@@ -94,9 +94,9 @@ export default function SettingsLayout() {
                 to={item.path}
                 className={({ isActive }) =>
                   cn(
-                    "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors",
+                    "flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
                     isActive
-                      ? "bg-accent/15 text-accent"
+                      ? "bg-accent/10 text-accent"
                       : "text-muted hover:text-ink",
                   )
                 }
@@ -109,7 +109,7 @@ export default function SettingsLayout() {
           {showSetupLink && (
             <button
               type="button"
-              className="flex shrink-0 items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent"
+              className="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent"
               onClick={() => setDrawerOpen(true)}
             >
               <Rocket className="h-3.5 w-3.5" />

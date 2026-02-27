@@ -36,13 +36,13 @@ function PolicyLayoutInner() {
 
   return (
     <div className="space-y-6">
-      {/* Lockdown banner */}
+{/* Lockdown banner */}
       {policyConfigSupported && isLockdown && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-danger px-5 py-3 text-white shadow-lg">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-danger px-4 py-3 text-white">
           <div className="flex items-center gap-3">
-            <Lock className="h-5 w-5 animate-pulse" />
+            <Lock className="h-4 w-4 animate-pulse" />
             <div>
-              <span className="text-sm font-bold uppercase tracking-wide">
+              <span className="text-sm font-semibold">
                 Emergency Lockdown Active
               </span>
               {config?.lockdownReason && (
@@ -60,7 +60,7 @@ function PolicyLayoutInner() {
             <button
               type="button"
               onClick={() => setShowLiftDialog(true)}
-              className="flex items-center gap-1.5 rounded-full border border-white/40 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20"
+              className="flex items-center gap-1.5 rounded-md border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/20"
             >
               <Unlock className="h-3.5 w-3.5" />
               Lift Lockdown
@@ -93,10 +93,10 @@ function PolicyLayoutInner() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+{/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-display text-2xl font-semibold text-ink">
+          <h2 className="font-display text-xl font-semibold text-ink">
             Policy Studio
           </h2>
           <p className="text-sm text-muted">
@@ -109,7 +109,7 @@ function PolicyLayoutInner() {
           <select
             value={bundleId}
             onChange={(e) => setBundleId(e.target.value)}
-            className="rounded-2xl border border-border bg-white/70 px-4 py-2 text-sm text-ink"
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
           >
             {bundles.map((b) => (
               <option key={b.id} value={b.id}>
@@ -121,7 +121,7 @@ function PolicyLayoutInner() {
       </div>
 
       {/* Tab nav */}
-      <nav className="flex gap-1 overflow-x-auto rounded-full border border-border p-1">
+      <nav className="flex gap-1 overflow-x-auto rounded-lg border border-border p-1">
         {tabs.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
@@ -129,9 +129,9 @@ function PolicyLayoutInner() {
             end={end}
             className={({ isActive }) =>
               cn(
-                "flex shrink-0 items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition",
+                "flex shrink-0 items-center gap-2 rounded-md px-4 py-1.5 text-xs font-medium transition",
                 isActive
-                  ? "bg-accent/15 text-accent"
+                  ? "bg-accent/10 text-accent"
                   : "text-muted hover:text-ink",
               )
             }
