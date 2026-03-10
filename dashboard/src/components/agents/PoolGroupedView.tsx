@@ -55,7 +55,7 @@ function WorkerCard({ worker, onClick }: { worker: Worker; onClick?: () => void 
         <CardTitle className="text-sm">{worker.name}</CardTitle>
         <Badge variant={statusVariant(worker.status)}>{worker.status}</Badge>
       </CardHeader>
-      <div className="space-y-2 text-xs text-muted">
+      <div className="space-y-2 text-xs text-muted-foreground">
         <div className="flex items-center justify-between">
           <span>
             {worker.activeJobs}/{worker.capacity} jobs
@@ -95,7 +95,7 @@ function PoolSection({ group, onWorkerClick }: { group: PoolGroup; onWorkerClick
         <h3 className="font-display text-lg font-semibold text-ink">
           {group.pool}
         </h3>
-        <span className="text-xs text-muted">
+        <span className="text-xs text-muted-foreground">
           {group.workers.length} worker{group.workers.length !== 1 ? "s" : ""}{" "}
           &middot; {group.totalActive}/{group.totalCapacity} active &middot;{" "}
           {utilPct}%

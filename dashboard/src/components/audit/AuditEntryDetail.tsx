@@ -54,7 +54,7 @@ export function AuditEntryDetail({ entry, onClose }: AuditEntryDetailProps) {
                 <Badge variant="info" className="text-[10px]">
                   {entry.eventType}
                 </Badge>
-                <span className="font-mono text-xs text-muted">
+                <span className="font-mono text-xs text-muted-foreground">
                   {formatTimestamp(entry.timestamp)}
                 </span>
               </div>
@@ -63,7 +63,7 @@ export function AuditEntryDetail({ entry, onClose }: AuditEntryDetailProps) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded p-1 text-muted transition-colors hover:bg-surface2 hover:text-ink"
+              className="rounded p-1 text-muted-foreground transition-colors hover:bg-surface2 hover:text-ink"
               aria-label="Close detail"
             >
               <X className="h-4 w-4" />
@@ -73,19 +73,19 @@ export function AuditEntryDetail({ entry, onClose }: AuditEntryDetailProps) {
           {/* Metadata grid */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-4">
             <div>
-              <span className="text-muted">Actor</span>
+              <span className="text-muted-foreground">Actor</span>
               <p className="font-medium text-ink">{entry.actor || "\u2014"}</p>
             </div>
             <div>
-              <span className="text-muted">Action</span>
+              <span className="text-muted-foreground">Action</span>
               <p className="font-medium text-ink">{entry.action || "\u2014"}</p>
             </div>
             <div>
-              <span className="text-muted">Resource Type</span>
+              <span className="text-muted-foreground">Resource Type</span>
               <p className="font-medium text-ink">{entry.resourceType || "\u2014"}</p>
             </div>
             <div>
-              <span className="text-muted">Resource ID</span>
+              <span className="text-muted-foreground">Resource ID</span>
               <p className="font-mono font-medium text-ink" title={entry.resourceId}>
                 {entry.resourceId || "\u2014"}
               </p>
@@ -95,7 +95,7 @@ export function AuditEntryDetail({ entry, onClose }: AuditEntryDetailProps) {
           {/* Linked resource */}
           {link && (
             <div className="text-xs">
-              <span className="text-muted">Navigate to: </span>
+              <span className="text-muted-foreground">Navigate to: </span>
               <Link
                 to={link.to}
                 className="font-medium text-accent underline-offset-2 hover:underline"
@@ -108,7 +108,7 @@ export function AuditEntryDetail({ entry, onClose }: AuditEntryDetailProps) {
           {/* Full payload */}
           {entry.payload && Object.keys(entry.payload).length > 0 && (
             <div className="space-y-1">
-              <span className="text-xs font-semibold text-muted">Payload</span>
+              <span className="text-xs font-semibold text-muted-foreground">Payload</span>
               <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface p-3 text-xs text-ink">
                 {JSON.stringify(entry.payload, null, 2)}
               </pre>

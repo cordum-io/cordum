@@ -26,9 +26,9 @@ export const ParallelNode = memo(function ParallelNode({ data, selected }: NodeP
 
   return (
     <BaseNode
-      icon={<Layers className="h-4 w-4 text-sky-600" />}
+      icon={<Layers className="h-4 w-4 text-[var(--color-info)]" />}
       label={data.label as string}
-      accent="bg-sky-50"
+      accent="bg-[var(--color-info)]/5"
       selected={selected}
     >
       <span>{steps.length} child step{steps.length === 1 ? "" : "s"}</span>

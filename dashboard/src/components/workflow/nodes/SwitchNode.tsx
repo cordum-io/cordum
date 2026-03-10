@@ -20,9 +20,9 @@ export const SwitchNode = memo(function SwitchNode({ data, selected }: NodeProps
 
   return (
     <BaseNode
-      icon={<GitMerge className="h-4 w-4 text-teal-600" />}
+      icon={<GitMerge className="h-4 w-4 text-[var(--color-info)]" />}
       label={data.label as string}
-      accent="bg-teal-50"
+      accent="bg-[var(--color-info)]/15"
       selected={selected}
       outputs={outputs}
     >

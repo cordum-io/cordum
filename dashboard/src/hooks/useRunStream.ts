@@ -39,10 +39,20 @@ function extractStepId(event: StreamEvent): string | undefined {
   return (p.stepId ?? p.step_id) as string | undefined;
 }
 
+const VALID_RUN_STATUSES = new Set<string>(["pending", "running", "waiting", "succeeded", "failed", "timed_out", "cancelled"]);
+
 function extractStatus(event: StreamEvent): RunStatus | undefined {
   const p = event.payload ?? {};
   const raw = (p.status ?? p.newStatus ?? p.new_status) as string | undefined;
-  return raw as RunStatus | undefined;
+  if (!raw) return undefined;
+  const lower = raw.toLowerCase();
+  if (VALID_RUN_STATUSES.has(lower)) return lower as RunStatus;
+  // Map common variants
+  if (lower === "completed" || lower === "success") return "succeeded";
+  if (lower === "error" || lower === "errored") return "failed";
+  if (lower === "timeout" || lower === "timedout") return "timed_out";
+  if (lower === "canceled") return "cancelled";
+  return undefined;
 }
 
 function extractJobId(event: StreamEvent): string | undefined {
@@ -147,7 +157,7 @@ export function useRunStream(runId: string | null | undefined): void {
         patchRunInCache(queryClientRef.current, eventRunId, (run) => ({
           ...run,
           updatedAt: latest.timestamp,
-          steps: run.steps.map((s) => {
+          steps: (run.steps ?? []).map((s) => {
             if (s.id !== stepId) return s;
             return {
               ...s,
@@ -171,7 +181,7 @@ export function useRunStream(runId: string | null | undefined): void {
         patchRunInCache(queryClientRef.current, eventRunId, (run) => ({
           ...run,
           updatedAt: latest.timestamp,
-          steps: run.steps.map((s) => {
+          steps: (run.steps ?? []).map((s) => {
             const sJobId =
               (s.config?.jobId as string) ??
               (s.output?.jobId as string) ??

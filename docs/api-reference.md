@@ -11,6 +11,17 @@ Source of truth: `core/controlplane/gateway/gateway_core.go` route registration 
 
 This file is the comprehensive REST route reference; OpenAPI output currently covers only the generated subset.
 
+## gRPC Tenant Resolution
+
+gRPC methods resolve the caller's tenant using these rules (in order):
+
+1. **Scoped key** (auth context has tenant): request `org_id` must match auth tenant, or `PermissionDenied` is returned. Empty `org_id` defaults to auth tenant.
+2. **Cross-tenant key** (`AllowCrossTenant=true`): any `org_id` is accepted.
+3. **Unscoped key** (auth context has no tenant): `org_id` must be empty or match the server default tenant. Arbitrary tenant selection returns `PermissionDenied`.
+4. **No auth context**: falls back to server default tenant.
+
+SDK/CLI callers using unscoped API keys should omit `org_id` or set it to the server default. Scoped keys should match the configured tenant.
+
 ## Base URL and Servers
 
 - Gateway HTTP (default): `http://localhost:8081`
@@ -797,7 +808,7 @@ The `timers` array is omitted when no active delay timers exist for the run. Tim
 
 ### POST `/api/v1/workflow-runs/{id}/chat`
 
-- Auth: required + tenant access
+- Auth: **admin** or **operator** role required + tenant access
 - Request:
 
 ```json
@@ -812,22 +823,12 @@ The `timers` array is omitted when no active delay timers exist for the run. Tim
 }
 ```
 
+- **Role field rules:**
+  - Allowed values: `user`, `agent`, `assistant` (alias for agent), `system`. Unrecognized values return `400`.
+  - Omitting `role` defaults to `user`.
+  - Only **admin** callers may set `role` to `agent` or `system`. Operator callers are forced to `user`.
 - Response: created chat message (same shape as `items[]`)
 - Errors: `400`, `403`, `404`, `500`, `503`
-
-### Workflow approvals
-
-### POST `/api/v1/workflows/{id}/runs/{run_id}/steps/{step_id}/approve`
-
-- Auth: required + admin + tenant access
-- Body:
-
-```json
-{ "approved": true }
-```
-
-- Response: `204`
-- Errors: `400`, `403`, `409`, `503`
 
 ### POST `/api/v1/workflows/{id}/runs/{run_id}/cancel`
 
@@ -1173,17 +1174,20 @@ curl -sS -X POST http://localhost:8081/api/v1/policy/evaluate \
 
 ### GET `/api/v1/config`
 
-- Auth: required (admin for system scope)
+- Auth: required (admin for `system` scope; admin or operator for all other scopes)
 - Query: `scope`, `scope_id`, `envelope=true|false`
+- Valid scopes: `system`, `org`, `team`, `workflow`, `step`. Unknown scope values return `400`.
 - Response:
   - default: flat `data` object
   - with `envelope=true`: full config document (`scope`, `scope_id`, `data`, `meta`)
+- Errors: `400` (invalid scope), `403` (insufficient role or tenant mismatch)
 
 ### GET `/api/v1/config/effective`
 
-- Auth: required
+- Auth: required + admin or operator
 - Query: `org_id`, `team_id`, `workflow_id`, `step_id`
 - Response: merged effective config snapshot
+- Errors: `403` (viewer role denied)
 
 ### POST `/api/v1/config`
 
@@ -1500,13 +1504,10 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
 ```
 
 - Notes:
-  - `nats.url` is only included for admin callers.
-  - `redis.error` is only included for admin callers when Redis health check fails.
+  - **Admin-only fields**: The following fields are only included when the caller has the `admin` role: `nats.url`, `redis.error`, `instance_id`, `rate_limiter`, `circuit_breakers`, `input_fail_open_total`, `ha_env`, `snapshot_meta`, `replicas`. Non-admin callers receive a reduced response with only `time`, `uptime_seconds`, `build`, `nats` (connected/status only), `redis` (ok only), `workers`, `pipeline`, and `license`.
   - `license` is optional and only present when auth provider exposes license info.
-  - `instance_id` identifies the specific gateway replica that served this request.
-  - `rate_limiter.mode` is `"redis"` when using distributed rate limiting, `"memory"` when per-replica.
   - `circuit_breakers` shows input (pre-dispatch safety) and output (post-execution safety) circuit breaker state. Possible states: `CLOSED` (healthy), `OPEN` (failures exceeded threshold), `UNKNOWN` (Redis unavailable).
-  - `replicas` is a map of service name to array of registered instance info. Only present when the instance registry is active (HA mode with Redis). Each entry includes TTL information for liveness monitoring.
+  - `replicas` is a map of service name to array of registered instance info. Only present when the instance registry is active (HA mode with Redis).
 - Errors: auth/tenant middleware errors (`401`, `403`).
 
 ### GET `/api/v1/workers`
@@ -1554,6 +1555,7 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 - Auth: required + admin
 - Query: `ptr` or `key`
 - Supports `ctx:*`, `res:*`, and `mem:*` keys
+- Tenant isolation: all key prefixes enforce tenant checks. `ctx:`/`res:` keys check the job's tenant. `mem:run:{id}:*` keys check the workflow run's org. `mem:{id}:*` keys attempt job tenant lookup. Cross-tenant reads return `403`.
 - Response includes pointer/key metadata and payload views (`base64`, and optional parsed `json`)
 
 ### POST `/api/v1/artifacts`
@@ -1790,7 +1792,6 @@ The following routes are registered in gateway route setup.
 | GET | `/api/v1/dlq/page` |
 | DELETE | `/api/v1/dlq/{job_id}` |
 | POST | `/api/v1/dlq/{job_id}/retry` |
-| POST | `/api/v1/workflows/{id}/runs/{run_id}/steps/{step_id}/approve` |
 | POST | `/api/v1/workflows/{id}/runs/{run_id}/cancel` |
 | GET | `/api/v1/approvals` |
 | POST | `/api/v1/approvals/{job_id}/approve` |

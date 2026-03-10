@@ -39,7 +39,7 @@ export function DataFreshness({
     <button
       type="button"
       className={cn(
-        "inline-flex items-center gap-1.5 text-xs text-muted hover:text-accent transition-colors",
+        "inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-accent transition-colors",
         className,
       )}
       onClick={onRefresh}

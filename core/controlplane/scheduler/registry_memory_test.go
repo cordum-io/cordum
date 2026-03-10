@@ -140,9 +140,15 @@ func TestMemoryRegistry_StatsExcludesExpired(t *testing.T) {
 
 	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-stale", Pool: "A"})
 
-	// Wait for TTL to expire
-	time.Sleep(30 * time.Millisecond)
-
+	// Poll until TTL expires and worker is removed.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		total, _ := r.Stats()
+		if total == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	total, byPool := r.Stats()
 	if total != 0 {
 		t.Fatalf("expected 0 total workers after expiry, got %d", total)

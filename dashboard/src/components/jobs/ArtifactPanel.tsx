@@ -148,8 +148,8 @@ function JsonNode({
   if (value === null || value === undefined) {
     return (
       <div className="text-xs">
-        {name ? <span className="text-muted">{name}: </span> : null}
-        <span className="text-muted">null</span>
+        {name ? <span className="text-muted-foreground">{name}: </span> : null}
+        <span className="text-muted-foreground">null</span>
       </div>
     );
   }
@@ -157,7 +157,7 @@ function JsonNode({
   if (typeof value !== "object") {
     return (
       <div className="text-xs">
-        {name ? <span className="text-muted">{name}: </span> : null}
+        {name ? <span className="text-muted-foreground">{name}: </span> : null}
         <span className="text-ink">{String(value)}</span>
       </div>
     );
@@ -166,7 +166,7 @@ function JsonNode({
   if (Array.isArray(value)) {
     return (
       <details open={depth < 1} className="text-xs">
-        <summary className="cursor-pointer text-muted">
+        <summary className="cursor-pointer text-muted-foreground">
           {name ? `${name}: ` : ""}[{value.length}]
         </summary>
         <div className="ml-4 mt-1 space-y-1 border-l border-border/50 pl-2">
@@ -181,7 +181,7 @@ function JsonNode({
   const entries = Object.entries(value as Record<string, unknown>);
   return (
     <details open={depth < 1} className="text-xs">
-      <summary className="cursor-pointer text-muted">
+      <summary className="cursor-pointer text-muted-foreground">
         {name ? `${name}: ` : ""}
         {`{${entries.length} keys}`}
       </summary>
@@ -237,7 +237,7 @@ function ArtifactViewer({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Badge variant={artifactTypeVariant(contentType)}>{contentType || "application/octet-stream"}</Badge>
-          <span className="text-xs text-muted">{formatBytes(sizeBytes ?? decodedBytes.byteLength)}</span>
+          <span className="text-xs text-muted-foreground">{formatBytes(sizeBytes ?? decodedBytes.byteLength)}</span>
         </div>
         <Button
           type="button"
@@ -251,7 +251,7 @@ function ArtifactViewer({
       </div>
 
       {imageDataUrl && (
-        <div className="overflow-hidden rounded-xl border border-border/60 bg-white">
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
           <img
             src={imageDataUrl}
             alt={ptr}
@@ -296,7 +296,7 @@ function ArtifactViewer({
             <PackageOpen className="h-4 w-4" />
             Binary Artifact
           </div>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             This artifact cannot be rendered inline. Use download to inspect the raw bytes.
           </p>
         </div>
@@ -352,7 +352,7 @@ export function ArtifactPanel({ jobId }: ArtifactPanelProps) {
             <AlertTriangle className="h-4 w-4" />
             <span className="text-sm font-semibold">Failed to load artifacts</span>
           </div>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             {error instanceof Error ? error.message : "Unknown error"}
           </p>
           <Button
@@ -372,7 +372,7 @@ export function ArtifactPanel({ jobId }: ArtifactPanelProps) {
 
       {!isLoading && !isError && artifactRows.length === 0 && (
         <EmptyState
-          icon={PackageOpen}
+          icon={<PackageOpen className="h-10 w-10" />}
           title="No artifacts produced"
           description="This job does not expose artifact pointers yet."
         />
@@ -382,7 +382,7 @@ export function ArtifactPanel({ jobId }: ArtifactPanelProps) {
         <div className="space-y-4">
           <div className="overflow-x-auto rounded-2xl border border-border/60">
             <table className="min-w-full text-sm">
-              <thead className="bg-surface2/35 text-left text-xs uppercase tracking-wider text-muted">
+              <thead className="bg-surface2/35 text-left text-xs uppercase tracking-wider text-muted-foreground">
                 <tr>
                   <th className="px-4 py-2 font-semibold">Pointer</th>
                   <th className="px-4 py-2 font-semibold">Type</th>
@@ -408,8 +408,8 @@ export function ArtifactPanel({ jobId }: ArtifactPanelProps) {
                       <td className="px-4 py-2 text-xs">
                         <Badge variant={artifactTypeVariant(contentType)}>{contentType}</Badge>
                       </td>
-                      <td className="px-4 py-2 text-xs text-muted">{formatBytes(artifact.sizeBytes)}</td>
-                      <td className="px-4 py-2 text-xs text-muted">{formatTimestamp(artifact.timestamp)}</td>
+                      <td className="px-4 py-2 text-xs text-muted-foreground">{formatBytes(artifact.sizeBytes)}</td>
+                      <td className="px-4 py-2 text-xs text-muted-foreground">{formatTimestamp(artifact.timestamp)}</td>
                     </tr>
                   );
                 })}
@@ -418,8 +418,8 @@ export function ArtifactPanel({ jobId }: ArtifactPanelProps) {
           </div>
 
           {selectedRef && (
-            <div className="space-y-2 rounded-2xl border border-border/60 bg-white/30 p-4">
-              <div className="flex items-center gap-2 text-xs text-muted">
+            <div className="space-y-2 rounded-2xl border border-border/60 bg-card/30 p-4">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {selectedRef.contentType?.includes("json") ? (
                   <FileJson className="h-3.5 w-3.5" />
                 ) : selectedRef.contentType?.startsWith("image/") ? (
@@ -435,7 +435,7 @@ export function ArtifactPanel({ jobId }: ArtifactPanelProps) {
               </div>
 
               {isLoadingArtifact && (
-                <div className="flex items-center gap-2 py-5 text-sm text-muted">
+                <div className="flex items-center gap-2 py-5 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Loading artifact content...
                 </div>
@@ -444,7 +444,7 @@ export function ArtifactPanel({ jobId }: ArtifactPanelProps) {
               {isArtifactError && (
                 <div className="rounded-xl border border-danger/40 bg-danger/5 p-4">
                   <p className="text-sm font-semibold text-danger">Failed to load artifact content.</p>
-                  <p className="mt-1 text-xs text-muted">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     {artifactError instanceof Error ? artifactError.message : "Unknown error"}
                   </p>
                   <Button

@@ -31,11 +31,17 @@ func (s *server) stopBusTaps() {
 	})
 }
 
+// wsRevalidateInterval controls how often long-lived WebSocket connections
+// re-check the caller's API key. If the key has been revoked or rotated the
+// connection is closed within this window.
+const wsRevalidateInterval = 60 * time.Second
+
 type wsClient struct {
 	ch               chan wsEvent
 	tenant           string
 	allowCrossTenant bool
 	jobID            string
+	apiKey           string // stored for periodic revalidation, never logged
 	closeOnce        sync.Once
 }
 
@@ -55,12 +61,21 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return isAllowedOrigin(r) },
 }
 
-// negotiateSubprotocol builds a response header that echoes back the client's
-// cordum-api-key subprotocol so browsers accept the upgrade handshake.
+// negotiateSubprotocol builds a response header that echoes back only the
+// "cordum-api-key" subprotocol identifier — never the credential itself.
+// Previous versions echoed the full dot-format token (cordum-api-key.<base64>),
+// which leaked the API key in response headers visible to proxies and DevTools.
 func negotiateSubprotocol(r *http.Request) http.Header {
 	for _, p := range websocket.Subprotocols(r) {
-		if strings.HasPrefix(strings.ToLower(p), strings.ToLower(wsAuthSubprotocol)) {
-			return http.Header{"Sec-Websocket-Protocol": {p}}
+		if strings.EqualFold(p, wsAuthSubprotocol) {
+			// Comma-separated format: ["cordum-api-key", "<base64>"]
+			// Echo back the bare identifier only.
+			return http.Header{"Sec-Websocket-Protocol": {wsAuthSubprotocol}}
+		}
+		if strings.HasPrefix(strings.ToLower(p), strings.ToLower(wsAuthSubprotocol)+".") {
+			// Legacy dot format: "cordum-api-key.<base64>"
+			// Still accept for backward compat, but only echo the identifier.
+			return http.Header{"Sec-Websocket-Protocol": {wsAuthSubprotocol}}
 		}
 	}
 	return nil
@@ -193,6 +208,13 @@ func (s *server) startBusTaps() error {
 		subject := subj
 		if err := s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
 			if subject == "sys.job.>" {
+				// Check if gateway is shutting down before starting
+				// potentially long-running workflow result processing.
+				select {
+				case <-s.shutdownCh:
+					return nil
+				default:
+				}
 				handlerCtx, handlerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer handlerCancel()
 				s.handleWorkflowJobResult(handlerCtx, p.GetJobResult())
@@ -369,6 +391,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if authCtx != nil {
 		client.tenant = strings.TrimSpace(authCtx.Tenant)
 		client.allowCrossTenant = authCtx.AllowCrossTenant
+		client.apiKey = authCtx.APIKey
 	}
 	s.clientsMu.Lock()
 	s.clients[ws] = client
@@ -380,6 +403,9 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		client.closeChannel()
 	}()
 
+	revalidate := time.NewTicker(wsRevalidateInterval)
+	defer revalidate.Stop()
+
 	for {
 		select {
 		case msg, ok := <-client.ch:
@@ -389,6 +415,17 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 			_ = ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 			if err := ws.WriteMessage(websocket.TextMessage, msg.data); err != nil {
 				return
+			}
+		case <-revalidate.C:
+			if s.auth != nil && client.apiKey != "" {
+				if err := s.revalidateWSAuth(client.apiKey); err != nil {
+					logging.Info("gateway", "ws credential revoked, closing",
+						"tenant", client.tenant, "remote", r.RemoteAddr)
+					_ = ws.WriteControl(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "credential revoked"),
+						time.Now().Add(2*time.Second))
+					return
+				}
 			}
 		case <-r.Context().Done():
 			return
@@ -431,7 +468,11 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	defer ws.Close()
 	logging.Info("gateway", "job ws connected", "job_id", jobID, "remote", r.RemoteAddr)
 
+	authCtx := authFromRequest(r)
 	client := &wsClient{ch: make(chan wsEvent, 100), tenant: strings.TrimSpace(tenant), jobID: jobID}
+	if authCtx != nil {
+		client.apiKey = authCtx.APIKey
+	}
 	s.clientsMu.Lock()
 	s.clients[ws] = client
 	s.clientsMu.Unlock()
@@ -441,6 +482,9 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 		s.clientsMu.Unlock()
 		client.closeChannel()
 	}()
+
+	revalidate := time.NewTicker(wsRevalidateInterval)
+	defer revalidate.Stop()
 
 	for {
 		select {
@@ -452,8 +496,29 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 			if err := ws.WriteMessage(websocket.TextMessage, msg.data); err != nil {
 				return
 			}
+		case <-revalidate.C:
+			if s.auth != nil && client.apiKey != "" {
+				if err := s.revalidateWSAuth(client.apiKey); err != nil {
+					logging.Info("gateway", "job ws credential revoked, closing",
+						"job_id", jobID, "tenant", client.tenant, "remote", r.RemoteAddr)
+					_ = ws.WriteControl(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "credential revoked"),
+						time.Now().Add(2*time.Second))
+					return
+				}
+			}
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+// revalidateWSAuth builds a synthetic HTTP request carrying the given API key
+// and runs it through the configured auth provider. Returns nil if the key is
+// still valid, or an error if revoked / expired.
+func (s *server) revalidateWSAuth(apiKey string) error {
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/stream", nil)
+	req.Header.Set("X-API-Key", apiKey)
+	_, err := s.auth.AuthenticateHTTP(req)
+	return err
 }

@@ -65,6 +65,9 @@ type Metrics interface {
 	IncJobCancelFailures()
 	IncValidationRejections()
 	IncInputFailOpen(topic string)
+	IncJobLockAbandoned()
+	IncResultPtrWriteFailure()
+	IncDispatchRollback(topic string)
 }
 
 // GatewayMetrics captures request metrics for the API gateway.
@@ -113,6 +116,9 @@ func (Noop) IncSagaUnmarshalError()                            {}
 func (Noop) IncJobCancelFailures()                             {}
 func (Noop) IncValidationRejections()                          {}
 func (Noop) IncInputFailOpen(string)                           {}
+func (Noop) IncJobLockAbandoned()                              {}
+func (Noop) IncResultPtrWriteFailure()                         {}
+func (Noop) IncDispatchRollback(string)                        {}
 
 // Prom implements Metrics backed by Prometheus counters.
 type Prom struct {
@@ -146,6 +152,9 @@ type Prom struct {
 	jobCancelFailures       prometheus.Counter
 	validationRejections    prometheus.Counter
 	inputFailOpen           *prometheus.CounterVec
+	jobLockAbandoned        prometheus.Counter
+	resultPtrWriteFailure   prometheus.Counter
+	dispatchRollback        *prometheus.CounterVec
 	once                    sync.Once
 }
 
@@ -306,6 +315,21 @@ func NewProm(namespace string) *Prom {
 			Name:      "input_fail_open_total",
 			Help:      "Jobs allowed through when safety kernel is unavailable (fail-open mode) per topic",
 		}, []string{"topic"}),
+		jobLockAbandoned: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "scheduler_job_lock_abandoned_total",
+			Help:      "Job locks abandoned after consecutive renewal failures",
+		}),
+		resultPtrWriteFailure: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "scheduler_result_ptr_write_failure_total",
+			Help:      "Result pointer write failures during job result handling",
+		}),
+		dispatchRollback: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "scheduler_dispatch_rollback_total",
+			Help:      "Dispatch rollbacks after NATS publish failure",
+		}, []string{"topic"}),
 	}
 	p.register()
 	return p
@@ -344,6 +368,9 @@ func (p *Prom) register() {
 			p.jobCancelFailures,
 			p.validationRejections,
 			p.inputFailOpen,
+			p.jobLockAbandoned,
+			p.resultPtrWriteFailure,
+			p.dispatchRollback,
 		)
 	})
 }
@@ -480,6 +507,18 @@ func (p *Prom) IncValidationRejections() {
 
 func (p *Prom) IncInputFailOpen(topic string) {
 	p.inputFailOpen.WithLabelValues(topic).Inc()
+}
+
+func (p *Prom) IncJobLockAbandoned() {
+	p.jobLockAbandoned.Inc()
+}
+
+func (p *Prom) IncResultPtrWriteFailure() {
+	p.resultPtrWriteFailure.Inc()
+}
+
+func (p *Prom) IncDispatchRollback(topic string) {
+	p.dispatchRollback.WithLabelValues(topic).Inc()
 }
 
 // Handler returns an HTTP handler for /metrics.

@@ -71,7 +71,7 @@ function TagInput({
 
   return (
     <div>
-      <label className="mb-1 block text-xs font-semibold text-muted">
+      <label className="mb-1 block text-xs font-semibold text-muted-foreground">
         {label}
       </label>
       <div className="flex gap-2">
@@ -145,14 +145,14 @@ function MetadataEditor({
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <label className="text-xs font-semibold text-muted">Metadata</label>
+        <label className="text-xs font-semibold text-muted-foreground">Metadata</label>
         <Button variant="ghost" size="sm" type="button" onClick={addRow}>
           <Plus className="h-3.5 w-3.5" />
           Add
         </Button>
       </div>
       {rows.length === 0 && (
-        <p className="text-xs text-muted">No metadata entries.</p>
+        <p className="text-xs text-muted-foreground">No metadata entries.</p>
       )}
       <div className="space-y-2">
         {rows.map((row, i) => (
@@ -216,13 +216,13 @@ function DenySuggestionCard({
               ) : null}
             </p>
             {result.reason && (
-              <p className="text-xs text-muted">Reason: {result.reason}</p>
+              <p className="text-xs text-muted-foreground">Reason: {result.reason}</p>
             )}
           </div>
         </div>
 
         <div className="rounded-lg border border-border bg-surface2/30 px-3 py-2">
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             <span className="font-semibold text-ink">Suggestion: </span>
             {capsList && (
               <>Consider adding an exception for capabilities <span className="font-mono font-semibold">{capsList}</span></>
@@ -270,7 +270,7 @@ function EvaluationWaterfall({
 }) {
   return (
     <div className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Evaluation Waterfall
       </h3>
 
@@ -282,12 +282,12 @@ function EvaluationWaterfall({
             {whatIfResult.decision}
           </Badge>
           {whatIfResult.reason && (
-            <span className="text-muted">{whatIfResult.reason}</span>
+            <span className="text-muted-foreground">{whatIfResult.reason}</span>
           )}
         </div>
       )}
       {disabledRuleIds.length > 0 && whatIfPending && (
-        <div className="rounded-xl border border-border bg-surface2/30 px-4 py-2 text-xs text-muted">
+        <div className="rounded-xl border border-border bg-surface2/30 px-4 py-2 text-xs text-muted-foreground">
           Re-simulating without disabled rules...
         </div>
       )}
@@ -317,10 +317,10 @@ function EvaluationWaterfall({
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] text-muted">
+                <span className="font-mono text-[10px] text-muted-foreground">
                   #{i + 1}
                 </span>
-                <span className={cn("text-sm font-medium", isDisabled ? "text-muted line-through" : "text-ink")}>
+                <span className={cn("text-sm font-medium", isDisabled ? "text-muted-foreground line-through" : "text-ink")}>
                   {rule.ruleId}
                 </span>
               </div>
@@ -332,7 +332,7 @@ function EvaluationWaterfall({
                   title={isDisabled ? "Re-enable rule" : "What-if: disable this rule"}
                   className={cn(
                     "rounded-full p-1 transition hover:bg-surface2",
-                    isDisabled ? "text-accent" : "text-muted",
+                    isDisabled ? "text-accent" : "text-muted-foreground",
                   )}
                 >
                   {isDisabled ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
@@ -349,7 +349,7 @@ function EvaluationWaterfall({
               </div>
             </div>
             {rule.matched && rule.reason && (
-              <p className="mt-1 text-xs text-muted">{rule.reason}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{rule.reason}</p>
             )}
           </div>
         );
@@ -380,7 +380,7 @@ function ResultSummary({
             {result.decision}
           </Badge>
         </div>
-        <div className="flex items-center gap-4 text-xs text-muted">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span>
             Matched rule: {result.matchedRule || "\u2014"}
           </span>
@@ -433,7 +433,7 @@ export function PolicySimulator({ bundleId, mode = "simulate", initialCapabiliti
   // What-if state
   const [disabledRuleIds, setDisabledRuleIds] = useState<string[]>([]);
   const whatIfSimulate = useSimulatePolicy();
-  const whatIfDebounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const whatIfDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Highlight state (for scroll-to-rule)
   const [highlightRuleId, setHighlightRuleId] = useState<string | null>(null);
@@ -572,14 +572,14 @@ export function PolicySimulator({ bundleId, mode = "simulate", initialCapabiliti
           <h3 className="font-display text-lg font-semibold text-ink">
             {mode === "explain" ? "Explain Policy Decision" : "Simulate Policy Evaluation"}
           </h3>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             {mode === "explain"
               ? "Shows the full decision reasoning chain \u2014 which rules were evaluated, in what order, and why each passed or failed."
               : "Test how a job with the given attributes would be evaluated."}
           </p>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Topic
             </label>
             <Input
@@ -590,7 +590,7 @@ export function PolicySimulator({ bundleId, mode = "simulate", initialCapabiliti
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Capability
             </label>
             <Input

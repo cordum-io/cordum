@@ -157,13 +157,6 @@ for _, ev := range events {
 }
 ```
 
-#### Approve a Workflow Step
-
-```go
-err := c.ApproveStep(ctx, workflowID, runID, stepID, true)  // approve
-err := c.ApproveStep(ctx, workflowID, runID, stepID, false) // reject
-```
-
 #### Delete Workflow / Run
 
 ```go

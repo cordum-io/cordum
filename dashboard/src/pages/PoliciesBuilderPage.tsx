@@ -16,7 +16,7 @@ export default function PoliciesBuilderPage() {
 
   if (!bundleId) {
     return (
-      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
+      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
         No policy bundles found. Create one to get started.
       </div>
     );
@@ -32,10 +32,10 @@ export default function PoliciesBuilderPage() {
             type="button"
             onClick={() => setTab(t)}
             className={cn(
-              "rounded-lg px-4 py-1.5 text-xs font-semibold transition",
+              "rounded-2xl px-4 py-1.5 text-xs font-semibold transition",
               tab === t
                 ? "bg-surface1 text-ink shadow-sm"
-                : "text-muted hover:text-ink",
+                : "text-muted-foreground hover:text-ink",
             )}
           >
             {t === "visual" ? "Visual" : "YAML"}

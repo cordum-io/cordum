@@ -78,7 +78,7 @@ export function JobActions({ job }: JobActionsProps) {
 
   const handleRetry = useCallback(() => {
     logger.info("job-actions", "Retry clicked", { jobId: job.id });
-    retryMutation.mutate(job.id, {
+    retryMutation.mutate({ id: job.id, topic: job.topic || "" }, {
       onSuccess: () => {
         setFeedback({ type: "success", message: "Job resubmitted for retry." });
         close();

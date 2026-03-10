@@ -121,10 +121,10 @@ function RuleSummary({ rule, highlight }: { rule: PolicyRule; highlight?: string
       )}
     >
       <div className="flex items-center justify-between">
-        <span className="font-mono text-muted">{rule.id.slice(0, 10)}</span>
-        <Badge variant={decisionVariant[rule.decisionType] ?? "default"}>{rule.decisionType}</Badge>
+        <span className="font-mono text-muted-foreground">{rule.id.slice(0, 10)}</span>
+        <Badge variant={decisionVariant[rule.decisionType ?? ""] ?? "default"}>{rule.decisionType}</Badge>
       </div>
-      {rule.reason && <p className="mt-1 text-muted italic">{rule.reason}</p>}
+      {rule.reason && <p className="mt-1 text-muted-foreground italic">{rule.reason}</p>}
       {(capabilities.length > 0 || riskTags.length > 0) && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {capabilities.map((c) => (
@@ -155,7 +155,7 @@ function ExpandedDiff({ snapshotId, prevSnapshotId }: { snapshotId: string; prev
 
   if (loadingA || loadingB) {
     return (
-      <div className="flex items-center gap-2 py-6 text-xs text-muted">
+      <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
         <Loader className="h-3.5 w-3.5 animate-spin" />
         Loading diff...
       </div>
@@ -181,7 +181,7 @@ function ExpandedDiff({ snapshotId, prevSnapshotId }: { snapshotId: string; prev
         {added > 0 && <span className="font-semibold text-success">+{added} added</span>}
         {removed > 0 && <span className="font-semibold text-danger">-{removed} removed</span>}
         {changed > 0 && <span className="font-semibold text-warning">{changed} changed</span>}
-        {unchanged > 0 && <span className="text-muted">{unchanged} unchanged</span>}
+        {unchanged > 0 && <span className="text-muted-foreground">{unchanged} unchanged</span>}
       </div>
       <div className="space-y-2">
         {diffs.map((diff, i) => {
@@ -195,7 +195,7 @@ function ExpandedDiff({ snapshotId, prevSnapshotId }: { snapshotId: string; prev
                     highlight={diff.kind === "removed" ? "red" : diff.kind === "changed" ? "yellow" : undefined}
                   />
                 ) : (
-                  <div className="rounded-xl border border-dashed border-success/40 bg-success/5 px-3 py-4 text-center text-[10px] text-muted">
+                  <div className="rounded-xl border border-dashed border-success/40 bg-success/5 px-3 py-4 text-center text-[10px] text-muted-foreground">
                     Not present in previous
                   </div>
                 )}
@@ -207,7 +207,7 @@ function ExpandedDiff({ snapshotId, prevSnapshotId }: { snapshotId: string; prev
                     highlight={diff.kind === "added" ? "green" : diff.kind === "changed" ? "yellow" : undefined}
                   />
                 ) : (
-                  <div className="rounded-xl border border-dashed border-danger/40 bg-danger/5 px-3 py-4 text-center text-[10px] text-muted">
+                  <div className="rounded-xl border border-dashed border-danger/40 bg-danger/5 px-3 py-4 text-center text-[10px] text-muted-foreground">
                     Not present in this version
                   </div>
                 )}
@@ -244,14 +244,14 @@ function RollbackDialog({
           <h3 className="font-display text-lg font-semibold text-ink">
             Rollback to v{snapshot.version ?? "?"}
           </h3>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             This will replace the current active policy with the snapshot from{" "}
             <strong>{timeAgo(snapshot.createdAt)}</strong>
             {snapshot.createdBy && <> by {snapshot.createdBy}</>}.
             A new snapshot will be created for safety.
           </p>
           <div>
-            <label htmlFor="rollback-note" className="mb-1 block text-xs font-semibold text-muted">
+            <label htmlFor="rollback-note" className="mb-1 block text-xs font-semibold text-muted-foreground">
               Reason (optional)
             </label>
             <Textarea
@@ -299,11 +299,11 @@ function CaptureSnapshotDialog({
           <h3 className="font-display text-lg font-semibold text-ink">
             Capture Snapshot
           </h3>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             Saves the current state of all policy bundles. Useful before making changes.
           </p>
           <div>
-            <label htmlFor="capture-name" className="mb-1 block text-xs font-semibold text-muted">
+            <label htmlFor="capture-name" className="mb-1 block text-xs font-semibold text-muted-foreground">
               Name (optional)
             </label>
             <Input
@@ -314,7 +314,7 @@ function CaptureSnapshotDialog({
             />
           </div>
           <div>
-            <label htmlFor="capture-note" className="mb-1 block text-xs font-semibold text-muted">
+            <label htmlFor="capture-note" className="mb-1 block text-xs font-semibold text-muted-foreground">
               Note (optional)
             </label>
             <Textarea
@@ -469,7 +469,7 @@ export default function PoliciesHistoryPage() {
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <Filter className="h-4 w-4 text-muted" />
+        <Filter className="h-4 w-4 text-muted-foreground" />
 
         {/* Date range pills */}
         <div className="flex rounded-full border border-border">
@@ -482,7 +482,7 @@ export default function PoliciesHistoryPage() {
                 "px-3 py-1 text-xs font-semibold transition first:rounded-l-full last:rounded-r-full",
                 dateRange === range
                   ? "bg-accent/15 text-accent"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
               )}
             >
               {range === "all" ? "All time" : `Last ${range}`}
@@ -508,14 +508,14 @@ export default function PoliciesHistoryPage() {
           <button
             type="button"
             onClick={() => { setDateRange("all"); setAuthorFilter(""); }}
-            className="flex items-center gap-1 text-xs text-muted hover:text-ink"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-ink"
           >
             <X className="h-3 w-3" />
             Reset
           </button>
         )}
 
-        <span className="ml-auto text-xs text-muted">
+        <span className="ml-auto text-xs text-muted-foreground">
           Showing {filtered.length} of {snapshots.length} snapshots
         </span>
         <Button
@@ -541,12 +541,12 @@ export default function PoliciesHistoryPage() {
 
       {/* Snapshot list */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-16 text-sm text-muted">
+        <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
           <Loader className="mr-2 h-4 w-4 animate-spin" />
           Loading snapshots...
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
+        <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
           {snapshots.length === 0
             ? "No snapshots yet. Publish a policy to create the first snapshot."
             : "No snapshots match the current filters."}
@@ -573,10 +573,10 @@ export default function PoliciesHistoryPage() {
                       {timeAgo(snap.createdAt)}
                     </span>
                     {snap.createdBy && (
-                      <span className="ml-2 text-xs text-muted">by {snap.createdBy}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">by {snap.createdBy}</span>
                     )}
                     {snap.note && (
-                      <span className="ml-2 text-xs italic text-muted">{snap.note}</span>
+                      <span className="ml-2 text-xs italic text-muted-foreground">{snap.note}</span>
                     )}
                   </div>
 
@@ -614,7 +614,7 @@ export default function PoliciesHistoryPage() {
                     {prevSnap ? (
                       <ExpandedDiff snapshotId={snap.id} prevSnapshotId={prevSnap.id} />
                     ) : (
-                      <p className="text-xs text-muted">
+                      <p className="text-xs text-muted-foreground">
                         This is the earliest snapshot — no previous version to compare against.
                       </p>
                     )}

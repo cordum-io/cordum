@@ -91,17 +91,15 @@ describe("useWorkers hooks", () => {
   it("useWorker finds worker by id and errors when missing", async () => {
     mockFetch([
       {
-        match: "/workers",
+        match: "/workers/w2",
         method: "GET",
-        body: [
-          {
-            worker_id: "w2",
-            pool: "default",
-            capabilities: ["cap.b"],
-            active_jobs: 0,
-            max_parallel_jobs: 2,
-          },
-        ],
+        body: {
+          worker_id: "w2",
+          pool: "default",
+          capabilities: ["cap.b"],
+          active_jobs: 0,
+          max_parallel_jobs: 2,
+        },
       },
     ]);
 
@@ -114,14 +112,9 @@ describe("useWorkers hooks", () => {
 
     mockFetch([
       {
-        match: "/workers",
+        match: "/workers/missing",
         method: "GET",
-        body: [
-          {
-            worker_id: "other",
-            pool: "default",
-          },
-        ],
+        body: null,
       },
     ]);
 
@@ -133,10 +126,10 @@ describe("useWorkers hooks", () => {
     missing.unmount();
   });
 
-  it("useWorkerJobs fetches /jobs?limit=20 and maps job records", async () => {
+  it("useWorkerJobs fetches /workers/:id/jobs?limit=20 and returns items", async () => {
     mockFetch([
       {
-        match: "/jobs?limit=20",
+        match: "/workers/w1/jobs?limit=20",
         method: "GET",
         body: {
           items: [
@@ -156,7 +149,7 @@ describe("useWorkers hooks", () => {
       expect(hook.result.current?.isSuccess).toBe(true);
     });
 
-    expect(hook.result.current?.data?.[0]).toMatchObject({ id: "j1", status: "running" });
+    expect(hook.result.current?.data?.[0]).toMatchObject({ id: "j1", state: "RUNNING" });
     hook.unmount();
   });
 
@@ -171,6 +164,7 @@ describe("useWorkers hooks", () => {
     window.dispatchEvent(new CustomEvent("cordum:event", { detail: { type: "worker.heartbeat" } }));
     await hook.waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["workers"] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["pools"] });
     });
 
     hook.unmount();

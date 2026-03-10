@@ -1,171 +1,171 @@
-import { useState, useMemo, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, Loader, Workflow } from "lucide-react";
-import { useWorkflows, useStartRun } from "../hooks/useWorkflows";
-import { ActiveRunsStrip } from "../components/workflows/ActiveRunsStrip";
-import { WorkflowTemplateCard } from "../components/workflows/WorkflowTemplateCard";
-import { Button } from "../components/ui/Button";
-import { Card } from "../components/ui/Card";
-import { Input } from "../components/ui/Input";
-import { EmptyState } from "../components/ui/EmptyState";
-import { DataFreshness } from "../components/ui/DataFreshness";
-import { usePageTitle } from "../hooks/usePageTitle";
+/*
+ * DESIGN: "Control Surface" — Workflows
+ * Matches cordumds-gj5mw4zm.manus.space showcase patterns
+ */
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
+import { get } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonTable } from "@/components/ui/Skeleton";
+import { Search, Plus, Workflow, RefreshCw, Eye, GitBranch } from "lucide-react";
+import { formatRelativeTime, clickableRowProps } from "@/lib/utils";
 
-// ---------------------------------------------------------------------------
-// Skeleton cards
-// ---------------------------------------------------------------------------
-
-function SkeletonCards({ count = 6 }: { count?: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <Card key={i} className="animate-pulse">
-          <div className="space-y-3">
-            <div className="h-5 w-2/3 rounded bg-surface2" />
-            <div className="flex gap-4">
-              <div className="h-4 w-16 rounded bg-surface2" />
-              <div className="h-4 w-20 rounded bg-surface2" />
-              <div className="h-4 w-14 rounded bg-surface2" />
-            </div>
-            <div className="h-4 w-1/2 rounded bg-surface2" />
-          </div>
-        </Card>
-      ))}
-    </>
-  );
+interface WorkflowSummary {
+  id: string;
+  name: string;
+  description?: string;
+  version?: number;
+  status?: string;
+  stepCount?: number;
+  lastRunAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-// ---------------------------------------------------------------------------
-// WorkflowsPage
-// ---------------------------------------------------------------------------
-
 export default function WorkflowsPage() {
-  usePageTitle("Workflows");
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const { data: workflows, isLoading, isError, dataUpdatedAt, refetch, isRefetching } = useWorkflows();
-  const startRun = useStartRun();
+  const [search, setSearch] = useState("");
 
-  // URL-persisted search
-  const urlSearch = searchParams.get("q") ?? "";
-  const [searchInput, setSearchInput] = useState(urlSearch);
+  const { data: workflows, isLoading, refetch } = useQuery({
+    queryKey: ["workflows"],
+    queryFn: async () => {
+      const res = await get<WorkflowSummary[] | { items: WorkflowSummary[] }>("/workflows?limit=200");
+      // Backend may return a bare array or { items: [...] }
+      const items = Array.isArray(res) ? res : (res.items ?? []);
+      return items.map((w) => {
+        const raw = w as unknown as Record<string, unknown>;
+        const steps = raw.steps as Record<string, unknown> | undefined;
+        return {
+          ...w,
+          stepCount: w.stepCount ?? (steps ? Object.keys(steps).length : undefined),
+          lastRunAt: w.lastRunAt ?? raw.last_run_at as string | undefined,
+          createdAt: w.createdAt ?? raw.created_at as string | undefined,
+          updatedAt: w.updatedAt ?? raw.updated_at as string | undefined,
+        };
+      });
+    },
+    refetchInterval: 30_000,
+  });
 
-  // Debounce write-back to URL (300ms)
-  useEffect(() => {
-    const id = setTimeout(() => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (searchInput.trim()) next.set("q", searchInput.trim());
-        else next.delete("q");
-        return next;
-      }, { replace: true });
-    }, 300);
-    return () => clearTimeout(id);
-  }, [searchInput, setSearchParams]);
-
-  const filtered = useMemo(() => {
-    if (!workflows) return [];
-    if (!urlSearch.trim()) return workflows;
-    const q = urlSearch.toLowerCase();
-    return workflows.filter((wf) => wf.name.toLowerCase().includes(q));
-  }, [workflows, urlSearch]);
-
-  const handleRunNow = (workflowId: string) => {
-    startRun.mutate({ workflowId });
-  };
+  const all = workflows ?? [];
+  const filtered = all.filter((w) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return w.name.toLowerCase().includes(q) || w.id.toLowerCase().includes(q) || (w.description ?? "").toLowerCase().includes(q);
+  });
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="font-display text-2xl font-bold text-ink">Workflows</h1>
-          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
-        </div>
-        <Button onClick={() => navigate("/workflows/new")}>
-          <Plus className="h-4 w-4" />
-          Create Workflow
-        </Button>
+      <PageHeader
+        label="Core"
+        title="Workflows"
+        subtitle={`${all.length} workflow${all.length !== 1 ? "s" : ""} defined`}
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="w-3 h-3 mr-1" />
+              Refresh
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => navigate("/workflows/new")}>
+              <Plus className="w-3 h-3 mr-1" />
+              New Workflow
+            </Button>
+          </div>
+        }
+      />
+
+      {/* Search — showcase style */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search workflows..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+        />
       </div>
 
-      {/* Active Runs Strip */}
-      <ActiveRunsStrip />
-
-      {/* Templates Section */}
-      <section>
-        <div className="mb-4 flex items-center gap-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
-            Templates
-          </h2>
-          <div className="relative max-w-xs flex-1">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-            <Input
-              placeholder="Search workflows..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="pl-8 text-sm"
-            />
-          </div>
+      {/* Workflows Table — showcase style */}
+      {isLoading ? (
+        <div className="instrument-card">
+          <SkeletonTable rows={6} />
         </div>
-
-        {isLoading && (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <SkeletonCards />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<Workflow className="w-5 h-5" />}
+          title="No workflows found"
+          description={search ? "Try adjusting your search" : "Create your first workflow to orchestrate agent tasks"}
+          action={
+            <Button variant="primary" size="sm" onClick={() => navigate("/workflows/new")}>
+              <Plus className="w-3 h-3 mr-1" />
+              New Workflow
+            </Button>
+          }
+        />
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="instrument-card overflow-hidden"
+        >
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[700px]">
+            <thead>
+              <tr className="border-b border-border bg-surface-0">
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Name</th>
+                <th className="text-center px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Version</th>
+                <th className="text-center px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Steps</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+                <th className="text-right px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Run</th>
+                <th className="px-5 py-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((w) => (
+                <tr
+                  key={w.id}
+                  {...clickableRowProps(() => navigate(`/workflows/${w.id}`))}
+                  className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
+                >
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-2xl bg-cordum/10 border border-cordum/20 flex items-center justify-center shrink-0">
+                        <GitBranch className="w-4 h-4 text-cordum" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{w.name}</p>
+                        {w.description && <p className="text-xs text-muted-foreground truncate max-w-[300px]">{w.description}</p>}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">v{w.version ?? 1}</td>
+                  <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">{w.stepCount ?? "—"}</td>
+                  <td className="px-5 py-3">
+                    <StatusBadge variant={w.status === "active" ? "healthy" : w.status === "draft" ? "muted" : "warning"}>
+                      {w.status ?? "active"}
+                    </StatusBadge>
+                  </td>
+                  <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">
+                    {w.lastRunAt ? formatRelativeTime(w.lastRunAt) : "Never"}
+                  </td>
+                  <td className="px-5 py-3">
+                    <button className="p-1 rounded hover:bg-surface-2 transition-colors" aria-label="View details">
+                      <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           </div>
-        )}
-
-        {isError && (
-          <Card>
-            <p className="py-8 text-center text-muted">
-              Failed to load workflows. Please try again.
-            </p>
-          </Card>
-        )}
-
-        {!isLoading && !isError && filtered.length > 0 && (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((wf) => (
-              <WorkflowTemplateCard
-                key={wf.id}
-                workflow={wf}
-                onRunNow={handleRunNow}
-              />
-            ))}
-          </div>
-        )}
-
-        {!isLoading && !isError && workflows && workflows.length > 0 && filtered.length === 0 && (
-          <Card>
-            <EmptyState
-              icon={Workflow}
-              title={`No workflows matching "${urlSearch}"`}
-              description="Try a different search term."
-            />
-          </Card>
-        )}
-
-        {!isLoading && !isError && (!workflows || workflows.length === 0) && (
-          <Card>
-            <EmptyState
-              icon={Workflow}
-              title="No workflows yet"
-              description="Create your first workflow to automate agent orchestration."
-              action={
-                <Button variant="outline" onClick={() => navigate("/workflows/new")}>
-                  Create your first workflow
-                </Button>
-              }
-            />
-          </Card>
-        )}
-      </section>
-
-      {/* Loading indicator for Run Now */}
-      {startRun.isPending && (
-        <div className="fixed bottom-4 right-4 flex items-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-lg">
-          <Loader className="h-4 w-4 animate-spin" />
-          Starting run...
-        </div>
+        </motion.div>
       )}
     </div>
   );

@@ -132,7 +132,7 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if total == 0 {
 		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w,chatResponse{Items: []chatMessage{}})
+		writeJSON(w, chatResponse{Items: []chatMessage{}})
 		return
 	}
 
@@ -184,10 +184,14 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 		nc := start - 1
 		nextCursor = &nc
 	}
-	writeJSON(w,chatResponse{Items: messages, NextCursor: nextCursor})
+	writeJSON(w, chatResponse{Items: messages, NextCursor: nextCursor})
 }
 
 func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin", "operator"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
 	if s.workflowStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
@@ -237,7 +241,18 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 
 	role := normalizeChatRole(body.Role)
 	if role == "" {
+		if strings.TrimSpace(body.Role) != "" {
+			writeErrorJSON(w, http.StatusBadRequest, "invalid role: must be user, agent, or system")
+			return
+		}
 		role = "user"
+	}
+	// Defense-in-depth: only admins may post as agent/system.
+	// Operators are forced to "user" to prevent impersonation.
+	if role != "user" {
+		if ac := authFromRequest(r); ac == nil || ac.Role != "admin" {
+			role = "user"
+		}
 	}
 
 	ev := chatEvent{
@@ -272,7 +287,7 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w,msg)
+	writeJSON(w, msg)
 }
 
 func (s *server) emitChatEvent(run *wf.WorkflowRun, msg chatMessage) {

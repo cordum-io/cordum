@@ -220,7 +220,7 @@ redis:
     type: ClusterIP
     port: 6379
   persistence:
-    enabled: false
+    enabled: true
     size: 1Gi
     storageClassName: ""
   resources:

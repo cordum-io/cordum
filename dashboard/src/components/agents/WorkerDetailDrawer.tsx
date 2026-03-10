@@ -122,7 +122,7 @@ export function WorkerDetailDrawer({
         )}
 
         {!isLoading && !worker && (
-          <p className="text-sm text-muted">Worker not found.</p>
+          <p className="text-sm text-muted-foreground">Worker not found.</p>
         )}
 
         {worker && (
@@ -133,12 +133,12 @@ export function WorkerDetailDrawer({
                 <h3 className="text-lg font-semibold text-ink">{worker.name}</h3>
                 <Badge variant={statusVariant(worker.status)}>{worker.status}</Badge>
               </div>
-              <p className="text-sm text-muted">Pool: {worker.pool}</p>
+              <p className="text-sm text-muted-foreground">Pool: {worker.pool}</p>
             </div>
 
             {/* Capabilities */}
             <section className="space-y-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Capabilities
               </h4>
               <div className="flex flex-wrap gap-1.5">
@@ -147,35 +147,35 @@ export function WorkerDetailDrawer({
                     <Badge key={cap} variant="info">{cap}</Badge>
                   ))
                 ) : (
-                  <span className="text-xs text-muted">None</span>
+                  <span className="text-xs text-muted-foreground">None</span>
                 )}
               </div>
             </section>
 
             {/* Connection Details */}
             <section className="space-y-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Connection
               </h4>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <span className="text-xs text-muted">Address</span>
+                  <span className="text-xs text-muted-foreground">Address</span>
                   <p className="font-mono text-ink">{worker.address ?? "--"}</p>
                 </div>
                 <div>
-                  <span className="text-xs text-muted">Version</span>
+                  <span className="text-xs text-muted-foreground">Version</span>
                   <p className="text-ink">{worker.version ?? "--"}</p>
                 </div>
                 <div>
-                  <span className="text-xs text-muted">Uptime</span>
+                  <span className="text-xs text-muted-foreground">Uptime</span>
                   <p className="text-ink">{formatUptime(worker.uptime)}</p>
                 </div>
                 <div>
-                  <span className="text-xs text-muted">Last Heartbeat</span>
+                  <span className="text-xs text-muted-foreground">Last Heartbeat</span>
                   <p className="text-ink">{relativeTime(worker.lastHeartbeat)}</p>
                 </div>
                 <div>
-                  <span className="text-xs text-muted">Load</span>
+                  <span className="text-xs text-muted-foreground">Load</span>
                   <p className="text-ink">{worker.activeJobs} / {worker.capacity}</p>
                 </div>
               </div>
@@ -183,7 +183,7 @@ export function WorkerDetailDrawer({
 
             {/* Heartbeat Status */}
             <section className="space-y-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Heartbeat Status
               </h4>
               {hbAge ? (
@@ -201,32 +201,32 @@ export function WorkerDetailDrawer({
                     <p className="text-sm font-semibold text-ink">
                       Last seen {hbAge.label}
                     </p>
-                    <p className="text-[11px] text-muted">
+                    <p className="text-[11px] text-muted-foreground">
                       {worker.lastHeartbeat}
                     </p>
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-muted">No heartbeat data available.</p>
+                <p className="text-xs text-muted-foreground">No heartbeat data available.</p>
               )}
             </section>
 
             {/* Recent Jobs */}
             <section className="space-y-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Recent Jobs (last 20)
               </h4>
               {!jobs || jobs.length === 0 ? (
-                <p className="text-xs text-muted">No recent jobs.</p>
+                <p className="text-xs text-muted-foreground">No recent jobs.</p>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-border">
                   <table className="w-full text-xs">
                     <thead className="border-b border-border bg-surface2/30">
                       <tr>
-                        <th className="px-3 py-2 text-left font-semibold text-muted">Job ID</th>
-                        <th className="px-3 py-2 text-left font-semibold text-muted">Status</th>
-                        <th className="px-3 py-2 text-left font-semibold text-muted">Topic</th>
-                        <th className="px-3 py-2 text-left font-semibold text-muted">Duration</th>
+                        <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Job ID</th>
+                        <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Status</th>
+                        <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Topic</th>
+                        <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Duration</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -240,10 +240,10 @@ export function WorkerDetailDrawer({
                               {job.status}
                             </Badge>
                           </td>
-                          <td className="px-3 py-2 text-muted font-mono">
+                          <td className="px-3 py-2 text-muted-foreground font-mono">
                             {job.topic}
                           </td>
-                          <td className="px-3 py-2 text-muted">
+                          <td className="px-3 py-2 text-muted-foreground">
                             {formatDuration(job.duration)}
                           </td>
                         </tr>

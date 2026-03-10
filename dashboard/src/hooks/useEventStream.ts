@@ -215,15 +215,15 @@ export function useEventStream(): void {
     function connect() {
       if (unmountedRef.current) return;
 
-      // Auth via subprotocol (use base64url without padding — '=' is invalid in subprotocol names)
+      // Auth via subprotocol — send identifier and credential as separate list
+      // entries so the server echoes only "cordum-api-key" (never the key itself).
       const encoded = btoa(apiKey).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const subprotocol = `cordum-api-key.${encoded}`;
 
       setStatus("connecting");
       const url = wsUrl(apiBaseUrl);
       logger.info("ws", "Connecting", { url });
 
-      const ws = new WebSocket(url, [subprotocol]);
+      const ws = new WebSocket(url, ["cordum-api-key", encoded]);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -269,7 +269,7 @@ export function useEventStream(): void {
             decision:
               "decision" in event.payload && typeof event.payload.decision === "string"
                 ? normalizeDecisionType(event.payload.decision)
-                : "allow",
+                : "deny",
             matchedRule:
               "matchedRule" in event.payload
                 ? String(event.payload.matchedRule)

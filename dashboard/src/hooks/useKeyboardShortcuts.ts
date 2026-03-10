@@ -3,7 +3,27 @@ import { useNavigate } from "react-router-dom";
 import { useUiStore } from "../state/ui";
 
 // ---------------------------------------------------------------------------
-// Shortcut config (exported so the help overlay can enumerate them)
+// Canonical g+key navigation map (single source of truth)
+// AppShell re-exports this so tests can import from either location.
+// ---------------------------------------------------------------------------
+
+export const G_KEY_MAP: Record<string, string> = {
+  h: "/",
+  o: "/",
+  j: "/jobs",
+  w: "/workflows",
+  a: "/agents",
+  k: "/approvals",
+  p: "/govern/input-rules",
+  b: "/govern/bundles",
+  x: "/packs",
+  s: "/settings",
+  d: "/dlq",
+  l: "/audit",
+};
+
+// ---------------------------------------------------------------------------
+// Shortcut config (derived from G_KEY_MAP)
 // ---------------------------------------------------------------------------
 
 export interface Shortcut {
@@ -13,26 +33,37 @@ export interface Shortcut {
   action: string;
 }
 
-export const SHORTCUTS: Shortcut[] = [
-  { keys: ["g", "o"], label: "g o", description: "Go to Overview", action: "/" },
-  { keys: ["g", "j"], label: "g j", description: "Go to Jobs", action: "/jobs" },
-  { keys: ["g", "w"], label: "g w", description: "Go to Workflows", action: "/workflows" },
-  { keys: ["g", "a"], label: "g a", description: "Go to Agents", action: "/agents" },
-  { keys: ["g", "k"], label: "g k", description: "Go to Approvals", action: "/approvals" },
-  { keys: ["g", "p"], label: "g p", description: "Go to Policies", action: "/policies" },
-  { keys: ["g", "x"], label: "g x", description: "Go to Packs", action: "/packs" },
-  { keys: ["g", "d"], label: "g d", description: "Go to Dead Letters", action: "/dlq" },
-  { keys: ["g", "l"], label: "g l", description: "Go to Audit Log", action: "/audit" },
-  { keys: ["g", "s"], label: "g s", description: "Go to Settings", action: "/settings" },
-];
+const ROUTE_LABELS: Record<string, string> = {
+  "/": "Overview",
+  "/jobs": "Jobs",
+  "/workflows": "Workflows",
+  "/agents": "Agents",
+  "/approvals": "Approvals",
+  "/govern/input-rules": "Input Rules",
+  "/govern/bundles": "Bundles",
+  "/packs": "Packs",
+  "/settings": "Settings",
+  "/dlq": "Dead Letters",
+  "/audit": "Audit Log",
+};
 
-// Build a lookup: second-key -> action
-const NAV_MAP = new Map<string, string>(
-  SHORTCUTS.map((s) => [s.keys[1], s.action]),
-);
+// Deduplicate routes (h and o both point to /) — keep first occurrence
+const seen = new Set<string>();
+export const SHORTCUTS: Shortcut[] = Object.entries(G_KEY_MAP)
+  .filter(([, route]) => {
+    if (seen.has(route)) return false;
+    seen.add(route);
+    return true;
+  })
+  .map(([key, route]) => ({
+    keys: ["g", key] as [string, string],
+    label: `g ${key}`,
+    description: `Go to ${ROUTE_LABELS[route] ?? route}`,
+    action: route,
+  }));
 
 // ---------------------------------------------------------------------------
-// Hook
+// Hook — mounts ? help overlay toggle, Escape close, and g+key navigation
 // ---------------------------------------------------------------------------
 
 function isEditableTarget(el: EventTarget | null): boolean {
@@ -48,7 +79,7 @@ export function useKeyboardShortcuts() {
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const prefixRef = useRef<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -81,7 +112,7 @@ export function useKeyboardShortcuts() {
       if (prefixRef.current === "g") {
         prefixRef.current = null;
         clearTimeout(timerRef.current);
-        const action = NAV_MAP.get(key);
+        const action = G_KEY_MAP[key];
         if (action) {
           e.preventDefault();
           navigateRef.current(action);
@@ -111,5 +142,5 @@ export function useKeyboardShortcuts() {
 /** @internal exported for unit tests */
 export const __keyboardShortcutsInternal = {
   isEditableTarget,
-  NAV_MAP,
+  NAV_MAP: new Map(Object.entries(G_KEY_MAP)),
 };

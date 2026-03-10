@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -10,72 +11,15 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-func (s *server) handleApproveStep(w http.ResponseWriter, r *http.Request) {
-	if s.workflowEng == nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow engine unavailable")
-		return
-	}
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
-		return
-	}
-	wfID := r.PathValue("id")
-	runID := r.PathValue("run_id")
-	stepID := r.PathValue("step_id")
-	if wfID == "" || runID == "" || stepID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "missing identifiers")
-		return
-	}
-	if s.workflowStore != nil {
-		if run, err := s.workflowStore.GetRun(r.Context(), runID); err == nil && run != nil {
-			if err := s.requireTenantAccess(r, run.OrgID); err != nil {
-				writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-				return
-			}
-		}
-	}
-
-	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
-	if s.jobStore != nil {
-		lockKey := "cordum:wf:run:lock:" + runID
-		token, err := s.jobStore.TryAcquireLock(r.Context(), lockKey, 30*time.Second)
-		if err != nil || token == "" {
-			writeErrorJSON(w, http.StatusConflict, "workflow run is busy, retry")
-			return
-		}
-		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
-	}
-
-	var body struct {
-		Approved bool `json:"approved"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSONDecodeError(w, err, "invalid body")
-		return
-	}
-	if err := s.workflowEng.ApproveStep(r.Context(), runID, stepID, body.Approved); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	stepApproveWfName := ""
-	if s.workflowStore != nil {
-		if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
-			stepApproveWfName = wfDef.Name
-		}
-	}
-	s.appendAuditEntryNamed(r.Context(), "approve_step", "run", runID, stepApproveWfName, policyActorID(r), policyRole(r), "approve step in run "+runID)
-	w.WriteHeader(http.StatusNoContent)
-}
 
 func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	if s.workflowEng == nil {
@@ -112,7 +56,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.workflowEng.CancelRun(r.Context(), runID); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeInternalError(w, r, "cancel run", err)
 		return
 	}
 	cancelRunWfName := ""
@@ -149,10 +93,46 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			cursor = v
 		}
 	}
+	// Pending approvals (APPROVAL_REQUIRED state).
 	jobs, err := s.jobStore.ListJobsByState(r.Context(), model.JobStateApproval, cursor, limit)
 	if err != nil {
 		writeInternalError(w, r, "list approvals", err)
 		return
+	}
+	// Also include recently resolved approvals from post-approval states.
+	// These are jobs that passed through the approval flow and have an
+	// ApprovalRecord, now in PENDING (approved), DENIED, SUCCEEDED, or FAILED.
+	includeResolved := r.URL.Query().Get("include_resolved") != "false"
+	if includeResolved {
+		resolvedLimit := limit - int64(len(jobs))
+		if resolvedLimit < 0 {
+			resolvedLimit = 0
+		}
+		seenIDs := make(map[string]bool, len(jobs))
+		for _, j := range jobs {
+			seenIDs[j.ID] = true
+		}
+		for _, state := range []model.JobState{model.JobStatePending, model.JobStateDenied, model.JobStateSucceeded, model.JobStateFailed} {
+			if resolvedLimit <= 0 {
+				break
+			}
+			resolved, err := s.jobStore.ListJobsByState(r.Context(), state, cursor, resolvedLimit)
+			if err != nil {
+				continue
+			}
+			for _, rj := range resolved {
+				if seenIDs[rj.ID] {
+					continue
+				}
+				// Only include jobs that have an approval record (went through approval flow).
+				if approval, err := s.jobStore.GetApprovalRecord(r.Context(), rj.ID); err != nil || approval.ApprovedBy == "" {
+					continue
+				}
+				jobs = append(jobs, rj)
+				seenIDs[rj.ID] = true
+				resolvedLimit--
+			}
+		}
 	}
 	items := make([]map[string]any, 0, len(jobs))
 	for _, job := range jobs {
@@ -160,7 +140,7 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		record, _ := s.jobStore.GetSafetyDecision(r.Context(), job.ID)
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"job":               job,
 			"decision":          record.Decision,
 			"policy_snapshot":   record.PolicySnapshot,
@@ -170,7 +150,51 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			"job_hash":          record.JobHash,
 			"approval_required": record.ApprovalRequired,
 			"approval_ref":      record.ApprovalRef,
-		})
+		}
+		// Merge approval resolution fields when an approval record exists.
+		if approval, err := s.jobStore.GetApprovalRecord(r.Context(), job.ID); err == nil && approval.ApprovedBy != "" {
+			item["resolved_by"] = approval.ApprovedBy
+			item["resolved_comment"] = approval.Note
+			item["resolution"] = approval.Reason
+			if approval.ApprovedAt > 0 {
+				item["resolved_at"] = approval.ApprovedAt
+			}
+		}
+		// Enrich with workflow labels from the original job request so the
+		// dashboard can distinguish gate approvals from policy approvals.
+		if req, err := s.jobStore.GetJobRequest(r.Context(), job.ID); err == nil && req != nil {
+			if req.Labels != nil {
+				if v := req.Labels["workflow_id"]; v != "" {
+					item["workflow_id"] = v
+				}
+				if v := req.Labels["run_id"]; v != "" {
+					item["workflow_run_id"] = v
+				}
+				if v := req.Labels["step_id"]; v != "" {
+					item["step_name"] = v
+				}
+				if v := req.Labels["gate_type"]; v != "" {
+					item["gate_type"] = v
+				}
+			}
+			// Dereference context_ptr to include the actual job input payload
+			// (e.g. transfer amount, customer, reason) so approvers see what
+			// they are approving.
+			if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" {
+				item["context_ptr"] = ptr
+				if s.memStore != nil {
+					if key, err := store.KeyFromPointer(ptr); err == nil {
+						if raw, err := s.memStore.GetContext(r.Context(), key); err == nil && len(raw) > 0 {
+							var payload map[string]any
+							if err := json.Unmarshal(raw, &payload); err == nil {
+								item["job_input"] = payload
+							}
+						}
+					}
+				}
+			}
+		}
+		items = append(items, item)
 	}
 	var nextCursor *int64
 	if int64(len(jobs)) == limit {
@@ -241,26 +265,37 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusConflict, "approval job hash unavailable")
 		return
 	}
-	if safetyRecord.PolicySnapshot == "" {
-		writeErrorJSON(w, http.StatusConflict, "approval policy snapshot unavailable")
-		return
+	isWorkflowGate := strings.TrimSpace(req.GetTopic()) == capsdk.SubjectApprovalGate
+	if !isWorkflowGate && req.Labels != nil && strings.EqualFold(strings.TrimSpace(req.Labels["gate_type"]), "workflow_approval") {
+		isWorkflowGate = true
 	}
-	if s.safetyClient == nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, "safety kernel unavailable")
-		return
-	}
-	snapResp, err := s.safetyClient.ListSnapshots(r.Context(), &pb.ListSnapshotsRequest{})
-	if err != nil {
-		writeBadGateway(w, r, "list safety snapshots", err)
-		return
-	}
-	currentSnapshot := ""
-	if snapResp != nil && len(snapResp.Snapshots) > 0 {
-		currentSnapshot = strings.TrimSpace(snapResp.Snapshots[0])
-	}
-	if currentSnapshot == "" || currentSnapshot != safetyRecord.PolicySnapshot {
-		writeErrorJSON(w, http.StatusConflict, "policy snapshot changed; re-evaluate before approving")
-		return
+	policySnapshot := strings.TrimSpace(safetyRecord.PolicySnapshot)
+	if isWorkflowGate {
+		if policySnapshot == "" {
+			policySnapshot = "workflow-gate"
+		}
+	} else {
+		if policySnapshot == "" {
+			writeErrorJSON(w, http.StatusConflict, "approval policy snapshot unavailable")
+			return
+		}
+		if s.safetyClient == nil {
+			writeErrorJSON(w, http.StatusServiceUnavailable, "safety kernel unavailable")
+			return
+		}
+		snapResp, err := s.safetyClient.ListSnapshots(r.Context(), &pb.ListSnapshotsRequest{})
+		if err != nil {
+			writeBadGateway(w, r, "list safety snapshots", err)
+			return
+		}
+		currentSnapshot := ""
+		if snapResp != nil && len(snapResp.Snapshots) > 0 {
+			currentSnapshot = strings.TrimSpace(snapResp.Snapshots[0])
+		}
+		if currentSnapshot == "" || snapshotBase(currentSnapshot) != snapshotBase(policySnapshot) {
+			writeErrorJSON(w, http.StatusConflict, "policy snapshot changed; re-evaluate before approving")
+			return
+		}
 	}
 	hash, err := scheduler.HashJobRequest(req)
 	if err != nil {
@@ -303,7 +338,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		ApprovedAt:     time.Now().UnixMicro(),
 		Reason:         reason,
 		Note:           note,
-		PolicySnapshot: safetyRecord.PolicySnapshot,
+		PolicySnapshot: policySnapshot,
 		JobHash:        safetyRecord.JobHash,
 	}); err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to persist approval record")
@@ -426,4 +461,14 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	s.appendAuditEntryNamed(r.Context(), "reject", "job", jobID, rejectTopic, policyActorID(r), policyRole(r), "reject job "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": jobID})
+}
+
+// snapshotBase returns the base policy hash from a combined snapshot string.
+// Combined snapshots have the form "base|cfg:hash"; this extracts just "base"
+// so that config-overlay changes don't invalidate existing approvals.
+func snapshotBase(snap string) string {
+	if i := strings.Index(snap, "|"); i >= 0 {
+		return snap[:i]
+	}
+	return snap
 }

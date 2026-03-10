@@ -64,26 +64,26 @@ function getDescendants(nodeId: string, edges: Edge[]): Set<string> {
 
 function DAGLegend({ onClose }: { onClose: () => void }) {
   return (
-    <div className="rounded-xl border border-border bg-surface1/95 p-3 shadow-lg backdrop-blur-sm text-xs space-y-2.5 w-56">
+    <div className="w-56 space-y-2.5 rounded-2xl border border-border bg-[color:var(--surface-glass)] p-3 text-xs shadow-soft backdrop-blur-md">
       <div className="flex items-center justify-between">
         <span className="font-semibold text-ink">Legend</span>
-        <button onClick={onClose} className="p-0.5 text-muted hover:text-ink">
+        <button onClick={onClose} className="p-0.5 text-muted-foreground hover:text-ink">
           <X className="h-3 w-3" />
         </button>
       </div>
       <div className="space-y-1.5">
-        <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Status</span>
-        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-green-500" />Succeeded</div>
-        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-red-500" />Failed</div>
-        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-blue-500 animate-pulse" />Running</div>
-        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-gray-300" />Pending</div>
-        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-amber-500" />Waiting</div>
+        <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Status</span>
+        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[var(--color-success)]" />Succeeded</div>
+        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-destructive" />Failed</div>
+        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[var(--color-info)] animate-pulse" />Running</div>
+        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-muted" />Pending</div>
+        <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[var(--color-warning)]" />Waiting</div>
       </div>
       <div className="space-y-1.5">
-        <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Edges</span>
+        <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Edges</span>
         <div className="flex items-center gap-2"><span className="h-0.5 w-5 bg-[var(--accent)]" />Critical path</div>
-        <div className="flex items-center gap-2"><span className="h-0.5 w-5 bg-green-500" />Completed</div>
-        <div className="flex items-center gap-2"><span className="h-0.5 w-5 bg-red-500" />To failed</div>
+        <div className="flex items-center gap-2"><span className="h-0.5 w-5 bg-[var(--color-success)]" />Completed</div>
+        <div className="flex items-center gap-2"><span className="h-0.5 w-5 bg-destructive" />To failed</div>
       </div>
     </div>
   );
@@ -149,14 +149,14 @@ export function RunDAG({ workflow, run, onNodeClick, className }: RunDAGProps) {
       if (isAncestorEdge) {
         return {
           ...edge,
-          style: { ...(edge.style ?? {}), strokeWidth: 2.5, stroke: "var(--info, #3b82f6)" },
+          style: { ...(edge.style ?? {}), strokeWidth: 2.5, stroke: "var(--color-info)" },
           animated: true,
         };
       }
       if (isDescendantEdge) {
         return {
           ...edge,
-          style: { ...(edge.style ?? {}), strokeWidth: 2.5, stroke: "var(--warning, #f59e0b)" },
+          style: { ...(edge.style ?? {}), strokeWidth: 2.5, stroke: "var(--color-warning)" },
           animated: true,
         };
       }
@@ -197,19 +197,19 @@ export function RunDAG({ workflow, run, onNodeClick, className }: RunDAGProps) {
         <Controls showInteractive={false} />
         <MiniMap
           nodeStrokeWidth={3}
-          className="!bg-surface1 !border-border"
+          className="!bg-surface-1 !border-border"
         />
         <Panel position="top-right" className="flex gap-1">
           <button
             onClick={() => setShowLegend((v) => !v)}
-            className="rounded-lg border border-border bg-surface1 p-1.5 text-muted hover:text-ink hover:bg-surface2 transition-colors"
+            className="rounded-full border border-border bg-surface-1 p-1.5 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-ink"
             title="Legend"
           >
             <Info className="h-4 w-4" />
           </button>
           <button
             onClick={() => setFullscreen((v) => !v)}
-            className="rounded-lg border border-border bg-surface1 p-1.5 text-muted hover:text-ink hover:bg-surface2 transition-colors"
+            className="rounded-full border border-border bg-surface-1 p-1.5 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-ink"
             title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
           >
             {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
@@ -226,7 +226,7 @@ export function RunDAG({ workflow, run, onNodeClick, className }: RunDAGProps) {
 
   if (fullscreen) {
     return (
-      <div className="fixed inset-0 z-50 bg-surface1">
+      <div className="fixed inset-0 z-50 bg-surface-1">
         {dagContent}
       </div>
     );

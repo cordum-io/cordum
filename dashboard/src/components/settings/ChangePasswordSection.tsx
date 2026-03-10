@@ -57,31 +57,31 @@ export function evaluatePasswordStrength(password: string): PasswordStrength {
     return {
       label: "Weak",
       progressPercent: 25,
-      barClassName: "bg-red-500",
-      labelClassName: "text-red-500",
+      barClassName: "bg-destructive",
+      labelClassName: "text-destructive",
     };
   }
   if (score === 2) {
     return {
       label: "Fair",
       progressPercent: 50,
-      barClassName: "bg-orange-500",
-      labelClassName: "text-orange-500",
+      barClassName: "bg-[var(--color-warning)]",
+      labelClassName: "text-[var(--color-warning)]",
     };
   }
   if (score <= 4) {
     return {
       label: "Strong",
       progressPercent: 75,
-      barClassName: "bg-yellow-500",
-      labelClassName: "text-yellow-600",
+      barClassName: "bg-[var(--color-warning)]",
+      labelClassName: "text-[var(--color-warning)]",
     };
   }
   return {
     label: "Very Strong",
     progressPercent: 100,
-    barClassName: "bg-green-500",
-    labelClassName: "text-green-600",
+    barClassName: "bg-[var(--color-success)]",
+    labelClassName: "text-[var(--color-success)]",
   };
 }
 
@@ -106,7 +106,7 @@ export function PasswordStrengthIndicator({
           style={{ width: `${strength.progressPercent}%` }}
         />
       </div>
-      <p className="text-xs text-muted">
+      <p className="text-xs text-muted-foreground">
         Password strength:{" "}
         <span className={cn("font-semibold", strength.labelClassName)}>
           {strength.label}
@@ -172,7 +172,7 @@ export function ChangePasswordSection() {
           <h2 className="font-display text-lg font-semibold text-ink">
             Change Your Password
           </h2>
-          <p className="mt-1 text-xs text-muted">{PASSWORD_REQUIREMENTS_TEXT}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{PASSWORD_REQUIREMENTS_TEXT}</p>
         </div>
 
         {errorMessage && (
@@ -183,7 +183,7 @@ export function ChangePasswordSection() {
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Current Password
             </label>
             <Input
@@ -200,7 +200,7 @@ export function ChangePasswordSection() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               New Password
             </label>
             <Input
@@ -220,7 +220,7 @@ export function ChangePasswordSection() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Confirm New Password
             </label>
             <Input

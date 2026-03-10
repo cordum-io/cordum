@@ -113,7 +113,7 @@ function recordsEqual(a: Record<string, string>, b: Record<string, string>): boo
 function fieldChangedStyle(changed: boolean): string {
   return changed
     ? "border-accent/50 bg-accent/5"
-    : "border-border/60 bg-white/30";
+    : "border-border/60 bg-card/30";
 }
 
 function buildInitialState(job: Job, prompt: string): RemediateFormState {
@@ -148,7 +148,7 @@ function DiffField({
   return (
     <div className={cn("rounded-2xl border p-3", fieldChangedStyle(changed))}>
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted">{title}</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
         {changed && <span className="h-2.5 w-2.5 rounded-full bg-accent" />}
       </div>
       {children}
@@ -248,7 +248,7 @@ export function RemediateDrawer({ jobId, originalJob, open, onClose }: Remediate
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <h2 className="font-display text-lg font-semibold text-ink">Remediate Job</h2>
-            <p className="mt-1 text-xs text-muted">
+            <p className="mt-1 text-xs text-muted-foreground">
               Remediation creates a new job linked to the original, with your modifications applied.
             </p>
           </div>
@@ -256,7 +256,7 @@ export function RemediateDrawer({ jobId, originalJob, open, onClose }: Remediate
             type="button"
             onClick={handleClose}
             disabled={remediate.isPending}
-            className="rounded-full p-1.5 text-muted transition hover:bg-surface2 disabled:opacity-50"
+            className="rounded-full p-1.5 text-muted-foreground transition hover:bg-surface2 disabled:opacity-50"
             aria-label="Close remediation drawer"
           >
             <X className="h-4 w-4" />
@@ -264,7 +264,7 @@ export function RemediateDrawer({ jobId, originalJob, open, onClose }: Remediate
         </div>
 
         <div className="mb-3 flex items-center justify-between rounded-xl border border-border/60 bg-surface2/25 px-3 py-2">
-          <span className="text-xs text-muted">Modified fields</span>
+          <span className="text-xs text-muted-foreground">Modified fields</span>
           <span className="text-sm font-semibold text-ink">{modifiedCount}</span>
         </div>
 
@@ -345,7 +345,7 @@ export function RemediateDrawer({ jobId, originalJob, open, onClose }: Remediate
           </DiffField>
 
           <div className="rounded-2xl border border-warning/40 bg-warning/10 p-3">
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted">
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Reason For Remediation
             </label>
             <Textarea

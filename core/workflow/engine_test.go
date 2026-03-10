@@ -8,9 +8,9 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/google/uuid"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/google/uuid"
 )
 
 type pubMsg struct {
@@ -257,63 +257,6 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 	final, _ := store.GetRun(context.Background(), run.ID)
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded after retry, got %s", final.Status)
-	}
-}
-
-func TestEngineApprovalPausesAndResumes(t *testing.T) {
-	store := newWorkflowStore(t)
-	defer store.Close()
-
-	bus := &recordingBus{}
-	engine := NewEngine(store, bus)
-
-	wf := &Workflow{
-		ID:    "wf-approval",
-		OrgID: "org-1",
-		Steps: map[string]*Step{
-			"approve": {ID: "approve", Type: StepTypeApproval},
-			"work":    {ID: "work", Type: StepTypeWorker, Topic: "job.default", DependsOn: []string{"approve"}},
-		},
-	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
-		t.Fatalf("save workflow: %v", err)
-	}
-	runID := uuid.NewString()
-	run := &WorkflowRun{
-		ID:         runID,
-		WorkflowID: wf.ID,
-		OrgID:      "org-1",
-		Steps:      map[string]*StepRun{},
-		Status:     RunStatusPending,
-	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
-		t.Fatalf("create run: %v", err)
-	}
-
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
-		t.Fatalf("start run: %v", err)
-	}
-	if bus.Count() != 0 {
-		t.Fatalf("expected no publishes before approval, got %d", bus.Count())
-	}
-	stored, _ := store.GetRun(context.Background(), run.ID)
-	if stored.Status != RunStatusWaiting {
-		t.Fatalf("expected run waiting, got %s", stored.Status)
-	}
-
-	if err := engine.ApproveStep(context.Background(), run.ID, "approve", true); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
-	if bus.Count() != 1 {
-		t.Fatalf("expected downstream publish after approval, got %d", bus.Count())
-	}
-	engine.HandleJobResult(context.Background(), &pb.JobResult{
-		JobId:  runID + ":work@1",
-		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
-	})
-	final, _ := store.GetRun(context.Background(), run.ID)
-	if final.Status != RunStatusSucceeded {
-		t.Fatalf("expected run succeeded, got %s", final.Status)
 	}
 }
 
@@ -732,8 +675,14 @@ func TestScheduleAfterFiresTimer(t *testing.T) {
 		t.Fatalf("expected 1 pending timer, got %d", n)
 	}
 
-	// Wait for it to fire.
-	time.Sleep(200 * time.Millisecond)
+	// Poll until the timer fires.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if engine.PendingTimers() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if n := engine.PendingTimers(); n != 0 {
 		t.Fatalf("expected 0 pending timers after fire, got %d", n)
 	}
@@ -778,8 +727,14 @@ func TestScheduleAfterMultipleTimers(t *testing.T) {
 		t.Fatalf("expected 5 pending timers, got %d", n)
 	}
 
-	// After all fire, should drain to 0.
-	time.Sleep(300 * time.Millisecond)
+	// Poll until all timers fire.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if engine.PendingTimers() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if n := engine.PendingTimers(); n != 0 {
 		t.Fatalf("expected 0 pending timers, got %d", n)
 	}

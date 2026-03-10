@@ -23,15 +23,15 @@ const categoryLabels: Record<AuditCategory, string> = {
 };
 
 const categoryColors: Record<AuditCategory, string> = {
-  safety_decision: "bg-purple-100 text-purple-800",
-  human_action: "bg-blue-100 text-blue-800",
-  system_event: "bg-gray-100 text-gray-800",
-  access_event: "bg-amber-100 text-amber-800",
+  safety_decision: "bg-primary/10 text-primary",
+  human_action: "bg-[var(--color-info)]/10 text-[var(--color-info)]",
+  system_event: "bg-muted text-muted-foreground",
+  access_event: "bg-[var(--color-warning)]/10 text-[var(--color-warning)]",
 };
 
 const severityDot: Record<AuditSeverity, string> = {
-  high: "bg-red-500",
-  medium: "bg-yellow-500",
+  high: "bg-destructive",
+  medium: "bg-[var(--color-warning)]",
   low: "bg-transparent",
 };
 
@@ -50,7 +50,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       type="button"
-      className="ml-1 inline-flex items-center rounded p-0.5 text-muted hover:text-ink transition-colors"
+      className="ml-1 inline-flex items-center rounded p-0.5 text-muted-foreground hover:text-ink transition-colors"
       onClick={() => {
         navigator.clipboard.writeText(text);
         setCopied(true);
@@ -107,8 +107,8 @@ function simpleDiff(before: string, after: string): DiffLine[] {
 }
 
 const diffLineClass: Record<DiffLine["type"], string> = {
-  add: "bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300",
-  remove: "bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-300",
+  add: "bg-[var(--color-success)]/5 text-[var(--color-success)]",
+  remove: "bg-destructive/5 text-destructive",
   unchanged: "",
 };
 
@@ -158,13 +158,13 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
             <div className="space-y-1.5 min-w-0 flex-1">
               {/* Event ID */}
               <div className="flex items-center gap-1">
-                <span className="font-mono text-xs text-muted" title={entry.id}>
+                <span className="font-mono text-xs text-muted-foreground" title={entry.id}>
                   {entry.id}
                 </span>
                 <CopyButton text={entry.id} />
               </div>
               {/* Timestamp */}
-              <p className="font-mono text-xs text-muted">
+              <p className="font-mono text-xs text-muted-foreground">
                 {formatTimestampMs(entry.timestamp)}
               </p>
               {/* Badges */}
@@ -176,7 +176,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
                 {severity !== "low" && (
                   <div className="flex items-center gap-1">
                     <span className={cn("h-2 w-2 rounded-full", severityDot[severity])} />
-                    <span className="text-[10px] text-muted">{severityLabels[severity]}</span>
+                    <span className="text-[10px] text-muted-foreground">{severityLabels[severity]}</span>
                   </div>
                 )}
               </div>
@@ -184,7 +184,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
             <button
               type="button"
               onClick={onClose}
-              className="ml-3 rounded p-1.5 text-muted hover:bg-surface2 hover:text-ink transition-colors"
+              className="ml-3 rounded p-1.5 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors"
               aria-label="Close panel"
             >
               <X className="h-5 w-5" />
@@ -199,16 +199,16 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
             {entry.actorInfo ? (
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
                 <div>
-                  <span className="text-muted">Identity</span>
+                  <span className="text-muted-foreground">Identity</span>
                   <p className="font-medium text-ink">{entry.actorInfo.name || entry.actorInfo.id}</p>
                 </div>
                 <div>
-                  <span className="text-muted">Type</span>
+                  <span className="text-muted-foreground">Type</span>
                   <p className="font-medium text-ink capitalize">{entry.actorInfo.type.replace("_", " ")}</p>
                 </div>
                 {entry.actorInfo.role && (
                   <div>
-                    <span className="text-muted">Role</span>
+                    <span className="text-muted-foreground">Role</span>
                     <p className="font-medium text-ink">{entry.actorInfo.role}</p>
                   </div>
                 )}
@@ -222,12 +222,12 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
           <Section title="Resource">
             <div className="space-y-1 text-xs">
               <p>
-                <span className="text-muted">Type: </span>
+                <span className="text-muted-foreground">Type: </span>
                 <span className="font-medium text-ink">{entry.resourceType}</span>
               </p>
               {entry.resourceId && (
                 <p>
-                  <span className="text-muted">ID: </span>
+                  <span className="text-muted-foreground">ID: </span>
                   <span className="font-mono text-ink">{entry.resourceId}</span>
                 </p>
               )}
@@ -248,12 +248,12 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
               <p>
                 <span className="font-semibold text-ink">{entry.action}</span>
                 {entry.message && (
-                  <span className="text-muted"> — {entry.message}</span>
+                  <span className="text-muted-foreground"> — {entry.message}</span>
                 )}
               </p>
               {entry.bundleIds && entry.bundleIds.length > 0 && (
                 <p>
-                  <span className="text-muted">Bundles: </span>
+                  <span className="text-muted-foreground">Bundles: </span>
                   <span className="text-ink">{entry.bundleIds.join(", ")}</span>
                 </p>
               )}
@@ -273,14 +273,14 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
                 </pre>
               ) : beforeStr ? (
                 <div>
-                  <p className="mb-1 text-xs text-muted">State Before</p>
+                  <p className="mb-1 text-xs text-muted-foreground">State Before</p>
                   <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
                     {beforeStr}
                   </pre>
                 </div>
               ) : afterStr ? (
                 <div>
-                  <p className="mb-1 text-xs text-muted">State After</p>
+                  <p className="mb-1 text-xs text-muted-foreground">State After</p>
                   <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
                     {afterStr}
                   </pre>
@@ -293,7 +293,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
           <Section title="Related Events">
             {entry.resourceId ? (
               <div className="text-xs">
-                <p className="text-muted">
+                <p className="text-muted-foreground">
                   This event involves {entry.resourceType}{" "}
                   <span className="font-mono text-ink">{entry.resourceId.slice(0, 16)}</span>.
                 </p>
@@ -305,7 +305,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
                 </Link>
               </div>
             ) : (
-              <p className="text-xs text-muted">No resource association.</p>
+              <p className="text-xs text-muted-foreground">No resource association.</p>
             )}
           </Section>
 
@@ -313,7 +313,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
           <div>
             <button
               type="button"
-              className="flex items-center gap-1 text-xs text-muted hover:text-ink transition-colors"
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-ink transition-colors"
               onClick={() => setIntegrityOpen((v) => !v)}
             >
               {integrityOpen ? (
@@ -324,17 +324,17 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
               Audit Integrity
             </button>
             {integrityOpen && (
-              <div className="mt-2 space-y-1 text-xs text-muted pl-4">
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground pl-4">
                 <p>
-                  <span className="text-muted">Event ID: </span>
+                  <span className="text-muted-foreground">Event ID: </span>
                   <span className="font-mono text-ink">{entry.id}</span>
                 </p>
                 <p>
-                  <span className="text-muted">Server timestamp: </span>
+                  <span className="text-muted-foreground">Server timestamp: </span>
                   <span className="font-mono text-ink">{entry.timestamp}</span>
                 </p>
                 <p>
-                  <span className="text-muted">ID hash: </span>
+                  <span className="text-muted-foreground">ID hash: </span>
                   <span className="font-mono text-ink">{entry.id.slice(-6)}</span>
                 </p>
               </div>

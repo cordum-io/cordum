@@ -40,7 +40,7 @@ export function SetupChecklist({
             <h2 className="font-display text-lg font-semibold text-ink">
               Setup Guide
             </h2>
-            <p className="mt-0.5 text-xs text-muted">
+            <p className="mt-0.5 text-xs text-muted-foreground">
               Complete these steps to get your Cordum instance ready.
             </p>
           </div>
@@ -49,7 +49,7 @@ export function SetupChecklist({
             onClick={onClose}
             className="rounded-full p-1.5 hover:bg-surface2"
           >
-            <X className="h-4 w-4 text-muted" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
@@ -59,7 +59,7 @@ export function SetupChecklist({
             <span className="font-medium text-ink">
               {completedCount} of {totalRequired} complete
             </span>
-            <span className="text-muted">{percentage}%</span>
+            <span className="text-muted-foreground">{percentage}%</span>
           </div>
           <ProgressBar value={percentage} />
         </div>
@@ -74,7 +74,7 @@ export function SetupChecklist({
         {/* Optional items */}
         {optionalItems.length > 0 && (
           <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Optional
             </p>
             {optionalItems.map((item) => (
@@ -96,7 +96,7 @@ export function SetupChecklist({
           >
             Dismiss forever
           </Button>
-          <p className="mt-1 text-center text-[10px] text-muted">
+          <p className="mt-1 text-center text-[10px] text-muted-foreground">
             You can re-open this guide from the Settings sidebar.
           </p>
         </div>
@@ -125,12 +125,12 @@ function ChecklistRow({
       {item.completed ? (
         <CheckCircle className="h-5 w-5 shrink-0 text-success" />
       ) : (
-        <Circle className="h-5 w-5 shrink-0 text-muted" />
+        <Circle className="h-5 w-5 shrink-0 text-muted-foreground" />
       )}
       <span
         className={
           item.completed
-            ? "text-sm text-muted line-through"
+            ? "text-sm text-muted-foreground line-through"
             : "text-sm font-medium text-ink"
         }
       >

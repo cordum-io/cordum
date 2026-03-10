@@ -32,9 +32,9 @@ function ConditionRow({ condition }: { condition: ExplainCondition }) {
   return (
     <tr className={cn(!condition.passed && "bg-danger/5")}>
       <td className="px-3 py-1.5 font-mono text-xs text-ink">{condition.field}</td>
-      <td className="px-3 py-1.5 text-xs text-muted">{condition.operator}</td>
-      <td className="px-3 py-1.5 font-mono text-xs text-muted">{condition.expected}</td>
-      <td className="px-3 py-1.5 font-mono text-xs text-muted">{condition.actual}</td>
+      <td className="px-3 py-1.5 text-xs text-muted-foreground">{condition.operator}</td>
+      <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{condition.expected}</td>
+      <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{condition.actual}</td>
       <td className="px-3 py-1.5 text-center">
         {condition.passed ? (
           <Check className="inline h-3.5 w-3.5 text-success" />
@@ -69,14 +69,14 @@ function RuleStepCard({ step, index }: { step: ExplainRuleStep; index: number })
       >
         <div className="flex items-center gap-2">
           {open ? (
-            <ChevronDown className="h-3.5 w-3.5 text-muted" />
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-muted" />
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
           )}
-          <span className="font-mono text-[10px] text-muted">#{index + 1}</span>
+          <span className="font-mono text-[10px] text-muted-foreground">#{index + 1}</span>
           <span className="text-sm font-medium text-ink">{step.ruleId}</span>
           {step.ruleName && (
-            <span className="text-xs text-muted">({step.ruleName})</span>
+            <span className="text-xs text-muted-foreground">({step.ruleName})</span>
           )}
         </div>
         <Badge variant={step.matched ? (decisionBadge[step.decision] ?? "default") : "default"}>
@@ -87,7 +87,7 @@ function RuleStepCard({ step, index }: { step: ExplainRuleStep; index: number })
       {open && (
         <div className="border-t border-border px-4 py-3 space-y-2">
           {step.reason && (
-            <p className="text-xs text-muted">{step.reason}</p>
+            <p className="text-xs text-muted-foreground">{step.reason}</p>
           )}
 
           {step.conditions.length > 0 ? (
@@ -95,11 +95,11 @@ function RuleStepCard({ step, index }: { step: ExplainRuleStep; index: number })
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border bg-surface2/50">
-                    <th className="px-3 py-1.5 text-left font-semibold text-muted">Field</th>
-                    <th className="px-3 py-1.5 text-left font-semibold text-muted">Operator</th>
-                    <th className="px-3 py-1.5 text-left font-semibold text-muted">Expected</th>
-                    <th className="px-3 py-1.5 text-left font-semibold text-muted">Actual</th>
-                    <th className="px-3 py-1.5 text-center font-semibold text-muted">Result</th>
+                    <th className="px-3 py-1.5 text-left font-semibold text-muted-foreground">Field</th>
+                    <th className="px-3 py-1.5 text-left font-semibold text-muted-foreground">Operator</th>
+                    <th className="px-3 py-1.5 text-left font-semibold text-muted-foreground">Expected</th>
+                    <th className="px-3 py-1.5 text-left font-semibold text-muted-foreground">Actual</th>
+                    <th className="px-3 py-1.5 text-center font-semibold text-muted-foreground">Result</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -110,7 +110,7 @@ function RuleStepCard({ step, index }: { step: ExplainRuleStep; index: number })
               </table>
             </div>
           ) : (
-            <p className="text-xs text-muted">No condition details available for this rule.</p>
+            <p className="text-xs text-muted-foreground">No condition details available for this rule.</p>
           )}
         </div>
       )}
@@ -135,7 +135,7 @@ export function ExplainResultPanel({ result }: { result: ExplainResult }) {
             </Badge>
           </div>
 
-          <div className="flex flex-wrap items-center gap-4 text-xs text-muted">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
             {result.matchedRule && (
               <span>
                 Matched rule:{" "}
@@ -156,7 +156,7 @@ export function ExplainResultPanel({ result }: { result: ExplainResult }) {
           </div>
 
           {result.reason && (
-            <p className="text-sm text-muted">{result.reason}</p>
+            <p className="text-sm text-muted-foreground">{result.reason}</p>
           )}
         </div>
       </Card>
@@ -164,7 +164,7 @@ export function ExplainResultPanel({ result }: { result: ExplainResult }) {
       {/* Evaluation chain */}
       {result.evaluationChain.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Evaluation Chain ({result.evaluationChain.length} rules)
           </h3>
           {result.evaluationChain.map((step, i) => (
@@ -175,7 +175,7 @@ export function ExplainResultPanel({ result }: { result: ExplainResult }) {
 
       {result.evaluationChain.length === 0 && (
         <Card>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             No detailed evaluation chain was returned. The backend may not populate
             evaluation_path for this policy mode.
           </p>

@@ -38,7 +38,7 @@ function PolicyLayoutInner() {
     <div className="space-y-6">
       {/* Lockdown banner */}
       {policyConfigSupported && isLockdown && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-danger px-5 py-3 text-white shadow-lg">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-danger px-5 py-3 text-destructive-foreground shadow-lg">
           <div className="flex items-center gap-3">
             <Lock className="h-5 w-5 animate-pulse" />
             <div>
@@ -46,11 +46,11 @@ function PolicyLayoutInner() {
                 Emergency Lockdown Active
               </span>
               {config?.lockdownReason && (
-                <p className="text-xs text-white/80">{config.lockdownReason}</p>
+                <p className="text-xs text-primary-foreground/80">{config.lockdownReason}</p>
               )}
             </div>
           </div>
-          <div className="flex items-center gap-3 text-xs text-white/70">
+          <div className="flex items-center gap-3 text-xs text-primary-foreground/70">
             {(config?.lockdownBy || config?.lockdownAt) && (
               <span>
                 {config.lockdownBy && `by ${config.lockdownBy}`}
@@ -60,7 +60,7 @@ function PolicyLayoutInner() {
             <button
               type="button"
               onClick={() => setShowLiftDialog(true)}
-              className="flex items-center gap-1.5 rounded-full border border-white/40 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20"
+              className="flex items-center gap-1.5 rounded-full border border-white/40 bg-white/10 px-3 py-1.5 text-xs font-semibold text-destructive-foreground transition hover:bg-white/20"
             >
               <Unlock className="h-3.5 w-3.5" />
               Lift Lockdown
@@ -77,7 +77,7 @@ function PolicyLayoutInner() {
               <h3 className="font-display text-lg font-semibold text-ink">
                 Lift Emergency Lockdown
               </h3>
-              <p className="text-sm text-muted">
+              <p className="text-sm text-muted-foreground">
                 This will restore normal policy evaluation. Jobs will be evaluated against rules again.
               </p>
               <div className="flex justify-end gap-2">
@@ -99,7 +99,7 @@ function PolicyLayoutInner() {
           <h2 className="font-display text-2xl font-semibold text-ink">
             Policy Studio
           </h2>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             Define safety rules that govern how AI jobs are evaluated.
           </p>
         </div>
@@ -109,7 +109,7 @@ function PolicyLayoutInner() {
           <select
             value={bundleId}
             onChange={(e) => setBundleId(e.target.value)}
-            className="rounded-2xl border border-border bg-white/70 px-4 py-2 text-sm text-ink"
+            className="rounded-2xl border border-border bg-card/70 px-4 py-2 text-sm text-ink"
           >
             {bundles.map((b) => (
               <option key={b.id} value={b.id}>
@@ -132,7 +132,7 @@ function PolicyLayoutInner() {
                 "flex shrink-0 items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition",
                 isActive
                   ? "bg-accent/15 text-accent"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
               )
             }
           >

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ShieldCheck, ShieldAlert, ChevronRight } from "lucide-react";
+import { ShieldCheck, ChevronRight } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { cn } from "../../lib/utils";
 import type { SafetyDecision } from "../../api/types";
@@ -44,7 +44,7 @@ export function SafetyExplanation({
   const hasData = policyRule || reason || safetyDecision || (riskTags?.length ?? 0) > 0;
 
   if (!hasData) {
-    return <p className="text-xs text-muted">No safety evaluation data available.</p>;
+    return <p className="text-xs text-muted-foreground">No safety evaluation data available.</p>;
   }
 
   const matchedRule = policyRule || safetyDecision?.matchedRule;
@@ -68,7 +68,7 @@ export function SafetyExplanation({
           {decisionLabel[decisionType] ?? decisionType}
         </Badge>
         {safetyDecision?.evalTimeMs != null && (
-          <span className="text-[10px] text-muted font-mono">
+          <span className="text-[10px] text-muted-foreground font-mono">
             {safetyDecision.evalTimeMs}ms
           </span>
         )}
@@ -76,7 +76,7 @@ export function SafetyExplanation({
 
       {/* Reason */}
       {decisionReason && (
-        <p className="text-xs text-muted">{decisionReason}</p>
+        <p className="text-xs text-muted-foreground">{decisionReason}</p>
       )}
 
       {/* Matching criteria */}
@@ -84,7 +84,7 @@ export function SafetyExplanation({
         <div className="space-y-1.5 text-xs">
           {(capabilities?.length ?? 0) > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-muted">Capabilities:</span>
+              <span className="text-muted-foreground">Capabilities:</span>
               {capabilities?.map((c) => (
                 <Badge key={c} variant="info">{c}</Badge>
               ))}
@@ -92,7 +92,7 @@ export function SafetyExplanation({
           )}
           {(riskTags?.length ?? 0) > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-muted">Risk tags:</span>
+              <span className="text-muted-foreground">Risk tags:</span>
               {riskTags?.map((t) => (
                 <Badge key={t} variant="warning">{t}</Badge>
               ))}
@@ -104,7 +104,7 @@ export function SafetyExplanation({
       {/* Evaluation path (if available) */}
       {safetyDecision?.evalPath && safetyDecision.evalPath.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Evaluation Path
           </p>
           <ol className="space-y-0.5">
@@ -117,8 +117,8 @@ export function SafetyExplanation({
                   className={cn(
                     "flex items-center gap-1.5 text-xs font-mono",
                     isMatch && "text-warning font-medium",
-                    isSkip && "text-muted",
-                    !isMatch && !isSkip && "text-muted",
+                    isSkip && "text-muted-foreground",
+                    !isMatch && !isSkip && "text-muted-foreground",
                   )}
                 >
                   <ChevronRight className="h-3 w-3 shrink-0" />

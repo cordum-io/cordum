@@ -10,9 +10,9 @@ export const AgentTaskNode = memo(function AgentTaskNode({ data, selected }: Nod
   const prompt = typeof input.prompt === "string" ? input.prompt : (typeof config.prompt === "string" ? config.prompt : "");
   return (
     <BaseNode
-      icon={<MessageSquare className="h-4 w-4 text-blue-600" />}
+      icon={<MessageSquare className="h-4 w-4 text-[var(--color-info)]" />}
       label={data.label as string}
-      accent="bg-blue-50"
+      accent="bg-[var(--color-info)]/5"
       selected={selected}
     >
       {topic && (

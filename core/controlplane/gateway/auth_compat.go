@@ -53,11 +53,11 @@ var (
 	authFromRequest = auth.FromRequest
 
 	// Provider constructors.
-	newBasicAuthProvider   = auth.NewBasicAuthProvider
+	newBasicAuthProvider     = auth.NewBasicAuthProvider
 	NewCompositeAuthProvider = auth.NewCompositeAuthProvider
-	NewOIDCAuthAdapter     = auth.NewOIDCAuthAdapter
-	NewOIDCProvider        = auth.NewOIDCProvider
-	NewOIDCProviderFromEnv = auth.NewOIDCProviderFromEnv
+	NewOIDCAuthAdapter       = auth.NewOIDCAuthAdapter
+	NewOIDCProvider          = auth.NewOIDCProvider
+	NewOIDCProviderFromEnv   = auth.NewOIDCProviderFromEnv
 
 	// Store constructors.
 	NewRedisUserStore    = auth.NewRedisUserStore
@@ -66,16 +66,17 @@ var (
 	GenerateRawKey       = auth.GenerateRawKey
 
 	// Validation helpers.
-	ValidatePassword = auth.ValidatePassword
+	ValidatePassword  = auth.ValidatePassword
+	bcryptCostFromEnv = auth.BcryptCostFromEnv
 
 	// Auth helpers (unexported — used by gateway internals + tests).
-	basicAuthProvider  = auth.ExtractBasicAuth
-	normalizeAPIKey    = auth.NormalizeAPIKey
+	basicAuthProvider   = auth.ExtractBasicAuth
+	normalizeAPIKey     = auth.NormalizeAPIKey
 	apiKeyFromWebSocket = auth.APIKeyFromWebSocket
-	bearerToken        = auth.BearerToken
-	headerValue        = auth.HeaderValue
-	normalizeRole      = auth.NormalizeRole
-	parseAPIKeys       = auth.ParseAPIKeys
+	bearerToken         = auth.BearerToken
+	headerValue         = auth.HeaderValue
+	normalizeRole       = auth.NormalizeRole
+	parseAPIKeys        = auth.ParseAPIKeys
 )
 
 // ─── Error re-exports ───────────────────────────────────────────────────────

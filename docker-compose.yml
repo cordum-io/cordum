@@ -345,6 +345,58 @@ services:
       retries: 3
       start_period: 10s
 
+  mock-bank-worker:
+    profiles: [demo]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    build:
+      context: .
+      dockerfile: demo/mock-bank/Dockerfile
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+    environment:
+      - NATS_URL=tls://nats:4222
+      - NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - NATS_TLS_SERVER_NAME=nats
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - REDIS_TLS_SERVER_NAME=redis
+    volumes:
+      - ./certs:/etc/cordum/tls:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+
+  mock-bank-ui:
+    profiles: [demo]
+    image: nginx:alpine
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    volumes:
+      - ./demo/mock-bank:/usr/share/nginx/html:ro
+      - ./demo/mock-bank/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "3000:80"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+
 volumes:
   nats_data:
   redis_data:

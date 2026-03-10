@@ -54,19 +54,13 @@ type BudgetConfig struct {
 	CostCenters            []string `json:"cost_centers"` // For chargeback
 }
 
-// RateLimitConfig - Controls throughput
+// RateLimitConfig controls job/workflow concurrency limits enforced by the
+// gateway (enforceJobBackpressure, maxConcurrentRuns). API request-rate
+// limiting is handled separately via env vars (API_RATE_LIMIT_RPS/BURST).
 type RateLimitConfig struct {
-	RequestsPerMinute   int `json:"requests_per_minute"`
-	RequestsPerHour     int `json:"requests_per_hour"`
-	BurstSize           int `json:"burst_size"`
 	ConcurrentJobs      int `json:"concurrent_jobs"`
 	ConcurrentWorkflows int `json:"concurrent_workflows"`
 	QueueSize           int `json:"queue_size"`
-
-	// Per-priority limits
-	CriticalJobsPerMinute int `json:"critical_jobs_per_minute"`
-	InteractiveJobsPerMin int `json:"interactive_jobs_per_minute"`
-	BatchJobsPerMinute    int `json:"batch_jobs_per_minute"`
 }
 
 // RetryConfig - Controls failure handling
@@ -98,12 +92,12 @@ type ModelsConfig struct {
 
 // ContextConfig / DataAccessConfig - Controls memory and data access
 type ContextConfig struct {
-	AllowedMemoryIDs   []string          `json:"allowed_memory_ids"` // "repo:org/*", "kb:support", etc.
-	DeniedMemoryIDs    []string          `json:"denied_memory_ids"`
-	MaxContextTokens   int               `json:"max_context_tokens"` // per job
-	MaxRetrievedChunks int               `json:"max_retrieved_chunks"`
-	CrossTenantAccess  bool              `json:"cross_tenant_access"` // should usually be false
-	AllowedConnectors  []string          `json:"allowed_connectors"`  // "github", "slack", "jira"
+	AllowedMemoryIDs   []string `json:"allowed_memory_ids"` // "repo:org/*", "kb:support", etc.
+	DeniedMemoryIDs    []string `json:"denied_memory_ids"`
+	MaxContextTokens   int      `json:"max_context_tokens"` // per job
+	MaxRetrievedChunks int      `json:"max_retrieved_chunks"`
+	CrossTenantAccess  bool     `json:"cross_tenant_access"` // should usually be false
+	AllowedConnectors  []string `json:"allowed_connectors"`  // "github", "slack", "jira"
 }
 
 // SLOConfig - Service Level Objectives per workflow

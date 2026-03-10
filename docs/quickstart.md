@@ -91,14 +91,20 @@ run_id=$(curl -sS -X POST http://localhost:8081/api/v1/workflows/${workflow_id}/
 echo "run: ${run_id}"
 ```
 
-## Step 6: Approve the step
+## Step 6: Approve the workflow gate job
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workflows/${workflow_id}/runs/${run_id}/steps/approve/approve \
+# Find the gate job for this run in the approvals queue
+job_id=$(curl -sS http://localhost:8081/api/v1/approvals \
+  -H "X-API-Key: ${API_KEY}" \
+  -H "X-Tenant-ID: ${TENANT_ID}" | \
+  jq -r --arg run_id "${run_id}" '.items[] | select(.workflow_run_id == $run_id) | .job.id' | head -n1)
+
+curl -sS -X POST http://localhost:8081/api/v1/approvals/${job_id}/approve \
   -H "X-API-Key: ${API_KEY}" \
   -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
-  -d '{"approved": true}' >/dev/null
+  -d '{}' >/dev/null
 ```
 
 ## Step 7: Check status

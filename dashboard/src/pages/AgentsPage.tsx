@@ -1,361 +1,381 @@
-import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, ChevronsUpDown, Users, List, LayoutGrid } from "lucide-react";
-import { Badge } from "../components/ui/Badge";
-import { Select } from "../components/ui/Select";
-import { useWorkers } from "../hooks/useWorkers";
-import { useUiStore } from "../state/ui";
-import { PoolGroupedView } from "../components/agents/PoolGroupedView";
-import { WorkerDetailDrawer } from "../components/agents/WorkerDetailDrawer";
-import { SnapshotWriterBadge } from "../components/agents/SnapshotWriterBadge";
-import { cn } from "../lib/utils";
-import type { Worker } from "../api/types";
-import { DataFreshness } from "../components/ui/DataFreshness";
-import { usePageTitle } from "../hooks/usePageTitle";
-import { useStatus } from "../hooks/useStatus";
+/*
+ * DESIGN: "Control Surface" — Agent Fleet
+ * Matches cordumds-gj5mw4zm.manus.space showcase patterns
+ */
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
+import { get } from "@/api/client";
+import { mapHeartbeatToWorker, type BackendHeartbeat } from "@/api/transform";
+import type { Worker } from "@/api/types";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
+import {
+  Cpu, Search, RefreshCw, Zap, Shield,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { useWorkers } from "@/hooks/useWorkers";
+import { PoolGroupedView } from "@/components/agents/PoolGroupedView";
+import { WorkerDetailDrawer } from "@/components/agents/WorkerDetailDrawer";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-type SortKey =
-  | "name"
-  | "pool"
-  | "status"
-  | "capabilities"
-  | "load"
-  | "lastHeartbeat"
-  | "uptime"
-  | "version";
-
-type SortDir = "asc" | "desc";
-
-function statusVariant(status: string): "success" | "warning" | "danger" | "default" {
+function workerStatusVariant(status: string) {
   switch (status) {
-    case "online":
-    case "active":
-      return "success";
-    case "draining":
-      return "warning";
-    case "offline":
-    case "error":
-      return "danger";
-    default:
-      return "default";
+    case "idle": return "healthy" as const;
+    case "busy": return "info" as const;
+    case "draining": return "warning" as const;
+    case "offline": return "danger" as const;
+    default: return "muted" as const;
   }
 }
-
-function relativeTime(iso?: string): string {
-  if (!iso) return "\u2014";
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 0) return "just now";
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
-function formatUptime(seconds?: number): string {
-  if (seconds == null) return "\u2014";
-  if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  const remainMins = mins % 60;
-  if (hrs < 24) return remainMins > 0 ? `${hrs}h ${remainMins}m` : `${hrs}h`;
-  const days = Math.floor(hrs / 24);
-  const remainHrs = hrs % 24;
-  return remainHrs > 0 ? `${days}d ${remainHrs}h` : `${days}d`;
-}
-
-function compare(a: Worker, b: Worker, key: SortKey): number {
-  switch (key) {
-    case "name":
-      return a.name.localeCompare(b.name);
-    case "pool":
-      return a.pool.localeCompare(b.pool);
-    case "status":
-      return a.status.localeCompare(b.status);
-    case "capabilities":
-      return a.capabilities.length - b.capabilities.length;
-    case "load":
-      return a.activeJobs / (a.capacity || 1) - b.activeJobs / (b.capacity || 1);
-    case "lastHeartbeat":
-      return (
-        new Date(a.lastHeartbeat ?? 0).getTime() -
-        new Date(b.lastHeartbeat ?? 0).getTime()
-      );
-    case "uptime":
-      return (a.uptime ?? 0) - (b.uptime ?? 0);
-    case "version":
-      return (a.version ?? "").localeCompare(b.version ?? "");
-    default:
-      return 0;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Sort header
-// ---------------------------------------------------------------------------
-
-function SortHeader({
-  label,
-  sortKey,
-  activeKey,
-  activeDir,
-  onSort,
-}: {
-  label: string;
-  sortKey: SortKey;
-  activeKey: SortKey;
-  activeDir: SortDir;
-  onSort: (key: SortKey) => void;
-}) {
-  const isActive = activeKey === sortKey;
-  return (
-    <th
-      className="cursor-pointer select-none whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted hover:text-ink"
-      onClick={() => onSort(sortKey)}
-    >
-      <span className="inline-flex items-center gap-1">
-        {label}
-        {isActive ? (
-          activeDir === "asc" ? (
-            <ChevronUp className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronDown className="h-3.5 w-3.5" />
-          )
-        ) : (
-          <ChevronsUpDown className="h-3.5 w-3.5 opacity-30" />
-        )}
-      </span>
-    </th>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 export default function AgentsPage() {
-  usePageTitle("Agent Fleet");
-  const { data: workers = [], isLoading, error, dataUpdatedAt, refetch, isRefetching } = useWorkers();
-  const { data: statusData } = useStatus();
-  const agentsView = useUiStore((s) => s.agentsView);
-  const setAgentsView = useUiStore((s) => s.setAgentsView);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [tab, setTab] = useState<"fleet" | "registry" | "pools">("fleet");
+  const [drawerWorkerId, setDrawerWorkerId] = useState<string | null>(null);
+  const navigate = useNavigate();
 
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const [poolFilter, setPoolFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
+  const { data: workers, isLoading, refetch } = useQuery({
+    queryKey: ["workers"],
+    queryFn: async () => {
+      const res = await get<{ items?: BackendHeartbeat[] } | BackendHeartbeat[]>(
+        "/workers",
+      );
+      const items = Array.isArray(res) ? res : (res.items ?? []);
+      return items.map(mapHeartbeatToWorker).filter((w): w is Worker => !!w);
+    },
+    refetchInterval: 15_000,
+  });
 
-  function handleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
+  const allWorkers = workers ?? [];
+  const idleCount = allWorkers.filter((w) => w.status === "idle").length;
+  const busyCount = allWorkers.filter((w) => w.status === "busy").length;
+  const offlineCount = allWorkers.filter((w) => w.status === "offline").length;
+
+  // Sort: offline agents go to the bottom
+  const statusOrder: Record<string, number> = { busy: 0, idle: 1, draining: 2, offline: 3 };
+  const sorted = [...allWorkers].sort((a, b) => (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99));
+
+  const filtered = sorted.filter((w) => {
+    if (statusFilter !== "all" && w.status !== statusFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (
+        w.id.toLowerCase().includes(q) ||
+        (w.pool ?? "").toLowerCase().includes(q) ||
+        w.capabilities?.some((t: string) => t.toLowerCase().includes(q))
+      );
     }
-  }
-
-  const pools = useMemo(
-    () => [...new Set(workers.map((w) => w.pool))].sort(),
-    [workers],
-  );
-
-  const filtered = useMemo(() => {
-    let result = workers;
-    if (poolFilter) result = result.filter((w) => w.pool === poolFilter);
-    if (statusFilter) result = result.filter((w) => w.status === statusFilter);
-    return [...result].sort((a, b) => {
-      const c = compare(a, b, sortKey);
-      return sortDir === "asc" ? c : -c;
-    });
-  }, [workers, poolFilter, statusFilter, sortKey, sortDir]);
-
-  const sh = (label: string, key: SortKey) => (
-    <SortHeader
-      label={label}
-      sortKey={key}
-      activeKey={sortKey}
-      activeDir={sortDir}
-      onSort={handleSort}
-    />
-  );
+    return true;
+  });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="font-display text-2xl font-bold text-ink">Agents</h1>
-          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
-        </div>
-        <div className="flex rounded-lg border border-border">
-          <button
-            type="button"
-            className={cn(
-              "flex items-center gap-1 rounded-l-lg px-3 py-1.5 text-xs font-medium transition",
-              agentsView === "table"
-                ? "bg-accent/15 text-accent"
-                : "text-muted hover:text-ink",
-            )}
-            onClick={() => setAgentsView("table")}
-            aria-label="Table view"
-          >
-            <List className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "flex items-center gap-1 rounded-r-lg px-3 py-1.5 text-xs font-medium transition",
-              agentsView === "cards"
-                ? "bg-accent/15 text-accent"
-                : "text-muted hover:text-ink",
-            )}
-            onClick={() => setAgentsView("cards")}
-            aria-label="Card view"
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </button>
-        </div>
+      <PageHeader
+        label="Fleet"
+        title="Agent Fleet"
+        subtitle="Monitor and manage worker agents across all pools"
+        actions={
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Refresh
+          </Button>
+        }
+      />
+
+      {/* Tabs */}
+      <div className="flex items-center gap-4 border-b border-border">
+        <button
+          onClick={() => setTab("fleet")}
+          className={cn(
+            "pb-2 text-sm font-medium border-b-2 transition-colors",
+            tab === "fleet" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Fleet Overview
+        </button>
+        <button
+          onClick={() => setTab("registry")}
+          className={cn(
+            "pb-2 text-sm font-medium border-b-2 transition-colors",
+            tab === "registry" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Agent Registry
+        </button>
+        <button
+          onClick={() => setTab("pools")}
+          className={cn(
+            "pb-2 text-sm font-medium border-b-2 transition-colors",
+            tab === "pools" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Pool Topology
+        </button>
       </div>
 
-      <SnapshotWriterBadge snapshotMeta={statusData?.snapshot_meta} />
+      {tab === "fleet" && (<>
+      {/* KPI Row — showcase style */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="grid grid-cols-2 lg:grid-cols-4 gap-4"
+      >
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <div className="instrument-card">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Total Agents</span>
+                <Cpu className="w-4 h-4 text-cordum" />
+              </div>
+              <span className="font-mono text-3xl font-bold text-foreground">{allWorkers.length}</span>
+              <div className="flex gap-1 mt-3">
+                {allWorkers.map((w, i) => (
+                  <div
+                    key={i}
+                    className={cn(
+                      "w-2 h-2 rounded-full",
+                      w.status === "idle" || w.status === "busy" ? "bg-[var(--color-success)]" : "bg-muted-foreground",
+                    )}
+                  />
+                ))}
+              </div>
+            </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <Select
-          value={poolFilter}
-          onChange={(e) => setPoolFilter(e.target.value)}
-          className="w-44"
-        >
-          <option value="">All pools</option>
-          {pools.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
+            <div className="instrument-card">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Idle</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] status-pulse" />
+              </div>
+              <span className="font-mono text-3xl font-bold text-[var(--color-success)]">{idleCount}</span>
+              <p className="text-xs text-muted-foreground mt-1">Ready for work</p>
+            </div>
+
+            <div className="instrument-card">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Busy</span>
+                <Zap className="w-4 h-4 text-[var(--color-info)]" />
+              </div>
+              <span className="font-mono text-3xl font-bold text-[var(--color-info)]">{busyCount}</span>
+              <p className="text-xs text-muted-foreground mt-1">Processing jobs</p>
+            </div>
+
+            <div className={cn("instrument-card", offlineCount > 0 && "status-danger")}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Offline</span>
+              </div>
+              <span className={cn("font-mono text-3xl font-bold", offlineCount > 0 ? "text-destructive" : "text-foreground")}>{offlineCount}</span>
+              <p className="text-xs text-muted-foreground mt-1">Disconnected</p>
+            </div>
+          </>
+        )}
+      </motion.div>
+
+      {/* Filters — showcase style */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search agents..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+          />
+        </div>
+        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
+          {["all", "idle", "busy", "draining", "offline"].map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium rounded transition-colors",
+                statusFilter === s
+                  ? "bg-cordum/10 text-cordum"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>
           ))}
-        </Select>
-
-        <Select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-44"
-        >
-          <option value="">All statuses</option>
-          <option value="online">online</option>
-          <option value="offline">offline</option>
-          <option value="draining">draining</option>
-        </Select>
+        </div>
       </div>
 
-      {isLoading && <p className="text-sm text-muted">Loading workers...</p>}
-
-      {error && (
-        <p className="text-sm text-danger">
-          Failed to load workers:{" "}
-          {error instanceof Error ? error.message : "Unknown error"}
-        </p>
-      )}
-
-      {!isLoading && !error && workers.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border py-16 text-center">
-          <Users className="mb-3 h-10 w-10 text-muted" />
-          <p className="text-sm text-muted">No workers registered.</p>
-        </div>
-      )}
-
-      {!isLoading && !error && workers.length > 0 && filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border py-12 text-center">
-          <p className="text-sm text-muted">
-            No workers match the current filters.
-          </p>
-        </div>
-      )}
-
-      {filtered.length > 0 && agentsView === "table" && (
-        <div className="overflow-x-auto rounded-2xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="border-b border-border bg-surface2/50">
-              <tr>
-                {sh("Name", "name")}
-                {sh("Pool", "pool")}
-                {sh("Status", "status")}
-                {sh("Capabilities", "capabilities")}
-                {sh("Active / Cap", "load")}
-                {sh("Heartbeat", "lastHeartbeat")}
-                {sh("Uptime", "uptime")}
-                {sh("Version", "version")}
+      {/* Worker Table — showcase style */}
+      {isLoading ? (
+        <SkeletonTable rows={6} />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<Cpu className="w-5 h-5" />}
+          title="No agents found"
+          description={search ? "Try adjusting your search" : "No agents have connected yet"}
+        />
+      ) : (
+        <div className="instrument-card overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+            <h3 className="font-display font-semibold text-sm text-foreground">Worker Pool</h3>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="w-3 h-3 mr-1" />
+              Refresh
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[750px]">
+            <thead>
+              <tr className="border-b border-border bg-surface-0">
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Worker</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Jobs</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Seen</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody>
               {filtered.map((w) => (
                 <tr
                   key={w.id}
-                  className="cursor-pointer transition-colors hover:bg-surface2/30"
-                  onClick={() => setSelectedWorkerId(w.id)}
+                  {...clickableRowProps(() => navigate(`/agents/${w.id}`))}
+                  className={cn(
+                    "border-b border-border hover:bg-surface-1 transition-colors cursor-pointer",
+                    w.status === "offline" && "opacity-50"
+                  )}
                 >
-                  <td className="whitespace-nowrap px-4 py-3 font-medium text-ink">
-                    {w.name}
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-3.5 h-3.5 text-cordum" />
+                      <span className="text-sm font-medium text-foreground">{w.id.slice(0, 16)}</span>
+                    </div>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted">
-                    {w.pool}
+                  <td className="px-5 py-3">
+                    <StatusBadge variant={workerStatusVariant(w.status)} dot pulse={w.status === "busy"}>
+                      {w.status}
+                    </StatusBadge>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <Badge variant={statusVariant(w.status)}>{w.status}</Badge>
-                  </td>
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-3 text-sm text-muted-foreground">{w.pool || "default"}</td>
+                  <td className="px-5 py-3">
                     <div className="flex flex-wrap gap-1">
-                      {w.capabilities.length > 0 ? (
-                        w.capabilities.map((c) => (
-                          <Badge key={c} variant="info" className="text-[11px]">
-                            {c}
-                          </Badge>
-                        ))
-                      ) : (
-                        <span className="text-muted">&mdash;</span>
+                      {(w.capabilities ?? []).slice(0, 3).map((t: string) => (
+                        <span key={t} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-2 text-muted-foreground">
+                          {t}
+                        </span>
+                      ))}
+                      {(w.capabilities?.length ?? 0) > 3 && (
+                        <span className="text-[10px] text-muted-foreground">+{w.capabilities!.length - 3}</span>
                       )}
                     </div>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <span
-                      className={
-                        w.activeJobs >= w.capacity && w.capacity > 0
-                          ? "text-danger font-semibold"
-                          : "text-ink"
-                      }
-                    >
-                      {w.activeJobs}/{w.capacity}
-                    </span>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted">
-                    {relativeTime(w.lastHeartbeat)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted">
-                    {formatUptime(w.uptime)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted">
-                    {w.version ?? "\u2014"}
+                  <td className="px-5 py-3 font-mono text-sm text-foreground">{w.activeJobs} / {w.capacity}</td>
+                  <td className="px-5 py-3 text-sm text-muted-foreground">
+                    {w.lastHeartbeat ? formatRelativeTime(w.lastHeartbeat) : "—"}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
-      {filtered.length > 0 && agentsView === "cards" && (
-        <PoolGroupedView workers={filtered} onWorkerClick={setSelectedWorkerId} />
+      </>)}
+
+      {tab === "registry" && (
+        <AgentRegistryTab />
+      )}
+
+      {tab === "pools" && (
+        <PoolGroupedView
+          workers={allWorkers}
+          onWorkerClick={(id) => setDrawerWorkerId(id)}
+        />
       )}
 
       <WorkerDetailDrawer
-        workerId={selectedWorkerId}
-        onClose={() => setSelectedWorkerId(null)}
+        workerId={drawerWorkerId}
+        onClose={() => setDrawerWorkerId(null)}
       />
+    </div>
+  );
+}
+
+/* --- Agent Registry Tab --- */
+function AgentRegistryTab() {
+  const navigate = useNavigate();
+  const { data: workers = [], isLoading } = useWorkers();
+
+  if (isLoading) {
+    return <SkeletonTable rows={6} />;
+  }
+
+  if (workers.length === 0) {
+    return (
+      <EmptyState icon={<Shield className="w-8 h-8" />} title="No agents registered" description="Agents will appear here after they connect and send heartbeats." />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">Agents that have submitted jobs, with their safety decision breakdown and policy bindings.</p>
+      <div className="instrument-card overflow-hidden">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[800px]">
+          <thead>
+            <tr className="border-b border-border bg-surface-0">
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Agent</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Active Jobs</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Capacity</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Active</th>
+            </tr>
+          </thead>
+          <tbody>
+            {workers.map((w) => (
+              <tr
+                key={w.id}
+                {...clickableRowProps(() => navigate(`/agents/${w.id}`))}
+                className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
+              >
+                <td className="px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-3.5 h-3.5 text-cordum" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{w.name || w.id}</p>
+                      <p className="text-[10px] font-mono text-muted-foreground">{w.id}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-5 py-3 font-mono text-sm text-foreground">{w.pool || "—"}</td>
+                <td className="px-5 py-3">
+                  <StatusBadge variant={w.status === "busy" ? "warning" : w.status === "idle" ? "healthy" : "muted"}>{w.status}</StatusBadge>
+                </td>
+                <td className="px-5 py-3 font-mono text-sm text-foreground">{w.activeJobs}</td>
+                <td className="px-5 py-3 font-mono text-sm text-foreground">{w.capacity}</td>
+                <td className="px-5 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {w.capabilities?.slice(0, 3).map((c) => (
+                      <span key={c} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cordum/10 text-cordum">{c}</span>
+                    ))}
+                    {(w.capabilities?.length ?? 0) > 3 && (
+                      <span className="text-[10px] font-mono text-muted-foreground">+{w.capabilities!.length - 3}</span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-5 py-3 text-sm text-muted-foreground">{w.lastHeartbeat ? formatRelativeTime(w.lastHeartbeat) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </div>
+      </div>
     </div>
   );
 }

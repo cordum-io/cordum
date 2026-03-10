@@ -1,33 +1,11 @@
 id: demo-mock-bank.transfer
-name: Mock Bank Transfer (Policy)
+name: Mock Bank Transfer
 org_id: default
 steps:
-  request:
-    id: request
-    name: Transfer Request
-    type: condition
-    condition: "true"
-    meta:
-      labels:
-        ui_node_type: worker
-  approval_gate:
-    id: approval_gate
-    name: Approval Gate
-    type: condition
-    depends_on:
-      - request
-    condition: "input.policy_bucket == 'review'"
-    meta:
-      labels:
-        ui_node_type: approval
-  auto:
-    id: auto
-    name: Transfer (auto)
-    type: worker
-    topic: job.demo-mock-bank.transfer.auto
-    depends_on:
-      - request
-    condition: "input.policy_bucket == 'auto'"
+  validate:
+    id: validate
+    name: Validate Request
+    type: transform
     input:
       amount: "${input.amount}"
       currency: "${input.currency}"
@@ -35,7 +13,21 @@ steps:
       reason: "${input.reason}"
       note: "${input.note}"
       requested_by: "${input.requested_by}"
-      policy_bucket: "${input.policy_bucket}"
+
+  execute_low:
+    id: execute_low
+    name: Execute Transfer
+    type: worker
+    depends_on:
+      - validate
+    condition: "input.amount < 100"
+    topic: job.demo-mock-bank.transfer
+    input:
+      amount: "${input.amount}"
+      currency: "${input.currency}"
+      customer: "${input.customer}"
+      reason: "${input.reason}"
+      note: "${input.note}"
     meta:
       pack_id: demo-mock-bank
       capability: demo-mock-bank.transfer
@@ -43,22 +35,21 @@ steps:
         - finance
         - transfer
         - low
-  review:
-    id: review
-    name: Transfer (requires approval)
+
+  execute_review:
+    id: execute_review
+    name: Execute Transfer (Review)
     type: worker
-    topic: job.demo-mock-bank.transfer.review
     depends_on:
-      - approval_gate
-    condition: "input.policy_bucket == 'review'"
+      - validate
+    condition: "input.amount >= 100 && input.amount < 300"
+    topic: job.demo-mock-bank.transfer
     input:
       amount: "${input.amount}"
       currency: "${input.currency}"
       customer: "${input.customer}"
       reason: "${input.reason}"
       note: "${input.note}"
-      requested_by: "${input.requested_by}"
-      policy_bucket: "${input.policy_bucket}"
     meta:
       pack_id: demo-mock-bank
       capability: demo-mock-bank.transfer
@@ -66,22 +57,21 @@ steps:
         - finance
         - transfer
         - review
-  blocked:
-    id: blocked
-    name: Transfer (blocked by policy)
+
+  execute_high:
+    id: execute_high
+    name: Execute Transfer (High Value)
     type: worker
-    topic: job.demo-mock-bank.transfer.blocked
     depends_on:
-      - request
-    condition: "input.policy_bucket == 'blocked'"
+      - validate
+    condition: "input.amount >= 300"
+    topic: job.demo-mock-bank.transfer
     input:
       amount: "${input.amount}"
       currency: "${input.currency}"
       customer: "${input.customer}"
       reason: "${input.reason}"
       note: "${input.note}"
-      requested_by: "${input.requested_by}"
-      policy_bucket: "${input.policy_bucket}"
     meta:
       pack_id: demo-mock-bank
       capability: demo-mock-bank.transfer

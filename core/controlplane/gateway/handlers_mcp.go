@@ -186,12 +186,53 @@ func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
 	return runtime.httpTransport
 }
 
+// mcpSSEReauthInterval is the interval at which long-lived MCP SSE sessions
+// re-validate the client's credentials. If re-auth fails (key revoked,
+// expired token, etc.) the SSE connection is terminated.
+const mcpSSEReauthInterval = 5 * time.Minute
+
 func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 	transport := s.mcpHTTPTransport()
 	if transport == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "mcp http transport unavailable")
 		return
 	}
+
+	// When no auth provider is configured, skip periodic re-auth.
+	if s.auth == nil {
+		transport.HandleSSE(w, r)
+		return
+	}
+
+	// Wrap the request context with a cancel so we can terminate the SSE
+	// stream if re-authentication fails during the session's lifetime.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	r = r.WithContext(ctx)
+
+	// Start a background goroutine that periodically re-validates the
+	// original credentials. If validation fails, the context is cancelled
+	// which causes the SSE event loop in the transport to exit cleanly.
+	go func() {
+		ticker := time.NewTicker(mcpSSEReauthInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := s.auth.AuthenticateHTTP(r); err != nil {
+					logging.Warn("api-gateway", "mcp sse re-auth failed, disconnecting session",
+						"error", err,
+						"remote", r.RemoteAddr,
+					)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
 	transport.HandleSSE(w, r)
 }
 

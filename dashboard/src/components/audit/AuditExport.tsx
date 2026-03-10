@@ -201,7 +201,7 @@ function ExportProgressModal({
           <p className="text-sm font-semibold text-ink">Exporting…</p>
           <button
             type="button"
-            className="rounded p-1 text-muted hover:text-ink transition"
+            className="rounded p-1 text-muted-foreground hover:text-ink transition"
             onClick={onCancel}
           >
             <X className="h-4 w-4" />
@@ -213,7 +213,7 @@ function ExportProgressModal({
             style={{ width: `${pct}%` }}
           />
         </div>
-        <p className="text-xs text-muted">
+        <p className="text-xs text-muted-foreground">
           {processed} of {total} events ({pct}%)
         </p>
         <Button variant="outline" size="sm" className="w-full" onClick={onCancel}>
@@ -350,7 +350,7 @@ export function AuditExport({ filters }: { filters: AuditFilters }) {
         </Button>
 
         {open && (
-          <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-white shadow-lg">
+          <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
             <button
               type="button"
               className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-ink transition hover:bg-surface2/60"

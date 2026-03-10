@@ -268,7 +268,7 @@ export function ApprovalDetailPanel({
               <p className="text-xl font-semibold text-ink leading-tight truncate">
                 {approval.humanSummary || `Job ${approval.jobId.slice(0, 8)} requires approval`}
               </p>
-              <div className="flex items-center gap-2 text-xs text-muted">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Badge variant={urgencyBadgeVariant[urgency]}>
                   {urgencyLabels[urgency]}
                 </Badge>
@@ -284,7 +284,7 @@ export function ApprovalDetailPanel({
             <button
               type="button"
               onClick={onClose}
-              className="ml-3 rounded p-1.5 text-muted hover:bg-surface2 hover:text-ink transition-colors"
+              className="ml-3 rounded p-1.5 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors"
               aria-label="Close panel"
             >
               <X className="h-5 w-5" />
@@ -301,7 +301,7 @@ export function ApprovalDetailPanel({
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
                 disabled={actionPending}
                 onClick={() => setMode("confirming-approve")}
               >
@@ -358,7 +358,7 @@ export function ApprovalDetailPanel({
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
                   disabled={actionPending}
                   onClick={handleApprove}
                 >
@@ -410,7 +410,7 @@ export function ApprovalDetailPanel({
             <div className="space-y-3">
               {/* Condition text */}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted">Condition (required)</label>
+                <label className="text-xs font-medium text-muted-foreground">Condition (required)</label>
                 <Textarea
                   rows={3}
                   placeholder="Describe conditions, e.g. Approved for staging only"
@@ -422,7 +422,7 @@ export function ApprovalDetailPanel({
 
               {/* Modified payload */}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted">Modify payload (optional)</label>
+                <label className="text-xs font-medium text-muted-foreground">Modify payload (optional)</label>
                 <textarea
                   rows={6}
                   className={cn(
@@ -444,7 +444,7 @@ export function ApprovalDetailPanel({
 
               {/* Scope radio */}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted">Scope</label>
+                <label className="text-xs font-medium text-muted-foreground">Scope</label>
                 <div className="flex items-center gap-4">
                   <label className="flex items-center gap-1.5 text-xs text-ink cursor-pointer">
                     <input
@@ -474,7 +474,7 @@ export function ApprovalDetailPanel({
                 {modifiedPayload.trim() && modifiedPayload.trim() !== originalPayloadJson ? (
                   <Button
                     size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
                     disabled={!conditionText.trim() || !!payloadError}
                     onClick={() => {
                       if (validatePayload(modifiedPayload)) setMode("conditions-diff");
@@ -485,7 +485,7 @@ export function ApprovalDetailPanel({
                 ) : (
                   <Button
                     size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
                     disabled={!conditionText.trim() || !!payloadError}
                     onClick={handleConditionsSubmit}
                   >
@@ -508,8 +508,8 @@ export function ApprovalDetailPanel({
               <p className="text-xs font-medium text-ink">Review payload changes before confirming:</p>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="space-y-1">
-                  <span className="font-medium text-muted">Original</span>
-                  <pre className="max-h-40 overflow-auto rounded-lg border border-border bg-surface2 p-2 font-mono text-[11px] text-muted whitespace-pre-wrap">
+                  <span className="font-medium text-muted-foreground">Original</span>
+                  <pre className="max-h-40 overflow-auto rounded-lg border border-border bg-surface2 p-2 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap">
                     {originalPayloadJson}
                   </pre>
                 </div>
@@ -520,13 +520,13 @@ export function ApprovalDetailPanel({
                   </pre>
                 </div>
               </div>
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted-foreground">
                 Condition: <span className="font-medium text-ink">{conditionText}</span>
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
                   onClick={handleConditionsSubmit}
                 >
                   Confirm Conditional Approval

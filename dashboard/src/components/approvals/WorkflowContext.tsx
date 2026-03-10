@@ -19,13 +19,13 @@ function StepDot({
       <div
         className={cn(
           "h-2.5 w-2.5 rounded-full",
-          state === "completed" && "bg-emerald-500",
-          state === "current" && "bg-yellow-500 animate-pulse",
-          state === "pending" && "bg-gray-300 dark:bg-gray-600",
+          state === "completed" && "bg-[var(--color-success)]",
+          state === "current" && "bg-[var(--color-warning)] animate-pulse",
+          state === "pending" && "bg-muted",
         )}
       />
       {label && (
-        <span className="text-[9px] text-muted max-w-[60px] text-center truncate">
+        <span className="text-[9px] text-muted-foreground max-w-[60px] text-center truncate">
           {label}
         </span>
       )}
@@ -42,7 +42,7 @@ function StepLine({ completed }: { completed: boolean }) {
     <div
       className={cn(
         "h-0.5 flex-1 min-w-3",
-        completed ? "bg-emerald-500" : "bg-gray-300 dark:bg-gray-600",
+        completed ? "bg-[var(--color-success)]" : "bg-muted",
       )}
     />
   );
@@ -58,7 +58,7 @@ interface WorkflowContextProps {
 
 export function WorkflowContext({ workflowContext }: WorkflowContextProps) {
   if (!workflowContext) {
-    return <p className="text-xs text-muted">This job is not part of a workflow.</p>;
+    return <p className="text-xs text-muted-foreground">This job is not part of a workflow.</p>;
   }
 
   const { workflowId, runId, stepIndex, stepName, totalSteps } = workflowContext;
@@ -69,7 +69,7 @@ export function WorkflowContext({ workflowContext }: WorkflowContextProps) {
       {/* Workflow + Run links */}
       <div className="space-y-1 text-xs">
         <p className="flex items-center gap-1.5">
-          <span className="text-muted">Workflow:</span>
+          <span className="text-muted-foreground">Workflow:</span>
           <Link
             to={`/workflows/${workflowId}`}
             className="font-medium text-accent hover:underline inline-flex items-center gap-1"
@@ -79,7 +79,7 @@ export function WorkflowContext({ workflowContext }: WorkflowContextProps) {
           </Link>
         </p>
         <p>
-          <span className="text-muted">Run: </span>
+          <span className="text-muted-foreground">Run: </span>
           <Link
             to={`/workflows/${workflowId}?run=${runId}`}
             className="font-mono text-accent hover:underline"
@@ -93,7 +93,7 @@ export function WorkflowContext({ workflowContext }: WorkflowContextProps) {
       {hasStepInfo && (
         <>
           <p className="text-xs">
-            <span className="text-muted">Step: </span>
+            <span className="text-muted-foreground">Step: </span>
             <span className="font-medium text-ink">
               {stepIndex + 1} of {totalSteps}
               {stepName && ` — ${stepName}`}
@@ -118,7 +118,7 @@ export function WorkflowContext({ workflowContext }: WorkflowContextProps) {
           </div>
 
           {/* What happens next */}
-          <div className="space-y-1 text-xs text-muted">
+          <div className="space-y-1 text-xs text-muted-foreground">
             {stepIndex + 1 < totalSteps && (
               <p>
                 If approved, workflow continues to step {stepIndex + 2} of {totalSteps}.

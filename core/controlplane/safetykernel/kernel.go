@@ -276,6 +276,16 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		}
 	}
 
+	// Fail-closed: when no policy is loaded, deny all requests.
+	// This prevents a misconfigured deployment from silently allowing everything.
+	if policy == nil {
+		return &pb.PolicyCheckResponse{
+			Decision:       pb.DecisionType_DECISION_TYPE_DENY,
+			Reason:         "no policy loaded — fail-closed",
+			PolicySnapshot: snapshot,
+		}, nil
+	}
+
 	if tenant == "" {
 		tenant = defaultTenant
 	}
@@ -299,14 +309,11 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 	}
 	input.SecretsPresent = secretsPresent(input.Meta, req.GetLabels())
 
-	policyDecision := config.PolicyDecision{Decision: "allow"}
-	if policy != nil {
-		policyDecision = policy.Evaluate(input)
-		if tp, ok := policy.Tenants[tenant]; ok {
-			if ok, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !ok {
-				policyDecision.Decision = "deny"
-				policyDecision.Reason = mcpReason
-			}
+	policyDecision := policy.Evaluate(input)
+	if tp, ok := policy.Tenants[tenant]; ok {
+		if ok, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !ok {
+			policyDecision.Decision = "deny"
+			policyDecision.Reason = mcpReason
 		}
 	}
 	if strings.HasPrefix(policyDecision.Reason, "no matching rule") {
@@ -1016,6 +1023,10 @@ func fetchPolicyURL(raw string) ([]byte, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return nil, fmt.Errorf("invalid policy url: %w", err)
+	}
+	// Enforce HTTPS in production to prevent MITM injection of malicious policies.
+	if env.IsProduction() && parsed.Scheme == "http" {
+		return nil, fmt.Errorf("HTTPS required for policy URL in production (got http://%s)", parsed.Host)
 	}
 	if err := validatePolicyURL(parsed); err != nil {
 		return nil, err

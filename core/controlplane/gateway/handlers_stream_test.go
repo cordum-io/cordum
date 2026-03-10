@@ -81,7 +81,7 @@ func TestApiKeyFromWebSocketProtocols(t *testing.T) {
 
 // ---- negotiateSubprotocol unit tests ----
 
-func TestNegotiateSubprotocol_ValidProtocol(t *testing.T) {
+func TestNegotiateSubprotocol_DotFormat_OnlyEchoesIdentifier(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	token := base64.RawURLEncoding.EncodeToString([]byte("my-key"))
 	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+"."+token)
@@ -90,8 +90,22 @@ func TestNegotiateSubprotocol_ValidProtocol(t *testing.T) {
 		t.Fatal("expected non-nil header for valid subprotocol")
 	}
 	got := h.Get("Sec-Websocket-Protocol")
-	if !strings.HasPrefix(strings.ToLower(got), strings.ToLower(wsAuthSubprotocol)) {
-		t.Fatalf("expected protocol starting with %s, got %q", wsAuthSubprotocol, got)
+	if got != wsAuthSubprotocol {
+		t.Fatalf("expected bare %q, got %q (credential leak!)", wsAuthSubprotocol, got)
+	}
+}
+
+func TestNegotiateSubprotocol_CommaSeparated_OnlyEchoesIdentifier(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	token := base64.RawURLEncoding.EncodeToString([]byte("my-key"))
+	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+", "+token)
+	h := negotiateSubprotocol(req)
+	if h == nil {
+		t.Fatal("expected non-nil header for comma-separated subprotocol")
+	}
+	got := h.Get("Sec-Websocket-Protocol")
+	if got != wsAuthSubprotocol {
+		t.Fatalf("expected bare %q, got %q (credential leak!)", wsAuthSubprotocol, got)
 	}
 }
 
@@ -146,6 +160,28 @@ func TestApiKeyFromWebSocket_MalformedBase64FallsBack(t *testing.T) {
 	got := apiKeyFromWebSocket(req)
 	if got == "" {
 		t.Fatal("expected non-empty fallback for malformed base64")
+	}
+}
+
+// ---- revalidateWSAuth unit tests ----
+
+func TestRevalidateWSAuth_ValidKey(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"live-key","role":"admin","tenant":"default"}]`,
+	})
+	s := &server{auth: provider}
+	if err := s.revalidateWSAuth("live-key"); err != nil {
+		t.Fatalf("expected nil for valid key, got %v", err)
+	}
+}
+
+func TestRevalidateWSAuth_RevokedKey(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"live-key","role":"admin","tenant":"default"}]`,
+	})
+	s := &server{auth: provider}
+	if err := s.revalidateWSAuth("revoked-key"); err == nil {
+		t.Fatal("expected error for revoked/unknown key")
 	}
 }
 
@@ -488,6 +524,127 @@ func TestStopWorkerExpirySafeWithoutStart(t *testing.T) {
 	s := &server{}
 	// Should not panic when called without startWorkerExpiry.
 	s.stopWorkerExpiry()
+}
+
+// ---------------------------------------------------------------------------
+// Leak and lifecycle regression tests
+// ---------------------------------------------------------------------------
+
+// TestStaleClientAccumulatesWithoutReadPump demonstrates that a disconnected
+// WebSocket client remains in s.clients until a write failure or slow-client
+// eviction occurs. Without a read goroutine, the server cannot detect client
+// disconnect promptly (only on next WriteMessage error).
+func TestStaleClientAccumulatesWithoutReadPump(t *testing.T) {
+	s := &server{
+		clients:    make(map[*websocket.Conn]*wsClient),
+		eventsCh:   make(chan wsEvent, 64),
+		shutdownCh: make(chan struct{}),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+
+	// Connect then immediately close the client side.
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	_ = conn.Close()
+
+	// Give the server a moment to process.
+	time.Sleep(50 * time.Millisecond)
+
+	// Without a read pump, the server has no immediate way to detect the
+	// client closed. The entry may still be in s.clients until a write fails.
+	// This test documents the behavior — a future fix should add a read pump
+	// so disconnected clients are cleaned up promptly.
+	s.clientsMu.RLock()
+	count := len(s.clients)
+	s.clientsMu.RUnlock()
+	// We log the count; the stale entry is eventually cleaned by write failure
+	// or slow-client eviction, but the window exists.
+	t.Logf("clients after close: %d (stale entries expected without read pump)", count)
+}
+
+// TestEnqueueWSEventDropsSilently verifies that when the event channel is full,
+// enqueueWSEvent drops the event with no error and no panic.
+func TestEnqueueWSEventDropsSilently(t *testing.T) {
+	s := &server{
+		eventsCh: make(chan wsEvent, 1), // tiny buffer
+	}
+	// Fill the buffer.
+	s.enqueueWSEvent([]byte("first"), "t", "")
+	// This should drop silently (no panic, no error).
+	s.enqueueWSEvent([]byte("dropped"), "t", "")
+	// Verify only the first event is in the buffer.
+	select {
+	case evt := <-s.eventsCh:
+		if string(evt.data) != "first" {
+			t.Fatalf("expected first event, got %q", string(evt.data))
+		}
+	default:
+		t.Fatal("expected event in buffer")
+	}
+	// Buffer should now be empty — the second event was dropped.
+	select {
+	case evt := <-s.eventsCh:
+		t.Fatalf("expected empty buffer after drain, got %q", string(evt.data))
+	default:
+		// OK — buffer empty, event was dropped silently
+	}
+}
+
+// TestBroadcastLoopRespectsShutdown verifies that closing shutdownCh stops
+// the broadcast goroutine cleanly.
+func TestBroadcastLoopRespectsShutdown(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.shutdownCh = make(chan struct{})
+
+	if err := s.startBusTaps(); err != nil {
+		t.Fatalf("start bus taps: %v", err)
+	}
+
+	// Register a client so we can check it's cleaned up.
+	client := &wsClient{ch: make(chan wsEvent, 8), allowCrossTenant: true}
+	dummyConn := &websocket.Conn{}
+	s.clientsMu.Lock()
+	s.clients[dummyConn] = client
+	s.clientsMu.Unlock()
+
+	// Drain client channel to avoid goroutine leak.
+	go func() {
+		for range client.ch {
+		}
+	}()
+
+	// Send an event to prove the broadcast loop is running.
+	s.enqueueWSEvent([]byte(`{"test":true}`), "", "")
+	time.Sleep(20 * time.Millisecond)
+
+	// Shut down.
+	close(s.shutdownCh)
+	s.stopBusTaps()
+	s.stopWorkerExpiry()
+
+	// Give broadcast goroutine time to exit.
+	time.Sleep(50 * time.Millisecond)
+
+	// Events after shutdown should be safely dropped.
+	s.enqueueWSEvent([]byte(`{"after":"shutdown"}`), "", "")
+}
+
+// TestWriteDeadlineIsSet verifies the write timeout constant exists and is reasonable.
+func TestWriteDeadlineIsSet(t *testing.T) {
+	if wsWriteTimeout <= 0 {
+		t.Fatal("wsWriteTimeout must be positive")
+	}
+	if wsWriteTimeout > 30*time.Second {
+		t.Fatalf("wsWriteTimeout too high: %v (max 30s recommended)", wsWriteTimeout)
+	}
 }
 
 func newIPv4Server(t *testing.T, handler http.Handler) *httptest.Server {

@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -26,6 +28,7 @@ import (
 type BasicAuthProvider struct {
 	defaultTenant        string
 	keys                 map[string]apiKeyMeta
+	keyHashes            map[string]apiKeyMeta // SHA-256(key) → meta for timing-safe lookup
 	requireAPIKey        bool
 	allowAnonymous       bool
 	allowHeaderPrincipal bool
@@ -69,6 +72,7 @@ func NewBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 	return &BasicAuthProvider{
 		defaultTenant:        defaultTenant,
 		keys:                 keys,
+		keyHashes:            buildKeyHashes(keys),
 		requireAPIKey:        requireKey,
 		allowAnonymous:       allowAnonymous,
 		allowHeaderPrincipal: allowHeaderPrincipal,
@@ -514,10 +518,32 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 	return keys, requireKey, keysPath, keysModTime, allowHeaderPrincipal, nil
 }
 
+// hashAPIKey returns a hex-encoded SHA-256 digest of the given API key.
+// Used to build a timing-safe lookup index: the map key is the hash,
+// so Go's map lookup timing correlates with hash values (opaque) rather
+// than the original secret. This is NOT password hashing — API keys are
+// high-entropy random tokens; SHA-256 is appropriate for indexing them.
+func hashAPIKey(rawToken string) string {
+	h := sha256.Sum256([]byte(rawToken)) // #nosec G703 -- SHA-256 for lookup index, not password storage
+	return hex.EncodeToString(h[:])
+}
+
+// buildKeyHashes creates the hash-indexed lookup map from the raw key map.
+func buildKeyHashes(keys map[string]apiKeyMeta) map[string]apiKeyMeta {
+	hashes := make(map[string]apiKeyMeta, len(keys))
+	for k, meta := range keys {
+		hashes[hashAPIKey(k)] = meta
+	}
+	return hashes
+}
+
 func (b *BasicAuthProvider) lookupKey(key string) (apiKeyMeta, bool) {
 	b.keysMu.RLock()
 	defer b.keysMu.RUnlock()
-	meta, ok := b.keys[key]
+	// SECURITY: Look up by SHA-256 hash of the key rather than the raw key.
+	// This prevents timing side-channels from leaking information about
+	// which key prefixes exist in the map.
+	meta, ok := b.keyHashes[hashAPIKey(key)]
 	return meta, ok
 }
 
@@ -544,6 +570,7 @@ func (b *BasicAuthProvider) maybeReloadKeys() {
 	}
 	b.keysMu.Lock()
 	b.keys = keys
+	b.keyHashes = buildKeyHashes(keys)
 	b.requireAPIKey = requireKey
 	b.keysPath = keysPath
 	b.keysModTime = keysModTime

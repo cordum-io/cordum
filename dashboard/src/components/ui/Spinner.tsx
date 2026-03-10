@@ -61,7 +61,7 @@ export function LoadingScreen({
     <div className={cn("flex min-h-[200px] items-center justify-center", className)}>
       <div className="flex flex-col items-center gap-3">
         <Spinner size="lg" className="text-accent" />
-        <p className="text-sm text-muted">{label}</p>
+        <p className="text-sm text-muted-foreground">{label}</p>
       </div>
     </div>
   );

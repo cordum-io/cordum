@@ -101,22 +101,22 @@ export function MemoryPanel({ memoryPtr, jobId }: MemoryPanelProps) {
         <div>
           <CardTitle>Memory</CardTitle>
           {memoryPtr ? (
-            <p className="mt-1 max-w-[32rem] truncate font-mono text-[10px] text-muted" title={memoryPtr}>
+            <p className="mt-1 max-w-[32rem] truncate font-mono text-[10px] text-muted-foreground" title={memoryPtr}>
               {memoryPtr}
             </p>
           ) : (
-            <p className="mt-1 text-xs text-muted">Job {jobId.slice(0, 8)} has no memory pointer.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Job {jobId.slice(0, 8)} has no memory pointer.</p>
           )}
         </div>
       </CardHeader>
 
       {memoryPtr && (
         <div className="mb-4">
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted">
+          <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Search Memory Entries
           </label>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
@@ -129,7 +129,7 @@ export function MemoryPanel({ memoryPtr, jobId }: MemoryPanelProps) {
 
       {!memoryPtr && (
         <EmptyState
-          icon={BrainCircuit}
+          icon={<BrainCircuit className="h-10 w-10" />}
           title="No memory context for this job"
           description="This job was submitted without a memory pointer."
         />
@@ -155,7 +155,7 @@ export function MemoryPanel({ memoryPtr, jobId }: MemoryPanelProps) {
             <AlertTriangle className="h-4 w-4" />
             <span className="text-sm font-semibold">Failed to load memory entries</span>
           </div>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             {error instanceof Error ? error.message : "Unknown error"}
           </p>
           <Button
@@ -175,7 +175,7 @@ export function MemoryPanel({ memoryPtr, jobId }: MemoryPanelProps) {
 
       {memoryPtr && !isLoading && !isError && filteredEntries.length === 0 && (
         <EmptyState
-          icon={BrainCircuit}
+          icon={<BrainCircuit className="h-10 w-10" />}
           title={entries.length === 0 ? "No memory context for this job" : "No memory entries match your search"}
           description={
             entries.length === 0
@@ -198,14 +198,14 @@ export function MemoryPanel({ memoryPtr, jobId }: MemoryPanelProps) {
             return (
               <div
                 key={entry.id}
-                className="rounded-2xl border border-border/60 bg-white/40 p-4 transition hover:border-border"
+                className="rounded-2xl border border-border/60 bg-card/40 p-4 transition hover:border-border"
               >
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <Badge variant={roleVariant(entry.role)} title={roleHelp(entry.role)}>
                     {entry.role}
                   </Badge>
                   {timestamp && (
-                    <span className="text-[11px] text-muted">{timestamp}</span>
+                    <span className="text-[11px] text-muted-foreground">{timestamp}</span>
                   )}
                 </div>
                 <div className="rounded-xl bg-surface2/35 p-3">

@@ -100,7 +100,7 @@ export function Breadcrumbs() {
 
   return (
     <nav className="flex items-center gap-1 text-xs">
-      <Link to="/" className="text-muted transition-colors hover:text-accent">
+      <Link to="/" className="text-muted-foreground transition-colors hover:text-accent">
         Overview
       </Link>
       {crumbs.map((crumb, i) => {
@@ -121,7 +121,7 @@ export function Breadcrumbs() {
               <Link
                 to={crumb.path}
                 className={cn(
-                  "text-muted transition-colors hover:text-accent",
+                  "text-muted-foreground transition-colors hover:text-accent",
                   crumb.isId && "font-mono text-[10px]",
                 )}
               >

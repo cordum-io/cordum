@@ -1134,48 +1134,6 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
-  /api/v1/workflows/{id}/runs/{run_id}/steps/{step_id}/approve:
-    post:
-      operationId: approveWorkflowStep
-      summary: Approve or reject a pending workflow step
-      tags: [WorkflowRuns]
-      parameters:
-        - $ref: "#/components/parameters/WorkflowID"
-        - name: run_id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: step_id
-          in: path
-          required: true
-          schema:
-            type: string
-        - $ref: "#/components/parameters/TenantID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                approved:
-                  type: boolean
-              required: [approved]
-      responses:
-        "204":
-          description: Decision recorded
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "500":
-          $ref: "#/components/responses/InternalServerError"
-
   /api/v1/workflows/{id}/runs/{run_id}/cancel:
     post:
       operationId: cancelWorkflowRun

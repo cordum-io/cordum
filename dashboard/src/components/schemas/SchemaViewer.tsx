@@ -21,10 +21,10 @@ function FieldRow({ field, depth = 0 }: { field: SchemaField; depth?: number }) 
         {field.required ? (
           <Badge variant="danger" className="text-[10px]">required</Badge>
         ) : (
-          <span className="text-xs text-muted">optional</span>
+          <span className="text-xs text-muted-foreground">optional</span>
         )}
       </td>
-      <td className="px-4 py-2.5 text-xs text-muted">
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">
         {field.description || "—"}
       </td>
     </tr>
@@ -46,7 +46,7 @@ export function SchemaViewer({ schema }: { schema: Schema }) {
             <h3 className="font-display text-lg font-semibold text-ink">
               {schema.id}
             </h3>
-            <p className="mt-1 text-xs text-muted">
+            <p className="mt-1 text-xs text-muted-foreground">
               {fields.length} field{fields.length !== 1 ? "s" : ""} &middot; Schema registry
             </p>
           </div>
@@ -56,7 +56,7 @@ export function SchemaViewer({ schema }: { schema: Schema }) {
 
       {/* Fields table */}
       {fields.length === 0 ? (
-        <Card className="border-dashed text-center text-sm text-muted py-8">
+        <Card className="border-dashed text-center text-sm text-muted-foreground py-8">
           No fields parsed from this schema.
         </Card>
       ) : (
@@ -64,16 +64,16 @@ export function SchemaViewer({ schema }: { schema: Schema }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-surface2/50">
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Field
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Type
                 </th>
-                <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-muted">
+                <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Required
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Description
                 </th>
               </tr>
@@ -89,7 +89,7 @@ export function SchemaViewer({ schema }: { schema: Schema }) {
 
       {schema.schema && (
         <Card>
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Raw Schema
           </h4>
           <pre className="mt-2 max-h-96 overflow-auto rounded-xl bg-surface2 p-3 text-xs text-ink font-mono">

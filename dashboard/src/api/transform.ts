@@ -19,11 +19,13 @@ import type {
   WorkflowStep,
   PolicyBundle,
   Worker,
+  Pool,
   DLQEntry,
   Pack,
   MarketplacePack,
   MarketplaceCatalog,
   PolicyRule,
+  PolicyRuleMatch,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -77,6 +79,8 @@ export interface BackendOutputSafetyRecord {
 export interface BackendJobDetail extends BackendJobRecord {
   context_ptr?: string;
   result_ptr?: string;
+  context?: unknown;
+  result?: unknown;
   error_message?: string;
   error_status?: string;
   error_code?: string;
@@ -213,6 +217,7 @@ export interface BackendApprovalItem {
   resolved_by?: string;
   resolved_comment?: string;
   constraints?: Record<string, unknown>;
+  job_input?: Record<string, unknown>;
   workflow_id?: string;
   workflow_run_id?: string;
   step_index?: number;
@@ -358,6 +363,8 @@ export interface BackendHeartbeat {
   memory_load?: number;
   progress_pct?: number;
   last_memo?: string;
+  last_heartbeat?: string;
+  status?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +390,7 @@ export function microsToISO(raw: unknown): string {
 export function normalizeJobStatus(raw?: string): JobStatus {
   switch ((raw || "").toUpperCase()) {
     case "PENDING":
+    case "":
       return "pending";
     case "SCHEDULED":
       return "scheduled";
@@ -407,6 +415,9 @@ export function normalizeJobStatus(raw?: string): JobStatus {
     case "OUTPUT_QUARANTINED":
       return "output_quarantined";
     default:
+      // Unknown backend states should not silently become "pending".
+      // Log and return "pending" but with visibility.
+      logger.warn("transform", "Unknown job status from backend, defaulting to pending", { raw });
       return "pending";
   }
 }
@@ -414,10 +425,11 @@ export function normalizeJobStatus(raw?: string): JobStatus {
 export function normalizeDecisionType(raw?: string): SafetyDecision["type"] {
   switch ((raw || "").toUpperCase()) {
     case "ALLOW":
-    case "ALLOW_WITH_CONSTRAINTS":
     case "DECISION_TYPE_ALLOW":
-    case "DECISION_TYPE_ALLOW_WITH_CONSTRAINTS":
       return "allow";
+    case "ALLOW_WITH_CONSTRAINTS":
+    case "DECISION_TYPE_ALLOW_WITH_CONSTRAINTS":
+      return "allow_with_constraints";
     case "DENY":
     case "DECISION_TYPE_DENY":
       return "deny";
@@ -447,7 +459,7 @@ export function mapSafetyDecision(
   };
 }
 
-function normalizeOutputDecision(raw?: string): OutputDecision {
+export function normalizeOutputDecision(raw?: string): OutputDecision {
   switch ((raw || "").toUpperCase()) {
     case "ALLOW":
       return "ALLOW";
@@ -455,8 +467,15 @@ function normalizeOutputDecision(raw?: string): OutputDecision {
       return "QUARANTINE";
     case "REDACT":
       return "REDACT";
+    case "DENY":
+      return "QUARANTINE";
     default:
-      return "ALLOW";
+      // Fail-closed: unknown output decisions must NOT default to ALLOW.
+      // An unrecognized decision from the backend should quarantine for safety.
+      if (raw) {
+        logger.warn("transform", "Unknown output decision, defaulting to QUARANTINE", { raw });
+      }
+      return raw ? "QUARANTINE" : "ALLOW";
   }
 }
 
@@ -514,7 +533,7 @@ export function mapJobRecord(record: BackendJobRecord): Job {
   );
   return {
     id,
-    type: "",
+    type: record.topic || "",
     topic: record.topic || "",
     status: normalizeJobStatus(record.state),
     safetyDecision: mapSafetyDecision(
@@ -522,10 +541,15 @@ export function mapJobRecord(record: BackendJobRecord): Job {
       record.safety_reason,
       record.safety_rule_id,
     ),
-    pool: "",
+    pool: record.topic || "",
     capabilities,
     riskTags: record.risk_tags ?? [],
-    metadata: {},
+    metadata: {
+      ...(record.actor_id ? { actor_id: record.actor_id } : {}),
+      ...(record.actor_type ? { actor_type: record.actor_type } : {}),
+      ...(record.pack_id ? { pack_id: record.pack_id } : {}),
+      ...(record.tenant ? { tenant: record.tenant } : {}),
+    },
     contextPtr: undefined,
     resultPtr: undefined,
     workflowRunId: undefined,
@@ -547,8 +571,16 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
   const base = mapJobRecord(detail);
   return {
     ...base,
+    metadata: {
+      ...base.metadata,
+      ...(detail.labels ? detail.labels : {}),
+      ...(detail.workflow_id ? { workflow_id: detail.workflow_id } : {}),
+      ...(detail.run_id ? { run_id: detail.run_id } : {}),
+    },
     contextPtr: detail.context_ptr,
     resultPtr: detail.result_ptr,
+    context: detail.context,
+    result: detail.result,
     errorMessage: detail.error_message,
     errorStatus: detail.error_status,
     errorCode: detail.error_code,
@@ -572,6 +604,7 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
 
 const WORKFLOW_NODE_TYPES = new Set([
   "job",
+  "worker",
   "agent-task",
   "pack-action",
   "tool-call",
@@ -601,11 +634,11 @@ function normalizeWorkflowNodeType(
   if (trimmed === "subworkflow") {
     return { uiType: "sub-workflow" };
   }
-  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job") {
+  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job" && trimmed !== "worker") {
     return { uiType: trimmed };
   }
-  // Backend "job" → differentiate into agent-task / pack-action / tool-call
-  if (trimmed === "job" && meta) {
+  // Backend "job" or "worker" → differentiate into agent-task / pack-action / tool-call
+  if ((trimmed === "job" || trimmed === "worker") && meta) {
     if (typeof meta.pack_id === "string" && meta.pack_id) {
       return { uiType: "pack-action" };
     }
@@ -613,7 +646,7 @@ function normalizeWorkflowNodeType(
       return { uiType: "tool-call" };
     }
   }
-  if (trimmed === "job") {
+  if (trimmed === "job" || trimmed === "worker") {
     return { uiType: "agent-task" };
   }
   return { uiType: "agent-task", backendType: trimmed };
@@ -884,12 +917,25 @@ export function mapWorkflow(def: BackendWorkflow): Workflow {
   };
 }
 
+const VALID_RUN_STATUSES = new Set<string>(["pending", "running", "waiting", "succeeded", "failed", "timed_out", "cancelled"]);
+
+function normalizeRunStatus(raw?: string): WorkflowStep["status"] {
+  const lower = (raw || "").toLowerCase();
+  if (VALID_RUN_STATUSES.has(lower)) return lower as WorkflowStep["status"];
+  // Map common backend variants
+  if (lower === "completed" || lower === "success") return "succeeded";
+  if (lower === "error" || lower === "errored") return "failed";
+  if (lower === "timeout" || lower === "timedout") return "timed_out";
+  if (lower === "canceled") return "cancelled";
+  return "pending";
+}
+
 export function mapWorkflowRunStep(step: BackendStepRun, fallbackId: string): WorkflowStep {
   return {
     id: step.step_id || fallbackId,
     name: step.step_id || fallbackId,
     type: "step",
-    status: step.status as WorkflowStep["status"],
+    status: normalizeRunStatus(step.status),
     output: (step.output as Record<string, unknown>) ?? undefined,
     error: step.error ? JSON.stringify(step.error) : undefined,
     startedAt: step.started_at || undefined,
@@ -904,11 +950,13 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
   return {
     id: run.id,
     workflowId: run.workflow_id || "",
-    status: (run.status as WorkflowRun["status"]) || "pending",
+    status: normalizeRunStatus(run.status) as WorkflowRun["status"] || "pending",
     steps,
     startedAt: run.started_at ?? null,
     completedAt: run.completed_at ?? null,
-    duration: undefined,
+    duration: run.completed_at && run.started_at
+      ? new Date(run.completed_at).getTime() - new Date(run.started_at).getTime()
+      : undefined,
     createdAt: run.created_at,
     updatedAt: run.updated_at,
     orgId: run.org_id,
@@ -924,6 +972,7 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
 }
 
 export function computeUrgencyLevel(waitMs: number): UrgencyLevel {
+  if (!Number.isFinite(waitMs) || waitMs < 0) return "fresh";
   if (waitMs < 2 * 60_000) return "fresh";
   if (waitMs < 15 * 60_000) return "aging";
   if (waitMs < 60 * 60_000) return "critical";
@@ -933,19 +982,23 @@ export function computeUrgencyLevel(waitMs: number): UrgencyLevel {
 export function deriveApprovalStatus(
   jobState: string | undefined,
   decision: string | undefined,
+  resolvedBy?: string,
 ): string {
-  if (decision === "approve" || decision === "approved") return "approved";
-  if (decision === "reject" || decision === "rejected" || decision === "deny")
-    return "rejected";
-  if (jobState === "denied") return "rejected";
-  if (jobState === "output_quarantined") return "quarantined";
-  if (jobState === "approval_required") return "pending";
-  if (
-    jobState === "succeeded" ||
-    jobState === "failed" ||
-    jobState === "cancelled"
-  )
-    return "resolved";
+  const d = (decision || "").toLowerCase();
+  const s = (jobState || "").toLowerCase();
+  if (d === "approve" || d === "approved") return "approved";
+  if (d === "reject" || d === "rejected" || d === "deny")
+    return "denied";
+  if (s === "denied") return "denied";
+  if (s === "output_quarantined") return "quarantined";
+  if (s === "approval_required") return "pending";
+  // Job resolved through approval flow — derive from post-approval state.
+  if (resolvedBy) {
+    if (s === "denied") return "denied";
+    return "approved";
+  }
+  if (s === "succeeded" || s === "failed" || s === "cancelled" || s === "pending")
+    return "approved";
   return "pending";
 }
 
@@ -983,7 +1036,7 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
   return {
     id: item.approval_ref || job.id,
     jobId: job.id,
-    status: deriveApprovalStatus(item.job.state, item.decision),
+    status: deriveApprovalStatus(item.job.state, item.decision, item.resolved_by),
     requestedAt,
     resolvedAt: item.resolved_at ? microsToISO(item.resolved_at) : undefined,
     actor: item.resolved_by,
@@ -1014,6 +1067,7 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     approvalRef: item.approval_ref,
     tenant: job.tenant,
     contextPtr: item.context_ptr,
+    jobInput: item.job_input as Record<string, unknown> | undefined,
     constraints: item.constraints,
   };
 }
@@ -1036,30 +1090,12 @@ export function mapDLQEntry(entry: BackendDLQEntry): DLQEntry {
   };
 }
 
-function normalizeMatchCriteria(raw: Record<string, unknown>): Record<string, unknown> {
+function normalizeMatchCriteria(raw: Record<string, unknown>): PolicyRuleMatch {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
-    switch (key) {
-      case "risk_tags":
-        out.riskTags = value;
-        break;
-      case "pack_ids":
-        out.packIds = value;
-        break;
-      case "actor_ids":
-        out.actorIds = value;
-        break;
-      case "actor_types":
-        out.actorTypes = value;
-        break;
-      case "secrets_present":
-        out.secretsPresent = value;
-        break;
-      default:
-        out[key] = value;
-    }
+    out[key] = value;
   }
-  return out;
+  return out as PolicyRuleMatch;
 }
 
 export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
@@ -1069,15 +1105,23 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
   const match = (raw.match as Record<string, unknown>) ?? {};
   const priority = typeof raw.priority === "number" ? raw.priority : undefined;
   const logic = typeof raw.logic === "string" ? raw.logic : undefined;
+  const name = typeof raw.name === "string" ? raw.name : id;
+  const normalizedDecision = normalizeDecisionType(decision);
+  const normalizedMatch = normalizeMatchCriteria(match);
   return {
     id,
-    matchCriteria: normalizeMatchCriteria(match),
-    decisionType: normalizeDecisionType(decision),
+    name,
+    description: typeof raw.description === "string" ? raw.description : undefined,
+    match: normalizedMatch,
+    decision: normalizedDecision,
+    matchCriteria: normalizedMatch as Record<string, unknown>,
+    decisionType: normalizedDecision,
     reason,
-    priority,
+    priority: priority ?? 0,
     logic,
     source: typeof raw.source === "object" && raw.source ? (raw.source as Record<string, unknown>) : undefined,
-    enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
+    constraints: raw.constraints && typeof raw.constraints === "object" ? (raw.constraints as Record<string, unknown>) : undefined,
   };
 }
 
@@ -1090,7 +1134,7 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
       const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
       rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
     } catch {
-      logger.debug("transform", "YAML parse error in policy bundle summary, falling back to empty rules");
+      logger.warn("transform", "YAML parse error in policy bundle summary, falling back to empty rules");
     }
   }
   return {
@@ -1107,6 +1151,7 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
     updatedAt: summary.updated_at,
     installedAt: summary.installed_at,
     sha256: summary.sha256,
+    rule_count: summary.rule_count,
     healthStatus: undefined,
   };
 }
@@ -1129,7 +1174,7 @@ export function mapPolicyBundleDetail(detail: BackendPolicyBundleDetail): Policy
       const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
       rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
     } catch {
-      logger.debug("transform", "YAML parse error in policy bundle detail, falling back to empty rules");
+      logger.warn("transform", "YAML parse error in policy bundle detail, falling back to empty rules");
     }
   }
   return {
@@ -1200,7 +1245,7 @@ export function auditResourceLink(
     case "job": return `/jobs/${resourceId}`;
     case "workflow": return `/workflows/${resourceId}`;
     case "run": return `/workflows`;
-    case "policy": return `/policies`;
+    case "policy": return `/govern/bundles`;
     case "user": return `/settings`;
     case "pack": return `/packs`;
     case "approval": return `/approvals`;
@@ -1267,7 +1312,7 @@ export function mapPolicySnapshotSummary(snapshot: BackendPolicySnapshotSummary)
 export function mapPolicySnapshot(snapshot: BackendPolicySnapshot) {
   // Extract rules from all bundles in the snapshot
   const rules: ReturnType<typeof mapPolicyRule>[] = [];
-  if (snapshot.bundles) {
+  if (snapshot.bundles && typeof snapshot.bundles === "object") {
     for (const bundle of Object.values(snapshot.bundles)) {
       const b = bundle as Record<string, unknown>;
       const bundleRules = Array.isArray(b.rules) ? b.rules : [];
@@ -1379,7 +1424,7 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
   const name =
     (hb.labels && (hb.labels.name || hb.labels.worker_name || hb.labels.worker)) ||
     hb.worker_id;
-  const status = activeJobs > 0 ? "active" : "online";
+  const status = hb.status ?? (activeJobs > 0 ? "busy" : "idle");
   return {
     id: hb.worker_id,
     name,
@@ -1389,10 +1434,38 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
     activeJobs,
     // capacity fallback: if backend reports 0 max_parallel_jobs, use at least 1
     capacity: capacity > 0 ? capacity : Math.max(1, activeJobs),
+    lastHeartbeat: hb.last_heartbeat,
     region: hb.region,
     type: hb.type,
     cpuLoad: hb.cpu_load,
     gpuUtilization: hb.gpu_utilization,
     memoryLoad: hb.memory_load,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pool mapper
+// ---------------------------------------------------------------------------
+
+export interface BackendPoolSummary {
+  name: string;
+  workers: number;
+  active_jobs: number;
+  capacity: number;
+  utilization: number;
+  topics?: string[];
+  worker_list?: BackendHeartbeat[];
+  captured_at?: string;
+}
+
+export function mapPoolResponse(bp: BackendPoolSummary, mapWorker = mapHeartbeatToWorker): Pool {
+  return {
+    name: bp.name,
+    workerCount: bp.workers ?? 0,
+    activeJobs: bp.active_jobs ?? 0,
+    capacity: bp.capacity ?? 0,
+    utilization: Math.round((bp.utilization ?? 0) * 100),
+    topics: bp.topics ?? [],
+    workers: (bp.worker_list ?? []).map(mapWorker).filter((w): w is Worker => !!w),
   };
 }

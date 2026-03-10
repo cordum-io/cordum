@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ApiError, get } from "../api/client";
+import { get } from "../api/client";
 import type {
   ArtifactPayload,
   JobArtifactRef,
@@ -16,19 +16,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
-}
-
-function asNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return undefined;
 }
 
 function normalizeRole(value: unknown): MemoryEntry["role"] {
@@ -143,52 +130,43 @@ function attachMemoryEntries(payload: MemoryPayload): MemoryPayload {
   };
 }
 
-function mapArtifactRef(value: unknown): JobArtifactRef | null {
-  if (typeof value === "string") {
-    const ptr = value.trim();
-    if (!ptr) return null;
-    return { ptr, source: "job_artifacts" };
-  }
-  const record = asRecord(value);
-  if (!record) return null;
-  const ptr =
-    asString(record.ptr).trim() ||
-    asString(record.pointer).trim() ||
-    asString(record.artifact_ptr).trim();
-  if (!ptr) return null;
-  const metadata = asRecord(record.metadata);
-  const labels = asRecord(metadata?.labels);
-  const timestamp =
-    asString(record.timestamp).trim() ||
-    asString(record.created_at).trim() ||
-    asString(labels?.created_at).trim();
-  return {
-    ptr,
-    contentType:
-      asString(record.content_type).trim() ||
-      asString(metadata?.content_type).trim() ||
-      undefined,
-    sizeBytes:
-      asNumber(record.size_bytes) ??
-      asNumber(metadata?.size_bytes),
-    timestamp: timestamp || undefined,
-    source: asString(record.source).trim() || "job_artifacts",
-  };
-}
-
 function mapJobArtifactsResponse(raw: unknown): JobArtifactRef[] {
+  if (!raw) return [];
+
+  let items: unknown[];
+
   if (Array.isArray(raw)) {
-    return raw.map(mapArtifactRef).filter((item): item is JobArtifactRef => item !== null);
+    items = raw;
+  } else {
+    const record = asRecord(raw);
+    if (!record) return [];
+    if (Array.isArray(record.items)) {
+      items = record.items;
+    } else if (Array.isArray(record.artifacts)) {
+      items = record.artifacts;
+    } else {
+      return [];
+    }
   }
-  const record = asRecord(raw);
-  if (!record) return [];
-  const itemsRaw = Array.isArray(record.items)
-    ? record.items
-    : Array.isArray(record.artifacts)
-      ? record.artifacts
-      : null;
-  if (!itemsRaw) return [];
-  return itemsRaw.map(mapArtifactRef).filter((item): item is JobArtifactRef => item !== null);
+
+  const refs: JobArtifactRef[] = [];
+  for (const item of items) {
+    if (typeof item === "string") {
+      const ptr = item.trim();
+      if (ptr) refs.push({ ptr });
+      continue;
+    }
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const ptr = asString(rec.ptr || rec.pointer).trim();
+    if (!ptr) continue;
+    refs.push({
+      ptr,
+      contentType: asString(rec.content_type) || undefined,
+      sizeBytes: typeof rec.size_bytes === "number" ? rec.size_bytes : undefined,
+    });
+  }
+  return refs;
 }
 
 function dedupeArtifacts(items: JobArtifactRef[]): JobArtifactRef[] {
@@ -256,18 +234,6 @@ export function useJobArtifacts(jobId?: string) {
       const id = (jobId ?? "").trim();
       if (!id) return [];
       const encodedID = encodeURIComponent(id);
-
-      try {
-        const response = await get<unknown>(`/jobs/${encodedID}/artifacts`);
-        const mapped = mapJobArtifactsResponse(response);
-        if (mapped.length > 0) {
-          return dedupeArtifacts(mapped);
-        }
-      } catch (error) {
-        if (!(error instanceof ApiError) || ![404, 405].includes(error.status)) {
-          throw error;
-        }
-      }
 
       const detail = await get<unknown>(`/jobs/${encodedID}`);
       return fallbackArtifactsFromJobDetail(detail);

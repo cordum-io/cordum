@@ -140,19 +140,6 @@ func runApprovalCmd(args []string) {
 		os.Exit(1)
 	}
 	switch args[0] {
-	case "step":
-		fs := newFlagSet("approval step")
-		approve := fs.Bool("approve", false, "approve the step")
-		reject := fs.Bool("reject", false, "reject the step")
-		fs.ParseArgs(args[1:])
-		if fs.NArg() < 3 {
-			fail("usage: approval step <workflow_id> <run_id> <step_id>")
-		}
-		if *approve == *reject {
-			fail("use --approve or --reject")
-		}
-		client := newClientFromFlags(fs)
-		check(client.ApproveStep(context.Background(), fs.Arg(0), fs.Arg(1), fs.Arg(2), *approve))
 	case "job":
 		fs := newFlagSet("approval job")
 		approve := fs.Bool("approve", false, "approve the job")
@@ -206,7 +193,7 @@ func newFlagSet(name string) *flagSet {
 	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base url")
 	apiKey := fs.String("api-key", envOr("CORDUM_API_KEY", ""), "api key")
 	tenant := fs.String("tenant", envOr("CORDUM_TENANT_ID", "default"), "tenant id")
-	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1)")
+	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1|true)")
 	cacert := fs.String("cacert", envOr("CORDUM_TLS_CA", ""), "CA certificate for TLS verification (also: CORDUM_TLS_CA)")
 	return &flagSet{FlagSet: fs, gateway: gateway, apiKey: apiKey, tenant: tenant, insecure: insecure, cacert: cacert}
 }
@@ -227,16 +214,26 @@ func (fs *flagSet) tlsOptions() sdk.TLSOptions {
 		opts.CACertPath = strings.TrimSpace(os.Getenv("CORDUM_TLS_CA"))
 	}
 	opts.InsecureSkipVerify = (fs.insecure != nil && *fs.insecure) ||
-		strings.TrimSpace(os.Getenv("CORDUM_TLS_INSECURE")) == "1"
+		parseBoolEnv("CORDUM_TLS_INSECURE")
 	return opts
 }
 
+// parseBoolEnv returns true when the named env var is set to "1" or
+// case-insensitive "true". Matches the SDK runtime's parseBoolEnv semantics.
+func parseBoolEnv(key string) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
 func newClientFromFlags(fs *flagSet) *sdk.Client {
-	client := sdk.NewWithTLS(
+	client, err := sdk.NewWithTLSErr(
 		strings.TrimRight(*fs.gateway, "/"),
 		*fs.apiKey,
 		fs.tlsOptions(),
 	)
+	if err != nil {
+		fail(fmt.Sprintf("tls configuration error: %v", err))
+	}
 	if t := strings.TrimSpace(*fs.tenant); t != "" {
 		client.TenantID = t
 	}
@@ -272,7 +269,6 @@ Usage:
   cordumctl run start <workflow_id> [--input input.json] [--dry-run]
   cordumctl run delete <run_id>
   cordumctl run timeline <run_id>
-  cordumctl approval step <workflow_id> <run_id> <step_id> (--approve|--reject)
   cordumctl approval job <job_id> (--approve|--reject)
   cordumctl dlq retry <job_id>
   cordumctl job submit --topic job.example --prompt \"hello\" [--input input.json]
@@ -289,7 +285,7 @@ Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)
   --api-key    API key (default from CORDUM_API_KEY)
   --cacert     CA certificate for TLS verification (also: CORDUM_TLS_CA)
-  --insecure   Skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1)
+  --insecure   Skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1|true)
 `)
 }
 

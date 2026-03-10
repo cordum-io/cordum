@@ -59,7 +59,7 @@ func main() {
 		MaxHeaderBytes:    1 << 20,
 	}
 	go func() {
-		log.Printf("context engine metrics on %s/metrics", metricsAddr)
+		log.Printf("context engine metrics on %s/metrics", metricsAddr) // #nosec G706 -- metricsAddr is from server config, not user input
 		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("metrics server error: %v", err)
 		}

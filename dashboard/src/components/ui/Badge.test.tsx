@@ -69,7 +69,7 @@ describe("Badge", () => {
   it("applies enterprise variant styling", () => {
     renderBadge({ variant: "enterprise" });
     const span = container.querySelector("span")!;
-    expect(span.className).toContain("text-purple-600");
+    expect(span.className).toContain("text-primary");
   });
 
   it("merges custom className", () => {

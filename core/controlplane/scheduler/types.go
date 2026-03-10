@@ -109,6 +109,9 @@ type Metrics interface {
 	IncJobCancelFailures()
 	IncValidationRejections()
 	IncInputFailOpen(topic string)
+	IncJobLockAbandoned()
+	IncResultPtrWriteFailure()
+	IncDispatchRollback(topic string)
 }
 
 // SagaMetrics captures metrics for saga rollbacks and compensation handling.

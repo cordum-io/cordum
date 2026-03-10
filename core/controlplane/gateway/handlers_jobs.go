@@ -14,14 +14,14 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/infra/registry"
-	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/secrets"
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -60,7 +60,7 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	workers, err := s.workersFromRedisSnapshot()
 	if err == nil && workers != nil {
 		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w, workerSummariesToHeartbeats(workers))
+		writeJSON(w, map[string]any{"items": workerSummariesToHeartbeats(workers)})
 		return
 	}
 	if err != nil {
@@ -69,7 +69,7 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	// Fallback: in-memory heartbeat map (local replica only).
 	out := s.activeWorkersSnapshot(time.Now().UTC())
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, out)
+	writeJSON(w, map[string]any{"items": out})
 }
 
 func (s *server) activeWorkersSnapshot(now time.Time) []*pb.Heartbeat {
@@ -185,50 +185,47 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// HA-aware fields (additive — existing consumers ignore unknown fields).
-	resp["instance_id"] = s.instanceID
-	resp["rate_limiter"] = map[string]any{
-		"mode": rateLimiterMode(s.apiRL),
-	}
-
-	// Circuit breaker status from Redis (read-only).
-	var cbRedis redis.UniversalClient
-	if s.jobStore != nil {
-		cbRedis = s.jobStore.Client()
-	}
-	resp["circuit_breakers"] = map[string]any{
-		"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
-		"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
-	}
-
-	// Input fail-open counter from Redis (incremented by scheduler).
-	if cbRedis != nil {
-		if val, err := cbRedis.Get(r.Context(), "cordum:scheduler:input_fail_open_total").Int64(); err == nil {
-			resp["input_fail_open_total"] = val
+	// Infrastructure details are admin-only to prevent information disclosure.
+	if isAdmin {
+		resp["instance_id"] = s.instanceID
+		resp["rate_limiter"] = map[string]any{
+			"mode": rateLimiterMode(s.apiRL),
 		}
-	}
 
-	// HA environment variables (read-only, startup-only).
-	haEnv := map[string]any{
-		"redis_pool_size":      os.Getenv("REDIS_POOL_SIZE"),
-		"redis_min_idle_conns": os.Getenv("REDIS_MIN_IDLE_CONNS"),
-		"audit_transport":      os.Getenv("AUDIT_TRANSPORT"),
-	}
-	resp["ha_env"] = haEnv
-
-	// Worker snapshot metadata (writer ID + age).
-	if snap, snapErr := s.snapshotFromRedis(); snapErr == nil && snap != nil {
-		resp["snapshot_meta"] = map[string]any{
-			"writer_id":  snap.WriterID,
-			"captured_at": snap.CapturedAt,
+		var cbRedis redis.UniversalClient
+		if s.jobStore != nil {
+			cbRedis = s.jobStore.Client()
 		}
-	}
+		resp["circuit_breakers"] = map[string]any{
+			"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
+			"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
+		}
 
-	// Replica registry from Redis SCAN.
-	if s.instanceRegistry != nil && s.jobStore != nil {
-		replicas, err := registry.ListAllInstances(r.Context(), s.jobStore.Client())
-		if err == nil {
-			resp["replicas"] = replicas
+		if cbRedis != nil {
+			if val, err := cbRedis.Get(r.Context(), "cordum:scheduler:input_fail_open_total").Int64(); err == nil {
+				resp["input_fail_open_total"] = val
+			}
+		}
+
+		haEnv := map[string]any{
+			"redis_pool_size":      os.Getenv("REDIS_POOL_SIZE"),
+			"redis_min_idle_conns": os.Getenv("REDIS_MIN_IDLE_CONNS"),
+			"audit_transport":      os.Getenv("AUDIT_TRANSPORT"),
+		}
+		resp["ha_env"] = haEnv
+
+		if snap, snapErr := s.snapshotFromRedis(); snapErr == nil && snap != nil {
+			resp["snapshot_meta"] = map[string]any{
+				"writer_id":   snap.WriterID,
+				"captured_at": snap.CapturedAt,
+			}
+		}
+
+		if s.instanceRegistry != nil && s.jobStore != nil {
+			replicas, err := registry.ListAllInstances(r.Context(), s.jobStore.Client())
+			if err == nil {
+				resp["replicas"] = replicas
+			}
 		}
 	}
 
@@ -712,6 +709,36 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Tenant isolation for mem: keys — derive owner from run or job ID
+	// embedded in the key structure (mem:run:{runID}:* or mem:{jobID}:*).
+	if strings.HasPrefix(key, "mem:") {
+		memSuffix := strings.TrimPrefix(key, "mem:")
+		if strings.HasPrefix(memSuffix, "run:") {
+			// Pattern: mem:run:{runID}:events or mem:run:{runID}
+			parts := strings.SplitN(strings.TrimPrefix(memSuffix, "run:"), ":", 2)
+			runID := parts[0]
+			if runID != "" && s.workflowStore != nil {
+				if memRun, rerr := s.workflowStore.GetRun(r.Context(), runID); rerr == nil && memRun != nil {
+					if err := s.requireTenantAccess(r, memRun.OrgID); err != nil {
+						writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+						return
+					}
+				}
+			}
+		} else {
+			// Pattern: mem:{jobID}:* — try job tenant lookup.
+			parts := strings.SplitN(memSuffix, ":", 2)
+			potentialID := parts[0]
+			if potentialID != "" && s.jobStore != nil {
+				if memTenant, jerr := s.jobStore.GetTenant(r.Context(), potentialID); jerr == nil && memTenant != "" {
+					if err := s.requireTenantAccess(r, memTenant); err != nil {
+						writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+						return
+					}
+				}
+			}
+		}
+	}
 
 	var (
 		data []byte
@@ -1109,8 +1136,8 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body remediateJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid body")
+	if err := decodeJSONBody(w, r, &body); err != nil && !errors.Is(err, io.EOF) {
+		writeJSONDecodeError(w, err, "invalid body")
 		return
 	}
 	origReq, err := s.jobStore.GetJobRequest(r.Context(), jobID)
@@ -1260,6 +1287,8 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// RBAC: only admin and user roles may submit jobs.
+	// This matches the gRPC handler (SubmitJob) which also allows "admin"
+	// and "user" roles. Keep both in sync to avoid role asymmetry.
 	if err := s.requireRole(r, "admin", "user"); err != nil {
 		actorID, role := "anonymous", "none"
 		if ac := authFromRequest(r); ac != nil {
@@ -1274,6 +1303,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var req submitJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeErrorJSON(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
 		return
 	}

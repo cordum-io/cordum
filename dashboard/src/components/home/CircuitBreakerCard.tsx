@@ -28,7 +28,7 @@ const stateConfig = {
   },
   unknown: {
     label: "Unknown",
-    tone: "text-muted",
+    tone: "text-muted-foreground",
     bg: "bg-surface2",
     Icon: ShieldCheck,
   },
@@ -55,7 +55,7 @@ function CBSide({
 
   return (
     <div className="flex-1 space-y-1.5">
-      <p className="text-xs font-medium text-muted">{label}</p>
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
       <div className="flex items-center gap-2">
         <span
           className={cn(
@@ -68,7 +68,7 @@ function CBSide({
           {config.label}
         </span>
       </div>
-      <p className="text-xs text-muted">
+      <p className="text-xs text-muted-foreground">
         Failures: {cb.failures}/{cb.fail_threshold}
       </p>
       {cooldown && (

@@ -17,6 +17,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// workflowGateSnapshot is the PolicySnapshot value for approval-gate decisions
+// from SafetyBasic (which returns an empty snapshot).
+const workflowGateSnapshot = ""
+
 // newTestRegistry creates a MemoryRegistry that is automatically closed when the test ends.
 func newTestRegistry(t testing.TB) *MemoryRegistry {
 	t.Helper()
@@ -43,8 +47,10 @@ type publishedMsg struct {
 }
 
 type fakeBus struct {
-	mu        sync.Mutex
-	published []publishedMsg
+	mu          sync.Mutex
+	published   []publishedMsg
+	publishErr  error
+	failSubject string
 }
 
 type fakeConfigProvider struct {
@@ -82,6 +88,11 @@ type sagaJobStore struct {
 	reqs map[string]*pb.JobRequest
 }
 
+type failingSafetyDecisionStore struct {
+	*fakeJobStore
+	err error
+}
+
 func newSagaJobStore() *sagaJobStore {
 	return &sagaJobStore{
 		fakeJobStore: newFakeJobStore(),
@@ -106,6 +117,12 @@ func newFakeJobStore() *fakeJobStore {
 		locks:          make(map[string]time.Time),
 		failureReasons: make(map[string]string),
 	}
+}
+
+func (s *failingSafetyDecisionStore) SetSafetyDecision(_ context.Context, jobID string, record SafetyDecisionRecord) error {
+	_ = jobID
+	_ = record
+	return s.err
 }
 
 func (s *fakeJobStore) SetState(_ context.Context, jobID string, state JobState) error {
@@ -303,7 +320,12 @@ func (s *fakeJobStore) CancelJob(_ context.Context, jobID string) (JobState, err
 func (b *fakeBus) Publish(subject string, packet *pb.BusPacket) error {
 	b.mu.Lock()
 	b.published = append(b.published, publishedMsg{subject: subject, packet: packet})
+	err := b.publishErr
+	failSubject := b.failSubject
 	b.mu.Unlock()
+	if err != nil && (failSubject == "" || failSubject == subject) {
+		return err
+	}
 	return nil
 }
 
@@ -430,7 +452,7 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	if err := engine.processJob(req, "trace-123"); err != nil {
+	if err := engine.processJob(context.Background(), req, "trace-123"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -449,6 +471,154 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 	}
 	if msg.packet.TraceId != "trace-123" {
 		t.Fatalf("expected trace_id trace-123, got %s", msg.packet.TraceId)
+	}
+}
+
+func TestProcessJobApprovalGateFirstVisitStoresSyntheticDecision(t *testing.T) {
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-gate-1",
+		Topic: capsdk.SubjectApprovalGate,
+	}
+
+	if err := engine.processJob(context.Background(), req, "trace-gate-1"); err != nil {
+		t.Fatalf("process job: %v", err)
+	}
+	if got := jobStore.states["job-gate-1"]; got != JobStateApproval {
+		t.Fatalf("expected approval_required state, got %s", got)
+	}
+	record, ok := jobStore.safety["job-gate-1"]
+	if !ok {
+		t.Fatalf("expected synthetic safety decision record")
+	}
+	if record.Decision != SafetyRequireApproval {
+		t.Fatalf("expected %s, got %s", SafetyRequireApproval, record.Decision)
+	}
+	if !record.ApprovalRequired {
+		t.Fatalf("expected approval_required=true")
+	}
+	if record.PolicySnapshot != workflowGateSnapshot {
+		t.Fatalf("expected synthetic snapshot %q, got %q", workflowGateSnapshot, record.PolicySnapshot)
+	}
+	if len(bus.snapshotPublished()) != 0 {
+		t.Fatalf("expected no bus publish on first visit")
+	}
+}
+
+func TestProcessJobApprovalGateApprovedAutoCompletes(t *testing.T) {
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-gate-2",
+		Topic: capsdk.SubjectApprovalGate,
+		Labels: map[string]string{
+			"approval_granted": "true",
+			"gate_type":        "workflow_approval",
+		},
+	}
+	jobHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	jobStore.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   workflowGateSnapshot,
+		JobHash:          jobHash,
+	}
+
+	if err := engine.processJob(context.Background(), req, "trace-gate-2"); err != nil {
+		t.Fatalf("process job: %v", err)
+	}
+
+	if got := jobStore.states["job-gate-2"]; got != JobStateSucceeded {
+		t.Fatalf("expected succeeded state, got %s", got)
+	}
+	msgs := bus.snapshotPublished()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 publish, got %d", len(msgs))
+	}
+	if msgs[0].subject != capsdk.SubjectResult {
+		t.Fatalf("expected publish to %s, got %s", capsdk.SubjectResult, msgs[0].subject)
+	}
+	res := msgs[0].packet.GetJobResult()
+	if res == nil {
+		t.Fatalf("expected job result payload")
+	}
+	if res.GetStatus() != pb.JobStatus_JOB_STATUS_SUCCEEDED {
+		t.Fatalf("expected result status SUCCEEDED, got %s", res.GetStatus().String())
+	}
+}
+
+func TestProcessJobApprovalGateStoreFailureReturnsRetryableError(t *testing.T) {
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	failingStore := &failingSafetyDecisionStore{
+		fakeJobStore: newFakeJobStore(),
+		err:          fmt.Errorf("write failed"),
+	}
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), failingStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-gate-3",
+		Topic: capsdk.SubjectApprovalGate,
+	}
+	err := engine.processJob(context.Background(), req, "trace-gate-3")
+	retryErr, ok := err.(*retryableError)
+	if !ok {
+		t.Fatalf("expected retryable error, got %v", err)
+	}
+	// Safety decision store write failure surfaces as SafetyUnavailable
+	// in checkSafetyDecision, so the retry uses safetyThrottleDelay.
+	if retryErr.RetryDelay() != safetyThrottleDelay {
+		t.Fatalf("expected retry delay %s, got %s", safetyThrottleDelay, retryErr.RetryDelay())
+	}
+	if len(bus.snapshotPublished()) != 0 {
+		t.Fatalf("expected no publish when synthetic decision persistence fails")
+	}
+}
+
+func TestProcessJobApprovalGatePublishFailureReturnsRetryableError(t *testing.T) {
+	bus := &fakeBus{publishErr: fmt.Errorf("bus unavailable"), failSubject: capsdk.SubjectResult}
+	registry := newTestRegistry(t)
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId: "job-gate-4",
+		Topic: capsdk.SubjectApprovalGate,
+		Labels: map[string]string{
+			"approval_granted": "true",
+		},
+	}
+	jobHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	jobStore.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   workflowGateSnapshot,
+		JobHash:          jobHash,
+	}
+
+	err = engine.processJob(context.Background(), req, "trace-gate-4")
+	retryErr, ok := err.(*retryableError)
+	if !ok {
+		t.Fatalf("expected retryable error, got %v", err)
+	}
+	if retryErr.RetryDelay() != retryDelayPublish {
+		t.Fatalf("expected retry delay %s, got %s", retryDelayPublish, retryErr.RetryDelay())
+	}
+	if got := jobStore.states["job-gate-4"]; got == JobStateSucceeded {
+		t.Fatalf("expected job not to be marked succeeded when result publish fails")
 	}
 }
 
@@ -538,7 +708,7 @@ func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
 		},
 	}
 
-	if err := engine.processJob(req, "trace-ec"); err != nil {
+	if err := engine.processJob(context.Background(), req, "trace-ec"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -573,7 +743,7 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 		Topic: "sys.destroy",
 	}
 
-	if err := engine.processJob(req, "trace-block"); err != nil {
+	if err := engine.processJob(context.Background(), req, "trace-block"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -598,7 +768,7 @@ func TestProcessJobSkipsInvalidRequest(t *testing.T) {
 		Topic: "",
 	}
 
-	if err := engine.processJob(req, "trace-invalid"); err != nil {
+	if err := engine.processJob(context.Background(), req, "trace-invalid"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -751,7 +921,7 @@ func TestProcessJobSafetyUnavailableRetries(t *testing.T) {
 		Topic: "sys.unavailable",
 	}
 
-	err := engine.processJob(req, "trace-unavail")
+	err := engine.processJob(context.Background(), req, "trace-unavail")
 	if err == nil {
 		t.Fatal("expected retryable error for SafetyUnavailable, got nil")
 	}
@@ -866,7 +1036,7 @@ func TestProcessJobMaxSchedulingRetriesFailsToDLQ(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	if err := engine.processJob(req, "trace-stuck"); err != nil {
+	if err := engine.processJob(context.Background(), req, "trace-stuck"); err != nil {
 		t.Fatalf("expected nil (job failed to DLQ), got: %v", err)
 	}
 
@@ -902,7 +1072,7 @@ func TestProcessJobBelowMaxRetriesStillRetries(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	err := engine.processJob(req, "trace-retry")
+	err := engine.processJob(context.Background(), req, "trace-retry")
 	if err == nil {
 		t.Fatal("expected retryable error, got nil")
 	}
@@ -933,7 +1103,7 @@ func TestProcessJobIncrAttemptsNotCalledOnSuccess(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	if err := engine.processJob(req, "trace-ok"); err != nil {
+	if err := engine.processJob(context.Background(), req, "trace-ok"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -983,6 +1153,9 @@ func (m *cancelMetricsSpy) IncDLQEmitFailure(string)                          {}
 func (m *cancelMetricsSpy) IncJobCancelFailures()                             { m.cancelFailures++ }
 func (m *cancelMetricsSpy) IncValidationRejections()                          {}
 func (m *cancelMetricsSpy) IncInputFailOpen(string)                           {}
+func (m *cancelMetricsSpy) IncJobLockAbandoned()                              {}
+func (m *cancelMetricsSpy) IncResultPtrWriteFailure()                         {}
+func (m *cancelMetricsSpy) IncDispatchRollback(string)                        {}
 
 func TestHandlePacket_CancelJob_ErrorPropagates(t *testing.T) {
 	store := &failCancelJobStore{

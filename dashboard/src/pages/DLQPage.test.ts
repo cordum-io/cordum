@@ -1,73 +1,115 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
-import type { DLQEntry } from "../api/types";
+import { describe, expect, it } from "vitest";
+import { buildDLQEntryDetails, resolveDLQError } from "./DLQPage";
 
-let dlqPageInternal: {
-  isOutputQuarantinedEntry: (entry: DLQEntry) => boolean;
-  matchesResultFilter: (entry: DLQEntry, filterValue: string) => boolean;
-};
+describe("DLQPage expanded row rendering", () => {
+  describe("buildDLQEntryDetails", () => {
+    it("includes all diagnostic fields when present", () => {
+      const result = buildDLQEntryDetails({
+        jobId: "job-abc",
+        status: "DEAD",
+        reasonCode: "MAX_RETRIES",
+        lastState: "DISPATCHED",
+        originalTopic: "job.billing.charge",
+        attempts: 5,
+        failedAt: "2026-03-01T12:00:00Z",
+      });
 
-beforeAll(async () => {
-  Object.defineProperty(window, "matchMedia", {
-    writable: true,
-    value: vi.fn().mockImplementation(() => ({
-      matches: false,
-      media: "",
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
+      expect(result).toEqual({
+        jobId: "job-abc",
+        status: "DEAD",
+        reasonCode: "MAX_RETRIES",
+        lastState: "DISPATCHED",
+        originalTopic: "job.billing.charge",
+        attempts: 5,
+        failedAt: "2026-03-01T12:00:00Z",
+      });
+    });
+
+    it("falls back to retryCount when attempts is undefined", () => {
+      const result = buildDLQEntryDetails({
+        jobId: "job-xyz",
+        retryCount: 3,
+      });
+
+      expect(result.attempts).toBe(3);
+    });
+
+    it("falls back to 0 when both attempts and retryCount are undefined", () => {
+      const result = buildDLQEntryDetails({
+        jobId: "job-bare",
+      });
+
+      expect(result.attempts).toBe(0);
+    });
+
+    it("falls back to createdAt when failedAt is undefined", () => {
+      const result = buildDLQEntryDetails({
+        jobId: "job-no-failed",
+        createdAt: "2026-02-28T08:00:00Z",
+      });
+
+      expect(result.failedAt).toBe("2026-02-28T08:00:00Z");
+    });
+
+    it("prefers failedAt over createdAt when both present", () => {
+      const result = buildDLQEntryDetails({
+        jobId: "job-both",
+        failedAt: "2026-03-01T12:00:00Z",
+        createdAt: "2026-02-28T08:00:00Z",
+      });
+
+      expect(result.failedAt).toBe("2026-03-01T12:00:00Z");
+    });
+
+    it("handles completely sparse entry without crashing", () => {
+      const result = buildDLQEntryDetails({ jobId: "job-sparse" });
+
+      expect(result.jobId).toBe("job-sparse");
+      expect(result.status).toBeUndefined();
+      expect(result.reasonCode).toBeUndefined();
+      expect(result.lastState).toBeUndefined();
+      expect(result.originalTopic).toBeUndefined();
+      expect(result.attempts).toBe(0);
+      expect(result.failedAt).toBeUndefined();
+    });
+
+    it("serializes to valid JSON (no circular refs, no undefined poison)", () => {
+      const result = buildDLQEntryDetails({
+        jobId: "job-json",
+        status: "DEAD",
+        attempts: 2,
+      });
+
+      const json = JSON.stringify(result, null, 2);
+      expect(() => JSON.parse(json)).not.toThrow();
+      expect(json).toContain("job-json");
+      expect(json).toContain('"attempts": 2');
+    });
   });
-  dlqPageInternal = (await import("./DLQPage")).__dlqPageInternal;
-});
 
-function makeEntry(partial: Partial<DLQEntry>): DLQEntry {
-  return {
-    id: partial.id ?? "job-1",
-    jobId: partial.jobId ?? "job-1",
-    error: partial.error ?? "",
-    retryCount: partial.retryCount ?? 0,
-    maxRetries: partial.maxRetries ?? 0,
-    originalTopic: partial.originalTopic ?? "job.test",
-    failedAt: partial.failedAt ?? "",
-    status: partial.status,
-    reasonCode: partial.reasonCode,
-    lastState: partial.lastState,
-    reason: partial.reason,
-    attempts: partial.attempts,
-    createdAt: partial.createdAt,
-  };
-}
+  describe("resolveDLQError", () => {
+    it("returns error when present", () => {
+      expect(resolveDLQError({ error: "connection timeout" })).toBe("connection timeout");
+    });
 
-describe("DLQPage quarantine filtering", () => {
-  it("detects output quarantined entries from status/reason fields", () => {
-    expect(
-      dlqPageInternal.isOutputQuarantinedEntry(
-        makeEntry({ status: "OUTPUT_QUARANTINED" }),
-      ),
-    ).toBe(true);
-    expect(
-      dlqPageInternal.isOutputQuarantinedEntry(
-        makeEntry({ reasonCode: "output_quarantined_async" }),
-      ),
-    ).toBe(true);
-    expect(
-      dlqPageInternal.isOutputQuarantinedEntry(
-        makeEntry({ status: "FAILED", reasonCode: "worker_failed" }),
-      ),
-    ).toBe(false);
-  });
+    it("falls back to reason when error is absent", () => {
+      expect(resolveDLQError({ reason: "rate limited" })).toBe("rate limited");
+    });
 
-  it("matches result-type filters for quarantined, denied, and failed", () => {
-    const quarantined = makeEntry({ status: "OUTPUT_QUARANTINED" });
-    const denied = makeEntry({ status: "DENIED" });
-    const failed = makeEntry({ status: "FAILED" });
+    it("falls back to reason when error is empty string", () => {
+      expect(resolveDLQError({ error: "", reason: "quota exceeded" })).toBe("quota exceeded");
+    });
 
-    expect(dlqPageInternal.matchesResultFilter(quarantined, "output_quarantined")).toBe(true);
-    expect(dlqPageInternal.matchesResultFilter(denied, "denied")).toBe(true);
-    expect(dlqPageInternal.matchesResultFilter(failed, "failed")).toBe(true);
-    expect(dlqPageInternal.matchesResultFilter(quarantined, "failed")).toBe(false);
+    it("returns default message when both error and reason are absent", () => {
+      expect(resolveDLQError({})).toBe("No error message");
+    });
+
+    it("returns default message when both are empty strings", () => {
+      expect(resolveDLQError({ error: "", reason: "" })).toBe("No error message");
+    });
+
+    it("prefers error over reason when both present", () => {
+      expect(resolveDLQError({ error: "primary", reason: "secondary" })).toBe("primary");
+    });
   });
 });

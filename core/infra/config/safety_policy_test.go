@@ -333,3 +333,73 @@ func TestNormalizeDecisionEmpty(t *testing.T) {
 		t.Fatalf("expected deny for whitespace-only string, got %q", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Security regression: default decision fail-closed behavior
+// ---------------------------------------------------------------------------
+
+func TestEvaluateNilRulesAndTenantsDefaultsDeny(t *testing.T) {
+	// Policy with no rules and no tenants must default to deny (fail-closed),
+	// not silently allow everything.
+	policy := &SafetyPolicy{}
+	dec := policy.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.anything"})
+	if dec.Decision != "deny" {
+		t.Fatalf("FAIL-OPEN: empty policy should deny, got %q", dec.Decision)
+	}
+}
+
+func TestEvaluateDefaultDecisionCaseInsensitive(t *testing.T) {
+	// DefaultDecision should be case-insensitive.
+	policy := &SafetyPolicy{DefaultDecision: "ALLOW"}
+	dec := policy.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.test"})
+	if dec.Decision != "allow" {
+		t.Fatalf("expected allow for 'ALLOW', got %q", dec.Decision)
+	}
+
+	policy2 := &SafetyPolicy{DefaultDecision: "DENY"}
+	dec2 := policy2.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.test"})
+	if dec2.Decision != "deny" {
+		t.Fatalf("expected deny for 'DENY', got %q", dec2.Decision)
+	}
+}
+
+func TestEvaluateDefaultDecisionInvalidValueDenies(t *testing.T) {
+	// An invalid default_decision value must result in deny (fail-closed).
+	// This covers typos like "alow" or "permitt".
+	policy := &SafetyPolicy{DefaultDecision: "alow"}
+	dec := policy.Evaluate(PolicyInput{Tenant: "t1", Topic: "job.test"})
+	if dec.Decision != "deny" {
+		t.Fatalf("FAIL-OPEN: invalid default_decision 'alow' should deny, got %q", dec.Decision)
+	}
+}
+
+func TestMCPAllowedEmptyPolicyPassesThrough(t *testing.T) {
+	// An empty MCP policy should allow all MCP requests (no restrictions configured).
+	policy := MCPPolicy{}
+	ok, reason := MCPAllowed(policy, MCPRequest{Server: "any", Tool: "any"})
+	if !ok {
+		t.Fatalf("expected empty MCP policy to allow, got denied: %s", reason)
+	}
+}
+
+func TestMCPAllowedDenyTakesPrecedence(t *testing.T) {
+	// When a server is in both allow and deny lists, deny must take precedence.
+	policy := MCPPolicy{
+		AllowServers: []string{"srv"},
+		DenyServers:  []string{"srv"},
+	}
+	ok, _ := MCPAllowed(policy, MCPRequest{Server: "srv"})
+	if ok {
+		t.Fatalf("expected deny to take precedence over allow for same server")
+	}
+}
+
+func TestMatchRuleEmptyMatchMatchesEverything(t *testing.T) {
+	// A rule with empty match criteria matches all inputs — this is by design
+	// for "catch-all" rules, but we want to document the behavior.
+	match := PolicyMatch{}
+	input := PolicyInput{Tenant: "t1", Topic: "job.test"}
+	if !matchRule(match, input) {
+		t.Fatalf("expected empty match to match any input")
+	}
+}

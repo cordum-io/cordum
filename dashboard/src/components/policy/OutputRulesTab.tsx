@@ -152,7 +152,7 @@ function OutputRuleEditorModal({
 
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Bundle ID</label>
+              <label className="mb-1 block text-xs font-semibold text-muted-foreground">Bundle ID</label>
               <Input
                 value={bundleId}
                 onChange={(event) => setBundleId(event.target.value)}
@@ -160,7 +160,7 @@ function OutputRuleEditorModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Rule ID</label>
+              <label className="mb-1 block text-xs font-semibold text-muted-foreground">Rule ID</label>
               <Input
                 value={id}
                 onChange={(event) => setID(event.target.value)}
@@ -168,7 +168,7 @@ function OutputRuleEditorModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Decision</label>
+              <label className="mb-1 block text-xs font-semibold text-muted-foreground">Decision</label>
               <select
                 className="w-full rounded-xl border border-border bg-surface1 px-3 py-2 text-sm text-ink"
                 value={decision}
@@ -179,7 +179,7 @@ function OutputRuleEditorModal({
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Severity</label>
+              <label className="mb-1 block text-xs font-semibold text-muted-foreground">Severity</label>
               <select
                 className="w-full rounded-xl border border-border bg-surface1 px-3 py-2 text-sm text-ink"
                 value={severity}
@@ -194,7 +194,7 @@ function OutputRuleEditorModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">Description</label>
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">Description</label>
             <Input
               value={description}
               onChange={(event) => setDescription(event.target.value)}
@@ -204,7 +204,7 @@ function OutputRuleEditorModal({
 
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Topics (comma separated)</label>
+              <label className="mb-1 block text-xs font-semibold text-muted-foreground">Topics (comma separated)</label>
               <Input
                 value={topics}
                 onChange={(event) => setTopics(event.target.value)}
@@ -212,7 +212,7 @@ function OutputRuleEditorModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Scanners (comma separated)</label>
+              <label className="mb-1 block text-xs font-semibold text-muted-foreground">Scanners (comma separated)</label>
               <Input
                 value={scanners}
                 onChange={(event) => setScanners(event.target.value)}
@@ -222,7 +222,7 @@ function OutputRuleEditorModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">Pattern (regex)</label>
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">Pattern (regex)</label>
             <Input
               value={pattern}
               onChange={(event) => setPattern(event.target.value)}
@@ -231,7 +231,7 @@ function OutputRuleEditorModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">Reason</label>
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">Reason</label>
             <Input
               value={reason}
               onChange={(event) => setReason(event.target.value)}
@@ -241,7 +241,7 @@ function OutputRuleEditorModal({
 
           <div className="rounded-xl border border-border bg-surface2/30 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <label className="text-xs font-semibold text-muted">Pattern Tester</label>
+              <label className="text-xs font-semibold text-muted-foreground">Pattern Tester</label>
               <Badge variant={tester.valid ? (tester.matched ? "success" : "warning") : "danger"}>
                 {tester.valid ? (tester.matched ? "MATCH" : "NO MATCH") : "INVALID"}
               </Badge>
@@ -252,7 +252,7 @@ function OutputRuleEditorModal({
               rows={4}
               placeholder="Paste sample output content to test the regex."
             />
-            <p className="mt-2 text-xs text-muted">{tester.message}</p>
+            <p className="mt-2 text-xs text-muted-foreground">{tester.message}</p>
           </div>
 
           <label className="inline-flex items-center gap-2 text-sm text-ink">
@@ -346,7 +346,7 @@ export function OutputRulesTab({ activeBundleId = "" }: { activeBundleId?: strin
       <div className="flex items-center justify-between">
         <div>
           <h3 className="font-display text-lg font-semibold text-ink">Output Rules</h3>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             Rules applied to job output content after worker execution.
           </p>
         </div>
@@ -380,14 +380,14 @@ export function OutputRulesTab({ activeBundleId = "" }: { activeBundleId?: strin
           <table className="w-full text-sm">
             <thead className="border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">Rule ID</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">Topics</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">Scanners</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">Pattern</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">Decision</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">Severity</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">Enabled</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">Actions</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Rule ID</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Topics</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Scanners</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pattern</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Decision</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Severity</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Enabled</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -404,7 +404,7 @@ export function OutputRulesTab({ activeBundleId = "" }: { activeBundleId?: strin
 
               {!isLoading && isError && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
                     Failed to load output policy rules.
                   </td>
                 </tr>
@@ -412,7 +412,7 @@ export function OutputRulesTab({ activeBundleId = "" }: { activeBundleId?: strin
 
               {!isLoading && !isError && rules.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
                     No output rules configured.
                   </td>
                 </tr>
@@ -431,13 +431,13 @@ export function OutputRulesTab({ activeBundleId = "" }: { activeBundleId?: strin
                       onClick={() => setSelectedRuleID(rule.id)}
                     >
                       <td className="px-4 py-3 font-mono text-xs text-ink">{rule.id}</td>
-                      <td className="px-4 py-3 text-xs text-muted">
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
                         {(rule.topics ?? []).join(", ") || "\u2014"}
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted">
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
                         {(rule.scanners ?? []).join(", ") || "\u2014"}
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted">
+                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                         {rule.patternPreview || rule.patterns?.[0] || "\u2014"}
                       </td>
                       <td className="px-4 py-3">
@@ -471,7 +471,7 @@ export function OutputRulesTab({ activeBundleId = "" }: { activeBundleId?: strin
                           }}
                         >
                           <span
-                            className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                            className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-card shadow transition-transform ${
                               enabled ? "translate-x-4" : "translate-x-0"
                             }`}
                           />

@@ -48,14 +48,14 @@ function PoolCard({ group }: { group: PoolGroup }) {
           <Server className="h-4 w-4 text-accent" />
           <CardTitle className="text-sm">{group.pool}</CardTitle>
         </div>
-        <span className="text-xs font-mono text-muted">
+        <span className="text-xs font-mono text-muted-foreground">
           {group.activeJobs}/{group.totalCapacity}
         </span>
       </CardHeader>
 
       <div className="mt-3 space-y-2">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted">Utilization</span>
+          <span className="text-muted-foreground">Utilization</span>
           <span
             className={cn(
               "font-semibold",
@@ -72,7 +72,7 @@ function PoolCard({ group }: { group: PoolGroup }) {
 
       {group.workers.length > 0 && (
         <div className="mt-4 space-y-1.5">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
             Workers
           </p>
           {group.workers.map((w) => (
@@ -84,7 +84,7 @@ function PoolCard({ group }: { group: PoolGroup }) {
                 {statusDot(w.status)}
                 <span className="truncate text-ink">{w.name || w.id.slice(0, 8)}</span>
               </div>
-              <span className="font-mono text-muted">
+              <span className="font-mono text-muted-foreground">
                 {w.activeJobs}/{w.capacity}
               </span>
             </div>
@@ -146,7 +146,7 @@ export function PoolUtilizationGrid() {
     return (
       <div className="space-y-3">
         <h2 className="font-display text-lg font-semibold text-ink">Pool Utilization</h2>
-        <p className="text-sm text-muted">No worker pools detected.</p>
+        <p className="text-sm text-muted-foreground">No worker pools detected.</p>
       </div>
     );
   }

@@ -52,7 +52,8 @@ export function SessionTimeoutWarning() {
     !!authConfig &&
     (authConfig.password_enabled ||
       !!authConfig.user_auth_enabled ||
-      authConfig.saml_enabled);
+      authConfig.saml_enabled ||
+      authConfig.oidc_enabled);
 
   const ttlMs = parseTtlMs(authConfig?.session_ttl);
 

@@ -15,12 +15,12 @@ interface Stage {
 }
 
 const STAGES: Stage[] = [
-  { key: "pending", label: "Submitted", color: "#7b8794", stateParam: "pending" },
-  { key: "safety", label: "Safety Check", color: "#d97706", stateParam: "pending" },
-  { key: "dispatched", label: "Dispatched", color: "#4f46e5", stateParam: "dispatched" },
-  { key: "running", label: "Running", color: "#2563eb", stateParam: "running" },
-  { key: "succeeded", label: "Succeeded", color: "#059669", stateParam: "succeeded" },
-  { key: "failed", label: "Failed", color: "#dc2626", stateParam: "failed" },
+  { key: "pending", label: "Submitted", color: "#5a6a70", stateParam: "pending" },
+  { key: "safety", label: "Safety Check", color: "#c58a1c", stateParam: "pending" },
+  { key: "dispatched", label: "Dispatched", color: "#0f7f7a", stateParam: "dispatched" },
+  { key: "running", label: "Running", color: "#0f7f7a", stateParam: "running" },
+  { key: "succeeded", label: "Succeeded", color: "#1f7a57", stateParam: "succeeded" },
+  { key: "failed", label: "Failed", color: "#b83a3a", stateParam: "failed" },
 ];
 
 function pct(part: number, total: number): number {
@@ -95,7 +95,7 @@ export function JobPipelineFunnel() {
       <Card className="flex h-[430px] min-h-[430px] flex-col">
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-ink">Job Pipeline</h3>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             Pipeline metrics are not available from the gateway.
           </p>
         </div>
@@ -109,27 +109,27 @@ export function JobPipelineFunnel() {
         <div className="flex items-start justify-between">
           <div>
             <h3 className="text-sm font-semibold text-ink">Job Pipeline</h3>
-            <p className="text-[11px] text-muted">Live execution flow by stage</p>
+            <p className="text-[11px] text-muted-foreground">Live execution flow by stage</p>
           </div>
-          <span className="rounded-full border border-border bg-surface2 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+          <span className="rounded-full border border-border bg-surface2 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             {source === "jobs_fallback" ? "derived" : "realtime"}
           </span>
         </div>
         {source === "jobs_fallback" && (
-          <p className="text-[10px] text-muted">Using recent jobs fallback because gateway pipeline metrics are unavailable.</p>
+          <p className="text-[10px] text-muted-foreground">Using recent jobs fallback because gateway pipeline metrics are unavailable.</p>
         )}
 
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-xl border border-border/70 bg-surface2/40 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-wide text-muted">Submitted</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Submitted</p>
             <p className="mt-1 text-sm font-semibold text-ink">{submitted.toLocaleString()}</p>
           </div>
           <div className="rounded-xl border border-border/70 bg-surface2/40 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-wide text-muted">In Flight</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">In Flight</p>
             <p className="mt-1 text-sm font-semibold text-ink">{inFlight.toLocaleString()}</p>
           </div>
           <div className="rounded-xl border border-border/70 bg-surface2/40 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-wide text-muted">Success Rate</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Success Rate</p>
             <p className="mt-1 text-sm font-semibold text-ink">{successRate}%</p>
           </div>
         </div>
@@ -153,7 +153,7 @@ export function JobPipelineFunnel() {
                     />
                     <span className="font-medium text-ink">{stage.label}</span>
                   </div>
-                  <span className="font-mono text-muted">{stage.count.toLocaleString()}</span>
+                  <span className="font-mono text-muted-foreground">{stage.count.toLocaleString()}</span>
                 </div>
                 <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[color:rgba(90,106,112,0.15)]">
                   <div
@@ -161,7 +161,7 @@ export function JobPipelineFunnel() {
                     style={{ width: `${widthPct}%`, backgroundColor: stage.color }}
                   />
                 </div>
-                <div className="mt-1 flex items-center justify-between text-[10px] text-muted">
+                <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
                   <span>{totalPct}% of submitted</span>
                   <span>{widthPct}% of peak</span>
                 </div>

@@ -9,9 +9,9 @@ export const FanOutNode = memo(function FanOutNode({ data, selected }: NodeProps
   const forEach = (typeof data.for_each === "string" && data.for_each.trim() ? data.for_each : null) ?? (typeof config.forEach === "string" && config.forEach.trim() ? config.forEach : null);
   return (
     <BaseNode
-      icon={<Split className="h-4 w-4 text-indigo-600" />}
+      icon={<Split className="h-4 w-4 text-primary" />}
       label={data.label as string}
-      accent="bg-indigo-50"
+      accent="bg-primary/15"
       selected={selected}
     >
       {forEach && <span>for_each: {forEach}</span>}

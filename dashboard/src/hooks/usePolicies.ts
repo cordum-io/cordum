@@ -1,5 +1,6 @@
+import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post, put, del } from "../api/client";
+import { ApiError, get, post, put, del } from "../api/client";
 import { logger } from "../lib/logger";
 import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
@@ -26,9 +27,7 @@ import {
   type BackendPolicyAuditEntry,
 } from "../api/transform";
 
-// Feature flags (disabled by default until gateway endpoints are available).
-export const POLICY_CONFIG_SUPPORTED =
-  import.meta.env.VITE_POLICY_CONFIG_SUPPORTED === "true";
+// Feature flags.
 export const POLICY_STATS_SUPPORTED =
   import.meta.env.VITE_POLICY_STATS_SUPPORTED === "true";
 
@@ -45,6 +44,36 @@ function readPolicyBundleContent(raw: unknown): string {
     if (typeof obj.data === "string" && obj.data) return obj.data;
   }
   return "";
+}
+
+function readApiErrorDetail(error: ApiError): string | undefined {
+  if (!error.body || typeof error.body !== "object") return undefined;
+  const payload = error.body as Record<string, unknown>;
+  const detail = [payload.error, payload.message, payload.details]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .find(Boolean);
+  return detail || undefined;
+}
+
+function describeBundleUpdateError(error: Error): string {
+  if (error instanceof ApiError) {
+    const detail = readApiErrorDetail(error);
+    if (error.status === 409 || error.status === 412) {
+      return detail
+        ? `Policy bundle changed on server (${detail}). Refresh and retry.`
+        : "Policy bundle changed on server. Refresh and retry.";
+    }
+    if (error.status === 400 || error.status === 422) {
+      return detail
+        ? `Policy bundle validation failed: ${detail}`
+        : "Policy bundle validation failed. Check YAML and retry.";
+    }
+    if (detail) {
+      return `Policy bundle request failed: ${detail}`;
+    }
+    return `Policy bundle request failed (status ${error.status}).`;
+  }
+  return error.message;
 }
 
 function policyBundlePath(id: string): string {
@@ -75,7 +104,10 @@ export function usePolicyBundles() {
       return {
         items: (res.items ?? []).map((summary) => {
           const content = readPolicyBundleContent(bundlesMap[summary.id]);
-          return mapPolicyBundleSummary(summary, content);
+          return {
+            ...mapPolicyBundleSummary(summary, content),
+            content: content || undefined,
+          };
         }),
       };
     },
@@ -133,7 +165,7 @@ export function usePublishPolicy() {
     onSuccess: (_, { bundleId }) => {
       logger.info("policies", "Policy published", { bundleId });
       useToastStore.getState().addToast({ type: "success", title: "Policy published" });
-      queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundle(bundleId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundles() });
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.snapshots() });
@@ -155,8 +187,8 @@ export function useRollbackPolicy() {
     onSuccess: (_, { snapshotId }) => {
       logger.info("policies", "Policy rolled back", { snapshotId });
       useToastStore.getState().addToast({ type: "success", title: "Policy rolled back" });
-      queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.bundles() });
+      queryClient.invalidateQueries({ queryKey: ["policy-bundle"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.snapshots() });
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
     },
@@ -252,14 +284,15 @@ export function useUpdatePolicyBundle() {
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
     },
     onError: (err, { id }) => {
+      const detail = describeBundleUpdateError(err);
       logger.error("policies", "Update policy bundle failed", {
         bundleId: id.trim(),
-        error: err.message,
+        error: detail,
       });
       useToastStore.getState().addToast({
         type: "error",
         title: "Failed to update bundle",
-        description: err.message,
+        description: detail,
       });
     },
   });
@@ -462,29 +495,38 @@ export function useExplainPolicy() {
 }
 
 // ---------------------------------------------------------------------------
-// Policy config — default stance + lockdown
+// Policy config / lockdown
 // ---------------------------------------------------------------------------
 
+export const POLICY_CONFIG_SUPPORTED =
+  import.meta.env.VITE_POLICY_CONFIG_SUPPORTED === "true";
+
 export interface PolicyConfig {
-  defaultStance: "allow" | "deny";
-  lockdown: boolean;
+  lockdownActive: boolean;
   lockdownReason?: string;
+  defaultDecision: string;
+  maxEvalTimeMs: number;
+  lockdown?: boolean;
   lockdownBy?: string;
   lockdownAt?: string;
+  defaultStance?: string;
 }
 
-const DEFAULT_POLICY_CONFIG: PolicyConfig = { defaultStance: "allow", lockdown: false };
+const DEFAULT_POLICY_CONFIG: PolicyConfig = {
+  lockdownActive: false,
+  defaultDecision: "deny",
+  maxEvalTimeMs: 500,
+};
 
 export function usePolicyConfig() {
   return useQuery<PolicyConfig>({
     queryKey: queryKeys.policies.config(),
     queryFn: async () => {
       if (!POLICY_CONFIG_SUPPORTED) return DEFAULT_POLICY_CONFIG;
-      return get<PolicyConfig>("/policy/config");
+      const res = await get<PolicyConfig>("/policy/config");
+      return res;
     },
-    enabled: POLICY_CONFIG_SUPPORTED,
-    initialData: DEFAULT_POLICY_CONFIG,
-    staleTime: 10_000,
+    staleTime: 30_000,
   });
 }
 
@@ -492,20 +534,11 @@ export function useUpdatePolicyConfig() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, Partial<PolicyConfig>>({
     mutationFn: (config) => {
-      logger.info("policies", "Updating policy config", { config });
-      if (!POLICY_CONFIG_SUPPORTED) {
-        return Promise.resolve();
-      }
+      if (!POLICY_CONFIG_SUPPORTED) return Promise.resolve();
       return put<void>("/policy/config", config);
     },
     onSuccess: () => {
-      logger.info("policies", "Policy config updated");
-      useToastStore.getState().addToast({ type: "success", title: "Policy config saved" });
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.config() });
-    },
-    onError: (err) => {
-      logger.error("policies", "Policy config update failed", { error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to save config", description: err.message });
     },
   });
 }
@@ -514,20 +547,17 @@ export function useActivateLockdown() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, { reason: string }>({
     mutationFn: ({ reason }) => {
-      logger.warn("policies", "Activating lockdown", { reason });
-      if (!POLICY_CONFIG_SUPPORTED) {
-        return Promise.resolve();
-      }
+      logger.info("policies", "Activating lockdown", { reason });
       return post<void>("/policy/lockdown", { reason });
     },
     onSuccess: () => {
-      logger.warn("policies", "Lockdown activated");
+      logger.info("policies", "Lockdown activated");
       useToastStore.getState().addToast({ type: "warning", title: "Lockdown activated" });
       queryClient.invalidateQueries({ queryKey: queryKeys.policies.config() });
     },
     onError: (err) => {
       logger.error("policies", "Lockdown activation failed", { error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to activate lockdown", description: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Lockdown failed", description: err.message });
     },
   });
 }
@@ -537,9 +567,6 @@ export function useDeactivateLockdown() {
   return useMutation<void, Error, void>({
     mutationFn: () => {
       logger.info("policies", "Deactivating lockdown");
-      if (!POLICY_CONFIG_SUPPORTED) {
-        return Promise.resolve();
-      }
       return del<void>("/policy/lockdown");
     },
     onSuccess: () => {
@@ -549,7 +576,7 @@ export function useDeactivateLockdown() {
     },
     onError: (err) => {
       logger.error("policies", "Lockdown deactivation failed", { error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to deactivate lockdown", description: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Deactivation failed", description: err.message });
     },
   });
 }
@@ -575,18 +602,21 @@ export function usePolicyApprovals() {
   const { data, isLoading, isError } = usePolicyBundles();
   const bundles = data?.items ?? [];
 
-  const pending: PendingPolicyChange[] = [];
-  for (const b of bundles) {
-    const updatedMs = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-    const publishedMs = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+  const pending = useMemo<PendingPolicyChange[]>(() => {
+    const result: PendingPolicyChange[] = [];
+    for (const b of bundles) {
+      const updatedMs = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      const publishedMs = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
 
-    if (b.rules.length > 0 && (!b.publishedAt || updatedMs > publishedMs + 1000)) {
-      const changeSummary = !b.publishedAt
-        ? `${b.rules.length} new rule${b.rules.length !== 1 ? "s" : ""}`
-        : `${b.rules.length} rule${b.rules.length !== 1 ? "s" : ""} modified`;
-      pending.push({ bundle: b, changeSummary });
+      if (b.rules.length > 0 && (!b.publishedAt || updatedMs > publishedMs + 1000)) {
+        const changeSummary = !b.publishedAt
+          ? `${b.rules.length} new rule${b.rules.length !== 1 ? "s" : ""}`
+          : `${b.rules.length} rule${b.rules.length !== 1 ? "s" : ""} modified`;
+        result.push({ bundle: b, changeSummary });
+      }
     }
-  }
+    return result;
+  }, [bundles]);
 
   return { pending, isLoading, isError };
 }
@@ -597,5 +627,6 @@ export const __policiesInternal = {
   policyBundlePath,
   policyBundleRulePath,
   policyBundleSimulatePath,
+  describeBundleUpdateError,
   DEFAULT_POLICY_CONFIG,
 };

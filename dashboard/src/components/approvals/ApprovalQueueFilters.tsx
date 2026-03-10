@@ -229,14 +229,14 @@ export function ApprovalQueueFilters({
               "group relative rounded-full border px-3 py-1 text-xs font-medium transition-colors",
               JSON.stringify(filters) === JSON.stringify(preset.filters)
                 ? "border-accent bg-accent/10 text-accent"
-                : "border-border text-muted hover:text-ink hover:border-ink/20",
+                : "border-border text-muted-foreground hover:text-ink hover:border-ink/20",
             )}
             onClick={() => onFiltersChange(preset.filters)}
           >
             {preset.name}
             {!preset.builtin && (
               <span
-                className="ml-1.5 hidden group-hover:inline-flex cursor-pointer text-muted hover:text-danger"
+                className="ml-1.5 hidden group-hover:inline-flex cursor-pointer text-muted-foreground hover:text-danger"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDeletePreset(preset.name);
@@ -268,7 +268,7 @@ export function ApprovalQueueFilters({
           nonDefault && (
             <button
               type="button"
-              className="flex items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted hover:text-ink hover:border-ink/20 transition-colors"
+              className="flex items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-ink hover:border-ink/20 transition-colors"
               onClick={() => setSavingPreset(true)}
             >
               <Plus className="h-3 w-3" /> Save filter
@@ -289,7 +289,7 @@ export function ApprovalQueueFilters({
                 "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
                 filters.urgency === u
                   ? "bg-accent/10 text-accent"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
               )}
               onClick={() => update({ urgency: u })}
             >
@@ -308,7 +308,7 @@ export function ApprovalQueueFilters({
                 "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
                 filters.risk === r
                   ? "bg-accent/10 text-accent"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
               )}
               onClick={() => update({ risk: r })}
             >
@@ -327,7 +327,7 @@ export function ApprovalQueueFilters({
                 "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
                 filters.assignment === a
                   ? "bg-accent/10 text-accent"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
               )}
               onClick={() => update({ assignment: a })}
             >

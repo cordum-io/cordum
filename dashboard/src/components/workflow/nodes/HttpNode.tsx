@@ -15,9 +15,9 @@ export const HttpNode = memo(function HttpNode({ data, selected }: NodeProps) {
   const display = method && url ? `${method} ${truncate(url, 60)}` : method || (url ? truncate(url, 60) : "");
   return (
     <BaseNode
-      icon={<Globe className="h-4 w-4 text-purple-600" />}
+      icon={<Globe className="h-4 w-4 text-primary" />}
       label={data.label as string}
-      accent="bg-purple-50"
+      accent="bg-primary/5"
       selected={selected}
     >
       {display && <span className="block truncate max-w-[180px]">{display}</span>}

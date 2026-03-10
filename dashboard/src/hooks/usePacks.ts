@@ -30,7 +30,7 @@ export function usePack(id: string) {
   return useQuery<Pack>({
     queryKey: ["pack", id],
     queryFn: async () => {
-      const rec = await get<BackendPackRecord>(`/packs/${id}`);
+      const rec = await get<BackendPackRecord>(`/packs/${encodeURIComponent(id)}`);
       return mapPackRecord(rec);
     },
     enabled: !!id,

@@ -63,7 +63,7 @@ export function TagInput({
   return (
     <div className={cn("relative", className)}>
       <div
-        className="flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-2xl border border-border bg-white/70 px-3 py-2 shadow-sm transition-all duration-200 focus-within:border-accent focus-within:ring-2 focus-within:ring-[color:var(--ring)]"
+        className="flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-2xl border border-border bg-card/70 px-3 py-2 shadow-sm transition-all duration-200 focus-within:border-accent focus-within:ring-2 focus-within:ring-[color:var(--ring)]"
         onClick={() => inputRef.current?.focus()}
       >
         {value.map((tag, idx) => (

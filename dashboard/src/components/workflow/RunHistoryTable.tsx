@@ -91,12 +91,12 @@ function Pagination({
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   return (
     <div className="flex items-center justify-between border-t border-border px-4 py-3">
-      <span className="text-xs text-muted">{total} runs</span>
+      <span className="text-xs text-muted-foreground">{total} runs</span>
       <div className="flex items-center gap-1">
         <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
           Prev
         </Button>
-        <span className="px-2 text-xs text-muted">
+        <span className="px-2 text-xs text-muted-foreground">
           {page} / {totalPages}
         </span>
         <Button variant="ghost" size="sm" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>
@@ -141,7 +141,7 @@ export function RunHistoryTable({ workflowId }: { workflowId: string }) {
     <div className="space-y-3">
       {/* Filter */}
       <div className="flex items-center gap-2">
-        <label className="text-xs font-semibold text-muted">Status:</label>
+        <label className="text-xs font-semibold text-muted-foreground">Status:</label>
         <select
           value={statusFilter}
           onChange={(e) => handleStatusChange(e.target.value)}
@@ -161,19 +161,19 @@ export function RunHistoryTable({ workflowId }: { workflowId: string }) {
           <table className="w-full text-sm">
             <thead className="border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Run ID
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Status
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Started
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Duration
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Steps
                 </th>
               </tr>
@@ -183,7 +183,7 @@ export function RunHistoryTable({ workflowId }: { workflowId: string }) {
 
               {!isLoading && isError && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={5} className="px-4 py-12 text-center text-muted-foreground">
                     Failed to load runs.
                   </td>
                 </tr>
@@ -191,7 +191,7 @@ export function RunHistoryTable({ workflowId }: { workflowId: string }) {
 
               {!isLoading && !isError && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={5} className="px-4 py-12 text-center text-muted-foreground">
                     {statusFilter ? "No runs match this filter." : "No runs yet."}
                   </td>
                 </tr>
@@ -210,13 +210,13 @@ export function RunHistoryTable({ workflowId }: { workflowId: string }) {
                     <td className="px-4 py-3">
                       <RunStatusBadge status={run.status as RunStatus} />
                     </td>
-                    <td className="px-4 py-3 text-xs text-muted">
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
                       {run.startedAt ? timeAgo(run.startedAt) : "\u2014"}
                     </td>
-                    <td className="px-4 py-3 text-xs text-muted">
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
                       {formatDuration(run.duration)}
                     </td>
-                    <td className="px-4 py-3 text-xs text-muted">
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
                       {stepsProgress(run)}
                     </td>
                   </tr>

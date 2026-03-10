@@ -392,7 +392,10 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("read response body: %w", err)
+	}
 	return resp.StatusCode, data, nil
 }
 

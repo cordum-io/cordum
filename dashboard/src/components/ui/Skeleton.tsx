@@ -1,84 +1,33 @@
-import type { HTMLAttributes } from "react";
-import { cn } from "../../lib/utils";
+import { cn } from "@/lib/utils";
 
-// ---------------------------------------------------------------------------
-// Skeleton — base primitive
-// ---------------------------------------------------------------------------
-
-export function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn(
-        "animate-pulse rounded bg-surface2 motion-reduce:animate-none",
-        className,
-      )}
-      {...props}
-    />
-  );
+interface SkeletonProps {
+  className?: string;
 }
 
-// ---------------------------------------------------------------------------
-// SkeletonText — multiple lines with varying widths
-// ---------------------------------------------------------------------------
+export function Skeleton({ className }: SkeletonProps) {
+  return <div className={cn("skeleton", className)} />;
+}
 
-const LINE_WIDTHS = ["w-full", "w-4/5", "w-3/5"];
-
-export function SkeletonText({
-  lines = 3,
-  className,
-}: {
-  lines?: number;
-  className?: string;
-}) {
+export function SkeletonCard() {
   return (
-    <div className={cn("space-y-2", className)}>
-      {Array.from({ length: lines }, (_, i) => (
-        <Skeleton
-          key={i}
-          className={cn("h-4", LINE_WIDTHS[i % LINE_WIDTHS.length])}
-        />
-      ))}
+    <div className="rounded-3xl border border-border bg-card overflow-hidden">
+      <div className="h-[3px] skeleton" />
+      <div className="p-5 space-y-3">
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-8 w-16" />
+        <Skeleton className="h-3 w-32" />
+      </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// SkeletonRow — table row with N skeleton cells
-// ---------------------------------------------------------------------------
-
-export function SkeletonRow({
-  columns,
-  className,
-}: {
-  columns: number;
-  className?: string;
-}) {
+export function SkeletonTable({ rows = 5 }: { rows?: number }) {
   return (
-    <tr className={cn("animate-pulse motion-reduce:animate-none", className)}>
-      {Array.from({ length: columns }, (_, j) => (
-        <td key={j} className="px-4 py-3">
-          <div className="h-4 rounded bg-surface2 w-3/4" />
-        </td>
+    <div className="space-y-2">
+      <Skeleton className="h-8 w-full" />
+      {Array.from({ length: rows }).map((_, i) => (
+        <Skeleton key={i} className="h-12 w-full" />
       ))}
-    </tr>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SkeletonCard — card-shaped loading placeholder
-// ---------------------------------------------------------------------------
-
-export function SkeletonCard({ className }: { className?: string }) {
-  return (
-    <div
-      className={cn(
-        "surface-card animate-pulse rounded-3xl p-6 motion-reduce:animate-none",
-        className,
-      )}
-    >
-      <Skeleton className="mb-4 h-4 w-1/3" />
-      <Skeleton className="mb-3 h-4 w-2/3" />
-      <Skeleton className="h-4 w-1/2" />
     </div>
   );
 }

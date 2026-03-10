@@ -61,7 +61,7 @@ export function DLQSummary() {
         {reasons.map((reason, i) => (
           <div key={i} className="flex items-start gap-2 text-xs">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
-            <span className="text-muted line-clamp-1">
+            <span className="text-muted-foreground line-clamp-1">
               {reason.length > 60 ? `${reason.slice(0, 60)}...` : reason}
             </span>
           </div>

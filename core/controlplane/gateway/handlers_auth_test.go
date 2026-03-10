@@ -302,8 +302,9 @@ func (s *timingUserStore) ValidatePassword(_ context.Context, u *User, password 
 func (s *timingUserStore) Close() error { return nil }
 
 func TestLoginTimingEqualization(t *testing.T) {
-	// Create a user with a bcrypt hash.
-	hash, err := bcrypt.GenerateFromPassword([]byte("correct-password"), bcrypt.DefaultCost)
+	// Create a user with the same bcrypt cost as the timing dummy hash
+	// to ensure timing equalization works correctly.
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct-password"), bcryptCostFromEnv())
 	if err != nil {
 		t.Fatalf("generate hash: %v", err)
 	}
@@ -496,8 +497,8 @@ type stubKeyStore struct {
 }
 
 func (s *stubKeyStore) List(_ context.Context, _ string) ([]*ManagedKey, error) { return nil, nil }
-func (s *stubKeyStore) Create(_ context.Context, _ *ManagedKey, _ string) error  { return nil }
-func (s *stubKeyStore) Revoke(_ context.Context, _ string, _ string) error       { return s.revokeErr }
+func (s *stubKeyStore) Create(_ context.Context, _ *ManagedKey, _ string) error { return nil }
+func (s *stubKeyStore) Revoke(_ context.Context, _ string, _ string) error      { return s.revokeErr }
 func (s *stubKeyStore) ValidateKey(_ context.Context, _ string) (*ManagedKey, error) {
 	return nil, ErrKeyNotFound
 }

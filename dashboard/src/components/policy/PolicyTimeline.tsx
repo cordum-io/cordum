@@ -102,7 +102,7 @@ function CategoryFilters({
           key={key}
           className={cn(
             "flex cursor-pointer items-center gap-1.5 text-xs font-medium transition",
-            active.has(key) ? textColor : "text-muted opacity-50",
+            active.has(key) ? textColor : "text-muted-foreground opacity-50",
           )}
         >
           <input
@@ -115,7 +115,7 @@ function CategoryFilters({
           {label}
         </label>
       ))}
-      <span className="text-[10px] text-muted">|</span>
+      <span className="text-[10px] text-muted-foreground">|</span>
       <button
         type="button"
         onClick={setAll}
@@ -153,7 +153,7 @@ function TimelineEntry({ entry, category }: { entry: PolicyAuditEntry; category:
       {/* Dot + icon */}
       <div className="relative flex flex-col items-center">
         <div className={cn("h-6 w-6 rounded-full flex items-center justify-center", cat.dotColor)}>
-          <Icon className="h-3 w-3 text-white" />
+          <Icon className="h-3 w-3 text-primary-foreground" />
         </div>
       </div>
 
@@ -164,7 +164,7 @@ function TimelineEntry({ entry, category }: { entry: PolicyAuditEntry; category:
             <p className="text-sm font-medium text-ink">
               {describeEntry(entry)}
             </p>
-            <p className="text-[11px] text-muted">
+            <p className="text-[11px] text-muted-foreground">
               {entry.actor && <span>{entry.actor} &middot; </span>}
               <span title={new Date(entry.timestamp).toLocaleString()}>
                 {timeAgo(entry.timestamp)}
@@ -174,7 +174,7 @@ function TimelineEntry({ entry, category }: { entry: PolicyAuditEntry; category:
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="flex-shrink-0 rounded-full p-1 text-muted transition hover:bg-surface2 hover:text-ink"
+            className="flex-shrink-0 rounded-full p-1 text-muted-foreground transition hover:bg-surface2 hover:text-ink"
           >
             {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           </button>
@@ -182,7 +182,7 @@ function TimelineEntry({ entry, category }: { entry: PolicyAuditEntry; category:
 
         {/* Expanded details */}
         {expanded && entry.details && (
-          <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-border bg-surface2/30 p-2.5 text-[11px] text-muted">
+          <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-border bg-surface2/30 p-2.5 text-[11px] text-muted-foreground">
             {JSON.stringify(entry.details, null, 2)}
           </pre>
         )}
@@ -219,7 +219,7 @@ export function PolicyTimeline({ entries }: PolicyTimelineProps) {
 
       {/* Timeline */}
       {categorized.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted">
+        <p className="py-6 text-center text-sm text-muted-foreground">
           No activity entries match the selected categories.
         </p>
       ) : (

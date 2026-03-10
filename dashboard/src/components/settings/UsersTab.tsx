@@ -129,13 +129,13 @@ function CreateUserModal({
             Create User
           </h3>
           <button onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
-            <X className="h-4 w-4 text-muted" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Username
             </label>
             <Input placeholder="e.g. jane.doe" {...register("username")} />
@@ -145,18 +145,18 @@ function CreateUserModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Password
             </label>
             <Input type="password" placeholder="Min 12 characters" {...register("password")} />
-            <p className="mt-1 text-xs text-muted">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
+            <p className="mt-1 text-xs text-muted-foreground">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
             {errors.password && (
               <p className="mt-1 text-xs text-danger">{errors.password.message}</p>
             )}
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Role
             </label>
             <Select {...register("role")}>
@@ -235,7 +235,7 @@ function ChangePasswordModal({
             Reset Password for {user.username}
           </h3>
           <button onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
-            <X className="h-4 w-4 text-muted" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
@@ -247,11 +247,11 @@ function ChangePasswordModal({
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               New Password
             </label>
             <Input type="password" placeholder="Min 12 characters" {...register("password")} />
-            <p className="mt-1 text-xs text-muted">{PASSWORD_REQUIREMENTS_TEXT}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{PASSWORD_REQUIREMENTS_TEXT}</p>
             <div className="mt-2">
               <PasswordStrengthIndicator password={password ?? ""} />
             </div>
@@ -261,7 +261,7 @@ function ChangePasswordModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Confirm Password
             </label>
             <Input type="password" placeholder="Repeat password" {...register("confirm")} />
@@ -305,7 +305,7 @@ function ConfirmDelete({
         <h3 className="mb-4 font-display text-lg font-semibold text-ink">
           Delete User
         </h3>
-        <p className="mb-6 text-sm text-muted">
+        <p className="mb-6 text-sm text-muted-foreground">
           Are you sure you want to delete{" "}
           <strong className="text-ink">{user.username}</strong>? This action
           cannot be undone.
@@ -348,7 +348,7 @@ function BulkConfirmDialog({
         <h3 className="mb-4 font-display text-lg font-semibold text-ink">
           {action === "delete" ? "Delete Users" : "Change Role"}
         </h3>
-        <p className="mb-6 text-sm text-muted">
+        <p className="mb-6 text-sm text-muted-foreground">
           {action === "delete"
             ? `Are you sure you want to delete ${count} user${count !== 1 ? "s" : ""}? This action cannot be undone.`
             : `Change the role of ${count} user${count !== 1 ? "s" : ""} to ${role}?`}
@@ -529,16 +529,16 @@ export function UsersTab() {
                     />
                   )}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Username
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Role
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Created
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Last Login
                 </th>
                 <th className="px-4 py-3" />
@@ -558,7 +558,7 @@ export function UsersTab() {
 
               {!isLoading && isError && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
                     Failed to load users.
                   </td>
                 </tr>
@@ -566,7 +566,7 @@ export function UsersTab() {
 
               {!isLoading && !isError && users.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
                     No users yet. Create one to get started.
                   </td>
                 </tr>
@@ -598,7 +598,7 @@ export function UsersTab() {
                       <td className="px-4 py-3 font-medium text-ink">
                         {user.username}
                         {self && (
-                          <span className="ml-2 text-xs text-muted">(you)</span>
+                          <span className="ml-2 text-xs text-muted-foreground">(you)</span>
                         )}
                       </td>
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
@@ -621,10 +621,10 @@ export function UsersTab() {
                           {primaryRole}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted">
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
                         {timeAgo(user.createdAt)}
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted">
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
                         {timeAgo(user.lastLogin)}
                       </td>
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>

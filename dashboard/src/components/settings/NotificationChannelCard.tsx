@@ -71,11 +71,11 @@ export function NotificationChannelCard({
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface2">
-              <Icon className="h-4 w-4 text-muted" />
+              <Icon className="h-4 w-4 text-muted-foreground" />
             </div>
             <div>
               <p className="text-sm font-semibold text-ink">{channel.name}</p>
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted-foreground">
                 {CHANNEL_LABELS[channel.type] ?? channel.type}
               </p>
             </div>
@@ -87,7 +87,7 @@ export function NotificationChannelCard({
           <p className="text-xs text-danger">{channel.error}</p>
         )}
 
-        <div className="flex items-center justify-between text-[10px] text-muted">
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
           <span>Last sent: {timeAgo(channel.lastSentAt)}</span>
         </div>
 

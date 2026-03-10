@@ -1,6 +1,6 @@
 const STORAGE_KEY = "cordum-mock-bank-config";
 const DEFAULT_CONFIG = {
-  apiBaseUrl: "http://localhost:8081",
+  apiBaseUrl: "",
   apiKey: "",
   tenantId: "default",
   principalId: "demo",
@@ -70,18 +70,12 @@ function handleChatMessage(text) {
     return;
   }
 
-  const route = routeForAmount(amount);
-  appendChat(
-    "agent",
-    `Understood. I will submit a transfer request for ${formatMoney(amount)}. ${route.preflight}`,
-  );
-
+  appendChat("agent", `Processing transfer request for ${formatMoney(amount)}.`);
   submitTransfer({
     amount,
     customer: "Alex Morgan",
     reason: "Client transfer request",
     note: text,
-    policyBucket: route.bucket,
   });
 }
 
@@ -93,7 +87,7 @@ function respondToMessage(text) {
   if (/(transfer|send|wire|payment|payout)/.test(lower)) {
     return "Certainly. What amount should I transfer?";
   }
-  return "I can help with transfers. Share an amount like $40 so I can start the request.";
+  return "I can help with transfers. Just let me know the amount.";
 }
 
 function formatMoney(amount) {
@@ -151,26 +145,7 @@ function parseAmount(text) {
   return Number(match[1]);
 }
 
-function routeForAmount(amount) {
-  if (amount < 50) {
-    return {
-      bucket: "auto",
-      preflight: "This is a low-risk transfer and should process quickly.",
-    };
-  }
-  if (amount > 1000) {
-    return {
-      bucket: "blocked",
-      preflight: "This exceeds the $1,000 limit and will be blocked by policy.",
-    };
-  }
-  return {
-    bucket: "review",
-    preflight: "This will require manager approval before funds move.",
-  };
-}
-
-async function submitTransfer({ amount, customer, reason, note, policyBucket }) {
+async function submitTransfer({ amount, customer, reason, note }) {
   const request = {
     id: `req-${Date.now()}`,
     amount,
@@ -190,7 +165,6 @@ async function submitTransfer({ amount, customer, reason, note, policyBucket }) 
       reason,
       note,
       requested_by: "agent-demo",
-      policy_bucket: policyBucket,
     };
     const runResp = await apiRequest(`/api/v1/workflows/${WORKFLOW_ID}/runs`, {
       method: "POST",
@@ -198,44 +172,21 @@ async function submitTransfer({ amount, customer, reason, note, policyBucket }) 
       query: { org_id: state.config.orgId },
     });
     request.runId = runResp.run_id;
-    appendChat("agent", "Request received. Monitoring approval and execution.");
+    appendChat("agent", "Please wait, waiting for representative for approval.");
 
-    const jobId = await waitForJobId(request.runId);
-    request.jobId = jobId;
-
-    await pollJob(request);
+    await pollRun(request);
   } catch (err) {
-    request.status = "blocked";
+    request.status = "error";
     appendChat("agent", buildErrorMessage(err));
   }
 }
 
-async function waitForJobId(runId) {
-  const maxAttempts = 30;
-  for (let i = 0; i < maxAttempts; i += 1) {
-    const run = await apiRequest(`/api/v1/workflow-runs/${runId}`);
-    const step = findStepWithJobId(run?.steps);
-    if (step) {
-      return step.job_id;
-    }
-    await sleep(500);
-  }
-  throw new Error("Timed out waiting for job id");
-}
-
-function findStepWithJobId(steps) {
-  if (!steps) {
-    return null;
-  }
-  return Object.values(steps).find((step) => step && step.job_id) || null;
-}
-
-async function pollJob(request) {
+async function pollRun(request) {
   let done = false;
   while (!done) {
-    let job;
+    let run;
     try {
-      job = await apiRequest(`/api/v1/jobs/${encodeURIComponent(request.jobId)}`);
+      run = await apiRequest(`/api/v1/workflow-runs/${encodeURIComponent(request.runId)}`);
     } catch (err) {
       if (isNotFound(err)) {
         await sleep(800);
@@ -243,26 +194,46 @@ async function pollJob(request) {
       }
       throw err;
     }
-    const stateValue = String(job.state || "").toUpperCase();
+    const status = String(run.status || "").toLowerCase();
 
-    if (stateValue === "APPROVAL_REQUIRED") {
+    if (status === "waiting") {
       setRequestStatus(request, "approval", () => {
-        appendChat("agent", "This transfer needs manager approval. I will notify you once cleared.");
+        appendChat(
+          "agent",
+          "This transfer requires manager approval per safety policy. Open the Cordum dashboard to approve or reject.",
+        );
       });
-    } else if (stateValue === "DENIED") {
+    } else if (status === "denied") {
       setRequestStatus(request, "blocked", () => {
-        appendChat("agent", "The transfer was declined by policy. No funds moved.");
+        appendChat(
+          "agent",
+          "This transfer was blocked by the Safety Kernel. Transfers of $300 or more are not permitted.",
+        );
       });
       done = true;
-    } else if (stateValue === "SUCCEEDED") {
+    } else if (status === "succeeded") {
       setRequestStatus(request, "completed", () => {
         applyTransaction(request);
         appendChat("agent", "Transfer completed. Your balance has been updated.");
       });
       done = true;
-    } else if (["FAILED", "CANCELLED", "TIMEOUT"].includes(stateValue)) {
+    } else if (status === "failed") {
+      const hasDeniedStep = run.steps && Object.values(run.steps).some(
+        (s) => s.status === "denied" || (s.safety_decision && s.safety_decision.type === "deny"),
+      );
+      if (hasDeniedStep) {
+        setRequestStatus(request, "blocked", () => {
+          appendChat("agent", "This transfer was blocked by the Safety Kernel.");
+        });
+      } else {
+        setRequestStatus(request, "blocked", () => {
+          appendChat("agent", "The transfer could not be completed.");
+        });
+      }
+      done = true;
+    } else if (["cancelled", "timed_out"].includes(status)) {
       setRequestStatus(request, "blocked", () => {
-        appendChat("agent", `The transfer did not complete (${stateValue.toLowerCase()}).`);
+        appendChat("agent", `The transfer was ${status.replace("_", " ")}.`);
       });
       done = true;
     }
@@ -298,11 +269,8 @@ function setRequestStatus(request, status, onChange) {
 }
 
 async function apiRequest(path, options = {}) {
-  const base = state.config.apiBaseUrl || DEFAULT_CONFIG.apiBaseUrl;
-  if (!base) {
-    throw new Error("API base URL is missing.");
-  }
-  const url = new URL(path, base);
+  const base = state.config.apiBaseUrl;
+  const url = base ? new URL(path, base) : new URL(path, window.location.origin);
   if (options.query) {
     Object.entries(options.query).forEach(([key, value]) => {
       if (value === undefined || value === null || value === "") {
@@ -379,8 +347,7 @@ function loadStoredConfig() {
     if (!parsed || typeof parsed !== "object") {
       return {};
     }
-    const { apiKey: _apiKey, ...rest } = parsed;
-    return rest;
+    return parsed;
   } catch (err) {
     return {};
   }
@@ -435,10 +402,9 @@ function sanitizeConfig(input) {
 
 function persistConfig(config) {
   try {
-    const { apiKey: _apiKey, ...rest } = config;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
   } catch (err) {
-    // Ignore storage failures for demo environments.
+    // Ignore storage failures.
   }
 }
 
@@ -467,6 +433,7 @@ function ensureApiKey() {
   const entered = window.prompt("Enter your Cordum API key to continue:");
   if (entered && entered.trim()) {
     state.config.apiKey = entered.trim();
+    persistConfig(state.config);
     return true;
   }
   return false;
@@ -479,7 +446,7 @@ function buildErrorMessage(err) {
     return "I could not reach the bank API. Please ensure the Cordum API is running and the page is served over http://localhost.";
   }
   if (lower.includes("401") || lower.includes("unauthorized")) {
-    return "The request was rejected. Update the demo API key and retry (refresh to re-enter).";
+    return "The request was rejected. Check your API key and retry (refresh to re-enter).";
   }
   if (lower.includes("403") || lower.includes("tenant")) {
     return "The request was rejected. Set a tenant (try ?tenantId=default) and reload.";

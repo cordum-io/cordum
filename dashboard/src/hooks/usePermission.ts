@@ -17,7 +17,8 @@ export function usePermission(requiredRoles: string[]): {
     !!authConfig &&
     (authConfig.password_enabled ||
       !!authConfig.user_auth_enabled ||
-      authConfig.saml_enabled);
+      authConfig.saml_enabled ||
+      authConfig.oidc_enabled);
 
   // Graceful degradation: if no auth configured, allow everything
   if (!requiresAuth) return { allowed: true, userRoles: [] };

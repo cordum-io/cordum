@@ -38,7 +38,7 @@ export function TokenBudgetGroup({
     <div className={cn("space-y-3", className)}>
       <div className="grid grid-cols-3 gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted">Input tokens</span>
+          <span className="text-xs font-medium text-muted-foreground">Input tokens</span>
           <Input
             type="number"
             min={0}
@@ -49,7 +49,7 @@ export function TokenBudgetGroup({
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted">Output tokens</span>
+          <span className="text-xs font-medium text-muted-foreground">Output tokens</span>
           <Input
             type="number"
             min={0}
@@ -60,7 +60,7 @@ export function TokenBudgetGroup({
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted">Total</span>
+          <span className="text-xs font-medium text-muted-foreground">Total</span>
           <Input type="number" value={total} disabled className="opacity-70" />
         </label>
       </div>
@@ -77,7 +77,7 @@ export function TokenBudgetGroup({
         />
       </div>
 
-      <div className="flex justify-between text-[10px] text-muted">
+      <div className="flex justify-between text-[10px] text-muted-foreground">
         <span>Input {inputPct.toFixed(0)}%</span>
         <span>Output {outputPct.toFixed(0)}%</span>
       </div>

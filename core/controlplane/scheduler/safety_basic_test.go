@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -22,6 +23,13 @@ func (s *SafetyBasic) Check(_ context.Context, req *pb.JobRequest) (SafetyDecisi
 	}
 	if req.Topic == "sys.unavailable" {
 		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "test unavailable"}, nil
+	}
+	if req.Topic == capsdk.SubjectApprovalGate {
+		return SafetyDecisionRecord{
+			Decision:         SafetyRequireApproval,
+			ApprovalRequired: true,
+			Reason:           "workflow approval gate",
+		}, nil
 	}
 	return SafetyDecisionRecord{Decision: SafetyAllow}, nil
 }

@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -98,6 +98,69 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	}
 	if bus.published[0].subject != capsdk.SubjectSubmit {
 		t.Fatalf("expected publish to %s got %s", capsdk.SubjectSubmit, bus.published[0].subject)
+	}
+}
+
+func TestApproveWorkflowGateBypassesSafetySnapshotCheck(t *testing.T) {
+	s, bus, safety := newTestGateway(t)
+	// Intentionally mismatch snapshots; workflow gates should bypass this check.
+	safety.setSnapshots([]string{"different-snapshot"})
+
+	jobID := uuid.NewString()
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    capsdk.SubjectApprovalGate,
+		TenantId: "default",
+		Labels: map[string]string{
+			"workflow_id": "wf-1",
+			"run_id":      "run-1",
+			"step_id":     "approval",
+			"gate_type":   "workflow_approval",
+		},
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		JobHash:          hash,
+		// Deliberately empty — workflow gates do not bind to safety snapshots.
+		PolicySnapshot: "",
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"ok"}`))
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	rr := httptest.NewRecorder()
+
+	s.handleApproveJob(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.PolicySnapshot != "workflow-gate" {
+		t.Fatalf("expected synthetic workflow snapshot, got %q", record.PolicySnapshot)
+	}
+	if len(bus.published) != 1 || bus.published[0].subject != capsdk.SubjectSubmit {
+		t.Fatalf("expected approval publish to %s, got %#v", capsdk.SubjectSubmit, bus.published)
 	}
 }
 
@@ -340,6 +403,131 @@ func TestListApprovalsIncludesJobHash(t *testing.T) {
 	}
 	if payload.Items[0]["job_hash"] != "hash-123" {
 		t.Fatalf("expected job_hash, got %#v", payload.Items[0]["job_hash"])
+	}
+}
+
+func TestListApprovalsIncludesResolutionFields(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	jobID := "job-approval-resolution"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          "hash-res",
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+	approvalAt := int64(1709000000000000) // fixed microsecond timestamp
+	if err := s.jobStore.SetApprovalRecord(context.Background(), jobID, store.ApprovalRecord{
+		ApprovedBy:     "alice",
+		ApprovedRole:   "admin",
+		ApprovedAt:     approvalAt,
+		Reason:         "ok",
+		Note:           "looks fine",
+		PolicySnapshot: "snap-1",
+		JobHash:        "hash-res",
+	}); err != nil {
+		t.Fatalf("set approval record: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodGet, "/api/v1/approvals", nil)
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	rr := httptest.NewRecorder()
+	s.handleListApprovals(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Items) == 0 {
+		t.Fatalf("expected approvals")
+	}
+	item := payload.Items[0]
+	if item["resolved_by"] != "alice" {
+		t.Fatalf("expected resolved_by alice got %#v", item["resolved_by"])
+	}
+	if item["resolved_comment"] != "looks fine" {
+		t.Fatalf("expected resolved_comment 'looks fine' got %#v", item["resolved_comment"])
+	}
+	resolvedAt, ok := item["resolved_at"].(float64)
+	if !ok || int64(resolvedAt) != approvalAt {
+		t.Fatalf("expected resolved_at %d got %#v", approvalAt, item["resolved_at"])
+	}
+}
+
+func TestListApprovalsOmitsResolutionFieldsWhenNoRecord(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	jobID := "job-approval-no-resolution"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          "hash-none",
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodGet, "/api/v1/approvals", nil)
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	rr := httptest.NewRecorder()
+	s.handleListApprovals(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Items) == 0 {
+		t.Fatalf("expected approvals")
+	}
+	item := payload.Items[0]
+	if _, exists := item["resolved_by"]; exists {
+		t.Fatalf("expected no resolved_by field, got %#v", item["resolved_by"])
+	}
+	if _, exists := item["resolved_comment"]; exists {
+		t.Fatalf("expected no resolved_comment field, got %#v", item["resolved_comment"])
+	}
+	if _, exists := item["resolved_at"]; exists {
+		t.Fatalf("expected no resolved_at field, got %#v", item["resolved_at"])
 	}
 }
 

@@ -100,7 +100,7 @@ export function OAuthConfigPanel() {
 
         {/* Provider selector */}
         <div>
-          <label className="mb-2 block text-xs font-semibold text-muted">
+          <label className="mb-2 block text-xs font-semibold text-muted-foreground">
             Provider
           </label>
           <div className="flex gap-2">
@@ -112,7 +112,7 @@ export function OAuthConfigPanel() {
                   "flex-1 rounded-xl border px-4 py-3 text-center text-xs font-semibold transition-colors",
                   provider === p.id
                     ? "border-accent bg-accent/10 text-accent"
-                    : "border-border text-muted hover:text-ink hover:border-ink/20",
+                    : "border-border text-muted-foreground hover:text-ink hover:border-ink/20",
                 )}
                 onClick={() => setProvider(p.id)}
               >
@@ -123,7 +123,7 @@ export function OAuthConfigPanel() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-muted">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
             Client ID
           </label>
           <Input
@@ -136,7 +136,7 @@ export function OAuthConfigPanel() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-muted">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
             Client Secret
           </label>
           <div className="relative">
@@ -148,7 +148,7 @@ export function OAuthConfigPanel() {
             />
             <button
               type="button"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted hover:text-ink"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-ink"
               onClick={() => setShowSecret((v) => !v)}
             >
               {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -160,24 +160,24 @@ export function OAuthConfigPanel() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-muted">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
             Redirect URI
           </label>
           <Input value={redirectUri} readOnly className="bg-surface2/50 font-mono text-xs" />
-          <p className="mt-1 text-[10px] text-muted">
+          <p className="mt-1 text-[10px] text-muted-foreground">
             Add this URI to your {providerDef.label} OAuth app settings.
           </p>
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-muted">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
             Scopes
           </label>
           <Input
             placeholder="Space-separated scopes"
             {...register("scopes")}
           />
-          <p className="mt-1 text-[10px] text-muted">
+          <p className="mt-1 text-[10px] text-muted-foreground">
             Defaults: {providerDef.defaultScopes}
           </p>
         </div>

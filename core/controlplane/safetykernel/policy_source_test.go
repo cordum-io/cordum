@@ -161,3 +161,174 @@ func TestDecodeKey(t *testing.T) {
 		t.Fatalf("expected decode error")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Signature enforcement security regression tests
+// ---------------------------------------------------------------------------
+
+func TestVerifyPolicySignatureProductionRequiresKey(t *testing.T) {
+	// In production mode, signature verification is mandatory.
+	// Missing SAFETY_POLICY_PUBLIC_KEY must be an error, not a silent bypass.
+	t.Setenv("CORDUM_PRODUCTION", "1")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", "")
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "")
+
+	err := verifyPolicySignature([]byte(testPolicy), "policy.yaml")
+	if err == nil {
+		t.Fatalf("production mode must require signature key")
+	}
+	if !strings.Contains(err.Error(), "SAFETY_POLICY_PUBLIC_KEY not configured") {
+		t.Fatalf("expected missing key error, got: %v", err)
+	}
+}
+
+func TestVerifyPolicySignatureProductionInvalidSig(t *testing.T) {
+	// In production, a tampered signature must be rejected.
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	t.Setenv("CORDUM_PRODUCTION", "1")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", base64.StdEncoding.EncodeToString(pub))
+	// Wrong signature (all zeros).
+	t.Setenv("SAFETY_POLICY_SIGNATURE", base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)))
+
+	err = verifyPolicySignature([]byte(testPolicy), "policy.yaml")
+	if err == nil {
+		t.Fatalf("expected signature verification failure")
+	}
+	if !strings.Contains(err.Error(), "verification failed") {
+		t.Fatalf("expected verification failure error, got: %v", err)
+	}
+}
+
+func TestVerifyPolicySignatureTamperedData(t *testing.T) {
+	// Valid signature for original data must fail for modified data.
+	data := []byte(testPolicy)
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	sig := ed25519.Sign(priv, data)
+
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "1")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", base64.StdEncoding.EncodeToString(pub))
+	t.Setenv("SAFETY_POLICY_SIGNATURE", base64.StdEncoding.EncodeToString(sig))
+
+	// Tampered data: change policy content
+	tampered := []byte(testPolicy + "\n  evil:\n    allow_topics:\n      - '*'\n")
+	err = verifyPolicySignature(tampered, "policy.yaml")
+	if err == nil {
+		t.Fatalf("expected tampered data to fail verification")
+	}
+}
+
+func TestVerifyPolicySignatureWrongKeyPair(t *testing.T) {
+	// Signature from a different key pair must be rejected.
+	data := []byte(testPolicy)
+	_, priv1, _ := ed25519.GenerateKey(nil)
+	pub2, _, _ := ed25519.GenerateKey(nil)
+	sig := ed25519.Sign(priv1, data)
+
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "1")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", base64.StdEncoding.EncodeToString(pub2))
+	t.Setenv("SAFETY_POLICY_SIGNATURE", base64.StdEncoding.EncodeToString(sig))
+
+	err := verifyPolicySignature(data, "policy.yaml")
+	if err == nil {
+		t.Fatalf("expected wrong key pair to fail verification")
+	}
+}
+
+func TestVerifyPolicySignatureFromSigFile(t *testing.T) {
+	// Test .sig sidecar file path for file-based policy sources.
+	data := []byte(testPolicy)
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	sig := ed25519.Sign(priv, data)
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	sigPath := policyPath + ".sig"
+	if err := os.WriteFile(policyPath, data, 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	if err := os.WriteFile(sigPath, sig, 0o600); err != nil {
+		t.Fatalf("write sig: %v", err)
+	}
+
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "1")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", base64.StdEncoding.EncodeToString(pub))
+	t.Setenv("SAFETY_POLICY_SIGNATURE", "")
+	t.Setenv("SAFETY_POLICY_SIGNATURE_PATH", "")
+
+	err := verifyPolicySignature(data, policyPath)
+	if err != nil {
+		t.Fatalf("expected .sig sidecar to be used: %v", err)
+	}
+}
+
+func TestVerifyPolicySignatureHTTPNoSigFails(t *testing.T) {
+	// HTTP policy source with no signature env var must fail when signature required.
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "1")
+	pub, _, _ := ed25519.GenerateKey(nil)
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", base64.StdEncoding.EncodeToString(pub))
+	t.Setenv("SAFETY_POLICY_SIGNATURE", "")
+	t.Setenv("SAFETY_POLICY_SIGNATURE_PATH", "")
+
+	err := verifyPolicySignature([]byte(testPolicy), "https://example.com/policy.yaml")
+	if err == nil {
+		t.Fatalf("expected error for HTTP source with no signature")
+	}
+	if !strings.Contains(err.Error(), "no signature provided") {
+		t.Fatalf("expected 'no signature provided' error, got: %v", err)
+	}
+}
+
+func TestVerifyPolicySignatureDevModeNoKeySkips(t *testing.T) {
+	// In dev mode without any key or enforcement, verification should pass silently.
+	t.Setenv("CORDUM_PRODUCTION", "")
+	t.Setenv("CORDUM_ENV", "dev")
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", "")
+
+	err := verifyPolicySignature([]byte(testPolicy), "policy.yaml")
+	if err != nil {
+		t.Fatalf("dev mode without key should pass: %v", err)
+	}
+}
+
+func TestVerifyPolicySignatureFromSignaturePath(t *testing.T) {
+	// Signature can be provided via SAFETY_POLICY_SIGNATURE_PATH.
+	data := []byte(testPolicy)
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	sig := ed25519.Sign(priv, data)
+
+	dir := t.TempDir()
+	sigPath := filepath.Join(dir, "policy.sig")
+	if err := os.WriteFile(sigPath, sig, 0o600); err != nil {
+		t.Fatalf("write sig: %v", err)
+	}
+
+	t.Setenv("SAFETY_POLICY_SIGNATURE_REQUIRED", "1")
+	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", base64.StdEncoding.EncodeToString(pub))
+	t.Setenv("SAFETY_POLICY_SIGNATURE", "")
+	t.Setenv("SAFETY_POLICY_SIGNATURE_PATH", sigPath)
+
+	err := verifyPolicySignature(data, "https://example.com/policy.yaml")
+	if err != nil {
+		t.Fatalf("signature path should work: %v", err)
+	}
+}
+
+func TestReadPolicySourceHTTPBlocksHTTPInProduction(t *testing.T) {
+	// Integration test: readPolicySource → fetchPolicyURL rejects HTTP in production.
+	t.Setenv("CORDUM_PRODUCTION", "1")
+
+	_, err := readPolicySource("http://example.com/policy.yaml")
+	if err == nil {
+		t.Fatalf("expected HTTP to be rejected in production")
+	}
+	if !strings.Contains(err.Error(), "HTTPS required") {
+		t.Fatalf("expected HTTPS requirement error, got: %v", err)
+	}
+}

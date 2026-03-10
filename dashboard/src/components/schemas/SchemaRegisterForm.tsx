@@ -94,13 +94,13 @@ export function SchemaRegisterForm({ onSuccess, initialData }: SchemaRegisterFor
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       {/* ID */}
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           Schema ID
         </label>
         <Input
           placeholder="e.g. job.payload.echo"
           readOnly={isEdit}
-          className={isEdit ? "bg-surface2/50 text-muted cursor-not-allowed" : undefined}
+          className={isEdit ? "bg-surface2/50 text-muted-foreground cursor-not-allowed" : undefined}
           {...register("id")}
         />
         {errors.id && (
@@ -110,7 +110,7 @@ export function SchemaRegisterForm({ onSuccess, initialData }: SchemaRegisterFor
 
       {/* JSON Schema Body */}
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           JSON Schema Body
         </label>
         <Textarea
@@ -122,7 +122,7 @@ export function SchemaRegisterForm({ onSuccess, initialData }: SchemaRegisterFor
         {errors.body && (
           <p className="mt-1 text-xs text-danger">{errors.body.message}</p>
         )}
-        <p className="mt-1 text-[11px] text-muted">
+        <p className="mt-1 text-[11px] text-muted-foreground">
           Paste a JSON Schema object.
         </p>
       </div>

@@ -52,10 +52,10 @@ function eventColor(entry: AuditEntry): EventColor {
 }
 
 const COLOR_HEX: Record<EventColor, string> = {
-  red: "#ef4444",
-  yellow: "#eab308",
-  blue: "#3b82f6",
-  green: "#22c55e",
+  red: "#b83a3a",
+  yellow: "#c58a1c",
+  blue: "#0f7f7a",
+  green: "#1f7a57",
 };
 
 // ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ function flushCluster(entries: AuditEntry[]): TimelinePoint[] {
   return [{
     x: new Date(midEntry.timestamp).getTime(),
     y: CATEGORY_Y[cat],
-    color: "#8b5cf6",
+    color: "#0f7f7a",
     size: Math.min(200, 40 + entries.length * 10),
     entry: midEntry,
     isCluster: true,
@@ -171,7 +171,7 @@ function TimelineTooltip({ active, payload }: { active?: boolean; payload?: Arra
     return (
       <div className="rounded-lg border border-border bg-surface px-3 py-2 shadow-lg text-xs space-y-1">
         <p className="font-semibold text-ink">{point.clusterCount} events</p>
-        <p className="text-muted">Click to zoom into this cluster</p>
+        <p className="text-muted-foreground">Click to zoom into this cluster</p>
       </div>
     );
   }
@@ -190,10 +190,10 @@ function TimelineTooltip({ active, payload }: { active?: boolean; payload?: Arra
       <p className="text-ink font-medium truncate">
         {e.message || `${e.action} on ${e.resourceType}`}
       </p>
-      <p className="text-muted font-mono">
+      <p className="text-muted-foreground font-mono">
         {new Date(e.timestamp).toISOString().replace("T", " ").replace("Z", "")}
       </p>
-      <p className="text-muted">Actor: {e.actor}</p>
+      <p className="text-muted-foreground">Actor: {e.actor}</p>
     </div>
   );
 }
@@ -237,21 +237,21 @@ function DotShape(props: { cx?: number; cy?: number; payload?: TimelinePoint }) 
 
 function TimelineLegend() {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-muted">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
       <span className="flex items-center gap-1">
-        <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> Deny/Fail
+        <span className="h-2.5 w-2.5 rounded-full bg-destructive" /> Deny/Fail
       </span>
       <span className="flex items-center gap-1">
-        <span className="h-2.5 w-2.5 rounded-full bg-yellow-500" /> Approve/Warn
+        <span className="h-2.5 w-2.5 rounded-full bg-[var(--color-warning)]" /> Approve/Warn
       </span>
       <span className="flex items-center gap-1">
-        <span className="h-2.5 w-2.5 rounded-full bg-blue-500" /> Normal
+        <span className="h-2.5 w-2.5 rounded-full bg-[var(--color-info)]" /> Normal
       </span>
       <span className="flex items-center gap-1">
-        <span className="h-2.5 w-2.5 rounded-full bg-green-500" /> Success
+        <span className="h-2.5 w-2.5 rounded-full bg-[var(--color-success)]" /> Success
       </span>
       <span className="flex items-center gap-1">
-        <span className="h-2.5 w-2.5 rounded-full bg-purple-500" /> Cluster
+        <span className="h-2.5 w-2.5 rounded-full bg-primary" /> Cluster
       </span>
     </div>
   );
@@ -356,7 +356,7 @@ export function AuditTimeline({ events, onEventClick }: AuditTimelineProps) {
   }, [brushStart, brushEnd]);
 
   if (events.length === 0) {
-    return <p className="py-8 text-center text-sm text-muted">No events to display.</p>;
+    return <p className="py-8 text-center text-sm text-muted-foreground">No events to display.</p>;
   }
 
   return (
@@ -364,7 +364,7 @@ export function AuditTimeline({ events, onEventClick }: AuditTimelineProps) {
       <div className="flex items-center justify-between">
         <TimelineLegend />
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted">
+          <span className="text-[10px] text-muted-foreground">
             {visiblePoints.length} points
           </span>
           {isZoomed && (
@@ -393,7 +393,7 @@ export function AuditTimeline({ events, onEventClick }: AuditTimelineProps) {
               dataKey="x"
               domain={[range.min, range.max]}
               tickFormatter={(v: number) => formatAxisTick(v, rangeMs)}
-              tick={{ fontSize: 10, fill: "#888" }}
+              tick={{ fontSize: 10, fill: "#5a6a70" }}
               tickCount={6}
               name="Time"
             />
@@ -403,7 +403,7 @@ export function AuditTimeline({ events, onEventClick }: AuditTimelineProps) {
               domain={[-0.5, 3.5]}
               ticks={[0, 1, 2, 3]}
               tickFormatter={(v: number) => CATEGORY_LABELS[v] ?? ""}
-              tick={{ fontSize: 10, fill: "#888" }}
+              tick={{ fontSize: 10, fill: "#5a6a70" }}
               width={50}
             />
             <Tooltip content={<TimelineTooltip />} cursor={false} />
@@ -411,9 +411,9 @@ export function AuditTimeline({ events, onEventClick }: AuditTimelineProps) {
               <ReferenceArea
                 x1={Math.min(brushStart, brushEnd)}
                 x2={Math.max(brushStart, brushEnd)}
-                fill="#6366f1"
+                fill="#0f7f7a"
                 fillOpacity={0.1}
-                stroke="#6366f1"
+                stroke="#0f7f7a"
                 strokeOpacity={0.3}
               />
             )}
@@ -422,7 +422,7 @@ export function AuditTimeline({ events, onEventClick }: AuditTimelineProps) {
         </ResponsiveContainer>
       </div>
 
-      <p className="text-[10px] text-muted text-center">
+      <p className="text-[10px] text-muted-foreground text-center">
         {events.length} total events{isZoomed && " (zoomed) · scroll to zoom · click clusters to expand"}
       </p>
     </div>

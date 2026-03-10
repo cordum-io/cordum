@@ -118,9 +118,14 @@ func TestNATSAuditPublisher_FallbackOnPublishFailure(t *testing.T) {
 	pub := NewNATSAuditPublisher(bus, bufExp)
 	pub.Send(testEvent())
 
-	// Wait for the BufferedExporter to flush the fallback event.
-	time.Sleep(200 * time.Millisecond)
-
+	// Poll until the BufferedExporter flushes the fallback event.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if fallback.totalEvents() >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if got := fallback.totalEvents(); got != 1 {
 		t.Fatalf("expected 1 fallback event, got %d", got)
 	}

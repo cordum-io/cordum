@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -57,8 +56,8 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 		return
 	}
 	var req policyCheckRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	tenant, err := s.resolveTenant(r, req.Tenant)

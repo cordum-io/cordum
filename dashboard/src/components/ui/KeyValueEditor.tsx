@@ -71,7 +71,7 @@ export function KeyValueEditor({
           <button
             type="button"
             onClick={() => removePair(idx)}
-            className="flex-shrink-0 rounded-full p-2 text-muted transition hover:bg-danger/10 hover:text-danger"
+            className="flex-shrink-0 rounded-full p-2 text-muted-foreground transition hover:bg-danger/10 hover:text-danger"
           >
             <Trash2 className="h-4 w-4" />
           </button>

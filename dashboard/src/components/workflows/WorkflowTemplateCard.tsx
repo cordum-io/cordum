@@ -60,15 +60,15 @@ const TRIGGER_VARIANTS: Record<string, "info" | "success" | "warning" | "default
 // ---------------------------------------------------------------------------
 
 const SPARKLINE_COLORS: Record<string, string> = {
-  succeeded: "bg-green-500",
-  completed: "bg-green-500",
-  failed: "bg-red-500",
-  timed_out: "bg-red-500",
-  cancelled: "bg-gray-400",
-  running: "bg-blue-500",
-  in_progress: "bg-blue-500",
-  pending: "bg-gray-300",
-  waiting: "bg-amber-500",
+  succeeded: "bg-[var(--color-success)]",
+  completed: "bg-[var(--color-success)]",
+  failed: "bg-destructive",
+  timed_out: "bg-destructive",
+  cancelled: "bg-muted-foreground",
+  running: "bg-[var(--color-info)]",
+  in_progress: "bg-[var(--color-info)]",
+  pending: "bg-muted",
+  waiting: "bg-[var(--color-warning)]",
 };
 
 function SuccessSparkline({ data }: { data: RunStatus[] }) {
@@ -80,7 +80,7 @@ function SuccessSparkline({ data }: { data: RunStatus[] }) {
           key={i}
           className={cn(
             "w-1 rounded-sm",
-            SPARKLINE_COLORS[status] ?? "bg-gray-200",
+            SPARKLINE_COLORS[status] ?? "bg-muted",
             status === "succeeded" ? "h-3" : "h-2",
           )}
         />
@@ -102,10 +102,10 @@ function StepTypeIcons({ steps }: { steps: Workflow["steps"] }) {
     <div className="flex items-center gap-0.5">
       {shown.map((step, i) => {
         const Icon = STEP_TYPE_ICONS[step.type] ?? Briefcase;
-        return <Icon key={step.id ?? i} className="h-3 w-3 text-muted" />;
+        return <Icon key={step.id ?? i} className="h-3 w-3 text-muted-foreground" />;
       })}
       {overflow > 0 && (
-        <span className="text-[10px] text-muted">+{overflow}</span>
+        <span className="text-[10px] text-muted-foreground">+{overflow}</span>
       )}
     </div>
   );
@@ -170,13 +170,13 @@ export function WorkflowTemplateCard({ workflow, onRunNow }: WorkflowTemplateCar
 
       {/* Description */}
       {workflow.description && (
-        <p className="mt-1.5 text-sm text-muted line-clamp-2">
+        <p className="mt-1.5 text-sm text-muted-foreground line-clamp-2">
           {workflow.description}
         </p>
       )}
 
       {/* Stats row */}
-      <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted">
+      <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         {/* Step count + type icons */}
         <span className="inline-flex items-center gap-1.5">
           {workflow.steps.length} step{workflow.steps.length !== 1 ? "s" : ""}

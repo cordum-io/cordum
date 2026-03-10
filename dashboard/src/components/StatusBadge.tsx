@@ -7,7 +7,7 @@ const toneStyles: Record<string, string> = {
   warning: "bg-[color:rgba(197,138,28,0.18)] text-warning",
   danger: "bg-[color:rgba(184,58,58,0.18)] text-danger",
   info: "bg-[color:rgba(15,127,122,0.14)] text-accent",
-  muted: "bg-[color:rgba(90,106,112,0.15)] text-muted",
+  muted: "bg-[color:rgba(90,106,112,0.15)] text-muted-foreground",
   accent: "bg-[color:rgba(15,127,122,0.18)] text-accent",
 };
 

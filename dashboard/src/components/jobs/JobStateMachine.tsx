@@ -77,7 +77,7 @@ export function JobStateMachine({ status }: { status?: JobStatus }) {
                     )}
                   />
                 ) : (
-                  <Circle className="h-3 w-3 text-muted" />
+                  <Circle className="h-3 w-3 text-muted-foreground" />
                 )}
               </div>
               <span
@@ -86,7 +86,7 @@ export function JobStateMachine({ status }: { status?: JobStatus }) {
                   isCompleted && "text-success",
                   isCurrent && !isTerminalFailed && "text-accent font-semibold",
                   isTerminalFailed && "text-danger font-semibold",
-                  !isCompleted && !isCurrent && "text-muted",
+                  !isCompleted && !isCurrent && "text-muted-foreground",
                 )}
               >
                 {label}

@@ -7,9 +7,9 @@ export const NotifyNode = memo(function NotifyNode({ data, selected }: NodeProps
   const config = (data.config ?? {}) as Record<string, unknown>;
   return (
     <BaseNode
-      icon={<Bell className="h-4 w-4 text-pink-600" />}
+      icon={<Bell className="h-4 w-4 text-primary" />}
       label={data.label as string}
-      accent="bg-pink-50"
+      accent="bg-primary/10"
       selected={selected}
     >
       {typeof config.channel === "string" && config.channel && (

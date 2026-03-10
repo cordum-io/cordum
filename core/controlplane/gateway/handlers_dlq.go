@@ -48,7 +48,7 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 		entries = filtered
 	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, entries)
+	writeJSON(w, map[string]any{"items": entries})
 }
 
 func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +73,9 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 			cursor = v
 		}
 	}
-	entries, err := s.dlqStore.ListByScore(r.Context(), cursor, limit)
+	// Normalize cursor to seconds for store (accepts any unit from frontend)
+	storeCursor := normalizeTimestampSecondsUpper(cursor)
+	entries, err := s.dlqStore.ListByScore(r.Context(), storeCursor, limit)
 	if err != nil {
 		slog.Error("dlq list by score failed", "error", err)
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to list dlq entries")
@@ -94,7 +96,7 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 	if int64(len(entries)) == limit {
 		last := entries[len(entries)-1]
 		if !last.CreatedAt.IsZero() {
-			nc := last.CreatedAt.Unix() - 1
+			nc := last.CreatedAt.UnixMicro() - 1
 			nextCursor = &nc
 		}
 	}

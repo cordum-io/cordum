@@ -1,623 +1,211 @@
-import { useState, useMemo } from "react";
-import { useForm, Controller } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import {
-  Key,
-  Plus,
-  Copy,
-  Check,
-  Trash2,
-  RotateCw,
-  Eye,
-  Pencil,
-  Shield,
-  AlertTriangle,
-  Clock,
-} from "lucide-react";
-import {
-  useApiKeys,
-  useCreateApiKey,
-  useRevokeApiKey,
-} from "../hooks/useSettings";
-import { Card } from "../components/ui/Card";
-import { Badge } from "../components/ui/Badge";
-import { Button } from "../components/ui/Button";
-import { Input } from "../components/ui/Input";
-import { ConfirmDialog } from "../components/ui/ConfirmDialog";
-import { cn } from "../lib/utils";
-import type { ApiKey } from "../api/types";
-import { usePageTitle } from "../hooks/usePageTitle";
+/*
+ * DESIGN: "Control Surface" — API Keys
+ * PRD Section 31: API key management with create/revoke
+ */
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { motion } from "framer-motion";
+import { get, post, del } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonTable } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { DialogOverlay } from "@/components/ui/DialogOverlay";
+import { Key, Plus, Copy, Trash2, X } from "lucide-react";
+import { cn, formatRelativeTime } from "@/lib/utils";
+import { toast } from "sonner";
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const AVAILABLE_SCOPES = [
-  { value: "jobs:read", label: "Jobs Read" },
-  { value: "jobs:write", label: "Jobs Write" },
-  { value: "workflows:read", label: "Workflows Read" },
-  { value: "workflows:write", label: "Workflows Write" },
-  { value: "policy:read", label: "Policy Read" },
-  { value: "policy:write", label: "Policy Write" },
-  { value: "admin", label: "Admin" },
-] as const;
-
-const SCOPE_VARIANT: Record<string, "info" | "warning" | "danger"> = {
-  "jobs:read": "info",
-  "jobs:write": "info",
-  "workflows:read": "info",
-  "workflows:write": "info",
-  "policy:read": "warning",
-  "policy:write": "warning",
-  admin: "danger",
-};
-
-function scopeIcon(scope: string) {
-  if (scope === "admin") return Shield;
-  if (scope.endsWith(":write")) return Pencil;
-  return Eye;
+interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsed?: string;
+  scopes: string[];
 }
 
-const STALE_THRESHOLD_MS = 30 * 24 * 60 * 60_000; // 30 days
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function isStale(key: ApiKey): boolean {
-  if (!key.lastUsed) return true; // never used
-  return Date.now() - new Date(key.lastUsed).getTime() > STALE_THRESHOLD_MS;
+interface InvalidateQueriesClient {
+  invalidateQueries: (options: { queryKey: string[] }) => unknown;
 }
 
-function expiryStatus(key: ApiKey): "ok" | "soon" | "imminent" | "expired" | null {
-  if (!key.expiresAt) return null;
-  const remaining = new Date(key.expiresAt).getTime() - Date.now();
-  if (remaining <= 0) return "expired";
-  if (remaining < 24 * 60 * 60_000) return "imminent";
-  if (remaining < 7 * 24 * 60 * 60_000) return "soon";
-  return "ok";
+interface CreateKeyMutationDeps {
+  queryClient: InvalidateQueriesClient;
+  setCreatedKey: (key: string | null) => void;
+  setNewKeyName: (name: string) => void;
 }
 
-function formatExpiry(key: ApiKey): string {
-  if (!key.expiresAt) return "";
-  const remaining = new Date(key.expiresAt).getTime() - Date.now();
-  if (remaining <= 0) return "Expired";
-  const days = Math.floor(remaining / (24 * 60 * 60_000));
-  if (days > 0) return `${days}d`;
-  const hours = Math.floor(remaining / (60 * 60_000));
-  return `${hours}h`;
+interface DeleteKeyMutationDeps {
+  queryClient: InvalidateQueriesClient;
+  setDeleteTarget: (key: ApiKey | null) => void;
 }
 
-function fmtDate(d?: string): string {
-  if (!d) return "\u2014";
-  return new Date(d).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+function errorDescription(err: unknown): string {
+  if (err instanceof Error && err.message.trim()) {
+    return err.message;
+  }
+  if (typeof err === "string" && err.trim()) {
+    return err;
+  }
+  return "Unknown error";
 }
 
-function tomorrowISO(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
+export function handleCreateKeySuccess(data: { data?: { key?: string } } | undefined, deps: CreateKeyMutationDeps) {
+  deps.queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+  const key = data?.data?.key;
+  if (key) {
+    deps.setCreatedKey(key);
+  } else {
+    toast.error("API key created but key value not returned");
+  }
+  deps.setNewKeyName("");
 }
 
-// ---------------------------------------------------------------------------
-// Scope badge
-// ---------------------------------------------------------------------------
-
-function ScopeBadge({ scope }: { scope: string }) {
-  const variant = SCOPE_VARIANT[scope] ?? "info";
-  const Icon = scopeIcon(scope);
-  return (
-    <Badge variant={variant} className="text-[10px] gap-1">
-      <Icon className="h-2.5 w-2.5" />
-      {scope}
-    </Badge>
-  );
+export function handleCreateKeyError(err: unknown) {
+  toast.error("Failed to create API key", { description: errorDescription(err) });
 }
 
-// ---------------------------------------------------------------------------
-// Expiry badge
-// ---------------------------------------------------------------------------
-
-function ExpiryBadge({ apiKey }: { apiKey: ApiKey }) {
-  const status = expiryStatus(apiKey);
-  if (!status) return null;
-  const text = formatExpiry(apiKey);
-  if (status === "expired") return <Badge variant="danger">Expired</Badge>;
-  if (status === "imminent")
-    return (
-      <Badge variant="danger" className="animate-pulse">
-        <Clock className="mr-0.5 h-2.5 w-2.5" />
-        {text}
-      </Badge>
-    );
-  if (status === "soon")
-    return (
-      <Badge variant="warning">
-        <Clock className="mr-0.5 h-2.5 w-2.5" />
-        {text}
-      </Badge>
-    );
-  return (
-    <Badge variant="success">
-      <Clock className="mr-0.5 h-2.5 w-2.5" />
-      {text}
-    </Badge>
-  );
+export function handleDeleteKeySuccess(deps: DeleteKeyMutationDeps) {
+  deps.queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+  toast.success("API key revoked");
+  deps.setDeleteTarget(null);
 }
 
-// ---------------------------------------------------------------------------
-// Create key form schema
-// ---------------------------------------------------------------------------
+export function handleDeleteKeyError(err: unknown) {
+  toast.error("Failed to revoke API key", { description: errorDescription(err) });
+}
 
-const createKeySchema = z.object({
-  name: z.string().min(1, "Name is required").max(64),
-  scopes: z.array(z.string()).min(1, "Select at least one scope"),
-  expiresAt: z.string().optional(),
-});
+export default function SettingsKeysPage() {
+  const queryClient = useQueryClient();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>(["read"]);
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
 
-type CreateKeyFormValues = z.infer<typeof createKeySchema>;
-
-// ---------------------------------------------------------------------------
-// Create Key Form
-// ---------------------------------------------------------------------------
-
-function CreateKeyForm({
-  onClose,
-  defaultName,
-  defaultScopes,
-}: {
-  onClose: () => void;
-  defaultName?: string;
-  defaultScopes?: string[];
-}) {
-  const createKey = useCreateApiKey();
-  const [newSecret, setNewSecret] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const {
-    register,
-    handleSubmit,
-    control,
-    formState: { errors },
-  } = useForm<CreateKeyFormValues>({
-    resolver: zodResolver(createKeySchema),
-    defaultValues: {
-      name: defaultName ?? "",
-      scopes: defaultScopes ?? [],
-      expiresAt: "",
+  const { data: keys, isLoading } = useQuery({
+    queryKey: ["api-keys"],
+    queryFn: async () => {
+      const res = await get<{ data?: ApiKey[] }>("/auth/keys");
+      return res.data || [];
     },
   });
 
-  const onSubmit = (values: CreateKeyFormValues) => {
-    createKey.mutate(
-      {
-        name: values.name,
-        scopes: values.scopes,
-        expiresAt: values.expiresAt || undefined,
-      },
-      {
-        onSuccess: (res) => {
-          setNewSecret(res.secret);
-        },
-      },
-    );
-  };
+  const createMutation = useMutation({
+    mutationFn: async () => post<{ data?: { key?: string } }>("/auth/keys", { name: newKeyName, scopes: newKeyScopes }),
+    onSuccess: (data) => handleCreateKeySuccess(data, { queryClient, setCreatedKey, setNewKeyName }),
+    onError: handleCreateKeyError,
+  });
 
-  const copySecret = async () => {
-    if (!newSecret) return;
-    await navigator.clipboard.writeText(newSecret);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => del(`/auth/keys/${id}`),
+    onSuccess: () => handleDeleteKeySuccess({ queryClient, setDeleteTarget }),
+    onError: handleDeleteKeyError,
+  });
 
-  if (newSecret) {
-    return (
-      <Card>
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Key className="h-5 w-5 text-accent" />
-            <h3 className="font-display text-lg font-semibold text-ink">
-              API Key Created
-            </h3>
-          </div>
-          <p className="text-sm text-danger font-semibold">
-            Copy this key now. It will not be shown again.
-          </p>
-          <div className="flex items-center gap-2 rounded-xl border border-border bg-surface2 px-4 py-3">
-            <code className="flex-1 break-all text-xs font-mono text-ink">
-              {newSecret}
-            </code>
-            <button
-              type="button"
-              onClick={copySecret}
-              className="shrink-0 rounded-lg p-1.5 hover:bg-white/60 transition"
-            >
-              {copied ? (
-                <Check className="h-4 w-4 text-success" />
-              ) : (
-                <Copy className="h-4 w-4 text-muted" />
-              )}
-            </button>
-          </div>
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" type="button" onClick={onClose}>
-              Done
-            </Button>
-          </div>
-        </div>
-      </Card>
-    );
-  }
+  const SCOPES = ["read", "write", "admin"];
 
   return (
-    <Card>
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        <h3 className="font-display text-lg font-semibold text-ink">
-          {defaultName ? "Rotate API Key" : "Create API Key"}
-        </h3>
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader title="API Keys" subtitle="Manage API keys for programmatic access" actions={<><Button variant="primary" size="sm" onClick={() => { setCreateOpen(true); setCreatedKey(null); }}>
+          <Plus className="w-3 h-3 mr-1" />Create Key
+        </Button></>} />
 
-        <div className="space-y-1">
-          <label className="text-xs font-semibold text-muted">Name</label>
-          <Input {...register("name")} placeholder="e.g. CI Pipeline Key" />
-          {errors.name && (
-            <p className="text-xs text-danger">{errors.name.message}</p>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-xs font-semibold text-muted">Scopes</label>
-          <Controller
-            name="scopes"
-            control={control}
-            render={({ field }) => (
-              <div className="flex flex-wrap gap-2">
-                {AVAILABLE_SCOPES.map((scope) => {
-                  const checked = field.value.includes(scope.value);
-                  return (
-                    <label
-                      key={scope.value}
-                      className={cn(
-                        "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition",
-                        checked
-                          ? "border-accent bg-accent/10 text-accent"
-                          : "border-border text-muted hover:border-accent/40",
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            field.onChange([...field.value, scope.value]);
-                          } else {
-                            field.onChange(
-                              field.value.filter((s) => s !== scope.value),
-                            );
-                          }
-                        }}
-                        className="sr-only"
-                      />
-                      {scope.label}
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          />
-          {errors.scopes && (
-            <p className="text-xs text-danger">{errors.scopes.message}</p>
-          )}
-        </div>
-
-        <div className="space-y-1">
-          <label className="text-xs font-semibold text-muted">
-            Expires (optional)
-          </label>
-          <Input type="date" {...register("expiresAt")} min={tomorrowISO()} />
-        </div>
-
-        {createKey.isError && (
-          <p className="text-xs text-danger">
-            Failed to create key: {createKey.error.message}
-          </p>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            type="submit"
-            disabled={createKey.isPending}
-          >
-            {createKey.isPending
-              ? "Creating..."
-              : defaultName
-                ? "Create Rotated Key"
-                : "Create Key"}
-          </Button>
-        </div>
-      </form>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Rotate Key Modal (inline card)
-// ---------------------------------------------------------------------------
-
-function RotateKeyCard({
-  apiKey,
-  onClose,
-  onRevokeOld,
-}: {
-  apiKey: ApiKey;
-  onClose: () => void;
-  onRevokeOld: (id: string) => void;
-}) {
-  const [step, setStep] = useState<"create" | "done">("create");
-
-  if (step === "create") {
-    return (
-      <div className="space-y-3">
-        <Card className="border-accent/30 bg-accent/5">
-          <div className="space-y-2">
-            <p className="text-sm font-semibold text-ink">
-              Rotating key: <span className="text-accent">{apiKey.name}</span>
-            </p>
-            <p className="text-xs text-muted">
-              A new key will be created with the same scopes. After copying the
-              new secret, you can revoke the old key.
-            </p>
-            <div className="flex flex-wrap gap-1">
-              {apiKey.scopes.map((s) => (
-                <ScopeBadge key={s} scope={s} />
-              ))}
-            </div>
-          </div>
-        </Card>
-        <CreateKeyForm
-          onClose={() => {
-            setStep("done");
-          }}
-          defaultName={`${apiKey.name} (rotated)`}
-          defaultScopes={apiKey.scopes}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <Card>
-      <div className="space-y-4">
-        <h3 className="font-display text-lg font-semibold text-ink">
-          Rotation Complete
-        </h3>
-        <p className="text-sm text-muted">
-          New key created. Would you like to revoke the old key now?
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Keep old key
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => {
-              onRevokeOld(apiKey.id);
-              onClose();
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Revoke old key now
-          </Button>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SettingsKeysPage
-// ---------------------------------------------------------------------------
-
-export default function SettingsKeysPage() {
-  usePageTitle("Settings - API Keys");
-  const { data, isLoading, isError, refetch } = useApiKeys();
-  const revokeKey = useRevokeApiKey();
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [revokeId, setRevokeId] = useState<string | null>(null);
-  const [rotatingKey, setRotatingKey] = useState<ApiKey | null>(null);
-
-  const keys = data?.items ?? [];
-
-  const staleCount = useMemo(
-    () => keys.filter((k) => isStale(k)).length,
-    [keys],
-  );
-
-  return (
-    <div className="space-y-4">
-      {/* Header row */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <p className="text-sm text-muted">
-            Manage API keys for programmatic access.
-          </p>
-          {staleCount > 0 && (
-            <p className="flex items-center gap-1 text-xs text-warning">
-              <AlertTriangle className="h-3 w-3" />
-              {staleCount} key{staleCount !== 1 ? "s" : ""} unused for 30+ days
-            </p>
-          )}
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          type="button"
-          onClick={() => {
-            setShowCreateForm(true);
-            setRotatingKey(null);
-          }}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Create Key
-        </Button>
-      </div>
-
-      {/* Create form (inline) */}
-      {showCreateForm && !rotatingKey && (
-        <CreateKeyForm onClose={() => setShowCreateForm(false)} />
-      )}
-
-      {/* Rotate form (inline) */}
-      {rotatingKey && (
-        <RotateKeyCard
-          apiKey={rotatingKey}
-          onClose={() => setRotatingKey(null)}
-          onRevokeOld={(id) => revokeKey.mutate(id)}
-        />
-      )}
-
-      {/* Table */}
-      {isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 3 }, (_, i) => (
-            <div key={i} className="h-16 animate-pulse rounded-2xl bg-surface2" />
-          ))}
-        </div>
-      ) : isError ? (
-        <Card>
-          <div className="flex flex-col items-center gap-3 py-12 text-center">
-            <AlertTriangle className="h-8 w-8 text-danger" />
-            <p className="text-sm font-semibold text-ink">Failed to load API keys</p>
-            <p className="text-xs text-muted">Could not retrieve your API keys. Please try again.</p>
-            <Button variant="outline" size="sm" type="button" onClick={() => refetch()}>
-              <RotateCw className="h-3.5 w-3.5" />
-              Retry
-            </Button>
-          </div>
-        </Card>
-      ) : keys.length === 0 ? (
-        <Card>
-          <p className="py-8 text-center text-sm text-muted">
-            No API keys yet. Create one to get started.
-          </p>
-        </Card>
-      ) : (
-        <div className="overflow-x-auto rounded-2xl border border-border">
-          <table className="w-full text-sm">
+      {isLoading ? <SkeletonTable rows={4} /> :
+       !keys?.length ? <EmptyState icon={<Key className="w-8 h-8" />} title="No API keys" description="Create an API key to access the Cordum API" /> : (
+        <div className="instrument-card overflow-hidden">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead>
-              <tr className="border-b border-border bg-surface2/60 text-left text-xs uppercase tracking-wider text-muted">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Key Prefix</th>
-                <th className="px-4 py-3">Scopes</th>
-                <th className="px-4 py-3">Created</th>
-                <th className="px-4 py-3">Last Used</th>
-                <th className="px-4 py-3 text-right">Usage</th>
-                <th className="px-4 py-3" />
+              <tr className="border-b border-border bg-surface-0">
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Name</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Key</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Scopes</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Last Used</th>
+                <th className="text-right px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {keys.map((k) => {
-                const stale = isStale(k);
-                return (
-                  <tr
-                    key={k.id}
-                    className={cn(
-                      "transition hover:bg-surface2/30",
-                      stale && "border-l-4 border-l-warning",
-                    )}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-ink">{k.name}</span>
-                        {stale && (
-                          <Badge variant="warning" className="text-[10px]">
-                            Unused 30d+
-                          </Badge>
-                        )}
-                        <ExpiryBadge apiKey={k} />
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <code className="rounded bg-surface2 px-2 py-0.5 text-xs font-mono text-muted">
-                        ****{k.prefix}
-                      </code>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {k.scopes.map((s) => (
-                          <ScopeBadge key={s} scope={s} />
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted">
-                      {fmtDate(k.createdAt)}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted">
-                      {fmtDate(k.lastUsed)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-xs font-mono text-ink">
-                      {k.usageCount.toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          onClick={() => {
-                            setRotatingKey(k);
-                            setShowCreateForm(false);
-                          }}
-                        >
-                          <RotateCw className="h-3.5 w-3.5" />
-                          Rotate
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          type="button"
-                          onClick={() => setRevokeId(k.id)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Revoke
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+            <tbody>
+              {keys.map((key, i) => (
+                <motion.tr key={key.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
+                  className="border-b border-border last:border-0 hover:bg-surface-1 transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Key className="w-3.5 h-3.5 text-cordum" />
+                      <span className="text-sm font-medium text-foreground">{key.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{key.prefix}...****</td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1">{key.scopes.map(s => <StatusBadge key={s} variant="info">{s}</StatusBadge>)}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{key.lastUsed ? formatRelativeTime(key.lastUsed) : "Never"}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => setDeleteTarget(key)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                    </button>
+                  </td>
+                </motion.tr>
+              ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
-      {/* Revoke confirmation dialog */}
-      <ConfirmDialog
-        open={revokeId !== null}
-        title="Revoke API Key"
-        message="This key will be permanently revoked. Any integrations using it will stop working immediately. This action cannot be undone."
-        confirmLabel="Revoke Key"
-        confirmVariant="danger"
-        isPending={revokeKey.isPending}
-        onConfirm={() => {
-          if (revokeId) {
-            revokeKey.mutate(revokeId, {
-              onSuccess: () => setRevokeId(null),
-            });
-          }
-        }}
-        onCancel={() => setRevokeId(null)}
-      />
-    </div>
+      {/* Create Dialog */}
+      <DialogOverlay open={createOpen} onClose={() => setCreateOpen(false)} label={createdKey ? "Key Created" : "Create API key"} className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-display font-semibold text-foreground">{createdKey ? "Key Created" : "Create API Key"}</h3>
+          <button onClick={() => setCreateOpen(false)} className="p-1 rounded hover:bg-surface-2"><X className="w-4 h-4 text-muted-foreground" /></button>
+        </div>
+        {createdKey ? (
+          <div className="space-y-4">
+            <div className="p-3 bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20 rounded-2xl">
+              <p className="text-xs text-[var(--color-warning)] mb-2">Copy this key now — it won't be shown again.</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs font-mono text-foreground bg-surface-2 px-3 py-2 rounded">{createdKey}</code>
+                <button onClick={() => { navigator.clipboard.writeText(createdKey); toast.success("Copied"); }} className="p-2 rounded hover:bg-surface-2">
+                  <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+                </button>
+              </div>
+            </div>
+            <Button variant="primary" size="sm" className="w-full" onClick={() => setCreateOpen(false)}>Done</Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Name</label>
+              <input type="text" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="e.g., CI Pipeline"
+                className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+            </div>
+            <div>
+              <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Scopes</label>
+              <div className="flex gap-2">
+                {SCOPES.map(s => (
+                  <button key={s} onClick={() => setNewKeyScopes(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
+                    className={cn("px-3 py-1.5 text-xs rounded-2xl border transition-colors capitalize",
+                      newKeyScopes.includes(s) ? "bg-cordum/10 border-cordum/30 text-cordum" : "border-border text-muted-foreground hover:text-foreground")}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={() => createMutation.mutate()} loading={createMutation.isPending} disabled={!newKeyName.trim()}>
+                <Key className="w-3 h-3 mr-1" />Create
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogOverlay>
+
+      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        title="Revoke API Key" description={`Revoke "${deleteTarget?.name}"? Applications using this key will lose access immediately.`}
+        confirmLabel="Revoke" variant="destructive" />
+    </motion.div>
   );
 }

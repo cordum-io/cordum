@@ -11,8 +11,8 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/locks"
-	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/gorilla/websocket"
@@ -97,9 +97,10 @@ func subjectMatches(pattern, subject string) bool {
 }
 
 type stubSafetyClient struct {
-	mu        sync.Mutex
-	snapshots []string
-	resp      *pb.PolicyCheckResponse
+	mu          sync.Mutex
+	snapshots   []string
+	resp        *pb.PolicyCheckResponse
+	simulateErr error
 }
 
 func (c *stubSafetyClient) setSnapshots(snapshots []string) {
@@ -127,6 +128,12 @@ func (c *stubSafetyClient) Explain(ctx context.Context, req *pb.PolicyCheckReque
 }
 
 func (c *stubSafetyClient) Simulate(ctx context.Context, req *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	c.mu.Lock()
+	simErr := c.simulateErr
+	c.mu.Unlock()
+	if simErr != nil {
+		return nil, simErr
+	}
 	return c.response(), nil
 }
 

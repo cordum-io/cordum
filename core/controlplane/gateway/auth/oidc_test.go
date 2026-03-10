@@ -469,9 +469,11 @@ func TestComposite_FallsThroughToOIDC(t *testing.T) {
 	defer oidcProvider.Close()
 
 	// Create a BasicAuthProvider that requires API key
+	testKeys := map[string]apiKeyMeta{"test-key": {Role: "admin"}}
 	basic := &BasicAuthProvider{
 		defaultTenant: "default",
-		keys:          map[string]apiKeyMeta{"test-key": {Role: "admin"}},
+		keys:          testKeys,
+		keyHashes:     buildKeyHashes(testKeys),
 		requireAPIKey: true,
 	}
 
@@ -521,9 +523,11 @@ func TestComposite_BothFail(t *testing.T) {
 	}
 	defer oidcProvider.Close()
 
+	realKeys := map[string]apiKeyMeta{"real-key": {Role: "admin"}}
 	basic := &BasicAuthProvider{
 		defaultTenant: "default",
-		keys:          map[string]apiKeyMeta{"real-key": {Role: "admin"}},
+		keys:          realKeys,
+		keyHashes:     buildKeyHashes(realKeys),
 		requireAPIKey: true,
 	}
 
@@ -711,10 +715,10 @@ func TestIssuerCacheKey(t *testing.T) {
 // mockOIDCServerWithCounter wraps mockOIDCServer and counts JWKS requests.
 type mockOIDCServerWithCounter struct {
 	*httptest.Server
-	key       *rsa.PrivateKey
-	kid       string
-	issuer    string
-	jwksHits  atomic.Int64
+	key      *rsa.PrivateKey
+	kid      string
+	issuer   string
+	jwksHits atomic.Int64
 }
 
 func newMockOIDCServerWithCounter(t *testing.T) *mockOIDCServerWithCounter {
@@ -792,7 +796,7 @@ func TestJWKSRedisCacheHit(t *testing.T) {
 	}
 
 	// Trigger refresh — should hit cache, not IdP.
-	if err := provider.refreshJWKS(); err != nil {
+	if err := provider.refreshJWKS(context.Background()); err != nil {
 		t.Fatalf("refreshJWKS: %v", err)
 	}
 
@@ -843,7 +847,7 @@ func TestJWKSRedisCacheMiss(t *testing.T) {
 	hitsBefore := m.jwksHits.Load()
 
 	// Trigger refresh — should fetch from IdP and write cache.
-	if err := provider.refreshJWKS(); err != nil {
+	if err := provider.refreshJWKS(context.Background()); err != nil {
 		t.Fatalf("refreshJWKS: %v", err)
 	}
 
@@ -895,7 +899,7 @@ func TestJWKSRedisFallback(t *testing.T) {
 	hitsBefore := m.jwksHits.Load()
 
 	// Should fall back to HTTP fetch despite broken Redis.
-	if err := provider.refreshJWKS(); err != nil {
+	if err := provider.refreshJWKS(context.Background()); err != nil {
 		t.Fatalf("refreshJWKS should succeed with broken Redis: %v", err)
 	}
 
@@ -928,11 +932,147 @@ func TestJWKSWithRedisNil(t *testing.T) {
 
 	hitsBefore := m.jwksHits.Load()
 
-	if err := provider.refreshJWKS(); err != nil {
+	if err := provider.refreshJWKS(context.Background()); err != nil {
 		t.Fatalf("refreshJWKS: %v", err)
 	}
 
 	if m.jwksHits.Load() <= hitsBefore {
 		t.Fatal("expected IdP JWKS fetch when no Redis configured")
+	}
+}
+
+// ---------- Context binding regression tests ----------
+
+// TestRefreshJWKSRespectsContextCancellation verifies that refreshJWKS
+// honours context cancellation instead of using an unbounded context.
+func TestRefreshJWKSRespectsContextCancellation(t *testing.T) {
+	// Slow server that delays JWKS response by 5 seconds.
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	mux := http.NewServeMux()
+	var issuer string
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		doc := map[string]string{"issuer": issuer, "jwks_uri": issuer + "/keys"}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(doc)
+	})
+	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
+		// Block until request context is done or 5s elapses.
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+		n := base64.RawURLEncoding.EncodeToString(key.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())
+		jwks := fmt.Sprintf(`{"keys":[{"kty":"RSA","kid":"slow-kid","use":"sig","alg":"RS256","n":"%s","e":"%s"}]}`, n, e)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jwks))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	issuer = srv.URL
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: issuer,
+		Audience:  "cordum-api",
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	// Cancel context immediately.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err = provider.refreshJWKS(ctx)
+	elapsed := time.Since(start)
+
+	// refreshJWKS should fail quickly due to cancelled context, not block for 5s.
+	if elapsed > 2*time.Second {
+		t.Fatalf("refreshJWKS took %v — context cancellation not respected", elapsed)
+	}
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+}
+
+// TestRefreshJWKSContextTimeout verifies that refreshJWKS respects a short
+// context timeout instead of running unbounded.
+func TestRefreshJWKSContextTimeout(t *testing.T) {
+	// Server that never responds to JWKS requests.
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	mux := http.NewServeMux()
+	var issuer string
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		doc := map[string]string{"issuer": issuer, "jwks_uri": issuer + "/keys"}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(doc)
+	})
+	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
+		// Respond immediately on first call (init), then block on subsequent.
+		n := base64.RawURLEncoding.EncodeToString(key.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())
+		jwks := fmt.Sprintf(`{"keys":[{"kty":"RSA","kid":"timeout-kid","use":"sig","alg":"RS256","n":"%s","e":"%s"}]}`, n, e)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jwks))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	issuer = srv.URL
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: issuer,
+		Audience:  "cordum-api",
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	// Verify that a bounded context is respected (not ignored).
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// This should succeed quickly since the server responds immediately.
+	if err := provider.refreshJWKS(ctx); err != nil {
+		t.Fatalf("refreshJWKS with timeout: %v", err)
+	}
+}
+
+// TestRefreshIfUnknownKidUsesBoundedContext verifies that the on-demand
+// refresh triggered by an unknown kid uses a bounded context.
+func TestRefreshIfUnknownKidUsesBoundedContext(t *testing.T) {
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL: m.issuer,
+		Audience:  "cordum-api",
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	// Force lastRefresh to be old so on-demand refresh is allowed.
+	provider.mu.Lock()
+	provider.lastRefresh = time.Now().Add(-2 * time.Minute)
+	provider.mu.Unlock()
+
+	// Request an unknown kid — triggers on-demand refresh which should
+	// complete (pass or fail) within reasonable time, not hang.
+	done := make(chan bool, 1)
+	go func() {
+		result := provider.refreshIfUnknownKid("nonexistent-kid-xyz")
+		done <- result
+	}()
+
+	select {
+	case <-done:
+		// Completed within timeout — context bounding works.
+	case <-time.After(15 * time.Second):
+		t.Fatal("refreshIfUnknownKid blocked beyond 15s — likely unbounded context")
 	}
 }

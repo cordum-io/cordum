@@ -109,6 +109,8 @@ async function handleResponse<T>(res: Response, meta: { method: string; path: st
   throw new ApiError(res.status, msg, body);
 }
 
+const REQUEST_TIMEOUT_MS = 30_000;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) };
   const reqId = headers["X-Request-Id"] ?? "unknown";
@@ -116,10 +118,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   logger.debug("api-client", `${method} ${path}`, { requestId: reqId });
 
+  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, timeoutSignal])
+    : timeoutSignal;
+
   const startMs = performance.now();
   const res = await fetch(`${baseUrl()}${path}`, {
     ...init,
     headers,
+    signal,
   });
   return handleResponse<T>(res, { method, path, requestId: reqId, startMs });
 }

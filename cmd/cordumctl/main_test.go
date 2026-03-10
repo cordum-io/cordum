@@ -129,3 +129,170 @@ func TestLoadAndPrintJSON(t *testing.T) {
 		t.Fatalf("expected json output, got %s", string(data))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Regression: TLS config edge cases
+// ---------------------------------------------------------------------------
+
+func TestTLSOptionsInsecureEnvValues(t *testing.T) {
+	// tlsOptions now uses parseBoolEnv which accepts "1" or case-insensitive "true".
+	for _, val := range []string{"1", "true", "TRUE", "True"} {
+		t.Run(val, func(t *testing.T) {
+			t.Setenv("CORDUM_TLS_CA", "")
+			t.Setenv("CORDUM_TLS_INSECURE", val)
+			fs := newFlagSet("insecure-" + val)
+			fs.ParseArgs([]string{})
+			opts := fs.tlsOptions()
+			if !opts.InsecureSkipVerify {
+				t.Fatalf("expected insecure=true for env value %q", val)
+			}
+		})
+	}
+
+	// "0", "false", and empty should NOT be insecure.
+	for _, val := range []string{"0", "false", ""} {
+		t.Run("not-"+val, func(t *testing.T) {
+			t.Setenv("CORDUM_TLS_CA", "")
+			t.Setenv("CORDUM_TLS_INSECURE", val)
+			fs := newFlagSet("not-insecure-" + val)
+			fs.ParseArgs([]string{})
+			opts := fs.tlsOptions()
+			if opts.InsecureSkipVerify {
+				t.Fatalf("expected insecure=false for env value %q", val)
+			}
+		})
+	}
+}
+
+func TestParseBoolEnv(t *testing.T) {
+	key := "TEST_PARSE_BOOL_CLI"
+	// Truthy values.
+	for _, val := range []string{"1", "true", "TRUE", "True", "tRuE"} {
+		t.Setenv(key, val)
+		if !parseBoolEnv(key) {
+			t.Fatalf("expected true for %q", val)
+		}
+	}
+	// Falsy values.
+	for _, val := range []string{"", "0", "false", "FALSE", "no", "yes", "on"} {
+		t.Setenv(key, val)
+		if parseBoolEnv(key) {
+			t.Fatalf("expected false for %q", val)
+		}
+	}
+}
+
+func TestTLSOptionsFlagPriorityOverEnv(t *testing.T) {
+	// When --cacert flag is set, it should take priority over CORDUM_TLS_CA env.
+	t.Setenv("CORDUM_TLS_CA", "/env/path.crt")
+	t.Setenv("CORDUM_TLS_INSECURE", "")
+	fs := newFlagSet("flag-priority")
+	fs.ParseArgs([]string{"--cacert", "/flag/path.crt"})
+	opts := fs.tlsOptions()
+	if opts.CACertPath != "/flag/path.crt" {
+		t.Fatalf("flag should take priority, got: %s", opts.CACertPath)
+	}
+}
+
+func TestTLSOptionsEnvFallback(t *testing.T) {
+	// When no --cacert flag, use CORDUM_TLS_CA env.
+	t.Setenv("CORDUM_TLS_CA", "/env/only.crt")
+	t.Setenv("CORDUM_TLS_INSECURE", "")
+	fs := newFlagSet("env-fallback")
+	fs.ParseArgs([]string{})
+	opts := fs.tlsOptions()
+	if opts.CACertPath != "/env/only.crt" {
+		t.Fatalf("expected env fallback, got: %s", opts.CACertPath)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: newClientFromFlags uses strict TLS error handling
+// ---------------------------------------------------------------------------
+
+func TestNewClientFromFlagsValidTLS(t *testing.T) {
+	t.Setenv("CORDUM_GATEWAY", "http://localhost:8081")
+	t.Setenv("CORDUM_API_KEY", "test-key")
+	t.Setenv("CORDUM_TENANT_ID", "default")
+	t.Setenv("CORDUM_TLS_CA", "")
+	t.Setenv("CORDUM_TLS_INSECURE", "")
+	fs := newFlagSet("valid-tls")
+	fs.ParseArgs([]string{})
+	client := newClientFromFlags(fs)
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+	if client.BaseURL != "http://localhost:8081" {
+		t.Fatalf("unexpected base url: %s", client.BaseURL)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: Config parsing edge cases
+// ---------------------------------------------------------------------------
+
+func TestEnvOrWhitespace(t *testing.T) {
+	t.Setenv("TEST_WS", "   ")
+	if got := envOr("TEST_WS", "fb"); got != "fb" {
+		t.Fatalf("whitespace-only env should fall back, got %q", got)
+	}
+}
+
+func TestEnvOrUnset(t *testing.T) {
+	// Ensure unset env var uses fallback.
+	t.Setenv("TEST_UNSET", "")
+	if got := envOr("TEST_UNSET", "default"); got != "default" {
+		t.Fatalf("expected default, got %q", got)
+	}
+}
+
+func TestParseJSONArgInlineJSON(t *testing.T) {
+	val, err := parseJSONArg(`{"key": "value"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	m, ok := val.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map, got %T", val)
+	}
+	if m["key"] != "value" {
+		t.Fatalf("unexpected value: %v", m["key"])
+	}
+}
+
+func TestParseJSONArgEmpty(t *testing.T) {
+	val, err := parseJSONArg("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != nil {
+		t.Fatalf("expected nil for empty arg, got %v", val)
+	}
+}
+
+func TestParseJSONArgInvalidJSON(t *testing.T) {
+	_, err := parseJSONArg("{not json}")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestSplitCommaEdgeCases(t *testing.T) {
+	cases := []struct {
+		input string
+		want  int
+	}{
+		{"", 0},
+		{"  ", 0},
+		{",,,", 0},
+		{"a", 1},
+		{"a,b,c", 3},
+		{" a , b , ", 2},
+	}
+	for _, tc := range cases {
+		got := splitComma(tc.input)
+		if len(got) != tc.want {
+			t.Errorf("splitComma(%q) = %v (len %d), want len %d", tc.input, got, len(got), tc.want)
+		}
+	}
+}

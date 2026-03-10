@@ -500,6 +500,11 @@ func (e jobBackpressureError) Error() string {
 	return fmt.Sprintf("job queue full (active=%d, limit=%d)", e.active, e.limit)
 }
 
+// enforceJobBackpressure is the system-capacity gate. It checks active job
+// count against the system config limit (rate_limits.concurrent_jobs + queue_size).
+// The scheduler separately enforces a per-job policy concurrency limit from the
+// safety kernel (PolicyConstraints.Budgets.MaxConcurrentJobs) against the same
+// active count — that is the policy-enforcement gate.
 func (s *server) enforceJobBackpressure(ctx context.Context, orgID, teamID string) error {
 	if s == nil || s.jobStore == nil {
 		return nil
@@ -715,11 +720,24 @@ func parseRetention(raw string) artifacts.RetentionClass {
 	}
 }
 
+// truncateForError truncates s to max characters for safe inclusion in error
+// messages. If truncated, the result ends with "..." to indicate truncation.
+// This prevents user-supplied input from inflating error message size (BUG-7).
+func truncateForError(s string, max int) string {
+	if max <= 0 {
+		max = 256
+	}
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
 // ---------- JSON helpers (from json_helpers.go) ----------
 
 const (
-	defaultMaxJSONBodyBytes   int64 = 2 * 1024 * 1024
-	envGatewayMaxJSONBodyBytes      = "GATEWAY_MAX_JSON_BODY_BYTES"
+	defaultMaxJSONBodyBytes    int64 = 2 * 1024 * 1024
+	envGatewayMaxJSONBodyBytes       = "GATEWAY_MAX_JSON_BODY_BYTES"
 )
 
 var errRequestBodyTooLarge = errors.New("request body too large")

@@ -214,7 +214,9 @@ Backend enforcement of admin-only actions is provided by the enterprise auth pro
 ## Workflow Management
 
 - `DELETE /api/v1/workflows/{id}` - Delete a workflow (WorkflowDetailPage > Delete button)
-- `POST /api/v1/workflows/{workflowId}/runs/{runId}/steps/{stepId}/approve` - Approve workflow step
+- `GET /api/v1/approvals` - List pending approvals (including workflow gate approvals)
+- `POST /api/v1/approvals/{job_id}/approve` - Approve a job or workflow gate approval
+- `POST /api/v1/approvals/{job_id}/reject` - Reject a job or workflow gate approval
 
 ## Lock Management
 

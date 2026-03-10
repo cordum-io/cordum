@@ -30,7 +30,7 @@ export function BaseNode({ icon, label, accent, selected, children, outputs, hid
   return (
     <div
       className={cn(
-        "relative min-w-[140px] rounded-xl border bg-white px-3 py-2.5 shadow-sm transition-all",
+        "relative min-w-[140px] rounded-xl border bg-card px-3 py-2.5 shadow-sm transition-all",
         selected ? "border-accent ring-2 ring-accent/30" : "border-border",
       )}
     >
@@ -41,7 +41,7 @@ export function BaseNode({ icon, label, accent, selected, children, outputs, hid
         </div>
         <span className="text-xs font-semibold text-ink truncate">{label}</span>
       </div>
-      {children && <div className="mt-2 border-t border-border/50 pt-2 text-[10px] text-muted">{children}</div>}
+      {children && <div className="mt-2 border-t border-border/50 pt-2 text-[10px] text-muted-foreground">{children}</div>}
       {outputs ? (
         outputs.map((out) => (
           <div key={out.id} className="relative">
@@ -53,7 +53,7 @@ export function BaseNode({ icon, label, accent, selected, children, outputs, hid
             />
             <span
               className={cn(
-                "absolute text-[10px] text-muted pointer-events-none whitespace-nowrap",
+                "absolute text-[10px] text-muted-foreground pointer-events-none whitespace-nowrap",
                 out.position === "left" && "left-0 -translate-x-full pr-1 top-1/2 -translate-y-1/2",
                 out.position === "right" && "right-0 translate-x-full pl-1 top-1/2 -translate-y-1/2",
                 out.position === "bottom" && "bottom-0 translate-y-full left-1/2 -translate-x-1/2 pt-0.5",

@@ -191,6 +191,9 @@ func (m *spyMetrics) IncDLQEmitFailure(string)                          {}
 func (m *spyMetrics) IncJobCancelFailures()                             {}
 func (m *spyMetrics) IncValidationRejections()                          {}
 func (m *spyMetrics) IncInputFailOpen(string)                           {}
+func (m *spyMetrics) IncJobLockAbandoned()                              {}
+func (m *spyMetrics) IncResultPtrWriteFailure()                         {}
+func (m *spyMetrics) IncDispatchRollback(string)                        {}
 func (m *spyMetrics) IncOrphanReplayed(topic string) {
 	m.mu.Lock()
 	m.orphanReplayed[topic]++
@@ -310,8 +313,14 @@ func TestPendingReplayerSingleTickPerTTLWindow(t *testing.T) {
 	go replayer1.Start(ctx)
 	go replayer2.Start(ctx)
 
-	// Wait enough for at least one tick to fire.
-	time.Sleep(50 * time.Millisecond)
+	// Poll until at least one replayer publishes.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if bus1.count()+bus2.count() > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	cancel()
 
 	total := bus1.count() + bus2.count()
@@ -363,9 +372,17 @@ func TestPendingReplayerSingleTickPerTTLWindow(t *testing.T) {
 		t.Fatalf("expected exactly 1 tick in TTL window, got %d", got)
 	}
 
-	// After TTL expires, the lock should be available again.
-	time.Sleep(15 * time.Millisecond)
-	token, err := store2.TryAcquireLock(context.Background(), "cordum:replayer:pending", 10*time.Millisecond)
+	// Poll until TTL expires and the lock becomes available.
+	var token string
+	var err error
+	deadline2 := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline2) {
+		token, err = store2.TryAcquireLock(context.Background(), "cordum:replayer:pending", 10*time.Millisecond)
+		if err == nil && token != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatalf("lock acquisition after TTL: %v", err)
 	}

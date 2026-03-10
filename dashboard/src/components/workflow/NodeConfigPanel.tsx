@@ -612,7 +612,7 @@ export function NodeConfigPanel({ node, onSave, onClose, onDelete, allNodes }: N
     control,
     formState: { errors, isDirty },
   } = useForm({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema as z.ZodTypeAny) as any,
     defaultValues: nodeToDefaults(node) as Record<string, unknown>,
   });
 
@@ -651,7 +651,7 @@ export function NodeConfigPanel({ node, onSave, onClose, onDelete, allNodes }: N
         <h3 className="text-sm font-semibold text-ink capitalize">{nodeType} Config</h3>
         <button
           onClick={onClose}
-          className="rounded-lg p-1 text-muted hover:bg-surface2 hover:text-ink transition-colors"
+          className="rounded-lg p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors"
         >
           <X className="h-4 w-4" />
         </button>
@@ -801,7 +801,7 @@ export function NodeConfigPanel({ node, onSave, onClose, onDelete, allNodes }: N
                 </Button>
               </div>
               {switchCaseFields.length === 0 && (
-                <p className="text-[11px] text-muted">Add one or more match → target branch routes.</p>
+                <p className="text-[11px] text-muted-foreground">Add one or more match → target branch routes.</p>
               )}
               {switchCaseFields.map((field, index) => (
                 <div key={field.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
@@ -838,7 +838,7 @@ export function NodeConfigPanel({ node, onSave, onClose, onDelete, allNodes }: N
                 ))}
               </Select>
             </Field>
-            <p className="text-[11px] text-muted">
+            <p className="text-[11px] text-muted-foreground">
               First matching case is selected. If none match, default branch is used.
             </p>
           </>
@@ -865,7 +865,7 @@ export function NodeConfigPanel({ node, onSave, onClose, onDelete, allNodes }: N
             <Field label="Until (stop when true)">
               <Textarea {...register("until")} placeholder="steps.scan.output.clean == true" rows={2} />
             </Field>
-            <p className="text-[11px] text-muted">
+            <p className="text-[11px] text-muted-foreground">
               `condition` keeps iterating while truthy. `until` stops when truthy. If both are empty, the loop runs exactly max iterations.
             </p>
           </>
@@ -917,7 +917,7 @@ export function NodeConfigPanel({ node, onSave, onClose, onDelete, allNodes }: N
                 <Input {...register("outputPath")} placeholder="ctx.result" />
               </Field>
             )}
-            <p className="text-[11px] text-muted">
+            <p className="text-[11px] text-muted-foreground">
               Storage steps read/write/delete values in the workflow run context using dot-separated key paths. Use `$&#123;expr&#125;` templates for dynamic values.
             </p>
           </>
@@ -976,7 +976,7 @@ function Field({
 }) {
   return (
     <div>
-      <label className="mb-1 flex items-baseline gap-1 text-xs text-muted">
+      <label className="mb-1 flex items-baseline gap-1 text-xs text-muted-foreground">
         {label}
         {hint && <span className="text-[10px] text-muted/60">({hint})</span>}
       </label>

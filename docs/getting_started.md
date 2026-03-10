@@ -80,7 +80,7 @@ CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} bash ./tools/scripts/platfo
 Expected output:
 - workflow created
 - run started
-- approval step approved
+- workflow gate approval granted
 - run completes
 - workflow + run deleted
 

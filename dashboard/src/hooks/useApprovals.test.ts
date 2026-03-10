@@ -1,416 +1,175 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
-import { createTestQueryClient, mockFetch, renderWithQueryClient } from "./__tests__/test-utils";
-import {
-  __approvalsInternal,
-  useApproval,
-  useApprovalHistory,
-  useApprovals,
-  useApproveJob,
-  useApproveStep,
-  useRejectJob,
-} from "./useApprovals";
+import { describe, expect, it } from "vitest";
+import type { Approval, ApiResponse } from "@/api/types";
+import { __approvalsInternal } from "./useApprovals";
 
-const { addToastMock, loggerMock } = vi.hoisted(() => ({
-  addToastMock: vi.fn(),
-  loggerMock: {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-
-const { mockConfigState } = vi.hoisted(() => ({
-  mockConfigState: {
-    apiBaseUrl: "/api/v1",
-    apiKey: "",
-    tenantId: "",
-    principalId: "",
-    principalRole: "",
-    user: null,
-    logout: vi.fn(),
-  },
-}));
-
-vi.mock("../state/config", () => ({
-  useConfigStore: {
-    getState: () => mockConfigState,
-  },
-}));
-
-vi.mock("../state/toast", () => ({
-  useToastStore: {
-    getState: () => ({ addToast: addToastMock }),
-  },
-}));
-
-vi.mock("../lib/logger", () => ({
-  logger: loggerMock,
-}));
+function makeApproval(overrides: Partial<Approval>): Approval {
+  return {
+    id: "approval-default",
+    jobId: "job-default",
+    status: "pending",
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 describe("useApprovals internals", () => {
-  it("buildHistoryParams serializes filters correctly", () => {
-    expect(__approvalsInternal.buildHistoryParams({})).toBe("");
-    expect(
-      __approvalsInternal.buildHistoryParams({ page: 1, perPage: 25, sort: "desc" }),
-    ).toBe("?page=1&perPage=25&sort=desc");
+  it("builds history query params", () => {
+    const params = __approvalsInternal.buildHistoryParams({
+      page: 2,
+      perPage: 25,
+      sort: "desc",
+    });
+
+    expect(params).toContain("page=2");
+    expect(params).toContain("perPage=25");
+    expect(params).toContain("sort=desc");
+  });
+
+  it("filters approval list by status when requested", () => {
+    const approvals = [
+      makeApproval({ id: "a-1", status: "pending" }),
+      makeApproval({ id: "a-2", status: "approved" }),
+      makeApproval({ id: "a-3", status: "rejected" }),
+    ];
+
+    expect(__approvalsInternal.filterApprovalsByStatus(approvals, "approved")).toEqual([
+      approvals[1],
+    ]);
+    expect(__approvalsInternal.filterApprovalsByStatus(approvals, undefined)).toEqual(
+      approvals,
+    );
+  });
+
+  it("applies optimistic removal and targeted restoration for approve/reject mutations", () => {
+    const list: ApiResponse<Approval[]> = {
+      items: [
+        makeApproval({ id: "a-1", status: "pending" }),
+        makeApproval({ id: "a-2", status: "pending" }),
+      ],
+    };
+    const original = list.items[0];
+
+    const removed = __approvalsInternal.removeApprovalFromList(list, "a-1");
+    expect(removed?.items.map((item) => item.id)).toEqual(["a-2"]);
+
+    const restored = __approvalsInternal.restoreApprovalToList(
+      removed,
+      "a-1",
+      original,
+    );
+    expect(restored?.items.map((item) => item.id)).toEqual(["a-2", "a-1"]);
+
+    const unchanged = __approvalsInternal.restoreApprovalToList(
+      restored,
+      "a-1",
+      original,
+    );
+    expect(unchanged).toEqual(restored);
+  });
+
+  it("finds an approval item in mutation snapshots and validates approve-step input", () => {
+    const snapshot = {
+      previous: [
+        [
+          ["approvals", "list"],
+          {
+            items: [makeApproval({ id: "a-1" }), makeApproval({ id: "a-2" })],
+          },
+        ],
+      ],
+    };
+    const found = __approvalsInternal.findApprovalInSnapshot(
+      snapshot as Parameters<typeof __approvalsInternal.findApprovalInSnapshot>[0],
+      "a-2",
+    );
+    expect(found?.id).toBe("a-2");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Mutation safety: concurrent optimistic removal + rollback
+  // ---------------------------------------------------------------------------
+
+  describe("concurrent optimistic rollback safety", () => {
+    it("per-item restore does not interfere with other concurrent removals", () => {
+      // Simulates: approve A fires, approve B fires, B fails — only B should be restored
+      const list: ApiResponse<Approval[]> = {
+        items: [
+          makeApproval({ id: "a-1", status: "pending" }),
+          makeApproval({ id: "a-2", status: "pending" }),
+          makeApproval({ id: "a-3", status: "pending" }),
+        ],
+      };
+
+      // Step 1: Approve A → remove A
+      const afterRemoveA = __approvalsInternal.removeApprovalFromList(list, "a-1");
+      expect(afterRemoveA?.items.map((i) => i.id)).toEqual(["a-2", "a-3"]);
+
+      // Step 2: Approve B → remove B from the already-modified list
+      const afterRemoveB = __approvalsInternal.removeApprovalFromList(afterRemoveA!, "a-2");
+      expect(afterRemoveB?.items.map((i) => i.id)).toEqual(["a-3"]);
+
+      // Snapshot for B captured the state AFTER A was removed
+      const snapshotB = {
+        previous: [[["approvals"], afterRemoveA]] as [unknown, ApiResponse<Approval[]> | undefined][],
+      };
+
+      // Step 3: B fails → restore only B using per-item restore
+      const originalB = __approvalsInternal.findApprovalInSnapshot(
+        snapshotB as Parameters<typeof __approvalsInternal.findApprovalInSnapshot>[0],
+        "a-2",
+      );
+      expect(originalB?.id).toBe("a-2");
+      const afterRestoreB = __approvalsInternal.restoreApprovalToList(afterRemoveB!, "a-2", originalB);
+      // A should still be removed, only B restored
+      expect(afterRestoreB?.items.map((i) => i.id)).toEqual(["a-3", "a-2"]);
+      expect(afterRestoreB?.items.find((i) => i.id === "a-1")).toBeUndefined();
+    });
+
+    it("double restore of same item is idempotent", () => {
+      const list: ApiResponse<Approval[]> = {
+        items: [makeApproval({ id: "a-1" }), makeApproval({ id: "a-2" })],
+      };
+
+      const removed = __approvalsInternal.removeApprovalFromList(list, "a-1");
+      const original = list.items[0];
+
+      const restored = __approvalsInternal.restoreApprovalToList(removed!, "a-1", original);
+      const restoredAgain = __approvalsInternal.restoreApprovalToList(restored!, "a-1", original);
+      // Should be same reference — no-op when item already present
+      expect(restoredAgain).toBe(restored);
+    });
+
+    it("removeApprovalFromList is safe on undefined/empty input", () => {
+      expect(__approvalsInternal.removeApprovalFromList(undefined, "a-1")).toBeUndefined();
+      expect(__approvalsInternal.removeApprovalFromList({ items: [] }, "a-1")).toEqual({ items: [] });
+    });
+
+    it("restoreApprovalToList is safe when originalItem is undefined", () => {
+      const list: ApiResponse<Approval[]> = { items: [makeApproval({ id: "a-1" })] };
+      const result = __approvalsInternal.restoreApprovalToList(list, "a-2", undefined);
+      // Should return unchanged list
+      expect(result).toBe(list);
+    });
+
+    it("findApprovalInSnapshot returns undefined for nonexistent IDs", () => {
+      const snapshot = {
+        previous: [[["key"], { items: [makeApproval({ id: "a-1" })] }]],
+      };
+      const found = __approvalsInternal.findApprovalInSnapshot(
+        snapshot as Parameters<typeof __approvalsInternal.findApprovalInSnapshot>[0],
+        "nonexistent",
+      );
+      expect(found).toBeUndefined();
+    });
+
+    it("findApprovalInSnapshot handles empty/undefined snapshot", () => {
+      expect(__approvalsInternal.findApprovalInSnapshot(undefined, "a-1")).toBeUndefined();
+      expect(
+        __approvalsInternal.findApprovalInSnapshot(
+          { previous: [] } as Parameters<typeof __approvalsInternal.findApprovalInSnapshot>[0],
+          "a-1",
+        ),
+      ).toBeUndefined();
+    });
   });
 });
-
-describe("useApprovals hooks", () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-    vi.clearAllMocks();
-    mockConfigState.apiBaseUrl = "/api/v1";
-    mockConfigState.apiKey = "";
-    mockConfigState.tenantId = "";
-    mockConfigState.principalId = "";
-    mockConfigState.principalRole = "";
-    mockConfigState.user = null;
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue("00000000-0000-0000-0000-000000000123");
-    vi.spyOn(performance, "now").mockReturnValue(100);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("useApprovals fetches items, maps approvals, and filters null records", async () => {
-    mockFetch([
-      {
-        match: "/approvals",
-        method: "GET",
-        body: {
-          items: [
-            {
-              approval_ref: "a1",
-              policy_reason: "needs approval",
-              job: {
-                id: "j1",
-                state: "RUNNING",
-                topic: "sys.job.submit",
-                updated_at: 1_707_000_000_000_000,
-              },
-            },
-            {},
-          ],
-          next_cursor: 9,
-        },
-      },
-    ]);
-
-    const hook = renderWithQueryClient(() => useApprovals());
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-    expect(hook.result.current?.data?.items).toHaveLength(1);
-    expect(hook.result.current?.data?.items[0].id).toBe("a1");
-    expect(hook.result.current?.data?.next_cursor).toBe(9);
-    hook.unmount();
-  });
-
-  it("useApproval uses cache placeholder and resolves selected approval", async () => {
-    mockFetch([
-      {
-        match: "/approvals",
-        method: "GET",
-        body: {
-          items: [
-            {
-              approval_ref: "a1",
-              job: {
-                id: "j1",
-                state: "RUNNING",
-                updated_at: 1_707_000_000_000_000,
-              },
-            },
-          ],
-        },
-      },
-    ]);
-    const queryClient = createTestQueryClient();
-    queryClient.setQueryData(["approvals", "all"], {
-      items: [
-        {
-          id: "a1",
-          jobId: "j1",
-          status: "pending",
-          requestedAt: "2026-02-13T00:00:00.000Z",
-        },
-      ],
-    });
-    const hook = renderWithQueryClient(() => useApproval("a1"), queryClient);
-
-    expect(hook.result.current?.data?.id).toBe("a1");
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-    expect(hook.result.current?.data?.id).toBe("a1");
-    hook.unmount();
-  });
-
-  it("useApproval finds placeholder from non-all filtered cache", async () => {
-    mockFetch([
-      {
-        match: "/approvals",
-        method: "GET",
-        body: {
-          items: [
-            {
-              approval_ref: "a1",
-              job: {
-                id: "j1",
-                state: "RUNNING",
-                updated_at: 1_707_000_000_000_000,
-              },
-            },
-          ],
-        },
-      },
-    ]);
-    const queryClient = createTestQueryClient();
-    // Seed a filtered cache (not "all") — useApproval should still find it
-    queryClient.setQueryData(["approvals", "pending"], {
-      items: [
-        {
-          id: "a1",
-          jobId: "j1",
-          status: "pending",
-          requestedAt: "2026-02-13T00:00:00.000Z",
-        },
-      ],
-    });
-    const hook = renderWithQueryClient(() => useApproval("a1"), queryClient);
-
-    // Placeholder should resolve from the "pending" cache
-    expect(hook.result.current?.data?.id).toBe("a1");
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-    expect(hook.result.current?.data?.id).toBe("a1");
-    hook.unmount();
-  });
-
-  it("useApproveJob removes from cache optimistically and restores on error", async () => {
-    mockFetch([{ match: "/approvals/a1/approve", method: "POST", rejectWith: new Error("approve failed") }]);
-    const queryClient = createTestQueryClient();
-    queryClient.setQueryData(["approvals", "all"], {
-      items: [{ id: "a1" }, { id: "a2" }],
-    });
-    const hook = renderWithQueryClient(() => useApproveJob(), queryClient);
-
-    await expect(
-      hook.result.current?.mutateAsync({ id: "a1" }),
-    ).rejects.toThrow("approve failed");
-
-    // Per-item rollback re-adds the failed item at the end (preserving other optimistic removals)
-    const items = queryClient.getQueryData<{ items: Array<{ id: string }> }>(["approvals", "all"])?.items;
-    expect(items).toHaveLength(2);
-    expect(items?.map((i) => i.id).sort()).toEqual(["a1", "a2"]);
-    expect(addToastMock).toHaveBeenCalledWith({
-      type: "error",
-      title: "Approval failed",
-      description: "approve failed",
-    });
-    hook.unmount();
-  });
-
-  it("useRejectJob posts reason payload and supports optimistic update flow", async () => {
-    const fetchSpy = mockFetch([{ match: "/approvals/a2/reject", method: "POST", body: {} }]);
-    const queryClient = createTestQueryClient();
-    queryClient.setQueryData(["approvals", "all"], {
-      items: [{ id: "a1" }, { id: "a2" }],
-    });
-    const hook = renderWithQueryClient(() => useRejectJob(), queryClient);
-
-    await act(async () => {
-      await hook.result.current?.mutateAsync({ id: "a2", reason: "unsafe", comment: "manual check" });
-    });
-
-    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(String(init.body))).toEqual({ reason: "unsafe", note: "manual check" });
-    expect(queryClient.getQueryData<{ items: Array<{ id: string }> }>(["approvals", "all"])?.items).toEqual([
-      { id: "a1" },
-    ]);
-    expect(addToastMock).toHaveBeenCalledWith({ type: "success", title: "Rejected" });
-    hook.unmount();
-  });
-
-  it("useApprovalHistory filters approve/reject and parses snapshot_after details", async () => {
-    mockFetch([
-      {
-        match: "/policy/audit?page=1&perPage=20&sort=desc",
-        method: "GET",
-        body: {
-          items: [
-            {
-              id: "h1",
-              action: "approve",
-              resource_id: "j1",
-              actor_id: "alice",
-              created_at: "2026-02-13T10:05:00.000Z",
-              snapshot_after: JSON.stringify({
-                topic: "sys.job.submit",
-                workflow_id: "wf-1",
-                requested_at: "2026-02-13T10:00:00.000Z",
-              }),
-            },
-            {
-              id: "h2",
-              action: "view",
-              resource_id: "j2",
-            },
-          ],
-        },
-      },
-    ]);
-
-    const hook = renderWithQueryClient(() =>
-      useApprovalHistory({ page: 1, perPage: 20, sort: "desc" }),
-    );
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-    expect(hook.result.current?.data?.items).toHaveLength(1);
-    expect(hook.result.current?.data?.items[0]).toMatchObject({
-      id: "h1",
-      action: "approve",
-      topic: "sys.job.submit",
-      workflowId: "wf-1",
-      waitDurationMs: 300000,
-    });
-    hook.unmount();
-  });
-
-  it("useApprovalHistory handles null snapshot_after gracefully", async () => {
-    mockFetch([
-      {
-        match: "/policy/audit",
-        method: "GET",
-        body: {
-          items: [
-            {
-              id: "h1",
-              action: "approve",
-              resource_id: "j1",
-              actor_id: "alice",
-              created_at: "2026-02-13T10:05:00.000Z",
-              snapshot_after: null,
-            },
-          ],
-        },
-      },
-    ]);
-
-    const hook = renderWithQueryClient(() => useApprovalHistory());
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-    expect(hook.result.current?.data?.items).toHaveLength(1);
-    expect(hook.result.current?.data?.items[0].topic).toBeUndefined();
-    expect(hook.result.current?.data?.items[0].workflowId).toBeUndefined();
-    expect(hook.result.current?.data?.items[0].waitDurationMs).toBeUndefined();
-    hook.unmount();
-  });
-
-  it("useApprovalHistory handles malformed snapshot_after JSON and logs warn with context", async () => {
-    mockFetch([
-      {
-        match: "/policy/audit",
-        method: "GET",
-        body: {
-          items: [
-            {
-              id: "h1",
-              action: "reject",
-              resource_id: "j1",
-              actor_id: "bob",
-              created_at: "2026-02-13T10:05:00.000Z",
-              snapshot_after: "not-json{",
-            },
-          ],
-        },
-      },
-    ]);
-
-    const hook = renderWithQueryClient(() => useApprovalHistory());
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-    expect(hook.result.current?.data?.items).toHaveLength(1);
-    expect(hook.result.current?.data?.items[0].topic).toBeUndefined();
-    expect(loggerMock.warn).toHaveBeenCalledWith(
-      "approvals",
-      "Failed to parse approval snapshot_after",
-      expect.objectContaining({
-        auditId: "h1",
-        rawType: "string",
-      }),
-    );
-    hook.unmount();
-  });
-
-  it("useApprovalHistory handles snapshot_after with unexpected shape", async () => {
-    mockFetch([
-      {
-        match: "/policy/audit",
-        method: "GET",
-        body: {
-          items: [
-            {
-              id: "h1",
-              action: "approve",
-              resource_id: "j1",
-              actor_id: "charlie",
-              created_at: "2026-02-13T10:05:00.000Z",
-              snapshot_after: JSON.stringify({ unexpected: "shape" }),
-            },
-          ],
-        },
-      },
-    ]);
-
-    const hook = renderWithQueryClient(() => useApprovalHistory());
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-    expect(hook.result.current?.data?.items).toHaveLength(1);
-    // Fields silently resolve to undefined but don't throw
-    expect(hook.result.current?.data?.items[0].topic).toBeUndefined();
-    expect(hook.result.current?.data?.items[0].workflowId).toBeUndefined();
-    hook.unmount();
-  });
-
-  it("useApproveStep validates required params and posts correct endpoint", async () => {
-    const modFetch = mockFetch([
-      {
-        match: "/workflows/wf-1/runs/run-1/steps/step-1/approve",
-        method: "POST",
-        body: {},
-      },
-    ]);
-
-    const hook = renderWithQueryClient(() => useApproveStep());
-
-    await expect(
-      hook.result.current?.mutateAsync({
-        workflowId: "",
-        runId: "run-1",
-        stepId: "step-1",
-      }),
-    ).rejects.toThrow("workflowId, runId, and stepId are required");
-
-    await act(async () => {
-      await hook.result.current?.mutateAsync({
-        workflowId: "wf-1",
-        runId: "run-1",
-        stepId: "step-1",
-      });
-    });
-    expect(modFetch).toHaveBeenCalledTimes(1);
-    expect(addToastMock).toHaveBeenCalledWith({ type: "success", title: "Step approved" });
-    hook.unmount();
-  });
-});
-

@@ -215,17 +215,26 @@ func (e *Engine) scheduleAfter(delay time.Duration, workflowID, runID string) {
 		}
 		e.timerMu.Unlock()
 
-		// Remove durable timer entry before resuming the run.
+		// Resume the run first, then remove the durable timer only on success.
+		// This prevents a window where the timer is removed but the run fails
+		// to resume — leaving the run stuck until the reconciler catches it.
+		// Use a bounded context so a slow Redis doesn't hang indefinitely.
+		startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := e.StartRun(startCtx, workflowID, runID); err != nil {
+			startCancel()
+			logging.Error("workflow-engine", "delay timer: StartRun failed, durable timer preserved for poller retry",
+				"workflow_id", workflowID, "run_id", runID, "error", err)
+			return
+		}
+		startCancel()
 		if e.store != nil {
 			rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			if err := e.store.RemoveDelayTimer(rCtx, workflowID, runID); err != nil {
-				logging.Warn("workflow-engine", "failed to remove delay timer",
+				logging.Warn("workflow-engine", "failed to remove delay timer after successful resume",
 					"workflow_id", workflowID, "run_id", runID, "error", err)
 			}
 			rCancel()
 		}
-
-		_ = e.StartRun(context.Background(), workflowID, runID)
 	})
 	e.pendingTimers = append(e.pendingTimers, t)
 	e.timerMu.Unlock()
@@ -252,7 +261,10 @@ func (e *Engine) recoverDelayTimers(ctx context.Context) {
 		}
 		logging.Info("workflow-engine", "recovering past-due delay timer",
 			"workflow_id", wfID, "run_id", rID)
-		_ = e.StartRun(ctx, wfID, rID)
+		if err := e.StartRun(ctx, wfID, rID); err != nil {
+			logging.Error("workflow-engine", "recovery: StartRun failed for past-due timer, reconciler will retry",
+				"workflow_id", wfID, "run_id", rID, "error", err)
+		}
 	}
 
 	// 2. Re-schedule future timers with remaining delay.
@@ -358,7 +370,10 @@ func (e *Engine) startDelayPoller(ctx context.Context) {
 				}
 				logging.Info("workflow-engine", "delay poller: firing recovered timer",
 					"workflow_id", wfID, "run_id", rID)
-				_ = e.StartRun(ctx, wfID, rID)
+				if err := e.StartRun(ctx, wfID, rID); err != nil {
+					logging.Error("workflow-engine", "delay poller: StartRun failed, reconciler will retry",
+						"workflow_id", wfID, "run_id", rID, "error", err)
+				}
 			}
 
 			// Periodic stale entry cleanup.

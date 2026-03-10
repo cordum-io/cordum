@@ -77,19 +77,19 @@ export function PromotionDrawer({ source, target, onConfirm, onClose, isPending 
         <div className="flex items-center justify-between">
           <h3 className="font-display text-lg font-semibold text-ink">Promote Environment</h3>
           <button type="button" onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
-            <X className="h-5 w-5 text-muted" />
+            <X className="h-5 w-5 text-muted-foreground" />
           </button>
         </div>
 
         {/* Source → Target header */}
         <div className="flex items-center justify-center gap-4 rounded-2xl border border-border bg-surface2/50 px-6 py-4">
           <div className="text-center">
-            <p className="text-xs text-muted">Source</p>
+            <p className="text-xs text-muted-foreground">Source</p>
             <p className="font-display text-sm font-semibold text-ink capitalize">{source.name}</p>
           </div>
           <ArrowRight className="h-5 w-5 text-accent" />
           <div className="text-center">
-            <p className="text-xs text-muted">Target</p>
+            <p className="text-xs text-muted-foreground">Target</p>
             <p className="font-display text-sm font-semibold text-ink capitalize">{target.name}</p>
           </div>
         </div>
@@ -98,7 +98,7 @@ export function PromotionDrawer({ source, target, onConfirm, onClose, isPending 
         <div className="flex items-center gap-3">
           <Badge variant="info">{changes.length} {changes.length === 1 ? "change" : "changes"}</Badge>
           {changes.length === 0 && (
-            <span className="text-xs text-muted">Configurations are identical</span>
+            <span className="text-xs text-muted-foreground">Configurations are identical</span>
           )}
         </div>
 
@@ -107,9 +107,9 @@ export function PromotionDrawer({ source, target, onConfirm, onClose, isPending 
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border bg-surface2/50">
-                <th className="px-3 py-2 text-left font-semibold text-muted">Key</th>
-                <th className="px-3 py-2 text-left font-semibold text-muted">Source</th>
-                <th className="px-3 py-2 text-left font-semibold text-muted">Target</th>
+                <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Key</th>
+                <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Source</th>
+                <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Target</th>
                 <th className="px-3 py-2 w-20" />
               </tr>
             </thead>
@@ -120,10 +120,10 @@ export function PromotionDrawer({ source, target, onConfirm, onClose, isPending 
                 return (
                   <tr key={entry.key} className={cn("border-b border-border last:border-0", style.bg)}>
                     <td className="px-3 py-2 font-mono font-medium text-ink">{entry.key}</td>
-                    <td className="px-3 py-2 font-mono text-muted truncate max-w-[160px]">
+                    <td className="px-3 py-2 font-mono text-muted-foreground truncate max-w-[160px]">
                       {entry.sourceVal || <span className="italic text-muted/50">-</span>}
                     </td>
-                    <td className="px-3 py-2 font-mono text-muted truncate max-w-[160px]">
+                    <td className="px-3 py-2 font-mono text-muted-foreground truncate max-w-[160px]">
                       {entry.targetVal || <span className="italic text-muted/50">-</span>}
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -139,7 +139,7 @@ export function PromotionDrawer({ source, target, onConfirm, onClose, isPending 
               })}
               {diff.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-muted">
+                  <td colSpan={4} className="px-3 py-6 text-center text-muted-foreground">
                     No configuration keys in either environment
                   </td>
                 </tr>

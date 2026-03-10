@@ -209,7 +209,10 @@ func runPackInstall(args []string) {
 		fail("pack path or url required")
 	}
 
-	tlsTransport := sdk.BuildTLSTransport(fs.tlsOptions())
+	tlsTransport, tlsErr := sdk.BuildTLSTransportErr(fs.tlsOptions())
+	if tlsErr != nil {
+		fail(fmt.Sprintf("tls configuration error: %v", tlsErr))
+	}
 
 	bundle, err := loadPackBundle(fs.Arg(0), tlsTransport)
 	check(err)
@@ -370,7 +373,11 @@ func runPackUninstall(args []string) {
 		fail("pack id required")
 	}
 	packID := fs.Arg(0)
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, sdk.BuildTLSTransport(fs.tlsOptions()))
+	tlsTransport, tlsErr := sdk.BuildTLSTransportErr(fs.tlsOptions())
+	if tlsErr != nil {
+		fail(fmt.Sprintf("tls configuration error: %v", tlsErr))
+	}
+	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, tlsTransport)
 	ctx := context.Background()
 	owner := lockOwner()
 	release, err := acquirePackLocks(ctx, client, packID, owner)
@@ -408,10 +415,18 @@ func runPackUninstall(args []string) {
 	fmt.Printf("uninstalled pack %s (%s)\n", record.ID, record.Status)
 }
 
+func restClientFromFlags(fs *flagSet) *restClient {
+	tlsTransport, tlsErr := sdk.BuildTLSTransportErr(fs.tlsOptions())
+	if tlsErr != nil {
+		fail(fmt.Sprintf("tls configuration error: %v", tlsErr))
+	}
+	return newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, tlsTransport)
+}
+
 func runPackList(args []string) {
 	fs := newFlagSet("pack list")
 	fs.ParseArgs(args)
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, sdk.BuildTLSTransport(fs.tlsOptions()))
+	client := restClientFromFlags(fs)
 	ctx := context.Background()
 	records, err := listPackRecords(ctx, client)
 	check(err)
@@ -436,7 +451,7 @@ func runPackShow(args []string) {
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, sdk.BuildTLSTransport(fs.tlsOptions()))
+	client := restClientFromFlags(fs)
 	ctx := context.Background()
 	record, err := getPackRecord(ctx, client, fs.Arg(0))
 	check(err)
@@ -452,7 +467,7 @@ func runPackVerify(args []string) {
 	if fs.NArg() < 1 {
 		fail("pack id required")
 	}
-	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, sdk.BuildTLSTransport(fs.tlsOptions()))
+	client := restClientFromFlags(fs)
 	ctx := context.Background()
 	record, err := getPackRecord(ctx, client, fs.Arg(0))
 	check(err)
@@ -1677,7 +1692,9 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, readErr := io.ReadAll(resp.Body)
+		// Limit error body read to 1 MiB to prevent OOM from oversized responses.
+		const maxErrBody = 1 << 20
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 		msg := strings.TrimSpace(string(data))
 		if msg == "" || readErr != nil {
 			msg = resp.Status

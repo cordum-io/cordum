@@ -19,13 +19,17 @@ type Snapshot struct {
 
 // WorkerSummary is a compact representation of a worker heartbeat.
 type WorkerSummary struct {
-	WorkerID        string   `json:"worker_id"`
-	Pool            string   `json:"pool"`
-	ActiveJobs      int32    `json:"active_jobs"`
-	MaxParallelJobs int32    `json:"max_parallel_jobs"`
-	Capabilities    []string `json:"capabilities,omitempty"`
-	CpuLoad         float32  `json:"cpu_load,omitempty"`
-	GpuUtilization  float32  `json:"gpu_utilization,omitempty"`
+	WorkerID        string            `json:"worker_id"`
+	Pool            string            `json:"pool"`
+	ActiveJobs      int32             `json:"active_jobs"`
+	MaxParallelJobs int32             `json:"max_parallel_jobs"`
+	Capabilities    []string          `json:"capabilities,omitempty"`
+	CpuLoad         float32           `json:"cpu_load,omitempty"`
+	GpuUtilization  float32           `json:"gpu_utilization,omitempty"`
+	MemoryLoad      float32           `json:"memory_load,omitempty"`
+	Region          string            `json:"region,omitempty"`
+	Type            string            `json:"type,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
 }
 
 // PoolSnapshot aggregates worker capacity per pool.
@@ -60,6 +64,10 @@ func BuildSnapshot(workers map[string]*pb.Heartbeat, topicToPool map[string]stri
 			Capabilities:    hb.Capabilities,
 			CpuLoad:         hb.CpuLoad,
 			GpuUtilization:  hb.GpuUtilization,
+			MemoryLoad:      hb.MemoryLoad,
+			Region:          hb.Region,
+			Type:            hb.Type,
+			Labels:          hb.Labels,
 		})
 		if hb.Pool == "" {
 			continue

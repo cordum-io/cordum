@@ -8,9 +8,9 @@ export const ApprovalNode = memo(function ApprovalNode({ data, selected }: NodeP
   const timeout = (typeof data.timeout_sec === "number" ? `${data.timeout_sec}s` : "") || (typeof config.timeout === "string" ? config.timeout : "");
   return (
     <BaseNode
-      icon={<ShieldCheck className="h-4 w-4 text-amber-600" />}
+      icon={<ShieldCheck className="h-4 w-4 text-[var(--color-warning)]" />}
       label={data.label as string}
-      accent="bg-amber-50"
+      accent="bg-[var(--color-warning)]/5"
       selected={selected}
     >
       {timeout && (

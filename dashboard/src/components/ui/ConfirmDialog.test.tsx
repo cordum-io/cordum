@@ -89,9 +89,9 @@ describe("ConfirmDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("shows 'Working...' and disables buttons when isPending", () => {
+  it("shows 'Processing...' and disables buttons when isPending", () => {
     renderDialog({ isPending: true });
-    expect(container.textContent).toContain("Working...");
+    expect(container.textContent).toContain("Processing...");
     const buttons = Array.from(container.querySelectorAll("button"));
     const disabledBtns = buttons.filter((b) => b.disabled);
     expect(disabledBtns.length).toBeGreaterThanOrEqual(2);

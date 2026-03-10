@@ -14,38 +14,10 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
-// checkStepOutputPolicy runs output policy on a step result before propagating it.
-// Returns true if the output was quarantined/denied and should NOT be recorded.
-func (e *Engine) checkStepOutputPolicy(ctx context.Context, run *WorkflowRun, stepID string, stepRun *StepRun, res *pb.JobResult) bool {
-	if e.outputSafety == nil || res == nil || res.ResultPtr == "" {
-		return false
-	}
-	record, err := e.outputSafety.CheckOutputMeta(res, nil)
-	if err != nil {
-		logging.Error("workflow-engine", "step output policy check failed", "run_id", run.ID, "step_id", stepID, "error", err)
-		return false // fail-open on error to preserve backward compat
-	}
-	now := time.Now().UTC()
-	switch record.Decision {
-	case model.OutputQuarantine, model.OutputDeny:
-		stepRun.Status = StepStatusFailed
-		stepRun.CompletedAt = &now
-		stepRun.Error = map[string]any{
-			"code":    "output_quarantined",
-			"message": record.Reason,
-		}
-		e.appendTimeline(ctx, run, "step_output_quarantined", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, record.Reason, nil)
-		return true
-	case model.OutputRedact:
-		if record.RedactedPtr != "" {
-			res.ResultPtr = record.RedactedPtr
-		}
-		e.appendTimeline(ctx, run, "step_output_redacted", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, record.Reason, nil)
-		return false
-	default:
-		return false
-	}
-}
+// validationTimeout bounds Redis calls during step input/output schema
+// validation. Without this, a slow or unresponsive Redis would block the
+// workflow engine indefinitely.
+const validationTimeout = 5 * time.Second
 
 func recordStepOutput(ctx context.Context, mem store.Store, run *WorkflowRun, stepID string, stepDef *Step, resultPtr string, applyOutputPath bool) {
 	if run == nil || stepID == "" || resultPtr == "" {
@@ -134,7 +106,9 @@ func (e *Engine) validateStepInput(step *Step, payload map[string]any) error {
 		if e.schemaRegistry == nil {
 			return fmt.Errorf("schema registry unavailable")
 		}
-		return e.schemaRegistry.ValidateID(context.Background(), id, payload)
+		ctx, cancel := context.WithTimeout(context.Background(), validationTimeout)
+		defer cancel()
+		return e.schemaRegistry.ValidateID(ctx, id, payload)
 	}
 	return nil
 }
@@ -148,9 +122,13 @@ func (e *Engine) validateStepOutput(step *Step, resultPtr string) error {
 	if !hasInline && id == "" {
 		return nil
 	}
-	payload, ok := fetchResultPayload(context.Background(), e.mem, resultPtr)
+	ctx, cancel := context.WithTimeout(context.Background(), validationTimeout)
+	defer cancel()
+	payload, ok := fetchResultPayload(ctx, e.mem, resultPtr)
 	if !ok {
-		return nil
+		// Fail-closed: if a schema is configured but the result payload cannot
+		// be fetched, reject the step rather than silently skipping validation.
+		return fmt.Errorf("output schema validation failed: unable to fetch result payload %q", resultPtr)
 	}
 	if hasInline {
 		return schemas.ValidateMap(step.OutputSchema, payload)
@@ -158,7 +136,7 @@ func (e *Engine) validateStepOutput(step *Step, resultPtr string) error {
 	if e.schemaRegistry == nil {
 		return fmt.Errorf("schema registry unavailable")
 	}
-	return e.schemaRegistry.ValidateID(context.Background(), id, payload)
+	return e.schemaRegistry.ValidateID(ctx, id, payload)
 }
 
 func fetchResultPayload(ctx context.Context, mem store.Store, resultPtr string) (any, bool) {
@@ -183,6 +161,39 @@ func fetchResultPayload(ctx context.Context, mem store.Store, resultPtr string) 
 	return string(data), true
 }
 
+// checkStepOutputPolicy runs a fast sync output policy check on step results.
+// Returns true if the step was quarantined/denied (caller should skip recording output).
+func (e *Engine) checkStepOutputPolicy(ctx context.Context, run *WorkflowRun, stepID string, stepRun *StepRun, res *pb.JobResult) bool {
+	if e.outputSafety == nil || res == nil || res.ResultPtr == "" {
+		return false
+	}
+	record, err := e.outputSafety.CheckOutputMeta(res, nil)
+	if err != nil {
+		logging.Error("workflow-engine", "step output policy check failed", "run_id", run.ID, "step_id", stepID, "error", err)
+		return false // fail-open on error to preserve backward compat
+	}
+	now := time.Now().UTC()
+	switch record.Decision {
+	case model.OutputQuarantine, model.OutputDeny:
+		stepRun.Status = StepStatusFailed
+		stepRun.CompletedAt = &now
+		stepRun.Error = map[string]any{
+			"code":    "output_quarantined",
+			"message": record.Reason,
+		}
+		e.appendTimeline(ctx, run, "step_output_quarantined", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, record.Reason, nil)
+		return true
+	case model.OutputRedact:
+		if record.RedactedPtr != "" {
+			res.ResultPtr = record.RedactedPtr
+		}
+		e.appendTimeline(ctx, run, "step_output_redacted", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, record.Reason, nil)
+		return false
+	default:
+		return false
+	}
+}
+
 func (e *Engine) validateInlineOutput(step *Step, value any) error {
 	if step == nil {
 		return nil
@@ -194,7 +205,9 @@ func (e *Engine) validateInlineOutput(step *Step, value any) error {
 		if e.schemaRegistry == nil {
 			return fmt.Errorf("schema registry unavailable")
 		}
-		return e.schemaRegistry.ValidateID(context.Background(), id, value)
+		ctx, cancel := context.WithTimeout(context.Background(), validationTimeout)
+		defer cancel()
+		return e.schemaRegistry.ValidateID(ctx, id, value)
 	}
 	return nil
 }

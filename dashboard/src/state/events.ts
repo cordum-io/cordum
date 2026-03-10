@@ -1,7 +1,8 @@
-import { useEffect } from "react";
 import { create } from "zustand";
 import { logger } from "../lib/logger";
 import type { StreamEvent } from "../api/types";
+
+export type LiveEvent = StreamEvent;
 
 export type WsStatus = "connected" | "connecting" | "disconnected" | "reconnecting";
 
@@ -13,23 +14,13 @@ export interface SafetyDecisionEvent {
   id: string;
   timestamp: string;
   topic: string;
-  decision: "allow" | "deny" | "require_approval" | "throttle";
+  decision: "allow" | "deny" | "require_approval" | "allow_with_constraints" | "throttle";
   matchedRule?: string;
   evalTimeMs?: number;
 }
 
 const MAX_SAFETY_EVENTS = 100;
 const MAX_EVENTS = 100;
-const PRESENCE_EXPIRE_MS = 60_000; // 60 seconds
-
-// ---------------------------------------------------------------------------
-// Presence & Assignment types
-// ---------------------------------------------------------------------------
-
-export interface PresenceEntry {
-  actor: string;
-  since: number;
-}
 
 // ---------------------------------------------------------------------------
 // Store
@@ -48,14 +39,12 @@ interface EventState {
   safetyDecisions: SafetyDecisionEvent[];
   pushSafetyDecision: (event: SafetyDecisionEvent) => void;
 
-  // Approval presence tracking (who is reviewing which item)
-  approvalPresence: Map<string, PresenceEntry>;
-  setReviewing: (approvalId: string, actor: string) => void;
-  clearReviewing: (approvalId: string) => void;
-
-  // Approval assignment (who is assigned to which item)
+  // Approval presence & assignments (real-time collaboration)
+  approvalPresence: Map<string, string>;
   approvalAssignments: Map<string, string>;
-  assignApproval: (approvalId: string, actor: string) => void;
+  setReviewing: (approvalId: string, user: string) => void;
+  clearReviewing: (approvalId: string) => void;
+  assignApproval: (approvalId: string, user: string) => void;
   unassignApproval: (approvalId: string) => void;
 
   // Reset all state (called on logout / tenant switch)
@@ -89,12 +78,12 @@ export const useEventStore = create<EventState>((set, get) => ({
       safetyDecisions: [event, ...state.safetyDecisions].slice(0, MAX_SAFETY_EVENTS),
     })),
 
-  // Presence tracking
   approvalPresence: new Map(),
-  setReviewing: (approvalId, actor) =>
+  approvalAssignments: new Map(),
+  setReviewing: (approvalId, user) =>
     set((state) => {
       const next = new Map(state.approvalPresence);
-      next.set(approvalId, { actor, since: Date.now() });
+      next.set(approvalId, user);
       return { approvalPresence: next };
     }),
   clearReviewing: (approvalId) =>
@@ -103,13 +92,10 @@ export const useEventStore = create<EventState>((set, get) => ({
       next.delete(approvalId);
       return { approvalPresence: next };
     }),
-
-  // Assignment tracking
-  approvalAssignments: new Map(),
-  assignApproval: (approvalId, actor) =>
+  assignApproval: (approvalId, user) =>
     set((state) => {
       const next = new Map(state.approvalAssignments);
-      next.set(approvalId, actor);
+      next.set(approvalId, user);
       return { approvalAssignments: next };
     }),
   unassignApproval: (approvalId) =>
@@ -123,33 +109,8 @@ export const useEventStore = create<EventState>((set, get) => ({
     set({
       events: [],
       safetyDecisions: [],
+      status: "disconnected",
       approvalPresence: new Map(),
       approvalAssignments: new Map(),
-      status: "disconnected",
     }),
 }));
-
-// ---------------------------------------------------------------------------
-// Presence cleanup hook — expire entries older than 60s
-// ---------------------------------------------------------------------------
-
-export function usePresenceCleanup(): void {
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      const state = useEventStore.getState();
-      const now = Date.now();
-      let changed = false;
-      const next = new Map(state.approvalPresence);
-      for (const [entryId, entry] of next) {
-        if (now - entry.since > PRESENCE_EXPIRE_MS) {
-          next.delete(entryId);
-          changed = true;
-        }
-      }
-      if (changed) {
-        useEventStore.setState({ approvalPresence: next });
-      }
-    }, 15_000);
-    return () => window.clearInterval(id);
-  }, []);
-}

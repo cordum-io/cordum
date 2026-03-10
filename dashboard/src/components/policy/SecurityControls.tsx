@@ -44,7 +44,7 @@ function ConfirmDialog({
       <Card className="relative z-10 w-full max-w-md">
         <div className="space-y-4">
           <h3 className="font-display text-lg font-semibold text-ink">{title}</h3>
-          <p className="text-sm text-muted">{message}</p>
+          <p className="text-sm text-muted-foreground">{message}</p>
           {children}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
@@ -78,7 +78,7 @@ export function SecurityControls() {
           <h3 className="font-display text-base font-semibold text-ink">
             Security Controls
           </h3>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             Policy controls (default stance and emergency lockdown) are not available in this deployment.
           </p>
         </div>
@@ -150,7 +150,7 @@ export function SecurityControls() {
                   {stance === "allow" ? "Allow" : "Deny"}
                 </Badge>
               </div>
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted-foreground">
                 {stance === "allow"
                   ? "Jobs not matching any rule are allowed by default."
                   : "Jobs not matching any rule are denied by default."}
@@ -169,7 +169,7 @@ export function SecurityControls() {
             >
               <span
                 className={cn(
-                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transition-transform",
+                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-card shadow transition-transform",
                   stance === "deny" ? "translate-x-5" : "translate-x-0",
                 )}
               />
@@ -183,11 +183,11 @@ export function SecurityControls() {
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <Lock className={cn("h-4 w-4", isLockdown ? "text-danger animate-pulse" : "text-muted")} />
+                <Lock className={cn("h-4 w-4", isLockdown ? "text-danger animate-pulse" : "text-muted-foreground")} />
                 <span className="text-sm font-semibold text-ink">Emergency Lockdown</span>
                 {isLockdown && <Badge variant="danger">ACTIVE</Badge>}
               </div>
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted-foreground">
                 {isLockdown
                   ? `Activated${config?.lockdownBy ? ` by ${config.lockdownBy}` : ""}${config?.lockdownAt ? ` at ${new Date(config.lockdownAt).toLocaleString()}` : ""}. All jobs are being denied.`
                   : "Immediately deny ALL jobs regardless of rules. Use only in emergencies."}
@@ -238,7 +238,7 @@ export function SecurityControls() {
           onCancel={() => { setShowLockdownDialog(false); setLockdownReason(""); }}
         >
           <div>
-            <label htmlFor="lockdown-reason" className="mb-1 block text-xs font-semibold text-muted">
+            <label htmlFor="lockdown-reason" className="mb-1 block text-xs font-semibold text-muted-foreground">
               Reason (required, min 10 characters)
             </label>
             <Textarea

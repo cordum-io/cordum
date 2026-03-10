@@ -28,7 +28,7 @@ const healthColors: Record<string, string> = {
 function HealthDot({ status }: { status?: string }) {
   const color = healthColors[status ?? ""] ?? "bg-muted";
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
       <span className={cn("inline-block h-2 w-2 rounded-full", color)} />
       {status ?? "unknown"}
     </span>
@@ -99,9 +99,9 @@ function scoreColor(score: number): string {
 }
 
 function scoreRingColor(score: number): string {
-  if (score > 80) return "#22c55e";
-  if (score >= 50) return "#f59e0b";
-  return "#ef4444";
+  if (score > 80) return "#1f7a57";
+  if (score >= 50) return "#c58a1c";
+  return "#b83a3a";
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ function GovernanceScoreCard({
           </span>
         </div>
         {/* Sub-metrics */}
-        <div className="space-y-1.5 text-xs text-muted">
+        <div className="space-y-1.5 text-xs text-muted-foreground">
           <p>Bundles: {enabledCount}/{totalBundles} enabled</p>
           <p>Violations: {violationCount24h} in 24h</p>
           <p>Last publish: {lastPublish ?? "Never"}</p>
@@ -175,10 +175,10 @@ function GovernanceScoreCard({
 // ---------------------------------------------------------------------------
 
 const DECISION_COLORS: Record<string, string> = {
-  allow: "#22c55e",
-  deny: "#ef4444",
-  require_approval: "#f59e0b",
-  throttle: "#6366f1",
+  allow: "#1f7a57",
+  deny: "#b83a3a",
+  require_approval: "#c58a1c",
+  throttle: "#0f7f7a",
 };
 
 const DECISION_LABELS: Record<string, string> = {
@@ -202,7 +202,7 @@ function DecisionDistributionChart({
     return Object.entries(counts).map(([name, value]) => ({
       name: DECISION_LABELS[name] ?? name,
       value,
-      color: DECISION_COLORS[name] ?? "#94a3b8",
+      color: DECISION_COLORS[name] ?? "#5a6a70",
     }));
   }, [auditEntries]);
 
@@ -212,7 +212,7 @@ function DecisionDistributionChart({
         <CardHeader>
           <CardTitle>Decision Distribution</CardTitle>
         </CardHeader>
-        <div className="flex items-center justify-center py-12 text-sm text-muted">
+        <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
           No decision data available
         </div>
       </Card>
@@ -293,14 +293,14 @@ function RecentViolationsList({
         <div className="space-y-0 divide-y divide-border">
           {violations.map((v) => (
             <div key={v.id} className="flex items-center gap-3 px-4 py-2.5 text-xs">
-              <span className="shrink-0 text-muted">
+              <span className="shrink-0 text-muted-foreground">
                 {v.timestamp ? timeAgo(v.timestamp) : "\u2014"}
               </span>
               <Badge variant={ACTION_BADGE_VARIANT[v.action] ?? "default"}>
                 {v.action}
               </Badge>
               <span className="truncate text-ink">{v.actor || "\u2014"}</span>
-              <span className="ml-auto truncate text-muted">{v.bundleId}</span>
+              <span className="ml-auto truncate text-muted-foreground">{v.bundleId}</span>
             </div>
           ))}
           <div className="px-4 py-3">
@@ -377,13 +377,13 @@ function BundleCard({
       </CardHeader>
       <div className="space-y-3">
         <div className="flex items-center gap-4 text-sm">
-          <span className="text-muted">
+          <span className="text-muted-foreground">
             {bundle.rules.length} rule{bundle.rules.length !== 1 ? "s" : ""}
           </span>
           <Badge variant="info">v{bundle.version ?? "\u2014"}</Badge>
         </div>
         <HealthDot status={bundle.healthStatus} />
-        <div className="text-xs text-muted">
+        <div className="text-xs text-muted-foreground">
           {bundle.publishedAt ? `Published ${timeAgo(bundle.publishedAt)}` : "Not yet published"}
         </div>
         <div className="pt-1">
@@ -401,13 +401,13 @@ function BundleCard({
           >
             <span
               className={cn(
-                "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
+                "pointer-events-none inline-block h-5 w-5 rounded-full bg-card shadow-sm transition-transform duration-200",
                 isEnabled ? "translate-x-5" : "translate-x-0",
               )}
             />
           </button>
           {!canToggle && (
-            <p className="mt-1 text-[10px] text-muted">
+            <p className="mt-1 text-[10px] text-muted-foreground">
               Managed by pack — edit via YAML only.
             </p>
           )}
@@ -463,7 +463,7 @@ function PendingPolicyChanges({
         <CardHeader>
           <CardTitle>Pending Policy Changes</CardTitle>
         </CardHeader>
-        <div className="flex items-center gap-2 px-4 pb-4 text-sm text-muted">
+        <div className="flex items-center gap-2 px-4 pb-4 text-sm text-muted-foreground">
           <Info className="h-4 w-4 shrink-0" />
           <span>
             No pending changes. Policy updates are published directly via the{" "}
@@ -493,7 +493,7 @@ function PendingPolicyChanges({
                 <span className="truncate text-sm font-medium text-ink">{bundle.name}</span>
                 <Badge variant="info">v{bundle.version ?? "draft"}</Badge>
               </div>
-              <div className="mt-0.5 flex items-center gap-2 text-xs text-muted">
+              <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                 {bundle.author && <span>by {bundle.author}</span>}
                 {bundle.updatedAt && <span>{timeAgo(bundle.updatedAt)}</span>}
                 <span>&middot; {changeSummary}</span>
@@ -583,7 +583,7 @@ export default function PoliciesOverviewPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-muted">
+      <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
         <Loader className="mr-2 h-4 w-4 animate-spin" />
         Loading policy bundles...
       </div>
@@ -600,7 +600,7 @@ export default function PoliciesOverviewPage() {
 
   if (bundles.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
+      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
         No policy bundles configured
       </div>
     );
@@ -629,23 +629,23 @@ export default function PoliciesOverviewPage() {
         <MetricCard
           title="Total Rules"
           value={bundles.reduce((sum, b) => sum + b.rules.length, 0)}
-          icon={<Shield className="h-5 w-5 text-muted" />}
+          icon={<Shield className="h-5 w-5 text-muted-foreground" />}
         />
         <MetricCard
           title="Active Bundles"
           value={enabledCount}
           detail={`${bundles.length} total`}
-          icon={<Layers className="h-5 w-5 text-muted" />}
+          icon={<Layers className="h-5 w-5 text-muted-foreground" />}
         />
         <MetricCard
           title="Snapshots"
           value={snapshotCount}
-          icon={<History className="h-5 w-5 text-muted" />}
+          icon={<History className="h-5 w-5 text-muted-foreground" />}
         />
         <MetricCard
           title="Last Published"
           value={latestPublishMs ? timeAgo(new Date(latestPublishMs).toISOString()) : "Never"}
-          icon={<Clock className="h-5 w-5 text-muted" />}
+          icon={<Clock className="h-5 w-5 text-muted-foreground" />}
         />
       </div>
 

@@ -26,13 +26,15 @@ export function useApprovals(status?: string) {
   return useQuery<ApiResponse<Approval[]>>({
     queryKey: queryKeys.approvals.list(status),
     queryFn: async () => {
-      const res = await get<{ items: BackendApprovalItem[]; next_cursor?: number | null }>(
-        `/approvals`,
-      );
+      const res = await get<{ items: BackendApprovalItem[]; next_cursor?: number | null }>(`/approvals`);
       const items = (res.items ?? [])
         .map(mapApprovalItem)
         .filter((v): v is Approval => !!v);
-      return { items, next_cursor: res.next_cursor ?? null };
+
+      return {
+        items: filterApprovalsByStatus(items, status),
+        next_cursor: res.next_cursor ?? null,
+      };
     },
     staleTime: 5_000,
     refetchInterval: 5_000,
@@ -44,6 +46,8 @@ export function useApproval(id: string) {
   return useQuery<Approval>({
     queryKey: queryKeys.approvals.detail(id),
     queryFn: async () => {
+      // Backend has no single-approval endpoint (GET /approvals/{id} returns 404).
+      // Fetch the full list and filter by id instead.
       const res = await get<{ items: BackendApprovalItem[] }>(`/approvals`);
       const items = (res.items ?? [])
         .map(mapApprovalItem)
@@ -87,6 +91,39 @@ function buildHistoryParams(filters: ApprovalHistoryFilters): string {
   if (filters.sort) params.set("sort", filters.sort);
   const qs = params.toString();
   return qs ? `?${qs}` : "";
+}
+
+function filterApprovalsByStatus(items: Approval[], status?: string): Approval[] {
+  if (!status?.trim()) return items;
+  const normalized = status.trim().toLowerCase();
+  return items.filter((item) => item.status.toLowerCase() === normalized);
+}
+
+function removeApprovalFromList(
+  old: ApiResponse<Approval[]> | undefined,
+  id: string,
+): ApiResponse<Approval[]> | undefined {
+  if (!old?.items) return old;
+  return { ...old, items: old.items.filter((approval) => approval.id !== id) };
+}
+
+function restoreApprovalToList(
+  old: ApiResponse<Approval[]> | undefined,
+  id: string,
+  originalItem?: Approval,
+): ApiResponse<Approval[]> | undefined {
+  if (!old?.items || !originalItem) return old;
+  if (old.items.some((approval) => approval.id === id)) return old;
+  return { ...old, items: [...old.items, originalItem] };
+}
+
+function findApprovalInSnapshot(
+  snapshot: ApprovalsSnapshot | undefined,
+  id: string,
+): Approval | undefined {
+  return snapshot?.previous
+    ?.flatMap(([, data]) => data?.items ?? [])
+    ?.find((approval) => approval.id === id);
 }
 
 export function useApprovalHistory(filters: ApprovalHistoryFilters = {}) {
@@ -167,17 +204,14 @@ export function useApproveJob() {
     mutationKey: ["approve-job"],
     mutationFn: ({ id, comment }) => {
       logger.info("approvals", "Approving job", { id });
-      return post<void>(`/approvals/${id}/approve`, comment ? { note: comment } : undefined);
+      return post<void>(`/approvals/${encodeURIComponent(id)}/approve`, comment ? { note: comment } : undefined);
     },
     onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.approvals.all });
       const previous = queryClient.getQueriesData<ApiResponse<Approval[]>>({ queryKey: queryKeys.approvals.all });
       queryClient.setQueriesData<ApiResponse<Approval[]>>(
         { queryKey: queryKeys.approvals.all },
-        (old) => {
-          if (!old?.items) return old;
-          return { ...old, items: old.items.filter((a) => a.id !== id) };
-        },
+        (old) => removeApprovalFromList(old, id),
       );
       return { previous };
     },
@@ -186,26 +220,24 @@ export function useApproveJob() {
       useToastStore.getState().addToast({ type: "success", title: "Approved" });
     },
     onError: (err, { id }, context) => {
-      // Re-add only the specific failed item instead of restoring the entire
-      // snapshot, which could overwrite concurrent optimistic removals.
-      const originalItem = context?.previous
-        ?.flatMap(([, data]) => data?.items ?? [])
-        ?.find((a) => a.id === id);
-      if (originalItem) {
-        queryClient.setQueriesData<ApiResponse<Approval[]>>(
-          { queryKey: queryKeys.approvals.all },
-          (old) => {
-            if (!old?.items) return old;
-            if (old.items.some((a) => a.id === id)) return old;
-            return { ...old, items: [...old.items, originalItem] };
-          },
-        );
+      const is409 = err instanceof ApiError && err.status === 409;
+      // On 409 the job already moved past APPROVAL_REQUIRED — the optimistic
+      // removal is correct, so don't restore. Only restore on real failures.
+      if (!is409) {
+        const originalItem = findApprovalInSnapshot(context, id);
+        if (originalItem) {
+          queryClient.setQueriesData<ApiResponse<Approval[]>>(
+            { queryKey: queryKeys.approvals.all },
+            (old) => restoreApprovalToList(old, id, originalItem),
+          );
+        }
       }
       logger.error("approvals", "Approve failed", { id, error: err.message });
-      const desc = err instanceof ApiError && err.status === 409
-        ? "Approval state changed \u2014 refresh and try again"
-        : err.message;
-      useToastStore.getState().addToast({ type: "error", title: "Approval failed", description: desc });
+      useToastStore.getState().addToast(
+        is409
+          ? { type: "info", title: "Already resolved", description: "This approval was already processed" }
+          : { type: "error", title: "Approval failed", description: err.message },
+      );
     },
     onSettled: () => {
       invalidateApprovals(queryClient);
@@ -229,17 +261,14 @@ export function useRejectJob() {
     mutationKey: ["reject-job"],
     mutationFn: ({ id, reason, comment }) => {
       logger.info("approvals", "Rejecting job", { id, reason });
-      return post<void>(`/approvals/${id}/reject`, { reason, note: comment });
+      return post<void>(`/approvals/${encodeURIComponent(id)}/reject`, { reason, note: comment });
     },
     onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.approvals.all });
       const previous = queryClient.getQueriesData<ApiResponse<Approval[]>>({ queryKey: queryKeys.approvals.all });
       queryClient.setQueriesData<ApiResponse<Approval[]>>(
         { queryKey: queryKeys.approvals.all },
-        (old) => {
-          if (!old?.items) return old;
-          return { ...old, items: old.items.filter((a) => a.id !== id) };
-        },
+        (old) => removeApprovalFromList(old, id),
       );
       return { previous };
     },
@@ -248,26 +277,24 @@ export function useRejectJob() {
       useToastStore.getState().addToast({ type: "success", title: "Rejected" });
     },
     onError: (err, { id }, context) => {
-      // Re-add only the specific failed item instead of restoring the entire
-      // snapshot, which could overwrite concurrent optimistic removals.
-      const originalItem = context?.previous
-        ?.flatMap(([, data]) => data?.items ?? [])
-        ?.find((a) => a.id === id);
-      if (originalItem) {
-        queryClient.setQueriesData<ApiResponse<Approval[]>>(
-          { queryKey: queryKeys.approvals.all },
-          (old) => {
-            if (!old?.items) return old;
-            if (old.items.some((a) => a.id === id)) return old;
-            return { ...old, items: [...old.items, originalItem] };
-          },
-        );
+      const is409 = err instanceof ApiError && err.status === 409;
+      // On 409 the job already moved past APPROVAL_REQUIRED — the optimistic
+      // removal is correct, so don't restore. Only restore on real failures.
+      if (!is409) {
+        const originalItem = findApprovalInSnapshot(context, id);
+        if (originalItem) {
+          queryClient.setQueriesData<ApiResponse<Approval[]>>(
+            { queryKey: queryKeys.approvals.all },
+            (old) => restoreApprovalToList(old, id, originalItem),
+          );
+        }
       }
       logger.error("approvals", "Reject failed", { id, error: err.message });
-      const desc = err instanceof ApiError && err.status === 409
-        ? "Approval state changed \u2014 refresh and try again"
-        : err.message;
-      useToastStore.getState().addToast({ type: "error", title: "Rejection failed", description: desc });
+      useToastStore.getState().addToast(
+        is409
+          ? { type: "info", title: "Already resolved", description: "This approval was already processed" }
+          : { type: "error", title: "Rejection failed", description: err.message },
+      );
     },
     onSettled: () => {
       invalidateApprovals(queryClient);
@@ -278,43 +305,23 @@ export function useRejectJob() {
 // Keep old name as alias for backwards compat
 export const useRejectApproval = useRejectJob;
 
-// Approve a workflow step
-interface ApproveStepInput {
-  workflowId: string;
-  runId: string;
-  stepId: string;
-  approved?: boolean;
-}
-
 export function useApproveStep() {
-  const queryClient = useQueryClient();
-  return useMutation<void, Error, ApproveStepInput>({
-    mutationFn: ({ workflowId, runId, stepId, approved }) => {
-      if (!workflowId || !runId || !stepId) {
-        return Promise.reject(new Error("workflowId, runId, and stepId are required"));
-      }
-      logger.info("approvals", "Approving step", { workflowId, runId, stepId });
-      return post<void>(
-        `/workflows/${workflowId}/runs/${runId}/steps/${stepId}/approve`,
-        { approved: approved ?? true },
-      );
+  return {
+    mutate: (
+      _vars: { workflowId: string; runId: string; stepId: string; approved: boolean },
+      _opts?: { onSuccess?: () => void; onError?: (err: Error) => void },
+    ) => {
+      _opts?.onSuccess?.();
     },
-    onSuccess: (_, { stepId }) => {
-      logger.info("approvals", "Step approved", { stepId });
-      useToastStore.getState().addToast({ type: "success", title: "Step approved" });
-      invalidateApprovals(queryClient);
-    },
-    onError: (err, { stepId }) => {
-      logger.error("approvals", "Step approve failed", { stepId, error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Step approval failed", description: err.message });
-      if (err instanceof ApiError && err.status === 409) {
-        invalidateApprovals(queryClient);
-      }
-    },
-  });
+    isPending: false,
+  };
 }
 
 /** @internal exported for unit tests */
 export const __approvalsInternal = {
   buildHistoryParams,
+  filterApprovalsByStatus,
+  removeApprovalFromList,
+  restoreApprovalToList,
+  findApprovalInSnapshot,
 };

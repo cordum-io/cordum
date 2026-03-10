@@ -382,3 +382,220 @@ func TestDelayTimerIdempotent(t *testing.T) {
 		t.Fatalf("expected updated score %d, got %d", newFireAt.Unix(), int64(members[0].Score))
 	}
 }
+
+// TestDelayTimerPreservedOnStartRunFailure verifies that when StartRun fails
+// after a timer fires, the durable timer entry is NOT removed from Redis.
+// This ensures the delay poller can retry the resume on its next tick.
+func TestDelayTimerPreservedOnStartRunFailure(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create engine with store but no workflow saved — StartRun will fail
+	// with "get workflow" error because the workflow doesn't exist.
+	engine := NewEngine(store, nil)
+	defer engine.Stop()
+
+	workflowID := "wf-nosuch"
+	runID := "run-startrun-fail"
+
+	// Pre-seed a durable timer in the ZSET (simulates scheduleAfter's AddDelayTimer).
+	fireAt := time.Now().Add(50 * time.Millisecond)
+	if err := store.AddDelayTimer(ctx, workflowID, runID, fireAt); err != nil {
+		t.Fatalf("AddDelayTimer: %v", err)
+	}
+
+	// Schedule a short timer — it will fire and call StartRun, which will fail.
+	engine.scheduleAfter(50*time.Millisecond, workflowID, runID)
+
+	// Wait for the timer to fire.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if engine.PendingTimers() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if engine.PendingTimers() != 0 {
+		t.Fatal("timer did not fire within deadline")
+	}
+
+	// The durable timer entry must still exist in Redis because StartRun failed.
+	count, err := store.client.ZCard(ctx, delayTimerKey).Result()
+	if err != nil {
+		t.Fatalf("ZCard: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected durable timer preserved (1 entry) after StartRun failure, got %d", count)
+	}
+}
+
+// TestDelayTimerRemovedOnStartRunSuccess verifies that after a successful
+// StartRun, the durable timer entry IS removed from Redis.
+func TestDelayTimerRemovedOnStartRunSuccess(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer store.Close()
+
+	ctx := context.Background()
+
+	engine := NewEngine(store, nil)
+	defer engine.Stop()
+
+	workflowID := "wf-delay-ok"
+	runID := "run-delay-ok"
+
+	// Save a minimal workflow and a terminal run so StartRun succeeds (returns nil).
+	wf := &Workflow{
+		ID:    workflowID,
+		OrgID: "org-1",
+		Steps: map[string]*Step{},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	now := time.Now().UTC()
+	run := &WorkflowRun{
+		ID:         runID,
+		WorkflowID: workflowID,
+		OrgID:      "org-1",
+		Status:     RunStatusSucceeded, // terminal — StartRun returns nil immediately
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Pre-seed the durable timer.
+	fireAt := time.Now().Add(50 * time.Millisecond)
+	if err := store.AddDelayTimer(ctx, workflowID, runID, fireAt); err != nil {
+		t.Fatalf("AddDelayTimer: %v", err)
+	}
+
+	engine.scheduleAfter(50*time.Millisecond, workflowID, runID)
+
+	// Wait for the timer to fire.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if engine.PendingTimers() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if engine.PendingTimers() != 0 {
+		t.Fatal("timer did not fire within deadline")
+	}
+
+	// Small grace period for the async RemoveDelayTimer call.
+	time.Sleep(50 * time.Millisecond)
+
+	// The durable timer entry must be removed after successful StartRun.
+	count, err := store.client.ZCard(ctx, delayTimerKey).Result()
+	if err != nil {
+		t.Fatalf("ZCard: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected durable timer removed (0 entries) after successful StartRun, got %d", count)
+	}
+}
+
+// TestDelayTimerRecoveryAfterTransientFailure verifies the end-to-end resilient
+// behavior: a timer fires, StartRun fails (transient), durable timer is preserved,
+// and a subsequent StartRun (simulating reconciler/poller retry) succeeds and
+// progresses the delay step to completed.
+func TestDelayTimerRecoveryAfterTransientFailure(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer store.Close()
+
+	ctx := context.Background()
+	engine := NewEngine(store, nil)
+	defer engine.Stop()
+
+	workflowID := "wf-recover"
+	runID := "run-recover"
+
+	// Phase 1: Timer fires with no workflow → StartRun fails, timer preserved.
+	fireAt := time.Now().Add(50 * time.Millisecond)
+	if err := store.AddDelayTimer(ctx, workflowID, runID, fireAt); err != nil {
+		t.Fatalf("AddDelayTimer: %v", err)
+	}
+	engine.scheduleAfter(50*time.Millisecond, workflowID, runID)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if engine.PendingTimers() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if engine.PendingTimers() != 0 {
+		t.Fatal("timer did not fire within deadline")
+	}
+
+	// Timer should be preserved because StartRun failed.
+	count, err := store.client.ZCard(ctx, delayTimerKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("phase 1: expected timer preserved (1), got %d", count)
+	}
+
+	// Phase 2: "Fix" the transient issue by creating the workflow and run with
+	// a delay step whose NextAttemptAt is in the past (simulating the delay
+	// period having elapsed). Then call StartRun as the reconciler would.
+	now := time.Now().UTC()
+	pastDelay := now.Add(-10 * time.Second)
+	wf := &Workflow{
+		ID:    workflowID,
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"wait": {ID: "wait", Type: StepTypeDelay, DelaySec: 5},
+		},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &WorkflowRun{
+		ID:         runID,
+		WorkflowID: workflowID,
+		OrgID:      "org-1",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"wait": {
+				StepID:        "wait",
+				Status:        StepStatusRunning,
+				StartedAt:     &now,
+				NextAttemptAt: &pastDelay, // delay has elapsed
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Simulate reconciler calling StartRun.
+	if err := engine.StartRun(ctx, workflowID, runID); err != nil {
+		t.Fatalf("reconciler StartRun should succeed: %v", err)
+	}
+
+	// Verify the delay step was completed by scheduleReady.
+	updatedRun, err := store.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	waitStep := updatedRun.Steps["wait"]
+	if waitStep == nil {
+		t.Fatal("wait step missing from run")
+	}
+	if waitStep.Status != StepStatusSucceeded {
+		t.Fatalf("expected delay step succeeded after recovery, got %s", waitStep.Status)
+	}
+}

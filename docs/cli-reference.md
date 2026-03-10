@@ -45,7 +45,6 @@ cordumctl status --gateway https://prod:8081 --api-key $KEY --cacert ./certs/ca/
 | `run start` | Start a workflow run |
 | `run delete` | Delete a workflow run |
 | `run timeline` | Get run timeline events |
-| `approval step` | Approve or reject a workflow step |
 | `approval job` | Approve or reject a job |
 | `dlq retry` | Retry a dead-letter job |
 | `pack create` | Scaffold a new pack |
@@ -315,20 +314,6 @@ cordumctl run timeline run-abc123
 ---
 
 ## Approvals
-
-### `approval step <workflow_id> <run_id> <step_id>`
-
-Approve or reject a workflow step that requires human approval.
-
-| Flag | Description |
-|------|-------------|
-| `--approve` | Approve the step |
-| `--reject` | Reject the step |
-
-```bash
-cordumctl approval step wf-123 run-456 step-789 --approve
-cordumctl approval step wf-123 run-456 step-789 --reject
-```
 
 ### `approval job <job_id>`
 

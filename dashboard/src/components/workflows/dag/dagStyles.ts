@@ -154,7 +154,7 @@ export function colorEdgesByStatus(
     ) {
       return {
         ...edge,
-        style: { ...(edge.style ?? {}), stroke: "var(--info, #3b82f6)" },
+        style: { ...(edge.style ?? {}), stroke: "var(--info, #0f7f7a)" },
         animated: true,
       };
     }

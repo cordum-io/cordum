@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -59,26 +60,6 @@ func TestStartRunEncodesWorkflowID(t *testing.T) {
 
 	if _, err := client.StartRunWithDryRun(context.Background(), workflowID, map[string]any{"input": "ok"}, true); err != nil {
 		t.Fatalf("StartRunWithDryRun error: %v", err)
-	}
-}
-
-func TestApproveStepEncodesSegments(t *testing.T) {
-	workflowID := "wf:1"
-	runID := "run/1"
-	stepID := "step:alpha/beta"
-	expectedPath := "/api/v1/workflows/" + url.PathEscape(workflowID) +
-		"/runs/" + url.PathEscape(runID) +
-		"/steps/" + url.PathEscape(stepID) + "/approve"
-
-	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.EscapedPath() != expectedPath {
-			t.Fatalf("expected path %q, got %q", expectedPath, req.URL.EscapedPath())
-		}
-		return jsonResponse(http.StatusNoContent, ""), nil
-	}))
-
-	if err := client.ApproveStep(context.Background(), workflowID, runID, stepID, true); err != nil {
-		t.Fatalf("ApproveStep error: %v", err)
 	}
 }
 
@@ -148,10 +129,16 @@ func TestBuildTLSTransportBadCA(t *testing.T) {
 	if err := os.WriteFile(badCA, []byte("not a cert"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	// BuildTLSTransport silently ignores read errors (returns transport with nil RootCAs).
-	tr := BuildTLSTransport(TLSOptions{CACertPath: badCA})
-	if tr == nil {
-		t.Fatal("expected non-nil transport")
+	// BuildTLSTransportErr returns an error for invalid PEM content.
+	tr, err := BuildTLSTransportErr(TLSOptions{CACertPath: badCA})
+	if err == nil {
+		t.Fatal("expected error for invalid PEM content")
+	}
+	if tr != nil {
+		t.Fatal("expected nil transport on error")
+	}
+	if !strings.Contains(err.Error(), "no valid PEM") {
+		t.Fatalf("expected PEM parse error, got: %v", err)
 	}
 }
 
@@ -207,4 +194,367 @@ func generateTestCA(t *testing.T) string {
 		t.Fatalf("pem encode: %v", err)
 	}
 	return path
+}
+
+// faultyReadCloser returns partial data then an error on Read.
+type faultyReadCloser struct {
+	partial string
+	readErr error
+	read    bool
+}
+
+func (f *faultyReadCloser) Read(p []byte) (int, error) {
+	if !f.read {
+		f.read = true
+		n := copy(p, f.partial)
+		return n, f.readErr
+	}
+	return 0, f.readErr
+}
+
+func (f *faultyReadCloser) Close() error { return nil }
+
+// TestDoJSONBodyReadErrorPreserved verifies that when reading a non-2xx
+// response body fails, the read error is included in the returned error
+// instead of being silently dropped.
+func TestDoJSONBodyReadErrorPreserved(t *testing.T) {
+	readErr := fmt.Errorf("connection reset by peer")
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 500,
+			Body:       &faultyReadCloser{partial: "", readErr: readErr},
+			Header:     make(http.Header),
+		}, nil
+	}))
+
+	err := client.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error for non-2xx response")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "500") {
+		t.Fatalf("expected status code in error, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "body read error") {
+		t.Fatalf("expected body read error context, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "connection reset") {
+		t.Fatalf("expected original read error, got: %s", errStr)
+	}
+}
+
+// TestDoJSONBodyReadErrorWithPartialBody verifies that partial body content
+// is still included alongside the read error.
+func TestDoJSONBodyReadErrorWithPartialBody(t *testing.T) {
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 502,
+			Body:       &faultyReadCloser{partial: "Bad Gateway from", readErr: fmt.Errorf("truncated")},
+			Header:     make(http.Header),
+		}, nil
+	}))
+
+	err := client.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "502") {
+		t.Fatalf("expected status code, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "Bad Gateway from") {
+		t.Fatalf("expected partial body in error, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "truncated") {
+		t.Fatalf("expected read error, got: %s", errStr)
+	}
+}
+
+// TestDoJSONNon2xxNoReadError verifies the normal non-2xx path still works
+// when body read succeeds.
+func TestDoJSONNon2xxNoReadError(t *testing.T) {
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(403, `{"error":"forbidden"}`), nil
+	}))
+
+	err := client.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error for 403")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "403") {
+		t.Fatalf("expected 403, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "forbidden") {
+		t.Fatalf("expected body message, got: %s", errStr)
+	}
+	if strings.Contains(errStr, "body read error") {
+		t.Fatalf("should not contain body read error for successful read, got: %s", errStr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: TLS MinVersion enforcement
+// ---------------------------------------------------------------------------
+
+func TestBuildTLSTransportErrMinVersion(t *testing.T) {
+	// Insecure mode should still enforce TLS 1.2 minimum.
+	tr, err := BuildTLSTransportErr(TLSOptions{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tr == nil {
+		t.Fatal("expected non-nil transport")
+	}
+	if tr.TLSClientConfig.MinVersion != 0x0303 { // tls.VersionTLS12
+		t.Fatalf("expected MinVersion=TLS1.2 (0x0303), got 0x%04x", tr.TLSClientConfig.MinVersion)
+	}
+}
+
+func TestBuildTLSTransportErrWithCAMinVersion(t *testing.T) {
+	caPath := generateTestCA(t)
+	tr, err := BuildTLSTransportErr(TLSOptions{CACertPath: caPath})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tr == nil {
+		t.Fatal("expected non-nil transport")
+	}
+	if tr.TLSClientConfig.MinVersion != 0x0303 {
+		t.Fatalf("expected MinVersion=TLS1.2, got 0x%04x", tr.TLSClientConfig.MinVersion)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: CA file read errors are reported, not silently swallowed
+// ---------------------------------------------------------------------------
+
+func TestBuildTLSTransportErrMissingCA(t *testing.T) {
+	tr, err := BuildTLSTransportErr(TLSOptions{CACertPath: "/nonexistent/ca.crt"})
+	if err == nil {
+		t.Fatal("expected error for missing CA file")
+	}
+	if tr != nil {
+		t.Fatal("expected nil transport on error")
+	}
+	if !strings.Contains(err.Error(), "read ca cert") {
+		t.Fatalf("expected descriptive error, got: %v", err)
+	}
+}
+
+func TestBuildTLSTransportErrNoOptions(t *testing.T) {
+	tr, err := BuildTLSTransportErr(TLSOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tr != nil {
+		t.Fatal("expected nil transport for zero-value TLSOptions")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: NewWithTLSErr strict error propagation
+// ---------------------------------------------------------------------------
+
+func TestNewWithTLSErrMissingCA(t *testing.T) {
+	_, err := NewWithTLSErr("https://example.com", "key", TLSOptions{CACertPath: "/nonexistent/ca.crt"})
+	if err == nil {
+		t.Fatal("expected error for missing CA file")
+	}
+	if !strings.Contains(err.Error(), "tls config") {
+		t.Fatalf("expected tls config error wrapper, got: %v", err)
+	}
+}
+
+func TestNewWithTLSErrSuccess(t *testing.T) {
+	c, err := NewWithTLSErr("https://example.com", "key", TLSOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil client")
+	}
+	if c.BaseURL != "https://example.com" {
+		t.Fatalf("expected base url, got %s", c.BaseURL)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: Secret redaction in error responses
+// ---------------------------------------------------------------------------
+
+func TestRedactSecretsInErrorBody(t *testing.T) {
+	apiKey := "super-secret-api-key-1234"
+	client := &Client{
+		BaseURL:  "http://example.test",
+		APIKey:   apiKey,
+		TenantID: "tenant-1",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			// Server echoes back the API key in the error response.
+			body := fmt.Sprintf(`{"error":"invalid key: %s"}`, apiKey)
+			return jsonResponse(401, body), nil
+		})},
+	}
+
+	err := client.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error for 401")
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, apiKey) {
+		t.Fatalf("API key should be redacted from error, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "[REDACTED]") {
+		t.Fatalf("expected [REDACTED] placeholder, got: %s", errStr)
+	}
+}
+
+func TestRedactSecretsShortKey(t *testing.T) {
+	// Short API keys (< 8 chars) are not redacted to avoid false positives.
+	client := &Client{
+		BaseURL:  "http://example.test",
+		APIKey:   "short",
+		TenantID: "tenant-1",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return jsonResponse(401, `error contains short`), nil
+		})},
+	}
+
+	err := client.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// "short" should NOT be redacted because the key is too short.
+	if strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatal("short keys should not trigger redaction")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: Client.String() redacts API key
+// ---------------------------------------------------------------------------
+
+func TestClientStringRedactsKey(t *testing.T) {
+	c := &Client{
+		BaseURL:  "https://example.com",
+		APIKey:   "super-secret-api-key",
+		TenantID: "default",
+	}
+	s := c.String()
+	if strings.Contains(s, "super-secret-api-key") {
+		t.Fatalf("String() should redact API key, got: %s", s)
+	}
+	if !strings.Contains(s, "supe****") {
+		t.Fatalf("expected partial key prefix, got: %s", s)
+	}
+}
+
+func TestClientStringNoKey(t *testing.T) {
+	c := &Client{BaseURL: "https://example.com", TenantID: "default"}
+	s := c.String()
+	if !strings.Contains(s, "(none)") {
+		t.Fatalf("expected (none) for empty key, got: %s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: Empty/invalid URL handling
+// ---------------------------------------------------------------------------
+
+func TestDoJSONEmptyBaseURL(t *testing.T) {
+	client := &Client{
+		BaseURL:  "",
+		APIKey:   "key",
+		TenantID: "t",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("should not reach here")
+		})},
+	}
+	// Empty base URL produces an invalid request URL.
+	err := client.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error for empty base URL")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: Auth header injection
+// ---------------------------------------------------------------------------
+
+func TestDoJSONSetsAuthHeaders(t *testing.T) {
+	client := &Client{
+		BaseURL:  "http://example.test",
+		APIKey:   "my-key",
+		TenantID: "my-tenant",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if got := req.Header.Get("X-API-Key"); got != "my-key" {
+				t.Fatalf("expected X-API-Key header, got %q", got)
+			}
+			if got := req.Header.Get("X-Tenant-ID"); got != "my-tenant" {
+				t.Fatalf("expected X-Tenant-ID header, got %q", got)
+			}
+			return jsonResponse(200, `{}`), nil
+		})},
+	}
+	err := client.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDoJSONNoAuthHeaderWhenEmpty(t *testing.T) {
+	client := &Client{
+		BaseURL:  "http://example.test",
+		APIKey:   "",
+		TenantID: "",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if got := req.Header.Get("X-API-Key"); got != "" {
+				t.Fatalf("expected no X-API-Key header, got %q", got)
+			}
+			if got := req.Header.Get("X-Tenant-ID"); got != "" {
+				t.Fatalf("expected no X-Tenant-ID header, got %q", got)
+			}
+			return jsonResponse(200, `{}`), nil
+		})},
+	}
+	err := client.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: Nil request validation
+// ---------------------------------------------------------------------------
+
+func TestCreateWorkflowNilRequest(t *testing.T) {
+	client := newTestClient(nil)
+	_, err := client.CreateWorkflow(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for nil request")
+	}
+}
+
+func TestSubmitJobNilRequest(t *testing.T) {
+	client := newTestClient(nil)
+	_, err := client.SubmitJob(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for nil request")
+	}
+}
+
+func TestGetRunEmptyID(t *testing.T) {
+	client := newTestClient(nil)
+	_, err := client.GetRun(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty run ID")
+	}
+}
+
+func TestApproveJobEmptyID(t *testing.T) {
+	client := newTestClient(nil)
+	err := client.ApproveJob(context.Background(), "", true)
+	if err == nil {
+		t.Fatal("expected error for empty job ID")
+	}
 }

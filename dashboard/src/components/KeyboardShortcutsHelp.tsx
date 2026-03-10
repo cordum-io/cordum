@@ -32,7 +32,7 @@ export function KeyboardShortcutsHelp() {
     >
       <div
         ref={dialogRef}
-        className="mx-4 w-full max-w-md rounded-2xl border border-border bg-white p-6 shadow-2xl dark:bg-[var(--surface)]"
+        className="mx-4 w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl"
       >
         {/* Header */}
         <div className="mb-4 flex items-center gap-2">
@@ -42,7 +42,7 @@ export function KeyboardShortcutsHelp() {
 
         {/* Navigation shortcuts */}
         <div className="mb-4">
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Navigation
           </h3>
           <div className="space-y-1.5">
@@ -66,7 +66,7 @@ export function KeyboardShortcutsHelp() {
 
         {/* Utility shortcuts */}
         <div className="mb-4">
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Utility
           </h3>
           <div className="space-y-1.5">
@@ -97,7 +97,7 @@ export function KeyboardShortcutsHelp() {
         </div>
 
         {/* Footer hint */}
-        <p className="text-center text-[11px] text-muted">
+        <p className="text-center text-[11px] text-muted-foreground">
           Press <kbd className="rounded bg-[var(--surface2)] px-1 py-0.5 font-mono text-[10px]">g</kbd> then a letter within 1 second
         </p>
       </div>

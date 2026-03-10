@@ -113,7 +113,7 @@ function CollapsibleJson({ label, data }: { label: string; data: unknown }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-muted hover:text-ink transition"
+        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-ink transition"
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5" />
@@ -138,7 +138,7 @@ function CollapsibleJson({ label, data }: { label: string; data: unknown }) {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </h4>
       {children}
@@ -149,7 +149,7 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between text-xs">
-      <span className="text-muted">{label}</span>
+      <span className="text-muted-foreground">{label}</span>
       <span className="font-medium text-ink">{value}</span>
     </div>
   );
@@ -242,7 +242,7 @@ function JobDetail({
         <div className="flex items-center justify-between">
           <RunStatusBadge status={runStep?.status} />
           {duration != null && (
-            <span className="text-xs text-muted">{formatDuration(duration)}</span>
+            <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
           )}
         </div>
         {runStep?.startedAt && (
@@ -288,13 +288,13 @@ function JobDetail({
               {safetyDecision.type}
             </Badge>
             {safetyDecision.matchedRule && (
-              <span className="text-[10px] text-muted">
+              <span className="text-[10px] text-muted-foreground">
                 rule: {safetyDecision.matchedRule}
               </span>
             )}
           </div>
           {safetyDecision.reason && (
-            <p className="text-xs text-muted">{truncate(safetyDecision.reason, 200)}</p>
+            <p className="text-xs text-muted-foreground">{truncate(safetyDecision.reason, 200)}</p>
           )}
           {safetyDecision.evalTimeMs != null && (
             <InfoRow label="Eval time" value={`${safetyDecision.evalTimeMs}ms`} />
@@ -460,7 +460,7 @@ function ApprovalDetail({
           <InfoRow label="Actor" value={truncate(actor, 60)} />
           {resolvedAt && <InfoRow label="Resolved at" value={formatDate(resolvedAt)} />}
           {existingComment && (
-            <p className="text-xs text-muted italic">{truncate(existingComment, 300)}</p>
+            <p className="text-xs text-muted-foreground italic">{truncate(existingComment, 300)}</p>
           )}
         </Section>
       )}
@@ -490,7 +490,7 @@ function ApprovalDetail({
               variant="primary"
               size="sm"
               type="button"
-              className="bg-green-600 hover:bg-green-700"
+              className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90"
               onClick={handleApprove}
               disabled={isPending}
             >
@@ -610,7 +610,7 @@ function DelayDetail({
         <Section label={isRunning ? "Time Elapsed" : "Total Wait"}>
           <span className="text-xs font-medium text-ink">{formatDuration(elapsed)}</span>
           {isRunning && delayMs != null && elapsed < delayMs && (
-            <span className="ml-2 text-[10px] text-muted">
+            <span className="ml-2 text-[10px] text-muted-foreground">
               ({formatDuration(delayMs - elapsed)} remaining)
             </span>
           )}
@@ -722,7 +722,7 @@ function SwitchDetail({
 
       <Section label={`Cases (${switchCases.length})`}>
         {switchCases.length === 0 ? (
-          <p className="text-xs text-muted">No cases configured.</p>
+          <p className="text-xs text-muted-foreground">No cases configured.</p>
         ) : (
           <div className="space-y-1">
             {switchCases.map((entry, idx) => {
@@ -743,7 +743,7 @@ function SwitchDetail({
                       <RunStatusBadge status={stepRun?.status ?? "pending"} />
                     </div>
                   </div>
-                  <p className="mt-1 text-[11px] text-muted">{truncate(stepRun?.name || entry.stepId, 120)}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{truncate(stepRun?.name || entry.stepId, 120)}</p>
                 </div>
               );
             })}
@@ -824,7 +824,7 @@ function ParallelDetail({
         <div className="h-2 w-full overflow-hidden rounded-full bg-surface2">
           <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progressPct}%` }} />
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-muted">
+        <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
           <span>succeeded: {succeeded}</span>
           <span>failed: {failed}</span>
           <span>cancelled: {cancelled}</span>
@@ -967,7 +967,7 @@ function LoopDetail({
             <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progressPct}%` }} />
           </div>
         )}
-        <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-muted">
+        <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
           <span>dispatched: {dispatchedIterations}</span>
           <span>active: {activeChildren}</span>
           <span>failed: {failedChildren}</span>
@@ -993,9 +993,9 @@ function LoopDetail({
                   >
                     <div className="flex items-center gap-2">
                       {isOpen ? (
-                        <ChevronDown className="h-3.5 w-3.5 text-muted" />
+                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                       ) : (
-                        <ChevronRight className="h-3.5 w-3.5 text-muted" />
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
                       )}
                       <span className="text-xs font-medium text-ink">{`Iteration ${entry.index + 1}`}</span>
                     </div>
@@ -1082,7 +1082,7 @@ function SubWorkflowDetail({
         <div className="flex items-center justify-between">
           <RunStatusBadge status={runStep?.status} />
           {childDuration != null && (
-            <span className="text-xs text-muted">{formatDuration(childDuration)}</span>
+            <span className="text-xs text-muted-foreground">{formatDuration(childDuration)}</span>
           )}
         </div>
         {childStatus && <InfoRow label="Child status" value={<RunStatusBadge status={childStatus} />} />}
@@ -1094,7 +1094,7 @@ function SubWorkflowDetail({
             {childWorkflowId}
           </Link>
         ) : (
-          <span className="text-xs text-muted">Not configured</span>
+          <span className="text-xs text-muted-foreground">Not configured</span>
         )}
         {childRunId && childWorkflowId && (
           <div>
@@ -1151,7 +1151,7 @@ function TransformDetail({
         <div className="flex items-center justify-between">
           <RunStatusBadge status={runStep?.status} />
           {duration != null && (
-            <span className="text-xs text-muted">{formatDuration(duration)}</span>
+            <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
           )}
         </div>
         {runStep?.startedAt && <InfoRow label="Started" value={formatDate(runStep.startedAt)} />}
@@ -1166,7 +1166,7 @@ function TransformDetail({
 
       <Section label={`Mappings (${entries.length})`}>
         {entries.length === 0 ? (
-          <p className="text-xs text-muted">No input mappings configured.</p>
+          <p className="text-xs text-muted-foreground">No input mappings configured.</p>
         ) : (
           <div className="space-y-2">
             {entries.map(([key, expr]) => (
@@ -1177,7 +1177,7 @@ function TransformDetail({
                     <Badge variant="success" className="text-[10px]">evaluated</Badge>
                   )}
                 </div>
-                <pre className="mt-1 rounded bg-surface2/40 px-2 py-1 text-[11px] font-mono text-muted">
+                <pre className="mt-1 rounded bg-surface2/40 px-2 py-1 text-[11px] font-mono text-muted-foreground">
                   {typeof expr === "string" ? expr : JSON.stringify(expr, null, 2)}
                 </pre>
                 {runStep?.status === "succeeded" && outputMap[key] !== undefined && (
@@ -1248,7 +1248,7 @@ function StorageDetail({
         <div className="flex items-center justify-between">
           <RunStatusBadge status={runStep?.status} />
           {duration != null && (
-            <span className="text-xs text-muted">{formatDuration(duration)}</span>
+            <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
           )}
         </div>
         {runStep?.startedAt && <InfoRow label="Started" value={formatDate(runStep.startedAt)} />}
@@ -1336,7 +1336,7 @@ export function NodeDetailPanel({
           {/* Header */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface2 text-muted">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface2 text-muted-foreground">
                 {stepIcon}
               </div>
               <div className="min-w-0">
@@ -1356,12 +1356,12 @@ export function NodeDetailPanel({
               onClick={onClose}
               className="rounded-full p-1.5 hover:bg-surface2 transition"
             >
-              <X className="h-4 w-4 text-muted" />
+              <X className="h-4 w-4 text-muted-foreground" />
             </button>
           </div>
 
           {/* Step-type-specific content */}
-          {step.type === "job" && (
+          {["job", "worker", "agent-task", "pack-action", "tool-call"].includes(step.type) && (
             <JobDetail step={step} runStep={runStep} />
           )}
           {step.type === "approval" && (
@@ -1401,7 +1401,7 @@ export function NodeDetailPanel({
           {step.type === "notify" && (
             <GenericDetail runStep={runStep} />
           )}
-          {!["job", "approval", "condition", "switch", "delay", "fan-out", "fanout", "parallel", "loop", "sub-workflow", "subworkflow", "transform", "storage", "notify"].includes(step.type) && (
+          {!["job", "worker", "agent-task", "pack-action", "tool-call", "approval", "condition", "switch", "delay", "fan-out", "fanout", "parallel", "loop", "sub-workflow", "subworkflow", "transform", "storage", "notify"].includes(step.type) && (
             <GenericDetail runStep={runStep} />
           )}
         </div>

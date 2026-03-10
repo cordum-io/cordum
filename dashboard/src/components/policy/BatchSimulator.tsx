@@ -146,7 +146,7 @@ export function BatchSimulator({ bundleId }: BatchSimulatorProps) {
           <h3 className="font-display text-lg font-semibold text-ink">
             Batch Simulation
           </h3>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             Paste a JSON array of job payloads to simulate each one. Max {MAX_PAYLOADS} payloads.
           </p>
 
@@ -186,7 +186,7 @@ export function BatchSimulator({ bundleId }: BatchSimulatorProps) {
                   style={{ width: `${(progress.completed / progress.total) * 100}%` }}
                 />
               </div>
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted-foreground">
                 {progress.completed}/{progress.total} simulated
               </p>
             </div>
@@ -203,7 +203,7 @@ export function BatchSimulator({ bundleId }: BatchSimulatorProps) {
               deny: "bg-danger/10 text-danger",
               require_approval: "bg-warning/10 text-warning",
               throttle: "bg-accent/10 text-accent",
-              error: "bg-muted/10 text-muted",
+              error: "bg-muted/10 text-muted-foreground",
             };
             const labels: Record<string, string> = {
               allow: "Allow",
@@ -228,7 +228,7 @@ export function BatchSimulator({ bundleId }: BatchSimulatorProps) {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-border text-left text-muted">
+                <tr className="border-b border-border text-left text-muted-foreground">
                   <th className="px-3 py-2 font-semibold">#</th>
                   <th className="px-3 py-2 font-semibold">Topic</th>
                   <th className="px-3 py-2 font-semibold">Decision</th>
@@ -242,7 +242,7 @@ export function BatchSimulator({ bundleId }: BatchSimulatorProps) {
                     key={r.index}
                     className="border-b border-border/50 transition hover:bg-surface2/30"
                   >
-                    <td className="px-3 py-2 font-mono text-muted">{r.index}</td>
+                    <td className="px-3 py-2 font-mono text-muted-foreground">{r.index}</td>
                     <td className="px-3 py-2 font-medium text-ink">{r.topic}</td>
                     <td className="px-3 py-2">
                       {r.error ? (
@@ -253,14 +253,14 @@ export function BatchSimulator({ bundleId }: BatchSimulatorProps) {
                         </Badge>
                       )}
                     </td>
-                    <td className="px-3 py-2 font-mono text-muted">
+                    <td className="px-3 py-2 font-mono text-muted-foreground">
                       {r.error ? (
                         <span className="text-danger">{r.error}</span>
                       ) : (
                         r.matchedRule || "\u2014"
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right text-muted">
+                    <td className="px-3 py-2 text-right text-muted-foreground">
                       {r.error ? "\u2014" : r.evalTimeMs}
                     </td>
                   </tr>

@@ -46,10 +46,10 @@ export function EnvironmentCard({ env, onEdit, onPromote, isOnly }: EnvironmentC
           <h3 className="font-display text-base font-semibold text-ink capitalize">{env.name}</h3>
           <Badge variant={STATUS_VARIANT[env.status] ?? "default"}>{env.status}</Badge>
         </div>
-        <Globe className="h-5 w-5 text-muted opacity-40" />
+        <Globe className="h-5 w-5 text-muted-foreground opacity-40" />
       </div>
 
-      <div className="mt-4 space-y-2 text-xs text-muted">
+      <div className="mt-4 space-y-2 text-xs text-muted-foreground">
         {env.endpoint ? (
           <div className="flex items-center gap-2">
             <Globe className="h-3.5 w-3.5 shrink-0" />

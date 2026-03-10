@@ -322,7 +322,12 @@ cordumctl workflow create --file workflows/hello.json
 
 ` + "```bash" + `
 run_id=$(cordumctl run start <workflow_id>)
-cordumctl approval step --approve <workflow_id> ${run_id} approve
+
+# Find the workflow gate job in the approvals queue, then approve it
+job_id=$(curl -sS http://localhost:8081/api/v1/approvals \
+  -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: default" | jq -r '.items[0].job.id')
+cordumctl approval job ${job_id} --approve
 ` + "```" + `
 
 ## Open the dashboard

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -121,8 +120,26 @@ func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
 // response time between user-exists and user-not-found login paths,
 // preventing username enumeration via timing side-channel.
 //
+// SECURITY: This hash MUST use the same bcrypt cost as production password
+// hashing (bcryptCostFromEnv / defaultBcryptCost=12). Using a different cost
+// (e.g. bcrypt.DefaultCost=10) creates a ~4x timing difference that leaks
+// whether a username exists.
+//
 //nolint:gosec // G101: this is not a credential, it's a timing-equalization dummy.
-var loginTimingDummyHash, _ = bcrypt.GenerateFromPassword([]byte("timing-pad"), bcrypt.DefaultCost)
+var loginTimingDummyHash []byte
+
+func init() {
+	cost := bcryptCostFromEnv()
+	hash, err := bcrypt.GenerateFromPassword([]byte("timing-pad"), cost)
+	if err != nil {
+		// Fallback: generate with default cost rather than panicking at startup.
+		// This path should never be reached in practice.
+		hash, _ = bcrypt.GenerateFromPassword([]byte("timing-pad"), bcrypt.DefaultCost)
+		slog.Error("failed to generate timing dummy hash with configured cost, falling back to default",
+			"configured_cost", cost, "error", err)
+	}
+	loginTimingDummyHash = hash
+}
 
 // AuthUser represents the authenticated user info returned to clients.
 type AuthUser struct {
@@ -259,6 +276,10 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authenticate using existing provider
+	if s.auth == nil {
+		writeErrorJSON(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
 	authCtx, err := s.auth.AuthenticateHTTP(authReq)
 	if err != nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "invalid credentials")
@@ -665,8 +686,8 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req updateUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 
@@ -807,8 +828,8 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 	}
 
 	var req adminPasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid request body")
 		return
 	}
 

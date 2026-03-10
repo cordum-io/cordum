@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -553,5 +555,420 @@ func TestSnapshotHistoryOrder(t *testing.T) {
 		if resp.Snapshots[i] != want {
 			t.Fatalf("snapshot[%d] = %q, want %q", i, resp.Snapshots[i], want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Security regression tests: fail-open, policy fetch, signature enforcement
+// ---------------------------------------------------------------------------
+
+func TestEvaluateNilPolicyDeniesFailClosed(t *testing.T) {
+	// BUG FIX REGRESSION: When policy is nil (no policy source configured),
+	// the safety kernel must deny requests (fail-closed), not allow them.
+	srv := &server{}
+	// No policy set — s.policy is nil.
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-nil-policy",
+		Topic:  "job.test",
+		Tenant: "default",
+	}
+	resp, err := srv.Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("evaluate error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("FAIL-OPEN BUG: nil policy should deny, got %v", resp.GetDecision())
+	}
+	if !strings.Contains(resp.GetReason(), "no policy loaded") {
+		t.Fatalf("expected 'no policy loaded' reason, got %q", resp.GetReason())
+	}
+}
+
+func TestEvaluateNilPolicyAfterSetPolicyNilDenies(t *testing.T) {
+	// Explicitly calling setPolicy(nil, "") should result in deny.
+	srv := &server{}
+	srv.setPolicy(nil, "")
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-explicit-nil",
+		Topic:  "job.test",
+		Tenant: "default",
+	}
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("check error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("FAIL-OPEN BUG: setPolicy(nil) should deny, got %v", resp.GetDecision())
+	}
+}
+
+func TestEvaluateAllErrorClassesDeny(t *testing.T) {
+	// All error classes must result in deny (fail-closed) decisions,
+	// never allow.
+	tests := []struct {
+		name   string
+		policy *config.SafetyPolicy
+	}{
+		{"nil policy", nil},
+		{"empty policy no rules", &config.SafetyPolicy{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &server{}
+			if tt.policy != nil {
+				srv.setPolicy(tt.policy, "test")
+			}
+			req := &pb.PolicyCheckRequest{
+				JobId:  "job-err",
+				Topic:  "job.test",
+				Tenant: "default",
+			}
+			resp, err := srv.Evaluate(context.Background(), req)
+			if err != nil {
+				t.Fatalf("evaluate error: %v", err)
+			}
+			if resp.GetDecision() == pb.DecisionType_DECISION_TYPE_ALLOW {
+				t.Fatalf("FAIL-OPEN: %s should not allow, got %v", tt.name, resp.GetDecision())
+			}
+		})
+	}
+}
+
+func TestFetchPolicyURLRejectsHTTPInProduction(t *testing.T) {
+	// In production mode, plaintext HTTP policy URLs must be rejected
+	// to prevent MITM injection of malicious policies.
+	t.Setenv("CORDUM_PRODUCTION", "1")
+	t.Setenv("SAFETY_POLICY_URL_ALLOW_PRIVATE", "1") // separate concern
+
+	_, err := fetchPolicyURL("http://example.com/policy.yaml")
+	if err == nil {
+		t.Fatalf("expected HTTP to be rejected in production mode")
+	}
+	if !strings.Contains(err.Error(), "HTTPS required") {
+		t.Fatalf("expected HTTPS requirement error, got %v", err)
+	}
+}
+
+func TestFetchPolicyURLAllowsHTTPInDev(t *testing.T) {
+	// In non-production mode, HTTP should still work for development.
+	t.Setenv("CORDUM_PRODUCTION", "")
+	t.Setenv("CORDUM_ENV", "dev")
+	t.Setenv("SAFETY_POLICY_URL_ALLOW_PRIVATE", "1")
+
+	// This will fail to connect (no server), but should NOT fail with scheme error.
+	_, err := fetchPolicyURL("http://127.0.0.1:19999/policy.yaml")
+	if err != nil && strings.Contains(err.Error(), "HTTPS required") {
+		t.Fatalf("HTTP should be allowed in dev mode, got: %v", err)
+	}
+}
+
+func TestFetchPolicyURLAllowsHTTPS(t *testing.T) {
+	// HTTPS should always be accepted regardless of mode.
+	t.Setenv("CORDUM_PRODUCTION", "1")
+	t.Setenv("SAFETY_POLICY_URL_ALLOW_PRIVATE", "1")
+
+	// This will fail to connect, but should NOT fail with scheme error.
+	_, err := fetchPolicyURL("https://127.0.0.1:19999/policy.yaml")
+	if err != nil && strings.Contains(err.Error(), "HTTPS required") {
+		t.Fatalf("HTTPS should always be allowed, got: %v", err)
+	}
+}
+
+func TestValidatePolicyURLPrivateIPVariants(t *testing.T) {
+	// Comprehensive private IP blocking test matrix.
+	privateAddrs := []string{
+		"http://127.0.0.1/policy",
+		"http://10.0.0.1/policy",
+		"http://172.16.0.1/policy",
+		"http://192.168.1.1/policy",
+		"http://[::1]/policy",
+		"http://0.0.0.0/policy",
+		"http://localhost/policy",
+		"http://[fe80::1]/policy",       // link-local
+		"http://169.254.169.254/policy", // AWS metadata
+	}
+	for _, addr := range privateAddrs {
+		t.Run(addr, func(t *testing.T) {
+			// Override DNS lookback for hostname tests
+			origLookup := policyLookupIP
+			t.Cleanup(func() { policyLookupIP = origLookup })
+			policyLookupIP = func(host string) ([]net.IP, error) {
+				switch host {
+				case "localhost":
+					return []net.IP{net.ParseIP("127.0.0.1")}, nil
+				default:
+					return net.LookupIP(host)
+				}
+			}
+
+			u, err := url.Parse(addr)
+			if err != nil {
+				t.Skipf("parse error: %v", err)
+			}
+			if err := validatePolicyURL(u); err == nil {
+				t.Fatalf("expected private IP %s to be blocked", addr)
+			}
+		})
+	}
+}
+
+func TestValidatePolicyURLAllowlistEnforced(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_URL_ALLOWLIST", "trusted.example.com")
+	t.Setenv("SAFETY_POLICY_URL_ALLOW_PRIVATE", "1") // separate concern
+
+	// Allowed host should pass.
+	u, _ := url.Parse("https://trusted.example.com/policy")
+	if err := validatePolicyURL(u); err != nil {
+		t.Fatalf("expected allowlisted host to pass: %v", err)
+	}
+
+	// Non-allowed host should fail.
+	u2, _ := url.Parse("https://evil.attacker.com/policy")
+	if err := validatePolicyURL(u2); err == nil {
+		t.Fatalf("expected non-allowlisted host to be blocked")
+	}
+
+	// Subdomain of allowlisted host should pass.
+	u3, _ := url.Parse("https://api.trusted.example.com/policy")
+	if err := validatePolicyURL(u3); err != nil {
+		t.Fatalf("expected subdomain of allowlisted host to pass: %v", err)
+	}
+}
+
+func TestPolicyFetchRedirectToPrivateBlocked(t *testing.T) {
+	// Redirect chain: public URL -> private IP should be blocked.
+	origLookup := policyLookupIP
+	t.Cleanup(func() { policyLookupIP = origLookup })
+
+	// First call resolves to public, subsequent calls resolve to private (DNS rebinding).
+	callCount := 0
+	policyLookupIP = func(host string) ([]net.IP, error) {
+		callCount++
+		if callCount <= 1 {
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		}
+		// DNS rebinding: second resolution returns private IP.
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+
+	_, err := fetchPolicyURL("http://attacker.example.com/policy")
+	if err == nil {
+		t.Fatalf("expected DNS rebinding to be blocked")
+	}
+}
+
+func TestLoadPolicyBundleEmptySourceReturnsNil(t *testing.T) {
+	// Empty source should return nil policy, empty snapshot, no error.
+	policy, snapshot, err := loadPolicyBundle("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if policy != nil {
+		t.Fatalf("expected nil policy for empty source")
+	}
+	if snapshot != "" {
+		t.Fatalf("expected empty snapshot for empty source")
+	}
+}
+
+func TestEvaluateDecisionReasonMetadata(t *testing.T) {
+	// Every deny/approval response must include actionable reason metadata
+	// for observability and incident triage.
+	tests := []struct {
+		name           string
+		policy         *config.SafetyPolicy
+		req            *pb.PolicyCheckRequest
+		expectDecision pb.DecisionType
+		expectReason   string // substring that must be present
+		expectSnapshot string
+	}{
+		{
+			name:           "nil policy — reason must say no policy loaded",
+			policy:         nil,
+			req:            &pb.PolicyCheckRequest{JobId: "j1", Topic: "job.test"},
+			expectDecision: pb.DecisionType_DECISION_TYPE_DENY,
+			expectReason:   "no policy loaded",
+			expectSnapshot: "", // no setPolicy called, snapshot is empty
+		},
+		{
+			name: "missing topic — reason says missing topic",
+			policy: &config.SafetyPolicy{
+				DefaultTenant: "default",
+			},
+			req:            &pb.PolicyCheckRequest{JobId: "j2"},
+			expectDecision: pb.DecisionType_DECISION_TYPE_DENY,
+			expectReason:   "missing topic",
+		},
+		{
+			name: "unsupported topic — reason says unsupported",
+			policy: &config.SafetyPolicy{
+				DefaultTenant: "default",
+			},
+			req:            &pb.PolicyCheckRequest{JobId: "j3", Topic: "event.custom"},
+			expectDecision: pb.DecisionType_DECISION_TYPE_DENY,
+			expectReason:   "unsupported topic",
+		},
+		{
+			name: "default deny — reason says no matching rule",
+			policy: &config.SafetyPolicy{
+				DefaultDecision: "deny",
+				Rules: []config.PolicyRule{
+					{ID: "r1", Decision: "allow", Match: config.PolicyMatch{Topics: []string{"job.allowed"}}},
+				},
+			},
+			req:            &pb.PolicyCheckRequest{JobId: "j4", Topic: "job.other", Tenant: "default"},
+			expectDecision: pb.DecisionType_DECISION_TYPE_DENY,
+			expectReason:   "no matching rule",
+		},
+		{
+			name: "effective config deny — reason says denied by effective config",
+			policy: &config.SafetyPolicy{
+				DefaultDecision: "allow",
+				DefaultTenant:   "default",
+			},
+			req: &pb.PolicyCheckRequest{
+				JobId:           "j5",
+				Topic:           "job.test",
+				Tenant:          "default",
+				EffectiveConfig: []byte(`{"safety":{"denied_topics":["job.test"]}}`),
+			},
+			expectDecision: pb.DecisionType_DECISION_TYPE_DENY,
+			expectReason:   "denied by effective config",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &server{}
+			snap := "snap-meta"
+			if tt.policy != nil {
+				srv.setPolicy(tt.policy, snap)
+			}
+			resp, err := srv.evaluate(context.Background(), tt.req, "check")
+			if err != nil {
+				t.Fatalf("evaluate error: %v", err)
+			}
+			if resp.GetDecision() != tt.expectDecision {
+				t.Fatalf("expected %v, got %v", tt.expectDecision, resp.GetDecision())
+			}
+			if !strings.Contains(resp.GetReason(), tt.expectReason) {
+				t.Fatalf("expected reason containing %q, got %q", tt.expectReason, resp.GetReason())
+			}
+			if tt.expectSnapshot != "" && resp.GetPolicySnapshot() != tt.expectSnapshot {
+				t.Fatalf("expected snapshot %q, got %q", tt.expectSnapshot, resp.GetPolicySnapshot())
+			}
+		})
+	}
+}
+
+func TestEvaluateNilPolicyBeforeTopicValidation(t *testing.T) {
+	// Nil-policy denial must occur BEFORE topic validation to prevent
+	// information leakage about request structure when policy is absent.
+	srv := &server{}
+
+	// Empty topic with nil policy: should say "no policy loaded", NOT "missing topic".
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{})
+	if err != nil {
+		t.Fatalf("evaluate error: %v", err)
+	}
+	if !strings.Contains(resp.GetReason(), "no policy loaded") {
+		t.Fatalf("expected 'no policy loaded' before topic validation, got %q", resp.GetReason())
+	}
+}
+
+func TestCachedDecisionNotServedAfterPolicyNil(t *testing.T) {
+	// If a policy was active, decisions were cached, and then policy becomes nil
+	// (e.g. via corrupted reload that sets nil), cached allow decisions must NOT
+	// be served. The version check in getCachedDecision handles this.
+	srv := &server{
+		cacheTTL:     5 * time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+
+	// Load policy, evaluate to populate cache.
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "allow",
+		DefaultTenant:   "default",
+	}
+	srv.setPolicy(policy, "snap-cached")
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-cached",
+		Topic:  "job.test",
+		Tenant: "default",
+	}
+	resp1, _ := srv.evaluate(context.Background(), req, "check")
+	if resp1.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("expected allow with policy, got %v", resp1.GetDecision())
+	}
+
+	// Simulate policy becoming nil (setPolicy clears cache).
+	srv.mu.Lock()
+	srv.policy = nil
+	srv.mu.Unlock()
+	srv.policyVersion.Add(1) // Bump version to invalidate cache entries
+
+	// New evaluation must deny (nil policy), not serve stale cached allow.
+	resp2, _ := srv.evaluate(context.Background(), req, "check")
+	if resp2.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("expected deny after policy nil, got %v (stale cache?)", resp2.GetDecision())
+	}
+	if !strings.Contains(resp2.GetReason(), "no policy loaded") {
+		t.Fatalf("expected 'no policy loaded' reason, got %q", resp2.GetReason())
+	}
+}
+
+func TestWatchPolicyReloadFailureKeepsOldPolicy(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "50ms")
+
+	dir := t.TempDir()
+	policyPath := dir + "/policy.yaml"
+	if err := os.WriteFile(policyPath, []byte("default_tenant: default\ntenants:\n  default:\n    allow_topics:\n      - job.*\n"), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	srv := &server{}
+	initialPolicy := &config.SafetyPolicy{
+		DefaultTenant: "prod",
+		Tenants: map[string]config.TenantPolicy{
+			"prod": {AllowTopics: []string{"job.prod.*"}},
+		},
+	}
+	srv.setPolicy(initialPolicy, "initial-snap")
+
+	// Corrupt the policy file so reload fails.
+	if err := os.WriteFile(policyPath, []byte("invalid:\n  - [broken"), 0o600); err != nil {
+		t.Fatalf("write corrupt policy: %v", err)
+	}
+
+	loader := &policyLoader{source: policyPath}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		srv.watchPolicy(ctx, loader)
+		close(done)
+	}()
+
+	// Wait for at least one reload attempt.
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	<-done
+
+	// Old policy should still be active (fail-closed on reload error).
+	srv.mu.RLock()
+	currentPolicy := srv.policy
+	currentSnap := srv.snapshot
+	srv.mu.RUnlock()
+
+	if currentPolicy == nil {
+		t.Fatalf("expected old policy to be preserved after failed reload")
+	}
+	if currentSnap != "initial-snap" {
+		t.Fatalf("expected snapshot to remain 'initial-snap', got %q", currentSnap)
+	}
+	if currentPolicy.DefaultTenant != "prod" {
+		t.Fatalf("expected DefaultTenant to remain 'prod', got %q", currentPolicy.DefaultTenant)
 	}
 }

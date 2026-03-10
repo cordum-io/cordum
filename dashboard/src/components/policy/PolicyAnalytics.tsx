@@ -23,7 +23,7 @@ import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { cn } from "../../lib/utils";
 import { POLICY_STATS_SUPPORTED, usePolicyAudit, usePolicyRules } from "../../hooks/usePolicies";
 import { useJobs } from "../../hooks/useJobs";
-import { exportPdf, captureElement, type PdfSection } from "../../lib/pdfExport";
+import { exportPdf, type PdfSection } from "../../lib/pdfExport";
 import { useAuth } from "../../hooks/useAuth";
 
 // ---------------------------------------------------------------------------
@@ -89,21 +89,21 @@ const RANGES: { value: TimeRange; label: string }[] = [
 // ---------------------------------------------------------------------------
 
 const DECISION_COLORS: Record<string, string> = {
-  allow: "#22c55e",
-  deny: "#ef4444",
-  require_approval: "#f59e0b",
-  throttle: "#6366f1",
+  allow: "#1f7a57",
+  deny: "#b83a3a",
+  require_approval: "#c58a1c",
+  throttle: "#0f7f7a",
 };
 
 const LATENCY_COLORS: Record<string, string> = {
-  p50: "#3b82f6",
-  p95: "#f59e0b",
-  p99: "#ef4444",
+  p50: "#0f7f7a",
+  p95: "#c58a1c",
+  p99: "#b83a3a",
 };
 
 const REASON_PALETTE = [
-  "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899",
-  "#06b6d4", "#84cc16", "#f97316", "#6366f1",
+  "#b83a3a", "#c58a1c", "#0f7f7a", "#d4833a",
+  "#06b6d4", "#84cc16", "#d4833a", "#0f7f7a",
 ];
 
 // ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ function ChartTooltip({
   if (!active || !payload?.length) return null;
   const fmt = valueFormatter ?? String;
   return (
-    <div className="rounded-xl border border-border bg-white px-3 py-2 shadow-lg text-xs space-y-1">
+    <div className="rounded-xl border border-border bg-card px-3 py-2 shadow-lg text-xs space-y-1">
       {label && <p className="font-semibold text-ink">{formatTime(label)}</p>}
       {payload.map((entry) => (
         <div key={entry.name} className="flex items-center gap-2">
@@ -205,7 +205,7 @@ function ChartTooltip({
             className="inline-block h-2 w-2 rounded-full"
             style={{ background: entry.color }}
           />
-          <span className="text-muted">{entry.name}:</span>
+          <span className="text-muted-foreground">{entry.name}:</span>
           <span className="font-medium text-ink">{fmt(entry.value)}</span>
         </div>
       ))}
@@ -306,9 +306,9 @@ function buildCoverageData(
 }
 
 function coverageColor(pct: number): string {
-  if (pct >= 80) return "#22c55e";
-  if (pct >= 50) return "#f59e0b";
-  return "#ef4444";
+  if (pct >= 80) return "#1f7a57";
+  if (pct >= 50) return "#c58a1c";
+  return "#b83a3a";
 }
 
 // ---------------------------------------------------------------------------
@@ -404,7 +404,7 @@ export function PolicyAnalytics() {
 
   if (!POLICY_STATS_SUPPORTED) {
     return (
-      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
+      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
         Policy analytics are not available in this deployment.
       </div>
     );
@@ -412,7 +412,7 @@ export function PolicyAnalytics() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-muted">
+      <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
         <Loader className="mr-2 h-4 w-4 animate-spin" />
         Loading analytics...
       </div>
@@ -440,7 +440,7 @@ export function PolicyAnalytics() {
                 "px-4 py-1.5 text-xs font-semibold transition first:rounded-l-full last:rounded-r-full",
                 range === r.value
                   ? "bg-accent/15 text-accent"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
               )}
               onClick={() => setRange(r.value)}
             >
@@ -468,21 +468,21 @@ export function PolicyAnalytics() {
           <CardTitle>Decisions Over Time</CardTitle>
         </CardHeader>
         {decisions.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted">No decision data for this range.</p>
+          <p className="px-4 pb-4 text-sm text-muted-foreground">No decision data for this range.</p>
         ) : (
           <div style={{ width: "100%", height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={decisions} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" />
                 <XAxis
                   dataKey="time"
                   tickFormatter={formatTime}
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  tick={{ fontSize: 10, fill: "#5a6a70" }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  tick={{ fontSize: 10, fill: "#5a6a70" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -537,21 +537,21 @@ export function PolicyAnalytics() {
           <CardTitle>Denied By Reason</CardTitle>
         </CardHeader>
         {deniedData.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted">No deny data for this range.</p>
+          <p className="px-4 pb-4 text-sm text-muted-foreground">No deny data for this range.</p>
         ) : (
           <div style={{ width: "100%", height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={deniedData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" />
                 <XAxis
                   dataKey="time"
                   tickFormatter={formatTime}
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  tick={{ fontSize: 10, fill: "#5a6a70" }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  tick={{ fontSize: 10, fill: "#5a6a70" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -577,10 +577,10 @@ export function PolicyAnalytics() {
       <Card>
         <CardHeader>
           <CardTitle>Rule Coverage</CardTitle>
-          <span className="text-xs text-muted">% of recent jobs evaluated by policy</span>
+          <span className="text-xs text-muted-foreground">% of recent jobs evaluated by policy</span>
         </CardHeader>
         {coverageRows.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted">No job data to compute coverage.</p>
+          <p className="px-4 pb-4 text-sm text-muted-foreground">No job data to compute coverage.</p>
         ) : (
           <>
             {/* Overall metric */}
@@ -592,7 +592,7 @@ export function PolicyAnalytics() {
                 >
                   {overallCoverage.toFixed(0)}%
                 </span>
-                <span className="text-sm text-muted">overall coverage</span>
+                <span className="text-sm text-muted-foreground">overall coverage</span>
               </div>
             </div>
             <div style={{ width: "100%", height: Math.max(coverageRows.length * 32 + 40, 160) }}>
@@ -602,11 +602,11 @@ export function PolicyAnalytics() {
                   layout="vertical"
                   margin={{ top: 8, right: 24, bottom: 8, left: 8 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" horizontal={false} />
                   <XAxis
                     type="number"
                     domain={[0, 100]}
-                    tick={{ fontSize: 10, fill: "#94a3b8" }}
+                    tick={{ fontSize: 10, fill: "#5a6a70" }}
                     axisLine={false}
                     tickLine={false}
                     tickFormatter={(v: number) => `${v}%`}
@@ -615,7 +615,7 @@ export function PolicyAnalytics() {
                     type="category"
                     dataKey="topic"
                     width={140}
-                    tick={{ fontSize: 11, fill: "#1e293b" }}
+                    tick={{ fontSize: 11, fill: "#1f2a2e" }}
                     axisLine={false}
                     tickLine={false}
                   />
@@ -641,10 +641,10 @@ export function PolicyAnalytics() {
       <Card>
         <CardHeader>
           <CardTitle>Most-Hit Rules</CardTitle>
-          <span className="text-xs text-muted">Top 10</span>
+          <span className="text-xs text-muted-foreground">Top 10</span>
         </CardHeader>
         {sortedRules.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted">No rule hit data for this range.</p>
+          <p className="px-4 pb-4 text-sm text-muted-foreground">No rule hit data for this range.</p>
         ) : (
           <div style={{ width: "100%", height: Math.max(sortedRules.length * 36 + 40, 160) }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -653,10 +653,10 @@ export function PolicyAnalytics() {
                 layout="vertical"
                 margin={{ top: 8, right: 24, bottom: 8, left: 8 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" horizontal={false} />
                 <XAxis
                   type="number"
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  tick={{ fontSize: 10, fill: "#5a6a70" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -664,7 +664,7 @@ export function PolicyAnalytics() {
                   type="category"
                   dataKey="ruleName"
                   width={140}
-                  tick={{ fontSize: 11, fill: "#1e293b" }}
+                  tick={{ fontSize: 11, fill: "#1f2a2e" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -672,7 +672,7 @@ export function PolicyAnalytics() {
                   content={<ChartTooltip />}
                   cursor={{ fill: "rgba(0,0,0,0.03)" }}
                 />
-                <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={20} />
+                <Bar dataKey="count" fill="#0f7f7a" radius={[0, 4, 4, 0]} barSize={20} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -687,22 +687,22 @@ export function PolicyAnalytics() {
           <CardTitle>Eval Latency Trends</CardTitle>
         </CardHeader>
         {latency.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted">No latency data for this range.</p>
+          <p className="px-4 pb-4 text-sm text-muted-foreground">No latency data for this range.</p>
         ) : (
           <div style={{ width: "100%", height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={latency} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" />
                 <XAxis
                   dataKey="time"
                   tickFormatter={formatTime}
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  tick={{ fontSize: 10, fill: "#5a6a70" }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
                   tickFormatter={(v: number) => formatMs(v)}
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  tick={{ fontSize: 10, fill: "#5a6a70" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -710,9 +710,9 @@ export function PolicyAnalytics() {
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <ReferenceLine
                   y={100}
-                  stroke="#ef4444"
+                  stroke="#b83a3a"
                   strokeDasharray="5 5"
-                  label={{ value: "SLA 100ms", position: "right", fill: "#ef4444", fontSize: 10 }}
+                  label={{ value: "SLA 100ms", position: "right", fill: "#b83a3a", fontSize: 10 }}
                 />
                 <Line
                   type="monotone"

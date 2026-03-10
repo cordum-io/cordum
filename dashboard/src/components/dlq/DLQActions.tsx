@@ -33,7 +33,7 @@ function ConfirmDialog({
           <h3 className="font-display text-lg font-semibold text-ink">
             {title}
           </h3>
-          <p className="text-sm text-muted">{message}</p>
+          <p className="text-sm text-muted-foreground">{message}</p>
           <div className="flex justify-end gap-2">
             <Button
               variant="ghost"

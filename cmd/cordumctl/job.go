@@ -155,15 +155,21 @@ func parseJSONArg(value string) (any, error) {
 	if value == "" {
 		return nil, nil
 	}
-	if _, err := os.Stat(value); err == nil {
-		// #nosec G304 -- CLI explicitly reads local files provided by the operator.
-		data, err := os.ReadFile(value)
-		if err != nil {
+	// If the value looks like a JSON literal (starts with { or [), skip the
+	// file-existence check entirely. This avoids platform-specific os.Stat
+	// errors on strings containing characters invalid in file paths
+	// (e.g. { } on Windows).
+	if !strings.HasPrefix(value, "{") && !strings.HasPrefix(value, "[") {
+		if _, err := os.Stat(value); err == nil {
+			// #nosec G304 -- CLI explicitly reads local files provided by the operator.
+			data, err := os.ReadFile(value)
+			if err != nil {
+				return nil, err
+			}
+			return parseJSONBytes(data)
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		return parseJSONBytes(data)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
 	}
 	return parseJSONBytes([]byte(value))
 }

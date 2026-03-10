@@ -1,14 +1,35 @@
-import type { InputHTMLAttributes } from "react";
-import { cn } from "../../lib/utils";
+import { forwardRef, type InputHTMLAttributes } from "react";
+import { cn } from "@/lib/utils";
 
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={cn(
-        "w-full rounded-2xl border border-border bg-white/70 px-4 py-2.5 text-sm text-ink shadow-sm transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] placeholder:text-muted/60 hover:border-[color:rgba(15,127,122,0.4)] hover:shadow-soft focus:outline-none focus:border-accent focus:ring-2 focus:ring-[color:var(--ring)]",
-        className
-      )}
-      {...props}
-    />
-  );
+interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+  icon?: React.ReactNode;
 }
+
+export const Input = forwardRef<HTMLInputElement, InputProps>(
+  ({ className, icon, ...props }, ref) => {
+    return (
+      <div className="relative">
+        {icon && (
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+            {icon}
+          </div>
+        )}
+        <input
+          ref={ref}
+          className={cn(
+            "flex h-9 w-full rounded-2xl border border-border bg-surface-2/50 px-3 py-2 text-sm text-foreground",
+            "placeholder:text-muted-foreground/60",
+            "focus:outline-none focus:ring-2 focus:ring-cordum/30 focus:border-cordum/40",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
+            "transition-all duration-150",
+            icon && "pl-9",
+            className,
+          )}
+          {...props}
+        />
+      </div>
+    );
+  },
+);
+
+Input.displayName = "Input";

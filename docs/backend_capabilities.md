@@ -26,8 +26,8 @@ This document tracks the current backend features, their status, and where they 
 
 ### API Gateway
 - Jobs: submit/list/get/cancel, trace fetch; list supports filters (state/topic/tenant/team/time/trace) and cursor pagination (`cursor`/`next_cursor`).
-- Workflows: create/upsert (`/api/v1/workflows`), list/get, runs start/get/list, approve step, cancel run, rerun, timeline.
-- Approvals: job approvals (`/api/v1/approvals/...`) and step approvals (`/api/v1/workflows/.../steps/.../approve`).
+- Workflows: create/upsert (`/api/v1/workflows`), list/get, runs start/get/list, cancel run, rerun, timeline.
+- Approvals: job approvals (`/api/v1/approvals/...`), including workflow gate approvals.
 - Config: Redis-backed config service (set/get via `/api/v1/config`, effective via `/api/v1/config/effective`).
 - Policy: evaluate/simulate/explain + snapshots, bundle list/detail/update, bundle snapshots, publish/rollback, audit (admin role enforced when enterprise RBAC is enabled).
 - Schemas: register/get/list/delete JSON schemas.
@@ -48,8 +48,8 @@ This document tracks the current backend features, their status, and where they 
 - DAG deps: `depends_on` allows parallel independent steps; a step runs only after all dependencies succeed.
 - Failure semantics: failed/cancelled/timed-out deps block downstream steps (no implicit continue-on-error).
 - Dataflow: step `input` supports `${...}` expressions; step outputs are recorded in run context under `steps.<step_id>` and optionally `output_path`.
-- Step types: built-ins (approval, delay, notify, condition) plus job-dispatch steps (any non-built-in type dispatches as a job via `step.topic`).
-- Reliability: per-step retry/backoff (exponential), budget deadline hint from `timeout_sec`, approval steps pause/resume via API; job-result handling returns retryable errors (NAK) under transient store/lock failures so results aren’t dropped; reconciler replays terminal job states from JobStore and resumes delayed retries; tests cover fan-out/retry/approval/max_parallel.
+- Step types: built-ins (approval, delay, notify, condition) plus job-dispatch steps (any non-built-in type dispatches as a job via `step.topic`). Approval steps dispatch gate jobs (`sys.approval.gate`) that enter the unified job approval queue.
+- Reliability: per-step retry/backoff (exponential), budget deadline hint from `timeout_sec`; job-result handling returns retryable errors (NAK) under transient store/lock failures so results aren’t dropped; reconciler replays terminal job states from JobStore and resumes delayed retries; tests cover fan-out/retry/approval/max_parallel.
 - Rerun: rerun-from-step and dry-run support.
 - Validation: workflow input schema validation; step input/output schema validation.
 - Audit: append-only timeline for run events.

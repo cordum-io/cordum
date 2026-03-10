@@ -88,13 +88,13 @@ export function ApprovalDetailModal({
             onClick={onClose}
             className="rounded-full p-1 hover:bg-surface2"
           >
-            <X className="h-4 w-4 text-muted" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
         {/* Job context */}
         <section className="mb-4">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Job Context
           </h3>
           <div className="space-y-2">
@@ -122,13 +122,13 @@ export function ApprovalDetailModal({
 
         {/* Safety explain */}
         <section className="mb-4">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Safety Decision
           </h3>
           <div className="space-y-1 text-sm">
             {approval.policyRule && (
               <p>
-                <span className="text-muted">Matched rule: </span>
+                <span className="text-muted-foreground">Matched rule: </span>
                 <span className="font-medium text-ink">
                   {approval.policyRule}
                 </span>
@@ -136,7 +136,7 @@ export function ApprovalDetailModal({
             )}
             {approval.reason && (
               <p>
-                <span className="text-muted">Reason: </span>
+                <span className="text-muted-foreground">Reason: </span>
                 <span className="text-ink">{approval.reason}</span>
               </p>
             )}
@@ -145,17 +145,17 @@ export function ApprovalDetailModal({
 
         {/* Similar past approvals */}
         <section className="mb-5">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             History
           </h3>
           {approval.resolvedAt && approval.actor ? (
-            <p className="text-sm text-muted">
+            <p className="text-sm text-muted-foreground">
               Last resolved by{" "}
               <span className="font-medium text-ink">{approval.actor}</span> at{" "}
               {new Date(approval.resolvedAt).toLocaleString()}
             </p>
           ) : (
-            <p className="text-sm text-muted">No prior resolution on record.</p>
+            <p className="text-sm text-muted-foreground">No prior resolution on record.</p>
           )}
         </section>
 

@@ -293,12 +293,12 @@ func (s *Service) loadSummary(ctx context.Context, memoryID string) string {
 
 func redisOpContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
-		return context.WithTimeout(context.Background(), defaultRedisOpTimeout)
+		return context.WithTimeout(context.Background(), defaultRedisOpTimeout) // #nosec G118 -- cancel returned to caller
 	}
 	if _, ok := ctx.Deadline(); ok {
 		return ctx, func() {}
 	}
-	return context.WithTimeout(ctx, defaultRedisOpTimeout)
+	return context.WithTimeout(ctx, defaultRedisOpTimeout) // #nosec G118 -- cancel returned to caller
 }
 
 func (s *Service) extractUserMessage(payload []byte) string {

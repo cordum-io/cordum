@@ -48,7 +48,6 @@ cordumctl run start --input input.json <workflow_id>
 cordumctl run start --dry-run <workflow_id>
 cordumctl run timeline <run_id>
 cordumctl run delete <run_id>
-cordumctl approval step --approve <workflow_id> <run_id> <step_id>
 cordumctl approval job --approve <job_id>
 cordumctl approval job --reject <job_id>
 ```

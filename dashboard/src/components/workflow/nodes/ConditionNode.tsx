@@ -13,9 +13,9 @@ export const ConditionNode = memo(function ConditionNode({ data, selected }: Nod
   const expression = (data.condition as string) ?? (typeof config.expression === "string" ? config.expression : "");
   return (
     <BaseNode
-      icon={<GitBranch className="h-4 w-4 text-teal-600" />}
+      icon={<GitBranch className="h-4 w-4 text-[var(--color-info)]" />}
       label={data.label as string}
-      accent="bg-teal-50"
+      accent="bg-[var(--color-info)]/15"
       selected={selected}
       outputs={CONDITION_OUTPUTS}
     >

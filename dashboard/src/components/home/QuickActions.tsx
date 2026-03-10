@@ -74,7 +74,7 @@ export function QuickActions() {
               <span className="text-xs font-semibold text-ink">
                 {action.label}
               </span>
-              <span className="text-[10px] leading-tight text-muted">
+              <span className="text-[10px] leading-tight text-muted-foreground">
                 {action.description}
               </span>
             </div>

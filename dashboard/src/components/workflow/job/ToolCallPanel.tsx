@@ -45,7 +45,7 @@ function Field({ label, error, hint, children }: {
 }) {
   return (
     <div>
-      <label className="mb-1 flex items-baseline gap-1 text-xs text-muted">
+      <label className="mb-1 flex items-baseline gap-1 text-xs text-muted-foreground">
         {label}
         {hint && <span className="text-[10px] text-muted/60">({hint})</span>}
       </label>
@@ -131,7 +131,7 @@ function KeyValueEditor({ value, onChange }: {
           <button
             type="button"
             onClick={() => updatePairs(pairs.filter((_, j) => j !== i))}
-            className="p-1 text-muted hover:text-danger"
+            className="p-1 text-muted-foreground hover:text-danger"
           >
             <Trash2 className="h-3 w-3" />
           </button>
@@ -140,7 +140,7 @@ function KeyValueEditor({ value, onChange }: {
       <button
         type="button"
         onClick={() => updatePairs([...pairs, { key: "", value: "" }])}
-        className="flex items-center gap-1 text-[10px] text-muted hover:text-ink"
+        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-ink"
       >
         <Plus className="h-3 w-3" /> Add label
       </button>
@@ -186,7 +186,7 @@ export function ToolCallPanel({ node, onSave, onClose, onDelete }: ToolCallPanel
     <aside className="flex w-96 shrink-0 flex-col border-l border-border bg-surface1 overflow-y-auto">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-ink">Tool Call Config</h3>
-        <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-surface2 hover:text-ink transition-colors">
+        <button onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -216,7 +216,7 @@ export function ToolCallPanel({ node, onSave, onClose, onDelete }: ToolCallPanel
         <button
           type="button"
           onClick={() => setAdvancedOpen(!advancedOpen)}
-          className="flex items-center gap-1 text-xs font-medium text-muted hover:text-ink transition-colors"
+          className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-ink transition-colors"
         >
           {advancedOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           Advanced

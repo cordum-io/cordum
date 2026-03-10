@@ -35,7 +35,7 @@ export function Drawer({
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="absolute inset-0 bg-black/20 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 animate-fade-in bg-[color:var(--surface-glass)] backdrop-blur-md"
       />
       <div
         ref={dialogRef}
@@ -43,7 +43,7 @@ export function Drawer({
         aria-modal="true"
         aria-label={label || "Drawer"}
         className={cn(
-          "absolute right-0 top-0 h-full w-full overflow-y-auto bg-surface/95 p-6 shadow-2xl animate-slide-in border-l border-border",
+          "absolute right-0 top-0 h-full w-full overflow-y-auto rounded-l-3xl border-l border-border bg-[color:var(--surface-glass)] p-6 shadow-2xl backdrop-blur-xl animate-slide-in",
           sizeClass
         )}
       >

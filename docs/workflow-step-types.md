@@ -135,9 +135,12 @@ Key config fields:
 
 Execution behavior:
 
-- Step enters `waiting`.
-- Run enters `waiting`.
-- Resumed by `ApproveStep` API (`approved=true|false`).
+- Engine dispatches a gate job with topic `sys.approval.gate`.
+- Step enters `running` (has active gate job).
+- Gate job appears on the Approvals page alongside policy approvals.
+- Operator approves or rejects via the unified Approvals queue.
+- On approval: gate job auto-completes, step succeeds, DAG continues.
+- On rejection: gate job fails, step fails, `on_error` handler fires if configured.
 
 Output format:
 
@@ -145,7 +148,7 @@ Output format:
 
 Dashboard UI:
 
-- Dedicated approval detail panel with approve/reject actions.
+- Gate approvals appear on the Approvals page with a "Workflow Gate" badge.
 
 YAML example:
 

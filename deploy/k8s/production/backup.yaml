@@ -34,19 +34,20 @@ spec:
               set -e
               ts=$(date -u +%Y%m%dT%H%M%SZ)
               TLS_ARGS="--tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key"
+              AUTH_ARGS="-a $REDIS_PASSWORD"
               backed_up=0
               failed=0
               # Iterate all 6 Redis cluster nodes, back up only primaries
               for i in 0 1 2 3 4 5; do
                 host="cordum-redis-${i}.cordum-redis.cordum.svc"
                 echo "Checking node ${i} (${host})..."
-                role=$(redis-cli $TLS_ARGS -h "$host" -p 6379 INFO replication 2>/dev/null | grep "^role:" | tr -d '\r' | cut -d: -f2 || true)
+                role=$(redis-cli $TLS_ARGS $AUTH_ARGS -h "$host" -p 6379 INFO replication 2>/dev/null | grep "^role:" | tr -d '\r' | cut -d: -f2 || true)
                 if [ "$role" != "master" ]; then
                   echo "  Node ${i} is ${role:-unreachable}, skipping."
                   continue
                 fi
                 echo "  Node ${i} is primary — backing up..."
-                if redis-cli $TLS_ARGS -h "$host" -p 6379 --rdb "/backup/redis-${ts}-node${i}.rdb"; then
+                if redis-cli $TLS_ARGS $AUTH_ARGS -h "$host" -p 6379 --rdb "/backup/redis-${ts}-node${i}.rdb"; then
                   echo "  Backup of node ${i} succeeded."
                   backed_up=$((backed_up + 1))
                 else
@@ -62,6 +63,12 @@ spec:
               if [ "$failed" -gt 0 ]; then
                 echo "WARNING: Some primaries failed to back up (partial backup)."
               fi
+            env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cordum-redis-secret
+                  key: REDIS_PASSWORD
             resources:
               requests:
                 cpu: 100m

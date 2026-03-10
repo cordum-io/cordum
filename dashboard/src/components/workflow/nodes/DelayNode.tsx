@@ -8,9 +8,9 @@ export const DelayNode = memo(function DelayNode({ data, selected }: NodeProps) 
   const duration = (typeof data.delay_sec === "number" ? `${data.delay_sec}s` : "") || (data.delay_until as string) || (typeof config.duration === "string" ? config.duration : "");
   return (
     <BaseNode
-      icon={<Clock className="h-4 w-4 text-purple-600" />}
+      icon={<Clock className="h-4 w-4 text-primary" />}
       label={data.label as string}
-      accent="bg-purple-50"
+      accent="bg-primary/5"
       selected={selected}
     >
       {duration && (

@@ -53,7 +53,7 @@ function ServiceGroup({
         onClick={() => setOpen((v) => !v)}
       >
         <div className="flex items-center gap-2">
-          <Server className="h-4 w-4 text-muted" />
+          <Server className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-semibold text-ink">{service}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -61,9 +61,9 @@ function ServiceGroup({
             {healthyCount}/{total} healthy
           </Badge>
           {open ? (
-            <ChevronUp className="h-4 w-4 text-muted" />
+            <ChevronUp className="h-4 w-4 text-muted-foreground" />
           ) : (
-            <ChevronDown className="h-4 w-4 text-muted" />
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
           )}
         </div>
       </button>
@@ -71,7 +71,7 @@ function ServiceGroup({
       {open && (
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-t border-border bg-surface2/30 text-left text-muted">
+            <tr className="border-t border-border bg-surface2/30 text-left text-muted-foreground">
               <th className="px-4 py-2 font-medium">Instance ID</th>
               <th className="px-4 py-2 font-medium">Version</th>
               <th className="px-4 py-2 font-medium">Uptime</th>
@@ -88,9 +88,9 @@ function ServiceGroup({
                   className="border-t border-border/50 transition-colors hover:bg-surface2/20"
                 >
                   <td className="px-4 py-2 font-mono text-ink">{replica.id}</td>
-                  <td className="px-4 py-2 text-muted">{replica.version || "\u2014"}</td>
-                  <td className="px-4 py-2 text-muted">{replica.uptime || "\u2014"}</td>
-                  <td className="px-4 py-2 text-muted">{relativeTime(replica.last_seen)}</td>
+                  <td className="px-4 py-2 text-muted-foreground">{replica.version || "\u2014"}</td>
+                  <td className="px-4 py-2 text-muted-foreground">{replica.uptime || "\u2014"}</td>
+                  <td className="px-4 py-2 text-muted-foreground">{relativeTime(replica.last_seen)}</td>
                   <td className="px-4 py-2">
                     <span className="flex items-center gap-1.5">
                       <span
@@ -130,7 +130,7 @@ export function ReplicaTable({
         <CardHeader>
           <CardTitle className="text-sm">Service Replicas</CardTitle>
         </CardHeader>
-        <div className="flex items-center gap-2 text-sm text-muted">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Info className="h-4 w-4" />
           Single-replica mode — instance registry not available
         </div>
@@ -148,7 +148,7 @@ export function ReplicaTable({
         <CardHeader>
           <CardTitle className="text-sm">Service Replicas</CardTitle>
         </CardHeader>
-        <p className="text-sm text-muted">No registered instances.</p>
+        <p className="text-sm text-muted-foreground">No registered instances.</p>
       </Card>
     );
   }

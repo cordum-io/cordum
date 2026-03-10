@@ -73,11 +73,11 @@ function MarketplaceCard({
         </CardHeader>
 
         {description && (
-          <p className="mb-3 line-clamp-2 text-sm text-muted">{description}</p>
+          <p className="mb-3 line-clamp-2 text-sm text-muted-foreground">{description}</p>
         )}
 
         {author && (
-          <p className="mb-3 text-xs text-muted">by {author}</p>
+          <p className="mb-3 text-xs text-muted-foreground">by {author}</p>
         )}
 
         {(pack.capabilities ?? []).length > 0 && (
@@ -105,7 +105,7 @@ function MarketplaceCard({
             ))}
           </Select>
         ) : (
-          <span className="text-xs text-muted">v{selectedVersion}</span>
+          <span className="text-xs text-muted-foreground">v{selectedVersion}</span>
         )}
 
         {isInstalled ? (
@@ -163,7 +163,7 @@ export function MarketplaceBrowser() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-muted">
+      <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
         <Loader className="mr-2 h-4 w-4 animate-spin" />
         Loading marketplace...
       </div>
@@ -182,8 +182,8 @@ export function MarketplaceBrowser() {
   if (groups.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border py-16 text-center">
-        <ShoppingBag className="mb-3 h-10 w-10 text-muted" />
-        <p className="text-sm text-muted">No packs available in the marketplace.</p>
+        <ShoppingBag className="mb-3 h-10 w-10 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">No packs available in the marketplace.</p>
       </div>
     );
   }

@@ -3,16 +3,16 @@ import type { RunStatus } from "../../api/types";
 import { cn } from "../../lib/utils";
 
 const COLOR_MAP: Record<string, string> = {
-  succeeded: "#22c55e",
-  completed: "#22c55e",
-  failed: "#ef4444",
-  timed_out: "#ef4444",
+  succeeded: "#1f7a57",
+  completed: "#1f7a57",
+  failed: "#b83a3a",
+  timed_out: "#b83a3a",
   cancelled: "#6b7280",
-  running: "#3b82f6",
-  in_progress: "#3b82f6",
+  running: "#0f7f7a",
+  in_progress: "#0f7f7a",
   pending: "#d1d5db",
-  waiting: "#f59e0b",
-  blocked: "#f59e0b",
+  waiting: "#c58a1c",
+  blocked: "#c58a1c",
   queued: "#d1d5db",
 };
 

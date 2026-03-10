@@ -331,15 +331,27 @@ const maxWorkflowStepIDLen = 64
 
 var workflowStepIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// truncateForError truncates s to max characters for safe inclusion in error
+// messages. Prevents user-supplied input from inflating error message size.
+func truncateForError(s string, max int) string {
+	if max <= 0 {
+		max = 256
+	}
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
 func validateWorkflowStepID(stepID string) error {
 	if stepID == "" {
 		return errors.New("workflow step id required")
 	}
 	if len(stepID) > maxWorkflowStepIDLen {
-		return fmt.Errorf("workflow step id %q exceeds %d characters", stepID, maxWorkflowStepIDLen)
+		return fmt.Errorf("workflow step id %q exceeds %d characters", truncateForError(stepID, 256), maxWorkflowStepIDLen)
 	}
 	if !workflowStepIDPattern.MatchString(stepID) {
-		return fmt.Errorf("workflow step id %q must match %s", stepID, workflowStepIDPattern.String())
+		return fmt.Errorf("workflow step id %q must match %s", truncateForError(stepID, 256), workflowStepIDPattern.String())
 	}
 	return nil
 }

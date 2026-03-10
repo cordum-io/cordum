@@ -28,7 +28,7 @@ export default function PoliciesSimulatorPage() {
 
   if (!bundleId) {
     return (
-      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
+      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
         No policy bundles found. Create one to simulate policy checks.
       </div>
     );
@@ -53,7 +53,7 @@ export default function PoliciesSimulatorPage() {
               "rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition",
               tab === key
                 ? "bg-accent/15 text-accent"
-                : "text-muted hover:text-ink",
+                : "text-muted-foreground hover:text-ink",
             )}
           >
             {label}

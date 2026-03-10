@@ -51,7 +51,7 @@ export function EventTimeline() {
         <h3 className="text-sm font-semibold text-ink">Recent Events</h3>
 
         {displayed.length === 0 ? (
-          <p className="py-6 text-center text-xs text-muted">
+          <p className="py-6 text-center text-xs text-muted-foreground">
             No events yet. Events will appear as activity flows through the system.
           </p>
         ) : (
@@ -61,7 +61,7 @@ export function EventTimeline() {
                 key={event.id}
                 className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-surface2/40 transition-colors"
               >
-                <span className="shrink-0 font-mono text-muted w-16">
+                <span className="shrink-0 font-mono text-muted-foreground w-16">
                   {formatTime(event.timestamp)}
                 </span>
                 <Badge variant={eventVariant(event.type)} className="shrink-0 text-[10px]">

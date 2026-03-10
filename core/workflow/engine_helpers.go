@@ -197,8 +197,8 @@ func depsSatisfied(step *Step, run *WorkflowRun, wfDef *Workflow) bool {
 		if sr.Status == StepStatusSucceeded {
 			continue
 		}
-		// A failed dependency is satisfied if its on_error handler succeeded.
-		if sr.Status == StepStatusFailed && wfDef != nil {
+		// A failed or timed-out dependency is satisfied if its on_error handler succeeded.
+		if (sr.Status == StepStatusFailed || sr.Status == StepStatusTimedOut) && wfDef != nil {
 			depDef := wfDef.Steps[dep]
 			if depDef != nil && depDef.OnError != "" {
 				handlerSR := run.Steps[depDef.OnError]

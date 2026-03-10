@@ -153,8 +153,10 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 	}
 	p.jwksURI = jwksURI
 
-	// Fetch initial JWKS
-	if err := p.refreshJWKS(); err != nil {
+	// Fetch initial JWKS with bounded startup context
+	initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer initCancel()
+	if err := p.refreshJWKS(initCtx); err != nil {
 		return nil, fmt.Errorf("oidc jwks fetch: %w", err)
 	}
 
@@ -300,7 +302,10 @@ func (p *OIDCProvider) discover() (string, error) {
 // refreshJWKS fetches keys from the JWKS endpoint and caches them.
 // When a Redis client is configured, it checks the cross-replica cache first
 // and only falls back to the IdP HTTP call on cache miss.
-func (p *OIDCProvider) refreshJWKS() error {
+func (p *OIDCProvider) refreshJWKS(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	p.mu.RLock()
 	rdb := p.redisClient
 	p.mu.RUnlock()
@@ -310,7 +315,7 @@ func (p *OIDCProvider) refreshJWKS() error {
 	// Try Redis cache first (cross-replica dedup).
 	if rdb != nil {
 		cacheKey := p.issuerCacheKey()
-		cacheCtx, cacheCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cacheCtx, cacheCancel := context.WithTimeout(ctx, 2*time.Second)
 		cached, err := rdb.Get(cacheCtx, cacheKey).Bytes()
 		cacheCancel()
 		if err == nil && len(cached) > 0 {
@@ -321,7 +326,7 @@ func (p *OIDCProvider) refreshJWKS() error {
 
 	// If no cache hit, fetch from IdP.
 	if body == nil {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.jwksURI, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.jwksURI, nil) // #nosec G704 -- jwksURI from OIDC discovery of admin-configured issuer, not user input
 		if err != nil {
 			return err
 		}
@@ -344,7 +349,7 @@ func (p *OIDCProvider) refreshJWKS() error {
 		// Write to Redis cache (best effort, 1h TTL).
 		if rdb != nil {
 			cacheKey := p.issuerCacheKey()
-			setCtx, setCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			setCtx, setCancel := context.WithTimeout(ctx, 2*time.Second)
 			if err := rdb.Set(setCtx, cacheKey, body, time.Hour).Err(); err != nil {
 				logging.Error("oidc", "jwks cache write failed", "error", err)
 			}
@@ -441,9 +446,11 @@ func (p *OIDCProvider) backgroundRefresh() {
 				case <-time.After(jitter):
 				}
 			}
-			if err := p.refreshJWKS(); err != nil {
+			refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := p.refreshJWKS(refreshCtx); err != nil {
 				logging.Error("oidc", "background jwks refresh failed", "error", err)
 			}
+			refreshCancel()
 		}
 	}
 }
@@ -464,7 +471,10 @@ func (p *OIDCProvider) refreshIfUnknownKid(kid string) bool {
 	if time.Since(lastRefresh) < time.Minute {
 		return false
 	}
-	if err := p.refreshJWKS(); err != nil {
+	// Bound on-demand refresh to prevent request-path pile-up under IdP slowness.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := p.refreshJWKS(ctx); err != nil {
 		logging.Error("oidc", "on-demand jwks refresh failed", "kid", kid, "error", err)
 		return false
 	}

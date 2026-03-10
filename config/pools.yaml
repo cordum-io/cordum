@@ -1,8 +1,6 @@
 topics:
   job.default: default
-  job.demo-mock-bank.transfer.auto: demo-mock-bank
-  job.demo-mock-bank.transfer.review: demo-mock-bank
-  job.demo-mock-bank.transfer.blocked: demo-mock-bank
+  job.demo-mock-bank.transfer: megacorp-banking
   job.demo-guardrails.write: demo-guardrails
   job.demo-guardrails.safe: demo-guardrails
   job.demo-guardrails.dangerous: demo-guardrails
@@ -19,7 +17,11 @@ topics:
 pools:
   default:
     requires: []
-  demo-mock-bank:
+  megacorp-banking:
+    requires: []
+  megacorp-compliance:
+    requires: []
+  megacorp-audit:
     requires: []
   demo-guardrails:
     requires: []

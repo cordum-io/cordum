@@ -32,7 +32,7 @@ export function NotificationRuleModal({
     control,
     formState: { errors },
   } = useForm<NotificationRuleForm>({
-    resolver: zodResolver(notificationRuleSchema),
+    resolver: zodResolver(notificationRuleSchema) as any,
     defaultValues: {
       eventPattern: rule?.eventPattern ?? "",
       channelIds: rule?.channelIds ?? [],
@@ -78,14 +78,14 @@ export function NotificationRuleModal({
             onClick={onClose}
             className="rounded-full p-1 hover:bg-surface2"
           >
-            <X className="h-4 w-4 text-muted" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <form onSubmit={handleSubmit(onSubmit as any)} className="space-y-4">
           {/* Event pattern */}
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Event Pattern
             </label>
             <Input
@@ -98,7 +98,7 @@ export function NotificationRuleModal({
                 {errors.eventPattern.message}
               </p>
             )}
-            <p className="mt-1 text-[10px] text-muted">
+            <p className="mt-1 text-[10px] text-muted-foreground">
               Use glob patterns: * matches any segment, e.g. policy.* matches
               policy.created, policy.updated.
             </p>
@@ -106,7 +106,7 @@ export function NotificationRuleModal({
 
           {/* Channel multi-select */}
           <div>
-            <label className="mb-2 block text-xs font-semibold text-muted">
+            <label className="mb-2 block text-xs font-semibold text-muted-foreground">
               Notify Channels
             </label>
             <Controller
@@ -115,7 +115,7 @@ export function NotificationRuleModal({
               render={({ field }) => (
                 <div className="space-y-1.5">
                   {channels.length === 0 ? (
-                    <p className="text-xs text-muted">
+                    <p className="text-xs text-muted-foreground">
                       No channels configured. Create a channel first.
                     </p>
                   ) : (
@@ -139,7 +139,7 @@ export function NotificationRuleModal({
                           }}
                         />
                         <span className="font-medium text-ink">{ch.name}</span>
-                        <span className="text-muted">({ch.type})</span>
+                        <span className="text-muted-foreground">({ch.type})</span>
                       </label>
                     ))
                   )}
@@ -155,7 +155,7 @@ export function NotificationRuleModal({
 
           {/* Throttle */}
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Throttle (minutes)
             </label>
             <Controller
@@ -174,7 +174,7 @@ export function NotificationRuleModal({
                 />
               )}
             />
-            <p className="mt-1 text-[10px] text-muted">
+            <p className="mt-1 text-[10px] text-muted-foreground">
               Minimum interval between notifications for this rule. 0 = no
               throttling.
             </p>
@@ -182,14 +182,14 @@ export function NotificationRuleModal({
 
           {/* Mute until */}
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Mute Until (optional)
             </label>
             <Input
               type="datetime-local"
               {...register("muteUntil")}
             />
-            <p className="mt-1 text-[10px] text-muted">
+            <p className="mt-1 text-[10px] text-muted-foreground">
               Suppress notifications until this time. Leave empty for no mute.
             </p>
           </div>

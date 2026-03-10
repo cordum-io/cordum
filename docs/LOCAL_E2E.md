@@ -53,7 +53,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows \
   -d '{"name":"local-e2e","org_id":"default","steps":{"approve":{"type":"approval"}}}'
 ```
 
-2) Start a run:
+2) Start a run (the approval step dispatches a gate job to the Approvals queue):
 
 ```bash
 curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs \
@@ -63,14 +63,20 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs \
   -d '{}'
 ```
 
-3) Approve the step:
+3) List approvals and approve the gate job:
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs/<run_id>/steps/approve/approve \
+# Find the gate job in the approvals list
+curl -sS http://localhost:8081/api/v1/approvals \
+  -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: $CORDUM_TENANT_ID"
+
+# Approve the gate job by job ID
+curl -sS -X POST http://localhost:8081/api/v1/approvals/<job_id>/approve \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
-  -d '{"approved": true}'
+  -d '{}'
 ```
 
 4) Delete the run and workflow:
@@ -91,7 +97,7 @@ After smoke tests, verify dashboard features at `http://localhost:8082`:
 
 - **Delete workflow**: WorkflowDetailPage > Delete button (with confirmation dialog)
 - **Renew lock**: ToolsPage > Locks > Renew button (extends lock TTL)
-- **Step approval**: Runs use `approveStep` API for workflow step approvals
+- **Workflow approvals**: Approval steps appear on the Approvals page with a "Workflow Gate" badge
 
 ## Notes
 - Safety policy (`config/safety.yaml`) denies `sys.*` and allows `job.*` for the default tenant.

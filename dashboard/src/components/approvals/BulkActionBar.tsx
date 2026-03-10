@@ -137,7 +137,7 @@ export function BulkActionBar({
             <>
               <Button
                 size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
                 disabled={eligibleCount === 0}
                 onClick={() => setMode("confirm-approve")}
                 title={eligibleCount === 0 ? "All selected items are high-risk" : undefined}
@@ -168,7 +168,7 @@ export function BulkActionBar({
               />
               <Button
                 size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
                 disabled={mode !== "confirm-approve"}
                 onClick={() => executeBulk("approve", eligibleForApprove, comment)}
               >
@@ -211,7 +211,7 @@ export function BulkActionBar({
                   style={{ width: `${progress.total > 0 ? (progress.done / progress.total) * 100 : 0}%` }}
                 />
               </div>
-              <span className="text-xs text-muted">
+              <span className="text-xs text-muted-foreground">
                 {progress.done}/{progress.total}
                 {progress.failed > 0 && ` (${progress.failed} failed)`}
               </span>

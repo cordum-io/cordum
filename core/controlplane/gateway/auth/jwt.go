@@ -73,7 +73,7 @@ func newJWTValidatorFromEnv() (*jwtValidator, bool, error) {
 	}
 
 	if secret != "" {
-		v.hmacSecret = decodeMaybeBase64(secret)
+		v.hmacSecret = decodeHMACSecret(secret)
 	}
 	if pubKey != "" {
 		key, err := parseRSAPublicKey([]byte(pubKey))
@@ -90,14 +90,31 @@ func newJWTValidatorFromEnv() (*jwtValidator, bool, error) {
 	return v, required, nil
 }
 
-func decodeMaybeBase64(raw string) []byte {
+// decodeHMACSecret parses the HMAC secret string. If the value starts with
+// "base64:" the remainder is decoded as standard base64. Otherwise the raw
+// string bytes are used verbatim. This replaces the old decodeMaybeBase64
+// behaviour which silently decoded any valid-looking base64, changing the
+// effective key bytes without the operator's knowledge.
+func decodeHMACSecret(raw string) []byte {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
 	}
-	decoded, err := base64.StdEncoding.DecodeString(raw)
-	if err == nil && len(decoded) > 0 {
+	const prefix = "base64:"
+	if strings.HasPrefix(raw, prefix) {
+		decoded, err := base64.StdEncoding.DecodeString(raw[len(prefix):])
+		if err != nil {
+			slog.Error("jwt: invalid base64 in HMAC secret after 'base64:' prefix", "err", err)
+			return nil
+		}
 		return decoded
+	}
+	// Warn if the value looks like base64 but is missing the prefix —
+	// helps operators migrate from the old silent-decode behaviour.
+	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil && len(decoded) > 0 && len(decoded) != len(raw) {
+		slog.Warn("jwt: HMAC secret looks like base64 but missing 'base64:' prefix — using raw bytes. "+
+			"Add 'base64:' prefix if you intended base64 decoding.",
+			"hint", "CORDUM_JWT_HMAC_SECRET=base64:"+raw)
 	}
 	return []byte(raw)
 }
@@ -247,7 +264,7 @@ func (v *jwtValidator) authFromClaims(claims map[string]any) *AuthContext {
 	if role == "" {
 		role = v.defaultRole
 	}
-	tenant := claimString(claims, "tenant")
+	tenant := claimString(claims, "tenant") // #nosec G706 -- structured slog logging, no format string injection
 	if tenant == "" {
 		tenant = claimString(claims, "tenant_id")
 	}

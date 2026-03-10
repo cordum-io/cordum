@@ -174,7 +174,7 @@ export function MaintenanceModeSection() {
           <div className={cn("mt-1 h-3 w-3 rounded-full", isActive ? "bg-danger animate-pulse" : "bg-success")} />
           <div>
             <h3 className="font-display text-base font-semibold text-ink">Maintenance Mode</h3>
-            <p className="text-xs text-muted">
+            <p className="text-xs text-muted-foreground">
               {isActive
                 ? "System is in maintenance — new jobs are rejected"
                 : "System is operational"}
@@ -197,7 +197,7 @@ export function MaintenanceModeSection() {
       {isActive && (
         <div className="mt-4 space-y-3 rounded-xl border border-danger/20 bg-danger/5 p-4">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
               Started {config.maintenanceStartedAt ? formatDateTime(config.maintenanceStartedAt) : "—"}
             </div>
@@ -210,7 +210,7 @@ export function MaintenanceModeSection() {
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-muted">Maintenance Message</label>
+            <label className="text-xs font-semibold text-muted-foreground">Maintenance Message</label>
             <div className="flex gap-2">
               <Textarea
                 value={message}
@@ -238,7 +238,7 @@ export function MaintenanceModeSection() {
         <button
           type="button"
           onClick={() => setShowSchedule((v) => !v)}
-          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted hover:text-ink"
+          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted-foreground hover:text-ink"
         >
           <span className="flex items-center gap-2">
             <Calendar className="h-3.5 w-3.5" />
@@ -256,7 +256,7 @@ export function MaintenanceModeSection() {
                   <span className="font-medium text-ink">
                     {formatDateTime(s.startAt)} — {formatDateTime(s.endAt)}
                   </span>
-                  {s.message && <span className="ml-2 text-muted">"{s.message}"</span>}
+                  {s.message && <span className="ml-2 text-muted-foreground">"{s.message}"</span>}
                   {s.recurring && (
                     <Badge variant="info" className="ml-2 text-[10px]">
                       Recurring: {s.recurring.daysOfWeek.map((d) => DAY_LABELS[d]).join(", ")}
@@ -266,7 +266,7 @@ export function MaintenanceModeSection() {
                 <button
                   type="button"
                   onClick={() => handleRemoveSchedule(s.id)}
-                  className="rounded-full p-1 text-muted hover:text-danger"
+                  className="rounded-full p-1 text-muted-foreground hover:text-danger"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -274,7 +274,7 @@ export function MaintenanceModeSection() {
             ))}
 
             {schedule.length === 0 && (
-              <p className="text-xs text-muted italic">No scheduled maintenance windows</p>
+              <p className="text-xs text-muted-foreground italic">No scheduled maintenance windows</p>
             )}
 
             {/* Add schedule form */}
@@ -282,7 +282,7 @@ export function MaintenanceModeSection() {
               <p className="text-xs font-semibold text-ink">Schedule New Window</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-semibold text-muted">Start</label>
+                  <label className="text-[10px] font-semibold text-muted-foreground">Start</label>
                   <Input
                     type="datetime-local"
                     value={schedStart}
@@ -291,7 +291,7 @@ export function MaintenanceModeSection() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-semibold text-muted">End</label>
+                  <label className="text-[10px] font-semibold text-muted-foreground">End</label>
                   <Input
                     type="datetime-local"
                     value={schedEnd}
@@ -328,7 +328,7 @@ export function MaintenanceModeSection() {
                         className={cn(
                           "rounded-full px-3 py-1 text-xs font-medium transition",
                           recurDays.includes(idx)
-                            ? "bg-accent text-white"
+                            ? "bg-accent text-primary-foreground"
                             : "border border-border text-ink hover:bg-surface2",
                         )}
                       >
@@ -336,7 +336,7 @@ export function MaintenanceModeSection() {
                       </button>
                     ))}
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-muted">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Input
                       type="number"
                       value={recurStartHour}
@@ -379,7 +379,7 @@ export function MaintenanceModeSection() {
         <button
           type="button"
           onClick={() => setShowHistory((v) => !v)}
-          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted hover:text-ink"
+          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted-foreground hover:text-ink"
         >
           <span className="flex items-center gap-2">
             <Clock className="h-3.5 w-3.5" />
@@ -391,7 +391,7 @@ export function MaintenanceModeSection() {
         {showHistory && (
           <div className="mt-1 space-y-2">
             {history.length === 0 && (
-              <p className="text-xs text-muted italic">No maintenance history</p>
+              <p className="text-xs text-muted-foreground italic">No maintenance history</p>
             )}
             {history.map((w, i) => (
               <div key={i} className="flex items-center justify-between rounded-lg border border-border bg-surface2/50 px-3 py-2 text-xs">
@@ -399,7 +399,7 @@ export function MaintenanceModeSection() {
                   <div className="font-medium text-ink">
                     {formatDateTime(w.startedAt)} — {formatDateTime(w.endedAt)}
                   </div>
-                  {w.message && <div className="text-muted">"{w.message}"</div>}
+                  {w.message && <div className="text-muted-foreground">"{w.message}"</div>}
                 </div>
                 <Badge variant="default">{formatDuration(w.durationMs)}</Badge>
               </div>

@@ -56,7 +56,9 @@ graph TB
 ```
 
 <!-- Replace with a high-impact GIF showing a risky agent action being caught by Cordum -->
-![Governed Agent Approval Lifecycle](docs/assets/governance-flow.svg)
+![nWwQVRVqwlZKeRbBZvkSof-img-2_1771930624000_na1fn_ZGFzaGJvYXJkLXByZXZpZXctZGFyaw](https://github.com/user-attachments/assets/6d8d4781-dff4-4d62-8e26-7ff0366b2a5d)
+
+
 
 ### Governance Across the Lifecycle
 
@@ -119,7 +121,8 @@ open http://localhost:8082
 ## Key Features
 
 <!-- Replace with a visual showing the Policy Studio and Safety Kernel in action -->
-![Policy Studio and Safety Kernel](docs/assets/dashboard-ui.svg)
+
+![nWwQVRVqwlZKeRbBZvkSof-img-4_1771930611000_na1fn_d29ya2Zsb3ctdmlzdWFsaXphdGlvbg](https://github.com/user-attachments/assets/ee44853d-1e89-463b-bf3c-0ba0481eee68)
 
 | Governance Feature | Why It Matters for Enterprise |
 |--------------------|--------------------------------|

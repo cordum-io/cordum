@@ -59,7 +59,7 @@ export function RuleCard({
   onDrop,
 }: RuleCardProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const decision = decisionStyles[rule.decisionType] ?? decisionStyles.allow;
+  const decision = decisionStyles[rule.decisionType ?? "allow"] ?? decisionStyles.allow;
   const isDisabled = rule.enabled === false;
 
   const handleToggle = useCallback(() => {
@@ -90,7 +90,7 @@ export function RuleCard({
       {/* Drag handle */}
       <button
         type="button"
-        className="mt-1 cursor-grab text-muted/50 hover:text-muted active:cursor-grabbing"
+        className="mt-1 cursor-grab text-muted/50 hover:text-muted-foreground active:cursor-grabbing"
         aria-label="Drag to reorder"
       >
         <GripVertical className="h-4 w-4" />
@@ -111,7 +111,7 @@ export function RuleCard({
         >
           <span
             className={cn(
-              "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+              "pointer-events-none inline-block h-4 w-4 rounded-full bg-card shadow transition-transform",
               isDisabled ? "translate-x-0" : "translate-x-4",
             )}
           />
@@ -131,13 +131,13 @@ export function RuleCard({
       {/* Rule sentence */}
       <div className="flex-1 space-y-2">
         <p className="text-sm leading-relaxed text-ink">
-          <span className="text-muted">When a job has </span>
+          <span className="text-muted-foreground">When a job has </span>
           {hasMatch ? (
             <>
-              <span className="text-muted">{logic} </span>
+              <span className="text-muted-foreground">{logic} </span>
               {capabilities.length > 0 && (
                 <>
-                  <span className="text-muted">capabilities </span>
+                  <span className="text-muted-foreground">capabilities </span>
                   {capabilities.map((cap) => (
                     <Badge key={cap} variant="info" className="mx-0.5">
                       {cap}
@@ -146,11 +146,11 @@ export function RuleCard({
                 </>
               )}
               {capabilities.length > 0 && riskTags.length > 0 && (
-                <span className="text-muted"> and </span>
+                <span className="text-muted-foreground"> and </span>
               )}
               {riskTags.length > 0 && (
                 <>
-                  <span className="text-muted">risk tags </span>
+                  <span className="text-muted-foreground">risk tags </span>
                   {riskTags.map((tag) => (
                     <Badge key={tag} variant="danger" className="mx-0.5">
                       {tag}
@@ -160,22 +160,22 @@ export function RuleCard({
               )}
             </>
           ) : (
-            <span className="text-muted">any match criteria </span>
+            <span className="text-muted-foreground">any match criteria </span>
           )}
-          <span className="text-muted"> then </span>
+          <span className="text-muted-foreground"> then </span>
           <Badge variant={decision.variant} className="mx-0.5 text-sm">
             {decision.label}
           </Badge>
           {rule.reason && (
             <>
-              <span className="text-muted"> because </span>
+              <span className="text-muted-foreground"> because </span>
               <span className="italic text-ink/80">{rule.reason}</span>
             </>
           )}
         </p>
 
         {/* Inline stats */}
-        <div className="flex items-center gap-3 text-[11px] text-muted">
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           {rule.hitCount24h !== undefined && (
             <span className="flex items-center gap-1.5">
               <MiniSparkline value={rule.hitCount24h} />

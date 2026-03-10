@@ -33,6 +33,7 @@ import type { RunStatus } from "../../../api/types";
 export interface RunOverlayNodeData {
   label: string;
   stepType: string;
+  condition?: string;
   runStatus?: RunStatus;
   duration?: number;
   safetyDecision?: { type: string };
@@ -63,6 +64,7 @@ function truncate(str: string, max: number): string {
 
 const STEP_TYPE_ICONS: Record<string, React.ReactNode> = {
   job: <Briefcase className="h-3.5 w-3.5" />,
+  worker: <Briefcase className="h-3.5 w-3.5" />,
   approval: <UserCheck className="h-3.5 w-3.5" />,
   delay: <Clock className="h-3.5 w-3.5" />,
   condition: <GitBranch className="h-3.5 w-3.5" />,
@@ -98,35 +100,35 @@ function getStatusStyle(status?: RunStatus): StatusStyle {
   switch (status) {
     case "succeeded":
       return {
-        bg: "bg-green-50",
-        border: "border-green-400",
-        statusIcon: <CheckCircle className="h-3.5 w-3.5 text-green-600" />,
+        bg: "bg-[var(--color-success)]/5",
+        border: "border-[var(--color-success)]/40",
+        statusIcon: <CheckCircle className="h-3.5 w-3.5 text-[var(--color-success)]" />,
         pulse: false,
         dimmed: false,
         strikethrough: false,
       };
     case "running":
       return {
-        bg: "bg-blue-50",
-        border: "border-blue-400",
-        statusIcon: <Loader2 className="h-3.5 w-3.5 text-blue-600 animate-spin" />,
+        bg: "bg-[var(--color-info)]/5",
+        border: "border-[var(--color-info)]/40",
+        statusIcon: <Loader2 className="h-3.5 w-3.5 text-[var(--color-info)] animate-spin" />,
         pulse: true,
         dimmed: false,
         strikethrough: false,
       };
     case "failed":
       return {
-        bg: "bg-red-50",
-        border: "border-red-400",
-        statusIcon: <XCircle className="h-3.5 w-3.5 text-red-600" />,
+        bg: "bg-destructive/5",
+        border: "border-destructive/40",
+        statusIcon: <XCircle className="h-3.5 w-3.5 text-destructive" />,
         pulse: false,
         dimmed: false,
         strikethrough: false,
       };
     case "pending":
       return {
-        bg: "bg-gray-50",
-        border: "border-gray-200",
+        bg: "bg-muted/30",
+        border: "border-border",
         statusIcon: null,
         pulse: false,
         dimmed: true,
@@ -134,27 +136,27 @@ function getStatusStyle(status?: RunStatus): StatusStyle {
       };
     case "waiting":
       return {
-        bg: "bg-amber-50",
-        border: "border-amber-400",
-        statusIcon: <UserCheck className="h-3.5 w-3.5 text-amber-600" />,
+        bg: "bg-[var(--color-warning)]/5",
+        border: "border-[var(--color-warning)]/40",
+        statusIcon: <UserCheck className="h-3.5 w-3.5 text-[var(--color-warning)]" />,
         pulse: true,
         dimmed: false,
         strikethrough: false,
       };
     case "cancelled":
       return {
-        bg: "bg-gray-100",
-        border: "border-gray-300",
-        statusIcon: <Slash className="h-3.5 w-3.5 text-gray-500" />,
+        bg: "bg-muted/50",
+        border: "border-muted",
+        statusIcon: <Slash className="h-3.5 w-3.5 text-muted-foreground" />,
         pulse: false,
         dimmed: false,
         strikethrough: true,
       };
     case "timed_out":
       return {
-        bg: "bg-red-50",
-        border: "border-red-300",
-        statusIcon: <Clock className="h-3.5 w-3.5 text-red-500" />,
+        bg: "bg-destructive/5",
+        border: "border-destructive/30",
+        statusIcon: <Clock className="h-3.5 w-3.5 text-destructive" />,
         pulse: false,
         dimmed: false,
         strikethrough: false,
@@ -162,7 +164,7 @@ function getStatusStyle(status?: RunStatus): StatusStyle {
     default:
       // Neutral / blueprint — no run selected
       return {
-        bg: "bg-white",
+        bg: "bg-card",
         border: "border-border",
         statusIcon: null,
         pulse: false,
@@ -177,10 +179,10 @@ function getStatusStyle(status?: RunStatus): StatusStyle {
 // ---------------------------------------------------------------------------
 
 const SAFETY_BADGE: Record<string, { label: string; className: string }> = {
-  allow: { label: "Allowed", className: "bg-green-500 text-white" },
-  deny: { label: "Denied", className: "bg-red-500 text-white" },
-  require_approval: { label: "Approval required", className: "bg-amber-500 text-white" },
-  throttle: { label: "Throttled", className: "bg-blue-500 text-white" },
+  allow: { label: "Allowed", className: "bg-[var(--color-success)] text-primary-foreground" },
+  deny: { label: "Denied", className: "bg-destructive text-primary-foreground" },
+  require_approval: { label: "Approval required", className: "bg-[var(--color-warning)] text-primary-foreground" },
+  throttle: { label: "Throttled", className: "bg-[var(--color-info)] text-primary-foreground" },
 };
 
 // ---------------------------------------------------------------------------
@@ -231,18 +233,18 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
       {/* Rich hover tooltip */}
       {hovered && (
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none">
-          <div className="rounded-lg border border-border bg-surface1 px-3 py-2 shadow-lg text-[11px] whitespace-nowrap space-y-1 min-w-[180px]">
+          <div className="min-w-[180px] space-y-1 whitespace-nowrap rounded-2xl border border-border bg-surface-1 px-3 py-2 text-[11px] shadow-soft">
             <div className="flex items-center gap-1.5 font-semibold text-ink">
               {typeIcon}
               {truncate(data.label, 40)}
             </div>
-            <div className="flex items-center gap-1.5 text-muted">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
               <span className="capitalize">{data.stepType.replace("-", " ")}</span>
               {data.runStatus && (
                 <>
                   <span className="text-border">&middot;</span>
                   <span className={cn(
-                    data.runStatus === "failed" && "text-danger",
+                    data.runStatus === "failed" && "text-destructive",
                     data.runStatus === "succeeded" && "text-success",
                     data.runStatus === "running" && "text-info",
                   )}>
@@ -252,10 +254,10 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
               )}
             </div>
             {data.duration != null && (
-              <div className="text-muted">Duration: {formatDuration(data.duration)}</div>
+              <div className="text-muted-foreground">Duration: {formatDuration(data.duration)}</div>
             )}
             {data.error && (
-              <div className="text-danger whitespace-normal max-w-[250px]">
+              <div className="max-w-[250px] whitespace-normal text-destructive">
                 {truncate(data.error, 80)}
               </div>
             )}
@@ -283,7 +285,7 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
 
       {/* Main content */}
       <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface2 text-muted">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted-foreground">
           {typeIcon}
         </div>
         <span
@@ -298,17 +300,24 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
         {style.statusIcon}
       </div>
 
+      {/* Condition subtitle */}
+      {data.condition && (
+        <p className="mt-1 truncate text-[9px] text-muted-foreground font-mono" title={data.condition}>
+          {truncate(data.condition, 35)}
+        </p>
+      )}
+
       {/* Footer: duration + error indicator */}
       {(data.duration != null || data.error) && (
         <div className="mt-1.5 flex items-center justify-between text-[10px]">
           {data.duration != null ? (
-            <span className="text-muted">{formatDuration(data.duration)}</span>
+            <span className="text-muted-foreground">{formatDuration(data.duration)}</span>
           ) : (
             <span />
           )}
           {data.error && (
             <span
-              className="ml-1 h-2 w-2 shrink-0 rounded-full bg-red-500"
+              className="ml-1 h-2 w-2 shrink-0 rounded-full bg-destructive"
               title={truncate(data.error, 120)}
             />
           )}
@@ -324,13 +333,13 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
             position={Position.Right}
             className={cn(
               "!w-2.5 !h-2.5",
-              data.conditionResult === false ? "!bg-gray-300 !opacity-30" : "!bg-accent",
+              data.conditionResult === false ? "!bg-muted !opacity-30" : "!bg-accent",
             )}
           />
           <span
             className={cn(
               "absolute right-0 translate-x-full pl-1 top-1/2 -translate-y-1/2 text-[10px] pointer-events-none whitespace-nowrap",
-              data.conditionResult === false ? "text-gray-300" : "text-muted",
+              data.conditionResult === false ? "text-muted-foreground" : "text-muted-foreground",
             )}
           >
             {"\u2713"} True
@@ -341,13 +350,13 @@ function RunOverlayNodeInner({ data, selected }: NodeProps<RunOverlayNodeData>) 
             position={Position.Left}
             className={cn(
               "!w-2.5 !h-2.5",
-              data.conditionResult === true ? "!bg-gray-300 !opacity-30" : "!bg-accent",
+              data.conditionResult === true ? "!bg-muted !opacity-30" : "!bg-accent",
             )}
           />
           <span
             className={cn(
               "absolute left-0 -translate-x-full pr-1 top-1/2 -translate-y-1/2 text-[10px] pointer-events-none whitespace-nowrap",
-              data.conditionResult === true ? "text-gray-300" : "text-muted",
+              data.conditionResult === true ? "text-muted-foreground" : "text-muted-foreground",
             )}
           >
             {"\u2717"} False

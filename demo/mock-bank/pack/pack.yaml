@@ -3,33 +3,20 @@ kind: Pack
 
 metadata:
   id: demo-mock-bank
-  version: 0.2.1
+  version: 0.3.0
   title: Mock Bank Demo
-  description: Mock bank demo with policy-gated transfers.
+  description: Mock bank demo with workflow-routed transfers and approval gates.
 
 compatibility:
   protocolVersion: 1
   minCoreVersion: 0.6.0
 
 topics:
-  - name: job.demo-mock-bank.transfer.auto
+  - name: job.demo-mock-bank.transfer
     capability: demo-mock-bank.transfer
     riskTags:
       - finance
       - transfer
-      - low
-  - name: job.demo-mock-bank.transfer.review
-    capability: demo-mock-bank.transfer
-    riskTags:
-      - finance
-      - transfer
-      - review
-  - name: job.demo-mock-bank.transfer.blocked
-    capability: demo-mock-bank.transfer
-    riskTags:
-      - finance
-      - transfer
-      - blocked
 
 resources:
   workflows:

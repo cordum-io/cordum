@@ -208,6 +208,58 @@ func TestSafeHTTPClient_BlocksNonHTTPS(t *testing.T) {
 	}
 }
 
+func TestHTTPBridgeReturnsBodyReadError(t *testing.T) {
+	t.Parallel()
+
+	bridge := NewHTTPServiceBridge(HTTPServiceBridgeConfig{
+		BaseURL:           "http://127.0.0.1:8081",
+		TenantID:          "tenant-a",
+		AllowPrivateHosts: true,
+		HTTPClient: &http.Client{
+			Transport: bridgeFailingBodyTransport{
+				statusCode: http.StatusOK,
+				err:        errors.New("simulated read failure"),
+			},
+		},
+	})
+
+	_, err := bridge.SubmitJob(context.Background(), SubmitJobInput{
+		Prompt: "hello",
+		Topic:  "job.default",
+	})
+	if err == nil {
+		t.Fatal("expected body read error")
+	}
+	if !strings.Contains(err.Error(), "read response body") {
+		t.Fatalf("expected read response body error, got %v", err)
+	}
+}
+
+type bridgeFailingBodyTransport struct {
+	statusCode int
+	err        error
+}
+
+func (t bridgeFailingBodyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: t.statusCode,
+		Body:       bridgeFailingReadCloser{err: t.err},
+		Header:     make(http.Header),
+	}, nil
+}
+
+type bridgeFailingReadCloser struct {
+	err error
+}
+
+func (r bridgeFailingReadCloser) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func (r bridgeFailingReadCloser) Close() error {
+	return nil
+}
+
 func assertBridgeStatus(t *testing.T, err error, status int) {
 	t.Helper()
 	var be *BridgeError

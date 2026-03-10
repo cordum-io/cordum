@@ -160,7 +160,7 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="mx-4 w-full max-w-lg rounded-2xl bg-white shadow-xl">
+      <div className="mx-4 w-full max-w-lg rounded-2xl bg-card shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <h2 className="font-display text-lg font-semibold text-ink">
@@ -171,14 +171,14 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
             onClick={onClose}
             className="rounded-full p-1.5 hover:bg-surface2 transition"
           >
-            <X className="h-4 w-4 text-muted" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
         {/* Body */}
         <div className="max-h-[60vh] overflow-y-auto px-6 py-4 space-y-5">
           {loadingWorkflow ? (
-            <div className="flex items-center justify-center py-8 text-sm text-muted">
+            <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
               <Loader className="mr-2 h-4 w-4 animate-spin" />
               Loading workflow...
             </div>
@@ -187,7 +187,7 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
               {/* Input form */}
               {hasSchema ? (
                 <div>
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Input Parameters
                   </h3>
                   <SchemaForm
@@ -198,7 +198,7 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
                 </div>
               ) : (
                 <div>
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Input (JSON)
                   </h3>
                   <Textarea
@@ -219,7 +219,7 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
 
               {/* Environment selector */}
               <div>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Environment
                 </h3>
                 <div className="flex gap-3">
@@ -230,7 +230,7 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
                         "flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition",
                         environment === env.value
                           ? "border-accent bg-accent/10 text-accent"
-                          : "border-border text-muted hover:border-accent/40",
+                          : "border-border text-muted-foreground hover:border-accent/40",
                       )}
                     >
                       <input
@@ -248,7 +248,7 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
               </div>
 
               {/* Dry-run toggle */}
-              <label className="flex items-center gap-2 text-xs text-muted cursor-pointer">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
                 <input
                   type="checkbox"
                   checked={dryRunEnabled}
@@ -272,7 +272,7 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
                   )}
 
                   <div className="rounded-xl border border-border">
-                    <div className="border-b border-border px-4 py-2 text-xs font-semibold uppercase tracking-wider text-muted">
+                    <div className="border-b border-border px-4 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Evaluation Results
                     </div>
                     <div className="divide-y divide-border">
@@ -301,7 +301,7 @@ export function RunNowModal({ workflowId, onClose }: RunNowModalProps) {
                         );
                       })}
                       {dryRunResults.length === 0 && (
-                        <div className="px-4 py-3 text-xs text-muted">
+                        <div className="px-4 py-3 text-xs text-muted-foreground">
                           No steps evaluated.
                         </div>
                       )}

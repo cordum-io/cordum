@@ -126,7 +126,7 @@ describe("SettingsLayout navigation", () => {
       expect(healthLink?.className).toContain("text-accent");
       // Non-active links should have muted class
       const keysLink = links.find((a) => a.textContent?.includes("API Keys"));
-      expect(keysLink?.className).toContain("text-muted");
+      expect(keysLink?.className).toContain("text-muted-foreground");
     });
     view.unmount();
   });

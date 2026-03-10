@@ -1,499 +1,224 @@
-import { useState, useEffect, lazy, Suspense } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { Shield, Database, Gauge, Save, RotateCcw, AlertTriangle } from "lucide-react";
-import { useGeneralConfig, useSetGeneralConfig } from "../hooks/useSettings";
-import { Card } from "../components/ui/Card";
-import { Button } from "../components/ui/Button";
-import { Input } from "../components/ui/Input";
-import { ProgressBar } from "../components/ProgressBar";
-import { MaintenanceModeSection } from "../components/settings/MaintenanceModeSection";
-import { HAConfigSection } from "../components/settings/HAConfigSection";
-import { cn } from "../lib/utils";
-import type { GeneralConfig } from "../api/types";
-import { usePageTitle } from "../hooks/usePageTitle";
-import { useStatus } from "../hooks/useStatus";
-import { RequireRole } from "../components/RequireRole";
+/*
+ * DESIGN: "Control Surface" — System Configuration
+ * PRD Section 27: Grouped settings with unsaved changes banner
+ */
+import { useState, useEffect } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
+import { get, post } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { Save, RotateCcw, AlertTriangle, Settings, Shield, Database, Zap } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
-const EffectiveConfigPanel = lazy(() => import("../components/settings/EffectiveConfigPanel"));
+type ConfigValue = string | number | boolean;
 
-// ---------------------------------------------------------------------------
-// Form schema
-// ---------------------------------------------------------------------------
+interface ConfigGroup {
+  id: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  fields: ConfigField[];
+}
 
-const configSchema = z.object({
-  safetyStance: z.enum(["permissive", "balanced", "strict"]),
-  approvalTimeoutMin: z.number().min(5).max(60),
-  autoDenyOnTimeout: z.boolean(),
-  logRetentionDays: z.number().min(7).max(365),
-  auditRetentionDays: z.number().min(7).max(365),
-  dlqRetentionDays: z.number().min(1).max(90),
-  rateLimitPerKey: z.number().min(1).max(10000),
-  concurrentJobsLimit: z.number().min(1).max(1000),
-  wsConnectionsLimit: z.number().min(1).max(500),
-});
+interface ConfigField {
+  key: string;
+  label: string;
+  type: "text" | "number" | "toggle" | "select";
+  value: ConfigValue;
+  description?: string;
+  options?: string[];
+}
 
-type ConfigFormValues = z.infer<typeof configSchema>;
-
-// ---------------------------------------------------------------------------
-// Stance options
-// ---------------------------------------------------------------------------
-
-const STANCES = [
+const GROUPS: ConfigGroup[] = [
   {
-    value: "permissive" as const,
-    label: "Permissive",
-    description: "Allow by default, deny explicitly",
-    border: "border-emerald-500",
-    bg: "bg-emerald-500/10",
+    id: "general", label: "General", icon: Settings,
+    fields: [
+      { key: "cluster_name", label: "Cluster Name", type: "text", value: "production", description: "Display name for this Cordum cluster" },
+      { key: "log_level", label: "Log Level", type: "select", value: "info", options: ["debug", "info", "warn", "error"], description: "Minimum log level for server output" },
+    ],
   },
   {
-    value: "balanced" as const,
-    label: "Balanced",
-    description: "Require approval for high-risk actions",
-    border: "border-accent",
-    bg: "bg-accent/10",
+    id: "safety", label: "Safety", icon: Shield,
+    fields: [
+      { key: "safety_enabled", label: "Enable Safety Checks", type: "toggle", value: true, description: "Run input/output safety checks on all jobs" },
+      { key: "safety_fail_mode", label: "Fail Mode", type: "select", value: "block", options: ["block", "warn", "log"], description: "Action when safety check fails" },
+    ],
   },
   {
-    value: "strict" as const,
-    label: "Strict",
-    description: "Deny by default, allow explicitly",
-    border: "border-red-500",
-    bg: "bg-red-500/10",
+    id: "performance", label: "Performance", icon: Zap,
+    fields: [
+      { key: "max_concurrent_jobs", label: "Max Concurrent Jobs", type: "number", value: 100, description: "Maximum jobs running simultaneously" },
+      { key: "job_timeout_seconds", label: "Default Job Timeout (s)", type: "number", value: 300, description: "Default timeout for jobs without explicit timeout" },
+    ],
   },
-];
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function toFormValues(config: GeneralConfig): ConfigFormValues {
-  return {
-    safetyStance: config.safetyStance,
-    approvalTimeoutMin: Math.round(config.approvalTimeoutMs / 60_000),
-    autoDenyOnTimeout: config.autoDenyOnTimeout,
-    logRetentionDays: config.logRetentionDays,
-    auditRetentionDays: config.auditRetentionDays,
-    dlqRetentionDays: config.dlqRetentionDays,
-    rateLimitPerKey: config.rateLimitPerKey,
-    concurrentJobsLimit: config.concurrentJobsLimit,
-    wsConnectionsLimit: config.wsConnectionsLimit,
-  };
-}
-
-function toConfigPatch(values: ConfigFormValues): Partial<GeneralConfig> {
-  return {
-    safetyStance: values.safetyStance,
-    approvalTimeoutMs: values.approvalTimeoutMin * 60_000,
-    autoDenyOnTimeout: values.autoDenyOnTimeout,
-    logRetentionDays: values.logRetentionDays,
-    auditRetentionDays: values.auditRetentionDays,
-    dlqRetentionDays: values.dlqRetentionDays,
-    rateLimitPerKey: values.rateLimitPerKey,
-    concurrentJobsLimit: values.concurrentJobsLimit,
-    wsConnectionsLimit: values.wsConnectionsLimit,
-  };
-}
-
-function estimateStorage(log: number, audit: number, dlq: number): string {
-  // Rough estimate: ~5MB/day logs, ~1MB/day audit, ~0.5MB/day DLQ
-  const totalMb = log * 5 + audit * 1 + dlq * 0.5;
-  if (totalMb >= 1000) return `~${(totalMb / 1000).toFixed(1)} GB`;
-  return `~${Math.round(totalMb)} MB`;
-}
-
-// ---------------------------------------------------------------------------
-// Section header
-// ---------------------------------------------------------------------------
-
-function SectionHeader({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: typeof Shield;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex items-start gap-3 mb-4">
-      <Icon className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
-      <div>
-        <h3 className="font-display text-base font-semibold text-ink">{title}</h3>
-        <p className="text-xs text-muted">{description}</p>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
-
-type ConfigTab = "configuration" | "effective";
-
-const TABS: { key: ConfigTab; label: string }[] = [
-  { key: "configuration", label: "Configuration" },
-  { key: "effective", label: "Effective Config" },
+  {
+    id: "retention", label: "Data Retention", icon: Database,
+    fields: [
+      { key: "job_retention_days", label: "Job History (days)", type: "number", value: 90, description: "Days to retain completed job records" },
+      { key: "audit_retention_days", label: "Audit Log (days)", type: "number", value: 365, description: "Days to retain audit log entries" },
+    ],
+  },
 ];
 
 export default function SettingsConfigPage() {
-  usePageTitle("Settings - Configuration");
-  const [tab, setTab] = useState<ConfigTab>("configuration");
-  const { data: config, isLoading, isError, refetch } = useGeneralConfig();
-  const { data: statusData } = useStatus();
-  const saveConfig = useSetGeneralConfig();
+  const [values, setValues] = useState<Record<string, ConfigValue>>({});
+  const [originalValues, setOriginalValues] = useState<Record<string, ConfigValue>>({});
+  const [activeGroup, setActiveGroup] = useState("general");
 
-  const {
-    register,
-    handleSubmit,
-    watch,
-    reset,
-    setValue,
-    formState: { errors, isDirty },
-  } = useForm<ConfigFormValues>({
-    resolver: zodResolver(configSchema),
-    defaultValues: config ? toFormValues(config) : undefined,
+  const { data: configData, isLoading } = useQuery({
+    queryKey: ["config"],
+    queryFn: async () => {
+      const res = await get<Record<string, unknown>>("/config");
+      return res;
+    },
   });
 
-  // Sync form when config loads
+  // Initialize values from groups defaults, then overlay backend config when available
   useEffect(() => {
-    if (config) {
-      reset(toFormValues(config));
+    const initial: Record<string, ConfigValue> = {};
+    GROUPS.forEach(g => g.fields.forEach(f => { initial[f.key] = f.value; }));
+    if (configData && typeof configData === "object") {
+      for (const key of Object.keys(initial)) {
+        const raw = (configData as Record<string, unknown>)[key];
+        if (raw !== undefined && (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean")) {
+          initial[key] = raw;
+        }
+      }
     }
-  }, [config, reset]);
+    setValues(initial);
+    setOriginalValues(initial);
+  }, [configData]);
 
-  const stance = watch("safetyStance");
-  const timeoutMin = watch("approvalTimeoutMin");
-  const logDays = watch("logRetentionDays");
-  const auditDays = watch("auditRetentionDays");
-  const dlqDays = watch("dlqRetentionDays");
-  const rateLimit = watch("rateLimitPerKey");
-  const jobsLimit = watch("concurrentJobsLimit");
-  const wsLimit = watch("wsConnectionsLimit");
+  const hasChanges = JSON.stringify(values) !== JSON.stringify(originalValues);
 
-  const onSubmit = (values: ConfigFormValues) => {
-    saveConfig.mutate(toConfigPatch(values), {
-      onSuccess: () => reset(values),
-    });
+  const saveMutation = useMutation({
+    mutationFn: async () => post("/config", values),
+    onSuccess: () => { setOriginalValues({ ...values }); toast.success("Configuration saved"); },
+    onError: () => toast.error("Failed to save configuration"),
+  });
+
+  const updateValue = (key: string, value: ConfigValue) => {
+    setValues(prev => ({ ...prev, [key]: value }));
   };
 
-  if (isLoading) {
-    return (
-      <div className="space-y-4">
-        {Array.from({ length: 3 }, (_, i) => (
-          <div key={i} className="h-48 animate-pulse rounded-2xl bg-surface2" />
-        ))}
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <Card>
-        <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <AlertTriangle className="h-8 w-8 text-danger" />
-          <p className="text-sm font-semibold text-ink">Failed to load configuration</p>
-          <p className="text-xs text-muted">
-            The configuration could not be retrieved. Editing is disabled to prevent overwriting existing settings.
-          </p>
-          <Button variant="outline" size="sm" type="button" onClick={() => refetch()}>
-            <RotateCcw className="h-3.5 w-3.5" />
-            Retry
-          </Button>
-        </div>
-      </Card>
-    );
-  }
+  const currentGroup = GROUPS.find(g => g.id === activeGroup);
 
   return (
-    <div className="space-y-6 pb-20">
-      {/* Tab switcher */}
-      <div className="flex gap-1 rounded-xl bg-surface2 p-1 w-fit">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={cn(
-              "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
-              tab === t.key
-                ? "bg-surface text-ink shadow-sm"
-                : "text-muted hover:text-ink",
-            )}
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader title="System Configuration" subtitle="Manage cluster-wide settings and defaults" />
+
+      {/* Unsaved Changes Banner */}
+      <AnimatePresence>
+        {hasChanges && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="flex items-center justify-between px-4 py-3 rounded-2xl bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20"
           >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "effective" && (
-        <Suspense
-          fallback={
-            <div className="space-y-4">
-              {Array.from({ length: 2 }, (_, i) => (
-                <div key={i} className="h-48 animate-pulse rounded-2xl bg-surface2" />
-              ))}
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-[var(--color-warning)]" />
+              <span className="text-sm text-[var(--color-warning)]">You have unsaved changes</span>
             </div>
-          }
-        >
-          <EffectiveConfigPanel />
-        </Suspense>
-      )}
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setValues({ ...originalValues })}>
+                <RotateCcw className="w-3 h-3 mr-1" />Discard
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => saveMutation.mutate()} loading={saveMutation.isPending}>
+                <Save className="w-3 h-3 mr-1" />Save Changes
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {tab === "configuration" && (
-      <>
-      {/* Maintenance Mode — first for high-urgency visibility */}
-      <MaintenanceModeSection />
-
-      {/* HA env vars — read-only, startup-only */}
-      <HAConfigSection status={statusData} />
-
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-      {/* Safety Defaults */}
-      <Card>
-        <SectionHeader
-          icon={Shield}
-          title="Safety Defaults"
-          description="Default safety posture and approval behavior"
-        />
-
-        <div className="space-y-5">
-          {/* Stance selector */}
-          <div className="space-y-2">
-            <label className="text-xs font-semibold text-muted">Safety Stance</label>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {STANCES.map((s) => (
+      {isLoading ? (
+        <div className="space-y-4">{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}</div>
+      ) : (
+        <div className="flex gap-6">
+          {/* Group Nav */}
+          <div className="w-48 shrink-0 space-y-1">
+            {GROUPS.map(g => {
+              const Icon = g.icon;
+              return (
                 <button
-                  key={s.value}
-                  type="button"
-                  onClick={() => setValue("safetyStance", s.value, { shouldDirty: true })}
+                  key={g.id}
+                  onClick={() => setActiveGroup(g.id)}
                   className={cn(
-                    "rounded-xl border-2 p-4 text-left transition",
-                    stance === s.value
-                      ? `${s.border} ${s.bg}`
-                      : "border-border hover:border-ink/20",
+                    "w-full flex items-center gap-2 px-3 py-2 rounded-2xl text-xs font-medium transition-colors text-left",
+                    activeGroup === g.id ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground hover:bg-surface-1",
                   )}
                 >
-                  <p className="text-sm font-semibold text-ink">{s.label}</p>
-                  <p className="mt-1 text-xs text-muted">{s.description}</p>
+                  <Icon className="w-3.5 h-3.5" />{g.label}
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
 
-          {/* Approval timeout slider */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-muted">
-                Approval Timeout
-              </label>
-              <span className="text-xs font-mono text-ink">{timeoutMin} min</span>
-            </div>
-            <input
-              type="range"
-              min={5}
-              max={60}
-              step={5}
-              {...register("approvalTimeoutMin", { valueAsNumber: true })}
-              className="w-full accent-accent"
-            />
-            <div className="flex justify-between text-[10px] text-muted">
-              <span>5 min</span>
-              <span>60 min</span>
-            </div>
-            {errors.approvalTimeoutMin && (
-              <p className="text-xs text-danger">{errors.approvalTimeoutMin.message}</p>
-            )}
-          </div>
-
-          {/* Auto-deny toggle */}
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              {...register("autoDenyOnTimeout")}
-              className="mt-1 h-4 w-4 rounded border-border text-accent focus:ring-accent"
-            />
-            <div>
-              <p className="text-sm font-medium text-ink">Auto-deny on timeout</p>
-              <p className="text-xs text-warning">
-                Jobs will be automatically denied if not approved within the timeout period.
-              </p>
-            </div>
-          </label>
-        </div>
-      </Card>
-
-      {/* Retention */}
-      <Card>
-        <SectionHeader
-          icon={Database}
-          title="Retention"
-          description="How long data is kept before automatic cleanup"
-        />
-
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-muted">Log Retention (days)</label>
-              <Input
-                type="number"
-                {...register("logRetentionDays", { valueAsNumber: true })}
-                min={7}
-                max={365}
-              />
-              {errors.logRetentionDays && (
-                <p className="text-xs text-danger">{errors.logRetentionDays.message}</p>
-              )}
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-muted">Audit Retention (days)</label>
-              <Input
-                type="number"
-                {...register("auditRetentionDays", { valueAsNumber: true })}
-                min={7}
-                max={365}
-              />
-              {errors.auditRetentionDays && (
-                <p className="text-xs text-danger">{errors.auditRetentionDays.message}</p>
-              )}
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-muted">DLQ Retention (days)</label>
-              <Input
-                type="number"
-                {...register("dlqRetentionDays", { valueAsNumber: true })}
-                min={1}
-                max={90}
-              />
-              {errors.dlqRetentionDays && (
-                <p className="text-xs text-danger">{errors.dlqRetentionDays.message}</p>
-              )}
-            </div>
-          </div>
-
-          <p className="text-xs text-muted">
-            Estimated storage:{" "}
-            <span className="font-semibold text-ink">
-              {estimateStorage(logDays ?? 30, auditDays ?? 90, dlqDays ?? 14)}
-            </span>{" "}
-            at current ingestion rate
-          </p>
-        </div>
-      </Card>
-
-      {/* Rate Limits */}
-      <Card>
-        <SectionHeader
-          icon={Gauge}
-          title="Rate Limits"
-          description="Throttling limits for API keys, jobs, and connections"
-        />
-
-        <div className="space-y-5">
-          {/* Requests per second */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-muted">Requests/sec per key</label>
-              <span className="text-xs font-mono text-ink">{rateLimit ?? 600}</span>
-            </div>
-            <Input
-              type="number"
-              {...register("rateLimitPerKey", { valueAsNumber: true })}
-              min={1}
-              max={10000}
-            />
-            {errors.rateLimitPerKey && (
-              <p className="text-xs text-danger">{errors.rateLimitPerKey.message}</p>
-            )}
-            <ProgressBar value={0} className="h-1.5" />
-            <p className="text-[10px] text-muted">Current usage: N/A</p>
-          </div>
-
-          {/* Concurrent jobs */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-muted">Concurrent jobs limit</label>
-              <span className="text-xs font-mono text-ink">{jobsLimit ?? 100}</span>
-            </div>
-            <Input
-              type="number"
-              {...register("concurrentJobsLimit", { valueAsNumber: true })}
-              min={1}
-              max={1000}
-            />
-            {errors.concurrentJobsLimit && (
-              <p className="text-xs text-danger">{errors.concurrentJobsLimit.message}</p>
-            )}
-            <ProgressBar value={0} className="h-1.5" />
-            <p className="text-[10px] text-muted">Current usage: N/A</p>
-          </div>
-
-          {/* WebSocket connections */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-muted">WebSocket connections limit</label>
-              <span className="text-xs font-mono text-ink">{wsLimit ?? 50}</span>
-            </div>
-            <Input
-              type="number"
-              {...register("wsConnectionsLimit", { valueAsNumber: true })}
-              min={1}
-              max={500}
-            />
-            {errors.wsConnectionsLimit && (
-              <p className="text-xs text-danger">{errors.wsConnectionsLimit.message}</p>
-            )}
-            <ProgressBar value={0} className="h-1.5" />
-            <p className="text-[10px] text-muted">Current usage: N/A</p>
-          </div>
-        </div>
-      </Card>
-
-      {/* Unsaved changes bar */}
-      <RequireRole roles={["admin"]}>
-        {isDirty && (
-          <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface px-6 py-3 shadow-lift">
-            <div className="mx-auto flex max-w-4xl items-center justify-between">
-              <p className="text-sm font-medium text-warning">You have unsaved changes</p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  type="button"
-                  onClick={() => config && reset(toFormValues(config))}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Discard
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  type="submit"
-                  disabled={saveConfig.isPending}
-                >
-                  <Save className="h-3.5 w-3.5" />
-                  {saveConfig.isPending ? "Saving..." : "Save Changes"}
-                </Button>
+          {/* Fields */}
+          {currentGroup && (
+            <div className="flex-1 instrument-card p-6 space-y-6">
+              <div>
+                <h2 className="text-sm font-display font-semibold text-foreground">{currentGroup.label}</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Configure {currentGroup.label.toLowerCase()} settings</p>
+              </div>
+              <div className="space-y-5">
+                {currentGroup.fields.map(field => (
+                  <div key={field.key} className="flex items-start justify-between gap-8">
+                    <div className="flex-1">
+                      <label className="text-xs font-medium text-foreground block">{field.label}</label>
+                      {field.description && <p className="text-[10px] text-muted-foreground mt-0.5">{field.description}</p>}
+                    </div>
+                    <div className="w-48 shrink-0">
+                      {field.type === "text" && (
+                        <input
+                          type="text"
+                          value={String(values[field.key] ?? "")}
+                          onChange={(e) => updateValue(field.key, e.target.value)}
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                        />
+                      )}
+                      {field.type === "number" && (
+                        <input
+                          type="number"
+                          value={Number(values[field.key] ?? 0)}
+                          onChange={(e) => updateValue(field.key, Number(e.target.value))}
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                        />
+                      )}
+                      {field.type === "select" && (
+                        <select
+                          value={String(values[field.key] ?? "")}
+                          onChange={(e) => updateValue(field.key, e.target.value)}
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                        >
+                          {field.options?.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      )}
+                      {field.type === "toggle" && (
+                        <button
+                          onClick={() => updateValue(field.key, !values[field.key])}
+                          className={cn(
+                            "w-9 h-5 rounded-full relative transition-colors",
+                            values[field.key] ? "bg-cordum" : "bg-surface-2",
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-0.5 w-4 h-4 rounded-full bg-card transition-transform",
+                            values[field.key] ? "left-[18px]" : "left-0.5",
+                          )} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
-        )}
-      </RequireRole>
-
-      {/* Success/error feedback */}
-      {saveConfig.isSuccess && !isDirty && (
-        <p className="text-center text-xs text-success">Configuration saved successfully.</p>
+          )}
+        </div>
       )}
-      {saveConfig.isError && (
-        <p className="text-center text-xs text-danger">
-          Failed to save: {saveConfig.error.message}
-        </p>
-      )}
-    </form>
-      </>
-      )}
-    </div>
+    </motion.div>
   );
 }

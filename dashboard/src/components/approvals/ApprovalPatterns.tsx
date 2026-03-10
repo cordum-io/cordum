@@ -93,7 +93,7 @@ export function ApprovalPatterns({ approval, allApprovals }: ApprovalPatternsPro
 
   // Empty state
   if (similar.length === 0) {
-    return <p className="text-xs text-muted">No similar past approvals found.</p>;
+    return <p className="text-xs text-muted-foreground">No similar past approvals found.</p>;
   }
 
   const display = similar.slice(0, 5);
@@ -102,7 +102,7 @@ export function ApprovalPatterns({ approval, allApprovals }: ApprovalPatternsPro
     <div className="space-y-3">
       {/* Frequency counter */}
       {stats.total > 0 && (
-        <p className="text-xs text-muted">
+        <p className="text-xs text-muted-foreground">
           This pattern: {stats.approved} approved, {stats.rejected} rejected in last 30 days
           {stats.total > 0 && ` (${stats.rate}% approval rate)`}
         </p>
@@ -124,15 +124,15 @@ export function ApprovalPatterns({ approval, allApprovals }: ApprovalPatternsPro
                 <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
               )}
               <div className="min-w-0">
-                <span className="text-muted">{formatRelativeTime(ts)}</span>
+                <span className="text-muted-foreground">{formatRelativeTime(ts)}</span>
                 {" — "}
                 <span className="font-medium text-ink">@{actor}</span>
                 {" "}
-                <span className="text-muted">{isApproved ? "approved" : "rejected"}</span>
+                <span className="text-muted-foreground">{isApproved ? "approved" : "rejected"}</span>
                 {commentText && (
                   <>
                     {" — "}
-                    <span className="italic text-muted">
+                    <span className="italic text-muted-foreground">
                       &ldquo;{commentText.length > 60 ? `${commentText.slice(0, 60)}…` : commentText}&rdquo;
                     </span>
                   </>
@@ -145,11 +145,11 @@ export function ApprovalPatterns({ approval, allApprovals }: ApprovalPatternsPro
 
       {/* Auto-approve suggestion */}
       {showSuggestion && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
+        <div className="rounded-2xl border border-[var(--color-info)]/20 bg-[var(--color-info)]/5 p-3">
           <div className="flex items-start gap-2">
-            <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+            <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-info)]" />
             <div className="space-y-2">
-              <p className="text-xs text-blue-800 dark:text-blue-200">
+              <p className="text-xs text-[var(--color-info)]">
                 <span className="font-semibold">Consider creating an auto-approve rule.</span>{" "}
                 You&apos;ve approved {recentApprovals7d.length} similar jobs in the last 7 days.
               </p>

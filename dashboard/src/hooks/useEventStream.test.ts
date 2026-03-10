@@ -107,8 +107,9 @@ describe("useEventStream", () => {
   it("sends auth via subprotocol", () => {
     useEventStream();
     const ws = MockWebSocket.instances[0];
-    expect(ws.protocols.length).toBe(1);
-    expect(ws.protocols[0]).toMatch(/^cordum-api-key\./);
+    expect(ws.protocols).toHaveLength(2);
+    expect(ws.protocols[0]).toBe("cordum-api-key");
+    expect(ws.protocols[1]).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
   it("sets status to connected on open", () => {

@@ -36,7 +36,7 @@ export async function captureElement(element: HTMLElement): Promise<string> {
   const canvas = await html2canvas(element, {
     scale: 2,
     useCORS: true,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#f5efe6",
   });
   return canvas.toDataURL("image/png");
 }
@@ -183,7 +183,7 @@ export async function exportPdf(options: PdfOptions): Promise<void> {
         const element = section.content as HTMLElement;
         try {
           const dataUrl = await captureElement(element);
-          const canvas = await html2canvas(element, { scale: 2, backgroundColor: "#ffffff" });
+          const canvas = await html2canvas(element, { scale: 2, backgroundColor: "#f5efe6" });
           const imgWidth = CONTENT_WIDTH;
           const imgHeight = (canvas.height / canvas.width) * imgWidth;
 

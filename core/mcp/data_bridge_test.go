@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -225,6 +226,55 @@ func TestDirectDataBridgeUnavailable(t *testing.T) {
 	if _, err := bridge.GetJob(context.Background(), "job-1"); !errors.Is(err, ErrBridgeUnavailable) {
 		t.Fatalf("expected ErrBridgeUnavailable, got %v", err)
 	}
+}
+
+func TestHTTPDataBridgeReturnsBodyReadError(t *testing.T) {
+	t.Parallel()
+
+	bridge := NewHTTPDataBridge(HTTPDataBridgeConfig{
+		BaseURL:           "http://127.0.0.1:8081",
+		TenantID:          "tenant-a",
+		AllowPrivateHosts: true,
+		HTTPClient: &http.Client{
+			Transport: dataBridgeFailingBodyTransport{
+				statusCode: http.StatusOK,
+				err:        errors.New("simulated read failure"),
+			},
+		},
+	})
+
+	_, err := bridge.GetSystemHealth(context.Background())
+	if err == nil {
+		t.Fatal("expected body read error")
+	}
+	if !strings.Contains(err.Error(), "read response body") {
+		t.Fatalf("expected read response body error, got %v", err)
+	}
+}
+
+type dataBridgeFailingBodyTransport struct {
+	statusCode int
+	err        error
+}
+
+func (t dataBridgeFailingBodyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: t.statusCode,
+		Body:       dataBridgeFailingReadCloser{err: t.err},
+		Header:     make(http.Header),
+	}, nil
+}
+
+type dataBridgeFailingReadCloser struct {
+	err error
+}
+
+func (r dataBridgeFailingReadCloser) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func (r dataBridgeFailingReadCloser) Close() error {
+	return nil
 }
 
 func assertDataBridgeStatus(t *testing.T, err error, status int) {

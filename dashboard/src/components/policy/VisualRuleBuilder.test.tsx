@@ -40,6 +40,10 @@ vi.mock("../../hooks/usePolicies", () => ({
   encodePolicyBundleId: (id: string) => encodeURIComponent(id),
 }));
 
+vi.mock("@monaco-editor/react", () => ({
+  default: () => null,
+}));
+
 import { usePolicyBundle } from "../../hooks/usePolicies";
 import { VisualRuleBuilder } from "./VisualRuleBuilder";
 
@@ -76,7 +80,7 @@ function makeRule(overrides: Partial<PolicyRule> & { id: string }): PolicyRule {
     matchCriteria: {},
     decisionType: "allow",
     ...overrides,
-  };
+  } as any as PolicyRule;
 }
 
 beforeEach(() => {

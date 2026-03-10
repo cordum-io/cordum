@@ -99,6 +99,7 @@ export function buildRunGraph(
     const data: RunOverlayNodeData = {
       label: step.name || step.id,
       stepType: step.type,
+      condition: step.condition,
       ...(run
         ? {
             runStatus: runStep?.status,

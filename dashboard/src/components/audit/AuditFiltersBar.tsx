@@ -142,9 +142,9 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
   onChangeRef.current = onChange;
 
   // Debounce timers
-  const actorTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const resourceIdTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const actorTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const resourceIdTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Clear pending debounce timers on unmount
   useEffect(() => {
@@ -320,20 +320,6 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
   }, [setSearchParams]);
 
   // ---------------------------------------------------------------------------
-  // Active filter count
-  // ---------------------------------------------------------------------------
-
-  const activeCount =
-    eventType.length +
-    (actor ? 1 : 0) +
-    (resourceType ? 1 : 0) +
-    (resourceId ? 1 : 0) +
-    severity.length +
-    outcome.length +
-    (timeRange ? 1 : 0) +
-    (search ? 1 : 0);
-
-  // ---------------------------------------------------------------------------
   // Clear all
   // ---------------------------------------------------------------------------
 
@@ -423,7 +409,7 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
           className="pl-9"
         />
         <svg
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -436,7 +422,7 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
       {/* Row 2: Event type categories */}
       <div className="space-y-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-xs font-semibold text-muted">Event:</span>
+          <span className="mr-1 text-xs font-semibold text-muted-foreground">Event:</span>
           {EVENT_CATEGORIES.map((cat) => {
             const catTypes = cat.subTypes as readonly string[];
             const selectedCount = catTypes.filter((t) => eventType.includes(t)).length;
@@ -452,7 +438,7 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
                     ? "border-accent bg-accent/10 text-accent"
                     : selectedCount > 0
                       ? "border-accent/50 bg-accent/5 text-accent"
-                      : "border-border text-muted hover:border-accent/40 hover:text-ink",
+                      : "border-border text-muted-foreground hover:border-accent/40 hover:text-ink",
                 )}
               >
                 {cat.label}
@@ -465,7 +451,7 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
           <button
             type="button"
             onClick={() => setShowSubTypes(!showSubTypes)}
-            className="text-xs text-muted hover:text-accent transition-colors"
+            className="text-xs text-muted-foreground hover:text-accent transition-colors"
           >
             {showSubTypes ? "Hide sub-types" : "Sub-types\u2026"}
           </button>
@@ -483,7 +469,7 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
                     "rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
                     active
                       ? "border-accent bg-accent/10 text-accent"
-                      : "border-border text-muted hover:border-accent/40 hover:text-ink",
+                      : "border-border text-muted-foreground hover:border-accent/40 hover:text-ink",
                   )}
                 >
                   {st.label}
@@ -496,7 +482,7 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
 
       {/* Row 3: Severity chips */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-xs font-semibold text-muted">Severity:</span>
+        <span className="mr-1 text-xs font-semibold text-muted-foreground">Severity:</span>
         {SEVERITY_OPTIONS.map((sev) => {
           const active = severity.includes(sev);
           return (
@@ -508,11 +494,11 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
                 "rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize transition-colors",
                 active
                   ? sev === "high"
-                    ? "border-red-400 bg-red-50 text-red-700"
+                    ? "border-destructive/40 bg-destructive/5 text-destructive"
                     : sev === "medium"
-                      ? "border-yellow-400 bg-yellow-50 text-yellow-700"
-                      : "border-gray-400 bg-gray-50 text-gray-600"
-                  : "border-border text-muted hover:border-accent/40 hover:text-ink",
+                      ? "border-[var(--color-warning)]/40 bg-[var(--color-warning)]/5 text-[var(--color-warning)]"
+                      : "border-muted bg-muted/50 text-muted-foreground"
+                  : "border-border text-muted-foreground hover:border-accent/40 hover:text-ink",
               )}
             >
               {sev}
@@ -581,8 +567,8 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
               className={cn(
                 "rounded-full px-3 py-1 text-xs font-medium transition-colors",
                 timeRange === tr.value
-                  ? "bg-accent text-white"
-                  : "text-muted hover:text-ink",
+                  ? "bg-accent text-primary-foreground"
+                  : "text-muted-foreground hover:text-ink",
               )}
             >
               {tr.label}
@@ -594,8 +580,8 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
             className={cn(
               "rounded-full px-3 py-1 text-xs font-medium transition-colors",
               isCustomRange
-                ? "bg-accent text-white"
-                : "text-muted hover:text-ink",
+                ? "bg-accent text-primary-foreground"
+                : "text-muted-foreground hover:text-ink",
             )}
           >
             Custom
@@ -604,21 +590,21 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
 
         {isCustomRange && (
           <div className="flex flex-wrap items-center gap-2 pl-1">
-            <label className="text-xs text-muted">From:</label>
+            <label className="text-xs text-muted-foreground">From:</label>
             <input
               type="datetime-local"
               value={from}
               onChange={(e) => setParam("from", e.target.value)}
-              className="rounded-lg border border-border bg-white/70 px-2 py-1 text-xs text-ink"
+              className="rounded-lg border border-border bg-card/70 px-2 py-1 text-xs text-ink"
             />
-            <label className="text-xs text-muted">To:</label>
+            <label className="text-xs text-muted-foreground">To:</label>
             <input
               type="datetime-local"
               value={to}
               onChange={(e) => setParam("to", e.target.value)}
-              className="rounded-lg border border-border bg-white/70 px-2 py-1 text-xs text-ink"
+              className="rounded-lg border border-border bg-card/70 px-2 py-1 text-xs text-ink"
             />
-            <span className="text-[10px] text-muted">({tz})</span>
+            <span className="text-[10px] text-muted-foreground">({tz})</span>
           </div>
         )}
       </div>

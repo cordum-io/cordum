@@ -225,13 +225,18 @@ func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 		}
 	}
 	dd := strings.ToLower(strings.TrimSpace(p.DefaultDecision))
-	if dd == "" || dd == "deny" {
-		return PolicyDecision{
-			Decision: "deny",
-			Reason:   "no matching rule — default policy: deny",
-		}
+	if dd == "allow" || dd == "permit" {
+		return PolicyDecision{Decision: "allow", Reason: "no matching rule — default policy: allow"}
 	}
-	return PolicyDecision{Decision: "allow", Reason: "no matching rule — default policy: allow"}
+	// Fail-closed: empty, "deny", or any unrecognized default_decision value
+	// results in deny. This prevents typos like "alow" from silently allowing.
+	if dd != "" && dd != "deny" {
+		slog.Warn("unrecognized default_decision value, defaulting to deny (fail-closed)", "raw", p.DefaultDecision)
+	}
+	return PolicyDecision{
+		Decision: "deny",
+		Reason:   "no matching rule — default policy: deny",
+	}
 }
 
 func normalizeDecision(raw string) string {

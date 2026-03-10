@@ -465,6 +465,8 @@ spec:
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -559,6 +561,8 @@ spec:
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -657,6 +661,8 @@ spec:
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -779,6 +785,8 @@ spec:
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -919,6 +927,8 @@ spec:
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         env:
         - name: NATS_URL
           value: nats://nats:4222
@@ -1021,6 +1031,8 @@ spec:
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         env:
         - name: CORDUM_API_KEY
           valueFrom:

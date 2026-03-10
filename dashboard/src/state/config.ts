@@ -5,6 +5,17 @@ import { useEventStore } from "./events";
 import type { User } from "../api/types";
 
 // ---------------------------------------------------------------------------
+// React Query client reference — set once by App.tsx to avoid circular import
+// ---------------------------------------------------------------------------
+
+let _queryClient: { clear: () => void } | null = null;
+
+/** Called by App.tsx to register the QueryClient for cache clearing on logout/tenant-switch. */
+export function registerQueryClient(qc: { clear: () => void }): void {
+  _queryClient = qc;
+}
+
+// ---------------------------------------------------------------------------
 // Persistence helpers
 // ---------------------------------------------------------------------------
 
@@ -107,6 +118,9 @@ interface ConfigState {
   /** @internal Prevents tenant impersonation via store mutation after login. */
   tenantLocked: boolean;
 
+  /** True once runtime config has been loaded (from public/config.json or defaults). */
+  loaded: boolean;
+
   // Actions
   update: (patch: ConfigPatch) => void;
   login: (token: string, user: User) => void;
@@ -128,6 +142,7 @@ export const useConfigStore = create<ConfigState>((set) => {
     isAuthenticated: !!loadToken(),
     loginTimestamp: loadLoginTimestamp(),
     tenantLocked: !!(savedUser?.tenant),
+    loaded: true,
 
     update: (patch) =>
       set((s) => {
@@ -144,9 +159,10 @@ export const useConfigStore = create<ConfigState>((set) => {
           const next = { ...s, ...safePatch };
           return { ...next, isAuthenticated: !!next.apiKey };
         }
-        // Reset event store on tenant switch to prevent cross-tenant data leakage
+        // Reset event store and query cache on tenant switch to prevent cross-tenant data leakage
         if (patch.tenantId !== undefined && patch.tenantId !== s.tenantId) {
           useEventStore.getState().reset();
+          _queryClient?.clear();
         }
         const next = { ...s, ...patch };
         const locked = s.tenantLocked || !!(next.tenantId);
@@ -178,6 +194,8 @@ export const useConfigStore = create<ConfigState>((set) => {
       persistUser(null);
       persistLoginTimestamp(null);
       useEventStore.getState().reset();
+      // Clear React Query cache to prevent cross-tenant/cross-user data leakage
+      _queryClient?.clear();
       set({
         apiKey: "",
         user: null,

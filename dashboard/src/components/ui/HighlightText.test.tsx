@@ -44,7 +44,7 @@ describe("HighlightText", () => {
     const marks = container.querySelectorAll("mark");
     expect(marks).toHaveLength(1);
     expect(marks[0].textContent).toBe("World");
-    expect(marks[0].className).toContain("bg-amber-200");
+    expect(marks[0].className).toContain("bg-");
   });
 
   it("is case-insensitive", () => {

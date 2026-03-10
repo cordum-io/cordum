@@ -1,83 +1,160 @@
-import { useId } from "react";
-import { X } from "lucide-react";
-import { Button } from "./Button";
-import { useDialogA11y } from "../../hooks/useDialogA11y";
+import { useState, type ReactNode } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { AlertTriangle, X } from "lucide-react";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 
-interface ConfirmDialogProps {
+export interface ConfirmDialogProps {
   open: boolean;
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  confirmVariant?: "primary" | "danger" | "outline" | "ghost";
-  isPending?: boolean;
+  onClose?: () => void;
+  onCancel?: () => void;
   onConfirm: () => void;
-  onCancel: () => void;
+  title: string;
+  description?: string | ReactNode;
+  message?: string | ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: "default" | "destructive";
+  confirmVariant?: string;
+  confirmText?: string; // If set, user must type this to confirm
+  loading?: boolean;
+  isPending?: boolean;
+  icon?: React.ElementType;
 }
 
 export function ConfirmDialog({
   open,
+  onClose,
+  onCancel,
+  onConfirm,
   title,
+  description,
   message,
   confirmLabel = "Confirm",
-  confirmVariant = "primary",
-  isPending = false,
-  onConfirm,
-  onCancel,
+  cancelLabel = "Cancel",
+  variant = "default",
+  confirmVariant: _confirmVariant,
+  confirmText,
+  loading,
+  isPending,
+  icon: Icon = AlertTriangle,
 }: ConfirmDialogProps) {
-  const dialogRef = useDialogA11y(onCancel);
-  const titleId = useId();
+  const resolvedDescription = description ?? message ?? "";
+  const resolvedLoading = loading ?? isPending ?? false;
+  const resolvedOnClose = onClose ?? onCancel ?? (() => {});
+  const [typed, setTyped] = useState("");
+  const canConfirm = confirmText ? typed === confirmText : true;
 
-  if (!open) return null;
+  const handleConfirm = () => {
+    if (!canConfirm || resolvedLoading) return;
+    onConfirm();
+    setTyped("");
+  };
+
+  const handleClose = () => {
+    if (resolvedLoading) return;
+    setTyped("");
+    resolvedOnClose();
+  };
+
+  const dialogRef = useDialogA11y(handleClose);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="surface-card w-full max-w-md rounded-3xl p-6 shadow-xl"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h3
-            id={titleId}
-            className="font-display text-lg font-semibold text-ink"
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[100] bg-[color:var(--surface-glass)] backdrop-blur-md"
+            onClick={handleClose}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[101] w-full max-w-md"
           >
-            {title}
-          </h3>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-full p-1 hover:bg-surface2"
-            aria-label="Close dialog"
-          >
-            <X className="h-4 w-4 text-muted" />
-          </button>
-        </div>
+            <div
+              ref={dialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="confirm-dialog-title"
+              aria-describedby="confirm-dialog-desc"
+              className="overflow-hidden rounded-3xl border border-border bg-[color:var(--surface-glass)] shadow-glow backdrop-blur-xl"
+            >
+              {/* Header */}
+              <div className="flex items-start gap-3 px-5 pt-5 pb-3">
+                <div className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${
+                  variant === "destructive" ? "bg-destructive/15" : "bg-[var(--color-warning)]/15"
+                }`}>
+                  <Icon className={`w-5 h-5 ${
+                    variant === "destructive" ? "text-destructive" : "text-[var(--color-warning)]"
+                  }`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 id="confirm-dialog-title" className="text-sm font-display font-semibold text-foreground">{title}</h3>
+                  <div id="confirm-dialog-desc" className="text-xs text-muted-foreground mt-1 leading-relaxed">{resolvedDescription}</div>
+                </div>
+                <button
+                  onClick={handleClose}
+                  className="shrink-0 p-1 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
 
-        <p className="mb-6 text-sm text-muted">{message}</p>
+              {/* Confirm text input */}
+              {confirmText && (
+                <div className="px-5 pb-3">
+                  <p className="text-[11px] text-muted-foreground mb-1.5">
+                    Type <code className="font-mono text-foreground bg-surface-2 px-1 py-0.5 rounded text-[10px]">{confirmText}</code> to confirm
+                  </p>
+                  <input
+                    type="text"
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    placeholder={confirmText}
+                    className="w-full h-9 px-3 text-xs bg-surface-0 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+                  />
+                </div>
+              )}
 
-        <div className="flex justify-end gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            type="button"
-            onClick={onCancel}
-            disabled={isPending}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant={confirmVariant}
-            size="sm"
-            type="button"
-            onClick={onConfirm}
-            disabled={isPending}
-          >
-            {isPending ? "Working..." : confirmLabel}
-          </Button>
-        </div>
-      </div>
-    </div>
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border bg-surface-0/50">
+                <button
+                  onClick={handleClose}
+                  disabled={resolvedLoading}
+                  className="h-8 px-4 text-xs font-medium rounded-full border border-border text-foreground hover:bg-surface-2 transition-colors disabled:opacity-50"
+                >
+                  {cancelLabel}
+                </button>
+                <button
+                  onClick={handleConfirm}
+                  disabled={!canConfirm || resolvedLoading}
+                  className={`h-8 px-4 text-xs font-medium rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                    variant === "destructive"
+                      ? "bg-destructive text-foreground hover:bg-destructive/80"
+                      : "bg-cordum text-surface-0 hover:bg-cordum-dim"
+                  }`}
+                >
+                  {resolvedLoading ? (
+                    <span className="flex items-center gap-1.5">
+                      <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-25" />
+                        <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                      Processing...
+                    </span>
+                  ) : confirmLabel}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   );
 }

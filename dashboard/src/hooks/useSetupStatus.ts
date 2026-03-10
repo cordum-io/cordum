@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useApiKeys, useUsers, useConfig, useNotificationChannels, useAuthConfigAdmin } from "./useSettings";
 import { usePolicyBundles } from "./usePolicies";
 import { useStatus } from "./useStatus";
@@ -46,13 +46,13 @@ export function useSetupStatus(): SetupStatus {
 
   const isLoading = keysLoading || usersLoading || configLoading || bundlesLoading || statusLoading;
 
-  const dismissed = useMemo(() => {
+  const [dismissed, setDismissed] = useState(() => {
     try {
       return localStorage.getItem(LS_DISMISSED_KEY) === "true";
     } catch {
       return false;
     }
-  }, []);
+  });
 
   const items = useMemo<ChecklistItem[]>(() => {
     const apiKeys = keysData?.items ?? [];
@@ -88,7 +88,7 @@ export function useSetupStatus(): SetupStatus {
       {
         id: "policy-bundle",
         label: "Load first policy bundle",
-        route: "/policies",
+        route: "/govern/bundles",
         completed: bundles.length > 0,
         optional: false,
       },
@@ -134,6 +134,7 @@ export function useSetupStatus(): SetupStatus {
     } catch {
       // ignore
     }
+    setDismissed(true);
   }
 
   return {

@@ -41,7 +41,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "cordum.natsUrl" -}}
 {{- if .Values.nats.enabled -}}
+{{- if .Values.global.tls.enabled -}}
+{{- printf "tls://%s-nats:%d" (include "cordum.fullname" .) (int .Values.nats.service.port) -}}
+{{- else -}}
 {{- printf "nats://%s-nats:%d" (include "cordum.fullname" .) (int .Values.nats.service.port) -}}
+{{- end -}}
 {{- else -}}
 {{- required "external.natsUrl is required when nats.enabled=false" .Values.external.natsUrl -}}
 {{- end -}}
@@ -49,10 +53,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "cordum.redisUrl" -}}
 {{- if .Values.redis.enabled -}}
+{{- $scheme := ternary "rediss" "redis" .Values.global.tls.enabled -}}
 {{- if .Values.redis.auth.enabled -}}
-{{- printf "redis://:$(REDIS_PASSWORD)@%s-redis:%d" (include "cordum.fullname" .) (int .Values.redis.service.port) -}}
+{{- printf "%s://:$(REDIS_PASSWORD)@%s-redis:%d" $scheme (include "cordum.fullname" .) (int .Values.redis.service.port) -}}
 {{- else -}}
-{{- printf "redis://%s-redis:%d" (include "cordum.fullname" .) (int .Values.redis.service.port) -}}
+{{- printf "%s://%s-redis:%d" $scheme (include "cordum.fullname" .) (int .Values.redis.service.port) -}}
 {{- end -}}
 {{- else -}}
 {{- required "external.redisUrl is required when redis.enabled=false" .Values.external.redisUrl -}}

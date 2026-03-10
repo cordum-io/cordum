@@ -54,7 +54,7 @@ function ChangeArrow({ from, to }: { from: string; to: string }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs">
       <Badge variant={decisionBadge[from] ?? "default"}>{from}</Badge>
-      <span className="text-muted">&rarr;</span>
+      <span className="text-muted-foreground">&rarr;</span>
       <Badge variant={decisionBadge[to] ?? "default"}>{to}</Badge>
     </span>
   );
@@ -194,7 +194,7 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
           <h3 className="font-display text-lg font-semibold text-ink">
             Replay Mode
           </h3>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             Re-evaluate recent jobs against the current draft policy to see
             impact.
           </p>
@@ -211,7 +211,7 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
                     l === LIMITS[LIMITS.length - 1] && "rounded-r-full",
                     limit === l
                       ? "bg-accent/15 text-accent"
-                      : "text-muted hover:text-ink",
+                      : "text-muted-foreground hover:text-ink",
                   )}
                   onClick={() => setLimit(l)}
                 >
@@ -219,12 +219,12 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
                 </button>
               ))}
             </div>
-            <span className="text-xs text-muted">jobs</span>
+            <span className="text-xs text-muted-foreground">jobs</span>
           </div>
 
           {/* Time range filter */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-muted">Time range:</span>
+            <span className="text-xs font-semibold text-muted-foreground">Time range:</span>
             <div className="flex rounded-full border border-border">
               {TIME_RANGES.map(({ value, label }) => (
                 <button
@@ -235,7 +235,7 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
                     "px-3 py-1 text-xs font-semibold transition first:rounded-l-full last:rounded-r-full",
                     timeRange === value
                       ? "bg-accent/15 text-accent"
-                      : "text-muted hover:text-ink",
+                      : "text-muted-foreground hover:text-ink",
                   )}
                 >
                   {label}
@@ -253,7 +253,7 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
                 onChange={(e) => setCustomStart(e.target.value)}
                 className="!w-auto !py-1 text-xs"
               />
-              <span className="text-xs text-muted">to</span>
+              <span className="text-xs text-muted-foreground">to</span>
               <Input
                 type="date"
                 value={customEnd}
@@ -296,19 +296,19 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
             <table className="w-full text-sm">
               <thead className="border-b border-border">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Job ID
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Topic
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Original
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     New
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Status
                   </th>
                 </tr>
@@ -327,7 +327,7 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
                     <td className="px-4 py-3 font-mono text-xs text-ink">
                       {row.jobId.slice(0, 12)}
                     </td>
-                    <td className="px-4 py-3 text-xs text-muted">
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
                       {row.topic}
                     </td>
                     <td className="px-4 py-3">
@@ -347,7 +347,7 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
                           to={row.newDecision}
                         />
                       ) : (
-                        <span className="text-xs text-muted">unchanged</span>
+                        <span className="text-xs text-muted-foreground">unchanged</span>
                       )}
                     </td>
                   </tr>
@@ -360,7 +360,7 @@ export function PolicyReplay({ bundleId }: { bundleId: string }) {
 
       {/* Changed-only highlight */}
       {changedRows.length > 0 && changedRows.length < rows.length && (
-        <p className="text-xs text-muted">
+        <p className="text-xs text-muted-foreground">
           Showing {rows.length} total &middot;{" "}
           <span className="font-semibold text-warning">
             {changedRows.length} changed

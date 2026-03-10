@@ -100,6 +100,86 @@ func TestValidateStepOutputInlineSchema(t *testing.T) {
 	}
 }
 
+// TestValidateStepOutputFailClosedOnFetchError verifies that output schema
+// validation returns an error (fail-closed) when the result payload cannot
+// be fetched, rather than silently skipping validation.
+func TestValidateStepOutputFailClosedOnFetchError(t *testing.T) {
+	// Engine with nil mem store — fetchResultPayload will return (nil, false).
+	engine := &Engine{}
+	step := &Step{OutputSchema: map[string]any{"type": "object", "required": []any{"result"}}}
+
+	err := engine.validateStepOutput(step, "mem://some-key")
+	if err == nil {
+		t.Fatal("expected fail-closed error when result payload cannot be fetched, got nil")
+	}
+	if !strings.Contains(err.Error(), "unable to fetch result payload") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+// TestValidateStepOutputFailClosedOnMissingResult verifies fail-closed when
+// the result key exists in the pointer but has no data in the store.
+func TestValidateStepOutputFailClosedOnMissingResult(t *testing.T) {
+	memStore, srv := newMemoryStore(t)
+	defer srv.Close()
+	defer memStore.Close()
+
+	engine := (&Engine{}).WithMemory(memStore)
+	step := &Step{OutputSchema: map[string]any{"type": "object", "required": []any{"result"}}}
+
+	// Use a valid pointer format but don't put any data in the store.
+	key := store.MakeResultKey("job-missing")
+	ptr := store.PointerForKey(key)
+
+	err := engine.validateStepOutput(step, ptr)
+	if err == nil {
+		t.Fatal("expected fail-closed error when result is missing from store, got nil")
+	}
+	if !strings.Contains(err.Error(), "unable to fetch result payload") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+// TestValidateStepOutputNoSchemaSkipsValidation verifies that when no output
+// schema is configured, validation is skipped regardless of fetch success.
+func TestValidateStepOutputNoSchemaSkipsValidation(t *testing.T) {
+	engine := &Engine{} // nil mem
+	step := &Step{}     // no OutputSchema, no OutputSchemaID
+
+	// Should return nil — no schema means no validation needed.
+	if err := engine.validateStepOutput(step, "mem://some-key"); err != nil {
+		t.Fatalf("expected nil when no schema configured, got: %v", err)
+	}
+}
+
+// TestValidateStepOutputSchemaRegistryUnavailable verifies that validation
+// fails when OutputSchemaID is set but the schema registry is nil.
+func TestValidateStepOutputSchemaRegistryUnavailable(t *testing.T) {
+	memStore, srv := newMemoryStore(t)
+	defer srv.Close()
+	defer memStore.Close()
+
+	engine := (&Engine{}).WithMemory(memStore) // no schema registry
+	step := &Step{OutputSchemaID: "schema-123"}
+
+	// Put valid data so fetchResultPayload succeeds — the error should come
+	// from the nil schema registry, not from fetch.
+	key := store.MakeResultKey("job-registry")
+	data, _ := json.Marshal(map[string]any{"result": "ok"})
+	if err := memStore.PutResult(context.Background(), key, data); err != nil {
+		t.Fatalf("put result: %v", err)
+	}
+	ptr := store.PointerForKey(key)
+
+	err := engine.validateStepOutput(step, ptr)
+	if err == nil {
+		t.Fatal("expected error when schema registry is nil")
+	}
+	if !strings.Contains(err.Error(), "schema registry unavailable") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildJobRequestMetadata(t *testing.T) {
 	engine := (&Engine{}).WithConfig(stubConfig{cfg: map[string]any{"limit": 1}})
 	wf := &Workflow{ID: "wf1"}

@@ -1,35 +1,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      // Force CJS entry so Rollup's commonjs plugin can transform the require() calls.
-      // The "ESM" entry in @dagrejs/dagre v2 uses dynamic require() which Rollup can't handle.
-      "@dagrejs/dagre": path.resolve(__dirname, "node_modules/@dagrejs/dagre/dist/dagre.cjs.js"),
-    },
-  },
-  optimizeDeps: {
-    include: ["@dagrejs/dagre"],
-  },
-  build: {
-    commonjsOptions: {
-      include: [/@dagrejs/, /node_modules/],
+      "@": path.resolve(__dirname, "./src"),
     },
   },
   server: {
-    port: 5173,
-    host: true,
+    allowedHosts: true,
     proxy: {
-      "/api/v1": {
-        target: "http://localhost:8081",
+      "/api": {
+        target: process.env.VITE_API_TARGET || "http://localhost:8080",
         changeOrigin: true,
-      },
-      "/api/v1/stream": {
-        target: "ws://localhost:8081",
-        ws: true,
       },
     },
   },

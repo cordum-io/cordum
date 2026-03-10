@@ -25,9 +25,9 @@ export const LoopNode = memo(function LoopNode({ data, selected }: NodeProps) {
     (typeof config.maxIterations === "number" ? config.maxIterations : null);
   return (
     <BaseNode
-      icon={<Repeat className="h-4 w-4 text-orange-600" />}
+      icon={<Repeat className="h-4 w-4 text-[var(--color-warning)]" />}
       label={data.label as string}
-      accent="bg-orange-50"
+      accent="bg-[var(--color-warning)]/10"
       selected={selected}
       outputs={LOOP_OUTPUTS}
     >

@@ -8,9 +8,9 @@ export const ErrorTriggerNode = memo(function ErrorTriggerNode({ data, selected 
   const catchFrom = (data.on_error as string) || (typeof config.catchFrom === "string" ? config.catchFrom : "");
   return (
     <BaseNode
-      icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
+      icon={<AlertTriangle className="h-4 w-4 text-destructive" />}
       label={data.label as string}
-      accent="bg-red-50"
+      accent="bg-destructive/5"
       selected={selected}
       hideInput
     >

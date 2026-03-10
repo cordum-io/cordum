@@ -293,6 +293,14 @@ export function useChangePassword() {
       logger.info("settings", "Changing current user password");
       return post<void>("/auth/password", input);
     },
+    onSuccess: () => {
+      logger.info("settings", "Password changed");
+      useToastStore.getState().addToast({ type: "success", title: "Password changed" });
+    },
+    onError: (err) => {
+      logger.error("settings", "Password change failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Password change failed", description: err.message });
+    },
   });
 }
 
@@ -301,6 +309,14 @@ export function useResetUserPassword() {
     mutationFn: ({ userId, password }) => {
       logger.info("settings", "Resetting user password", { userId });
       return post<void>(`/users/${encodeURIComponent(userId)}/password`, { password });
+    },
+    onSuccess: (_, { userId }) => {
+      logger.info("settings", "User password reset", { userId });
+      useToastStore.getState().addToast({ type: "success", title: "User password reset" });
+    },
+    onError: (err, { userId }) => {
+      logger.error("settings", "User password reset failed", { userId, error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Password reset failed", description: err.message });
     },
   });
 }
@@ -476,10 +492,12 @@ export function useEnvironments() {
 export function useSaveEnvironment() {
   const setConfig = useSetConfig();
   const { data: environments } = useEnvironments();
+  const environmentsRef = useRef(environments);
+  environmentsRef.current = environments;
 
   return useMutation<void, Error, Environment>({
     mutationFn: (env) => {
-      const existing = environments ?? [];
+      const existing = environmentsRef.current ?? [];
       const idx = existing.findIndex((e) => e.id === env.id);
       const updated = idx >= 0
         ? existing.map((e, i) => (i === idx ? env : e))

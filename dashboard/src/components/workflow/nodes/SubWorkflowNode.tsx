@@ -10,9 +10,9 @@ export const SubWorkflowNode = memo(function SubWorkflowNode({ data, selected }:
   const display = workflowName || (workflowId ? workflowId.slice(0, 12) : "");
   return (
     <BaseNode
-      icon={<Workflow className="h-4 w-4 text-cyan-600" />}
+      icon={<Workflow className="h-4 w-4 text-primary" />}
       label={data.label as string}
-      accent="bg-cyan-50"
+      accent="bg-primary/10"
       selected={selected}
     >
       {display && <span className="block truncate max-w-[140px]">{display}</span>}

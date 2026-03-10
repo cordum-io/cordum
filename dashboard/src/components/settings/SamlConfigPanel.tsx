@@ -94,7 +94,7 @@ export function SamlConfigPanel() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-muted">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
             Metadata URL
           </label>
           <Input
@@ -107,7 +107,7 @@ export function SamlConfigPanel() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-muted">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
             Login URL
           </label>
           <Input
@@ -120,7 +120,7 @@ export function SamlConfigPanel() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-muted">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
             Entity ID
           </label>
           <Input
@@ -128,13 +128,13 @@ export function SamlConfigPanel() {
             readOnly
             className="bg-surface2/50"
           />
-          <p className="mt-1 text-[10px] text-muted">
+          <p className="mt-1 text-[10px] text-muted-foreground">
             Use this as the Service Provider Entity ID in your IdP.
           </p>
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-muted">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
             Certificate (PEM)
           </label>
           <Textarea

@@ -53,7 +53,7 @@ function ConfirmDialog({
       <Card className="relative z-10 w-full max-w-sm">
         <div className="space-y-4">
           <h3 className="font-display text-lg font-semibold text-ink">{title}</h3>
-          <p className="text-sm text-muted">{message}</p>
+          <p className="text-sm text-muted-foreground">{message}</p>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
               Cancel
@@ -116,7 +116,7 @@ export function PublishControls({
             <h3 className="font-display text-base font-semibold text-ink">
               Publish Policy
             </h3>
-            <p className="text-xs text-muted">
+            <p className="text-xs text-muted-foreground">
               Current draft &middot; {ruleCount} rule{ruleCount !== 1 ? "s" : ""}
             </p>
           </div>
@@ -143,14 +143,14 @@ export function PublishControls({
           </h3>
 
           {snapshotsLoading && (
-            <div className="flex items-center gap-2 py-4 text-xs text-muted">
+            <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
               <Loader className="h-3.5 w-3.5 animate-spin" />
               Loading snapshots...
             </div>
           )}
 
           {!snapshotsLoading && snapshots.length === 0 && (
-            <p className="py-4 text-xs text-muted">No snapshots yet. Publish to create one.</p>
+            <p className="py-4 text-xs text-muted-foreground">No snapshots yet. Publish to create one.</p>
           )}
 
           {!snapshotsLoading && snapshots.length > 0 && (
@@ -165,10 +165,10 @@ export function PublishControls({
                     <div className="text-xs">
                       <span className="text-ink">{timeAgo(snap.createdAt)}</span>
                       {snap.createdBy && (
-                        <span className="ml-2 text-muted">&middot; by {snap.createdBy}</span>
+                        <span className="ml-2 text-muted-foreground">&middot; by {snap.createdBy}</span>
                       )}
                       {snap.note && (
-                        <span className="ml-2 text-muted">&middot; {snap.note}</span>
+                        <span className="ml-2 text-muted-foreground">&middot; {snap.note}</span>
                       )}
                     </div>
                   </div>

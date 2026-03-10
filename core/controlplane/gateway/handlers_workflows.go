@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/google/uuid"
@@ -48,12 +48,27 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createWorkflowRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	if req.ID == "" {
 		req.ID = uuid.NewString()
+	}
+	// SECURITY: Validate workflow name length to prevent DoS via oversized names.
+	if len(req.Name) > 256 {
+		writeErrorJSON(w, http.StatusBadRequest, "workflow name too long (max 256 chars)")
+		return
+	}
+	// SECURITY: Validate timeout bounds to prevent nonsensical values.
+	if req.TimeoutSec < 0 {
+		writeErrorJSON(w, http.StatusBadRequest, "timeout_sec must be non-negative")
+		return
+	}
+	const maxWorkflowTimeoutSec = 86400 * 7 // 7 days
+	if req.TimeoutSec > maxWorkflowTimeoutSec {
+		writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("timeout_sec too large (max %d)", maxWorkflowTimeoutSec))
+		return
 	}
 	orgID, err := s.resolveTenant(r, req.OrgID)
 	if err != nil {
@@ -231,8 +246,8 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &payload); err != nil && !errors.Is(err, io.EOF) {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	if payload == nil {
@@ -430,8 +445,8 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var req rerunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	newID, err := s.workflowEng.RerunFrom(r.Context(), runID, strings.TrimSpace(req.FromStep), req.DryRun)
@@ -488,11 +503,14 @@ func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing workflow id")
 		return
 	}
-	if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
-		if err := s.requireTenantAccess(r, wfDef.OrgID); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
+	wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID)
+	if err != nil || wfDef == nil {
+		writeErrorJSON(w, http.StatusNotFound, "workflow not found")
+		return
+	}
+	if err := s.requireTenantAccess(r, wfDef.OrgID); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
 	}
 	runs, err := s.workflowStore.ListRunsByWorkflow(r.Context(), wfID, 100)
 	if err != nil {
@@ -515,6 +533,7 @@ func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	cursor := int64(0)
 	if q := r.URL.Query().Get("cursor"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
@@ -593,7 +612,7 @@ func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
 				ts = last.CreatedAt
 			}
 			if !ts.IsZero() {
-				nc := ts.Unix() - 1
+				nc := ts.UnixMicro() - 1
 				nextCursor = &nc
 			}
 		}
@@ -652,11 +671,14 @@ func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing run id")
 		return
 	}
-	if run, err := s.workflowStore.GetRun(r.Context(), id); err == nil && run != nil {
-		if err := s.requireTenantAccess(r, run.OrgID); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
+	run, err := s.workflowStore.GetRun(r.Context(), id)
+	if err != nil || run == nil {
+		writeErrorJSON(w, http.StatusNotFound, "run not found")
+		return
+	}
+	if err := s.requireTenantAccess(r, run.OrgID); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
 	}
 	limit := int64(200)
 	if q := r.URL.Query().Get("limit"); q != "" {
@@ -664,6 +686,7 @@ func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
+	limit = clampListLimit(limit)
 	events, err := s.workflowStore.ListTimelineEvents(r.Context(), id, limit)
 	if err != nil {
 		logging.Error("api-gateway", "run timeline failed", "error", err, "run_id", id)
@@ -826,16 +849,18 @@ func (s *server) handleWorkflowDryRun(w http.ResponseWriter, r *http.Request) {
 			Labels:     step.RouteLabels,
 		}, s.configSvc, s.tenant)
 		if err != nil {
+			logging.Error("api-gateway", "dry-run build request failed", "step_id", stepID, "error", err)
 			result.Decision = "ERROR"
-			result.Reason = fmt.Sprintf("failed to build request: %v", err)
+			result.Reason = "internal error during dry-run evaluation"
 			results = append(results, result)
 			continue
 		}
 
 		resp, err := s.safetyClient.Simulate(r.Context(), checkReq)
 		if err != nil {
+			logging.Error("api-gateway", "dry-run safety kernel error", "step_id", stepID, "error", err)
 			result.Decision = "ERROR"
-			result.Reason = fmt.Sprintf("safety kernel error: %v", err)
+			result.Reason = "safety evaluation unavailable"
 			results = append(results, result)
 			continue
 		}
@@ -870,10 +895,10 @@ func validateWorkflowStepID(stepID string) error {
 		return errors.New("workflow step id required")
 	}
 	if len(stepID) > maxWorkflowStepIDLen {
-		return fmt.Errorf("workflow step id %q exceeds %d characters", stepID, maxWorkflowStepIDLen)
+		return fmt.Errorf("workflow step id %q exceeds %d characters", truncateForError(stepID, 256), maxWorkflowStepIDLen)
 	}
 	if !workflowStepIDPattern.MatchString(stepID) {
-		return fmt.Errorf("workflow step id %q must match %s", stepID, workflowStepIDPattern.String())
+		return fmt.Errorf("workflow step id %q must match %s", truncateForError(stepID, 256), workflowStepIDPattern.String())
 	}
 	return nil
 }
@@ -914,7 +939,7 @@ func validateDAG(steps map[string]wf.Step) error {
 				continue
 			}
 			if _, ok := steps[dep]; !ok {
-				return fmt.Errorf("step %q depends on non-existent step %q", id, dep)
+				return fmt.Errorf("step %q depends on non-existent step %q", truncateForError(id, 256), truncateForError(dep, 256))
 			}
 		}
 	}

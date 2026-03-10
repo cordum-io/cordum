@@ -21,12 +21,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-
 type policyBundleSimulateRequest struct {
 	Request policyCheckRequest `json:"request"`
 	Content string             `json:"content"`
 }
-
 
 func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 	if s.configSvc == nil {
@@ -288,8 +286,8 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body outputRuleToggleRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	if body.Enabled == nil {
@@ -449,8 +447,8 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body policyBundleUpsertRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	content := sanitizePolicyBundleYAML(strings.TrimSpace(body.Content))
@@ -525,8 +523,8 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body policyBundleSimulateRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	tenant, err := s.resolveTenant(r, body.Request.Tenant)
@@ -591,8 +589,8 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body policyPublishRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	bundles, doc, err := s.loadPolicyBundlesWithDoc(r.Context())
@@ -676,8 +674,8 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var body policyRollbackRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
 	snapshotID := strings.TrimSpace(body.SnapshotID)
@@ -932,7 +930,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 	var body struct {
 		Note string `json:"note"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeJSONBody(w, r, &body)
 
 	bundles, _, err := s.loadPolicyBundles(r.Context())
 	if err != nil {
@@ -1044,7 +1042,6 @@ func (s *server) loadPolicySnapshots(ctx context.Context) ([]policyBundleSnapsho
 	return snapshots, doc, nil
 }
 
-
 func (s *server) savePolicySnapshots(ctx context.Context, snapshots []policyBundleSnapshot, doc *configsvc.Document) error {
 	if doc == nil {
 		doc = &configsvc.Document{Scope: configsvc.Scope(policySnapshotsScope), ScopeID: policySnapshotsID, Data: map[string]any{}}
@@ -1063,7 +1060,6 @@ func (s *server) savePolicySnapshots(ctx context.Context, snapshots []policyBund
 	doc.Data[policySnapshotsKey] = data
 	return s.configSvc.Set(ctx, doc)
 }
-
 
 func (s *server) loadPolicyBundlesWithDoc(ctx context.Context) (map[string]any, *configsvc.Document, error) {
 	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policyConfigScope), policyConfigID)
@@ -1114,7 +1110,6 @@ func (s *server) capturePolicyBundleSnapshotWithBundles(ctx context.Context, bun
 	}
 	return id, nil
 }
-
 
 func (s *server) loadPolicyAudit(ctx context.Context) ([]policyAuditEntry, error) {
 	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policyAuditScope), policyAuditID)
@@ -1202,4 +1197,3 @@ func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType
 		Message:      message,
 	})
 }
-

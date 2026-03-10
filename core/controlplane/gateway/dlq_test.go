@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -28,11 +29,11 @@ func TestHandleDLQListAndDelete(t *testing.T) {
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("unexpected list status: %d", listRec.Code)
 	}
-	var entries []store.DLQEntry
-	if err := json.NewDecoder(listRec.Body).Decode(&entries); err != nil {
+	var listResp struct{ Items []store.DLQEntry }
+	if err := json.NewDecoder(listRec.Body).Decode(&listResp); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(entries) != 1 || entries[0].JobID != "job-dlq" {
+	if len(listResp.Items) != 1 || listResp.Items[0].JobID != "job-dlq" {
 		t.Fatalf("unexpected dlq entries")
 	}
 
@@ -51,6 +52,55 @@ func TestHandleDLQListAndDelete(t *testing.T) {
 	s.handleDeleteDLQ(deleteRec, deleteReq)
 	if deleteRec.Code != http.StatusNoContent {
 		t.Fatalf("unexpected delete status: %d", deleteRec.Code)
+	}
+}
+
+func TestDLQPageCursorIsMicroseconds(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// Add enough entries to trigger pagination (limit=1)
+	for i := 0; i < 2; i++ {
+		entry := store.DLQEntry{
+			JobID:     "job-cursor-" + strconv.Itoa(i),
+			Topic:     "job.test",
+			CreatedAt: now.Add(time.Duration(-i) * time.Second),
+		}
+		if err := s.dlqStore.Add(ctx, entry); err != nil {
+			t.Fatalf("add dlq: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dlq/page?limit=1", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleListDLQPage(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var resp struct {
+		Items      []store.DLQEntry `json:"items"`
+		NextCursor *int64           `json:"next_cursor"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.NextCursor == nil {
+		t.Fatal("expected next_cursor for pagination")
+	}
+	cursor := *resp.NextCursor
+	// Microsecond cursors are > 1e12 (year ~2001 in micros ≈ 9.78e14)
+	if cursor < 1_000_000_000_000 {
+		t.Fatalf("cursor %d appears to be in seconds, expected microseconds", cursor)
+	}
+
+	// Verify round-trip: passing microsecond cursor back should work
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/dlq/page?limit=1&cursor="+strconv.FormatInt(cursor, 10), nil)
+	req2.Header.Set("X-Tenant-ID", "default")
+	rec2 := httptest.NewRecorder()
+	s.handleListDLQPage(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("unexpected status on page 2: %d", rec2.Code)
 	}
 }
 

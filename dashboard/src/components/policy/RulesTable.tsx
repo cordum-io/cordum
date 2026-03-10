@@ -37,7 +37,7 @@ function MatchCriteria({ criteria }: { criteria: Record<string, unknown> }) {
     ...tags.map((t) => ({ label: t, variant: "warning" as const })),
   ];
   if (items.length === 0) {
-    return <span className="text-xs text-muted">any</span>;
+    return <span className="text-xs text-muted-foreground">any</span>;
   }
   return (
     <div className="flex flex-wrap gap-1">
@@ -106,8 +106,8 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
             className={cn(
               "rounded-lg px-3 py-1 text-xs font-medium capitalize transition",
               filter === f
-                ? "bg-accent text-white"
-                : "text-muted hover:text-ink hover:bg-surface2/60",
+                ? "bg-accent text-primary-foreground"
+                : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
             )}
           >
             {f === "require_approval" ? "Approval" : f}
@@ -120,16 +120,16 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
           <table className="w-full text-sm">
             <thead className="border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   ID
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Match Criteria
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Decision
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Source
                 </th>
               </tr>
@@ -139,7 +139,7 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
 
               {!isLoading && isError && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
                     Failed to load policy rules.
                   </td>
                 </tr>
@@ -147,7 +147,7 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
 
               {!isLoading && !isError && sorted.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
                     No rules match the selected filter.
                   </td>
                 </tr>
@@ -164,14 +164,14 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
                       {rule.id.slice(0, 8)}
                     </td>
                     <td className="px-4 py-3 max-w-xs">
-                      <MatchCriteria criteria={rule.matchCriteria} />
+                      <MatchCriteria criteria={rule.matchCriteria ?? {}} />
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={decisionVariant[rule.decisionType] ?? "default"}>
-                        {decisionLabel[rule.decisionType] ?? rule.decisionType}
+                      <Badge variant={decisionVariant[rule.decisionType ?? ""] ?? "default"}>
+                        {decisionLabel[rule.decisionType ?? ""] ?? rule.decisionType}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3 text-xs text-muted">
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
                       {rule.source && "fragment_id" in rule.source
                         ? String((rule.source as Record<string, unknown>).fragment_id ?? "—")
                         : "\u2014"}

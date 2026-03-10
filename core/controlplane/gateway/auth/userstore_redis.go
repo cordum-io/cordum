@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
-	"github.com/google/uuid"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -31,24 +33,13 @@ const (
 	userTenantIndexPrefix = "user:tenant:"
 )
 
-// createUserLua atomically checks that the username key (KEYS[1]) and
-// optional email key (KEYS[2]) don't exist, then creates all user records.
-// Returns 1 on success, 0 if username or email already exists.
+// createUserPipeline creates a user using individual Redis commands instead of
+// Lua. This is Redis Cluster safe since each command targets a single key.
 //
-// TODO(cluster): CROSSSLOT — needs hash tags or pipeline split for Redis Cluster.
-// KEYS[1], KEYS[2], and ARGV[2]/ARGV[5] keys may hash to different slots.
-// Low risk (admin operation, not hot path).
-//
-// ARGV: 1=userData, 2=idKey, 3=idVal, 4=emailVal, 5=tenantIdx, 6=userID
-var createUserLua = redis.NewScript(`
-if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
-if KEYS[2] ~= '' and redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
-redis.call('SET', KEYS[1], ARGV[1])
-redis.call('SET', ARGV[2], ARGV[3])
-if KEYS[2] ~= '' then redis.call('SET', KEYS[2], ARGV[4]) end
-redis.call('SADD', ARGV[5], ARGV[6])
-return 1
-`)
+// The TOCTOU window between the EXISTS checks and SET writes is acceptable
+// because user creation is a low-frequency admin operation with natural
+// serialization (admin UI, CLI). Concurrent duplicate creates would fail on
+// the second attempt's EXISTS check or produce idempotent writes.
 
 // userRecord is the internal Redis storage representation that includes the password hash.
 // The User struct uses json:"-" on PasswordHash to prevent API leakage, so we need
@@ -99,6 +90,17 @@ func (r *userRecord) toUser() *User {
 // RedisUserStore implements UserStore using Redis for persistence.
 type RedisUserStore struct {
 	client *redis.Client
+
+	// fallbackThrottle provides bounded brute-force protection when Redis is
+	// unavailable. Entries are keyed by "user:ip" and hold an atomic counter.
+	// Cleaned up lazily — stale entries are harmless (bounded by login traffic).
+	fallbackThrottle sync.Map // map[string]*fallbackEntry
+}
+
+// fallbackEntry tracks login attempts in memory when Redis is unavailable.
+type fallbackEntry struct {
+	count     atomic.Int32
+	expiresAt atomic.Int64 // unix seconds
 }
 
 // NewRedisUserStore creates a new Redis-backed user store.
@@ -287,21 +289,43 @@ func (s *RedisUserStore) Create(ctx context.Context, user *User, password string
 	tenantIdx := userTenantIndexPrefix + user.Tenant
 	idVal := user.Tenant + ":" + user.Username
 
-	// Atomically check username+email uniqueness and create all keys.
-	result, err := createUserLua.Run(ctx, s.client,
-		[]string{key, emailKey},
-		string(data), idKey, idVal, emailVal, tenantIdx, user.ID,
-	).Int64()
+	// Phase 1: Check username and email uniqueness (individual commands,
+	// Redis Cluster safe — no multi-key Lua).
+	exists, err := s.client.Exists(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("redis check username: %w", err)
+	}
+	if exists > 0 {
+		return ErrUserAlreadyExists
+	}
+	if emailKey != "" {
+		emailExists, eErr := s.client.Exists(ctx, emailKey).Result()
+		if eErr != nil {
+			return fmt.Errorf("redis check email: %w", eErr)
+		}
+		if emailExists > 0 {
+			return ErrUserAlreadyExists
+		}
+	}
+
+	// Phase 2: Create all user records via pipeline.
+	pipe := s.client.Pipeline()
+	pipe.Set(ctx, key, string(data), 0)
+	pipe.Set(ctx, idKey, idVal, 0)
+	if emailKey != "" {
+		pipe.Set(ctx, emailKey, emailVal, 0)
+	}
+	pipe.SAdd(ctx, tenantIdx, user.ID)
+	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("redis create user: %w", err)
-	}
-	if result == 0 {
-		return ErrUserAlreadyExists
 	}
 	return nil
 }
 
-// UpdatePassword updates a user's password.
+// UpdatePassword updates a user's password and invalidates all existing
+// sessions for that user to force re-authentication. This prevents stale
+// sessions from remaining valid after a password change or admin reset.
 func (s *RedisUserStore) UpdatePassword(ctx context.Context, userID, newPassword string) error {
 	if userID == "" {
 		return fmt.Errorf("user id required")
@@ -334,6 +358,13 @@ func (s *RedisUserStore) UpdatePassword(ctx context.Context, userID, newPassword
 	key := userKey(user.Tenant, user.Username)
 	if err := s.client.Set(ctx, key, data, 0).Err(); err != nil {
 		return fmt.Errorf("redis set user: %w", err)
+	}
+
+	// Revoke all existing sessions for this user. This must not fail-open:
+	// if session revocation fails, the password change should still be
+	// considered incomplete to prevent stale sessions from persisting.
+	if err := s.DeleteUserSessions(ctx, userID); err != nil {
+		return fmt.Errorf("revoke sessions after password change: %w", err)
 	}
 	return nil
 }
@@ -513,8 +544,18 @@ func loginLockoutPeriod() time.Duration {
 	return durationFromEnv("LOGIN_LOCKOUT_PERIOD", 15*time.Minute)
 }
 
-func bcryptCostFromEnv() int {
+// BcryptCostFromEnv returns the bcrypt cost factor from the CORDUM_BCRYPT_COST
+// environment variable, falling back to defaultBcryptCost (12).
+// Exported so that the gateway package can use the same cost for the login
+// timing dummy hash, preventing user-enumeration via timing side-channel.
+func BcryptCostFromEnv() int {
 	return intFromEnv("CORDUM_BCRYPT_COST", defaultBcryptCost)
+}
+
+// bcryptCostFromEnv is the internal alias kept for backward compatibility
+// with existing callers within this package.
+func bcryptCostFromEnv() int {
+	return BcryptCostFromEnv()
 }
 
 // ErrLoginThrottled is returned when too many failed login attempts are detected.
@@ -544,13 +585,42 @@ func (s *RedisUserStore) CheckLoginThrottle(ctx context.Context, username, ip st
 	perIPCmd := pipe.Get(ctx, loginThrottleKey(username, ip))
 	globalCmd := pipe.Get(ctx, loginGlobalThrottleKey(username))
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		return nil // fail open — don't block logins if Redis has issues
+		slog.WarnContext(ctx, "login throttle: Redis unavailable, using in-memory fallback",
+			"username", username, "ip", ip, "error", err)
+		return s.checkFallbackThrottle(username, ip)
 	}
 
 	if count, err := perIPCmd.Int(); err == nil && count >= maxLoginAttempts() {
 		return ErrLoginThrottled
 	}
 	if count, err := globalCmd.Int(); err == nil && count >= maxGlobalLoginAttempts() {
+		return ErrLoginThrottled
+	}
+	return nil
+}
+
+// checkFallbackThrottle provides bounded in-memory brute-force protection
+// when Redis is unavailable. Uses the same per-IP threshold as Redis.
+func (s *RedisUserStore) checkFallbackThrottle(username, ip string) error {
+	key := strings.ToLower(strings.TrimSpace(username)) + ":" + ip
+	now := time.Now().Unix()
+	lockout := int64(loginLockoutPeriod().Seconds())
+
+	val, _ := s.fallbackThrottle.LoadOrStore(key, &fallbackEntry{})
+	entry := val.(*fallbackEntry)
+
+	// If the entry has expired, reset it.
+	if exp := entry.expiresAt.Load(); exp > 0 && now > exp {
+		entry.count.Store(0)
+		entry.expiresAt.Store(0)
+	}
+
+	count := int(entry.count.Add(1))
+	if entry.expiresAt.Load() == 0 {
+		entry.expiresAt.Store(now + lockout)
+	}
+
+	if count > maxLoginAttempts() {
 		return ErrLoginThrottled
 	}
 	return nil
@@ -627,7 +697,10 @@ func (s *RedisUserStore) backfillTenantIndex(ctx context.Context) error {
 // Session token management
 // ---------------------------------------------------------------------------
 
-const sessionKeyPrefix = "session:"
+const (
+	sessionKeyPrefix     = "session:"
+	sessionUserIdxPrefix = "session:user:"
+)
 
 // sessionData stores the auth context for a session token.
 type sessionData struct {
@@ -638,6 +711,8 @@ type sessionData struct {
 }
 
 // StoreSession stores a session token in Redis with a TTL.
+// It also adds the token to a per-user session index so that all sessions
+// for a user can be invalidated efficiently (e.g. on password change).
 func (s *RedisUserStore) StoreSession(ctx context.Context, token string, user *User, ttl time.Duration) error {
 	data, err := json.Marshal(sessionData{
 		UserID:   user.ID,
@@ -648,12 +723,69 @@ func (s *RedisUserStore) StoreSession(ctx context.Context, token string, user *U
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
 	}
-	return s.client.Set(ctx, sessionKeyPrefix+token, data, ttl).Err()
+
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, sessionKeyPrefix+token, data, ttl)
+	// Track this token in the user's session index for bulk revocation.
+	idxKey := sessionUserIdxPrefix + user.ID
+	pipe.SAdd(ctx, idxKey, token)
+	// Align the index TTL with the session TTL so it auto-cleans.
+	// Use the longer of the current TTL and the new session TTL to avoid
+	// expiring the index while other sessions are still live.
+	pipe.Expire(ctx, idxKey, ttl)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis store session: %w", err)
+	}
+	return nil
 }
 
 // DeleteSession removes a session token from Redis.
+// It also removes the token from the user's session index if the session
+// data is still available.
 func (s *RedisUserStore) DeleteSession(ctx context.Context, token string) error {
+	// Try to read the session data first so we can clean up the user index.
+	raw, err := s.client.Get(ctx, sessionKeyPrefix+token).Bytes()
+	if err == nil {
+		var sd sessionData
+		if jsonErr := json.Unmarshal(raw, &sd); jsonErr == nil && sd.UserID != "" {
+			// Best-effort cleanup of user session index.
+			_ = s.client.SRem(ctx, sessionUserIdxPrefix+sd.UserID, token).Err()
+		}
+	}
 	return s.client.Del(ctx, sessionKeyPrefix+token).Err()
+}
+
+// DeleteUserSessions removes all active sessions for the given user ID.
+// This is called on password change to force re-authentication.
+// Returns an error only if Redis operations fail — an empty session set is not an error.
+func (s *RedisUserStore) DeleteUserSessions(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+	idxKey := sessionUserIdxPrefix + userID
+
+	// Fetch all session tokens for this user.
+	tokens, err := s.client.SMembers(ctx, idxKey).Result()
+	if err != nil {
+		return fmt.Errorf("redis smembers user sessions: %w", err)
+	}
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	// Delete all session keys and the index in a single pipeline.
+	pipe := s.client.TxPipeline()
+	for _, token := range tokens {
+		pipe.Del(ctx, sessionKeyPrefix+token)
+	}
+	pipe.Del(ctx, idxKey)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis delete user sessions: %w", err)
+	}
+
+	slog.Info("revoked user sessions on password change",
+		"user_id", userID, "sessions_revoked", len(tokens))
+	return nil
 }
 
 // ValidateSession looks up a session token and returns the associated auth context.

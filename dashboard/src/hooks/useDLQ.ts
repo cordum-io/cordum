@@ -59,7 +59,7 @@ export function useRetryDLQ() {
   return useMutation<void, Error, RetryInput, DLQSnapshot>({
     mutationFn: ({ id }) => {
       logger.info("dlq", "Retrying DLQ entry", { id });
-      return post<void>(`/dlq/${id}/retry`);
+      return post<void>(`/dlq/${encodeURIComponent(id)}/retry`);
     },
     onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.dlq.all });
@@ -94,19 +94,87 @@ export function useRetryDLQ() {
 
 export function useDeleteDLQ() {
   const queryClient = useQueryClient();
-  return useMutation<void, Error, string>({
+  type DLQSnapshot = { previous: [QueryKey, ApiResponse<DLQEntry[]> | undefined][] };
+  return useMutation<void, Error, string, DLQSnapshot>({
     mutationFn: (id) => {
       logger.info("dlq", "Deleting DLQ entry", { id });
-      return del(`/dlq/${id}`);
+      return del(`/dlq/${encodeURIComponent(id)}`);
+    },
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.dlq.all });
+      const previous = queryClient.getQueriesData<ApiResponse<DLQEntry[]>>({ queryKey: queryKeys.dlq.all });
+      queryClient.setQueriesData<ApiResponse<DLQEntry[]>>(
+        { queryKey: queryKeys.dlq.all },
+        (old) => {
+          if (!old?.items) return old;
+          return { ...old, items: old.items.filter((e) => e.id !== id) };
+        },
+      );
+      return { previous };
     },
     onSuccess: (_, id) => {
       logger.info("dlq", "DLQ entry deleted", { id });
       useToastStore.getState().addToast({ type: "success", title: "Entry deleted" });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
-    onError: (err, id) => {
+    onError: (err, id, context) => {
+      if (context?.previous) {
+        for (const [key, data] of context.previous) {
+          queryClient.setQueryData(key, data);
+        }
+      }
       logger.error("dlq", "DLQ delete failed", { id, error: err.message });
       useToastStore.getState().addToast({ type: "error", title: "Failed to delete entry", description: err.message });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mutations — bulk
+// ---------------------------------------------------------------------------
+
+export function useBulkRetryDLQ() {
+  const queryClient = useQueryClient();
+  return useMutation<PromiseSettledResult<void>[], Error, string[]>({
+    mutationFn: (ids) => {
+      logger.info("dlq", "Bulk retrying DLQ entries", { count: ids.length });
+      return Promise.allSettled(ids.map((id) => post<void>(`/dlq/${encodeURIComponent(id)}/retry`)));
+    },
+    onSuccess: (results, ids) => {
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        useToastStore.getState().addToast({ type: "warning", title: `Retried ${ids.length - failed}/${ids.length} — ${failed} failed` });
+      } else {
+        useToastStore.getState().addToast({ type: "success", title: `Retrying ${ids.length} items` });
+      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
+    },
+    onError: (err) => {
+      useToastStore.getState().addToast({ type: "error", title: "Bulk retry failed", description: err.message });
+    },
+  });
+}
+
+export function useBulkDeleteDLQ() {
+  const queryClient = useQueryClient();
+  return useMutation<PromiseSettledResult<void>[], Error, string[]>({
+    mutationFn: (ids) => {
+      logger.info("dlq", "Bulk deleting DLQ entries", { count: ids.length });
+      return Promise.allSettled(ids.map((id) => del(`/dlq/${encodeURIComponent(id)}`)));
+    },
+    onSuccess: (results, ids) => {
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        useToastStore.getState().addToast({ type: "warning", title: `Purged ${ids.length - failed}/${ids.length} — ${failed} failed` });
+      } else {
+        useToastStore.getState().addToast({ type: "success", title: `Purged ${ids.length} items` });
+      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
+    },
+    onError: (err) => {
+      useToastStore.getState().addToast({ type: "error", title: "Bulk purge failed", description: err.message });
     },
   });
 }

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -175,5 +177,56 @@ func TestHandleWorkflowDryRunForbiddenWithoutAdmin(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleWorkflowDryRunSanitizesErrors(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+
+	wfDef := &wf.Workflow{
+		ID:    "wf-dryrun-err",
+		OrgID: "default",
+		Steps: map[string]*wf.Step{
+			"step-a": {ID: "step-a", Name: "Step A", Type: wf.StepTypeLLM, Topic: "job.llm.test"},
+		},
+	}
+	if err := s.workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	// Inject an error into the safety client's Simulate method.
+	safety.mu.Lock()
+	safety.simulateErr = fmt.Errorf("connection refused: dial tcp 10.0.0.5:50051: i/o timeout")
+	safety.mu.Unlock()
+
+	body, _ := json.Marshal(dryRunRequest{Input: map[string]any{"x": 1}})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/wf-dryrun-err/dry-run", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", "wf-dryrun-err")
+	rec := httptest.NewRecorder()
+	s.handleWorkflowDryRun(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp dryRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(resp.Steps))
+	}
+
+	step := resp.Steps[0]
+	if step.Decision != "ERROR" {
+		t.Errorf("expected decision ERROR, got %s", step.Decision)
+	}
+	if step.Reason != "safety evaluation unavailable" {
+		t.Errorf("expected sanitized reason, got %q", step.Reason)
+	}
+	// Must NOT contain internal error details.
+	if strings.Contains(step.Reason, "connection refused") || strings.Contains(step.Reason, "i/o timeout") {
+		t.Errorf("reason leaks internal error: %q", step.Reason)
 	}
 }

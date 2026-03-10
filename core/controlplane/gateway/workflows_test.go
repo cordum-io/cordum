@@ -75,17 +75,6 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 		t.Fatalf("run id missing")
 	}
 
-	approveReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+wfID+"/runs/"+runID+"/steps/approve/approve", bytes.NewReader([]byte(`{"approved":true}`)))
-	approveReq.Header.Set("X-Tenant-ID", "default")
-	approveReq.SetPathValue("id", wfID)
-	approveReq.SetPathValue("run_id", runID)
-	approveReq.SetPathValue("step_id", "approve")
-	approveRR := httptest.NewRecorder()
-	s.handleApproveStep(approveRR, approveReq)
-	if approveRR.Code != http.StatusNoContent {
-		t.Fatalf("approve step: %d %s", approveRR.Code, approveRR.Body.String())
-	}
-
 	runGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs/"+runID, nil)
 	runGetReq.Header.Set("X-Tenant-ID", "default")
 	runGetReq.SetPathValue("id", runID)

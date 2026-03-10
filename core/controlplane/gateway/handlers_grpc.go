@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/logging"
-	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/secrets"
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -33,6 +33,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 
 	// RBAC: only admin and user roles may submit jobs.
+	// This matches the HTTP handler (handleSubmitJobHTTP) which also allows
+	// "admin" and "user" roles. Keep both in sync to avoid role asymmetry.
 	if err := s.requireRoleGRPC(ctx, "admin", "user"); err != nil {
 		actorID, role := "anonymous", "none"
 		if ac := authFromContext(ctx); ac != nil {
@@ -311,7 +313,8 @@ func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
 			return nil
 		}
 	}
-	return status.Errorf(codes.PermissionDenied, "role %s not permitted", role)
+	logging.Warn("api-gateway", "gRPC permission denied", "role", role, "required", roles)
+	return status.Error(codes.PermissionDenied, "permission denied")
 }
 
 func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string, error) {
@@ -327,9 +330,12 @@ func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string,
 			}
 			return requested, nil
 		}
-	}
-	if requested != "" {
-		return requested, nil
+		// Unscoped key: reject arbitrary tenant selection to prevent
+		// impersonation. Fall through to default tenant.
+		if requested != "" && requested != strings.TrimSpace(fallback) {
+			logging.Warn("api-gateway", "gRPC tenant denied: unscoped credentials", "requested", requested)
+			return "", status.Error(codes.PermissionDenied, "unscoped credentials cannot select tenant")
+		}
 	}
 	return strings.TrimSpace(fallback), nil
 }

@@ -20,13 +20,13 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
-	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
-	"github.com/cordum/cordum/core/infra/store"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/infra/store"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // healthDeps holds references to scheduler dependencies for the /health endpoint.
@@ -187,7 +187,7 @@ func main() {
 		MaxHeaderBytes:    1 << 20,
 	}
 	go func() {
-		log.Printf("scheduler metrics on %s/metrics", metricsAddr)
+		log.Printf("scheduler metrics on %s/metrics", metricsAddr) // #nosec G706 -- metricsAddr is from server config, not user input
 		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("metrics server error: %v", err)
 		}

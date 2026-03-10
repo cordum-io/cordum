@@ -1,876 +1,359 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
-import { useDLQ, useRetryDLQ, useDeleteDLQ } from "../hooks/useDLQ";
-import { useJob } from "../hooks/useJobs";
-import { Button } from "../components/ui/Button";
-import { Badge } from "../components/ui/Badge";
-import { Input } from "../components/ui/Input";
-import { cn } from "../lib/utils";
-import { TableEmptyState } from "../components/ui/EmptyState";
-import { SkeletonRow } from "../components/ui/Skeleton";
-import { DLQRowActions } from "../components/dlq/DLQActions";
-import type { DLQEntry, RetryAttempt } from "../api/types";
-import { DataFreshness } from "../components/ui/DataFreshness";
-import { RequireRole } from "../components/RequireRole";
-import { ConfirmDialog } from "../components/ui/ConfirmDialog";
-import { usePageTitle } from "../hooks/usePageTitle";
+/*
+ * DESIGN: "Control Surface" — Dead Letter Queue
+ * PRD: Bulk actions with checkbox selection + floating action bar
+ */
+import { Fragment, useState, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useDLQ, useRetryDLQ, useDeleteDLQ, useBulkRetryDLQ, useBulkDeleteDLQ } from "@/hooks/useDLQ";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
+import { Search, RefreshCw, AlertTriangle, Play, Trash2, CheckCircle2, Download, X } from "lucide-react";
+import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
-// Debounce hook
+// Exported for unit tests (following SettingsKeysPage pattern)
 // ---------------------------------------------------------------------------
 
-function useDebouncedValue(value: string, delayMs: number): string {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delayMs);
-    return () => clearTimeout(id);
-  }, [value, delayMs]);
-  return debounced;
-}
-
-// ---------------------------------------------------------------------------
-// Time range presets
-// ---------------------------------------------------------------------------
-
-const TIME_PRESETS = [
-  { label: "1h", value: "1h" },
-  { label: "24h", value: "24h" },
-  { label: "7d", value: "7d" },
-  { label: "30d", value: "30d" },
-  { label: "All", value: "" },
-] as const;
-
-const SINCE_MS: Record<string, number> = {
-  "1h": 60 * 60 * 1000,
-  "24h": 24 * 60 * 60 * 1000,
-  "7d": 7 * 24 * 60 * 60 * 1000,
-  "30d": 30 * 24 * 60 * 60 * 1000,
-};
-
-const RESULT_FILTERS = [
-  { label: "All", value: "" },
-  { label: "Denied", value: "denied" },
-  { label: "Failed", value: "failed" },
-  { label: "Quarantined", value: "output_quarantined" },
-] as const;
-
-// ---------------------------------------------------------------------------
-// Relative time
-// ---------------------------------------------------------------------------
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const secs = Math.floor(diff / 1_000);
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
-function normalizeEntrySignal(entry: DLQEntry): string {
-  return [entry.status, entry.lastState, entry.reasonCode]
-    .map((value) => (value || "").trim().toLowerCase())
-    .filter(Boolean)
-    .join(" ");
-}
-
-function isOutputQuarantinedEntry(entry: DLQEntry): boolean {
-  const signal = normalizeEntrySignal(entry);
-  if (signal.includes("output_quarantined")) return true;
-  if (signal.includes("output_quarantine")) return true;
-  if (signal.includes("quarantin")) return true;
-  return false;
-}
-
-function matchesResultFilter(entry: DLQEntry, filterValue: string): boolean {
-  if (!filterValue) return true;
-  const signal = normalizeEntrySignal(entry);
-  switch (filterValue) {
-    case "output_quarantined":
-      return isOutputQuarantinedEntry(entry);
-    case "denied":
-      return signal.includes("denied");
-    case "failed":
-      return !isOutputQuarantinedEntry(entry) && (signal.includes("failed") || signal.includes("error"));
-    default:
-      return true;
-  }
-}
-
-
-// ---------------------------------------------------------------------------
-// Pagination
-// ---------------------------------------------------------------------------
-
-function Pagination({
-  canPrev,
-  canNext,
-  onPrev,
-  onNext,
-  limit,
-  onLimit,
-}: {
-  canPrev: boolean;
-  canNext: boolean;
-  onPrev: () => void;
-  onNext: () => void;
-  limit: number;
-  onLimit: (limit: number) => void;
+/** Builds the structured diagnostics object shown in the expanded DLQ row. */
+export function buildDLQEntryDetails(d: {
+  jobId: string;
+  status?: string;
+  reasonCode?: string;
+  lastState?: string;
+  originalTopic?: string;
+  attempts?: number;
+  retryCount?: number;
+  failedAt?: string;
+  createdAt?: string;
 }) {
-  return (
-    <div className="flex items-center justify-between border-t border-border px-4 py-3">
-      <div className="flex items-center gap-2 text-xs text-muted">
-        <span>Rows:</span>
-        <select
-          value={limit}
-          onChange={(e) => onLimit(Number(e.target.value))}
-          className="rounded border border-border bg-transparent px-2 py-1 text-xs text-ink"
-        >
-          {[10, 25, 50, 100].map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="sm" disabled={!canPrev} onClick={onPrev}>
-          Newer
-        </Button>
-        <Button variant="ghost" size="sm" disabled={!canNext} onClick={onNext}>
-          Older
-        </Button>
-      </div>
-    </div>
-  );
+  return {
+    jobId: d.jobId,
+    status: d.status,
+    reasonCode: d.reasonCode,
+    lastState: d.lastState,
+    originalTopic: d.originalTopic,
+    attempts: d.attempts ?? d.retryCount ?? 0,
+    failedAt: d.failedAt ?? d.createdAt,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Retry attempts panel
-// ---------------------------------------------------------------------------
-
-function RetryAttemptsPanel({ attempts }: { attempts: RetryAttempt[] }) {
-  if (attempts.length === 0) {
-    return (
-      <p className="px-4 py-3 text-xs text-muted">No retry attempts recorded.</p>
-    );
-  }
-  return (
-    <div className="space-y-2 px-4 py-3">
-      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-        Retry Attempts ({attempts.length})
-      </h4>
-      <div className="space-y-1.5">
-        {attempts.map((a, i) => (
-          <div
-            key={i}
-            className="flex items-start gap-3 rounded-xl bg-surface2/40 px-3 py-2 text-xs"
-          >
-            <span className="shrink-0 font-mono text-muted">#{i + 1}</span>
-            <div className="min-w-0 flex-1">
-              <span className="text-danger font-medium break-words">
-                {a.error}
-              </span>
-            </div>
-            <span className="shrink-0 text-muted">{timeAgo(a.attemptedAt)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+/** Resolves the error message for the expanded DLQ row, with fallback chain. */
+export function resolveDLQError(d: { error?: string; reason?: string }): string {
+  return d.error || d.reason || "No error message";
 }
-
-// ---------------------------------------------------------------------------
-// Batch actions toolbar
-// ---------------------------------------------------------------------------
-
-function BatchToolbar({
-  count,
-  onRetryAll,
-  onDeleteAll,
-  onClear,
-  isPending,
-}: {
-  count: number;
-  onRetryAll: () => void;
-  onDeleteAll: () => void;
-  onClear: () => void;
-  isPending: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl bg-accent/10 px-4 py-2">
-      <span className="text-xs font-semibold text-accent">
-        {count} selected
-      </span>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onRetryAll}
-        disabled={isPending}
-      >
-        <RefreshCw className="h-3.5 w-3.5" />
-        Retry All
-      </Button>
-      <Button
-        variant="danger"
-        size="sm"
-        onClick={onDeleteAll}
-        disabled={isPending}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-        Delete All
-      </Button>
-      <Button variant="ghost" size="sm" onClick={onClear}>
-        <X className="h-3.5 w-3.5" />
-        Clear
-      </Button>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Sortable table header
-// ---------------------------------------------------------------------------
-
-function SortableHeader({
-  col,
-  label,
-  sortCol,
-  sortDir,
-  onSort,
-}: {
-  col: string;
-  label: string;
-  sortCol: string;
-  sortDir: "asc" | "desc";
-  onSort: (col: string) => void;
-}) {
-  const isActive = sortCol === col;
-  return (
-    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-      <button
-        type="button"
-        onClick={() => onSort(col)}
-        className={cn(
-          "inline-flex items-center gap-1 transition hover:text-ink",
-          isActive && "text-ink",
-        )}
-      >
-        {label}
-        {isActive ? (
-          sortDir === "asc" ? (
-            <ChevronUp className="h-3 w-3" />
-          ) : (
-            <ChevronDown className="h-3 w-3" />
-          )
-        ) : null}
-      </button>
-    </th>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// DLQPage
-// ---------------------------------------------------------------------------
 
 export default function DLQPage() {
-  usePageTitle("Dead Letters");
-  const [limit, setLimit] = useState(25);
-  const [cursor, setCursor] = useState<number | undefined>(undefined);
-  const [cursorStack, setCursorStack] = useState<number[]>([]);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState<"retry" | "purge" | null>(null);
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
-  // URL-persisted filter state
-  const [searchParams, setSearchParams] = useSearchParams();
-  const urlQ = searchParams.get("q") ?? "";
-  const timeRange = searchParams.get("timeRange") ?? "";
-  const resultType = searchParams.get("resultType") ?? "";
+  const { data, isLoading, refetch } = useDLQ({ limit: 200 });
+  const retryMutation = useRetryDLQ();
+  const purgeMutation = useDeleteDLQ();
+  const bulkRetryMutation = useBulkRetryDLQ();
+  const bulkPurgeMutation = useBulkDeleteDLQ();
 
-  const [topicInput, setTopicInput] = useState(urlQ);
-  const debouncedTopic = useDebouncedValue(topicInput, 400);
-
-  // Sync debounced topic → URL
-  useEffect(() => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (debouncedTopic) next.set("q", debouncedTopic);
-      else next.delete("q");
-      return next;
-    }, { replace: true });
-  }, [debouncedTopic, setSearchParams]);
-
-  const setTimeRange = useCallback(
-    (value: string) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (value) next.set("timeRange", value);
-        else next.delete("timeRange");
-        return next;
-      }, { replace: true });
-    },
-    [setSearchParams],
-  );
-
-  const setResultType = useCallback(
-    (value: string) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (value) next.set("resultType", value);
-        else next.delete("resultType");
-        return next;
-      }, { replace: true });
-    },
-    [setSearchParams],
-  );
-
-  // Sort state from URL
-  const sortCol = searchParams.get("sort") ?? "failedAt";
-  const sortDir = (searchParams.get("dir") ?? "desc") as "asc" | "desc";
-
-  const setSortParam = useCallback(
-    (col: string) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        const currentCol = prev.get("sort") ?? "failedAt";
-        const currentDir = prev.get("dir") ?? "desc";
-        if (col === currentCol) {
-          next.set("dir", currentDir === "asc" ? "desc" : "asc");
-        } else {
-          next.set("sort", col);
-          next.set("dir", "desc");
-        }
-        return next;
-      }, { replace: true });
-    },
-    [setSearchParams],
-  );
-
-  // Expand + select state
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-
-  // Batch mutations
-  const retryDLQ = useRetryDLQ();
-  const deleteDLQ = useDeleteDLQ();
-  const batchPending = retryDLQ.isPending || deleteDLQ.isPending;
-  const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
-
-  // Compute since ISO from time range preset
-  const sinceISO = useMemo(() => {
-    if (!timeRange || !SINCE_MS[timeRange]) return undefined;
-    return new Date(Date.now() - SINCE_MS[timeRange]).toISOString();
-  }, [timeRange]);
-
-  const { data, isLoading, isError, dataUpdatedAt, refetch, isRefetching } = useDLQ({
-    limit,
-    cursor,
-  });
-
-  const entries = data?.items ?? [];
-  const nextCursor = data?.next_cursor ?? null;
-
-  const resultFilteredEntries = useMemo(
-    () =>
-      entries.filter((entry) => {
-        if (!matchesResultFilter(entry, resultType)) return false;
-        if (debouncedTopic && !(entry.originalTopic ?? "").toLowerCase().includes(debouncedTopic.toLowerCase()))
-          return false;
-        if (sinceISO && (entry.failedAt ?? "") < sinceISO) return false;
-        return true;
-      }),
-    [entries, resultType, debouncedTopic, sinceISO],
-  );
-
-  // Client-side sort
-  const sortedEntries = useMemo(() => {
-    const sorted = [...resultFilteredEntries];
-    sorted.sort((a, b) => {
-      let aVal: string | number = "";
-      let bVal: string | number = "";
-      switch (sortCol) {
-        case "failedAt":
-          aVal = a.failedAt ?? "";
-          bVal = b.failedAt ?? "";
-          break;
-        case "topic":
-          aVal = (a.originalTopic ?? "").toLowerCase();
-          bVal = (b.originalTopic ?? "").toLowerCase();
-          break;
-        case "attempts":
-          aVal = a.retryCount ?? a.attempts ?? 0;
-          bVal = b.retryCount ?? b.attempts ?? 0;
-          break;
-        case "reason":
-          aVal = (a.error || a.reason || a.reasonCode || "").toLowerCase();
-          bVal = (b.error || b.reason || b.reasonCode || "").toLowerCase();
-          break;
-        default:
-          return 0;
-      }
-      if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
-      if (aVal > bVal) return sortDir === "asc" ? 1 : -1;
-      return 0;
+  const items = useMemo(() => {
+    return (data?.items ?? []).filter((d) => {
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return d.jobId.toLowerCase().includes(q) || (d.originalTopic ?? "").toLowerCase().includes(q) || (d.error ?? "").toLowerCase().includes(q);
     });
-    return sorted;
-  }, [resultFilteredEntries, sortCol, sortDir]);
+  }, [data, search]);
 
-  // Active filter count (non-default sort counts as a filter)
-  const isNonDefaultSort = sortCol !== "failedAt" || sortDir !== "desc";
-  const activeFilterCount =
-    (debouncedTopic ? 1 : 0) + (timeRange ? 1 : 0) + (resultType ? 1 : 0) + (isNonDefaultSort ? 1 : 0);
+  const avgAttempts = items.length > 0 ? (items.reduce((s, i) => s + (i.attempts ?? i.retryCount ?? 0), 0) / items.length).toFixed(1) : "0";
+  const allSelected = items.length > 0 && items.every((i) => selected.has(i.id));
 
-  // Reset pagination when filters change
-  const resetPagination = useCallback(() => {
-    setCursor(undefined);
-    setCursorStack([]);
-  }, []);
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(items.map((i) => i.id)));
+    }
+  };
 
-  useEffect(() => {
-    resetPagination();
-  }, [debouncedTopic, sinceISO, resultType, resetPagination]);
-
-  const clearFilters = useCallback(() => {
-    setTopicInput("");
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.delete("q");
-      next.delete("timeRange");
-      next.delete("resultType");
-      next.delete("sort");
-      next.delete("dir");
-      return next;
-    }, { replace: true });
-  }, [setSearchParams]);
-
-  const handleNext = useCallback(() => {
-    if (!nextCursor) return;
-    setCursorStack((prev) => [...prev, cursor ?? 0]);
-    setCursor(nextCursor);
-  }, [nextCursor, cursor]);
-
-  const handlePrev = useCallback(() => {
-    setCursorStack((prev) => {
-      if (prev.length === 0) return prev;
-      const next = [...prev];
-      const last = next.pop();
-      setCursor(last && last > 0 ? last : undefined);
-      return next;
-    });
-  }, []);
-
-  const handleLimit = useCallback((value: number) => {
-    setLimit(value);
-    setCursor(undefined);
-    setCursorStack([]);
-  }, []);
-
-  // Checkbox handlers
-  const toggleSelect = useCallback((id: string) => {
-    setSelectedIds((prev) => {
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }, []);
+  };
 
-  const toggleSelectAll = useCallback(() => {
-    const visibleIDs = sortedEntries.map((entry) => entry.id);
-    const allVisibleSelected = visibleIDs.length > 0 && visibleIDs.every((id) => selectedIds.has(id));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allVisibleSelected) {
-        for (const id of visibleIDs) {
-          next.delete(id);
-        }
-      } else {
-        for (const id of visibleIDs) {
-          next.add(id);
-        }
-      }
-      return next;
-    });
-  }, [selectedIds, sortedEntries]);
-
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
-
-  const handleBatchRetry = useCallback(() => {
-    for (const id of selectedIds) {
-      retryDLQ.mutate({ id });
-    }
-    clearSelection();
-  }, [selectedIds, retryDLQ, clearSelection]);
-
-  const handleBatchDelete = useCallback(() => {
-    for (const id of selectedIds) {
-      deleteDLQ.mutate(id);
-    }
-    setConfirmBatchDelete(false);
-    clearSelection();
-  }, [selectedIds, deleteDLQ, clearSelection]);
-
-  const allChecked =
-    sortedEntries.length > 0 &&
-    sortedEntries.every((entry) => selectedIds.has(entry.id));
+  const exportCSV = () => {
+    const rows = items.map((d) => [d.id, d.jobId, d.originalTopic ?? "", d.error ?? "", d.attempts ?? d.retryCount ?? 0, d.failedAt ?? d.createdAt ?? ""].join(","));
+    const csv = ["id,jobId,topic,error,attempts,failedAt", ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `dlq-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Exported CSV");
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="font-display text-2xl font-bold text-ink">Dead Letter Queue</h1>
-          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
-          {activeFilterCount > 0 && (
-            <Badge variant="info">{activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}</Badge>
-          )}
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        label="Platform"
+        title="Dead Letter Queue"
+        subtitle="Failed messages requiring attention"
+        actions={
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={exportCSV}>
+              <Download className="w-3 h-3 mr-1" />
+              Export CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="w-3 h-3 mr-1" />
+              Refresh
+            </Button>
+          </div>
+        }
+      />
+
+      {/* KPI Row */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="grid grid-cols-2 lg:grid-cols-3 gap-4"
+      >
+        {isLoading ? (
+          Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <div className={cn("instrument-card", items.length > 0 ? "status-danger" : "")}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Dead Letters</span>
+                <AlertTriangle className={cn("w-4 h-4", items.length > 0 ? "text-destructive" : "text-[var(--color-success)]")} />
+              </div>
+              <span className={cn("font-mono text-2xl font-bold", items.length > 0 ? "text-destructive" : "text-[var(--color-success)]")}>{data?.items?.length ?? 0}</span>
+              <p className="text-xs text-muted-foreground mt-1">{items.length > 0 ? "Requires attention" : "Queue clear"}</p>
+            </div>
+            <div className="instrument-card">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Avg Attempts</span>
+              </div>
+              <span className="font-mono text-2xl font-bold text-foreground">{avgAttempts}</span>
+              <p className="text-xs text-muted-foreground mt-1">Before dead-lettering</p>
+            </div>
+            <div className="instrument-card">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Status</span>
+                <span className={cn("w-1.5 h-1.5 rounded-full status-pulse", items.length > 0 ? "bg-destructive" : "bg-[var(--color-success)]")} />
+              </div>
+              <span className={cn("font-mono text-sm font-bold", items.length > 0 ? "text-[var(--color-warning)]" : "text-[var(--color-success)]")}>
+                {items.length > 0 ? "Attention Required" : "All Clear"}
+              </span>
+            </div>
+          </>
+        )}
+      </motion.div>
+
+      {/* Search */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search by job ID, topic, or error..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+        />
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="w-56">
-          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
-            Topic
-          </label>
-          <Input
-            value={topicInput}
-            onChange={(e) => setTopicInput(e.target.value)}
-            placeholder="Filter by topic\u2026"
-            className="h-[42px]"
-          />
+      {/* Table with checkboxes */}
+      {isLoading ? (
+        <div className="instrument-card">
+          <SkeletonTable rows={6} />
         </div>
-        <div>
-          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
-            Time Range
-          </label>
-          <div className="flex gap-1">
-            {TIME_PRESETS.map((p) => (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => setTimeRange(p.value)}
-                className={cn(
-                  "rounded-full px-3 py-1.5 text-xs font-semibold transition",
-                  timeRange === p.value
-                    ? "bg-accent/15 text-accent"
-                    : "text-muted hover:bg-surface2",
-                )}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
-            Result Type
-          </label>
-          <div className="flex gap-1">
-            {RESULT_FILTERS.map((option) => (
-              <button
-                key={option.value || "all"}
-                type="button"
-                onClick={() => setResultType(option.value)}
-                className={cn(
-                  "rounded-full px-3 py-1.5 text-xs font-semibold transition",
-                  resultType === option.value
-                    ? "bg-accent/15 text-accent"
-                    : "text-muted hover:bg-surface2",
-                )}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {activeFilterCount > 0 && (
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
-            <X className="h-3.5 w-3.5" />
-            Clear
-          </Button>
-        )}
-      </div>
-
-      {/* Batch toolbar */}
-      <RequireRole roles={["admin", "operator"]}>
-        {selectedIds.size > 0 && (
-          <BatchToolbar
-            count={selectedIds.size}
-            onRetryAll={handleBatchRetry}
-            onDeleteAll={() => setConfirmBatchDelete(true)}
-            onClear={clearSelection}
-            isPending={batchPending}
-          />
-        )}
-      </RequireRole>
-
-      <div className="surface-card overflow-hidden rounded-2xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-border">
-              <tr>
-                <th className="w-10 px-4 py-3">
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon={<CheckCircle2 className="w-5 h-5" />}
+          title="DLQ is empty"
+          description="No failed messages — all systems healthy"
+        />
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className="instrument-card status-danger overflow-hidden"
+        >
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[750px]">
+            <thead>
+              <tr className="border-b border-border bg-surface-0">
+                <th className="w-10 px-3 py-3">
                   <input
                     type="checkbox"
-                    checked={allChecked}
-                    onChange={toggleSelectAll}
-                    className="h-3.5 w-3.5 rounded border-border accent-accent"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    className="w-3.5 h-3.5 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
                   />
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-                  Job ID
-                </th>
-                <SortableHeader col="reason" label="Reason" sortCol={sortCol} sortDir={sortDir} onSort={setSortParam} />
-                <SortableHeader col="attempts" label="Attempts" sortCol={sortCol} sortDir={sortDir} onSort={setSortParam} />
-                <SortableHeader col="topic" label="Topic" sortCol={sortCol} sortDir={sortDir} onSort={setSortParam} />
-                <SortableHeader col="failedAt" label="Failed At" sortCol={sortCol} sortDir={sortDir} onSort={setSortParam} />
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-                  Actions
-                </th>
+                <th className="text-left px-4 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Job ID</th>
+                <th className="text-left px-4 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Topic</th>
+                <th className="text-left px-4 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Error</th>
+                <th className="text-center px-4 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Attempts</th>
+                <th className="text-right px-4 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Failed</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {isLoading && Array.from({ length: 8 }, (_, i) => <SkeletonRow key={i} columns={7} />)}
-
-              {!isLoading && isError && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-muted">
-                    Failed to load dead letter queue. Please try again.
-                  </td>
-                </tr>
-              )}
-
-              {!isLoading && !isError && sortedEntries.length === 0 && (
-                <TableEmptyState
-                  colSpan={7}
-                  icon={AlertTriangle}
-                  title="Dead letter queue is empty"
-                  description="No failed jobs — all systems running normally."
-                />
-              )}
-
-              {!isLoading &&
-                sortedEntries.map((entry: DLQEntry) => {
-                  const isExpanded = expandedId === entry.id;
-                  return (
-                    <DLQRow
-                      key={entry.id}
-                      entry={entry}
-                      isExpanded={isExpanded}
-                      isSelected={selectedIds.has(entry.id)}
-                      onToggleExpand={() =>
-                        setExpandedId(isExpanded ? null : entry.id)
-                      }
-                      onToggleSelect={() => toggleSelect(entry.id)}
-                      onRelease={() => retryDLQ.mutate({ id: entry.id })}
-                      isReleasePending={retryDLQ.isPending}
-                    />
-                  );
-                })}
+            <tbody>
+              {items.map((d) => (
+                <Fragment key={d.id}>
+                  <tr
+                    className={cn(
+                      "border-b border-border hover:bg-surface-1 transition-colors cursor-pointer",
+                      selected.has(d.id) && "bg-cordum/5",
+                      expandedRow === d.id && "bg-surface-1"
+                    )}
+                    {...clickableRowProps(() => setExpandedRow(expandedRow === d.id ? null : d.id))}
+                  >
+                    <td className="w-10 px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(d.id)}
+                        onChange={() => toggleOne(d.id)}
+                        className="w-3.5 h-3.5 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
+                      />
+                    </td>
+                    <td className="px-4 py-3 font-mono text-sm text-foreground">{(d.jobId ?? d.id ?? "").slice(0, 16)}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">{d.originalTopic ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs text-destructive truncate max-w-[250px] block font-mono">{d.error ?? "—"}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center font-mono text-xs text-muted-foreground">{d.attempts ?? d.retryCount ?? 0}</td>
+                    <td className="px-4 py-3 text-right text-xs text-muted-foreground font-mono">{formatRelativeTime(d.failedAt ?? d.createdAt ?? "")}</td>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex gap-1 justify-end">
+                        <button
+                          onClick={() => retryMutation.mutate({ id: d.id })}
+                          disabled={retryMutation.isPending || purgeMutation.isPending}
+                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-cordum disabled:opacity-50 disabled:pointer-events-none"
+                          title="Retry"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => purgeMutation.mutate(d.id)}
+                          disabled={purgeMutation.isPending || retryMutation.isPending}
+                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-destructive disabled:opacity-50 disabled:pointer-events-none"
+                          title="Purge"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {/* Expanded row — payload preview */}
+                  <AnimatePresence>
+                    {expandedRow === d.id && (
+                      <tr key={`${d.id}-expand`}>
+                        <td colSpan={7} className="px-0 py-0">
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="px-12 py-4 bg-surface-0/50 border-b border-border space-y-3">
+                              <div>
+                                <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Entry Details</p>
+                                <pre className="text-xs font-mono text-foreground bg-surface-0 border border-border rounded-2xl p-3 max-h-40 overflow-auto">
+                                  {JSON.stringify(buildDLQEntryDetails(d), null, 2)}
+                                </pre>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Full Error</p>
+                                <p className="text-xs font-mono text-destructive">{resolveDLQError(d)}</p>
+                              </div>
+                            </div>
+                          </motion.div>
+                        </td>
+                      </tr>
+                    )}
+                  </AnimatePresence>
+                </Fragment>
+              ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </motion.div>
+      )}
 
-        {!isLoading && !isError && (
-          <Pagination
-            canPrev={cursorStack.length > 0}
-            canNext={!!nextCursor}
-            onPrev={handlePrev}
-            onNext={handleNext}
-            limit={limit}
-            onLimit={handleLimit}
-          />
+      {/* Floating bulk action bar */}
+      <AnimatePresence>
+        {selected.size > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.2 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
+          >
+            <div className="flex items-center gap-3 px-5 py-3 bg-surface-1 border border-border rounded-xl shadow-2xl">
+              <span className="text-xs font-mono text-foreground">
+                <span className="font-bold text-cordum">{selected.size}</span> selected
+              </span>
+              <div className="w-px h-5 bg-border" />
+              <button
+                onClick={() => setConfirmBulk("retry")}
+                disabled={bulkRetryMutation.isPending || bulkPurgeMutation.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-cordum/10 text-cordum hover:bg-cordum/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+              >
+                <Play className="w-3 h-3" />
+                Retry All
+              </button>
+              <button
+                onClick={() => setConfirmBulk("purge")}
+                disabled={bulkRetryMutation.isPending || bulkPurgeMutation.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+              >
+                <Trash2 className="w-3 h-3" />
+                Purge All
+              </button>
+              <button
+                onClick={() => setSelected(new Set())}
+                className="p-1.5 rounded-full hover:bg-surface-2 text-muted-foreground transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
 
+      {/* Bulk confirm dialogs */}
       <ConfirmDialog
-        open={confirmBatchDelete}
-        title="Delete Selected Entries?"
-        message={`This will permanently remove ${selectedIds.size} dead letter ${selectedIds.size === 1 ? "entry" : "entries"}. This action cannot be undone.`}
-        confirmLabel="Delete"
-        confirmVariant="danger"
-        isPending={deleteDLQ.isPending}
-        onConfirm={handleBatchDelete}
-        onCancel={() => setConfirmBatchDelete(false)}
+        open={confirmBulk === "retry"}
+        onClose={() => setConfirmBulk(null)}
+        onConfirm={() => bulkRetryMutation.mutate([...selected], { onSuccess: () => { setSelected(new Set()); setConfirmBulk(null); } })}
+        title={`Retry ${selected.size} items?`}
+        description={`This will re-queue ${selected.size} dead letter items for processing.`}
+        confirmLabel="Retry All"
+        loading={bulkRetryMutation.isPending}
+      />
+      <ConfirmDialog
+        open={confirmBulk === "purge"}
+        onClose={() => setConfirmBulk(null)}
+        onConfirm={() => bulkPurgeMutation.mutate([...selected], { onSuccess: () => { setSelected(new Set()); setConfirmBulk(null); } })}
+        title={`Purge ${selected.size} items?`}
+        description="This will permanently delete the selected items. This action cannot be undone."
+        confirmLabel="Purge All"
+        variant="destructive"
+        loading={bulkPurgeMutation.isPending}
       />
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// DLQ Row (with expandable retry attempts + checkbox)
-// ---------------------------------------------------------------------------
-
-function DLQRow({
-  entry,
-  isExpanded,
-  isSelected,
-  onToggleExpand,
-  onToggleSelect,
-  onRelease,
-  isReleasePending,
-}: {
-  entry: DLQEntry;
-  isExpanded: boolean;
-  isSelected: boolean;
-  onToggleExpand: () => void;
-  onToggleSelect: () => void;
-  onRelease: () => void;
-  isReleasePending: boolean;
-}) {
-  const isQuarantined = isOutputQuarantinedEntry(entry);
-  const { data: jobDetails, isLoading: isJobLoading } = useJob(
-    isExpanded && isQuarantined ? entry.jobId : "",
-  );
-  const outputSafety = jobDetails?.output_safety;
-  const [showFullError, setShowFullError] = useState(false);
-  const errorText = entry.error || entry.reason || entry.reasonCode || "\u2014";
-  const errorTruncated = errorText.length > 120;
-  const displayError =
-    showFullError || !errorTruncated
-      ? errorText
-      : errorText.slice(0, 120) + "\u2026";
-
-  return (
-    <>
-      <tr
-        className={cn(
-          "transition-colors cursor-pointer",
-          isSelected ? "bg-accent/5" : "hover:bg-surface2/60",
-        )}
-        onClick={onToggleExpand}
-      >
-        <td className="w-10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={onToggleSelect}
-            className="h-3.5 w-3.5 rounded border-border accent-accent"
-          />
-        </td>
-        <td className="px-4 py-3 font-mono text-xs text-ink">
-          <span className="inline-flex items-center gap-1">
-            {isExpanded ? (
-              <ChevronDown className="h-3 w-3 text-muted" />
-            ) : (
-              <ChevronRight className="h-3 w-3 text-muted" />
-            )}
-            {entry.jobId.slice(0, 8)}
-          </span>
-        </td>
-        <td className="px-4 py-3 max-w-md">
-          {isQuarantined && (
-            <span className="mb-1 inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold text-warning">
-              <ShieldAlert className="h-3 w-3" />
-              Quarantined
-            </span>
-          )}
-          <span
-            className={cn(
-              "font-medium text-sm break-words",
-              isQuarantined ? "text-warning" : "text-danger",
-            )}
-            title={errorText}
-          >
-            {displayError}
-          </span>
-          {errorTruncated && (
-            <button
-              className="ml-1 text-xs text-accent hover:underline"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowFullError((v) => !v);
-              }}
-            >
-              {showFullError ? "less" : "more"}
-            </button>
-          )}
-        </td>
-        <td className="px-4 py-3 text-xs text-muted">
-          {entry.retryCount ?? entry.attempts ?? 0}
-          {entry.maxRetries != null ? `/${entry.maxRetries}` : ""}
-        </td>
-        <td className="px-4 py-3 text-xs text-muted font-mono">
-          {entry.originalTopic || "\u2014"}
-        </td>
-        <td className="px-4 py-3 text-xs text-muted">
-          {entry.failedAt ? timeAgo(entry.failedAt) : "\u2014"}
-        </td>
-        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-          <DLQRowActions entryId={entry.id} />
-        </td>
-      </tr>
-      {isExpanded && (
-        <tr>
-          <td colSpan={7} className="bg-surface2/20 border-b border-border">
-            {isQuarantined && (
-              <div className="space-y-2 border-b border-border px-4 py-3">
-                <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  Output Quarantine Details
-                </h4>
-                {isJobLoading && (
-                  <p className="text-xs text-muted">Loading quarantine findings…</p>
-                )}
-
-                {!isJobLoading && outputSafety && (
-                  <div className="space-y-1.5">
-                    <p className="text-xs text-muted">
-                      <span className="font-semibold text-ink">Matched Rule:</span>{" "}
-                      {outputSafety.rule_id || "\u2014"}
-                    </p>
-                    <p className="text-xs text-muted">
-                      <span className="font-semibold text-ink">Original Output Ptr:</span>{" "}
-                      <span className="font-mono text-[11px] text-ink">
-                        {outputSafety.original_ptr || "\u2014"}
-                      </span>
-                    </p>
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold text-ink">Findings</p>
-                      {(outputSafety.findings ?? []).length === 0 && (
-                        <p className="text-xs text-muted">No finding details attached.</p>
-                      )}
-                      {(outputSafety.findings ?? []).map((finding, idx) => (
-                        <p key={`${entry.id}-finding-${idx}`} className="text-xs text-ink">
-                          <span className="font-semibold">{finding.type || "finding"}</span>:{" "}
-                          {finding.detail || "\u2014"}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {!isJobLoading && !outputSafety && (
-                  <p className="text-xs text-muted">
-                    Quarantine details unavailable for this entry.
-                  </p>
-                )}
-
-                <RequireRole roles={["admin"]}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onRelease}
-                    disabled={isReleasePending}
-                  >
-                    <ShieldAlert className="h-3.5 w-3.5 text-warning" />
-                    Release Output
-                  </Button>
-                </RequireRole>
-              </div>
-            )}
-            <RetryAttemptsPanel attempts={entry.retryAttempts ?? []} />
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-/** @internal exported for unit tests */
-export const __dlqPageInternal = {
-  isOutputQuarantinedEntry,
-  matchesResultFilter,
-};
-

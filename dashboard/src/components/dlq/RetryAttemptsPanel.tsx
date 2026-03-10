@@ -42,10 +42,10 @@ export function RetryAttemptsPanel({
         <div className="space-y-4">
           {/* Header: attempt count & progress */}
           <div className="flex items-center gap-4">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Retry Attempts
             </span>
-            <span className="text-xs text-muted">
+            <span className="text-xs text-muted-foreground">
               {retryCount} / {maxRetries}
             </span>
             <div className="w-32">
@@ -55,7 +55,7 @@ export function RetryAttemptsPanel({
 
           {/* Timeline */}
           {(!attempts || attempts.length === 0) ? (
-            <p className="text-xs text-muted">No retry attempts recorded.</p>
+            <p className="text-xs text-muted-foreground">No retry attempts recorded.</p>
           ) : (
             <div className="relative space-y-0">
               {attempts.map((attempt, idx) => {
@@ -73,7 +73,7 @@ export function RetryAttemptsPanel({
                           "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
                           idx === attempts.length - 1
                             ? "bg-danger/20 text-danger"
-                            : "bg-surface text-muted border border-border",
+                            : "bg-surface text-muted-foreground border border-border",
                         )}
                       >
                         {idx + 1}
@@ -90,7 +90,7 @@ export function RetryAttemptsPanel({
                           {formatTimestamp(attempt.attemptedAt)}
                         </span>
                         {duration && (
-                          <span className="text-[10px] text-muted">
+                          <span className="text-[10px] text-muted-foreground">
                             +{duration}
                           </span>
                         )}

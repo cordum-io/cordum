@@ -1,595 +1,238 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import {
-  Briefcase,
-  Clock,
-  GitBranch,
-  Package,
-  Play,
-  Plus,
-  Search,
-  Settings,
-  ShieldCheck,
-  Sun,
-  Zap,
+  LayoutGrid, ListChecks, Workflow, Cpu, UserCheck, Shield, ShieldCheck, ShieldAlert, Boxes,
+  AlertTriangle, FileText, Settings, Search, Activity, Key, Bell,
+  Users, Server, Globe, Monitor, ArrowRight, GitBranch,
 } from "lucide-react";
-import { useUiStore } from "../state/ui";
-import { get } from "../api/client";
-import { cn } from "../lib/utils";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface SearchResult {
+interface CommandItem {
   id: string;
-  type: "job" | "workflow" | "run" | "pack";
-  title: string;
-  subtitle?: string;
-}
-
-interface SearchResponse {
-  data: SearchResult[];
-}
-
-interface QuickAction {
-  id: string;
-  icon: React.ComponentType<{ className?: string }>;
   label: string;
-  shortcut?: string;
-  path?: string;
-  execute?: () => void;
-}
-
-interface RecentItem {
-  id: string;
-  type: string;
-  title: string;
+  section: string;
+  icon: React.ElementType;
   path: string;
-  timestamp: number;
+  keywords?: string[];
 }
 
-type PaletteEntry =
-  | { kind: "recent"; recent: RecentItem }
-  | { kind: "action"; action: QuickAction }
-  | { kind: "result"; result: SearchResult };
-
-const TYPE_ORDER: SearchResult["type"][] = ["job", "workflow", "run", "pack"];
-
-const TYPE_LABELS: Record<SearchResult["type"], string> = {
-  job: "Jobs",
-  workflow: "Workflows",
-  run: "Runs",
-  pack: "Packs",
-};
-
-// ---------------------------------------------------------------------------
-// Scope detection
-// ---------------------------------------------------------------------------
-
-interface ScopeConfig {
-  type: SearchResult["type"];
-  label: string;
-}
-
-const SCOPE_MAP: Record<string, ScopeConfig> = {
-  "/jobs": { type: "job", label: "Jobs" },
-  "/workflows": { type: "workflow", label: "Workflows" },
-  "/packs": { type: "pack", label: "Packs" },
-};
-
-function detectScope(pathname: string): ScopeConfig | null {
-  for (const [prefix, config] of Object.entries(SCOPE_MAP)) {
-    if (pathname === prefix || pathname.startsWith(prefix + "/")) {
-      return config;
-    }
-  }
-  return null;
-}
-
-function typeIcon(type: string) {
-  switch (type) {
-    case "job":
-      return <Briefcase className="h-4 w-4 text-accent" />;
-    case "workflow":
-      return <GitBranch className="h-4 w-4 text-purple-500" />;
-    case "run":
-      return <Play className="h-4 w-4 text-success" />;
-    case "pack":
-      return <Package className="h-4 w-4 text-warning" />;
-    default:
-      return <Briefcase className="h-4 w-4 text-muted" />;
-  }
-}
-
-function resultPath(result: SearchResult): string {
-  switch (result.type) {
-    case "job":
-      return `/jobs/${result.id}`;
-    case "workflow":
-      return `/workflows/${result.id}`;
-    case "run":
-      return `/workflows`;
-    case "pack":
-      return `/packs`;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Recent items storage
-// ---------------------------------------------------------------------------
-
-const RECENT_KEY = "cordum-recent-items";
-const MAX_RECENT = 10;
-
-function loadRecentItems(): RecentItem[] {
-  try {
-    const raw = localStorage.getItem(RECENT_KEY);
-    if (!raw) return [];
-    const items = JSON.parse(raw) as RecentItem[];
-    return Array.isArray(items) ? items.slice(0, MAX_RECENT) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRecentItem(item: RecentItem): void {
-  try {
-    const items = loadRecentItems().filter((r) => r.path !== item.path);
-    items.unshift({ ...item, timestamp: Date.now() });
-    localStorage.setItem(RECENT_KEY, JSON.stringify(items.slice(0, MAX_RECENT)));
-  } catch {
-    // ignore
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Hook: debounced search
-// ---------------------------------------------------------------------------
-
-function useDebouncedSearch(query: string, delay: number, scopeType?: string) {
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    timerRef.current = setTimeout(() => {
-      let url = `/search?q=${encodeURIComponent(trimmed)}`;
-      if (scopeType) url += `&type=${encodeURIComponent(scopeType)}`;
-      get<SearchResponse>(url)
-        .then((res) => setResults(res.data ?? []))
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false));
-    }, delay);
-
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [query, delay, scopeType]);
-
-  return { results, loading };
-}
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-function entryKey(entry: PaletteEntry): string {
-  switch (entry.kind) {
-    case "recent":
-      return `rc-${entry.recent.path}`;
-    case "action":
-      return `a-${entry.action.id}`;
-    case "result":
-      return `r-${entry.result.id}`;
-  }
-}
+/** @internal exported for unit tests */
+export const COMMAND_PALETTE_COMMANDS: CommandItem[] = [
+  { id: "home", label: "Dashboard Overview", section: "Navigate", icon: LayoutGrid, path: "/", keywords: ["home", "overview", "dashboard"] },
+  { id: "jobs", label: "Jobs", section: "Navigate", icon: ListChecks, path: "/jobs", keywords: ["jobs", "tasks", "queue"] },
+  { id: "workflows", label: "Workflows", section: "Navigate", icon: Workflow, path: "/workflows", keywords: ["workflows", "orchestration", "pipeline"] },
+  { id: "agents", label: "Agent Fleet", section: "Navigate", icon: Cpu, path: "/agents", keywords: ["agents", "workers", "fleet", "pool"] },
+  { id: "approvals", label: "Approvals", section: "Navigate", icon: UserCheck, path: "/approvals", keywords: ["approvals", "pending", "approve", "deny"] },
+  { id: "security", label: "Security Overview", section: "Navigate", icon: ShieldCheck, path: "/", keywords: ["security", "overview", "safety", "decisions"] },
+  { id: "input-rules", label: "Input Rules", section: "Govern", icon: Shield, path: "/govern/input-rules", keywords: ["input", "rules", "safety", "pii", "injection", "policies", "governance"] },
+  { id: "output-rules", label: "Output Rules", section: "Govern", icon: Shield, path: "/govern/output-rules", keywords: ["output", "rules", "safety", "quarantine", "policies"] },
+  { id: "tenants", label: "Tenants", section: "Govern", icon: Users, path: "/govern/tenants", keywords: ["tenants", "hierarchy", "inheritance", "scope", "multi-tenant"] },
+  { id: "bundles", label: "Bundles", section: "Govern", icon: GitBranch, path: "/govern/bundles", keywords: ["bundles", "policy", "publish", "deploy", "history", "changelog", "versions"] },
+  { id: "simulator", label: "Simulator", section: "Govern", icon: Shield, path: "/govern/simulator", keywords: ["simulator", "test", "dry run", "analytics"] },
+  { id: "quarantine", label: "Quarantine", section: "Govern", icon: ShieldAlert, path: "/govern/quarantine", keywords: ["quarantine", "output", "blocked", "review"] },
+  { id: "packs", label: "Packs", section: "Navigate", icon: Boxes, path: "/packs", keywords: ["packs", "marketplace", "plugins"] },
+  { id: "schemas", label: "Schemas", section: "Navigate", icon: Monitor, path: "/schemas", keywords: ["schemas", "types", "definitions"] },
+  { id: "dlq", label: "Dead Letter Queue", section: "Navigate", icon: AlertTriangle, path: "/dlq", keywords: ["dlq", "dead letter", "failed", "retry"] },
+  { id: "traces", label: "Traces", section: "Navigate", icon: Activity, path: "/traces", keywords: ["traces", "spans", "observability", "telemetry"] },
+  { id: "audit", label: "Audit Log", section: "Navigate", icon: FileText, path: "/audit", keywords: ["audit", "log", "events", "history"] },
+  { id: "settings", label: "Settings Hub", section: "Settings", icon: Settings, path: "/settings", keywords: ["settings", "config"] },
+  { id: "settings-config", label: "System Config", section: "Settings", icon: Settings, path: "/settings/config", keywords: ["config", "configuration", "system"] },
+  { id: "settings-env", label: "Environments", section: "Settings", icon: Globe, path: "/settings/environments", keywords: ["environments", "production", "staging"] },
+  { id: "settings-health", label: "System Health", section: "Settings", icon: Activity, path: "/settings/health", keywords: ["health", "diagnostics", "status"] },
+  { id: "settings-keys", label: "API Keys", section: "Settings", icon: Key, path: "/settings/keys", keywords: ["api", "keys", "tokens"] },
+  { id: "settings-mcp", label: "MCP Server", section: "Settings", icon: Server, path: "/settings/mcp", keywords: ["mcp", "tools", "model context"] },
+  { id: "settings-notif", label: "Notifications", section: "Settings", icon: Bell, path: "/settings/notifications", keywords: ["notifications", "alerts", "channels"] },
+  { id: "settings-users", label: "Users & RBAC", section: "Settings", icon: Users, path: "/settings/users", keywords: ["users", "roles", "permissions", "rbac"] },
+];
 
 export function CommandPalette() {
-  const open = useUiStore((s) => s.commandOpen);
-  const setOpen = useUiStore((s) => s.setCommandOpen);
-  const toggleTheme = useUiStore((s) => s.toggleTheme);
-  const navigate = useNavigate();
-  const location = useLocation();
-
+  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
-  const [isScoped, setIsScoped] = useState(true);
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const dialogRef = useDialogA11y(() => setOpen(false));
 
-  const pageScope = detectScope(location.pathname);
-  const activeScope = isScoped ? pageScope : null;
-
-  const { results, loading } = useDebouncedSearch(query, 300, activeScope?.type);
-
-  // Quick actions
-  const quickActions = useMemo<QuickAction[]>(
-    () => [
-      { id: "nav-jobs", icon: Briefcase, label: "Go to Jobs", shortcut: "G J", path: "/jobs" },
-      { id: "nav-workflows", icon: GitBranch, label: "Go to Workflows", shortcut: "G W", path: "/workflows" },
-      { id: "nav-approvals", icon: ShieldCheck, label: "Go to Approvals", shortcut: "G A", path: "/approvals" },
-      { id: "create-workflow", icon: Plus, label: "Create Workflow", path: "/workflows/new" },
-      { id: "toggle-theme", icon: Sun, label: "Toggle Theme", execute: toggleTheme },
-      { id: "nav-settings", icon: Settings, label: "Open Settings", shortcut: "G S", path: "/settings" },
-    ],
-    [toggleTheme],
-  );
-
-  // Load recent items and reset scope when palette opens
+  // Cmd+K to open
   useEffect(() => {
-    if (open) {
-      setRecentItems(loadRecentItems());
-      setIsScoped(true);
-    }
-  }, [open]);
-
-  // Build flat list for keyboard navigation
-  const flat = useMemo<PaletteEntry[]>(() => {
-    const trimmed = query.trim().toLowerCase();
-
-    if (!trimmed) {
-      const entries: PaletteEntry[] = [];
-      for (const r of recentItems) entries.push({ kind: "recent", recent: r });
-      for (const a of quickActions) entries.push({ kind: "action", action: a });
-      return entries;
-    }
-
-    // Non-empty query: matching actions + search results (grouped by type order)
-    const entries: PaletteEntry[] = [];
-    const matchingActions = quickActions.filter((a) =>
-      a.label.toLowerCase().includes(trimmed),
-    );
-    for (const a of matchingActions) entries.push({ kind: "action", action: a });
-    for (const type of TYPE_ORDER) {
-      for (const r of results) {
-        if (r.type === type) entries.push({ kind: "result", result: r });
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setOpen((prev) => !prev);
       }
-    }
-    return entries;
-  }, [query, recentItems, quickActions, results]);
-
-  // Reset active index when flat list changes
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [flat]);
+      if (e.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Focus input when opened
   useEffect(() => {
     if (open) {
       setQuery("");
-      setActiveIndex(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
+      setSelectedIndex(0);
+      setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [open]);
 
-  // Global keyboard shortcut — stable listener (no deps)
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        const current = useUiStore.getState().commandOpen;
-        useUiStore.getState().setCommandOpen(!current);
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  const filtered = useMemo(() => {
+    if (!query.trim()) return COMMAND_PALETTE_COMMANDS;
+    const q = query.toLowerCase();
+    return COMMAND_PALETTE_COMMANDS.filter(
+      (c) =>
+        c.label.toLowerCase().includes(q) ||
+        c.section.toLowerCase().includes(q) ||
+        c.keywords?.some((k) => k.includes(q))
+    );
+  }, [query]);
 
-  const close = useCallback(() => {
-    setOpen(false);
-    setQuery("");
-  }, [setOpen]);
+  const grouped = useMemo(() => {
+    const groups: Record<string, CommandItem[]> = {};
+    filtered.forEach((item) => {
+      if (!groups[item.section]) groups[item.section] = [];
+      groups[item.section].push(item);
+    });
+    return groups;
+  }, [filtered]);
 
-  const selectEntry = useCallback(
-    (entry: PaletteEntry) => {
-      close();
-      switch (entry.kind) {
-        case "result": {
-          const path = resultPath(entry.result);
-          saveRecentItem({
-            id: entry.result.id,
-            type: entry.result.type,
-            title: entry.result.title,
-            path,
-            timestamp: Date.now(),
-          });
-          navigate(path);
-          break;
-        }
-        case "recent":
-          saveRecentItem(entry.recent);
-          navigate(entry.recent.path);
-          break;
-        case "action":
-          if (entry.action.path) {
-            saveRecentItem({
-              id: entry.action.id,
-              type: "action",
-              title: entry.action.label,
-              path: entry.action.path,
-              timestamp: Date.now(),
-            });
-            navigate(entry.action.path);
-          } else if (entry.action.execute) {
-            entry.action.execute();
-          }
-          break;
-      }
+  const flatItems = useMemo(() => filtered, [filtered]);
+
+  const handleSelect = useCallback(
+    (item: CommandItem) => {
+      navigate(item.path);
+      setOpen(false);
     },
-    [close, navigate],
+    [navigate]
   );
 
-  // Keyboard navigation inside palette
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      close();
-      return;
-    }
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((prev) => Math.min(prev + 1, flat.length - 1));
-      return;
-    }
-    if (e.key === "ArrowUp") {
+      setSelectedIndex((i) => Math.min(i + 1, flatItems.length - 1));
+    } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveIndex((prev) => Math.max(prev - 1, 0));
-      return;
+      setSelectedIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" && flatItems[selectedIndex]) {
+      handleSelect(flatItems[selectedIndex]);
     }
-    if (e.key === "Enter" && flat[activeIndex]) {
-      e.preventDefault();
-      selectEntry(flat[activeIndex]);
-    }
-  }
+  };
 
-  // Scroll active item into view
+  // Scroll selected item into view
   useEffect(() => {
-    if (!listRef.current) return;
-    const active = listRef.current.querySelector("[data-active='true']");
-    if (active) {
-      active.scrollIntoView({ block: "nearest" });
-    }
-  }, [activeIndex]);
-
-  if (!open) return null;
-
-  // -------------------------------------------------------------------------
-  // Render helpers
-  // -------------------------------------------------------------------------
-
-  const trimmed = query.trim().toLowerCase();
-  const recentEntries = flat.filter(
-    (e): e is Extract<PaletteEntry, { kind: "recent" }> => e.kind === "recent",
-  );
-  const actionEntries = flat.filter(
-    (e): e is Extract<PaletteEntry, { kind: "action" }> => e.kind === "action",
-  );
-  const resultEntries = flat.filter(
-    (e): e is Extract<PaletteEntry, { kind: "result" }> => e.kind === "result",
-  );
-  const resultGrouped = TYPE_ORDER.map((type) => ({
-    type,
-    items: resultEntries.filter((e) => e.result.type === type),
-  })).filter((g) => g.items.length > 0);
-
-  let flatIdx = 0;
-
-  function renderItem(entry: PaletteEntry) {
-    const idx = flatIdx++;
-    const isActive = idx === activeIndex;
-
-    let icon: React.ReactNode;
-    let label: string;
-    let subtitle: string | undefined;
-    let trailing: React.ReactNode = null;
-
-    switch (entry.kind) {
-      case "recent":
-        icon = typeIcon(entry.recent.type);
-        label = entry.recent.title;
-        subtitle = entry.recent.path;
-        break;
-      case "action": {
-        const Icon = entry.action.icon;
-        icon = <Icon className="h-4 w-4 text-accent" />;
-        label = entry.action.label;
-        if (entry.action.shortcut) {
-          trailing = (
-            <kbd className="shrink-0 rounded border border-border bg-surface2 px-1.5 py-0.5 text-[10px] font-mono text-muted">
-              {entry.action.shortcut}
-            </kbd>
-          );
-        }
-        break;
-      }
-      case "result":
-        icon = typeIcon(entry.result.type);
-        label = entry.result.title;
-        subtitle = entry.result.subtitle;
-        trailing = (
-          <span className="shrink-0 text-[10px] text-muted/60">
-            {entry.result.id.slice(0, 8)}
-          </span>
-        );
-        break;
-    }
-
-    return (
-      <button
-        key={entryKey(entry)}
-        type="button"
-        data-active={isActive}
-        className={cn(
-          "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors",
-          isActive
-            ? "bg-accent/10 text-ink"
-            : "text-muted hover:bg-surface2 hover:text-ink",
-        )}
-        onClick={() => selectEntry(entry)}
-        onMouseEnter={() => setActiveIndex(idx)}
-      >
-        {icon}
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">{label}</p>
-          {subtitle && (
-            <p className="truncate text-xs text-muted">{subtitle}</p>
-          )}
-        </div>
-        {trailing}
-      </button>
-    );
-  }
+    const el = listRef.current?.querySelector(`[data-index="${selectedIndex}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
-      {/* Backdrop */}
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={close}
-        className="absolute inset-0 bg-black/30 backdrop-blur-sm animate-fade-in"
-      />
-
-      {/* Dialog */}
-      <div
-        className="relative w-full max-w-lg rounded-2xl border border-border bg-white shadow-2xl animate-slide-in"
-        role="dialog"
-        aria-label="Command palette"
-        onKeyDown={handleKeyDown}
-      >
-        {/* Search input */}
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-          <Search className="h-4 w-4 shrink-0 text-muted" />
-          {activeScope && (
-            <button
-              type="button"
-              onClick={() => setIsScoped(false)}
-              className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent transition hover:bg-accent/25"
-              title="Click to search all"
-            >
-              {activeScope.label} &times;
-            </button>
-          )}
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={activeScope ? `Search ${activeScope.label.toLowerCase()}...` : "Search jobs, workflows, runs, packs..."}
-            className="w-full border-0 bg-transparent px-0 py-0 text-sm text-ink shadow-none outline-none placeholder:text-muted/60"
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm"
+            onClick={() => setOpen(false)}
           />
-          {!isScoped && pageScope && (
-            <button
-              type="button"
-              onClick={() => setIsScoped(true)}
-              className="shrink-0 whitespace-nowrap text-[10px] text-muted transition hover:text-accent"
+          {/* Palette */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: -10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: -10 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="fixed top-[20%] left-1/2 -translate-x-1/2 z-[101] w-full max-w-lg"
+          >
+            <div
+              ref={dialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Command palette"
+              className="bg-surface-1 border border-border rounded-xl shadow-2xl overflow-hidden"
             >
-              Search in {pageScope.label}
-            </button>
-          )}
-          <kbd className="hidden shrink-0 rounded-md border border-border bg-surface2 px-1.5 py-0.5 text-[10px] font-semibold text-muted sm:block">
-            ESC
-          </kbd>
-        </div>
+              {/* Search input */}
+              <div className="flex items-center gap-3 px-4 h-14 border-b border-border">
+                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setSelectedIndex(0);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type a command or search..."
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+                />
+                <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-2 border border-border text-muted-foreground">
+                  ESC
+                </kbd>
+              </div>
 
-        {/* Content */}
-        <div ref={listRef} className="max-h-[50vh] overflow-y-auto p-2">
-          {/* Loading */}
-          {loading && (
-            <p className="px-3 py-6 text-center text-xs text-muted">
-              Searching...
-            </p>
-          )}
+              {/* Results */}
+              <div ref={listRef} className="max-h-80 overflow-y-auto py-2">
+                {flatItems.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    No results found for "{query}"
+                  </div>
+                ) : (
+                  Object.entries(grouped).map(([section, items]) => (
+                    <div key={section}>
+                      <p className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
+                        {section}
+                      </p>
+                      {items.map((item) => {
+                        const globalIndex = flatItems.indexOf(item);
+                        return (
+                          <button
+                            key={item.id}
+                            data-index={globalIndex}
+                            onClick={() => handleSelect(item)}
+                            onMouseEnter={() => setSelectedIndex(globalIndex)}
+                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+                              globalIndex === selectedIndex
+                                ? "bg-cordum/10 text-cordum"
+                                : "text-foreground hover:bg-surface-2"
+                            }`}
+                          >
+                            <item.icon className="w-4 h-4 shrink-0 opacity-60" />
+                            <span className="flex-1 text-left">{item.label}</span>
+                            {globalIndex === selectedIndex && (
+                              <ArrowRight className="w-3.5 h-3.5 opacity-40" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))
+                )}
+              </div>
 
-          {/* No results for search query */}
-          {!loading && trimmed && flat.length === 0 && (
-            <p className="px-3 py-6 text-center text-xs text-muted">
-              No results for &ldquo;{query.trim()}&rdquo;
-            </p>
-          )}
-
-          {/* Empty query: Recent Items + Quick Actions */}
-          {!loading && !trimmed && (
-            <>
-              {recentEntries.length > 0 && (
-                <div className="mb-1">
-                  <p className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted">
-                    <Clock className="h-3 w-3" />
-                    Recent
-                  </p>
-                  {recentEntries.map((e) => renderItem(e))}
-                </div>
-              )}
-              {actionEntries.length > 0 && (
-                <div className="mb-1">
-                  <p className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted">
-                    <Zap className="h-3 w-3" />
-                    Quick Actions
-                  </p>
-                  {actionEntries.map((e) => renderItem(e))}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Search query: matching actions + grouped results */}
-          {!loading && trimmed && (
-            <>
-              {actionEntries.length > 0 && (
-                <div className="mb-1">
-                  <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted">
-                    Quick Actions
-                  </p>
-                  {actionEntries.map((e) => renderItem(e))}
-                </div>
-              )}
-              {resultGrouped.map((group) => (
-                <div key={group.type} className="mb-1">
-                  <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted">
-                    {TYPE_LABELS[group.type]}
-                  </p>
-                  {group.items.map((e) => renderItem(e))}
-                </div>
-              ))}
-            </>
-          )}
-        </div>
-
-        {/* Footer hint */}
-        {flat.length > 0 && (
-          <div className="flex items-center gap-4 border-t border-border px-4 py-2 text-[10px] text-muted">
-            <span>
-              <kbd className="rounded border border-border bg-surface2 px-1 py-0.5 font-mono">
-                &uarr;&darr;
-              </kbd>{" "}
-              navigate
-            </span>
-            <span>
-              <kbd className="rounded border border-border bg-surface2 px-1 py-0.5 font-mono">
-                &crarr;
-              </kbd>{" "}
-              select
-            </span>
-            <span>
-              <kbd className="rounded border border-border bg-surface2 px-1 py-0.5 font-mono">
-                esc
-              </kbd>{" "}
-              close
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
+              {/* Footer */}
+              <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1 py-0.5 rounded bg-surface-2 border border-border font-mono">↑↓</kbd>
+                  navigate
+                </span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1 py-0.5 rounded bg-surface-2 border border-border font-mono">↵</kbd>
+                  select
+                </span>
+                <span className="flex items-center gap-1">
+                  <kbd className="px-1 py-0.5 rounded bg-surface-2 border border-border font-mono">esc</kbd>
+                  close
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   );
 }

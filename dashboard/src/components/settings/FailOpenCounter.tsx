@@ -26,7 +26,7 @@ export function FailOpenCounter({ count, failMode, inputCB }: FailOpenCounterPro
         <ShieldOff
           className={cn(
             "h-5 w-5 shrink-0",
-            isActivelyBypassing ? "text-danger" : "text-muted",
+            isActivelyBypassing ? "text-danger" : "text-muted-foreground",
           )}
         />
         <div className="flex-1">
@@ -52,7 +52,7 @@ export function FailOpenCounter({ count, failMode, inputCB }: FailOpenCounterPro
               ? "text-danger"
               : count > 0
                 ? "text-warning"
-                : "text-muted",
+                : "text-muted-foreground",
           )}
         >
           {count.toLocaleString()}

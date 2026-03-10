@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"math/big"
 	"os"
 	"os/signal"
@@ -14,8 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/cordum/cordum/sdk/runtime"
 	"github.com/nats-io/nats.go"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -30,52 +34,57 @@ const (
 // ---------------------------------------------------------------------------
 
 type workerDef struct {
-	ID       string
-	Pool     string
-	Topics   []string
-	Capacity int
+	ID           string
+	Pool         string
+	Topics       []string
+	Capacity     int
+	Region       string
+	Type         string
+	Capabilities []string
+	Labels       map[string]string
 }
 
 var bankWorkers = []workerDef{
-	// Transaction processing
-	{ID: "bank-validator-1", Pool: "bank-validators", Topics: []string{"job.bank-validators.process"}, Capacity: 8},
-	{ID: "bank-validator-2", Pool: "bank-validators", Topics: []string{"job.bank-validators.process"}, Capacity: 8},
-
-	// Fraud detection
-	{ID: "fraud-detector-1", Pool: "fraud-detection", Topics: []string{"job.fraud-detection.process"}, Capacity: 4},
-	{ID: "fraud-detector-2", Pool: "fraud-detection", Topics: []string{"job.fraud-detection.process"}, Capacity: 4},
-
-	// Bank executors
-	{ID: "bank-executor-1", Pool: "bank-executors", Topics: []string{"job.bank-executors.process"}, Capacity: 8},
-
-	// Compliance / KYC
-	{ID: "compliance-agent-1", Pool: "compliance-agents", Topics: []string{"job.compliance-agents.process"}, Capacity: 4},
-	{ID: "compliance-agent-2", Pool: "compliance-agents", Topics: []string{"job.compliance-agents.process"}, Capacity: 4},
-
-	// Credit agents
-	{ID: "credit-agent-1", Pool: "credit-agents", Topics: []string{"job.credit-agents.process"}, Capacity: 4},
-
-	// Risk agents
-	{ID: "risk-agent-1", Pool: "risk-agents", Topics: []string{"job.risk-agents.process"}, Capacity: 4},
-
-	// Loan agents
-	{ID: "loan-agent-1", Pool: "loan-agents", Topics: []string{"job.loan-agents.process"}, Capacity: 4},
-
-	// Valuation agents
-	{ID: "valuation-agent-1", Pool: "valuation-agents", Topics: []string{"job.valuation-agents.process"}, Capacity: 2},
-
-	// Underwriting agents
-	{ID: "underwriter-1", Pool: "underwriting-agents", Topics: []string{"job.underwriting-agents.process"}, Capacity: 2},
-
-	// Notification service
-	{ID: "notifier-1", Pool: "notification-service", Topics: []string{"job.notification-service.process"}, Capacity: 16},
-
-	// Legacy demo topics
-	{ID: "demo-mock-bank-worker", Pool: "demo-mock-bank", Topics: []string{
-		"job.demo-mock-bank.transfer.auto",
-		"job.demo-mock-bank.transfer.review",
-		"job.demo-mock-bank.transfer.blocked",
-	}, Capacity: 4},
+	{
+		ID:           "megacorp-transfer-agent-01",
+		Pool:         "megacorp-banking",
+		Topics:       []string{"job.demo-mock-bank.transfer"},
+		Capacity:     8,
+		Region:       "us-east-1",
+		Type:         "cpu",
+		Capabilities: []string{"transfer", "wire", "compliance", "aml-check"},
+		Labels:       map[string]string{"name": "Transfer Agent 01", "env": "production", "tier": "critical"},
+	},
+	{
+		ID:           "megacorp-transfer-agent-02",
+		Pool:         "megacorp-banking",
+		Topics:       []string{"job.demo-mock-bank.transfer"},
+		Capacity:     8,
+		Region:       "us-east-1",
+		Type:         "cpu",
+		Capabilities: []string{"transfer", "wire", "compliance", "aml-check"},
+		Labels:       map[string]string{"name": "Transfer Agent 02", "env": "production", "tier": "critical"},
+	},
+	{
+		ID:           "megacorp-compliance-scanner",
+		Pool:         "megacorp-compliance",
+		Topics:       []string{"job.demo-mock-bank.transfer"},
+		Capacity:     4,
+		Region:       "us-west-2",
+		Type:         "cpu",
+		Capabilities: []string{"compliance", "aml-check", "sanctions-screening", "audit"},
+		Labels:       map[string]string{"name": "Compliance Scanner", "env": "production", "tier": "standard"},
+	},
+	{
+		ID:           "megacorp-audit-recorder",
+		Pool:         "megacorp-audit",
+		Topics:       []string{"job.demo-mock-bank.transfer"},
+		Capacity:     2,
+		Region:       "eu-west-1",
+		Type:         "cpu",
+		Capabilities: []string{"audit", "reporting", "regulatory"},
+		Labels:       map[string]string{"name": "Audit Recorder", "env": "production", "tier": "standard"},
+	},
 }
 
 // ---------------------------------------------------------------------------
@@ -124,9 +133,6 @@ func main() {
 		log.Println("[mock-bank] WARNING: REDIS_URL has no '@' — may be missing auth credentials")
 	}
 	// Create a TLS-aware blob store that applies REDIS_TLS_* env vars.
-	// This is required because the CAP runtime's default NewRedisBlobStore
-	// only uses the rediss:// scheme's basic TLS config, which trusts system
-	// CAs but not our self-signed CA from cordumctl generate-certs.
 	blobStore, err := runtime.NewRedisBlobStoreWithPing(redisURL)
 	if err != nil {
 		log.Fatalf("[mock-bank] Redis connection failed (check REDIS_URL, password, and TLS certs): %v", err)
@@ -167,11 +173,13 @@ func main() {
 			continue
 		}
 
-		// Heartbeat goroutine
+		// Heartbeat goroutine — builds full proto with capabilities, labels, region
 		go func() {
 			heartbeatFn := func() ([]byte, error) {
 				active := randInt(max(worker.Capacity/4, 1))
-				return runtime.HeartbeatPayload(worker.ID, worker.Pool, active, worker.Capacity, randFloat32()*0.3)
+				cpuLoad := 5.0 + randFloat32()*35.0  // 5–40%
+				memLoad := 20.0 + randFloat32()*40.0 // 20–60%
+				return buildHeartbeat(worker, safeInt32(active), float32(cpuLoad), float32(memLoad))
 			}
 			if payload, err := heartbeatFn(); err == nil {
 				_ = runtime.EmitHeartbeat(nc, payload)
@@ -179,18 +187,44 @@ func main() {
 			runtime.HeartbeatLoop(ctx, nc, heartbeatFn)
 		}()
 
-		log.Printf("[mock-bank]   started %-25s pool=%-22s topics=%v cap=%d",
-			worker.ID, worker.Pool, worker.Topics, worker.Capacity)
+		log.Printf("[mock-bank]   started %-35s pool=%-22s region=%-12s topics=%v cap=%d",
+			worker.ID, worker.Pool, worker.Region, worker.Topics, worker.Capacity)
 	}
 
 	log.Println("")
-	log.Println("=== Mock Bank Fleet Ready ===")
+	log.Println("=== MegaCorp Agent Fleet Ready ===")
 	log.Printf("Workers: %d", len(bankWorkers))
 	log.Printf("Pools:   %d", countPools())
 	log.Println("Press Ctrl+C to stop...")
 
 	<-ctx.Done()
 	log.Println("[mock-bank] shutting down...")
+}
+
+// ---------------------------------------------------------------------------
+// Custom heartbeat builder — populates all proto fields
+// ---------------------------------------------------------------------------
+
+func buildHeartbeat(w workerDef, activeJobs int32, cpuLoad, memoryLoad float32) ([]byte, error) {
+	hb := &agentv1.BusPacket{
+		SenderId:        w.ID,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &agentv1.BusPacket_Heartbeat{
+			Heartbeat: &agentv1.Heartbeat{
+				WorkerId:        w.ID,
+				Pool:            w.Pool,
+				Region:          w.Region,
+				Type:            w.Type,
+				CpuLoad:         cpuLoad,
+				MemoryLoad:      memoryLoad,
+				ActiveJobs:      activeJobs,
+				MaxParallelJobs: safeInt32(w.Capacity),
+				Capabilities:    w.Capabilities,
+				Labels:          w.Labels,
+			},
+		},
+	}
+	return proto.Marshal(hb)
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +337,16 @@ func randInt(max int) int {
 	return int(n.Int64())
 }
 
+func safeInt32(v int) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
+}
+
 func randFloat32() float32 {
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
 	if err != nil {
@@ -314,7 +358,7 @@ func randFloat32() float32 {
 // connectNATSWithTLS creates a NATS connection, adding TLS if NATS_TLS_* env
 // vars are set (via sdk/runtime.NATSTLSConfigFromEnv).
 func connectNATSWithTLS(natsURL string) (*nats.Conn, error) {
-	opts := []nats.Option{nats.Name("mock-bank-fleet"), nats.Timeout(5 * time.Second)}
+	opts := []nats.Option{nats.Name("megacorp-agent-fleet"), nats.Timeout(5 * time.Second)}
 	tlsCfg, err := runtime.NATSTLSConfigFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("nats tls config: %w", err)

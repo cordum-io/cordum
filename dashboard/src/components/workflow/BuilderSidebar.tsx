@@ -24,24 +24,24 @@ import { Textarea } from "../ui/Textarea";
 // ---------------------------------------------------------------------------
 
 const AGENT_NODES = [
-  { type: "agent-task", label: "Agent Task", icon: MessageSquare, color: "text-blue-500" },
-  { type: "pack-action", label: "Pack Action", icon: Package, color: "text-violet-500" },
-  { type: "tool-call", label: "Tool Call", icon: Wrench, color: "text-amber-500" },
+  { type: "agent-task", label: "Agent Task", icon: MessageSquare, color: "text-[var(--color-info)]" },
+  { type: "pack-action", label: "Pack Action", icon: Package, color: "text-primary" },
+  { type: "tool-call", label: "Tool Call", icon: Wrench, color: "text-[var(--color-warning)]" },
 ] as const;
 
 const FLOW_NODES = [
-  { type: "approval", label: "Approval", icon: ShieldCheck, color: "text-amber-500" },
-  { type: "delay", label: "Delay", icon: Clock, color: "text-purple-500" },
-  { type: "condition", label: "Condition", icon: GitBranch, color: "text-teal-500" },
-  { type: "notify", label: "Notify", icon: Bell, color: "text-pink-500" },
-  { type: "fan-out", label: "Fan-out", icon: Split, color: "text-indigo-500" },
-  { type: "parallel", label: "Parallel", icon: Layers, color: "text-sky-600" },
-  { type: "http", label: "HTTP", icon: Globe, color: "text-purple-600" },
-  { type: "transform", label: "Transform", icon: Code, color: "text-indigo-600" },
-  { type: "switch", label: "Switch", icon: GitMerge, color: "text-teal-600" },
-  { type: "loop", label: "Loop", icon: Repeat, color: "text-orange-500" },
-  { type: "sub-workflow", label: "Sub-flow", icon: Workflow, color: "text-cyan-500" },
-  { type: "error-trigger", label: "Error", icon: AlertTriangle, color: "text-red-500" },
+  { type: "approval", label: "Approval", icon: ShieldCheck, color: "text-[var(--color-warning)]" },
+  { type: "delay", label: "Delay", icon: Clock, color: "text-primary" },
+  { type: "condition", label: "Condition", icon: GitBranch, color: "text-[var(--color-info)]" },
+  { type: "notify", label: "Notify", icon: Bell, color: "text-primary" },
+  { type: "fan-out", label: "Fan-out", icon: Split, color: "text-primary" },
+  { type: "parallel", label: "Parallel", icon: Layers, color: "text-[var(--color-info)]" },
+  { type: "http", label: "HTTP", icon: Globe, color: "text-primary" },
+  { type: "transform", label: "Transform", icon: Code, color: "text-primary" },
+  { type: "switch", label: "Switch", icon: GitMerge, color: "text-[var(--color-info)]" },
+  { type: "loop", label: "Loop", icon: Repeat, color: "text-[var(--color-warning)]" },
+  { type: "sub-workflow", label: "Sub-flow", icon: Workflow, color: "text-[var(--color-info)]" },
+  { type: "error-trigger", label: "Error", icon: AlertTriangle, color: "text-destructive" },
 ] as const;
 
 function onDragStart(event: DragEvent, nodeType: string) {
@@ -70,7 +70,7 @@ export function BuilderSidebar({
     <aside className="flex w-60 shrink-0 flex-col gap-6 border-r border-border bg-surface1 p-4 overflow-y-auto">
       {/* Node palette */}
       <section>
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Node Types
         </h3>
 
@@ -83,7 +83,7 @@ export function BuilderSidebar({
               key={type}
               draggable
               onDragStart={(e) => onDragStart(e, type)}
-              className="flex cursor-grab flex-col items-center gap-1.5 rounded-xl border border-border bg-white/60 p-3 text-xs font-medium text-ink shadow-sm transition-all hover:border-accent hover:shadow-soft active:cursor-grabbing"
+              className="flex cursor-grab flex-col items-center gap-1.5 rounded-xl border border-border bg-card/60 p-3 text-xs font-medium text-ink shadow-sm transition-all hover:border-accent hover:shadow-soft active:cursor-grabbing"
             >
               <Icon className={`h-5 w-5 ${color}`} />
               {label}
@@ -100,7 +100,7 @@ export function BuilderSidebar({
               key={type}
               draggable
               onDragStart={(e) => onDragStart(e, type)}
-              className="flex cursor-grab flex-col items-center gap-1.5 rounded-xl border border-border bg-white/60 p-3 text-xs font-medium text-ink shadow-sm transition-all hover:border-accent hover:shadow-soft active:cursor-grabbing"
+              className="flex cursor-grab flex-col items-center gap-1.5 rounded-xl border border-border bg-card/60 p-3 text-xs font-medium text-ink shadow-sm transition-all hover:border-accent hover:shadow-soft active:cursor-grabbing"
             >
               <Icon className={`h-5 w-5 ${color}`} />
               {label}
@@ -111,12 +111,12 @@ export function BuilderSidebar({
 
       {/* Workflow metadata */}
       <section>
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Workflow
         </h3>
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-xs text-muted">Name</label>
+            <label className="mb-1 block text-xs text-muted-foreground">Name</label>
             <Input
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
@@ -124,7 +124,7 @@ export function BuilderSidebar({
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-muted">Description</label>
+            <label className="mb-1 block text-xs text-muted-foreground">Description</label>
             <Textarea
               value={description}
               onChange={(e) => onDescriptionChange(e.target.value)}

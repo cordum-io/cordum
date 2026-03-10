@@ -15,9 +15,9 @@ export const PackActionNode = memo(function PackActionNode({ data, selected }: N
   const display = packId && action ? `${packId}: ${action}` : packId || action;
   return (
     <BaseNode
-      icon={<Package className="h-4 w-4 text-violet-600" />}
+      icon={<Package className="h-4 w-4 text-primary" />}
       label={data.label as string}
-      accent="bg-violet-50"
+      accent="bg-primary/5"
       selected={selected}
     >
       {display && (

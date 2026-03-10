@@ -193,6 +193,38 @@ func TestStartBusTapsStartsWorkerExpiry(t *testing.T) {
 	}
 }
 
+// TestBusJobHandlerRespectsShutdownCh verifies that the sys.job.> handler
+// skips workflow result processing after shutdownCh is closed. Before the fix,
+// the bus subscriber would start a 30s context.Background() handler even during
+// shutdown, delaying graceful termination.
+func TestBusJobHandlerRespectsShutdownCh(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.shutdownCh = make(chan struct{})
+
+	if err := s.startBusTaps(); err != nil {
+		t.Fatalf("start bus taps: %v", err)
+	}
+
+	// Close shutdown channel BEFORE emitting a job event.
+	close(s.shutdownCh)
+	s.stopWorkerExpiry()
+
+	// Emit a sys.job event after shutdown. The handler should return immediately
+	// (no-op) instead of calling handleWorkflowJobResult with a 30s context.
+	bus.emit("sys.job.result", &pb.BusPacket{Payload: &pb.BusPacket_JobResult{
+		JobResult: &pb.JobResult{
+			JobId:  "run-shutdown:step@1",
+			Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+		},
+	}})
+
+	// If the handler didn't respect shutdownCh, it would attempt to process the
+	// workflow result, which could hang or error. We just verify no panic and
+	// the handler returned within the test timeout.
+
+	s.stopBusTaps()
+}
+
 func TestJobIDForBusPacket(t *testing.T) {
 	cases := []struct {
 		name   string

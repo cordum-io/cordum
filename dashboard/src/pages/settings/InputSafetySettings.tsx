@@ -165,7 +165,7 @@ export default function InputSafetySettings() {
 
         <div className="space-y-4">
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-muted">Fail Mode</label>
+            <label className="text-xs font-semibold text-muted-foreground">Fail Mode</label>
             <Select
               value={form.failMode}
               onChange={(e) =>
@@ -185,7 +185,7 @@ export default function InputSafetySettings() {
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
               <div>
                 <p className="text-sm font-semibold text-ink">Fail-open mode bypasses safety checks</p>
-                <p className="mt-1 text-xs text-muted">
+                <p className="mt-1 text-xs text-muted-foreground">
                   When the safety kernel is unreachable, jobs will be allowed to proceed without
                   policy evaluation. This may be acceptable for availability-critical workloads
                   but introduces risk. Monitor the <code className="text-xs">cordum_scheduler_input_fail_open_total</code> metric.
@@ -226,13 +226,13 @@ export default function InputSafetySettings() {
             {isDirty ? (
               <button
                 type="button"
-                className="text-xs font-semibold text-muted hover:text-ink"
+                className="text-xs font-semibold text-muted-foreground hover:text-ink"
                 onClick={() => setForm(baseline)}
               >
                 Reset
               </button>
             ) : (
-              <span className="text-xs text-muted">No unsaved changes</span>
+              <span className="text-xs text-muted-foreground">No unsaved changes</span>
             )}
           </div>
         </div>
@@ -247,7 +247,7 @@ export default function InputSafetySettings() {
             </CardDescription>
           </div>
         </CardHeader>
-        <div className="space-y-3 text-sm text-muted">
+        <div className="space-y-3 text-sm text-muted-foreground">
           <p>
             Before every job is dispatched to a worker pool, the scheduler sends the job request
             to the safety kernel for policy evaluation (allow, deny, require approval, throttle).

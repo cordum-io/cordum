@@ -13,9 +13,9 @@ export const ToolCallNode = memo(function ToolCallNode({ data, selected }: NodeP
   const capability = (typeof meta.capability === "string" ? meta.capability : "") || (typeof config.capability === "string" ? config.capability : "");
   return (
     <BaseNode
-      icon={<Wrench className="h-4 w-4 text-amber-600" />}
+      icon={<Wrench className="h-4 w-4 text-[var(--color-warning)]" />}
       label={data.label as string}
-      accent="bg-amber-50"
+      accent="bg-[var(--color-warning)]/5"
       selected={selected}
     >
       {capability && (

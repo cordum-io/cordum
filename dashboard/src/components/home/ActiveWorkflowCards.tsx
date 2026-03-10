@@ -46,7 +46,7 @@ export function ActiveWorkflowCards() {
         <h3 className="text-sm font-semibold text-ink">Active Workflows</h3>
 
         {runs.length === 0 ? (
-          <p className="py-6 text-center text-xs text-muted">
+          <p className="py-6 text-center text-xs text-muted-foreground">
             No active workflow runs.
           </p>
         ) : (
@@ -71,13 +71,13 @@ export function ActiveWorkflowCards() {
                       </span>
                       <RunStatusBadge status={run.status} />
                     </div>
-                    <span className="text-[10px] text-muted">
+                    <span className="text-[10px] text-muted-foreground">
                       {run.startedAt ? relativeTime(run.startedAt) : "pending"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <ProgressBar value={pct} className="flex-1" />
-                    <span className="text-[10px] text-muted shrink-0">
+                    <span className="text-[10px] text-muted-foreground shrink-0">
                       {completedSteps}/{totalSteps} steps
                     </span>
                   </div>

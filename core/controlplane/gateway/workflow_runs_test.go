@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -146,5 +147,74 @@ func TestHandleStartRunRejectsDisallowedMemoryID(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected forbidden, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkflowRunCursorIsMicroseconds(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.workflowEng = wf.NewEngine(s.workflowStore, bus).
+		WithMemory(s.memStore).
+		WithConfig(s.configSvc).
+		WithSchemaRegistry(s.schemaRegistry)
+
+	wfDef := &wf.Workflow{
+		ID:    "wf-cursor",
+		OrgID: "default",
+		Steps: map[string]*wf.Step{
+			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.test"},
+		},
+	}
+	if err := s.workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	now := time.Now().UTC()
+	for i := 0; i < 2; i++ {
+		run := &wf.WorkflowRun{
+			ID:         "run-cursor-" + strconv.Itoa(i),
+			WorkflowID: wfDef.ID,
+			OrgID:      "default",
+			Status:     wf.RunStatusRunning,
+			Steps: map[string]*wf.StepRun{
+				"step": {StepID: "step", Status: wf.StepStatusRunning},
+			},
+			CreatedAt: now.Add(time.Duration(-i) * time.Second),
+			UpdatedAt: now.Add(time.Duration(-i) * time.Second),
+		}
+		if err := s.workflowStore.CreateRun(context.Background(), run); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs?limit=1", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleListAllRuns(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Items      []json.RawMessage `json:"items"`
+		NextCursor *int64            `json:"next_cursor"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.NextCursor == nil {
+		t.Fatal("expected next_cursor for pagination")
+	}
+	cursor := *resp.NextCursor
+	// Microsecond cursors are > 1e12 (year ~2001 in micros ≈ 9.78e14)
+	if cursor < 1_000_000_000_000 {
+		t.Fatalf("cursor %d appears to be in seconds, expected microseconds", cursor)
+	}
+
+	// Verify round-trip: passing microsecond cursor back should work
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs?limit=1&cursor="+strconv.FormatInt(cursor, 10), nil)
+	req2.Header.Set("X-Tenant-ID", "default")
+	rec2 := httptest.NewRecorder()
+	s.handleListAllRuns(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("unexpected status on page 2: %d %s", rec2.Code, rec2.Body.String())
 	}
 }

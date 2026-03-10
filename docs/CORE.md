@@ -227,7 +227,7 @@ At minimum:
 
 - Workflows: `create/list/get/delete`
 - Runs: `start/get/list/cancel/delete`, `rerun`, `timeline`
-- Approvals: job approvals + workflow step approvals
+- Approvals: job approvals (including workflow gate approvals)
 - Jobs: `submit/status/get result pointer`, `cancel`, `remediate`
 - DLQ: `list/retry/delete`
 - Policy: `evaluate/simulate/explain` + snapshot list

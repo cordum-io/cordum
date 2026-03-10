@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 )
 
 func TestListJobsAndApprovalsLimitClamped(t *testing.T) {
@@ -90,22 +90,26 @@ func TestListDLQLimitClamped(t *testing.T) {
 		}
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/dlq", nil)
+	listReq := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/dlq", nil))
 	listReq.Header.Set("X-Tenant-ID", "default")
 	listRec := httptest.NewRecorder()
 	s.handleListDLQ(listRec, listReq)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("list dlq: %d %s", listRec.Code, listRec.Body.String())
 	}
-	var entries []any
-	if err := json.NewDecoder(listRec.Body).Decode(&entries); err != nil {
+	var dlqResp map[string]any
+	if err := json.NewDecoder(listRec.Body).Decode(&dlqResp); err != nil {
 		t.Fatalf("decode dlq: %v", err)
 	}
-	if len(entries) != 100 {
-		t.Fatalf("expected default dlq limit 100, got %d", len(entries))
+	items, ok := dlqResp["items"].([]any)
+	if !ok {
+		t.Fatalf("expected items array in response, got %T", dlqResp["items"])
+	}
+	if len(items) != 100 {
+		t.Fatalf("expected default dlq limit 100, got %d", len(items))
 	}
 
-	pageReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/dlq/page?limit=%d", maxListLimit+100), nil)
+	pageReq := adminCtx(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/dlq/page?limit=%d", maxListLimit+100), nil))
 	pageReq.Header.Set("X-Tenant-ID", "default")
 	pageRec := httptest.NewRecorder()
 	s.handleListDLQPage(pageRec, pageReq)

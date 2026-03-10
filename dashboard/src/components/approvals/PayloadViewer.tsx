@@ -49,7 +49,7 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
     <button
       type="button"
       className={cn(
-        "inline-flex items-center rounded p-1 text-muted hover:text-ink transition-colors",
+        "inline-flex items-center rounded p-1 text-muted-foreground hover:text-ink transition-colors",
         className,
       )}
       onClick={() => {
@@ -69,10 +69,10 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 // ---------------------------------------------------------------------------
 
 function JsonValue({ value }: { value: unknown }) {
-  if (value === null) return <span className="text-gray-400">null</span>;
-  if (typeof value === "boolean") return <span className="text-purple-600 dark:text-purple-400">{String(value)}</span>;
-  if (typeof value === "number") return <span className="text-blue-600 dark:text-blue-400">{value}</span>;
-  if (typeof value === "string") return <span className="text-green-700 dark:text-green-400">&quot;{value}&quot;</span>;
+  if (value === null) return <span className="text-muted-foreground">null</span>;
+  if (typeof value === "boolean") return <span className="text-primary">{String(value)}</span>;
+  if (typeof value === "number") return <span className="text-[var(--color-info)]">{value}</span>;
+  if (typeof value === "string") return <span className="text-[var(--color-success)]">&quot;{value}&quot;</span>;
   return null;
 }
 
@@ -123,17 +123,17 @@ function JsonNode({
         onClick={() => setExpanded((v) => !v)}
       >
         {expanded ? (
-          <ChevronDown className="h-3 w-3 text-muted shrink-0" />
+          <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
         ) : (
-          <ChevronRight className="h-3 w-3 text-muted shrink-0" />
+          <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
         )}
         {keyName != null && (
           <span className="text-ink font-medium">{keyName}: </span>
         )}
-        <span className="text-muted">
+        <span className="text-muted-foreground">
           {bracketOpen}
           {!expanded && (
-            <span className="text-muted">
+            <span className="text-muted-foreground">
               {` ${entries.length} ${isArr ? "items" : "keys"} `}
             </span>
           )}
@@ -145,7 +145,7 @@ function JsonNode({
           {entries.map(([k, v]) => (
             <JsonNode key={k} keyName={isArr ? undefined : k} value={v} depth={depth + 1} />
           ))}
-          <div style={{ paddingLeft: depth * 16 }} className="text-muted">
+          <div style={{ paddingLeft: depth * 16 }} className="text-muted-foreground">
             {bracketClose}
           </div>
         </>
@@ -201,13 +201,13 @@ function CommunicationRenderer({ data }: { data: Record<string, unknown> }) {
       <div className="space-y-2 p-4 text-xs">
         {recipientStr && (
           <p>
-            <span className="text-muted">To: </span>
+            <span className="text-muted-foreground">To: </span>
             <span className="font-medium text-ink">{recipientStr}</span>
           </p>
         )}
         {subject && (
           <p>
-            <span className="text-muted">Subject: </span>
+            <span className="text-muted-foreground">Subject: </span>
             <span className="font-medium text-ink">{subject}</span>
           </p>
         )}
@@ -227,12 +227,12 @@ function CommunicationRenderer({ data }: { data: Record<string, unknown> }) {
 
 function DestructiveWarning({ topic }: { topic?: string }) {
   return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 p-3">
-      <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
+    <div className="flex items-start gap-2.5 rounded-2xl border border-destructive/20 bg-destructive/5 p-3">
+      <AlertTriangle className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
       <div className="text-xs">
-        <p className="font-semibold text-red-800 dark:text-red-300">Destructive Operation</p>
+        <p className="font-semibold text-destructive">Destructive Operation</p>
         {topic && (
-          <p className="mt-0.5 text-red-700 dark:text-red-400">Topic: {topic}</p>
+          <p className="mt-0.5 text-destructive/80">Topic: {topic}</p>
         )}
       </div>
     </div>
@@ -251,7 +251,7 @@ interface PayloadViewerProps {
 
 export function PayloadViewer({ jobContext, topic, capabilities }: PayloadViewerProps) {
   if (!jobContext || Object.keys(jobContext).length === 0) {
-    return <p className="text-xs text-muted">No payload data available.</p>;
+    return <p className="text-xs text-muted-foreground">No payload data available.</p>;
   }
 
   const destructive = isDestructive(topic, capabilities);

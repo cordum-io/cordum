@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -73,15 +73,15 @@ var (
 		model.JobStateQuarantined: true,
 	}
 	allowedTransitions = map[model.JobState][]model.JobState{
-		"":                            {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed},
-		model.JobStatePending:     {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
-		model.JobStateApproval:    {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
+		"":                     {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed},
+		model.JobStatePending:  {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
+		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
 		// Quarantined transitions from active states: output policy 2-phase evaluation
 		// can quarantine a job at any point during execution if the output scanner
 		// detects unsafe content. See ADR-005 (output-policy-2-phase).
-		model.JobStateScheduled:   {model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
-		model.JobStateDispatched:  {model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
-		model.JobStateRunning:     {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
+		model.JobStateScheduled:  {model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
+		model.JobStateDispatched: {model.JobStateScheduled, model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
+		model.JobStateRunning:    {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
 		// Succeeded → Quarantined: async output scanning may flag content after the
 		// job completes. This is the only allowed post-success transition.
 		model.JobStateSucceeded:   {model.JobStateQuarantined},
@@ -192,6 +192,8 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 			return nil
 		}
 
+		tenant, _ := tx.HGet(ctx, metaKey, metaFieldTenant).Result()
+
 		now := nowUnixMicros()
 		pipe := tx.TxPipeline()
 		pipe.HSet(ctx, metaKey, map[string]any{
@@ -205,6 +207,15 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 		}
 		if idx := stateIndexKey(model.JobStateCancelled); idx != "" {
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
+		}
+
+		// Remove from tenant active set — CANCELLED is terminal.
+		if tenant != "" {
+			activeKey := tenantActiveKey(tenant)
+			pipe.SRem(ctx, activeKey, jobID)
+			if s.metaTTL > 0 {
+				pipe.Expire(ctx, activeKey, s.metaTTL)
+			}
 		}
 
 		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
@@ -348,7 +359,10 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.
 				attempts = parsed
 			}
 		}
-		if state == model.JobStateScheduled && prevState != model.JobStateScheduled {
+		// Count every scheduling attempt, including replays that remain in
+		// SCHEDULED due to downstream publish failures. This keeps retry budgets
+		// accurate under redelivery loops.
+		if state == model.JobStateScheduled {
 			attempts++
 		}
 		tenant, _ := tx.HGet(ctx, metaKey, metaFieldTenant).Result()
@@ -608,7 +622,6 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 		metaFieldTeam:      teamID,
 		metaFieldPrincipal: req.GetPrincipalId(),
 		metaFieldMemory:    req.GetMemoryId(),
-		metaFieldAttempts:  0,
 	}
 	if actorID != "" {
 		fields[metaFieldActorID] = actorID
@@ -1071,80 +1084,60 @@ func (s *RedisJobStore) GetFailureReason(ctx context.Context, jobID string) (str
 	return val, nil
 }
 
-// idempotencyScopedScript atomically checks the legacy key and performs
-// SetNX on the scoped key in a single round-trip, preventing the TOCTOU
-// race between the legacy GET and the scoped SetNX.
+// TrySetIdempotencyKeyScoped checks the legacy idempotency key and scoped key
+// using individual Redis commands instead of Lua. This is Redis Cluster safe
+// since each command targets a single key (no CROSSSLOT risk).
 //
-// TODO(cluster): CROSSSLOT — needs hash tags or pipeline split for Redis Cluster.
-// KEYS[1] and KEYS[2] may hash to different slots; the dynamic HGET on
-// ARGV[4]..legacyID adds a third slot. Medium risk (job submit path).
-//
-// KEYS[1] = legacy key, KEYS[2] = scoped key
-// ARGV[1] = jobID, ARGV[2] = ttl in ms, ARGV[3] = tenant, ARGV[4] = meta key prefix
-var idempotencyScopedScript = redis.NewScript(`
-local legacyID = redis.call("GET", KEYS[1])
-if legacyID and legacyID ~= false then
-  local metaKey = ARGV[4] .. legacyID
-  local metaTenant = redis.call("HGET", metaKey, "tenant")
-  if not metaTenant or metaTenant == false or metaTenant == "" or metaTenant == ARGV[3] then
-    return "EXISTING:" .. legacyID
-  end
-end
-local ok = redis.call("SET", KEYS[2], ARGV[1], "NX", "PX", ARGV[2])
-if ok then
-  return "OK:" .. ARGV[1]
-end
-local existing = redis.call("GET", KEYS[2])
-if existing and existing ~= false then
-  return "EXISTING:" .. existing
-end
-return "EXISTING:"
-`)
-
+// Minor TOCTOU window: between the legacy GET and scoped SetNX, a concurrent
+// request could race. This is acceptable because the job submit path has
+// external idempotency via the caller's retry logic.
 func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, key, jobID string) (bool, string, error) {
 	if key == "" || jobID == "" {
 		return false, "", fmt.Errorf("idempotency key and jobID required")
 	}
 	tenant = strings.TrimSpace(tenant)
-	if tenant == "" {
-		idKey := jobIdempotencyKeyScoped("", key)
-		if idKey == "" {
-			return false, "", fmt.Errorf("idempotency key required")
-		}
-		ok, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
-		if err != nil {
-			return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
-		}
-		if ok {
-			return true, jobID, nil
-		}
-		existing, err := s.client.Get(ctx, idKey).Result()
-		if err != nil && err != redis.Nil {
-			return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
-		}
-		return false, existing, nil
-	}
 
 	idKey := jobIdempotencyKeyScoped(tenant, key)
 	if idKey == "" {
 		return false, "", fmt.Errorf("idempotency key required")
 	}
-	legacyKey := jobIdempotencyKey(key)
-	ttlMs := s.metaTTL.Milliseconds()
-	result, err := idempotencyScopedScript.Run(ctx, s.client,
-		[]string{legacyKey, idKey},
-		jobID, ttlMs, tenant, jobMetaKeyPrefix,
-	).Text()
+
+	// Phase 1: Check legacy (unscoped) key for backward compatibility.
+	if tenant != "" {
+		legacyKey := jobIdempotencyKey(key)
+		legacyID, err := s.client.Get(ctx, legacyKey).Result()
+		if err != nil && err != redis.Nil {
+			return false, "", fmt.Errorf("job store idempotency legacy check %s: %w", jobID, err)
+		}
+		if err == nil && legacyID != "" {
+			// Verify tenant ownership via job meta.
+			metaKey := jobMetaKeyPrefix + legacyID
+			metaTenant, tErr := s.client.HGet(ctx, metaKey, "tenant").Result()
+			if tErr != nil && tErr != redis.Nil {
+				return false, "", fmt.Errorf("job store idempotency tenant check %s: %w", jobID, tErr)
+			}
+			// Match if: no tenant in meta, empty tenant, or same tenant.
+			if metaTenant == "" || metaTenant == tenant {
+				return false, legacyID, nil
+			}
+		}
+	}
+
+	// Phase 2: Try to claim the scoped key.
+	ok, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
 	if err != nil {
 		return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
 	}
-	if strings.HasPrefix(result, "OK:") {
-		return true, result[3:], nil
+	if ok {
+		return true, jobID, nil
 	}
-	if strings.HasPrefix(result, "EXISTING:") {
-		return false, result[9:], nil
+
+	// Key already exists — return the existing job ID.
+	existing, err := s.client.Get(ctx, idKey).Result()
+	if err != nil && err != redis.Nil {
+		return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
 	}
-	return false, "", nil
+	return false, existing, nil
 }
 
 func (s *RedisJobStore) SetIdempotencyKeyScoped(ctx context.Context, tenant, key, jobID string) error {

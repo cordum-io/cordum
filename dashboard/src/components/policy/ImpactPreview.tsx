@@ -73,7 +73,7 @@ export function ImpactPreview({
     decisionType,
   });
   const [isDebouncing, setIsDebouncing] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     setIsDebouncing(true);
@@ -111,17 +111,17 @@ export function ImpactPreview({
       <div className="space-y-4">
         {/* Header */}
         <div className="flex items-center gap-2">
-          <h4 className="text-xs font-semibold uppercase tracking-widest text-muted">
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
             Impact Preview
           </h4>
           <span className="group relative">
-            <Info className="h-3.5 w-3.5 text-muted" />
-            <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-ink px-2.5 py-1.5 text-[11px] text-white opacity-0 shadow-lg transition group-hover:opacity-100">
+            <Info className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-ink px-2.5 py-1.5 text-[11px] text-primary-foreground opacity-0 shadow-lg transition group-hover:opacity-100">
               Shows how this rule would affect recent jobs
             </span>
           </span>
           {isAnalyzing && (
-            <span className="flex items-center gap-1 text-[11px] text-muted">
+            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
               Analyzing...
             </span>
@@ -130,7 +130,7 @@ export function ImpactPreview({
 
         {/* Empty state */}
         {!jobsLoading && total === 0 && (
-          <p className="text-sm text-muted">No recent jobs to analyze.</p>
+          <p className="text-sm text-muted-foreground">No recent jobs to analyze.</p>
         )}
 
         {/* Summary + breakdown */}
@@ -161,7 +161,7 @@ export function ImpactPreview({
                     <p className={`text-lg font-bold ${colors.text}`}>
                       {count}
                     </p>
-                    <p className="text-[11px] font-medium text-muted">
+                    <p className="text-[11px] font-medium text-muted-foreground">
                       {colors.label}
                     </p>
                   </div>
@@ -204,10 +204,10 @@ function AffectedJobsList({ jobs }: { jobs: Job[] }) {
               key={j.id}
               className="flex items-center justify-between rounded-lg border border-border px-2.5 py-1.5 text-[11px]"
             >
-              <span className="font-mono text-muted">
+              <span className="font-mono text-muted-foreground">
                 {j.id.slice(0, 12)}...
               </span>
-              <span className="text-muted">
+              <span className="text-muted-foreground">
                 {(j.capabilities ?? []).slice(0, 2).join(", ") || "no caps"}
               </span>
             </div>

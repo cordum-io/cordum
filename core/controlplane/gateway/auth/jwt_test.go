@@ -106,13 +106,28 @@ func TestParseRSAPublicKey(t *testing.T) {
 	}
 }
 
-func TestDecodeMaybeBase64(t *testing.T) {
+func TestDecodeHMACSecret(t *testing.T) {
+	// Explicit base64: prefix triggers decode.
 	raw := base64.StdEncoding.EncodeToString([]byte("secret"))
-	if got := decodeMaybeBase64(raw); string(got) != "secret" {
-		t.Fatalf("expected base64 decode")
+	if got := decodeHMACSecret("base64:" + raw); string(got) != "secret" {
+		t.Fatalf("expected base64 decode, got %q", got)
 	}
-	if got := decodeMaybeBase64("plain"); string(got) != "plain" {
-		t.Fatalf("expected raw bytes")
+	// Plain string without prefix returns raw bytes (no silent decode).
+	if got := decodeHMACSecret("plain"); string(got) != "plain" {
+		t.Fatalf("expected raw bytes, got %q", got)
+	}
+	// Base64-looking value WITHOUT prefix returns raw bytes, not decoded.
+	b64 := base64.StdEncoding.EncodeToString([]byte("secret"))
+	if got := decodeHMACSecret(b64); string(got) != b64 {
+		t.Fatalf("expected raw bytes %q without prefix, got %q", b64, got)
+	}
+	// Empty returns nil.
+	if got := decodeHMACSecret(""); got != nil {
+		t.Fatalf("expected nil for empty, got %v", got)
+	}
+	// Invalid base64 after prefix returns nil.
+	if got := decodeHMACSecret("base64:!!!invalid!!!"); got != nil {
+		t.Fatalf("expected nil for invalid base64, got %v", got)
 	}
 }
 

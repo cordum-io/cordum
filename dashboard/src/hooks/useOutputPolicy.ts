@@ -5,12 +5,41 @@ import type { ApiResponse, Job, OutputFinding } from "../api/types";
 import { logger } from "../lib/logger";
 import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
-import type { OutputPolicyConfig, OutputPolicyStats, TopicOverride } from "../types/settings";
+import type { CustomPatternConfig, OutputPolicyConfig, OutputPolicyStats, ScannerOverride, TopicOverride } from "../types/settings";
 import { DEFAULT_OUTPUT_POLICY_CONFIG } from "../types/settings";
 
 export interface QuarantinedJobsFilters {
   limit?: number;
   cursor?: number;
+}
+
+function readOutputPolicyErrorDetails(error: ApiError): string | undefined {
+  if (!error.body || typeof error.body !== "object") return undefined;
+  const payload = error.body as Record<string, unknown>;
+  return [payload.error, payload.message, payload.details]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .find(Boolean);
+}
+
+export function describeOutputPolicyError(error: Error): string {
+  if (error instanceof ApiError) {
+    const details = readOutputPolicyErrorDetails(error);
+    if (error.status === 400 || error.status === 422) {
+      return details
+        ? `Validation failed: ${details}`
+        : "Validation failed while updating output policy.";
+    }
+    if (error.status === 409) {
+      return details
+        ? `Conflict while updating output policy: ${details}`
+        : "Conflict while updating output policy. Refresh and retry.";
+    }
+    if (details) {
+      return `Output policy request failed: ${details}`;
+    }
+    return `Output policy request failed (status ${error.status}).`;
+  }
+  return error.message;
 }
 
 function buildQuarantineParams(filters: QuarantinedJobsFilters): string {
@@ -47,7 +76,7 @@ export function useReleaseQuarantinedJob() {
   return useMutation<void, Error, string>({
     mutationFn: (jobId) => {
       logger.info("output-policy", "Releasing quarantined job", { jobId });
-      return post<void>(`/dlq/${jobId}/retry`);
+      return post<void>(`/dlq/${encodeURIComponent(jobId)}/retry`);
     },
     onSuccess: (_, jobId) => {
       useToastStore.getState().addToast({ type: "success", title: "Released quarantined job" });
@@ -56,11 +85,12 @@ export function useReleaseQuarantinedJob() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
     onError: (err, jobId) => {
-      logger.error("output-policy", "Release quarantined job failed", { jobId, error: err.message });
+      const detail = describeOutputPolicyError(err);
+      logger.error("output-policy", "Release quarantined job failed", { jobId, error: detail });
       useToastStore.getState().addToast({
         type: "error",
         title: "Failed to release quarantined job",
-        description: err.message,
+        description: detail,
       });
     },
   });
@@ -71,7 +101,7 @@ export function useConfirmQuarantine() {
   return useMutation<void, Error, string>({
     mutationFn: (jobId) => {
       logger.info("output-policy", "Confirming quarantine", { jobId });
-      return del(`/dlq/${jobId}`);
+      return del(`/dlq/${encodeURIComponent(jobId)}`);
     },
     onSuccess: (_, jobId) => {
       useToastStore.getState().addToast({ type: "success", title: "Quarantine confirmed" });
@@ -80,11 +110,12 @@ export function useConfirmQuarantine() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
     onError: (err, jobId) => {
-      logger.error("output-policy", "Confirm quarantine failed", { jobId, error: err.message });
+      const detail = describeOutputPolicyError(err);
+      logger.error("output-policy", "Confirm quarantine failed", { jobId, error: detail });
       useToastStore.getState().addToast({
         type: "error",
         title: "Failed to confirm quarantine",
-        description: err.message,
+        description: detail,
       });
     },
   });
@@ -94,7 +125,7 @@ export function useOutputFindings(jobId: string) {
   return useQuery<OutputFinding[]>({
     queryKey: queryKeys.jobs.outputFindings(jobId),
     queryFn: async () => {
-      const res = await get<BackendJobDetail>(`/jobs/${jobId}`);
+      const res = await get<BackendJobDetail>(`/jobs/${encodeURIComponent(jobId)}`);
       const job = mapJobDetail(res);
       return job.output_safety?.findings ?? [];
     },
@@ -194,6 +225,78 @@ function parseTopicOverrides(raw?: Record<string, unknown>): TopicOverride[] {
   return [];
 }
 
+function parseScannerOverride(raw: unknown): ScannerOverride | null {
+  const obj = toObject(raw);
+  if (!obj) return null;
+  const id = typeof obj.id === "string" ? obj.id.trim() : "";
+  if (!id) return null;
+  return {
+    id,
+    enabled: parseBool(obj.enabled) ?? undefined,
+    action: typeof obj.action === "string" ? obj.action : undefined,
+    confidence: parseNum(obj.confidence) ?? (typeof obj.confidence === "number" ? obj.confidence : undefined),
+    enabledTypes: Array.isArray(obj.enabledTypes)
+      ? obj.enabledTypes.filter((v): v is string => typeof v === "string")
+      : Array.isArray(obj.enabled_types)
+        ? (obj.enabled_types as unknown[]).filter((v): v is string => typeof v === "string")
+        : undefined,
+  };
+}
+
+function parseScannerOverrides(raw?: Record<string, unknown>): ScannerOverride[] {
+  if (!raw) return [];
+  const outputPolicy = toObject(raw.output_policy);
+  const candidates = [
+    outputPolicy?.scanner_overrides,
+    outputPolicy?.scannerOverrides,
+    raw.scanner_overrides,
+    raw.scannerOverrides,
+  ];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    const overrides = candidate
+      .map(parseScannerOverride)
+      .filter((entry): entry is ScannerOverride => entry !== null);
+    if (overrides.length > 0) return overrides;
+  }
+  return [];
+}
+
+function parseCustomPattern(raw: unknown): CustomPatternConfig | null {
+  const obj = toObject(raw);
+  if (!obj) return null;
+  const id = typeof obj.id === "string" ? obj.id.trim() : "";
+  const name = typeof obj.name === "string" ? obj.name.trim() : "";
+  if (!id || !name) return null;
+  return {
+    id,
+    name,
+    regex: typeof obj.regex === "string" ? obj.regex : "",
+    category: typeof obj.category === "string" ? obj.category : "",
+    action: typeof obj.action === "string" ? obj.action : "quarantine",
+    enabled: parseBool(obj.enabled) ?? true,
+  };
+}
+
+function parseCustomPatterns(raw?: Record<string, unknown>): CustomPatternConfig[] {
+  if (!raw) return [];
+  const outputPolicy = toObject(raw.output_policy);
+  const candidates = [
+    outputPolicy?.custom_patterns,
+    outputPolicy?.customPatterns,
+    raw.custom_patterns,
+    raw.customPatterns,
+  ];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    const patterns = candidate
+      .map(parseCustomPattern)
+      .filter((entry): entry is CustomPatternConfig => entry !== null);
+    if (patterns.length > 0) return patterns;
+  }
+  return [];
+}
+
 function parseOutputPolicyConfig(raw?: Record<string, unknown>): OutputPolicyConfig {
   if (!raw) return DEFAULT_OUTPUT_POLICY_CONFIG;
   const outputSafety = toObject(raw.output_safety);
@@ -236,6 +339,8 @@ function parseOutputPolicyConfig(raw?: Record<string, unknown>): OutputPolicyCon
       DEFAULT_OUTPUT_POLICY_CONFIG.maxPayloadKb,
     failureAction: failureActionRaw === "deny" ? "deny" : "allow",
     topicOverrides: parseTopicOverrides(raw),
+    scannerOverrides: parseScannerOverrides(raw),
+    customPatterns: parseCustomPatterns(raw),
   };
 }
 
@@ -248,6 +353,27 @@ function buildTopicOverrides(overrides: TopicOverride[]): Array<Record<string, u
   }));
 }
 
+function buildScannerOverrides(overrides: ScannerOverride[]): Array<Record<string, unknown>> {
+  return overrides.map((entry) => ({
+    id: entry.id,
+    enabled: entry.enabled,
+    action: entry.action,
+    confidence: entry.confidence,
+    enabled_types: entry.enabledTypes,
+  }));
+}
+
+function buildCustomPatterns(patterns: CustomPatternConfig[]): Array<Record<string, unknown>> {
+  return patterns.map((p) => ({
+    id: p.id,
+    name: p.name,
+    regex: p.regex,
+    category: p.category,
+    action: p.action,
+    enabled: p.enabled,
+  }));
+}
+
 function mergeOutputPolicyConfig(
   current: Record<string, unknown> | undefined,
   next: OutputPolicyConfig,
@@ -256,6 +382,8 @@ function mergeOutputPolicyConfig(
   const currentOutputPolicy = toObject(existing.output_policy) ?? {};
   const currentOutputSafety = toObject(existing.output_safety) ?? {};
   const topicOverrides = buildTopicOverrides(next.topicOverrides);
+  const scannerOverrides = buildScannerOverrides(next.scannerOverrides);
+  const customPatternsData = buildCustomPatterns(next.customPatterns);
   return {
     ...existing,
     output_safety: {
@@ -274,6 +402,8 @@ function mergeOutputPolicyConfig(
       max_payload_kb: next.maxPayloadKb,
       failure_action: next.failureAction,
       topic_overrides: topicOverrides,
+      scanner_overrides: scannerOverrides,
+      custom_patterns: customPatternsData,
     },
     output_policy_enabled: next.enabled,
     output_policy_fail_mode: next.failMode,
@@ -281,6 +411,8 @@ function mergeOutputPolicyConfig(
     output_policy_max_payload_kb: next.maxPayloadKb,
     output_safety_failure_action: next.failureAction,
     output_policy_topic_overrides: topicOverrides,
+    scanner_overrides: scannerOverrides,
+    custom_patterns: customPatternsData,
     OUTPUT_POLICY_ENABLED: next.enabled ? "true" : "false",
   };
 }
@@ -310,17 +442,16 @@ async function persistOutputPolicyConfig(data: Record<string, unknown>): Promise
 async function fetchSystemConfig(): Promise<Record<string, unknown>> {
   try {
     return await get<Record<string, unknown>>("/config?scope=system&scope_id=default");
-  } catch {
-    return get<Record<string, unknown>>("/config");
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 405)) {
+      return get<Record<string, unknown>>("/config");
+    }
+    throw err;
   }
 }
 
 async function fetchOutputPolicyConfigRaw(): Promise<Record<string, unknown>> {
-  try {
-    return await get<Record<string, unknown>>("/config?scope=output_policy");
-  } catch {
-    return fetchSystemConfig();
-  }
+  return fetchSystemConfig();
 }
 
 function mapOutputPolicyStats(raw?: RawOutputPolicyStats): OutputPolicyStats {
@@ -362,13 +493,14 @@ export function useUpdateOutputPolicy() {
       queryClient.invalidateQueries({ queryKey: queryKeys.outputPolicy.stats() });
     },
     onError: (err) => {
+      const detail = describeOutputPolicyError(err);
       logger.error("output-policy", "failed to update output policy config", {
-        error: err.message,
+        error: detail,
       });
       useToastStore.getState().addToast({
         type: "error",
         title: "Failed to save Output Safety settings",
-        description: err.message,
+        description: detail,
       });
     },
   });
@@ -402,4 +534,5 @@ export const __outputPolicyInternal = {
   parseOutputPolicyConfig,
   mergeOutputPolicyConfig,
   mapOutputPolicyStats,
+  describeOutputPolicyError,
 };

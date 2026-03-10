@@ -67,7 +67,7 @@ function StringField({
         placeholder={description ?? ""}
       />
       {description && (
-        <p className="text-[10px] text-muted">{description}</p>
+        <p className="text-[10px] text-muted-foreground">{description}</p>
       )}
     </div>
   );
@@ -133,7 +133,7 @@ function BooleanField({
       />
       <label className="text-xs font-medium text-ink">{label}</label>
       {description && (
-        <span className="text-[10px] text-muted">({description})</span>
+        <span className="text-[10px] text-muted-foreground">({description})</span>
       )}
     </div>
   );
@@ -173,7 +173,7 @@ function EnumField({
         ))}
       </Select>
       {description && (
-        <p className="text-[10px] text-muted">{description}</p>
+        <p className="text-[10px] text-muted-foreground">{description}</p>
       )}
     </div>
   );
@@ -204,7 +204,7 @@ function ArrayStringField({
         required={required}
         placeholder={description ?? "Comma-separated values"}
       />
-      <p className="text-[10px] text-muted">
+      <p className="text-[10px] text-muted-foreground">
         {description ?? "Enter comma-separated values"}
       </p>
     </div>

@@ -20,7 +20,6 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
@@ -28,11 +27,12 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/logging"
+	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
-	"github.com/cordum/cordum/core/infra/store"
-	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/schema"
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
@@ -55,11 +55,11 @@ const (
 	defaultPublicRateLimitRPS   = 20
 	defaultPublicRateLimitBurst = 40
 	defaultMaxHeaderBytes       = 1 << 20
-	maxLabelKeyLen              = 256  // Max length for label keys
-	maxLabelValueLen            = 4096 // Max length for label values (4KB)
-	wsAuthSubprotocol = "cordum-api-key" // #nosec G101 -- subprotocol identifier, not a credential
-	shutdownTimeout  = 15 * time.Second
-	wsWriteTimeout   = 5 * time.Second
+	maxLabelKeyLen              = 256              // Max length for label keys
+	maxLabelValueLen            = 4096             // Max length for label values (4KB)
+	wsAuthSubprotocol           = "cordum-api-key" // #nosec G101 -- subprotocol identifier, not a credential
+	shutdownTimeout             = 15 * time.Second
+	wsWriteTimeout              = 5 * time.Second
 )
 
 // validTopicRegex validates topic names to prevent injection attacks.
@@ -182,6 +182,10 @@ func workerSummariesToHeartbeats(workers []registry.WorkerSummary) []*pb.Heartbe
 			Capabilities:    w.Capabilities,
 			CpuLoad:         w.CpuLoad,
 			GpuUtilization:  w.GpuUtilization,
+			MemoryLoad:      w.MemoryLoad,
+			Region:          w.Region,
+			Type:            w.Type,
+			Labels:          w.Labels,
 		}
 	}
 	return out
@@ -558,11 +562,13 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		}
 	}()
 
-	// 1. Health
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+	// 1. Health (root path for k8s probes + /api/v1 alias for dashboard)
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
-	})
+	}
+	mux.HandleFunc("GET /health", healthHandler)
+	mux.HandleFunc("GET /api/v1/health", s.instrumented("/api/v1/health", healthHandler))
 
 	// 1.5 Auth config (public)
 	mux.HandleFunc("GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
@@ -587,6 +593,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
+	mux.HandleFunc("GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
+	mux.HandleFunc("GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
+	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
+	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
 
 	// 2.5 Status snapshot (Redis/NATS/workers/uptime)
 	mux.HandleFunc("GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))
@@ -665,8 +675,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("DELETE /api/v1/dlq/{job_id}", s.instrumented("/api/v1/dlq/{job_id}", s.handleDeleteDLQ))
 	mux.HandleFunc("POST /api/v1/dlq/{job_id}/retry", s.instrumented("/api/v1/dlq/{job_id}/retry", s.handleRetryDLQ))
 
-	// 11. Workflow approvals
-	mux.HandleFunc("POST /api/v1/workflows/{id}/runs/{run_id}/steps/{step_id}/approve", s.instrumented("/api/v1/workflows/{id}/runs/{run_id}/steps/{step_id}/approve", s.handleApproveStep))
+	// 11. Workflow run operations
 	mux.HandleFunc("POST /api/v1/workflows/{id}/runs/{run_id}/cancel", s.instrumented("/api/v1/workflows/{id}/runs/{run_id}/cancel", s.handleCancelRun))
 
 	// 11.5 Job approvals
@@ -707,8 +716,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		registrar.RegisterRoutes(mux, s.instrumented)
 	}
 
-	// Middleware chain: CORS → auth → rate limit → tenant → body limit → mux
-	handler := corsMiddleware(apiKeyMiddleware(s.auth, rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))))
+	// Middleware chain: CORS → rate limit → auth → tenant → body limit → mux
+	// SECURITY: Rate limiter MUST run before auth so that invalid API key
+	// brute-force attempts are rate-limited by IP. When auth context is
+	// absent, rateLimitKey falls back to IP-based keying automatically.
+	handler := corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))

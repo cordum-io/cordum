@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -22,10 +23,10 @@ func newInputFailOpenSpy() *inputFailOpenSpy {
 	}
 }
 
-func (m *inputFailOpenSpy) IncJobsReceived(string)                            {}
-func (m *inputFailOpenSpy) IncJobsDispatched(string)                          {}
-func (m *inputFailOpenSpy) IncJobsCompleted(string, string)                   {}
-func (m *inputFailOpenSpy) IncSafetyDenied(string)                            {}
+func (m *inputFailOpenSpy) IncJobsReceived(string)          {}
+func (m *inputFailOpenSpy) IncJobsDispatched(string)        {}
+func (m *inputFailOpenSpy) IncJobsCompleted(string, string) {}
+func (m *inputFailOpenSpy) IncSafetyDenied(string)          {}
 func (m *inputFailOpenSpy) IncSafetyUnavailable(topic string) {
 	m.mu.Lock()
 	m.unavailable[topic]++
@@ -48,6 +49,9 @@ func (m *inputFailOpenSpy) SetStaleJobs(string, int)                          {}
 func (m *inputFailOpenSpy) IncDLQEmitFailure(string)                          {}
 func (m *inputFailOpenSpy) IncJobCancelFailures()                             {}
 func (m *inputFailOpenSpy) IncValidationRejections()                          {}
+func (m *inputFailOpenSpy) IncJobLockAbandoned()                              {}
+func (m *inputFailOpenSpy) IncResultPtrWriteFailure()                         {}
+func (m *inputFailOpenSpy) IncDispatchRollback(string)                        {}
 func (m *inputFailOpenSpy) IncInputFailOpen(topic string) {
 	m.mu.Lock()
 	m.failOpenCalls[topic]++
@@ -76,7 +80,7 @@ func TestSafetyUnavailable_FailClosed(t *testing.T) {
 		JobId: "job-closed-1",
 		Topic: "sys.unavailable",
 	}
-	err := engine.processJob(req, "trace-closed-1")
+	err := engine.processJob(context.Background(), req, "trace-closed-1")
 	if err == nil {
 		t.Fatal("expected retryable error for fail-closed, got nil")
 	}
@@ -110,7 +114,7 @@ func TestSafetyUnavailable_FailOpen(t *testing.T) {
 		JobId: "job-open-1",
 		Topic: "sys.unavailable",
 	}
-	err := engine.processJob(req, "trace-open-1")
+	err := engine.processJob(context.Background(), req, "trace-open-1")
 	if err != nil {
 		// A retryable error from no workers is acceptable — the key check is
 		// that we did NOT get an immediate "safety unavailable" retry.
@@ -138,7 +142,7 @@ func TestSafetyUnavailable_FailOpen_Metric(t *testing.T) {
 		JobId: "job-metric-1",
 		Topic: "sys.unavailable",
 	}
-	_ = engine.processJob(req, "trace-metric-1")
+	_ = engine.processJob(context.Background(), req, "trace-metric-1")
 
 	if spy.getFailOpenCount("sys.unavailable") != 1 {
 		t.Fatalf("expected 1 IncInputFailOpen call, got %d", spy.getFailOpenCount("sys.unavailable"))
@@ -158,7 +162,7 @@ func TestWithInputFailMode_InvalidValue(t *testing.T) {
 		JobId: "job-invalid-1",
 		Topic: "sys.unavailable",
 	}
-	err := engine.processJob(req, "trace-invalid-1")
+	err := engine.processJob(context.Background(), req, "trace-invalid-1")
 	if err == nil {
 		t.Fatal("expected retryable error (invalid values should keep fail-closed), got nil")
 	}

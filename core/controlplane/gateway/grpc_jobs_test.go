@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
@@ -13,6 +14,7 @@ import (
 
 func TestSubmitJobGRPCAndStatus(t *testing.T) {
 	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
 	ctx := context.Background()
 
 	req := &pb.SubmitJobRequest{
@@ -68,6 +70,30 @@ func TestSubmitJobGRPCViewerDenied(t *testing.T) {
 	})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied for viewer, got %v", err)
+	}
+}
+
+func TestRequireRoleGRPC_DoesNotLeakRole(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{}
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+		Role:   "viewer",
+		Tenant: "org-1",
+	})
+
+	err := s.requireRoleGRPC(ctx, "admin")
+	if err == nil {
+		t.Fatal("expected error for viewer calling admin-only endpoint")
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied, got %v", status.Code(err))
+	}
+	msg := status.Convert(err).Message()
+	if msg != "permission denied" {
+		t.Errorf("expected generic 'permission denied', got %q", msg)
+	}
+	if strings.Contains(msg, "viewer") {
+		t.Errorf("error message leaks role 'viewer': %q", msg)
 	}
 }
 
@@ -221,6 +247,7 @@ func TestSubmitJobGRPCRejectsDisallowedMemoryID(t *testing.T) {
 
 func TestSubmitJobGRPCRespectsConcurrentJobsLimit(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	s.tenant = "org-1"
 	ctx := context.Background()
 
 	if err := s.configSvc.Set(ctx, &configsvc.Document{

@@ -110,12 +110,26 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	if scope == "" {
 		scope = string(configsvc.ScopeSystem)
 	}
+	// Reject unknown scopes before any data access.
+	switch configsvc.Scope(scope) {
+	case configsvc.ScopeSystem, configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
+		// valid
+	default:
+		writeErrorJSON(w, http.StatusBadRequest, "invalid scope")
+		return
+	}
 	scopeID := strings.TrimSpace(r.URL.Query().Get("scope_id"))
 	if scope == string(configsvc.ScopeSystem) && scopeID == "" {
 		scopeID = "default"
 	}
+	// System config requires admin; all other scopes require at least operator.
 	if configsvc.Scope(scope) == configsvc.ScopeSystem {
 		if err := s.requireRole(r, "admin"); err != nil {
+			writeForbidden(w, r, err)
+			return
+		}
+	} else {
+		if err := s.requireRole(r, "admin", "operator"); err != nil {
 			writeForbidden(w, r, err)
 			return
 		}
@@ -160,6 +174,10 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin", "operator"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
 	if s.configSvc == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "config service unavailable")
 		return

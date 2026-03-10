@@ -225,7 +225,6 @@ func TestServerCloseNilUserStoreNoPanic(t *testing.T) {
 	s.Close()
 }
 
-
 func TestAllowedOriginsFromEnv(t *testing.T) {
 	t.Setenv("CORDUM_ALLOWED_ORIGINS", "")
 	t.Setenv("CORDUM_CORS_ALLOW_ORIGINS", "")
@@ -523,6 +522,109 @@ func TestMCPRoutes_RateLimited(t *testing.T) {
 	handler.ServeHTTP(rr2, req)
 	if rr2.Code != http.StatusTooManyRequests {
 		t.Fatalf("second MCP request: expected 429, got %d", rr2.Code)
+	}
+}
+
+// TestInvalidKeyIsRateLimited verifies that the production middleware order
+// (rate limiter BEFORE auth) causes invalid API key attempts to be rate-limited
+// by IP. This is a regression test for the rate limiter bypass bug.
+func TestInvalidKeyIsRateLimited(t *testing.T) {
+	apiRL := newKeyedRateLimiter(2, 2) // allow 2 requests
+	publicRL := newKeyedRateLimiter(10, 10)
+	auth := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"valid-key","role":"admin","tenant":"default"}]`,
+	})
+	// Production order: rateLimitMiddleware wraps apiKeyMiddleware
+	handler := rateLimitMiddleware(auth, apiRL, publicRL,
+		apiKeyMiddleware(auth,
+			tenantMiddleware(auth,
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}))))
+
+	ip := "10.99.0.1:12345"
+
+	// Send invalid key requests — should get 401 but consume rate limit budget
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+		req.RemoteAddr = ip
+		req.Header.Set("X-API-Key", "invalid-key-attempt")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: expected 401, got %d", i+1, rr.Code)
+		}
+	}
+
+	// Third attempt from same IP should be rate-limited (429), not 401
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.RemoteAddr = ip
+	req.Header.Set("X-API-Key", "another-bad-key")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after rate limit exhaustion, got %d", rr.Code)
+	}
+}
+
+// TestValidKeyStillWorksUnderRateLimit confirms that valid authenticated
+// requests pass through the rate limiter and reach handlers.
+func TestValidKeyStillWorksUnderRateLimit(t *testing.T) {
+	apiRL := newKeyedRateLimiter(10, 10)
+	publicRL := newKeyedRateLimiter(10, 10)
+	auth := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"good-key","role":"admin","tenant":"default"}]`,
+	})
+	handler := rateLimitMiddleware(auth, apiRL, publicRL,
+		apiKeyMiddleware(auth,
+			tenantMiddleware(auth,
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}))))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.RemoteAddr = "10.99.0.2:12345"
+	req.Header.Set("X-API-Key", "good-key")
+	req.Header.Set("X-Tenant-ID", "default")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid key, got %d", rr.Code)
+	}
+}
+
+// TestTimingSafeKeyLookup verifies that static API key authentication still
+// works correctly after the switch to hash-indexed lookup for timing safety.
+func TestTimingSafeKeyLookup(t *testing.T) {
+	auth := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"timing-test-key","role":"viewer","tenant":"timing-tenant"}]`,
+	})
+
+	// Valid key should authenticate
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("X-API-Key", "timing-test-key")
+	authCtx, err := auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("valid key auth failed: %v", err)
+	}
+	if authCtx.Tenant != "timing-tenant" {
+		t.Errorf("tenant = %q, want timing-tenant", authCtx.Tenant)
+	}
+
+	// Invalid key should fail
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req2.Header.Set("X-API-Key", "wrong-key")
+	_, err = auth.AuthenticateHTTP(req2)
+	if err == nil {
+		t.Fatal("expected error for invalid key, got nil")
+	}
+
+	// Prefix of valid key should fail (not a prefix-match)
+	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req3.Header.Set("X-API-Key", "timing-test")
+	_, err = auth.AuthenticateHTTP(req3)
+	if err == nil {
+		t.Fatal("expected error for partial key, got nil")
 	}
 }
 

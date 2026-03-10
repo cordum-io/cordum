@@ -52,10 +52,10 @@ function useWaitTimer(requestedAt: string) {
 // ---------------------------------------------------------------------------
 
 const urgencyBorderColor: Record<UrgencyLevel, string> = {
-  fresh: "border-l-emerald-500",
-  aging: "border-l-yellow-500",
-  critical: "border-l-red-500",
-  breach: "border-l-red-600 animate-pulse",
+  fresh: "border-l-[var(--color-success)]",
+  aging: "border-l-[var(--color-warning)]",
+  critical: "border-l-destructive",
+  breach: "border-l-destructive animate-pulse",
 };
 
 const urgencyBadgeVariant: Record<UrgencyLevel, "success" | "warning" | "danger"> = {
@@ -171,16 +171,16 @@ export function ApprovalCardV2({
               {urgencyLabels[urgency]}
             </Badge>
             {breach && (
-              <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
+              <span className="rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold uppercase text-primary-foreground">
                 SLA Breach
               </span>
             )}
           </div>
           <div className="text-right">
-            <span className="font-mono text-xs text-muted">
+            <span className="font-mono text-xs text-muted-foreground">
               Waiting {formatted}
             </span>
-            <p className={cn("text-[10px]", breach ? "font-medium text-danger" : "text-muted")}>
+            <p className={cn("text-[10px]", breach ? "font-medium text-danger" : "text-muted-foreground")}>
               SLA: {slaText}
             </p>
           </div>
@@ -192,7 +192,7 @@ export function ApprovalCardV2({
             {presence && (
               <span className="flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
                 <Eye className="h-3 w-3" />
-                Being reviewed by @{presence.actor}
+                Being reviewed by @{presence}
               </span>
             )}
             {assignee && (
@@ -210,7 +210,7 @@ export function ApprovalCardV2({
         </p>
 
         {/* ROW 3: Context lines */}
-        <div className="space-y-0.5 text-xs text-muted">
+        <div className="space-y-0.5 text-xs text-muted-foreground">
           {approval.policyRule && (
             <p>
               Rule:{" "}
@@ -252,7 +252,7 @@ export function ApprovalCardV2({
           <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
             <Button
               size="sm"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
               onClick={() => setMode("confirming-approve")}
             >
               Approve
@@ -292,7 +292,7 @@ export function ApprovalCardV2({
               </Button>
               <Button
                 size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90 text-primary-foreground"
                 onClick={() => {
                   onApprove(approval.id, comment || undefined);
                   setMode("idle");

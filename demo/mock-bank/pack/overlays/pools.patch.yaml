@@ -1,7 +1,5 @@
 topics:
-  job.demo-mock-bank.transfer.auto: demo-mock-bank
-  job.demo-mock-bank.transfer.review: demo-mock-bank
-  job.demo-mock-bank.transfer.blocked: demo-mock-bank
+  job.demo-mock-bank.transfer: demo-mock-bank
 pools:
   demo-mock-bank:
     requires: []

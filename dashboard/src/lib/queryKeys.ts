@@ -103,6 +103,12 @@ export const queryKeys = {
     jobs: (workerId: string) => ["worker-jobs", workerId] as const,
   },
 
+  // ── Pools ──────────────────────────────────────────────────────────
+  pools: {
+    all: ["pools"] as const,
+    detail: (name: string) => ["pool", name] as const,
+  },
+
   // ── Config ────────────────────────────────────────────────────────
   config: {
     system: () => ["config"] as const,

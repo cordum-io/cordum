@@ -6,7 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -96,13 +96,13 @@ func NewNatsBus(url string) (*NatsBus, error) {
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2 * time.Second),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
-			log.Printf("[BUS] disconnected from NATS: %v", err)
+			slog.Info("bus: disconnected from nats", "err", err)
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
-			log.Printf("[BUS] reconnected to NATS at %s", nc.ConnectedUrl())
+			slog.Info("bus: reconnected to nats", "url", nc.ConnectedUrl())
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
-			log.Printf("[BUS] connection closed")
+			slog.Info("bus: connection closed")
 		}),
 	}
 	if strings.HasPrefix(url, "tls://") {
@@ -171,7 +171,7 @@ func (b *NatsBus) Drain() {
 			continue
 		}
 		if err := sub.Drain(); err != nil {
-			log.Printf("[BUS] drain subscription %s: %v", sub.Subject, err)
+			slog.Warn("bus: drain subscription failed", "subject", sub.Subject, "err", err)
 		}
 	}
 }
@@ -249,23 +249,22 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				// Terminate messages that have reached max delivery — they are poison pills
 				// blocking the queue for all messages behind them.
 				if numDelivered >= uint64(maxJSRedeliveries) {
-					log.Printf("nats bus: TERMINATING poison message on %s after %d deliveries (stream_seq=%d consumer_seq=%d)",
-						subject, numDelivered, meta.Sequence.Stream, meta.Sequence.Consumer)
+					slog.Warn("bus: terminating poison message", "subject", subject, "deliveries", numDelivered, "stream_seq", meta.Sequence.Stream, "consumer_seq", meta.Sequence.Consumer)
 					// DLQ write BEFORE Term — prevents data loss if we crash between Term and DLQ write.
 					if b.OnMessageTerminated != nil {
 						if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
-							log.Printf("nats bus: DLQ write failed, nak-ing for retry: %v", dlqErr)
+							slog.Error("bus: dlq write failed, nak-ing for retry", "subject", subject, "err", dlqErr)
 							_ = msg.NakWithDelay(5 * time.Second)
 							return
 						}
 					}
 					if termErr := msg.Term(); termErr != nil {
-						log.Printf("nats bus: term failed: %v", termErr)
+						slog.Error("bus: term failed", "subject", subject, "err", termErr)
 					}
 					return
 				}
 				if numDelivered > 50 {
-					log.Printf("nats bus: message on %s redelivered %d times (max=%d)", subject, numDelivered, maxJSRedeliveries)
+					slog.Warn("bus: message redelivered many times", "subject", subject, "deliveries", numDelivered, "max", maxJSRedeliveries)
 				}
 			}
 
@@ -277,13 +276,13 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				exists, err := b.redis.Exists(rCtx, pKey).Result()
 				rCancel()
 				if err != nil {
-					log.Printf("nats bus: idempotency check failed, nak-ing for retry: %v", err)
+					slog.Error("bus: idempotency check failed, nak-ing for retry", "subject", subject, "stream_seq", streamSeq, "err", err)
 					_ = msg.NakWithDelay(2 * time.Second)
 					return
 				} else if exists > 0 {
 					// Already processed — just Ack and skip.
 					if ackErr := msg.Ack(); ackErr != nil {
-						log.Printf("nats bus: ack (dedup) failed: %v", ackErr)
+						slog.Warn("bus: ack dedup failed", "subject", subject, "stream_seq", streamSeq, "err", ackErr)
 					}
 					return
 				}
@@ -309,26 +308,26 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 
 			switch action {
 			case msgActionTerm:
-				log.Printf("nats bus: terminating non-retryable message on %s (deliveries=%d)", subject, numDelivered)
+				slog.Warn("bus: terminating non-retryable message", "subject", subject, "deliveries", numDelivered)
 				// DLQ write BEFORE Term — prevents data loss if we crash between Term and DLQ write.
 				if b.OnMessageTerminated != nil {
 					if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
-						log.Printf("nats bus: DLQ write failed, nak-ing for retry: %v", dlqErr)
+						slog.Error("bus: dlq write failed, nak-ing for retry", "subject", subject, "err", dlqErr)
 						_ = msg.NakWithDelay(5 * time.Second)
 						break
 					}
 				}
 				if termErr := msg.Term(); termErr != nil {
-					log.Printf("nats bus: term failed: %v", termErr)
+					slog.Error("bus: term failed", "subject", subject, "err", termErr)
 				}
 			case msgActionNakDelay:
-				log.Printf("nats bus: nak-with-delay on %s (delay=%v)", subject, delay)
+				slog.Warn("bus: nak-with-delay", "subject", subject, "delay", delay)
 				if nakErr := msg.NakWithDelay(delay); nakErr != nil {
-					log.Printf("nats bus: nak-with-delay failed: %v", nakErr)
+					slog.Error("bus: nak-with-delay failed", "subject", subject, "delay", delay, "err", nakErr)
 				}
 			case msgActionNak:
 				if nakErr := msg.Nak(); nakErr != nil {
-					log.Printf("nats bus: nak failed: %v", nakErr)
+					slog.Error("bus: nak failed", "subject", subject, "err", nakErr)
 				}
 			default:
 				// Mark as processed BEFORE Ack so redelivery finds the guard.
@@ -336,7 +335,7 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 					pKey := processedKey(streamName, streamSeq)
 					rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
 					if setErr := b.redis.Set(rCtx, pKey, "1", processedKeyTTL).Err(); setErr != nil {
-						log.Printf("nats bus: idempotency set failed, nak-ing for retry: %v", setErr)
+						slog.Error("bus: idempotency set failed, nak-ing for retry", "subject", subject, "stream_seq", streamSeq, "err", setErr)
 						rCancel()
 						_ = msg.NakWithDelay(2 * time.Second)
 						return
@@ -344,7 +343,7 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 					rCancel()
 				}
 				if ackErr := msg.Ack(); ackErr != nil {
-					log.Printf("nats bus: ack failed: %v", ackErr)
+					slog.Error("bus: ack failed", "subject", subject, "err", ackErr)
 				}
 			}
 		}
@@ -379,11 +378,11 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	cb := func(msg *nats.Msg) {
 		var packet pb.BusPacket
 		if err := proto.Unmarshal(msg.Data, &packet); err != nil {
-			log.Printf("nats bus: failed to unmarshal packet: %v", err)
+			slog.Error("bus: failed to unmarshal packet", "subject", subject, "err", err)
 			return
 		}
 		if err := handler(&packet); err != nil {
-			log.Printf("nats bus: handler error: %v", err)
+			slog.Error("bus: handler error", "subject", subject, "err", err)
 		}
 	}
 	if queue == "" {
@@ -576,11 +575,11 @@ func (b *NatsBus) initJetStreamFromEnv() {
 
 	js, err := b.nc.JetStream()
 	if err != nil {
-		log.Printf("[BUS] jetstream init failed: %v", err)
+		slog.Error("bus: jetstream init failed", "err", err)
 		return
 	}
 	if _, err := js.AccountInfo(); err != nil {
-		log.Printf("[BUS] jetstream not available: %v", err)
+		slog.Error("bus: jetstream not available", "err", err)
 		return
 	}
 
@@ -596,14 +595,14 @@ func (b *NatsBus) initJetStreamFromEnv() {
 			Duplicates: 2 * time.Minute,
 		})
 		if err == nil {
-			log.Printf("[BUS] jetstream stream ensured name=%s subjects=%v max_age=%s", name, subjects, maxAge)
+			slog.Info("bus: jetstream stream ensured", "stream", name, "subjects", subjects, "max_age", maxAge) // #nosec G706 -- structured slog, name is from internal config
 			return
 		}
 		// Stream may already exist; treat that as success.
 		if _, infoErr := js.StreamInfo(name); infoErr == nil {
 			return
 		}
-		log.Printf("[BUS] jetstream ensure stream failed name=%s: %v", name, err)
+		slog.Error("bus: jetstream ensure stream failed", "stream", name, "err", err)
 	}
 	ensureStream(streamSys, []string{"sys.>"})
 	ensureStream(streamJobs, []string{"job.>", "worker.*.jobs"})
@@ -611,7 +610,7 @@ func (b *NatsBus) initJetStreamFromEnv() {
 	b.js = js
 	b.jsEnabled = true
 	b.ackWait = ackWait
-	log.Printf("[BUS] jetstream enabled ack_wait=%s replicas=%d", ackWait, replicas) // #nosec -- values are derived from configuration.
+	slog.Info("bus: jetstream enabled", "ack_wait", ackWait, "replicas", replicas)
 }
 
 // isDurableSubject returns true for subjects that need JetStream persistence.

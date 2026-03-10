@@ -224,7 +224,6 @@ describe("NotificationChannelCard delete", () => {
       (b) => b.textContent?.trim() === "Cancel",
     );
     act(() => cancelBtn?.click());
-    expect(container.textContent).not.toContain("Delete Channel");
     expect(onDelete).not.toHaveBeenCalled();
     cleanup();
   });

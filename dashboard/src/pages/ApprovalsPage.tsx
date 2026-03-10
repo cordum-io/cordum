@@ -1,218 +1,410 @@
-import { useCallback, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { CheckCircle, Clock, History } from "lucide-react";
-import {
-  useApprovals,
-  useApprovalHistory,
-  useApproveJob,
-  useRejectJob,
-} from "../hooks/useApprovals";
-import { Badge } from "../components/ui/Badge";
-import { Button } from "../components/ui/Button";
-import { Card } from "../components/ui/Card";
-import { ApprovalDetailPanel } from "../components/approvals/ApprovalDetailPanel";
-import { ApprovalHistory } from "../components/approvals/ApprovalHistory";
-import { ApprovalQueueFilters, applyFilters } from "../components/approvals/ApprovalQueueFilters";
-import type { FilterState } from "../components/approvals/ApprovalQueueFilters";
-import { BulkActionBar } from "../components/approvals/BulkActionBar";
-import { cn } from "../lib/utils";
-import { useEventStore } from "../state/events";
-import { useConfigStore } from "../state/config";
-import type { Approval, UrgencyLevel } from "../api/types";
-import { DataFreshness } from "../components/ui/DataFreshness";
-import { usePageTitle } from "../hooks/usePageTitle";
-import { RequireRole } from "../components/RequireRole";
+/*
+ * DESIGN: "Control Surface" — Approvals
+ * Matches cordumds-gj5mw4zm.manus.space showcase patterns
+ */
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import type { Approval } from "@/api/types";
+import { useApprovals, useApproveJob, useRejectJob } from "@/hooks/useApprovals";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
+import { Search, RefreshCw, UserCheck, CheckCircle2, XCircle, Clock, X, ArrowRight } from "lucide-react";
+import { cn, formatRelativeTime } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { InstrumentCard } from "@/components/ui/InstrumentCard";
+import { MetricValue } from "@/components/ui/MetricValue";
 
-type ApprovalsTab = "queue" | "history";
-
-function formatWait(ms: number): string {
-  const secs = Math.floor(ms / 1_000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
+function approvalStatusVariant(status: string) {
+  switch (status) {
+    case "pending": return "warning" as const;
+    case "approved": return "healthy" as const;
+    case "denied": return "danger" as const;
+    case "expired": return "muted" as const;
+    default: return "muted" as const;
+  }
 }
 
-type Urgency = "default" | "warning" | "danger";
+// ---------------------------------------------------------------------------
+// Exported for unit tests (following SettingsKeysPage pattern)
+// ---------------------------------------------------------------------------
 
-function urgencyToVariant(level?: UrgencyLevel): Urgency {
-  if (level === "critical" || level === "breach") return "danger";
-  if (level === "aging") return "warning";
-  return "default";
+/** Drawer a11y configuration — tested to ensure ARIA attributes are wired. */
+export const DRAWER_A11Y = {
+  role: "dialog" as const,
+  ariaModal: true,
+  labelledById: "approval-drawer-title",
+  /** The hook wired to the drawer — "useDialogA11y" provides Escape + focus trap */
+  hookName: "useDialogA11y" as const,
+} as const;
+
+/** Resolves the deny reason: trims input, falls back to default. */
+export function resolveDenyReason(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed || "Denied by operator";
 }
 
-const urgencyLabel: Record<Urgency, string> = { default: "Normal", warning: "Aging", danger: "Critical" };
-const urgencyDotColor: Record<Urgency, string> = { default: "bg-emerald-500", warning: "bg-yellow-500", danger: "bg-red-500" };
-
-function StatsStrip({ approvals, selectedCount, totalCount, onSelectAll }: { approvals: Approval[]; resolvedToday: number; selectedCount: number; totalCount: number; onSelectAll: () => void }) {
-  const pending = approvals.length;
-  const critical = approvals.filter((a) => a.urgencyLevel === "critical" || a.urgencyLevel === "breach").length;
-  const slaMs = useConfigStore((s) => s.approvalSlaMs);
-  const slaBreaches = approvals.filter((a) => (a.waitMs ?? 0) > slaMs).length;
-  const avgWait = pending > 0 ? Math.round(approvals.reduce((sum, a) => sum + (a.waitMs ?? 0), 0) / pending) : 0;
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-      {totalCount > 0 && (<><input type="checkbox" checked={selectedCount > 0 && selectedCount === totalCount} ref={(el) => { if (el) el.indeterminate = selectedCount > 0 && selectedCount < totalCount; }} onChange={onSelectAll} className="h-3.5 w-3.5 rounded border-border text-accent focus:ring-accent cursor-pointer" title="Select all" /><span aria-hidden>&middot;</span></>)}
-      <span><span className="font-semibold text-ink">{pending}</span> pending</span>
-      <span aria-hidden>&middot;</span>
-      <span><span className={cn("font-semibold", critical > 0 ? "text-danger" : "text-ink")}>{critical}</span> critical</span>
-      <span aria-hidden>&middot;</span>
-      <span>avg wait <span className="font-semibold text-ink">{formatWait(avgWait)}</span></span>
-      {slaBreaches > 0 && (<><span aria-hidden>&middot;</span><span><span className="font-semibold text-danger">{slaBreaches}</span> SLA breach{slaBreaches !== 1 ? "es" : ""}</span></>)}
-    </div>
-  );
-}
-
-function UrgencyBadge({ urgency }: { urgency: Urgency }) {
-  return (<Badge variant={urgency} className={cn(urgency === "danger" && "animate-pulse")}>{urgencyLabel[urgency]}</Badge>);
-}
-
-function ApprovalCard({ approval, onClick, selected, onToggleSelect }: { approval: Approval; onClick: () => void; selected?: boolean; onToggleSelect?: (id: string) => void }) {
-  const urgency = urgencyToVariant(approval.urgencyLevel);
-  return (
-    <Card className={cn("cursor-pointer transition-shadow hover:shadow-lift", urgency === "danger" && "border-l-4 border-l-danger", urgency === "warning" && "border-l-4 border-l-warning", selected && "ring-2 ring-accent/40")} onClick={onClick}>
-      <div className="flex gap-3">
-        {onToggleSelect && (<div className="flex items-start pt-0.5"><input type="checkbox" checked={selected ?? false} onChange={() => onToggleSelect(approval.id)} onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded border-border text-accent focus:ring-accent cursor-pointer" /></div>)}
-        <div className="min-w-0 flex-1 space-y-3">
-          <div className="flex items-center justify-between">
-            <UrgencyBadge urgency={urgency} />
-            <span className="text-xs font-mono text-muted">Waiting {formatWait(approval.waitMs ?? 0)}</span>
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-ink">
-              {approval.humanSummary || (<>Job{" "}<Link to={`/jobs/${approval.jobId}`} className="font-mono text-accent hover:underline" onClick={(e) => e.stopPropagation()}>{approval.jobId.slice(0, 8)}</Link>{" "}requires approval</>)}
-            </p>
-            {approval.reason && <p className="mt-1 text-xs text-muted">{approval.reason}</p>}
-          </div>
-          {approval.policyRule && (<div className="text-xs"><span className="text-muted">Policy rule: </span><span className="font-medium text-ink">{approval.policyRule}</span></div>)}
-          {((approval.capabilities?.length ?? 0) > 0 || (approval.riskTags?.length ?? 0) > 0) && (
-            <div className="flex flex-wrap gap-2">
-              {approval.capabilities?.map((c) => (<Badge key={c} variant="info">{c}</Badge>))}
-              {approval.riskTags?.map((t) => (<Badge key={t} variant="warning">{t}</Badge>))}
-            </div>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function MiniCard({ approval, active, onClick }: { approval: Approval; active: boolean; onClick: () => void }) {
-  const urgency = urgencyToVariant(approval.urgencyLevel);
-  return (
-    <button type="button" onClick={onClick} className={cn("w-full text-left rounded-xl border px-3 py-2.5 transition-colors", active ? "border-accent bg-accent/5" : "border-border bg-surface hover:bg-surface2/50")}>
-      <div className="flex items-center gap-2">
-        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", urgencyDotColor[urgency])} />
-        <p className="min-w-0 flex-1 truncate text-xs font-medium text-ink">{approval.humanSummary || `Job ${approval.jobId.slice(0, 8)}`}</p>
-        <span className="shrink-0 font-mono text-[10px] text-muted">{formatWait(approval.waitMs ?? 0)}</span>
-      </div>
-    </button>
-  );
+/** Pure handler for deny confirmation — calls mutate with resolved reason. */
+export function handleDenyConfirm(
+  target: Approval | null,
+  rawReason: string,
+  deps: {
+    mutate: (input: { id: string; reason: string }) => void;
+    clearTarget: () => void;
+  },
+): void {
+  if (!target) return;
+  deps.mutate({ id: target.id, reason: resolveDenyReason(rawReason) });
+  deps.clearTarget();
 }
 
 export default function ApprovalsPage() {
-  usePageTitle("Approvals");
-  const { data, isLoading, isError, dataUpdatedAt, refetch, isRefetching } = useApprovals();
-  const { data: historyData } = useApprovalHistory();
-  const approveJob = useApproveJob();
-  const rejectJob = useRejectJob();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab: ApprovalsTab = (searchParams.get("tab") as ApprovalsTab) || "queue";
-  const setActiveTab = useCallback(
-    (tab: ApprovalsTab) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (tab === "queue") next.delete("tab");
-        else next.set("tab", tab);
-        // Clear other tab's params
-        next.delete("page");
-        return next;
-      }, { replace: true });
-    },
-    [setSearchParams],
-  );
-  const approvals = data?.items ?? [];
-  const resolvedToday = historyData?.items?.length ?? 0;
+  const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState("pending");
+  const [selectedApproval, setSelectedApproval] = useState<Approval | null>(null);
+  const [denyTarget, setDenyTarget] = useState<Approval | null>(null);
+  const [denyReason, setDenyReason] = useState("");
 
-  const filters = useMemo<FilterState>(() => ({
-    urgency: (searchParams.get("urgency") as FilterState["urgency"]) || "all",
-    workflow: searchParams.get("workflow") || "",
-    rule: searchParams.get("rule") || "",
-    risk: (searchParams.get("risk") as FilterState["risk"]) || "all",
-    sortBy: (searchParams.get("sortBy") as FilterState["sortBy"]) || "waitTime",
-    assignment: (searchParams.get("assignment") as FilterState["assignment"]) || "all",
-  }), [searchParams]);
+  const drawerRef = useDialogA11y(() => setSelectedApproval(null));
+  const { data: approvalsData, isLoading, refetch } = useApprovals();
+  const approvals = approvalsData?.items ?? [];
+  const approveMutation = useApproveJob();
+  const rejectMutation = useRejectJob();
 
-  const setFilters = useCallback((next: FilterState) => {
-    const params: Record<string, string> = {};
-    const currentTab = searchParams.get("tab");
-    if (currentTab) params.tab = currentTab;
-    const currentId = searchParams.get("id");
-    if (currentId) params.id = currentId;
-    if (next.urgency !== "all") params.urgency = next.urgency;
-    if (next.workflow) params.workflow = next.workflow;
-    if (next.rule) params.rule = next.rule;
-    if (next.risk !== "all") params.risk = next.risk;
-    if (next.sortBy !== "waitTime") params.sortBy = next.sortBy;
-    if (next.assignment !== "all") params.assignment = next.assignment;
-    setSearchParams(params);
-  }, [searchParams, setSearchParams]);
+  const handleApprove = (approval: Approval) => {
+    if (approveMutation.isPending) return;
+    approveMutation.mutate({ id: approval.id });
+  };
 
-  // Subscribe to assignment count as a lightweight change signal —
-  // avoids re-rendering the full page on every individual assignment update.
-  const assignmentVersion = useEventStore((s) => s.approvalAssignments.size);
-  const sorted = useMemo(() => applyFilters(approvals, filters), [approvals, filters, assignmentVersion]);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const toggleSelect = useCallback((id: string) => { setSelectedIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }, []);
-  const selectAll = useCallback(() => { setSelectedIds((prev) => prev.size === sorted.length ? new Set() : new Set(sorted.map((a) => a.id))); }, [sorted]);
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  const handleDeny = (approval: Approval, reason: string) => {
+    if (rejectMutation.isPending) return;
+    rejectMutation.mutate({ id: approval.id, reason });
+  };
 
-  const selectedId = searchParams.get("id");
-  const selectedApproval = useMemo(() => sorted.find((a) => a.id === selectedId) ?? null, [sorted, selectedId]);
-  const openPanel = useCallback((id: string) => { const params: Record<string, string> = { id }; const t = searchParams.get("tab"); if (t) params.tab = t; if (filters.urgency !== "all") params.urgency = filters.urgency; if (filters.workflow) params.workflow = filters.workflow; if (filters.rule) params.rule = filters.rule; if (filters.risk !== "all") params.risk = filters.risk; if (filters.sortBy !== "waitTime") params.sortBy = filters.sortBy; if (filters.assignment !== "all") params.assignment = filters.assignment; setSearchParams(params); }, [filters, searchParams, setSearchParams]);
-  const closePanel = useCallback(() => { const params: Record<string, string> = {}; const t = searchParams.get("tab"); if (t) params.tab = t; if (filters.urgency !== "all") params.urgency = filters.urgency; if (filters.workflow) params.workflow = filters.workflow; if (filters.rule) params.rule = filters.rule; if (filters.risk !== "all") params.risk = filters.risk; if (filters.sortBy !== "waitTime") params.sortBy = filters.sortBy; if (filters.assignment !== "all") params.assignment = filters.assignment; setSearchParams(params); }, [filters, searchParams, setSearchParams]);
-  const panelOpen = !!selectedApproval;
+  const all = approvals ?? [];
+  const pending = all.filter((a) => a.status === "pending");
+  const approved = all.filter((a) => a.status === "approved");
+  const denied = all.filter((a) => a.status === "denied");
 
-  const handleApprove = useCallback((id: string, comment?: string) => approveJob.mutateAsync({ id, comment }), [approveJob]);
-  const handleReject = useCallback((id: string, reason: string) => rejectJob.mutateAsync({ id, reason }), [rejectJob]);
+  const filtered = all
+    .filter((a) => {
+      if (activeTab !== "all" && a.status !== activeTab) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        return a.id.toLowerCase().includes(q) || (a.topic ?? "").toLowerCase().includes(q) || (a.jobId ?? "").toLowerCase().includes(q);
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (a.status === "pending" && b.status !== "pending") return -1;
+      if (b.status === "pending" && a.status !== "pending") return 1;
+      return new Date(b.requestedAt ?? 0).getTime() - new Date(a.requestedAt ?? 0).getTime();
+    });
 
   return (
-    <div className="space-y-4 pb-20">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="font-display text-2xl font-bold text-ink">Approvals</h1>
-          <DataFreshness dataUpdatedAt={dataUpdatedAt} onRefresh={refetch} isRefetching={isRefetching} />
+    <div className="space-y-6">
+      <PageHeader
+        label="Safety"
+        title="Approvals"
+        subtitle="Human-in-the-loop review queue for agent actions"
+        actions={
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Refresh
+          </Button>
+        }
+      />
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="grid grid-cols-3 gap-4"
+      >
+        {isLoading ? (
+          Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <InstrumentCard accent={pending.length > 0 ? "warning" : "muted"}>
+              <MetricValue
+                label="Pending"
+                value={pending.length}
+                icon={<Clock className={cn("w-4 h-4", pending.length > 0 ? "text-[var(--color-warning)]" : "text-muted-foreground")} />}
+              />
+            </InstrumentCard>
+
+            <InstrumentCard accent="healthy">
+              <MetricValue
+                label="Approved"
+                value={approved.length}
+                icon={<CheckCircle2 className="w-4 h-4 text-[var(--color-success)]" />}
+              />
+            </InstrumentCard>
+
+            <InstrumentCard accent={denied.length > 0 ? "danger" : "muted"}>
+              <MetricValue
+                label="Denied"
+                value={denied.length}
+                icon={<XCircle className={cn("w-4 h-4", denied.length > 0 ? "text-destructive" : "text-muted-foreground")} />}
+              />
+            </InstrumentCard>
+          </>
+        )}
+      </motion.div>
+
+      {/* Filters — showcase style */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search approvals..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+          />
         </div>
-        {sorted.length > 0 && <Badge variant="warning">{sorted.length} pending</Badge>}
+        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
+          {[
+            { id: "pending", label: "Pending", count: pending.length },
+            { id: "approved", label: "Approved", count: approved.length },
+            { id: "denied", label: "Denied", count: denied.length },
+            { id: "all", label: "All", count: all.length },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium rounded transition-colors",
+                activeTab === tab.id
+                  ? "bg-cordum/10 text-cordum"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tab.label}
+              {tab.count > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-surface-2">{tab.count}</span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
-      <StatsStrip approvals={approvals} resolvedToday={resolvedToday} selectedCount={selectedIds.size} totalCount={sorted.length} onSelectAll={selectAll} />
-      <div className="flex gap-1 rounded-full border border-border p-1 w-fit" role="tablist" aria-label="Approval views">
-        <button type="button" role="tab" aria-selected={activeTab === "queue"} aria-controls="tabpanel-queue" id="tab-queue" className={cn("flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition", activeTab === "queue" ? "bg-accent/15 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("queue")}>
-          <Clock className="h-3.5 w-3.5" />Queue{sorted.length > 0 ? ` (${sorted.length})` : ""}
-        </button>
-        <button type="button" role="tab" aria-selected={activeTab === "history"} aria-controls="tabpanel-history" id="tab-history" className={cn("flex items-center gap-2 rounded-full px-5 py-2 text-xs font-semibold uppercase tracking-widest transition", activeTab === "history" ? "bg-accent/15 text-accent" : "text-muted hover:text-ink")} onClick={() => setActiveTab("history")}>
-          <History className="h-3.5 w-3.5" />History
-        </button>
-      </div>
-      {activeTab === "queue" && (
-        <div id="tabpanel-queue" role="tabpanel" aria-labelledby="tab-queue">
-          {!isLoading && approvals.length > 0 && <ApprovalQueueFilters approvals={approvals} filters={filters} onFiltersChange={setFilters} />}
-          {isLoading && (<div className="space-y-3">{Array.from({ length: 4 }, (_, i) => (<Card key={i} className="animate-pulse"><div className="space-y-3"><div className="h-5 w-1/3 rounded bg-surface2" /><div className="h-4 w-2/3 rounded bg-surface2" /><div className="h-4 w-1/2 rounded bg-surface2" /></div></Card>))}</div>)}
-          {!isLoading && isError && (<Card><p className="py-8 text-center text-muted">Failed to load approvals. Please try again.</p></Card>)}
-          {!isLoading && !isError && sorted.length === 0 && (<div className="py-16 text-center"><CheckCircle className="mx-auto mb-3 h-10 w-10 text-success opacity-60" /><p className="text-sm font-semibold text-ink">All clear — no pending approvals</p><p className="mt-1 text-xs text-muted">Nothing needs your attention right now.</p><Button variant="ghost" size="sm" className="mt-4" onClick={() => setActiveTab("history")}>View History</Button></div>)}
-          {!isLoading && !isError && sorted.length > 0 && (
-            panelOpen ? (
-              <div className="hidden md:block space-y-1.5">{sorted.map((approval) => (<MiniCard key={approval.id} approval={approval} active={approval.id === selectedId} onClick={() => openPanel(approval.id)} />))}</div>
-            ) : (
-              <div className="space-y-3">{sorted.map((approval: Approval) => (<ApprovalCard key={approval.id} approval={approval} onClick={() => openPanel(approval.id)} selected={selectedIds.has(approval.id)} onToggleSelect={toggleSelect} />))}</div>
-            )
-          )}
-          {panelOpen && selectedApproval && (<ApprovalDetailPanel approval={selectedApproval} allApprovals={approvals} onClose={closePanel} onApprove={handleApprove} onReject={handleReject} />)}
-          {selectedIds.size > 0 && (<RequireRole roles={["admin", "operator"]}><BulkActionBar selectedIds={selectedIds} approvals={sorted} onApprove={handleApprove} onReject={handleReject} onClear={clearSelection} onDone={clearSelection} /></RequireRole>)}
+
+      {/* Approval Cards — showcase style */}
+      {isLoading ? (
+        <SkeletonTable rows={5} />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<UserCheck className="w-5 h-5" />}
+          title={activeTab === "pending" ? "No pending approvals" : "No approvals found"}
+          description={activeTab === "pending" ? "All clear — no actions waiting for review" : "Try adjusting your search or filters"}
+        />
+      ) : (
+        <div className="space-y-3">
+          <AnimatePresence mode="popLayout">
+          {filtered.map((approval) => (
+            <motion.div
+              key={approval.id}
+              layout
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, x: -100, height: 0, marginBottom: 0, overflow: "hidden" }}
+              transition={{ duration: 0.3 }}
+              className={cn(
+                "instrument-card cursor-pointer",
+                approval.status === "pending" && "border-[var(--color-warning)]/30",
+                approval.status === "denied" && "status-danger",
+              )}
+              onClick={() => setSelectedApproval(approval)}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 mb-2.5">
+                    <span className="font-mono text-sm text-cordum">{approval.id.slice(0, 16)}</span>
+                    <StatusBadge variant={approvalStatusVariant(approval.status)} dot pulse={approval.status === "pending"}>
+                      {approval.status}
+                    </StatusBadge>
+                    {approval.workflowContext && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-mono bg-cordum/10 text-cordum rounded">
+                        Workflow Gate
+                      </span>
+                    )}
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {approval.requestedAt ? formatRelativeTime(approval.requestedAt) : "—"}
+                    </span>
+                  </div>
+                  <h3 className="text-sm font-semibold font-display text-foreground leading-snug">
+                    {approval.workflowContext
+                      ? `${approval.workflowContext.workflowId} — ${approval.workflowContext.stepName || approval.workflowContext.stepId}`
+                      : approval.humanSummary || approval.topic || "Approval Request"}
+                  </h3>
+                </div>
+                {approval.status === "pending" ? (
+                  <div className="flex gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={rejectMutation.isPending || approveMutation.isPending}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDenyTarget(approval);
+                        setDenyReason("");
+                      }}
+                    >
+                      <XCircle className="w-3.5 h-3.5 mr-1" />
+                      Deny
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      disabled={approveMutation.isPending || rejectMutation.isPending}
+                      loading={approveMutation.isPending}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleApprove(approval);
+                      }}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                      Approve
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="shrink-0 text-muted-foreground group-hover:text-cordum transition-colors pt-1">
+                    <ArrowRight className="w-4 h-4" />
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          ))}
+          </AnimatePresence>
         </div>
       )}
-      {activeTab === "history" && <div id="tabpanel-history" role="tabpanel" aria-labelledby="tab-history"><ApprovalHistory /></div>}
+
+      {/* Deny Confirmation Dialog */}
+      <ConfirmDialog open={!!denyTarget}
+        onClose={() => setDenyTarget(null)}
+        onConfirm={() => handleDenyConfirm(denyTarget, denyReason, { mutate: (input) => handleDeny({ id: input.id } as Approval, input.reason), clearTarget: () => setDenyTarget(null) })}
+        title="Deny Approval"
+        description={
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Are you sure you want to deny this approval request?</p>
+            <div>
+              <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1">Reason</label>
+              <textarea
+                value={denyReason}
+                onChange={(e) => setDenyReason(e.target.value)}
+                placeholder="Why is this request being denied?"
+                rows={3}
+                className="w-full px-3 py-2 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none"
+              />
+            </div>
+          </div>
+        }
+        confirmLabel="Deny"
+        variant="destructive" />
+
+      {/* Detail Drawer */}
+      {selectedApproval && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setSelectedApproval(null)} />
+          <motion.div
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="approval-drawer-title"
+            initial={{ x: 440 }}
+            animate={{ x: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="fixed inset-y-0 right-0 w-[440px] bg-surface-1 border-l border-border shadow-2xl z-50 overflow-y-auto"
+          >
+            <div className="p-5 border-b border-border flex items-center justify-between">
+              <div>
+                <h2 id="approval-drawer-title" className="font-display font-semibold text-sm text-foreground">Approval Detail</h2>
+                <p className="text-xs text-muted-foreground font-mono mt-0.5">{selectedApproval.id}</p>
+              </div>
+              <button
+                onClick={() => setSelectedApproval(null)}
+                className="p-1.5 rounded-full hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-5">
+              <div className="flex items-center gap-2">
+                <StatusBadge variant={approvalStatusVariant(selectedApproval.status)} dot pulse={selectedApproval.status === "pending"}>
+                  {selectedApproval.status}
+                </StatusBadge>
+                {selectedApproval.workflowContext && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-mono bg-cordum/10 text-cordum rounded">
+                    Workflow Gate
+                  </span>
+                )}
+              </div>
+              <dl className="space-y-3">
+                {[
+                  ["Source", selectedApproval.workflowContext ? "Workflow Gate" : "Safety Policy"],
+                  ["Topic", selectedApproval.workflowContext?.workflowId || selectedApproval.topic],
+                  ...(selectedApproval.workflowContext
+                    ? [["Step", selectedApproval.workflowContext.stepName || selectedApproval.workflowContext.stepId], ["Run ID", selectedApproval.workflowContext.runId]]
+                    : []),
+                  ["Job ID", selectedApproval.jobId],
+                  ["Requested", selectedApproval.requestedAt ? formatRelativeTime(selectedApproval.requestedAt) : "—"],
+                  ["Summary", selectedApproval.humanSummary],
+                  ["Decided By", selectedApproval.actor],
+                  ["Reason", selectedApproval.reason],
+                ].map(([label, value]) => (
+                  <div key={label as string}>
+                    <dt className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-0.5">{label}</dt>
+                    <dd className="text-sm text-foreground">{(value as string) || "—"}</dd>
+                  </div>
+                ))}
+              </dl>
+              {selectedApproval.jobInput && Object.keys(selectedApproval.jobInput).length > 0 && (
+                <div>
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Job Input</p>
+                  <div className="rounded-2xl bg-surface-2/50 border border-border p-3 font-mono text-xs text-foreground overflow-auto max-h-[200px]">
+                    <pre>{JSON.stringify(selectedApproval.jobInput, null, 2)}</pre>
+                  </div>
+                </div>
+              )}
+              {selectedApproval.jobContext && (
+                <div>
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Context</p>
+                  <div className="rounded-2xl bg-surface-2/50 border border-border p-3 font-mono text-xs text-foreground overflow-auto max-h-[200px]">
+                    <pre>{JSON.stringify(selectedApproval.jobContext, null, 2)}</pre>
+                  </div>
+                </div>
+              )}
+              {selectedApproval.status === "pending" && (
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    variant="primary"
+                    className="flex-1"
+                    disabled={approveMutation.isPending || rejectMutation.isPending}
+                    loading={approveMutation.isPending}
+                    onClick={() => handleApprove(selectedApproval)}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                    Approve
+                  </Button>
+                  <Button
+                    variant="danger"
+                    className="flex-1"
+                    disabled={rejectMutation.isPending || approveMutation.isPending}
+                    onClick={() => { setDenyTarget(selectedApproval); setDenyReason(""); }}
+                  >
+                    <XCircle className="w-3.5 h-3.5 mr-1" />
+                    Deny
+                  </Button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </>
+      )}
     </div>
   );
 }

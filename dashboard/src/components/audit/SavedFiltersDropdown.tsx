@@ -165,7 +165,7 @@ export function SavedFiltersDropdown({
 
       {/* Save form */}
       {saving && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-72 rounded-xl border border-border bg-white p-3 shadow-lg space-y-2">
+        <div className="absolute left-0 top-full z-20 mt-1 w-72 rounded-xl border border-border bg-card p-3 shadow-lg space-y-2">
           <Input
             className="h-8 text-xs"
             placeholder="e.g., Q3 Governance Review"
@@ -183,10 +183,10 @@ export function SavedFiltersDropdown({
 
       {/* Dropdown list */}
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-72 overflow-hidden rounded-xl border border-border bg-white shadow-lg">
+        <div className="absolute left-0 top-full z-20 mt-1 w-72 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
           {builtIn.length > 0 && (
             <>
-              <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Built-in
               </div>
               {builtIn.map((f) => (
@@ -198,7 +198,7 @@ export function SavedFiltersDropdown({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-ink">{f.name}</p>
-                    <p className="truncate text-[10px] text-muted">{summarizeFilters(f.filters)}</p>
+                    <p className="truncate text-[10px] text-muted-foreground">{summarizeFilters(f.filters)}</p>
                   </div>
                 </button>
               ))}
@@ -206,7 +206,7 @@ export function SavedFiltersDropdown({
           )}
           {userFilters.length > 0 && (
             <>
-              <div className="border-t border-border px-3 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              <div className="border-t border-border px-3 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Your filters
               </div>
               {userFilters.map((f) => (
@@ -218,11 +218,11 @@ export function SavedFiltersDropdown({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-ink">{f.name}</p>
-                    <p className="truncate text-[10px] text-muted">{summarizeFilters(f.filters)}</p>
+                    <p className="truncate text-[10px] text-muted-foreground">{summarizeFilters(f.filters)}</p>
                   </div>
                   <button
                     type="button"
-                    className="shrink-0 rounded p-1 text-muted hover:text-danger transition"
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:text-danger transition"
                     onClick={(e) => handleDelete(f.id, e)}
                   >
                     <X className="h-3 w-3" />
@@ -232,7 +232,7 @@ export function SavedFiltersDropdown({
             </>
           )}
           {filters.length === 0 && (
-            <p className="px-3 py-4 text-center text-xs text-muted">No saved filters yet.</p>
+            <p className="px-3 py-4 text-center text-xs text-muted-foreground">No saved filters yet.</p>
           )}
         </div>
       )}

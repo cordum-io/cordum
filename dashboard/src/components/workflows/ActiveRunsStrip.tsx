@@ -22,28 +22,28 @@ function elapsed(iso?: string): string {
 }
 
 const STEP_BAR_COLORS: Record<string, string> = {
-  succeeded: "bg-green-500",
-  completed: "bg-green-500",
-  running: "bg-blue-500",
-  in_progress: "bg-blue-500",
-  failed: "bg-red-500",
-  timed_out: "bg-red-500",
-  waiting: "bg-amber-500",
-  blocked: "bg-amber-500",
-  pending: "bg-gray-300",
-  queued: "bg-gray-300",
-  cancelled: "bg-gray-400",
+  succeeded: "bg-[var(--color-success)]",
+  completed: "bg-[var(--color-success)]",
+  running: "bg-[var(--color-info)]",
+  in_progress: "bg-[var(--color-info)]",
+  failed: "bg-destructive",
+  timed_out: "bg-destructive",
+  waiting: "bg-[var(--color-warning)]",
+  blocked: "bg-[var(--color-warning)]",
+  pending: "bg-muted",
+  queued: "bg-muted",
+  cancelled: "bg-muted-foreground",
 };
 
 function statusDotClass(run: WorkflowRun): string {
   const steps = run.steps ?? [];
   if (steps.some((s) => s.status === "waiting"))
-    return "bg-amber-400 animate-pulse";
+    return "bg-[var(--color-warning)] animate-pulse";
   if (steps.some((s) => s.status === "failed" || s.status === "timed_out"))
-    return "bg-red-500";
+    return "bg-destructive";
   if (run.status === "running")
-    return "bg-blue-500";
-  return "bg-gray-400";
+    return "bg-[var(--color-info)]";
+  return "bg-muted-foreground";
 }
 
 // ---------------------------------------------------------------------------
@@ -63,12 +63,12 @@ function MiniProgressBar({ steps }: { steps: WorkflowStep[] }) {
         {steps.map((s, i) => (
           <div
             key={s.id ?? i}
-            className={cn("h-full", STEP_BAR_COLORS[s.status ?? ""] ?? "bg-gray-200")}
+            className={cn("h-full", STEP_BAR_COLORS[s.status ?? ""] ?? "bg-muted")}
             style={{ width: `${100 / total}%` }}
           />
         ))}
       </div>
-      <span className="flex-shrink-0 text-[10px] text-muted">
+      <span className="flex-shrink-0 text-[10px] text-muted-foreground">
         {done}/{total}
       </span>
     </div>
@@ -105,7 +105,7 @@ function RunCard({ run, onClick }: { run: WorkflowRun; onClick: () => void }) {
 
       <MiniProgressBar steps={run.steps ?? []} />
 
-      <div className="mt-2 text-xs text-muted">
+      <div className="mt-2 text-xs text-muted-foreground">
         {elapsed(run.startedAt ?? run.createdAt)}
       </div>
     </button>
@@ -120,11 +120,11 @@ function SkeletonCard() {
   return (
     <div className="snap-start flex-shrink-0 w-56 surface-card rounded-xl px-4 py-3 animate-pulse">
       <div className="mb-2 flex items-center justify-between">
-        <div className="h-4 w-28 rounded bg-gray-200" />
-        <div className="h-2 w-2 rounded-full bg-gray-200" />
+        <div className="h-4 w-28 rounded bg-muted" />
+        <div className="h-2 w-2 rounded-full bg-muted" />
       </div>
-      <div className="h-1 w-full rounded-full bg-gray-200" />
-      <div className="mt-2 h-3 w-12 rounded bg-gray-200" />
+      <div className="h-1 w-full rounded-full bg-muted" />
+      <div className="mt-2 h-3 w-12 rounded bg-muted" />
     </div>
   );
 }
@@ -153,7 +153,7 @@ export function ActiveRunsStrip({ className }: { className?: string }) {
     return (
       <div className={cn("flex items-center gap-2 rounded-xl bg-surface2/50 px-4 py-2.5", className)}>
         <CheckCircle2 className="h-4 w-4 text-success" />
-        <span className="text-sm text-muted">All clear — no active runs</span>
+        <span className="text-sm text-muted-foreground">All clear — no active runs</span>
       </div>
     );
   }

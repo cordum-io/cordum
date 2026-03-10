@@ -4,7 +4,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { X, Mail, Hash, Bell, Globe, Loader, Plus, Trash2 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
-import { Badge } from "../ui/Badge";
 import { cn } from "../../lib/utils";
 import { notificationChannelSchema } from "../../lib/settingsSchemas";
 import { useSaveNotificationChannel } from "../../hooks/useSettings";
@@ -55,7 +54,7 @@ function EmailConfigFields({
   return (
     <div className="space-y-3">
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           Recipients
         </label>
         <Input
@@ -63,12 +62,12 @@ function EmailConfigFields({
           value={recipients}
           onChange={(e) => onChange({ ...config, recipients: e.target.value })}
         />
-        <p className="mt-1 text-[10px] text-muted">
+        <p className="mt-1 text-[10px] text-muted-foreground">
           Separate multiple addresses with commas.
         </p>
       </div>
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           SMTP Host (optional)
         </label>
         <Input
@@ -94,7 +93,7 @@ function SlackConfigFields({
   return (
     <div className="space-y-3">
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           Webhook URL
         </label>
         <Input
@@ -104,7 +103,7 @@ function SlackConfigFields({
         />
       </div>
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           Channel
         </label>
         <Input
@@ -130,7 +129,7 @@ function PagerDutyConfigFields({
   return (
     <div className="space-y-3">
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           Routing Key
         </label>
         <Input
@@ -140,7 +139,7 @@ function PagerDutyConfigFields({
         />
       </div>
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           Default Severity
         </label>
         <div className="flex gap-2">
@@ -152,7 +151,7 @@ function PagerDutyConfigFields({
                 "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
                 severity === s
                   ? "border-accent bg-accent/10 text-accent"
-                  : "border-border text-muted hover:text-ink",
+                  : "border-border text-muted-foreground hover:text-ink",
               )}
               onClick={() => onChange({ ...config, severity: s })}
             >
@@ -184,7 +183,7 @@ function WebhookConfigFields({
   return (
     <div className="space-y-3">
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           URL
         </label>
         <Input
@@ -195,7 +194,7 @@ function WebhookConfigFields({
       </div>
 
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           Authentication
         </label>
         <div className="flex gap-2">
@@ -207,7 +206,7 @@ function WebhookConfigFields({
                 "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
                 authType === a
                   ? "border-accent bg-accent/10 text-accent"
-                  : "border-border text-muted hover:text-ink",
+                  : "border-border text-muted-foreground hover:text-ink",
               )}
               onClick={() => onChange({ ...config, authType: a })}
             >
@@ -227,7 +226,7 @@ function WebhookConfigFields({
       </div>
 
       <div>
-        <label className="mb-1 block text-xs font-semibold text-muted">
+        <label className="mb-1 block text-xs font-semibold text-muted-foreground">
           Custom Headers
         </label>
         <div className="space-y-1.5">
@@ -304,7 +303,7 @@ export function NotificationChannelModal({
     setValue,
     formState: { errors },
   } = useForm<ChannelForm>({
-    resolver: zodResolver(notificationChannelSchema),
+    resolver: zodResolver(notificationChannelSchema) as any,
     defaultValues: {
       name: channel?.name ?? "",
       type: channel?.type ?? "email",
@@ -343,14 +342,14 @@ export function NotificationChannelModal({
             onClick={onClose}
             className="rounded-full p-1 hover:bg-surface2"
           >
-            <X className="h-4 w-4 text-muted" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <form onSubmit={handleSubmit(onSubmit as any)} className="space-y-4">
           {/* Name */}
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">
+            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
               Channel Name
             </label>
             <Input placeholder="e.g. Ops Slack" {...register("name")} />
@@ -361,7 +360,7 @@ export function NotificationChannelModal({
 
           {/* Type selector */}
           <div>
-            <label className="mb-2 block text-xs font-semibold text-muted">
+            <label className="mb-2 block text-xs font-semibold text-muted-foreground">
               Type
             </label>
             <div className="grid grid-cols-4 gap-2">
@@ -375,7 +374,7 @@ export function NotificationChannelModal({
                       "flex flex-col items-center gap-1 rounded-xl border px-3 py-3 text-xs font-semibold transition-colors",
                       selectedType === ct.id
                         ? "border-accent bg-accent/10 text-accent"
-                        : "border-border text-muted hover:text-ink hover:border-ink/20",
+                        : "border-border text-muted-foreground hover:text-ink hover:border-ink/20",
                     )}
                     onClick={() => {
                       setValue("type", ct.id);

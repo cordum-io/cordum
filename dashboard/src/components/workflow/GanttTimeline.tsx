@@ -30,19 +30,19 @@ interface GanttBar {
 // ---------------------------------------------------------------------------
 
 const statusColor: Record<string, string> = {
-  pending: "#94a3b8",
-  queued: "#94a3b8",
-  running: "#3b82f6",
-  in_progress: "#3b82f6",
-  succeeded: "#22c55e",
-  completed: "#22c55e",
-  failed: "#ef4444",
-  timed_out: "#f97316",
-  cancelled: "#9ca3af",
-  blocked: "#f59e0b",
+  pending: "#5a6a70",
+  queued: "#5a6a70",
+  running: "#0f7f7a",
+  in_progress: "#0f7f7a",
+  succeeded: "#1f7a57",
+  completed: "#1f7a57",
+  failed: "#b83a3a",
+  timed_out: "#d4833a",
+  cancelled: "#5a6a70",
+  blocked: "#c58a1c",
 };
 
-const blockingColor = "#e2e8f0";
+const blockingColor = "rgba(25, 36, 40, 0.12)";
 
 // ---------------------------------------------------------------------------
 // Build bars from steps
@@ -119,17 +119,17 @@ function GanttTooltip({ active, payload }: TooltipProps<number, string>) {
   if (!bar) return null;
 
   return (
-    <div className="rounded-xl border border-border bg-white px-3 py-2 shadow-lg text-xs">
+    <div className="rounded-xl border border-border bg-card px-3 py-2 shadow-lg text-xs">
       <p className="font-semibold text-ink">{bar.name}</p>
-      <p className="text-muted">
+      <p className="text-muted-foreground">
         Status: <span className="capitalize">{bar.status.replace(/_/g, " ")}</span>
       </p>
-      <p className="text-muted">Duration: {formatMs(bar.duration)}</p>
+      <p className="text-muted-foreground">Duration: {formatMs(bar.duration)}</p>
       {bar.blockingTime > 0 && (
-        <p className="text-muted">Wait: {formatMs(bar.blockingTime)}</p>
+        <p className="text-muted-foreground">Wait: {formatMs(bar.blockingTime)}</p>
       )}
       {bar.safetyDecision && (
-        <p className="text-muted">Safety: {bar.safetyDecision}</p>
+        <p className="text-muted-foreground">Safety: {bar.safetyDecision}</p>
       )}
     </div>
   );
@@ -144,7 +144,7 @@ export function GanttTimeline({ steps }: { steps: WorkflowStep[] }) {
 
   if (bars.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border px-6 py-8 text-center text-xs text-muted">
+      <div className="rounded-2xl border border-dashed border-border px-6 py-8 text-center text-xs text-muted-foreground">
         No step timing data available.
       </div>
     );
@@ -154,7 +154,7 @@ export function GanttTimeline({ steps }: { steps: WorkflowStep[] }) {
 
   return (
     <div className="surface-card rounded-2xl p-4">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Execution Timeline
       </h3>
       <ResponsiveContainer width="100%" height={chartHeight}>
@@ -193,7 +193,7 @@ export function GanttTimeline({ steps }: { steps: WorkflowStep[] }) {
             {bars.map((bar) => (
               <Cell
                 key={`dur-${bar.stepId}`}
-                fill={statusColor[bar.status] ?? "#94a3b8"}
+                fill={statusColor[bar.status] ?? "#5a6a70"}
               />
             ))}
           </Bar>

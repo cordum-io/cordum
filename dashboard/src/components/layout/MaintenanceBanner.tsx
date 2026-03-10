@@ -34,14 +34,14 @@ export function MaintenanceBanner() {
         <span className="text-ink">&mdash; {config.maintenanceMessage}</span>
       )}
       {config.maintenanceStartedAt && (
-        <span className="ml-auto font-mono text-muted">
+        <span className="ml-auto font-mono text-muted-foreground">
           {formatElapsed(config.maintenanceStartedAt)}
         </span>
       )}
       <button
         type="button"
         onClick={() => setDismissed(true)}
-        className="ml-2 rounded-full p-0.5 text-muted hover:text-ink"
+        className="ml-2 rounded-full p-0.5 text-muted-foreground hover:text-ink"
         aria-label="Dismiss"
       >
         <X className="h-3.5 w-3.5" />

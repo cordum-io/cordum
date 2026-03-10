@@ -32,7 +32,7 @@ import {
   createCondition,
 } from "./conditionTypes";
 
-const MonacoEditor = lazy(() => import("@monaco-editor/react").then((m) => ({ default: m.default })));
+const MonacoEditor = lazy(() => import("@monaco-editor/react").then((m) => ({ default: m.default }))) as any;
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -118,9 +118,9 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
   const existingLabels = (rule?.source?.labels as string[] | undefined) ?? [];
 
   const { register, handleSubmit, control, watch, formState: { errors } } = useForm<RuleFormData>({
-    resolver: zodResolver(ruleSchema),
+    resolver: zodResolver(ruleSchema) as any,
     defaultValues: {
-      decisionType: rule?.decisionType ?? "allow",
+      decisionType: (rule?.decisionType ?? "allow") as any,
       reason: rule?.reason ?? "",
       maxPerMinute: existingThrottle?.maxPerMinute ?? 60,
       burstLimit: existingThrottle?.burstLimit,
@@ -154,7 +154,7 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
 
   // YAML preview (debounced)
   const [yamlPreview, setYamlPreview] = useState("");
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -231,16 +231,16 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Left: form */}
         <form
-          onSubmit={handleSubmit(onSubmit)}
+          onSubmit={handleSubmit(onSubmit as any)}
           className="space-y-5"
         >
-          <h4 className="text-xs font-semibold uppercase tracking-widest text-muted">
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
             {rule ? "Edit Rule" : "New Rule"}
           </h4>
 
           {/* Condition group builder */}
           <div>
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Match Conditions
             </span>
             <ConditionGroupBuilder
@@ -251,7 +251,7 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
 
           {/* Decision selector */}
           <div>
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Decision
             </span>
             <Controller
@@ -289,14 +289,14 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
           {watchDecision === "throttle" && (
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label htmlFor="re-max-per-min" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                <label htmlFor="re-max-per-min" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Max per minute
                 </label>
                 <Input id="re-max-per-min" type="number" min={1} placeholder="60" {...register("maxPerMinute")} />
                 {errors.maxPerMinute && <p className="mt-1 text-xs text-danger">{errors.maxPerMinute.message}</p>}
               </div>
               <div>
-                <label htmlFor="re-burst" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                <label htmlFor="re-burst" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Burst limit (optional)
                 </label>
                 <Input id="re-burst" type="number" min={1} placeholder="10" {...register("burstLimit")} />
@@ -306,7 +306,7 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
 
           {/* Reason */}
           <div>
-            <label htmlFor="re-reason" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+            <label htmlFor="re-reason" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Reason
             </label>
             <Textarea
@@ -323,7 +323,7 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
             <button
               type="button"
               onClick={() => setShowAdvanced((v) => !v)}
-              className="flex items-center gap-1.5 text-xs font-semibold text-muted hover:text-ink transition"
+              className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-ink transition"
             >
               {showAdvanced ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               Advanced Options
@@ -332,29 +332,29 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
               <div className="mt-3 space-y-4 rounded-xl border border-border bg-surface2/20 p-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label htmlFor="re-priority" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                    <label htmlFor="re-priority" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       Priority
                     </label>
                     <Input id="re-priority" type="number" min={1} max={1000} placeholder="100" {...register("priority")} />
-                    <p className="mt-1 text-[10px] text-muted">Lower number = higher priority (1-1000)</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">Lower number = higher priority (1-1000)</p>
                     {errors.priority && <p className="mt-1 text-xs text-danger">{errors.priority.message}</p>}
                   </div>
                   <div>
-                    <label htmlFor="re-ttl" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                    <label htmlFor="re-ttl" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       TTL
                     </label>
                     <Input id="re-ttl" placeholder="24h, 7d, 30d" {...register("ttl")} />
-                    <p className="mt-1 text-[10px] text-muted">How long this rule stays active</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">How long this rule stays active</p>
                   </div>
                 </div>
                 <div>
-                  <label htmlFor="re-desc" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                  <label htmlFor="re-desc" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Description
                   </label>
                   <Textarea id="re-desc" rows={2} placeholder="Human-readable description..." {...register("description")} />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Labels
                   </label>
                   <div className="flex gap-2">
@@ -420,7 +420,7 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
         {/* Right: YAML preview */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               YAML Preview
             </span>
             <Button variant="ghost" size="sm" type="button" onClick={handleCopy}>
@@ -440,7 +440,7 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
           <div className="min-h-[300px] overflow-hidden rounded-xl border border-border">
             <Suspense
               fallback={
-                <div className="flex h-[300px] items-center justify-center text-xs text-muted">
+                <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground">
                   Loading editor...
                 </div>
               }

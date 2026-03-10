@@ -120,12 +120,12 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		InstalledBy: strings.TrimSpace(policyActorID(r)),
 	})
 	if err != nil {
-		status := http.StatusBadRequest
 		var installErr *packInstallError
 		if errors.As(err, &installErr) {
-			status = installErr.Status
+			writeErrorJSON(w, installErr.Status, installErr.Error())
+			return
 		}
-		writeErrorJSON(w, status, err.Error())
+		writeInternalError(w, r, "install pack", err)
 		return
 	}
 
@@ -318,7 +318,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Purge bool `json:"purge"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = decodeJSONBody(w, r, &body)
 		purge = body.Purge
 	}
 	owner := packLockOwner(r)
@@ -951,15 +951,28 @@ func acquirePackLocks(ctx context.Context, store locks.Store, packID, owner stri
 	}
 	packLock := "pack:" + packID
 	if _, ok, err := store.Acquire(ctx, packLock, owner, locks.ModeExclusive, 60*time.Second); err != nil || !ok {
-		_, _, _ = store.Release(ctx, global, owner)
+		rCtx, rCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if _, _, rErr := store.Release(rCtx, global, owner); rErr != nil {
+			slog.Error("pack lock cleanup: failed to release global lock",
+				"pack_id", packID, "owner", owner, "error", rErr)
+		}
+		rCancel()
 		if err != nil {
 			return func() {}, err
 		}
 		return func() {}, errors.New("pack lock held")
 	}
 	return func() {
-		_, _, _ = store.Release(context.Background(), packLock, owner)
-		_, _, _ = store.Release(context.Background(), global, owner)
+		rCtx, rCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer rCancel()
+		if _, _, err := store.Release(rCtx, packLock, owner); err != nil {
+			slog.Error("pack lock release failed, lock will expire after TTL",
+				"resource", packLock, "owner", owner, "error", err)
+		}
+		if _, _, err := store.Release(rCtx, global, owner); err != nil {
+			slog.Error("pack lock release failed, lock will expire after TTL",
+				"resource", global, "owner", owner, "error", err)
+		}
 	}, nil
 }
 
@@ -1000,8 +1013,8 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req marketplaceInstallRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json payload")
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid json payload")
 		return
 	}
 	allowedHosts, err := s.marketplaceAllowedHosts(r.Context())

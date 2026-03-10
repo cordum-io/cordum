@@ -1,228 +1,91 @@
-import { useState, useCallback } from "react";
-import { Database, Pencil, Plus, Trash2, X, Loader } from "lucide-react";
-import { Button } from "../components/ui/Button";
-import { Drawer } from "../components/ui/Drawer";
-import { SchemaRegisterForm } from "../components/schemas/SchemaRegisterForm";
-import { SchemaViewer } from "../components/schemas/SchemaViewer";
-import { useSchemas, useSchema, useDeleteSchema } from "../hooks/useSchemas";
-import type { Schema } from "../api/types";
-import { usePageTitle } from "../hooks/usePageTitle";
-
-// ---------------------------------------------------------------------------
-// Confirm dialog
-// ---------------------------------------------------------------------------
-
-function ConfirmDialog({
-  schemaId,
-  isPending,
-  onConfirm,
-  onCancel,
-}: {
-  schemaId: string;
-  isPending: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="surface-card w-full max-w-md rounded-3xl p-6 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-display text-lg font-semibold text-ink">
-            Delete Schema
-          </h3>
-          <button
-            onClick={onCancel}
-            className="rounded-full p-1 hover:bg-surface2"
-          >
-            <X className="h-4 w-4 text-muted" />
-          </button>
-        </div>
-
-        <p className="mb-6 text-sm text-muted">
-          Are you sure you want to delete{" "}
-          <strong className="text-ink">{schemaId}</strong>? This action cannot be undone.
-        </p>
-
-        <div className="flex justify-end gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onCancel}
-            disabled={isPending}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={onConfirm}
-            disabled={isPending}
-          >
-            {isPending ? "Deleting..." : "Delete"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SchemasPage
-// ---------------------------------------------------------------------------
+/*
+ * DESIGN: "Control Surface" — Schemas Registry
+ * PRD Section 21: Schema management with type filtering
+ */
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonTable } from "@/components/ui/Skeleton";
+import { Search, Plus, FileJson } from "lucide-react";
+import { useSchemas } from "@/hooks/useSchemas";
 
 export default function SchemasPage() {
-  usePageTitle("Schemas");
-  const { data, isLoading, error } = useSchemas();
-  const deleteMutation = useDeleteSchema();
-  const [confirmSchemaId, setConfirmSchemaId] = useState<string | null>(null);
-  const [registerOpen, setRegisterOpen] = useState(false);
-  const [selectedSchemaId, setSelectedSchemaId] = useState<string | null>(null);
-  const [editSchemaId, setEditSchemaId] = useState<string | null>(null);
-  const { data: selectedSchema } = useSchema(selectedSchemaId ?? "");
-  const { data: editSchema } = useSchema(editSchemaId ?? "");
+  const navigate = useNavigate();
+  const [search, setSearch] = useState("");
 
+  const { data, isLoading, error } = useSchemas();
   const schemas = data?.items ?? [];
 
-  const handleDelete = useCallback(() => {
-    if (!confirmSchemaId) return;
-    deleteMutation.mutate(confirmSchemaId, {
-      onSuccess: () => setConfirmSchemaId(null),
-    });
-  }, [confirmSchemaId, deleteMutation]);
+  const filtered = schemas.filter(s => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return s.id.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q);
+  });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-bold text-ink">Schemas</h1>
-          <p className="text-sm text-muted">
-            Data contracts for job payloads.
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setRegisterOpen(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          Register Schema
-        </Button>
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader title="Schemas" subtitle="Define and manage data schemas for jobs and workflows" actions={<><Button variant="primary" size="sm" onClick={() => navigate("/schemas/new")}>
+          <Plus className="w-3 h-3 mr-1" />Register Schema
+        </Button></>} />
+
+      {/* Search */}
+      <div className="relative max-w-xs">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search schemas..."
+          className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+        />
       </div>
 
-      {isLoading && (
-        <div className="flex items-center justify-center py-16 text-sm text-muted">
-          <Loader className="mr-2 h-4 w-4 animate-spin" />
-          Loading schemas...
+      {/* Table */}
+      {isLoading ? (
+        <SkeletonTable rows={6} />
+      ) : error ? (
+        <div className="instrument-card p-8 text-center">
+          <p className="text-sm text-destructive">Failed to load schemas</p>
         </div>
-      )}
-
-      {error && (
-        <p className="text-sm text-danger">
-          Failed to load schemas:{" "}
-          {error instanceof Error ? error.message : "Unknown error"}
-        </p>
-      )}
-
-      {!isLoading && !error && schemas.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border py-16 text-center">
-          <Database className="mb-3 h-10 w-10 text-muted" />
-          <p className="text-sm text-muted">No schemas registered</p>
-        </div>
-      )}
-
-      {schemas.length > 0 && (
-        <div className="overflow-hidden rounded-2xl border border-border">
-          <table className="w-full text-sm">
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={<FileJson className="w-8 h-8" />} title="No schemas found" description="Register a schema to define data contracts" />
+      ) : (
+        <div className="instrument-card overflow-hidden">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[400px]">
             <thead>
-              <tr className="border-b border-border bg-surface2/50">
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  ID
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Fields
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted">
-                  Actions
-                </th>
+              <tr className="border-b border-border bg-surface-0">
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Name</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Fields</th>
               </tr>
             </thead>
             <tbody>
-              {schemas.map((schema) => (
-                <tr
+              {filtered.map((schema, i) => (
+                <motion.tr
                   key={schema.id}
-                  className="cursor-pointer border-b border-border last:border-b-0 hover:bg-surface2/30 transition-colors"
-                  onClick={() => setSelectedSchemaId(schema.id)}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: i * 0.03 }}
+                  onClick={() => navigate(`/schemas/${schema.id}`)}
+                  className="border-b border-border last:border-0 hover:bg-surface-1 cursor-pointer transition-colors"
                 >
-                  <td className="px-4 py-3 font-medium text-ink">
-                    {schema.id}
-                  </td>
-                  <td className="px-4 py-3 text-muted">
-                    {schema.fields?.length ? `${schema.fields.length} field${schema.fields.length !== 1 ? "s" : ""}` : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditSchemaId(schema.id);
-                        }}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-danger hover:bg-danger/10"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setConfirmSchemaId(schema.id);
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <FileJson className="w-3.5 h-3.5 text-cordum" />
+                      <span className="font-medium text-foreground">{schema.name ?? schema.id}</span>
                     </div>
                   </td>
-                </tr>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{schema.fields?.length ?? 0} fields</td>
+                </motion.tr>
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
-
-      {confirmSchemaId && (
-        <ConfirmDialog
-          schemaId={confirmSchemaId}
-          isPending={deleteMutation.isPending}
-          onConfirm={handleDelete}
-          onCancel={() => setConfirmSchemaId(null)}
-        />
-      )}
-
-      <Drawer open={registerOpen} onClose={() => setRegisterOpen(false)} size="md">
-        <h2 className="mb-4 font-display text-lg font-semibold text-ink">
-          Register New Schema
-        </h2>
-        <SchemaRegisterForm onSuccess={() => setRegisterOpen(false)} />
-      </Drawer>
-
-      <Drawer open={!!selectedSchemaId} onClose={() => setSelectedSchemaId(null)} size="lg">
-        {selectedSchemaId && selectedSchema && <SchemaViewer schema={selectedSchema} />}
-      </Drawer>
-
-      <Drawer open={!!editSchemaId} onClose={() => setEditSchemaId(null)} size="md">
-        <h2 className="mb-4 font-display text-lg font-semibold text-ink">
-          Edit Schema
-        </h2>
-        {editSchemaId && editSchema && (
-          <SchemaRegisterForm
-            initialData={{
-              id: editSchema.id,
-              body: editSchema.schema
-                ? JSON.stringify(editSchema.schema, null, 2)
-                : "",
-            }}
-            onSuccess={() => setEditSchemaId(null)}
-          />
-        )}
-      </Drawer>
-    </div>
+    </motion.div>
   );
 }

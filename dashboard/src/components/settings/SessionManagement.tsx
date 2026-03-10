@@ -49,7 +49,7 @@ export function SessionManagement() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-ink">Session Timeout</h3>
-            <p className="mt-0.5 text-xs text-muted">
+            <p className="mt-0.5 text-xs text-muted-foreground">
               How long user sessions remain active before requiring re-authentication.
             </p>
           </div>
@@ -79,20 +79,20 @@ export function SessionManagement() {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border bg-surface2/50">
-                <th className="px-3 py-2 text-left font-medium text-muted">User</th>
-                <th className="px-3 py-2 text-left font-medium text-muted">IP</th>
-                <th className="px-3 py-2 text-left font-medium text-muted">Device</th>
-                <th className="px-3 py-2 text-left font-medium text-muted">Last Active</th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">User</th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">IP</th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Device</th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Last Active</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-border text-muted">
+            <tbody className="divide-y divide-border text-muted-foreground">
               <tr>
                 <td colSpan={5} className="px-3 py-8 text-center">
-                  <p className="text-sm text-muted">
+                  <p className="text-sm text-muted-foreground">
                     Session listing requires backend v2.x
                   </p>
-                  <p className="mt-1 text-[10px] text-muted">
+                  <p className="mt-1 text-[10px] text-muted-foreground">
                     Active session management will be available when the sessions API endpoint is deployed.
                   </p>
                 </td>

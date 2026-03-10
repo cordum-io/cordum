@@ -1,3 +1,14 @@
 name: cordum-codeql
 paths-ignore:
   - "**/*.pb.go"
+
+# Suppress false-positive rules:
+# - go/clear-text-logging: our logging package has dynamic redaction
+#   (sensitiveKey + redactValue) that CodeQL cannot model
+# - go/weak-sensitive-data-hashing: hashAPIKey uses SHA-256 for a
+#   timing-safe lookup index, not password storage
+query-filters:
+  - exclude:
+      id: go/clear-text-logging
+  - exclude:
+      id: go/weak-sensitive-data-hashing

@@ -27,29 +27,29 @@ import {
 // ---------------------------------------------------------------------------
 
 const statusBorder: Record<string, string> = {
-  pending: "border-gray-300",
-  queued: "border-gray-400",
-  running: "border-blue-400 ring-2 ring-blue-200",
-  in_progress: "border-blue-400 ring-2 ring-blue-200",
-  succeeded: "border-green-400",
-  completed: "border-green-400",
-  failed: "border-red-400",
-  timed_out: "border-red-300",
-  cancelled: "border-gray-300",
-  blocked: "border-amber-400",
+  pending: "border-muted",
+  queued: "border-muted-foreground",
+  running: "border-[var(--color-info)]/40 ring-2 ring-[var(--color-info)]/20",
+  in_progress: "border-[var(--color-info)]/40 ring-2 ring-[var(--color-info)]/20",
+  succeeded: "border-[var(--color-success)]/40",
+  completed: "border-[var(--color-success)]/40",
+  failed: "border-destructive/40",
+  timed_out: "border-destructive/30",
+  cancelled: "border-muted",
+  blocked: "border-[var(--color-warning)]/40",
 };
 
 const statusBg: Record<string, string> = {
-  pending: "bg-gray-50",
-  queued: "bg-gray-50",
-  running: "bg-blue-50",
-  in_progress: "bg-blue-50",
-  succeeded: "bg-green-50",
-  completed: "bg-green-50",
-  failed: "bg-red-50",
-  timed_out: "bg-red-50",
-  cancelled: "bg-gray-50",
-  blocked: "bg-amber-50",
+  pending: "bg-muted/30",
+  queued: "bg-muted/30",
+  running: "bg-[var(--color-info)]/5",
+  in_progress: "bg-[var(--color-info)]/5",
+  succeeded: "bg-[var(--color-success)]/5",
+  completed: "bg-[var(--color-success)]/5",
+  failed: "bg-destructive/5",
+  timed_out: "bg-destructive/5",
+  cancelled: "bg-muted/30",
+  blocked: "bg-[var(--color-warning)]/5",
 };
 
 const safetyVariant: Record<string, "success" | "danger" | "warning" | "info"> = {
@@ -74,23 +74,23 @@ const typeIcons: Record<string, typeof Briefcase> = {
 };
 
 const typeColors: Record<string, string> = {
-  job: "text-blue-600",
-  approval: "text-amber-600",
-  delay: "text-purple-600",
-  condition: "text-teal-600",
-  notify: "text-pink-600",
-  "fan-out": "text-indigo-600",
-  parallel: "text-sky-600",
+  job: "text-[var(--color-info)]",
+  approval: "text-[var(--color-warning)]",
+  delay: "text-primary",
+  condition: "text-[var(--color-info)]",
+  notify: "text-primary",
+  "fan-out": "text-primary",
+  parallel: "text-[var(--color-info)]",
 };
 
 const typeAccents: Record<string, string> = {
-  job: "bg-blue-50",
-  approval: "bg-amber-50",
-  delay: "bg-purple-50",
-  condition: "bg-teal-50",
-  notify: "bg-pink-50",
-  "fan-out": "bg-indigo-50",
-  parallel: "bg-sky-50",
+  job: "bg-[var(--color-info)]/5",
+  approval: "bg-[var(--color-warning)]/5",
+  delay: "bg-primary/5",
+  condition: "bg-[var(--color-info)]/5",
+  notify: "bg-primary/5",
+  "fan-out": "bg-primary/5",
+  parallel: "bg-[var(--color-info)]/5",
 };
 
 // ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ function RunNode({ data }: { data: RunNodeData }) {
   const status = data.status ?? "pending";
   const Icon = typeIcons[data.stepType] ?? Briefcase;
   const border = statusBorder[status] ?? "border-border";
-  const bg = statusBg[status] ?? "bg-white";
+  const bg = statusBg[status] ?? "bg-card";
 
   return (
     <div
@@ -128,12 +128,12 @@ function RunNode({ data }: { data: RunNodeData }) {
       title={buildTooltip(data)}
     >
       <div className="flex items-center gap-2">
-        <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${typeAccents[data.stepType] ?? "bg-gray-100"}`}>
-          <Icon className={`h-4 w-4 ${typeColors[data.stepType] ?? "text-gray-600"}`} />
+        <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${typeAccents[data.stepType] ?? "bg-muted/50"}`}>
+          <Icon className={`h-4 w-4 ${typeColors[data.stepType] ?? "text-muted-foreground"}`} />
         </div>
         <div className="flex flex-col min-w-0">
           <span className="text-xs font-semibold text-ink truncate">{data.label}</span>
-          <span className="text-[10px] text-muted capitalize">{status.replace(/_/g, " ")}</span>
+          <span className="text-[10px] text-muted-foreground capitalize">{status.replace(/_/g, " ")}</span>
         </div>
       </div>
 
@@ -224,7 +224,7 @@ function runToGraph(run: WorkflowRun): { nodes: Node[]; edges: Edge[] } {
         target: step.id,
         type: "smoothstep",
         animated: isRunning,
-        style: depSucceeded ? { stroke: "#22c55e", strokeWidth: 2 } : { strokeDasharray: "5 5" },
+        style: depSucceeded ? { stroke: "#1f7a57", strokeWidth: 2 } : { strokeDasharray: "5 5" },
       });
     }
   });

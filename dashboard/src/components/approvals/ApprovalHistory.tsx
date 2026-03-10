@@ -105,7 +105,7 @@ function MetricsStrip({ items }: { items: ApprovalHistoryEntry[] }) {
   if (!stats) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span>
         <span className="font-semibold text-ink">{stats.total}</span> decisions
       </span>
@@ -231,15 +231,6 @@ export function ApprovalHistory() {
     [filtered, page],
   );
 
-  const resetFilters = useCallback(() => {
-    setActionFilter("all");
-    setTimeRange("7d");
-    setSearch("");
-    setActorFilter("");
-    setWorkflowFilter("");
-    setPage(0);
-  }, [setPage]);
-
   return (
     <div className="space-y-4">
       {/* Metrics strip */}
@@ -257,7 +248,7 @@ export function ApprovalHistory() {
                 "rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors",
                 actionFilter === action
                   ? "bg-accent/10 text-accent"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
               )}
               onClick={() => { setActionFilter(action); setPage(0); }}
             >
@@ -276,7 +267,7 @@ export function ApprovalHistory() {
                 "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                 timeRange === range
                   ? "bg-accent/10 text-accent"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
               )}
               onClick={() => { setTimeRange(range); setPage(0); }}
             >
@@ -322,7 +313,7 @@ export function ApprovalHistory() {
         />
 
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-muted">
+          <span className="text-xs text-muted-foreground">
             {filtered.length} result{filtered.length !== 1 ? "s" : ""}
           </span>
           {filtered.length > 0 && (
@@ -356,7 +347,7 @@ export function ApprovalHistory() {
 
       {/* Empty */}
       {!isLoading && !isError && filtered.length === 0 && (
-        <p className="py-12 text-center text-sm text-muted">
+        <p className="py-12 text-center text-sm text-muted-foreground">
           No approval history for the selected filters.
         </p>
       )}
@@ -367,13 +358,13 @@ export function ApprovalHistory() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-surface2/50 text-left">
-                <th className="px-4 py-3 font-medium text-muted">Decision</th>
-                <th className="px-4 py-3 font-medium text-muted">Decided by</th>
-                <th className="px-4 py-3 font-medium text-muted">Wait</th>
-                <th className="px-4 py-3 font-medium text-muted">Decision time</th>
-                <th className="px-4 py-3 font-medium text-muted">Job</th>
-                <th className="px-4 py-3 font-medium text-muted">Workflow</th>
-                <th className="px-4 py-3 font-medium text-muted">Reason</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Decision</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Decided by</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Wait</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Decision time</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Job</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Workflow</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Reason</th>
               </tr>
             </thead>
             <tbody>
@@ -384,10 +375,10 @@ export function ApprovalHistory() {
                 >
                   <td className="px-4 py-3">{actionBadge(item.action)}</td>
                   <td className="px-4 py-3 text-xs text-ink">{item.actor}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                     {formatDuration(item.waitDurationMs)}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                     {formatTimestamp(item.timestamp)}
                   </td>
                   <td className="px-4 py-3">
@@ -407,10 +398,10 @@ export function ApprovalHistory() {
                         {item.workflowId.slice(0, 8)}
                       </Link>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className="max-w-xs truncate px-4 py-3 text-xs text-muted" title={item.reason ?? ""}>
+                  <td className="max-w-xs truncate px-4 py-3 text-xs text-muted-foreground" title={item.reason ?? ""}>
                     {item.reason ?? "—"}
                   </td>
                 </tr>
@@ -431,7 +422,7 @@ export function ApprovalHistory() {
           >
             Previous
           </Button>
-          <span className="text-xs text-muted">
+          <span className="text-xs text-muted-foreground">
             Page {page + 1} of {totalPages}
           </span>
           <Button

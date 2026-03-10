@@ -92,13 +92,13 @@ function RuleSummary({ rule, highlight }: { rule: PolicyRule; highlight?: string
       )}
     >
       <div className="flex items-center justify-between">
-        <span className="font-mono text-muted">{rule.id.slice(0, 10)}</span>
-        <Badge variant={decisionVariant[rule.decisionType] ?? "default"}>
+        <span className="font-mono text-muted-foreground">{rule.id.slice(0, 10)}</span>
+        <Badge variant={decisionVariant[rule.decisionType ?? ""] ?? "default"}>
           {rule.decisionType}
         </Badge>
       </div>
       {rule.reason && (
-        <p className="mt-1 text-muted italic">{rule.reason}</p>
+        <p className="mt-1 text-muted-foreground italic">{rule.reason}</p>
       )}
       {(capabilities.length > 0 || riskTags.length > 0) && (
         <div className="mt-1.5 flex flex-wrap gap-1">
@@ -135,7 +135,7 @@ function SnapshotSelect({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-semibold text-muted">{label}</label>
+      <label className="mb-1 block text-xs font-semibold text-muted-foreground">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -167,7 +167,7 @@ function DiffSummary({ diffs }: { diffs: RuleDiff[] }) {
       {added > 0 && <span className="font-semibold text-success">+{added} added</span>}
       {removed > 0 && <span className="font-semibold text-danger">-{removed} removed</span>}
       {changed > 0 && <span className="font-semibold text-warning">{changed} changed</span>}
-      {unchanged > 0 && <span className="text-muted">{unchanged} unchanged</span>}
+      {unchanged > 0 && <span className="text-muted-foreground">{unchanged} unchanged</span>}
     </div>
   );
 }
@@ -203,12 +203,12 @@ export function SnapshotComparison() {
           </h3>
 
           {snapshotsLoading ? (
-            <div className="flex items-center gap-2 py-4 text-xs text-muted">
+            <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
               <Loader className="h-3.5 w-3.5 animate-spin" />
               Loading snapshots...
             </div>
           ) : snapshots.length < 2 ? (
-            <p className="py-4 text-xs text-muted">
+            <p className="py-4 text-xs text-muted-foreground">
               Need at least 2 snapshots to compare. Publish more versions.
             </p>
           ) : (
@@ -232,7 +232,7 @@ export function SnapshotComparison() {
 
       {/* Loading */}
       {bothSelected && isLoading && (
-        <div className="flex items-center justify-center py-8 text-xs text-muted">
+        <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
           <Loader className="mr-2 h-3.5 w-3.5 animate-spin" />
           Loading snapshot rules...
         </div>
@@ -262,7 +262,7 @@ export function SnapshotComparison() {
                       }
                     />
                   ) : (
-                    <div className="rounded-xl border border-dashed border-success/40 bg-success/5 px-3 py-4 text-center text-[10px] text-muted">
+                    <div className="rounded-xl border border-dashed border-success/40 bg-success/5 px-3 py-4 text-center text-[10px] text-muted-foreground">
                       Not present in A
                     </div>
                   )}
@@ -282,7 +282,7 @@ export function SnapshotComparison() {
                       }
                     />
                   ) : (
-                    <div className="rounded-xl border border-dashed border-danger/40 bg-danger/5 px-3 py-4 text-center text-[10px] text-muted">
+                    <div className="rounded-xl border border-dashed border-danger/40 bg-danger/5 px-3 py-4 text-center text-[10px] text-muted-foreground">
                       Not present in B
                     </div>
                   )}

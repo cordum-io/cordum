@@ -82,19 +82,19 @@ function MultiSelect({
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "inline-flex items-center gap-1.5 rounded-xl border border-border bg-white/70 px-3 py-1.5 text-xs font-medium text-ink transition hover:border-accent/40",
+          "inline-flex items-center gap-1.5 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs font-medium text-ink transition hover:border-accent/40",
           selected.length > 0 && "border-accent/50 bg-accent/5",
         )}
       >
         {label}
         {selected.length > 0 && (
-          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[10px] font-bold text-white">
+          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[10px] font-bold text-primary-foreground">
             {selected.length}
           </span>
         )}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 min-w-[160px] rounded-xl border border-border bg-white p-1.5 shadow-lg">
+        <div className="absolute left-0 top-full z-20 mt-1 min-w-[160px] rounded-xl border border-border bg-card p-1.5 shadow-lg">
           {options.map((opt) => (
             <label
               key={opt.value}
@@ -152,9 +152,9 @@ export function JobFiltersBar({
   const [poolLocal, setPoolLocal] = useState(poolFilter);
   const [tenantLocal, setTenantLocal] = useState(tenantFilter);
   const [showCustomRange, setShowCustomRange] = useState(timeRangeFilter === "custom");
-  const topicTimer = useRef<ReturnType<typeof setTimeout>>();
-  const poolTimer = useRef<ReturnType<typeof setTimeout>>();
-  const tenantTimer = useRef<ReturnType<typeof setTimeout>>();
+  const topicTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const poolTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const tenantTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Clear pending debounce timers on unmount
   useEffect(() => {
@@ -312,7 +312,7 @@ export function JobFiltersBar({
         placeholder="Topic"
         value={topicLocal}
         onChange={handleTopicChange}
-        className="w-28 rounded-xl border border-border bg-white/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+        className="w-28 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
       />
 
       {/* Pool text input (debounced) */}
@@ -321,7 +321,7 @@ export function JobFiltersBar({
         placeholder="Pool"
         value={poolLocal}
         onChange={handlePoolChange}
-        className="w-24 rounded-xl border border-border bg-white/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+        className="w-24 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
       />
 
       {/* Tenant text input (debounced) */}
@@ -330,7 +330,7 @@ export function JobFiltersBar({
         placeholder="Tenant"
         value={tenantLocal}
         onChange={handleTenantChange}
-        className="w-24 rounded-xl border border-border bg-white/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+        className="w-24 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
       />
 
       {/* Time range preset buttons */}
@@ -343,8 +343,8 @@ export function JobFiltersBar({
             className={cn(
               "rounded-lg px-2.5 py-1 text-xs font-medium transition",
               timeRangeFilter === tr.value
-                ? "bg-accent text-white"
-                : "text-muted hover:text-ink hover:bg-surface2/60",
+                ? "bg-accent text-primary-foreground"
+                : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
             )}
           >
             {tr.label}
@@ -356,8 +356,8 @@ export function JobFiltersBar({
           className={cn(
             "rounded-lg px-2.5 py-1 text-xs font-medium transition",
             timeRangeFilter === "custom"
-              ? "bg-accent text-white"
-              : "text-muted hover:text-ink hover:bg-surface2/60",
+              ? "bg-accent text-primary-foreground"
+              : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
           )}
         >
           Custom
@@ -371,14 +371,14 @@ export function JobFiltersBar({
             type="datetime-local"
             value={updatedAfterFilter}
             onChange={(e) => setFilters({ updatedAfter: e.target.value })}
-            className="rounded-xl border border-border bg-white/70 px-2 py-1 text-xs text-ink"
+            className="rounded-xl border border-border bg-card/70 px-2 py-1 text-xs text-ink"
           />
-          <span className="text-xs text-muted">to</span>
+          <span className="text-xs text-muted-foreground">to</span>
           <input
             type="datetime-local"
             value={updatedBeforeFilter}
             onChange={(e) => setFilters({ updatedBefore: e.target.value })}
-            className="rounded-xl border border-border bg-white/70 px-2 py-1 text-xs text-ink"
+            className="rounded-xl border border-border bg-card/70 px-2 py-1 text-xs text-ink"
           />
         </div>
       )}

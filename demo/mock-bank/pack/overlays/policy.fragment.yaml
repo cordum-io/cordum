@@ -1,19 +1,27 @@
 rules:
-  - id: mock-bank-auto
+  - id: bank-transfer-blocked
     match:
       topics:
-        - job.demo-mock-bank.transfer.auto
-    decision: allow
-    reason: "Low-value transfer auto-approved."
-  - id: mock-bank-review
-    match:
-      topics:
-        - job.demo-mock-bank.transfer.review
-    decision: require_approval
-    reason: "Transfers over $50 require human approval."
-  - id: mock-bank-block
-    match:
-      topics:
-        - job.demo-mock-bank.transfer.blocked
+        - job.demo-mock-bank.transfer
+      risk_tags:
+        - blocked
     decision: deny
-    reason: "Transfers over $1,000 are blocked by policy."
+    reason: "Transfers of $300 or more are blocked by policy."
+
+  - id: bank-transfer-review
+    match:
+      topics:
+        - job.demo-mock-bank.transfer
+      risk_tags:
+        - review
+    decision: require_approval
+    reason: "Transfers between $100–$299 require human approval."
+
+  - id: bank-transfer-allow
+    match:
+      topics:
+        - job.demo-mock-bank.transfer
+      risk_tags:
+        - low
+    decision: allow
+    reason: "Transfers under $100 are auto-approved."

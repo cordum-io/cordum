@@ -23,17 +23,9 @@ budget:
   action_at_limit: "throttle"
   cost_attribution_enabled: true
   cost_centers: []
-# System-level budget rate limits (enforced by the scheduler).
-# Gateway-level API rate limiting (API_RATE_LIMIT_RPS env var) is enforced
-# independently by the api-gateway middleware before requests reach these limits.
+# Job/workflow concurrency limits enforced by the gateway (enforceJobBackpressure,
+# maxConcurrentRuns). API request-rate limiting uses env vars (API_RATE_LIMIT_RPS/BURST).
 rate_limits:
-  # Sustained throughput: 2000 requests/second (120000/minute)
-  requests_per_minute: 120000
-  requests_per_hour: 7200000
-  # Token bucket burst — max requests before throttling kicks in.
-  # This is the peak spike capacity, not sustained rate.
-  burst_size: 4000
-  # Max concurrent jobs across all tenants
   concurrent_jobs: 10000
   concurrent_workflows: 5
   queue_size: 5000

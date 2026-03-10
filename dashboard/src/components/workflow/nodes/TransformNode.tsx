@@ -12,9 +12,9 @@ export const TransformNode = memo(function TransformNode({ data, selected }: Nod
   const expression = (data.condition as string) ?? (typeof config.expression === "string" ? config.expression : "");
   return (
     <BaseNode
-      icon={<Code className="h-4 w-4 text-indigo-600" />}
+      icon={<Code className="h-4 w-4 text-[var(--color-warning)]" />}
       label={data.label as string}
-      accent="bg-indigo-50"
+      accent="bg-[var(--color-warning)]/15"
       selected={selected}
     >
       {expression && (

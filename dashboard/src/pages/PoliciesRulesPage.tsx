@@ -41,10 +41,10 @@ export default function PoliciesRulesPage() {
             type="button"
             onClick={() => setRuleType(item.id)}
             className={cn(
-              "rounded-lg px-3 py-1 text-xs font-semibold uppercase tracking-wide transition",
+              "rounded-2xl px-3 py-1 text-xs font-semibold uppercase tracking-wide transition",
               ruleType === item.id
-                ? "bg-accent text-white"
-                : "text-muted hover:bg-surface2 hover:text-ink",
+                ? "bg-accent text-primary-foreground"
+                : "text-muted-foreground hover:bg-surface2 hover:text-ink",
             )}
           >
             {item.label}

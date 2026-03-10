@@ -71,3 +71,14 @@ export function approvalStatusMeta(required?: boolean): StatusMeta {
   }
   return { label: "no approval", tone: "muted", shape: "shield", icon: ShieldOff };
 }
+
+export function decisionTypeMeta(type: string): { label: string; color: string; tone: string } {
+  const map: Record<string, { label: string; color: string; tone: string }> = {
+    allow: { label: "Allow", color: "green", tone: "success" },
+    deny: { label: "Deny", color: "red", tone: "danger" },
+    require_approval: { label: "Require Approval", color: "yellow", tone: "warning" },
+    allow_with_constraints: { label: "Constrained", color: "blue", tone: "info" },
+    throttle: { label: "Throttle", color: "orange", tone: "warning" },
+  };
+  return map[type] ?? { label: type, color: "gray", tone: "neutral" };
+}

@@ -150,7 +150,14 @@ func (c *CloudWatchExporter) exportWithSequence(ctx context.Context, events []SI
 		return fmt.Errorf("audit cloudwatch post: %w", err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		slog.Warn("audit cloudwatch: unable to read response body",
+			"status_code", resp.StatusCode,
+			"error", readErr,
+		)
+		respBody = nil
+	}
 
 	if resp.StatusCode >= 400 {
 		if allowRetry {

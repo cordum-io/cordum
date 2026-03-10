@@ -301,7 +301,7 @@ func TestWithJobLockReleaseRetry(t *testing.T) {
 	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
 
 	called := false
-	err := engine.withJobLock("job-retry-release", 30*time.Second, func() error {
+	err := engine.withJobLock("job-retry-release", 30*time.Second, func(context.Context) error {
 		called = true
 		return nil
 	})
@@ -348,7 +348,7 @@ func TestWithJobLockReleaseUsesBackgroundContext(t *testing.T) {
 	// Create a fresh engine, run fn, then cancel — the deferred release
 	// should still succeed because it uses context.Background().
 	engine2 := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
-	err := engine2.withJobLock("job-bg-ctx", 30*time.Second, func() error {
+	err := engine2.withJobLock("job-bg-ctx", 30*time.Second, func(context.Context) error {
 		// Cancel the engine context while fn is running.
 		engine2.cancel()
 		called = true
@@ -381,7 +381,7 @@ func TestWithJobLockRenewalKeepsLockAlive(t *testing.T) {
 	ttl := 150 * time.Millisecond
 
 	var fnDone atomic.Bool
-	err := engine.withJobLock("job-renewal", ttl, func() error {
+	err := engine.withJobLock("job-renewal", ttl, func(context.Context) error {
 		// Sleep longer than the TTL. Without renewal, the lock would expire.
 		time.Sleep(400 * time.Millisecond)
 		fnDone.Store(true)
@@ -409,7 +409,7 @@ func TestWithJobLockRenewalStopsOnCompletion(t *testing.T) {
 	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
 
 	ttl := 90 * time.Millisecond // renewal at ttl/3 = 30ms
-	err := engine.withJobLock("job-renew-stop", ttl, func() error {
+	err := engine.withJobLock("job-renew-stop", ttl, func(context.Context) error {
 		// Return immediately.
 		return nil
 	})
@@ -456,22 +456,25 @@ func TestWithJobLock_RenewalAbandonAfterConsecutiveFailures(t *testing.T) {
 
 	ttl := 150 * time.Millisecond // renewal every 50ms
 
-	var fnDone atomic.Bool
-	err := engine.withJobLock("job-abandon", ttl, func() error {
-		// Sleep long enough for well more than 3 renewal ticks to fire.
-		time.Sleep(500 * time.Millisecond)
-		fnDone.Store(true)
+	var ctxCancelled atomic.Bool
+	err := engine.withJobLock("job-abandon", ttl, func(lockCtx context.Context) error {
+		// Wait for the fenced context to be cancelled (lock abandonment).
+		<-lockCtx.Done()
+		ctxCancelled.Store(true)
+		// Return nil — withJobLock itself must still return errLockAbandoned.
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("withJobLock should succeed: %v", err)
+
+	// withJobLock must return errLockAbandoned when lock renewal fails,
+	// even if fn returns nil.
+	if !errors.Is(err, errLockAbandoned) {
+		t.Fatalf("expected errLockAbandoned, got: %v", err)
 	}
-	if !fnDone.Load() {
-		t.Fatal("expected fn to complete despite renewal abandon")
+	if !ctxCancelled.Load() {
+		t.Fatal("expected fenced context to be cancelled on abandonment")
 	}
 
 	// After 3 consecutive failures the goroutine should have stopped.
-	// Record count right after fn returns, then wait and verify no more.
 	countAtReturn := store.renewCount.Load()
 	time.Sleep(200 * time.Millisecond)
 	countLater := store.renewCount.Load()
@@ -482,17 +485,16 @@ func TestWithJobLock_RenewalAbandonAfterConsecutiveFailures(t *testing.T) {
 	if countLater > countAtReturn {
 		t.Fatalf("expected no renewals after abandon, but got %d more", countLater-countAtReturn)
 	}
-	// Exactly 3 failures should have been made (goroutine exits on the 3rd).
 	if countAtReturn != 3 {
 		t.Fatalf("expected exactly 3 renewal attempts (abandon on 3rd), got %d", countAtReturn)
 	}
 
-	// Lock should still be released by the defer.
+	// Lock should NOT be released after abandonment — we no longer own it.
 	store.fakeJobStore.mu.RLock()
 	_, locked := store.fakeJobStore.locks[jobLockKey("job-abandon")]
 	store.fakeJobStore.mu.RUnlock()
-	if locked {
-		t.Fatal("expected lock to be released after fn despite renewal abandon")
+	if !locked {
+		t.Fatal("expected lock to remain (skip release after abandonment)")
 	}
 }
 
@@ -517,7 +519,7 @@ func TestWithJobLock_RenewalIntermittentFailureNoAbandon(t *testing.T) {
 	ttl := 90 * time.Millisecond // renewal every 30ms
 
 	var fnDone atomic.Bool
-	err := engine.withJobLock("job-intermittent", ttl, func() error {
+	err := engine.withJobLock("job-intermittent", ttl, func(context.Context) error {
 		// Sleep long enough for 6+ renewal ticks.
 		time.Sleep(300 * time.Millisecond)
 		fnDone.Store(true)

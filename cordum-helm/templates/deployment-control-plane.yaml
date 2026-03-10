@@ -219,6 +219,18 @@ spec:
               value: /etc/cordum/tls/server/tls.crt
             - name: SAFETY_KERNEL_TLS_KEY
               value: /etc/cordum/tls/server/tls.key
+            - name: NATS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: NATS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: NATS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
+            - name: REDIS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: REDIS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: REDIS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
             {{- end }}
           ports:
             - name: grpc
@@ -230,6 +242,9 @@ spec:
             {{- if .Values.global.tls.enabled }}
             - name: server-tls
               mountPath: /etc/cordum/tls/server
+              readOnly: true
+            - name: client-tls
+              mountPath: /etc/cordum/tls/client
               readOnly: true
             {{- end }}
           livenessProbe:
@@ -252,10 +267,17 @@ spec:
         - name: config
           configMap:
             name: {{ include "cordum.fullname" . }}-config
-        {{- if and .Values.global.tls.enabled .Values.global.tls.serverCertSecret }}
+        {{- if .Values.global.tls.enabled }}
+        {{- if .Values.global.tls.serverCertSecret }}
         - name: server-tls
           secret:
             secretName: {{ .Values.global.tls.serverCertSecret }}
+        {{- end }}
+        {{- if .Values.global.tls.clientCertSecret }}
+        - name: client-tls
+          secret:
+            secretName: {{ .Values.global.tls.clientCertSecret }}
+        {{- end }}
         {{- end }}
 ---
 {{- end }}
@@ -320,6 +342,22 @@ spec:
               value: {{ .Values.scheduler.env.jobMetaTTL | quote }}
             - name: WORKER_SNAPSHOT_INTERVAL
               value: {{ .Values.scheduler.env.workerSnapshotInterval | quote }}
+            {{- if .Values.global.tls.enabled }}
+            - name: NATS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: NATS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: NATS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
+            - name: REDIS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: REDIS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: REDIS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
+            - name: SAFETY_KERNEL_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.scheduler.service.metricsPort }}
@@ -330,6 +368,11 @@ spec:
             - name: config
               mountPath: /etc/cordum/timeouts.yaml
               subPath: timeouts.yaml
+            {{- if .Values.global.tls.enabled }}
+            - name: client-tls
+              mountPath: /etc/cordum/tls/client
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -352,6 +395,11 @@ spec:
         - name: config
           configMap:
             name: {{ include "cordum.fullname" . }}-config
+        {{- if and .Values.global.tls.enabled .Values.global.tls.clientCertSecret }}
+        - name: client-tls
+          secret:
+            secretName: {{ .Values.global.tls.clientCertSecret }}
+        {{- end }}
 ---
 {{- end }}
 {{- if .Values.gateway.enabled }}
@@ -453,6 +501,22 @@ spec:
               value: /etc/cordum/tls/server/tls.crt
             - name: GATEWAY_HTTP_TLS_KEY
               value: /etc/cordum/tls/server/tls.key
+            - name: NATS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: NATS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: NATS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
+            - name: REDIS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: REDIS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: REDIS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
+            - name: SAFETY_KERNEL_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: CONTEXT_ENGINE_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
             {{- end }}
           ports:
             - name: grpc
@@ -461,12 +525,15 @@ spec:
               containerPort: {{ .Values.gateway.service.httpPort }}
             - name: metrics
               containerPort: {{ .Values.gateway.service.metricsPort }}
-          {{- if .Values.global.tls.enabled }}
           volumeMounts:
+            {{- if .Values.global.tls.enabled }}
             - name: server-tls
               mountPath: /etc/cordum/tls/server
               readOnly: true
-          {{- end }}
+            - name: client-tls
+              mountPath: /etc/cordum/tls/client
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -485,11 +552,18 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
-      {{- if and .Values.global.tls.enabled .Values.global.tls.serverCertSecret }}
+      {{- if .Values.global.tls.enabled }}
       volumes:
+        {{- if .Values.global.tls.serverCertSecret }}
         - name: server-tls
           secret:
             secretName: {{ .Values.global.tls.serverCertSecret }}
+        {{- end }}
+        {{- if .Values.global.tls.clientCertSecret }}
+        - name: client-tls
+          secret:
+            secretName: {{ .Values.global.tls.clientCertSecret }}
+        {{- end }}
       {{- end }}
 ---
 {{- end }}
@@ -550,9 +624,29 @@ spec:
               value: {{ .Values.workflowEngine.env.scanInterval | quote }}
             - name: WORKFLOW_ENGINE_RUN_SCAN_LIMIT
               value: {{ .Values.workflowEngine.env.runScanLimit | quote }}
+            {{- if .Values.global.tls.enabled }}
+            - name: NATS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: NATS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: NATS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
+            - name: REDIS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: REDIS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: REDIS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.workflowEngine.service.port }}
+          {{- if .Values.global.tls.enabled }}
+          volumeMounts:
+            - name: client-tls
+              mountPath: /etc/cordum/tls/client
+              readOnly: true
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -571,6 +665,12 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.workflowEngine.resources | nindent 12 }}
+      {{- if and .Values.global.tls.enabled .Values.global.tls.clientCertSecret }}
+      volumes:
+        - name: client-tls
+          secret:
+            secretName: {{ .Values.global.tls.clientCertSecret }}
+      {{- end }}
 ---
 {{- end }}
 {{- if .Values.contextEngine.enabled }}
@@ -629,18 +729,27 @@ spec:
               value: /etc/cordum/tls/server/tls.crt
             - name: CONTEXT_ENGINE_TLS_KEY
               value: /etc/cordum/tls/server/tls.key
+            - name: REDIS_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: REDIS_TLS_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: REDIS_TLS_KEY
+              value: /etc/cordum/tls/client/tls.key
             {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.contextEngine.service.port }}
             - name: metrics
               containerPort: {{ .Values.contextEngine.metricsPort | default 9094 }}
-          {{- if .Values.global.tls.enabled }}
           volumeMounts:
+            {{- if .Values.global.tls.enabled }}
             - name: server-tls
               mountPath: /etc/cordum/tls/server
               readOnly: true
-          {{- end }}
+            - name: client-tls
+              mountPath: /etc/cordum/tls/client
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -658,10 +767,17 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.contextEngine.resources | nindent 12 }}
-      {{- if and .Values.global.tls.enabled .Values.global.tls.serverCertSecret }}
+      {{- if .Values.global.tls.enabled }}
       volumes:
+        {{- if .Values.global.tls.serverCertSecret }}
         - name: server-tls
           secret:
             secretName: {{ .Values.global.tls.serverCertSecret }}
+        {{- end }}
+        {{- if .Values.global.tls.clientCertSecret }}
+        - name: client-tls
+          secret:
+            secretName: {{ .Values.global.tls.clientCertSecret }}
+        {{- end }}
       {{- end }}
 {{- end }}

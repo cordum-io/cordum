@@ -25,6 +25,15 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
+// String returns a debug-safe representation that redacts the API key.
+func (c *Client) String() string {
+	redacted := "(none)"
+	if c.APIKey != "" {
+		redacted = c.APIKey[:min(4, len(c.APIKey))] + "****"
+	}
+	return fmt.Sprintf("Client{BaseURL:%s, APIKey:%s, TenantID:%s}", c.BaseURL, redacted, c.TenantID)
+}
+
 // TLSOptions controls TLS behaviour for HTTP clients that connect to the
 // Cordum gateway. Zero value means "use system defaults".
 type TLSOptions struct {
@@ -42,14 +51,37 @@ func New(baseURL, apiKey string) *Client {
 }
 
 // NewWithTLS returns a client with explicit TLS configuration.
+// TLS configuration errors (invalid CA path, bad PEM) are logged to stderr
+// and the client falls back to system defaults. Use [NewWithTLSErr] for
+// strict error handling in production.
 func NewWithTLS(baseURL, apiKey string, opts TLSOptions) *Client {
+	c, err := NewWithTLSErr(baseURL, apiKey, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cordum sdk: %v (falling back to system TLS defaults)\n", err)
+		return newClient(baseURL, apiKey, nil)
+	}
+	return c
+}
+
+// NewWithTLSErr returns a client with explicit TLS configuration and strict
+// error handling. Returns an error if the TLS configuration is invalid (e.g.
+// CA cert file missing or unparseable).
+func NewWithTLSErr(baseURL, apiKey string, opts TLSOptions) (*Client, error) {
+	tr, err := BuildTLSTransportErr(opts)
+	if err != nil {
+		return nil, fmt.Errorf("tls config: %w", err)
+	}
+	return newClient(baseURL, apiKey, tr), nil
+}
+
+func newClient(baseURL, apiKey string, transport *http.Transport) *Client {
 	tenantID := strings.TrimSpace(os.Getenv("CORDUM_TENANT_ID"))
 	if tenantID == "" {
 		tenantID = "default"
 	}
 	httpClient := &http.Client{Timeout: 15 * time.Second}
-	if tr := BuildTLSTransport(opts); tr != nil {
-		httpClient.Transport = tr
+	if transport != nil {
+		httpClient.Transport = transport
 	}
 	return &Client{
 		BaseURL:    baseURL,
@@ -61,23 +93,43 @@ func NewWithTLS(baseURL, apiKey string, opts TLSOptions) *Client {
 
 // BuildTLSTransport returns an [http.Transport] configured from the given
 // options, or nil when no TLS customization is needed.
+//
+// Deprecated: Use [BuildTLSTransportErr] which properly reports CA read/parse
+// failures. This wrapper calls [BuildTLSTransportErr] and logs errors to stderr
+// for backward compatibility.
 func BuildTLSTransport(opts TLSOptions) *http.Transport {
-	if opts.CACertPath == "" && !opts.InsecureSkipVerify {
+	tr, err := BuildTLSTransportErr(opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cordum sdk: tls transport: %v\n", err)
 		return nil
 	}
-	tlsConfig := &tls.Config{} // #nosec G402 -- operator-controlled TLS settings.
+	return tr
+}
+
+// BuildTLSTransportErr returns an [http.Transport] configured from the given
+// options, or (nil, nil) when no TLS customization is needed. It returns an
+// error if the CA certificate cannot be read or parsed, preventing a silent
+// fall-back to system CAs.
+func BuildTLSTransportErr(opts TLSOptions) (*http.Transport, error) {
+	if opts.CACertPath == "" && !opts.InsecureSkipVerify {
+		return nil, nil
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12} // #nosec G402 -- operator-controlled TLS settings.
 	if opts.InsecureSkipVerify {
 		tlsConfig.InsecureSkipVerify = true // #nosec G402 -- operator opt-in for dev/testing.
 	}
 	if opts.CACertPath != "" {
 		caCert, err := os.ReadFile(opts.CACertPath) // #nosec G304 -- path from operator config.
-		if err == nil {
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM(caCert)
-			tlsConfig.RootCAs = pool
+		if err != nil {
+			return nil, fmt.Errorf("read ca cert %s: %w", opts.CACertPath, err)
 		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("parse ca cert %s: no valid PEM certificates found", opts.CACertPath)
+		}
+		tlsConfig.RootCAs = pool
 	}
-	return &http.Transport{TLSClientConfig: tlsConfig}
+	return &http.Transport{TLSClientConfig: tlsConfig}, nil
 }
 
 // Step is a generic workflow step payload.
@@ -188,6 +240,16 @@ func escapePathSegment(value string) string {
 	return url.PathEscape(value)
 }
 
+// redactSecrets replaces any occurrence of the client's API key in the given
+// string with a redacted placeholder. This prevents credential leakage if a
+// server error response echoes back request headers.
+func (c *Client) redactSecrets(s string) string {
+	if len(c.APIKey) >= 8 && strings.Contains(s, c.APIKey) {
+		return strings.ReplaceAll(s, c.APIKey, "[REDACTED]")
+	}
+	return s
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
 	return c.doJSONWithHeaders(ctx, method, path, body, out, nil)
 }
@@ -233,10 +295,17 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, bod
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(resp.Body)
+		// Limit error body read to 1 MiB to prevent OOM from oversized responses.
+		const maxErrBody = 1 << 20
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 		msg := strings.TrimSpace(string(data))
 		if msg == "" {
 			msg = resp.Status
+		}
+		// Redact API key from error body in case the server echoes it back.
+		msg = c.redactSecrets(msg)
+		if readErr != nil {
+			return fmt.Errorf("unexpected status %d: %s (body read error: %w)", resp.StatusCode, msg, readErr)
 		}
 		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, msg)
 	}
@@ -294,16 +363,6 @@ func (c *Client) StartRunWithOptions(ctx context.Context, workflowID string, inp
 		return "", err
 	}
 	return resp.RunID, nil
-}
-
-// ApproveStep approves or rejects a waiting approval step.
-func (c *Client) ApproveStep(ctx context.Context, workflowID, runID, stepID string, approved bool) error {
-	if workflowID == "" || runID == "" || stepID == "" {
-		return fmt.Errorf("workflow id, run id, and step id are required")
-	}
-	body := map[string]bool{"approved": approved}
-	path := "/api/v1/workflows/" + escapePathSegment(workflowID) + "/runs/" + escapePathSegment(runID) + "/steps/" + escapePathSegment(stepID) + "/approve"
-	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }
 
 // GetRun fetches a workflow run by ID.

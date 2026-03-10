@@ -129,10 +129,12 @@ export function useAuditLog(filters: AuditFilters = {}) {
     staleTime: 15_000,
   });
 
+  const filtersKey = JSON.stringify(filters);
   const filtered = useMemo(() => {
     if (!query.data?.items) return [];
     return applySort(applyFilters(query.data.items, filters), filters.sort);
-  }, [query.data, filters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query.data, filtersKey]);
 
   return { ...query, filtered };
 }

@@ -120,7 +120,7 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
       {/* Toggle */}
       <button
         type="button"
-        className="flex items-center gap-2 text-xs text-muted hover:text-ink transition"
+        className="flex items-center gap-2 text-xs text-muted-foreground hover:text-ink transition"
         onClick={() => setExpanded((v) => !v)}
       >
         <Shield className="h-3.5 w-3.5" />
@@ -132,7 +132,7 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
         <Card className="mt-2 space-y-4 p-4">
           {/* Retention section */}
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
               Retention
             </h3>
             <div className="space-y-1 text-sm text-ink">
@@ -151,7 +151,7 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
                 Events loaded: <span className="font-medium">{events.length}</span>
               </p>
             </div>
-            <p className="mt-2 text-xs italic text-muted">
+            <p className="mt-2 text-xs italic text-muted-foreground">
               Audit storage currently retains the most recent 500 events. Contact your
               administrator to configure extended retention.
             </p>
@@ -159,7 +159,7 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
 
           {/* Immutability section */}
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
               Immutability
             </h3>
             <div className="flex items-start gap-2 rounded-lg border border-border bg-surface2/30 px-3 py-2.5">
@@ -197,7 +197,7 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
                       }}
                     />
                   </div>
-                  <span className="text-xs text-muted">
+                  <span className="text-xs text-muted-foreground">
                     {progress.done}/{progress.total}
                   </span>
                 </div>
@@ -209,22 +209,22 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
                   className={cn(
                     "mt-2 flex items-start gap-2 rounded-lg border px-3 py-2.5",
                     passed
-                      ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950"
-                      : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950",
+                      ? "border-[var(--color-success)]/20 bg-[var(--color-success)]/5"
+                      : "border-destructive/20 bg-destructive/5",
                   )}
                 >
                   {passed ? (
-                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-success)]" />
                   ) : (
-                    <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                    <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                   )}
                   <div className="text-sm">
                     {passed ? (
-                      <p className="font-medium text-emerald-800 dark:text-emerald-300">
+                      <p className="font-medium text-[var(--color-success)]">
                         Verified: {result.hashMatches} event{result.hashMatches !== 1 ? "s" : ""},
                         no modifications detected.
                         {result.skipped > 0 && (
-                          <span className="font-normal text-muted">
+                          <span className="font-normal text-muted-foreground">
                             {" "}({result.skipped} skipped — no parseable hash)
                           </span>
                         )}
@@ -232,19 +232,19 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
                     ) : (
                       <div className="space-y-1">
                         {result.hashMismatches > 0 && (
-                          <p className="font-medium text-red-800 dark:text-red-300">
+                          <p className="font-medium text-destructive">
                             Warning: {result.hashMismatches} event{result.hashMismatches !== 1 ? "s" : ""}{" "}
                             failed hash verification.
                           </p>
                         )}
                         {result.orderViolations > 0 && (
-                          <p className="font-medium text-red-800 dark:text-red-300">
+                          <p className="font-medium text-destructive">
                             Warning: {result.orderViolations} event{result.orderViolations !== 1 ? "s" : ""}{" "}
                             out of chronological order.
                           </p>
                         )}
                         {result.hashMatches > 0 && (
-                          <p className="text-muted">
+                          <p className="text-muted-foreground">
                             {result.hashMatches} event{result.hashMatches !== 1 ? "s" : ""} verified
                             successfully.
                           </p>
@@ -252,7 +252,7 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
                       </div>
                     )}
                     {result.newestDate && result.oldestDate && (
-                      <p className="mt-1 text-xs text-muted">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         Chain:{" "}
                         <span className="font-mono">
                           {new Date(result.oldestDate).toLocaleDateString()}

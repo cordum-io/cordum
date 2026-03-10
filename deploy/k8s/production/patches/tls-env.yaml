@@ -14,7 +14,7 @@ spec:
         - name: NATS_URL
           value: tls://nats:4222
         - name: REDIS_URL
-          value: rediss://redis:6379
+          value: rediss://:$(REDIS_PASSWORD)@redis:6379
         - name: NATS_TLS_CA
           value: /etc/cordum/tls/client/ca.crt
         - name: NATS_TLS_CERT
@@ -44,6 +44,20 @@ spec:
           value: /etc/cordum/tls/server/tls.crt
         - name: GATEWAY_HTTP_TLS_KEY
           value: /etc/cordum/tls/server/tls.key
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 10
         volumeMounts:
         - name: cordum-client-tls
           mountPath: /etc/cordum/tls/client
@@ -75,7 +89,7 @@ spec:
         - name: NATS_URL
           value: tls://nats:4222
         - name: REDIS_URL
-          value: rediss://redis:6379
+          value: rediss://:$(REDIS_PASSWORD)@redis:6379
         - name: NATS_TLS_CA
           value: /etc/cordum/tls/client/ca.crt
         - name: NATS_TLS_CERT
@@ -121,7 +135,7 @@ spec:
         - name: NATS_URL
           value: tls://nats:4222
         - name: REDIS_URL
-          value: rediss://redis:6379
+          value: rediss://:$(REDIS_PASSWORD)@redis:6379
         - name: NATS_TLS_CA
           value: /etc/cordum/tls/client/ca.crt
         - name: NATS_TLS_CERT
@@ -169,7 +183,7 @@ spec:
         - name: NATS_URL
           value: tls://nats:4222
         - name: REDIS_URL
-          value: rediss://redis:6379
+          value: rediss://:$(REDIS_PASSWORD)@redis:6379
         - name: NATS_TLS_CA
           value: /etc/cordum/tls/client/ca.crt
         - name: NATS_TLS_CERT
@@ -222,7 +236,7 @@ spec:
         - name: CORDUM_ENV
           value: production
         - name: REDIS_URL
-          value: rediss://redis:6379
+          value: rediss://:$(REDIS_PASSWORD)@redis:6379
         - name: REDIS_TLS_CA
           value: /etc/cordum/tls/client/ca.crt
         - name: REDIS_TLS_CERT

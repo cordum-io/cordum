@@ -149,7 +149,7 @@ export function VisualRuleBuilder({ bundleId, onEditYaml }: VisualRuleBuilderPro
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-muted">
+      <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
         <Loader className="mr-2 h-4 w-4 animate-spin" />
         Loading policy rules...
       </div>
@@ -171,7 +171,7 @@ export function VisualRuleBuilder({ bundleId, onEditYaml }: VisualRuleBuilderPro
           <h3 className="font-display text-lg font-semibold text-ink">
             {bundle?.name ?? "Policy Rules"}
           </h3>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             {rules.length} rule{rules.length !== 1 ? "s" : ""} — first match wins
           </p>
         </div>
@@ -273,7 +273,7 @@ export function VisualRuleBuilder({ bundleId, onEditYaml }: VisualRuleBuilderPro
       </div>
 
       {rules.length === 0 && !addingNew && (
-        <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
+        <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
           No rules yet. Click &ldquo;Create Rule&rdquo; to create your first policy rule.
         </div>
       )}

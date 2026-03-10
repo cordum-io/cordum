@@ -63,13 +63,13 @@ export function Toast({ toast }: { toast: ToastData }) {
       <div className="flex-1 min-w-0">
         <p className="font-semibold text-sm">{toast.title}</p>
         {toast.description && (
-          <p className="text-xs text-muted mt-1">{toast.description}</p>
+          <p className="text-xs text-muted-foreground mt-1">{toast.description}</p>
         )}
       </div>
       {toast.dismissible && (
         <button
           onClick={handleDismiss}
-          className="absolute top-2 right-2 p-1 rounded-lg text-muted hover:text-ink transition-colors"
+          className="absolute top-2 right-2 p-1 rounded-lg text-muted-foreground hover:text-ink transition-colors"
         >
           <X size={14} />
         </button>

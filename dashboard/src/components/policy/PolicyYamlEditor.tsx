@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Editor, { DiffEditor, loader } from "@monaco-editor/react";
-import type { editor } from "monaco-editor";
 import { Loader, AlertTriangle, GitCompare, FileCode } from "lucide-react";
 import { put } from "../../api/client";
 import { Button } from "../ui/Button";
@@ -23,6 +22,28 @@ interface PolicyYamlEditorProps {
   bundleId: string;
 }
 
+type MonacoEditorInstance = {
+  getModel: () => { getLineMaxColumn: (lineNumber: number) => number } | null;
+};
+
+type MonacoEditorModule = {
+  MarkerSeverity: { Error: number };
+  editor: {
+    setModelMarkers: (
+      model: unknown,
+      owner: string,
+      markers: Array<{
+        severity: number;
+        message: string;
+        startLineNumber: number;
+        startColumn: number;
+        endLineNumber: number;
+        endColumn: number;
+      }>,
+    ) => void;
+  };
+};
+
 export function PolicyYamlEditor({ bundleId }: PolicyYamlEditorProps) {
   const queryClient = useQueryClient();
   const { data: bundle, isLoading, error } = usePolicyBundle(bundleId);
@@ -41,8 +62,8 @@ export function PolicyYamlEditor({ bundleId }: PolicyYamlEditorProps) {
   // Dirty flag
   const [isDirty, setIsDirty] = useState(false);
 
-  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-  const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
+  const editorRef = useRef<MonacoEditorInstance | null>(null);
+  const monacoRef = useRef<MonacoEditorModule | null>(null);
 
   // Sync content → YAML when bundle data changes
   useEffect(() => {
@@ -61,7 +82,7 @@ export function PolicyYamlEditor({ bundleId }: PolicyYamlEditorProps) {
     const monaco = monacoRef.current;
     if (!model || !monaco) return;
 
-    const markers: editor.IMarkerData[] = validationErrors.map((err) => ({
+    const markers = validationErrors.map((err) => ({
       severity: monaco.MarkerSeverity.Error,
       message: err.message,
       startLineNumber: err.line,
@@ -107,7 +128,7 @@ export function PolicyYamlEditor({ bundleId }: PolicyYamlEditorProps) {
   }, [yamlContent, saveMutation, editable]);
 
   const handleEditorMount = useCallback(
-    (ed: editor.IStandaloneCodeEditor, monaco: typeof import("monaco-editor")) => {
+    (ed: MonacoEditorInstance, monaco: MonacoEditorModule) => {
       editorRef.current = ed;
       monacoRef.current = monaco;
     },
@@ -120,7 +141,7 @@ export function PolicyYamlEditor({ bundleId }: PolicyYamlEditorProps) {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-muted">
+      <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
         <Loader className="mr-2 h-4 w-4 animate-spin" />
         Loading policy bundle...
       </div>
@@ -203,7 +224,7 @@ export function PolicyYamlEditor({ bundleId }: PolicyYamlEditorProps) {
       )}
 
       {!editable && (
-        <div className="rounded-xl border border-border bg-surface2/40 px-4 py-3 text-xs text-muted">
+        <div className="rounded-xl border border-border bg-surface2/40 px-4 py-3 text-xs text-muted-foreground">
           This bundle is managed by a pack and is read-only. Create or edit a
           bundle under `secops/` to make changes.
         </div>

@@ -56,12 +56,14 @@ export const useUiStore = create<UiState>((set) => ({
       const next: Theme =
         s.theme === "light" ? "dark" : s.theme === "dark" ? "system" : "light";
       const resolved = resolveTheme(next);
+      window.localStorage.setItem("cordum-theme", next);
       broadcastSync({ type: "theme-change", theme: next });
       return { theme: next, resolvedTheme: resolved };
     }),
   setTheme: (theme) =>
     set(() => {
       const resolved = resolveTheme(theme);
+      window.localStorage.setItem("cordum-theme", theme);
       return { theme, resolvedTheme: resolved };
     }),
   syncSystemTheme: () =>

@@ -57,7 +57,7 @@ function HealthIcon({ status }: { status: string }) {
     case "failed":
       return <XCircle className="h-4 w-4 text-danger" />;
     default:
-      return <Activity className="h-4 w-4 text-muted" />;
+      return <Activity className="h-4 w-4 text-muted-foreground" />;
   }
 }
 
@@ -76,7 +76,7 @@ function Section({
         <Icon className="h-4 w-4 text-accent" />
         {title}
       </div>
-      <div className="rounded-2xl border border-border bg-white/60 p-4">
+      <div className="rounded-2xl border border-border bg-card/60 p-4">
         {children}
       </div>
     </div>
@@ -86,7 +86,7 @@ function Section({
 function KVRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-4 py-1.5 text-sm">
-      <span className="shrink-0 text-muted">{label}</span>
+      <span className="shrink-0 text-muted-foreground">{label}</span>
       <span className="text-right text-ink break-all">{value}</span>
     </div>
   );
@@ -113,14 +113,14 @@ function VerificationCheckItem({ check }: { check: PackVerifyCheck }) {
         <span className="flex-1 text-ink">{check.name}</span>
         {hasDetails && (
           expanded ? (
-            <ChevronDown className="h-3.5 w-3.5 text-muted" />
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-muted" />
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
           )
         )}
       </button>
       {expanded && hasDetails && (
-        <div className="ml-6 mt-1 text-xs text-muted">
+        <div className="ml-6 mt-1 text-xs text-muted-foreground">
           {check.message && <p>{check.message}</p>}
           {check.details && (
             <pre className="mt-1 whitespace-pre-wrap rounded bg-surface2 p-2 font-mono text-[11px]">
@@ -147,11 +147,11 @@ function VerificationResults({ result }: { result: PackVerifyResult }) {
             ) : (
               <Badge variant="danger">Failed</Badge>
             )}
-            <span className="text-xs text-muted">
+            <span className="text-xs text-muted-foreground">
               {passCount}/{result.checks.length} checks passed
             </span>
           </div>
-          <span className="text-xs text-muted">
+          <span className="text-xs text-muted-foreground">
             {new Date(result.verified_at).toLocaleString()}
           </span>
         </div>
@@ -182,9 +182,9 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <button onClick={onClose} className="rounded-full p-1.5 hover:bg-surface2">
-            <ArrowLeft className="h-4 w-4 text-muted" />
+            <ArrowLeft className="h-4 w-4 text-muted-foreground" />
           </button>
-          <span className="text-sm text-muted">Loading...</span>
+          <span className="text-sm text-muted-foreground">Loading...</span>
         </div>
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
@@ -200,7 +200,7 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <button onClick={onClose} className="rounded-full p-1.5 hover:bg-surface2">
-            <ArrowLeft className="h-4 w-4 text-muted" />
+            <ArrowLeft className="h-4 w-4 text-muted-foreground" />
           </button>
           <span className="text-sm text-danger">
             Failed to load pack{error instanceof Error ? `: ${error.message}` : ""}
@@ -221,18 +221,18 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <button onClick={onClose} className="rounded-full p-1.5 hover:bg-surface2">
-            <ArrowLeft className="h-4 w-4 text-muted" />
+            <ArrowLeft className="h-4 w-4 text-muted-foreground" />
           </button>
           <Package className="h-6 w-6 text-accent" />
           <div>
             <h2 className="font-display text-lg font-bold text-ink">{pack.name}</h2>
-            <span className="text-xs text-muted">v{pack.version}</span>
+            <span className="text-xs text-muted-foreground">v{pack.version}</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant={statusVariant(pack.status)}>{pack.status}</Badge>
           <button onClick={onClose} className="rounded-full p-1.5 hover:bg-surface2">
-            <X className="h-4 w-4 text-muted" />
+            <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
       </div>
@@ -240,7 +240,7 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
       {/* Manifest */}
       <Section title="Manifest" icon={Package}>
         {manifestEntries.length === 0 ? (
-          <p className="text-xs text-muted">No manifest data available.</p>
+          <p className="text-xs text-muted-foreground">No manifest data available.</p>
         ) : (
           <div className="divide-y divide-border">
             {manifestEntries.map(([key, value]) => (
@@ -257,7 +257,7 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
       {/* Config */}
       <Section title="Configuration" icon={Settings}>
         {configEntries.length === 0 ? (
-          <p className="text-xs text-muted">No configuration set.</p>
+          <p className="text-xs text-muted-foreground">No configuration set.</p>
         ) : (
           <div className="divide-y divide-border">
             {configEntries.map(([key, value]) => (
@@ -274,7 +274,7 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
       {/* Capabilities */}
       <Section title="Capabilities" icon={Shield}>
         {pack.capabilities.length === 0 ? (
-          <p className="text-xs text-muted">No capabilities declared.</p>
+          <p className="text-xs text-muted-foreground">No capabilities declared.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {pack.capabilities.map((cap) => (
@@ -294,7 +294,7 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
             <span className="text-sm font-medium text-ink">{pack.poolAssignment}</span>
           </div>
         ) : (
-          <p className="text-xs text-muted">No pool assigned.</p>
+          <p className="text-xs text-muted-foreground">No pool assigned.</p>
         )}
       </Section>
 
@@ -327,7 +327,7 @@ export default function PackDetail({ packId, pack: prefetched, onClose }: PackDe
           {verify.isPending ? "Verifying..." : "Verify Integrity"}
         </Button>
         {verifyResult && (
-          <span className="text-xs text-muted">
+          <span className="text-xs text-muted-foreground">
             Last verified: {new Date(verifyResult.verified_at).toLocaleString()}
           </span>
         )}

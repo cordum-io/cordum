@@ -549,6 +549,43 @@ func aggregateChildren(parent *StepRun) StepStatus {
 	return StepStatusRunning
 }
 
+// chainOutcome represents the result of walking an on_error handler chain.
+type chainOutcome int
+
+const (
+	chainPending   chainOutcome = iota // a handler in the chain is still pending/running
+	chainRecovered                     // a handler in the chain succeeded (recovery)
+	chainExhausted                     // all handlers in the chain failed with no further on_error
+)
+
+// walkOnErrorChain iteratively follows the on_error chain starting from startStepID.
+// It returns chainPending if any handler is still processing, chainRecovered if any
+// handler succeeded, or chainExhausted if the chain is exhausted with no recovery.
+// Uses a visited map for cycle detection.
+func walkOnErrorChain(wfDef *Workflow, run *WorkflowRun, startStepID string) chainOutcome {
+	visited := map[string]bool{}
+	cur := startStepID
+	for {
+		if visited[cur] {
+			return chainExhausted // cycle detected
+		}
+		visited[cur] = true
+		stepDef := wfDef.Steps[cur]
+		if stepDef == nil || stepDef.OnError == "" {
+			return chainExhausted
+		}
+		handlerSR := run.Steps[stepDef.OnError]
+		if handlerSR == nil || handlerSR.Status == "" || handlerSR.Status == StepStatusPending || handlerSR.Status == StepStatusRunning {
+			return chainPending
+		}
+		if handlerSR.Status == StepStatusSucceeded {
+			return chainRecovered
+		}
+		// Handler failed — walk to its own on_error
+		cur = stepDef.OnError
+	}
+}
+
 func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 	if run == nil || wfDef == nil {
 		return
@@ -599,27 +636,37 @@ func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 		case StepStatusFailed:
 			stepDef := wfDef.Steps[stepID]
 			if stepDef != nil && stepDef.OnError != "" {
-				targetSR := run.Steps[stepDef.OnError]
-				if targetSR == nil || targetSR.Status == "" || targetSR.Status == StepStatusPending || targetSR.Status == StepStatusRunning {
-					// on_error handler is still pending/running — don't mark run as failed yet
+				switch walkOnErrorChain(wfDef, run, stepID) {
+				case chainPending:
 					allDone = false
-					break
-				}
-				if targetSR.Status == StepStatusSucceeded {
-					// on_error handler succeeded — treat failure as handled
+				case chainRecovered:
 					completed++
-					break
+				case chainExhausted:
+					hasFailed = true
 				}
+			} else {
+				hasFailed = true
 			}
-			hasFailed = true
 		case StepStatusCancelled:
 			if isSwitchBranchNotTaken(sr) {
 				completed++
-				break
+			} else {
+				hasFailed = true
 			}
-			hasFailed = true
 		case StepStatusTimedOut:
-			hasTimedOut = true
+			stepDef := wfDef.Steps[stepID]
+			if stepDef != nil && stepDef.OnError != "" {
+				switch walkOnErrorChain(wfDef, run, stepID) {
+				case chainPending:
+					allDone = false
+				case chainRecovered:
+					completed++
+				case chainExhausted:
+					hasTimedOut = true
+				}
+			} else {
+				hasTimedOut = true
+			}
 		case StepStatusSucceeded:
 			completed++
 		case StepStatusWaiting:
