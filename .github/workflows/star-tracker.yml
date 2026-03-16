@@ -97,10 +97,26 @@ jobs:
           echo "📊 Current stargazers: ${TOTAL}"
 
       - name: Download previous snapshot
-        uses: actions/download-artifact@v4
-        with:
-          name: stargazer-snapshot
-          path: /tmp/previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/previous
+          # Find the latest artifact named "stargazer-snapshot" across all runs
+          ARTIFACT_ID=$(gh api "repos/${REPO_FULL_NAME}/actions/artifacts?name=stargazer-snapshot&per_page=1" \
+            --jq '.artifacts[0].id // empty' 2>/dev/null || true)
+          if [ -z "$ARTIFACT_ID" ]; then
+            echo "No previous snapshot artifact found"
+            exit 0
+          fi
+          gh api "repos/${REPO_FULL_NAME}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            > /tmp/previous/snapshot.zip 2>/dev/null || true
+          if [ -f /tmp/previous/snapshot.zip ] && [ -s /tmp/previous/snapshot.zip ]; then
+            cd /tmp/previous && unzip -o snapshot.zip && rm snapshot.zip
+            # The uploaded file is current_usernames.txt, rename to expected name
+            if [ -f current_usernames.txt ]; then
+              mv current_usernames.txt stargazers.txt
+            fi
+          fi
         continue-on-error: true
 
       - name: Compare and detect unstars
