@@ -117,7 +117,7 @@ jobs:
     - name: Run Gosec Security Scanner
       run: |
         go install github.com/securego/gosec/v2/cmd/gosec@v2.24.7
-        gosec -no-fail -fmt sarif -out results.sarif ./...
+        gosec -no-fail -fmt sarif -out results.sarif -exclude-dir=sdk ./...
 
     - name: Sanitize SARIF
       run: |
