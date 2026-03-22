@@ -126,8 +126,11 @@ jobs:
       run: go mod download
 
     - name: Run Gosec Security Scanner
+      env:
+        GOFLAGS: ""
+        GOTOOLCHAIN: local
       run: |
-        go install github.com/securego/gosec/v2/cmd/gosec@latest
+        go install github.com/securego/gosec/v2/cmd/gosec@v2.22.4
         gosec -no-fail -fmt sarif -out results.sarif -exclude-dir=vendor ./cmd/... ./core/... ./sdk/...
 
     - name: Sanitize SARIF
