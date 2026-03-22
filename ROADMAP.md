@@ -193,7 +193,7 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**. Ba
 
 ### Goals
 - 🎯 **v1.0.0 GA Release**
-- 🎯 **100+ Production Adopters**
+- 🎯 **Grow Early Adopter Community**
 - 🎯 **Public Pack Registry**
 
 ### Features
