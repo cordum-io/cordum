@@ -17,7 +17,7 @@ export default defineConfig({
       ),
       "@dagrejs/graphlib": path.resolve(
         __dirname,
-        "node_modules/@dagrejs/graphlib/index.js",
+        "node_modules/@dagrejs/graphlib/dist/graphlib.cjs.js",
       ),
     },
   },

@@ -398,28 +398,32 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			"approval_required": record.ApprovalRequired,
 			"approval_ref":      record.ApprovalRef,
 		}
+		approvalRecord, approvalErr := s.jobStore.GetApprovalRecord(r.Context(), job.ID)
+		hasResolvedApproval := approvalErr == nil && approvalRecord.ApprovedBy != ""
 		// Merge approval resolution fields when an approval record exists.
-		if approval, err := s.jobStore.GetApprovalRecord(r.Context(), job.ID); err == nil && approval.ApprovedBy != "" {
-			item["resolved_by"] = approval.ApprovedBy
-			item["resolved_comment"] = approval.Note
-			item["resolution"] = approval.Reason
-			if approval.ApprovedAt > 0 {
-				item["resolved_at"] = approval.ApprovedAt
+		if hasResolvedApproval {
+			item["resolved_by"] = approvalRecord.ApprovedBy
+			item["resolved_comment"] = approvalRecord.Note
+			item["resolution"] = approvalRecord.Reason
+			if approvalRecord.ApprovedAt > 0 {
+				item["resolved_at"] = approvalRecord.ApprovedAt
 			}
 		}
 		// Enrich with workflow labels from the original job request so the
 		// dashboard can distinguish gate approvals from policy approvals.
-		// Also skip approvals whose workflow run has already terminated.
+		// Also skip unresolved approvals whose workflow run has already
+		// terminated. Resolved approvals must remain visible in history.
 		if req, err := s.jobStore.GetJobRequest(r.Context(), job.ID); err == nil && req != nil {
 			var (
 				payload       map[string]any
 				contextStatus = "absent"
 			)
 			if req.Labels != nil {
-				// Filter out stale approvals: if the run is terminal, skip this item.
+				// Filter out stale unresolved approvals: if the run is terminal,
+				// skip only items that have not been resolved yet.
 				if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
 					if run, runErr := s.workflowStore.GetRun(r.Context(), runID); runErr == nil && run != nil {
-						if wf.IsTerminalRunStatus(run.Status) {
+						if wf.IsTerminalRunStatus(run.Status) && !hasResolvedApproval {
 							continue
 						}
 					}
