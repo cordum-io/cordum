@@ -27,10 +27,12 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/tlsreload"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
@@ -110,6 +112,29 @@ func Run(cfg *config.Config) error {
 		return fmt.Errorf("load safety policy: %w", err)
 	}
 
+	var natsBus *bus.NatsBus
+	natsBus, err = bus.NewNatsBus(cfg.NatsURL)
+	if err != nil {
+		slog.Warn("safety-kernel: NATS connection failed, relying on poll", "err", err)
+	} else {
+		defer natsBus.Close()
+	}
+
+	notifyCh := make(chan struct{}, 1)
+	if natsBus != nil {
+		if err := natsBus.Subscribe(capsdk.SubjectConfigChanged, "", func(_ *pb.BusPacket) error {
+			select {
+			case notifyCh <- struct{}{}:
+			default:
+			}
+			return nil
+		}); err != nil {
+			slog.Warn("safety-kernel: failed to subscribe to config change notifications, relying on poll", "err", err)
+		} else {
+			slog.Info("safety-kernel: subscribed to config change notifications", "subject", capsdk.SubjectConfigChanged)
+		}
+	}
+
 	lis, err := net.Listen("tcp", cfg.SafetyKernelAddr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", cfg.SafetyKernelAddr, err)
@@ -167,7 +192,7 @@ func Run(cfg *config.Config) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			srv.watchPolicy(lifecycleCtx, loader)
+			srv.watchPolicy(lifecycleCtx, loader, notifyCh)
 		}()
 	}
 
@@ -741,7 +766,7 @@ func pathMatchImpl(pattern, value string) (bool, error) {
 	return path.Match(pattern, value)
 }
 
-func (s *server) watchPolicy(ctx context.Context, loader *policyLoader) {
+func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh <-chan struct{}) {
 	interval := 30 * time.Second
 	if raw := os.Getenv("SAFETY_POLICY_RELOAD_INTERVAL"); raw != "" {
 		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
@@ -750,26 +775,35 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader) {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	reload := func(trigger string) {
+		slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
+
+		policy, snapshot, err := loader.Load(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			slog.Error("safety-kernel: policy reload failed", "err", err, "trigger", trigger)
+			return
+		}
+		s.mu.RLock()
+		current := s.snapshot
+		s.mu.RUnlock()
+		if snapshot != "" && snapshot != current {
+			s.setPolicy(policy, snapshot)
+			slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			policy, snapshot, err := loader.Load(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				slog.Error("safety-kernel: policy reload failed", "err", err)
-				continue
-			}
-			s.mu.RLock()
-			current := s.snapshot
-			s.mu.RUnlock()
-			if snapshot != "" && snapshot != current {
-				s.setPolicy(policy, snapshot)
-				slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot)
-			}
+			reload("poll")
+		case <-notifyCh:
+			reload("notification")
 		}
 	}
 }

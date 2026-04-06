@@ -495,7 +495,7 @@ func TestWatchPolicy_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		srv.watchPolicy(ctx, loader)
+		srv.watchPolicy(ctx, loader, nil)
 		close(done)
 	}()
 
@@ -507,6 +507,75 @@ func TestWatchPolicy_ContextCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("watchPolicy did not exit after context cancellation (goroutine leak)")
 	}
+}
+
+func TestWatchPolicyNotificationTrigger(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "1h")
+
+	dir := t.TempDir()
+	policyPath := dir + "/policy.yaml"
+	if err := os.WriteFile(policyPath, []byte("default_tenant: default\ntenants:\n  default:\n    allow_topics:\n      - job.default.*\n"), 0o600); err != nil {
+		t.Fatalf("write initial policy: %v", err)
+	}
+
+	srv := &server{}
+	srv.setPolicy(&config.SafetyPolicy{
+		DefaultTenant: "default",
+		Tenants: map[string]config.TenantPolicy{
+			"default": {AllowTopics: []string{"job.default.*"}},
+		},
+	}, "initial-snapshot")
+
+	loader := &policyLoader{source: policyPath}
+	notifyCh := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		srv.watchPolicy(ctx, loader, notifyCh)
+		close(done)
+	}()
+
+	if err := os.WriteFile(policyPath, []byte("default_tenant: updated\ntenants:\n  updated:\n    allow_topics:\n      - job.updated.*\n"), 0o600); err != nil {
+		cancel()
+		<-done
+		t.Fatalf("write updated policy: %v", err)
+	}
+
+	notifyCh <- struct{}{}
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		srv.mu.RLock()
+		currentPolicy := srv.policy
+		currentSnapshot := srv.snapshot
+		srv.mu.RUnlock()
+		if currentPolicy != nil && currentPolicy.DefaultTenant == "updated" && currentSnapshot != "initial-snapshot" {
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("watchPolicy did not exit after notification test cancellation")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchPolicy did not exit after notification timeout cancellation")
+	}
+
+	srv.mu.RLock()
+	currentPolicy := srv.policy
+	currentSnapshot := srv.snapshot
+	srv.mu.RUnlock()
+	if currentPolicy == nil {
+		t.Fatal("expected policy to be loaded after notification")
+	}
+	t.Fatalf("expected notification-triggered reload to update policy within deadline, got tenant=%q snapshot=%q", currentPolicy.DefaultTenant, currentSnapshot)
 }
 
 func newTestRedisServer(t *testing.T) (*server, *miniredis.Miniredis) {
@@ -1113,7 +1182,7 @@ func TestWatchPolicyReloadFailureKeepsOldPolicy(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		srv.watchPolicy(ctx, loader)
+		srv.watchPolicy(ctx, loader, nil)
 		close(done)
 	}()
 

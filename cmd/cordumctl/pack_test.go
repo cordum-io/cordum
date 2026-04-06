@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -153,6 +156,92 @@ func TestRecordsToAny(t *testing.T) {
 	}
 }
 
+func TestRecordsToAnyPreservesTestFields(t *testing.T) {
+	expectedTests := packTests{
+		PolicySimulations: []packPolicySimulation{
+			{
+				Name: "allow namespaced pack topic",
+				Request: packPolicySimulationRequest{
+					TenantId:   "tenant-1",
+					Topic:      "job.pack1.topic",
+					Capability: "pack1.capability",
+					RiskTags:   []string{"trusted", "internal"},
+					Requires:   []string{"approval"},
+					PackId:     "pack1",
+					ActorId:    "actor-1",
+					ActorType:  "service",
+				},
+				ExpectDecision: "ALLOW",
+			},
+		},
+	}
+	records := map[string]packRecord{
+		"pack1": {
+			ID:      "pack1",
+			Version: "1.0.0",
+			Status:  "ACTIVE",
+			Tests:   expectedTests,
+		},
+	}
+
+	out := recordsToAny(records)
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal round-trip payload: %v", err)
+	}
+
+	jsonText := string(data)
+	for _, key := range []string{
+		`"policySimulations"`,
+		`"name"`,
+		`"request"`,
+		`"expectDecision"`,
+		`"tenantId"`,
+		`"topic"`,
+		`"capability"`,
+		`"riskTags"`,
+		`"requires"`,
+		`"packId"`,
+		`"actorId"`,
+		`"actorType"`,
+	} {
+		if !strings.Contains(jsonText, key) {
+			t.Fatalf("expected JSON output to contain %s: %s", key, jsonText)
+		}
+	}
+	for _, key := range []string{
+		`"PolicySimulations"`,
+		`"Name"`,
+		`"Request"`,
+		`"ExpectDecision"`,
+		`"TenantId"`,
+		`"Topic"`,
+		`"Capability"`,
+		`"RiskTags"`,
+		`"Requires"`,
+		`"PackId"`,
+		`"ActorId"`,
+		`"ActorType"`,
+	} {
+		if strings.Contains(jsonText, key) {
+			t.Fatalf("expected JSON output to omit %s: %s", key, jsonText)
+		}
+	}
+
+	var roundTrip map[string]packRecord
+	if err := json.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatalf("unmarshal round-trip payload: %v", err)
+	}
+
+	got, ok := roundTrip["pack1"]
+	if !ok {
+		t.Fatalf("expected pack1 record in round-trip payload")
+	}
+	if !reflect.DeepEqual(got.Tests, expectedTests) {
+		t.Fatalf("unexpected round-trip tests:\nwant: %#v\ngot:  %#v", expectedTests, got.Tests)
+	}
+}
+
 func TestValidatePoolsPatch(t *testing.T) {
 	patch := map[string]any{
 		"topics": map[string]any{"job.bad": map[string]any{}},
@@ -298,6 +387,77 @@ func TestAcquirePackLocks_RetriesGlobalReleaseOnPackLockFailure(t *testing.T) {
 	release()
 	if globalReleaseCalls != 2 {
 		t.Fatalf("expected cleanup to become a no-op after successful release, got %d calls", globalReleaseCalls)
+	}
+}
+
+func TestRunPackInstallReleasesLocksOnError(t *testing.T) {
+	packDir := t.TempDir()
+	manifest := fmt.Sprintf(`
+apiVersion: cordum.io/v1
+kind: Pack
+metadata:
+  id: demo-pack
+  version: 1.0.0
+compatibility:
+  protocolVersion: %d
+`, capsdk.DefaultProtocolVersion)
+	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(strings.TrimSpace(manifest)), 0o600); err != nil {
+		t.Fatalf("write pack manifest: %v", err)
+	}
+
+	var releaseCalls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
+			var req struct {
+				Resource string `json:"resource"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode acquire lock request: %v", err)
+			}
+			switch req.Resource {
+			case "packs:global", "pack:demo-pack":
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				t.Fatalf("unexpected acquire lock resource: %q", req.Resource)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
+			var req struct {
+				Resource string `json:"resource"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode release lock request: %v", err)
+			}
+			releaseCalls = append(releaseCalls, req.Resource)
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			if got := r.URL.Query().Get("scope"); got != packRegistryScope {
+				t.Fatalf("unexpected config scope: %q", got)
+			}
+			if got := r.URL.Query().Get("scope_id"); got != packRegistryID {
+				t.Fatalf("unexpected config scope_id: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"scope":"system","scope_id":"packs","data":{}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			http.Error(w, "simulated registry failure", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+
+	err := runPackInstall([]string{"--gateway", srv.URL, "--force", packDir})
+	if err == nil {
+		t.Fatal("expected runPackInstall to return an error")
+	}
+	if !strings.Contains(err.Error(), "update pack registry") {
+		t.Fatalf("expected updatePackRegistry error, got: %v", err)
+	}
+
+	wantReleaseCalls := []string{"pack:demo-pack", "packs:global"}
+	if !reflect.DeepEqual(releaseCalls, wantReleaseCalls) {
+		t.Fatalf("unexpected release calls\n got: %v\nwant: %v", releaseCalls, wantReleaseCalls)
 	}
 }
 

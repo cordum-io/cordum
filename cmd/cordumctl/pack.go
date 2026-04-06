@@ -102,24 +102,24 @@ type packPolicyOverlay struct {
 }
 
 type packTests struct {
-	PolicySimulations []packPolicySimulation `yaml:"policySimulations"`
+	PolicySimulations []packPolicySimulation `yaml:"policySimulations" json:"policySimulations"`
 }
 
 type packPolicySimulation struct {
-	Name           string                      `yaml:"name"`
-	Request        packPolicySimulationRequest `yaml:"request"`
-	ExpectDecision string                      `yaml:"expectDecision"`
+	Name           string                      `yaml:"name" json:"name"`
+	Request        packPolicySimulationRequest `yaml:"request" json:"request"`
+	ExpectDecision string                      `yaml:"expectDecision" json:"expectDecision"`
 }
 
 type packPolicySimulationRequest struct {
-	TenantId   string   `yaml:"tenantId"`
-	Topic      string   `yaml:"topic"`
-	Capability string   `yaml:"capability"`
-	RiskTags   []string `yaml:"riskTags"`
-	Requires   []string `yaml:"requires"`
-	PackId     string   `yaml:"packId"`
-	ActorId    string   `yaml:"actorId"`
-	ActorType  string   `yaml:"actorType"`
+	TenantId   string   `yaml:"tenantId" json:"tenantId"`
+	Topic      string   `yaml:"topic" json:"topic"`
+	Capability string   `yaml:"capability" json:"capability"`
+	RiskTags   []string `yaml:"riskTags" json:"riskTags"`
+	Requires   []string `yaml:"requires" json:"requires"`
+	PackId     string   `yaml:"packId" json:"packId"`
+	ActorId    string   `yaml:"actorId" json:"actorId"`
+	ActorType  string   `yaml:"actorType" json:"actorType"`
 }
 
 type packRecord struct {
@@ -183,7 +183,9 @@ func runPackCmd(args []string) {
 	case "create":
 		runPackCreate(args[1:])
 	case "install":
-		runPackInstall(args[1:])
+		if err := runPackInstall(args[1:]); err != nil {
+			fail(err.Error())
+		}
 	case "uninstall":
 		runPackUninstall(args[1:])
 	case "list":
@@ -198,7 +200,7 @@ func runPackCmd(args []string) {
 	}
 }
 
-func runPackInstall(args []string) {
+func runPackInstall(args []string) error {
 	fs := newFlagSet("pack install")
 	dryRun := fs.Bool("dry-run", false, "print planned changes without writing")
 	force := fs.Bool("force", false, "skip core version check")
@@ -206,46 +208,54 @@ func runPackInstall(args []string) {
 	inactive := fs.Bool("inactive", false, "install without pool mappings")
 	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
-		fail("pack path or url required")
+		return errors.New("pack path or url required")
 	}
 
 	tlsTransport, tlsErr := sdk.BuildTLSTransportErr(fs.tlsOptions())
 	if tlsErr != nil {
-		fail(fmt.Sprintf("tls configuration error: %v", tlsErr))
+		return fmt.Errorf("tls configuration error: %w", tlsErr)
 	}
 
 	bundle, err := loadPackBundle(fs.Arg(0), tlsTransport)
-	check(err)
+	if err != nil {
+		return err
+	}
 	defer bundle.Cleanup()
 
 	manifest, err := loadPackManifest(bundle.Dir)
-	check(err)
+	if err != nil {
+		return err
+	}
 	if err := validatePackManifest(manifest); err != nil {
-		fail(err.Error())
+		return err
 	}
 	if err := ensureProtocolCompatible(manifest); err != nil {
-		fail(err.Error())
+		return err
 	}
 
 	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, tlsTransport)
 	ctx := context.Background()
 	if !*force {
 		if err := enforceCoreVersion(ctx, client, manifest); err != nil {
-			fail(err.Error())
+			return err
 		}
 	}
 	owner := lockOwner()
 	release, err := acquirePackLocks(ctx, client, manifest.Metadata.ID, owner)
 	if err != nil {
 		release()
+		return err
 	}
-	check(err)
 	defer release()
 
 	schemaPlans, err := planSchemas(ctx, client, bundle.Dir, manifest, *upgrade)
-	check(err)
+	if err != nil {
+		return err
+	}
 	workflowPlans, err := planWorkflows(ctx, client, bundle.Dir, manifest, *upgrade)
-	check(err)
+	if err != nil {
+		return err
+	}
 
 	appliedConfig := []packAppliedConfigOverlay{}
 	appliedPolicy := []packAppliedPolicyOverlay{}
@@ -264,16 +274,11 @@ func runPackInstall(args []string) {
 
 	if *dryRun {
 		fmt.Printf("pack %s %s: dry-run\n", manifest.Metadata.ID, manifest.Metadata.Version)
-		return
+		return nil
 	}
 
 	rollback := func() {
 		rollbackPackInstall(ctx, client, appliedPolicyChanges, appliedConfigChanges, appliedWorkflows, appliedSchemas)
-	}
-
-	installFail := func(err error) {
-		rollback()
-		fail(err.Error())
 	}
 
 	for _, plan := range schemaPlans {
@@ -281,7 +286,8 @@ func runPackInstall(args []string) {
 			continue
 		}
 		if err := client.registerSchema(ctx, plan.ID, plan.Schema); err != nil {
-			installFail(err)
+			rollback()
+			return err
 		}
 		appliedSchemas = append(appliedSchemas, plan)
 	}
@@ -290,7 +296,8 @@ func runPackInstall(args []string) {
 			continue
 		}
 		if err := client.createWorkflow(ctx, plan.Workflow); err != nil {
-			installFail(err)
+			rollback()
+			return err
 		}
 		appliedWorkflows = append(appliedWorkflows, plan)
 	}
@@ -301,7 +308,8 @@ func runPackInstall(args []string) {
 		}
 		applied, err := applyConfigOverlay(ctx, client, overlay, manifest.Metadata.ID, bundle.Dir)
 		if err != nil {
-			installFail(err)
+			rollback()
+			return err
 		}
 		if applied.Overlay.Name != "" {
 			appliedConfig = append(appliedConfig, applied.Overlay)
@@ -311,7 +319,8 @@ func runPackInstall(args []string) {
 	for _, overlay := range manifest.Overlays.Policy {
 		applied, err := applyPolicyOverlay(ctx, client, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundle.Dir)
 		if err != nil {
-			installFail(err)
+			rollback()
+			return err
 		}
 		if applied.Overlay.Name != "" {
 			appliedPolicy = append(appliedPolicy, applied.Overlay)
@@ -345,8 +354,12 @@ func runPackInstall(args []string) {
 		Tests: manifest.Tests,
 	}
 
-	check(updatePackRegistry(ctx, client, record))
+	if err := updatePackRegistry(ctx, client, record); err != nil {
+		rollback()
+		return err
+	}
 	fmt.Printf("installed pack %s %s (%s)\n", record.ID, record.Version, record.Status)
+	return nil
 }
 
 func runPackUninstall(args []string) {
