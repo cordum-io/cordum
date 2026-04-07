@@ -17,6 +17,7 @@ ENV GONOSUMDB=${GONOSUMDB}
 ENV GONOPROXY=${GONOPROXY}
 RUN if [ "${USE_LOCAL_CAP}" != "1" ]; then \
       go mod edit -dropreplace github.com/cordum-io/cap/v2; \
+      cd sdk && go mod edit -dropreplace github.com/cordum-io/cap/v2; cd ..; \
     fi
 # Note: Only /go/pkg/mod cache mount is used. The go-build cache mount
 # was removed because BuildKit persists stale .a files across builds,
@@ -27,6 +28,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 RUN if [ "${USE_LOCAL_CAP}" != "1" ]; then \
       go mod edit -dropreplace github.com/cordum-io/cap/v2; \
+      cd sdk && go mod edit -dropreplace github.com/cordum-io/cap/v2; cd ..; \
     fi
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
