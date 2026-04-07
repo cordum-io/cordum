@@ -19,6 +19,10 @@ python -m http.server 8000
 # Open http://localhost:8000
 ```
 
+## Note on run chat endpoints
+
+The run chat endpoints (`POST /workflows/runs/:id/chat`, `GET /workflows/runs/:id/chat`) are REST-only and not included in the generated gRPC swagger spec. See `docs/api.md` for their documentation.
+
 ## Generating the gRPC spec
 
 ```bash
