@@ -43,6 +43,7 @@
     "framer-motion": "^12.23.22",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
+    "lodash": "^4.18.1",
     "lucide-react": "^1.7.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
