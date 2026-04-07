@@ -13,13 +13,13 @@ import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
-  ArrowLeft, Copy, Clock, Shield, ShieldCheck, ShieldX, ShieldAlert,
+  ArrowLeft, Copy, Check, Clock, Shield, ShieldCheck, ShieldX, ShieldAlert,
   AlertTriangle, Eye, Tag, Zap, CheckCircle2, XCircle, Timer,
   Store, Package, Users, Building2, CreditCard, ChevronRight,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
 import { useElapsedTimer } from "@/hooks/useElapsedTimer";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { useEventStore } from "@/state/events";
 import { JobActions } from "@/components/jobs/JobActions";
@@ -187,6 +187,17 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
   const Icon = config.icon;
   const summary = generateJobSummary(job);
   const rule = job.safetyDecision?.matchedRule;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyJobId = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(job.id);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Copy failed");
+    }
+  }, [job.id]);
 
   return (
     <motion.div
@@ -255,9 +266,19 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
           <span className="text-xs font-mono text-muted-foreground" title={job.createdAt}>
             {formatRelativeTime(job.createdAt)}
           </span>
-          <span className="text-[10px] font-mono text-muted-foreground/60 tracking-tight">
-            {job.id.slice(0, 12)}\u2026
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono text-muted-foreground/60 tracking-tight">
+              {job.id.slice(0, 12)}\u2026
+            </span>
+            <button
+              type="button"
+              onClick={handleCopyJobId}
+              aria-label="Copy job ID"
+              className="text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+            </button>
+          </div>
         </div>
       </div>
     </motion.div>

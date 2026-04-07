@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import {
   ArrowLeft, Send, Briefcase, Shield, ShieldAlert, GitBranch, Clock,
   CheckCircle2, XCircle, Loader2, MessageSquare, AlertTriangle,
-  ChevronDown, Copy, RotateCcw, Hand,
+  ChevronDown, Copy, Check, RotateCcw, Hand,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
 import { isRunVisibilityActive, isRunVisibilityTerminal, toRunVisibilityState } from "@/lib/runVisibility";
@@ -90,6 +90,7 @@ export default function WorkflowRunDetailPage() {
   const [chatInput, setChatInput] = useState("");
   const [selectedStep, setSelectedStep] = useState<RunStep | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [copiedRunId, setCopiedRunId] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Real data hooks
@@ -214,6 +215,18 @@ export default function WorkflowRunDetailPage() {
     setChatInput("");
   }, [chatInput, chatMutation]);
 
+  const handleCopyRunId = useCallback(async () => {
+    if (!runId) return;
+
+    try {
+      await navigator.clipboard.writeText(runId);
+      setCopiedRunId(true);
+      setTimeout(() => setCopiedRunId(false), 1500);
+    } catch {
+      toast.error("Copy failed");
+    }
+  }, [runId]);
+
   const handleCancel = () => {
     if (!workflowId || !runId) return;
     cancelMutation.mutate(
@@ -310,6 +323,16 @@ export default function WorkflowRunDetailPage() {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-display font-semibold text-foreground">Run {runId?.slice(0, 8)}</span>
+              {runId && (
+                <button
+                  type="button"
+                  onClick={handleCopyRunId}
+                  aria-label="Copy run ID"
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {copiedRunId ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                </button>
+              )}
               <StatusBadge
                 variant={runStatusVariant(run?.status ?? "pending")}
                 dot
