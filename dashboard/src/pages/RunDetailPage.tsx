@@ -502,10 +502,20 @@ export default function WorkflowRunDetailPage() {
             <span className="text-sm font-display font-semibold text-foreground">Run Chat</span>
             <span className="text-xs font-mono text-muted-foreground ml-auto">{messages.length} messages</span>
           </div>
-          {isChatFallback && (
+          {chatError && (
+            <div className="flex items-center gap-2 px-5 py-1.5 border-b border-destructive/20 bg-destructive/5 text-xs text-destructive">
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              {(chatError as { status?: number })?.status === 401 || (chatError as { status?: number })?.status === 403
+                ? "Chat unavailable — check your API key or permissions"
+                : (chatError as { status?: number })?.status === 404
+                  ? "Chat endpoint not available for this run"
+                  : "Unable to load chat messages"}
+            </div>
+          )}
+          {isChatFallback && !chatError && (
             <div className="flex items-center gap-2 px-5 py-1.5 border-b border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 text-xs text-[var(--color-warning)]">
               <AlertTriangle className="w-3 h-3 shrink-0" />
-              Showing timeline events {chatError ? "(chat unavailable)" : "(no chat messages)"}
+              Showing timeline events (no chat messages)
             </div>
           )}
 
