@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -77,4 +78,46 @@ func TestPublishCancel(t *testing.T) {
 			t.Fatalf("expected error for empty sender id")
 		}
 	})
+}
+
+func TestHeartbeatPayloadWithAuthToken(t *testing.T) {
+	payload, err := HeartbeatPayload("worker-auth", "pool-auth", 2, 8, 12.5, WithAuthToken(" attestation-token "))
+	if err != nil {
+		t.Fatalf("HeartbeatPayload failed: %v", err)
+	}
+
+	var pkt agentv1.BusPacket
+	if err := proto.Unmarshal(payload, &pkt); err != nil {
+		t.Fatalf("unmarshal packet: %v", err)
+	}
+	hb := pkt.GetHeartbeat()
+	if hb == nil {
+		t.Fatal("expected heartbeat payload")
+	}
+	if hb.AuthToken != "attestation-token" {
+		t.Fatalf("auth_token = %q, want %q", hb.AuthToken, "attestation-token")
+	}
+}
+
+func unknownStringField(raw []byte, fieldNumber protowire.Number) (string, bool) {
+	for len(raw) > 0 {
+		num, wireType, tagLen := protowire.ConsumeTag(raw)
+		if tagLen < 0 {
+			return "", false
+		}
+		raw = raw[tagLen:]
+		if num == fieldNumber && wireType == protowire.BytesType {
+			value, valueLen := protowire.ConsumeString(raw)
+			if valueLen < 0 {
+				return "", false
+			}
+			return value, true
+		}
+		valueLen := protowire.ConsumeFieldValue(num, wireType, raw)
+		if valueLen < 0 {
+			return "", false
+		}
+		raw = raw[valueLen:]
+	}
+	return "", false
 }

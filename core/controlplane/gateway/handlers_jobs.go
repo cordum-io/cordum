@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
@@ -1298,6 +1299,33 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	reg, registryEmpty, err := s.topicRegistrationForSubmit(r.Context(), req.Topic)
+	if err != nil {
+		writeInternalError(w, r, "topic validation", err)
+		return
+	}
+	if !registryEmpty {
+		if reg == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{
+				"error":      "unknown topic",
+				"status":     http.StatusBadRequest,
+				"error_code": "unknown_topic",
+			})
+			return
+		}
+		if reg.Status == "disabled" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{
+				"error":      "topic is disabled",
+				"status":     http.StatusBadRequest,
+				"error_code": "topic_disabled",
+			})
+			return
+		}
+	}
 
 	orgID, err := s.resolveTenant(r, req.OrgId)
 	if err != nil {
@@ -1306,6 +1334,30 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	req.OrgId = orgID
 	req.TenantId = orgID
+	if violations, err := s.validateSubmitJobSchema(r.Context(), req, orgID, reg); err != nil {
+		writeInternalError(w, r, "submit schema validation", err)
+		return
+	} else if len(violations) > 0 {
+		mode := s.schemaValidationMode()
+		if mode.Enforced() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{
+				"error":      "schema_validation_failed",
+				"status":     http.StatusBadRequest,
+				"error_code": "schema_validation_failed",
+				"violations": violations,
+			})
+			return
+		}
+		slog.Warn("submit payload violated topic input schema",
+			"topic", req.Topic,
+			"tenant_id", orgID,
+			"schema_id", strings.TrimSpace(reg.InputSchemaID),
+			"mode", mode,
+			"violations", violations,
+		)
+	}
 	principalID, err := s.resolvePrincipal(r, req.PrincipalId)
 	if err != nil {
 		writeForbidden(w, r, err)
@@ -1477,15 +1529,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if req.Mode != "" {
 			envVars["context_mode"] = req.Mode
 		}
-		payload := map[string]any{
-			"prompt": req.Prompt, "adapter_id": req.AdapterId,
-			"priority": req.Priority, "topic": req.Topic,
-			"created_at": time.Now().UTC().Format(time.RFC3339), "tenant_id": orgID,
+		payloadBytes, err := marshalSubmitJobPayload(req, orgID, time.Now().UTC())
+		if err != nil {
+			writeInternalError(w, r, "encode approval job payload", err)
+			return
 		}
-		if req.Context != nil {
-			payload["context"] = req.Context
-		}
-		payloadBytes, _ := json.Marshal(payload)
 		if s.memStore != nil {
 			if err := s.memStore.PutContext(r.Context(), ctxKey, payloadBytes); err != nil {
 				slog.Error("failed to persist approval job context", "job_id", jobID, "error", err)
@@ -1608,18 +1656,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	envVars["max_input_tokens"] = fmt.Sprintf("%d", req.MaxInputTokens)
 	envVars["max_output_tokens"] = fmt.Sprintf("%d", req.MaxOutputTokens)
 
-	payload := map[string]any{
-		"prompt":     req.Prompt,
-		"adapter_id": req.AdapterId,
-		"priority":   req.Priority,
-		"topic":      req.Topic,
-		"created_at": time.Now().UTC().Format(time.RFC3339),
-		"tenant_id":  orgID,
+	payloadBytes, err := marshalSubmitJobPayload(req, orgID, time.Now().UTC())
+	if err != nil {
+		writeInternalError(w, r, "encode job payload", err)
+		return
 	}
-	if req.Context != nil {
-		payload["context"] = req.Context
-	}
-	payloadBytes, _ := json.Marshal(payload)
 	if s.memStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "memory store unavailable")
 		return
@@ -1723,6 +1764,48 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		"job_id":   jobID,
 		"trace_id": traceID,
 	})
+}
+
+func (s *server) validateSubmitJobSchema(ctx context.Context, req submitJobRequest, tenantID string, reg *topicregistry.Registration) ([]schemaValidationError, error) {
+	mode := s.schemaValidationMode()
+	if !mode.Enabled() || reg == nil {
+		return nil, nil
+	}
+	schemaID := strings.TrimSpace(reg.InputSchemaID)
+	if schemaID == "" {
+		return nil, nil
+	}
+	if s == nil || s.schemaRegistry == nil {
+		return nil, fmt.Errorf("schema registry unavailable")
+	}
+	schemaJSON, err := s.schemaRegistry.Get(ctx, schemaID)
+	if err != nil {
+		return nil, fmt.Errorf("load input schema %s for topic %s: %w", schemaID, strings.TrimSpace(req.Topic), err)
+	}
+	payloadJSON, err := marshalSubmitJobPayload(req, tenantID, time.Now().UTC())
+	if err != nil {
+		return nil, fmt.Errorf("encode submit payload: %w", err)
+	}
+	violations, err := newSchemaValidator(s.schemaRegistry).Validate(ctx, schemaID, schemaJSON, payloadJSON)
+	if err != nil {
+		return nil, fmt.Errorf("validate submit payload for topic %s: %w", strings.TrimSpace(req.Topic), err)
+	}
+	return violations, nil
+}
+
+func marshalSubmitJobPayload(req submitJobRequest, tenantID string, createdAt time.Time) ([]byte, error) {
+	payload := map[string]any{
+		"prompt":     req.Prompt,
+		"adapter_id": req.AdapterId,
+		"priority":   req.Priority,
+		"topic":      req.Topic,
+		"created_at": createdAt.UTC().Format(time.RFC3339),
+		"tenant_id":  tenantID,
+	}
+	if req.Context != nil {
+		payload["context"] = req.Context
+	}
+	return json.Marshal(payload)
 }
 
 func (s *server) handleGetTrace(w http.ResponseWriter, r *http.Request) {

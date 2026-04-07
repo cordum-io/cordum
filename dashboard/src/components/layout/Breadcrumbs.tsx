@@ -14,6 +14,8 @@ const ROUTE_LABELS: Record<string, string> = {
   approvals: "Approvals",
   policies: "Policy Studio",
   packs: "Packs",
+  topics: "Topics",
+  schemas: "Schemas",
   dlq: "Dead Letters",
   audit: "Audit Log",
   settings: "Settings",

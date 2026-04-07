@@ -68,6 +68,8 @@ type packTopic struct {
 	Requires   []string `yaml:"requires"`
 	RiskTags   []string `yaml:"riskTags"`
 	Capability string   `yaml:"capability"`
+	InputSchemaID  string `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
+	OutputSchemaID string `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
 }
 
 type packResources struct {
@@ -187,7 +189,9 @@ func runPackCmd(args []string) {
 			fail(err.Error())
 		}
 	case "uninstall":
-		runPackUninstall(args[1:])
+		if err := runPackUninstall(args[1:]); err != nil {
+			fail(err.Error())
+		}
 	case "list":
 		runPackList(args[1:])
 	case "show":
@@ -362,17 +366,17 @@ func runPackInstall(args []string) error {
 	return nil
 }
 
-func runPackUninstall(args []string) {
+func runPackUninstall(args []string) error {
 	fs := newFlagSet("pack uninstall")
 	purge := fs.Bool("purge", false, "delete workflows and schemas")
 	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
-		fail("pack id required")
+		return errors.New("pack id required")
 	}
 	packID := fs.Arg(0)
 	tlsTransport, tlsErr := sdk.BuildTLSTransportErr(fs.tlsOptions())
 	if tlsErr != nil {
-		fail(fmt.Sprintf("tls configuration error: %v", tlsErr))
+		return fmt.Errorf("tls configuration error: %w", tlsErr)
 	}
 	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, tlsTransport)
 	ctx := context.Background()
@@ -380,22 +384,28 @@ func runPackUninstall(args []string) {
 	release, err := acquirePackLocks(ctx, client, packID, owner)
 	if err != nil {
 		release()
+		return err
 	}
-	check(err)
 	defer release()
 
 	record, err := getPackRecord(ctx, client, packID)
-	check(err)
+	if err != nil {
+		return err
+	}
 	if record == nil {
-		fail("pack not installed")
+		return errors.New("pack not installed")
 	}
 
 	for i := len(record.Overlays.Config) - 1; i >= 0; i-- {
 		overlay := record.Overlays.Config[i]
-		check(removeConfigOverlay(ctx, client, overlay))
+		if err := removeConfigOverlay(ctx, client, overlay); err != nil {
+			return err
+		}
 	}
 	for _, overlay := range record.Overlays.Policy {
-		check(removePolicyOverlay(ctx, client, overlay))
+		if err := removePolicyOverlay(ctx, client, overlay); err != nil {
+			return err
+		}
 	}
 	if *purge {
 		for wfID := range record.Resources.Workflows {
@@ -411,8 +421,11 @@ func runPackUninstall(args []string) {
 	}
 
 	record.Status = "DISABLED"
-	check(updatePackRegistry(ctx, client, *record))
+	if err := updatePackRegistry(ctx, client, *record); err != nil {
+		return err
+	}
 	fmt.Printf("uninstalled pack %s (%s)\n", record.ID, record.Status)
+	return nil
 }
 
 func restClientFromFlags(fs *flagSet) *restClient {
@@ -736,12 +749,27 @@ func validatePackManifest(manifest *packManifest) error {
 			return fmt.Errorf("topic %q must be namespaced under job.%s.*", topic.Name, id)
 		}
 	}
+	schemaIDs := make(map[string]struct{}, len(manifest.Resources.Schemas))
 	for _, res := range manifest.Resources.Schemas {
 		if res.ID == "" || res.Path == "" {
 			return errors.New("schema id and path required")
 		}
 		if !strings.HasPrefix(res.ID, id+"/") {
 			return fmt.Errorf("schema id %q must be namespaced under %s/", res.ID, id)
+		}
+		schemaIDs[res.ID] = struct{}{}
+	}
+	for _, topic := range manifest.Topics {
+		for _, schemaID := range []string{
+			strings.TrimSpace(topic.InputSchemaID),
+			strings.TrimSpace(topic.OutputSchemaID),
+		} {
+			if schemaID == "" {
+				continue
+			}
+			if _, ok := schemaIDs[schemaID]; !ok {
+				return fmt.Errorf("topic %s references unknown schema %s", topic.Name, schemaID)
+			}
 		}
 	}
 	for _, res := range manifest.Resources.Workflows {

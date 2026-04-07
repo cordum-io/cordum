@@ -8,6 +8,78 @@ import (
 	"testing"
 )
 
+func TestValidatePackManifest_TopicSchemaRefExists(t *testing.T) {
+	manifest := &PackManifest{
+		Metadata: PackMetadata{ID: "pack1", Version: "1.0.0"},
+		Topics: []PackTopic{
+			{
+				Name:           "job.pack1.topic",
+				InputSchemaID:  "pack1/Input",
+				OutputSchemaID: "pack1/Output",
+			},
+		},
+		Resources: PackResources{
+			Schemas: []PackResource{
+				{ID: "pack1/Input", Path: "schemas/input.json"},
+				{ID: "pack1/Output", Path: "schemas/output.json"},
+			},
+			Workflows: []PackResource{
+				{ID: "pack1.workflow", Path: "workflows/workflow.yaml"},
+			},
+		},
+	}
+
+	if err := ValidatePackManifest(manifest); err != nil {
+		t.Fatalf("expected valid manifest, got: %v", err)
+	}
+}
+
+func TestValidatePackManifest_TopicSchemaRefMissing(t *testing.T) {
+	manifest := &PackManifest{
+		Metadata: PackMetadata{ID: "pack1", Version: "1.0.0"},
+		Topics: []PackTopic{
+			{
+				Name:          "job.pack1.topic",
+				InputSchemaID: "pack1/Missing",
+			},
+		},
+		Resources: PackResources{
+			Schemas: []PackResource{
+				{ID: "pack1/Input", Path: "schemas/input.json"},
+			},
+			Workflows: []PackResource{
+				{ID: "pack1.workflow", Path: "workflows/workflow.yaml"},
+			},
+		},
+	}
+
+	err := ValidatePackManifest(manifest)
+	if err == nil {
+		t.Fatal("expected error for missing topic schema ref")
+	}
+	if !strings.Contains(err.Error(), "topic job.pack1.topic references unknown schema pack1/Missing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidatePackManifest_TopicNoSchemaIsValid(t *testing.T) {
+	manifest := &PackManifest{
+		Metadata: PackMetadata{ID: "pack1", Version: "1.0.0"},
+		Topics: []PackTopic{
+			{Name: "job.pack1.topic"},
+		},
+		Resources: PackResources{
+			Workflows: []PackResource{
+				{ID: "pack1.workflow", Path: "workflows/workflow.yaml"},
+			},
+		},
+	}
+
+	if err := ValidatePackManifest(manifest); err != nil {
+		t.Fatalf("expected manifest without topic schema refs to be valid, got: %v", err)
+	}
+}
+
 // buildTarGz creates a gzipped tar archive from the given entries.
 func buildTarGz(t *testing.T, entries []tar.Header, contents map[string]string) *bytes.Buffer {
 	t.Helper()

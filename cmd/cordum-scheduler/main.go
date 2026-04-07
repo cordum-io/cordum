@@ -17,6 +17,8 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
@@ -25,6 +27,7 @@ import (
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -280,6 +283,13 @@ func main() {
 	}
 	defer func() { _ = configSvc.Close() }()
 
+	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
+	if err != nil {
+		slog.Error("failed to connect to Redis for schema registry", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = schemaRegistry.Close() }()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -323,6 +333,8 @@ func main() {
 	registry := scheduler.NewMemoryRegistry()
 	defer registry.Close()
 
+	workerCredentialCache := scheduler.NewWorkerCredentialCache(workercredentials.NewService(configSvc))
+
 	engine := scheduler.NewEngine(
 		natsBus,
 		safetyClient,
@@ -330,7 +342,12 @@ func main() {
 		strategy,
 		jobStore,
 		metrics,
-	).WithConfig(configSvc).WithSaga(sagaManager)
+	).WithConfig(configSvc).
+		WithTopicRegistry(topicregistry.NewService(configSvc)).
+		WithWorkerCredentialCache(workerCredentialCache).
+		WithSchemaRegistry(schemaRegistry).
+		WithContextClient(jobStore.Client()).
+		WithSaga(sagaManager)
 	if dlqStore != nil {
 		engine.WithDLQSink(&redisDLQSink{
 			store:    dlqStore,

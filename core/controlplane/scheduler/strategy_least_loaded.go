@@ -37,7 +37,7 @@ func (s *LeastLoadedStrategy) CurrentRouting() PoolRouting {
 	return PoolRouting{}
 }
 
-func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string]*pb.Heartbeat) (string, error) {
+func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string]*pb.Heartbeat, readiness map[string]WorkerReadiness) (string, error) {
 	if req == nil || req.Topic == "" {
 		return "", fmt.Errorf("missing topic")
 	}
@@ -72,7 +72,10 @@ func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string
 	// Preferred worker shortcut if available and healthy.
 	if preferredWorker := labels["preferred_worker_id"]; preferredWorker != "" {
 		if hb, exists := workers[preferredWorker]; exists {
-			if _, ok := poolSet[hb.GetPool()]; ok && matchesLabels(hb, requiredLabels) && !isOverloaded(hb) {
+			if _, ok := poolSet[hb.GetPool()]; ok &&
+				matchesLabels(hb, requiredLabels) &&
+				readinessAllowsTopic(preferredWorker, req.Topic, readiness) &&
+				!isOverloaded(hb) {
 				if subject := bus.DirectSubject(preferredWorker); subject != "" {
 					slog.Info("strategy pick preferred worker",
 						"topic", req.Topic,
@@ -97,6 +100,9 @@ func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string
 			continue
 		}
 		if !matchesLabels(hb, requiredLabels) {
+			continue
+		}
+		if !readinessAllowsTopic(hb.GetWorkerId(), req.Topic, readiness) {
 			continue
 		}
 		totalCandidates++
@@ -133,6 +139,17 @@ func (s *LeastLoadedStrategy) PickSubject(req *pb.JobRequest, workers map[string
 	}
 	// Fallback: publish to the topic (pool subject); queue groups fan-in to a single worker.
 	return req.Topic, nil
+}
+
+func readinessAllowsTopic(workerID, topic string, readiness map[string]WorkerReadiness) bool {
+	if readiness == nil {
+		return true
+	}
+	state, ok := readiness[workerID]
+	if !ok {
+		return false
+	}
+	return workerReadyForTopic(state, topic)
 }
 
 func cloneRouting(routing PoolRouting) PoolRouting {

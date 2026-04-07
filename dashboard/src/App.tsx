@@ -38,8 +38,10 @@ const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
 const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudioPage"));
 const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
 const PacksPage = lazy(() => import("./pages/PacksPage"));
+const PackDetailPage = lazy(() => import("./pages/PackDetailPage"));
 const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
+const TopicsPage = lazy(() => import("./pages/TopicsPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const DLQPage = lazy(() => import("./pages/DLQPage"));
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
@@ -169,6 +171,8 @@ function ProtectedRoutes() {
 
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />
+          <Route path="/packs/:id" element={<PackDetailPage />} />
+          <Route path="/topics" element={<TopicsPage />} />
           <Route path="/schemas" element={<SchemasPage />} />
           <Route path="/schemas/:id" element={<SchemaDetailPage />} />
 

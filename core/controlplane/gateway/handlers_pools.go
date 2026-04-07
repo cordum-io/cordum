@@ -29,6 +29,19 @@ func extractPoolsFromConfig(doc *configsvc.Document) (topics map[string][]string
 	if !ok || raw == nil {
 		return map[string][]string{}, map[string]config.PoolConfig{}, nil
 	}
+	if rawMap, ok := raw.(map[string]any); ok {
+		if rawTopics, ok := rawMap["topics"].(map[string]any); (!ok || len(rawTopics) == 0) && rawMap["pools"] != nil {
+			poolData, err := json.Marshal(rawMap["pools"])
+			if err != nil {
+				return nil, nil, fmt.Errorf("marshal pools map: %w", err)
+			}
+			poolMap := map[string]config.PoolConfig{}
+			if err := json.Unmarshal(poolData, &poolMap); err != nil {
+				return nil, nil, fmt.Errorf("unmarshal pools map: %w", err)
+			}
+			return map[string][]string{}, poolMap, nil
+		}
+	}
 	data, err := json.Marshal(raw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal pools config: %w", err)

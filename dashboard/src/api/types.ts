@@ -591,6 +591,26 @@ export interface Pool {
 }
 
 // ---------------------------------------------------------------------------
+// Topics
+// ---------------------------------------------------------------------------
+
+export interface TopicRegistration {
+  name: string;
+  pool: string;
+  inputSchemaId?: string;
+  outputSchemaId?: string;
+  packId?: string;
+  requires: string[];
+  riskTags: string[];
+  status: string;
+  activeWorkers: number;
+}
+
+export interface TopicsResponse extends ApiResponse<TopicRegistration[]> {
+  registryEmpty?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Packs
 // ---------------------------------------------------------------------------
 

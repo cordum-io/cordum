@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestLeastLoadedStrategyPicksPoolMatch(t *testing.T) {
 		"w3": {WorkerId: "w3", Pool: "other", ActiveJobs: 0, CpuLoad: 0},
 	}
 
-	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestLeastLoadedStrategyPicksPoolMatch(t *testing.T) {
 
 func TestLeastLoadedStrategyNoWorkers(t *testing.T) {
 	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
-	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, map[string]*pb.Heartbeat{})
+	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, map[string]*pb.Heartbeat{}, nil)
 	if err == nil {
 		t.Fatalf("expected error when no workers")
 	}
@@ -45,7 +46,7 @@ func TestLeastLoadedStrategyNoWorkers(t *testing.T) {
 
 func TestLeastLoadedStrategyNoPoolConfigured(t *testing.T) {
 	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
-	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.unknown"}, map[string]*pb.Heartbeat{})
+	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.unknown"}, map[string]*pb.Heartbeat{}, nil)
 	if err == nil {
 		t.Fatalf("expected error for unknown topic pool")
 	}
@@ -58,7 +59,7 @@ func TestLeastLoadedStrategyUsesLoadScore(t *testing.T) {
 		"w2": {WorkerId: "w2", Pool: "default", ActiveJobs: 1, CpuLoad: 10, GpuUtilization: 0},
 	}
 
-	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestLeastLoadedStrategyHonorsPreferredWorker(t *testing.T) {
 		},
 	}
 
-	subject, err := strategy.PickSubject(req, workers)
+	subject, err := strategy.PickSubject(req, workers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestLeastLoadedStrategyIgnoresWorkflowLabelsForPlacement(t *testing.T) {
 		},
 	}
 
-	subject, err := strategy.PickSubject(req, workers)
+	subject, err := strategy.PickSubject(req, workers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestLeastLoadedStrategyDoesNotMarkIdleWorkerOverloaded(t *testing.T) {
 		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 0, CpuLoad: 1, MaxParallelJobs: 1},
 	}
 
-	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,9 +139,63 @@ func TestLeastLoadedStrategyMarksWorkerOverloadedWhenAtCapacity(t *testing.T) {
 		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 1, CpuLoad: 1, MaxParallelJobs: 1},
 	}
 
-	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers)
+	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers, nil)
 	if err == nil {
 		t.Fatalf("expected error when all workers overloaded")
+	}
+}
+
+func TestPickSubjectSkipsUnreadyWorker(t *testing.T) {
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 0, CpuLoad: 5},
+		"w2": {WorkerId: "w2", Pool: "default", ActiveJobs: 2, CpuLoad: 25},
+	}
+	readiness := map[string]WorkerReadiness{
+		"w1": {Ready: false},
+		"w2": {Ready: true, ReadyTopics: []string{"job.default"}},
+	}
+
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers, readiness)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "worker.w2.jobs" {
+		t.Fatalf("expected ready worker to be selected, got %s", subject)
+	}
+}
+
+func TestPickSubjectAllowsUnreadyWhenFlagFalse(t *testing.T) {
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 0, CpuLoad: 5},
+		"w2": {WorkerId: "w2", Pool: "default", ActiveJobs: 2, CpuLoad: 25},
+	}
+
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "worker.w1.jobs" {
+		t.Fatalf("expected legacy scheduling to ignore readiness, got %s", subject)
+	}
+}
+
+func TestPickSubjectFiltersOnReadyTopics(t *testing.T) {
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 0, CpuLoad: 5},
+	}
+	readiness := map[string]WorkerReadiness{
+		"w1": {Ready: true, ReadyTopics: []string{"job.other"}},
+	}
+
+	_, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers, readiness)
+	if err == nil {
+		t.Fatal("expected worker with wrong ready topic to be filtered out")
+	}
+	if !errors.Is(err, ErrNoWorkers) {
+		t.Fatalf("expected no workers error, got %v", err)
 	}
 }
 
@@ -152,11 +207,11 @@ func TestFilterPlacementLabels(t *testing.T) {
 		"approval_granted":    "true",
 		"workflow_id":         "wf",
 		"run_id":              "run",
-		"amount":              "500", // business label - should be ignored
-		"from":                "alice", // business label - should be ignored
-		"to":                  "bob", // business label - should be ignored
-		"placement.region":    "us-east", // explicit placement constraint
-		"constraint.gpu":      "true", // explicit capability constraint
+		"amount":              "500",      // business label - should be ignored
+		"from":                "alice",    // business label - should be ignored
+		"to":                  "bob",      // business label - should be ignored
+		"placement.region":    "us-east",  // explicit placement constraint
+		"constraint.gpu":      "true",     // explicit capability constraint
 		"node.type":           "gpu-node", // node selector
 	}
 	out := filterPlacementLabels(labels)
@@ -205,7 +260,7 @@ func TestStrategyIgnoresBusinessLabelsForWorkerMatch(t *testing.T) {
 		},
 	}
 
-	subject, err := strategy.PickSubject(req, workers)
+	subject, err := strategy.PickSubject(req, workers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -278,7 +333,7 @@ func benchWorkerSelection(b *testing.B, n int) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = strategy.PickSubject(req, workers)
+		_, _ = strategy.PickSubject(req, workers, nil)
 	}
 }
 

@@ -92,6 +92,41 @@ func TestValidatePackManifest(t *testing.T) {
 	}
 }
 
+func TestValidatePackManifestTopicSchemaRefs(t *testing.T) {
+	manifest := &packManifest{
+		Metadata: packMetadata{ID: "pack1", Version: "1.0.0"},
+		Topics: []packTopic{
+			{
+				Name:           "job.pack1.topic",
+				InputSchemaID:  "pack1/Input",
+				OutputSchemaID: "pack1/Output",
+			},
+		},
+		Resources: packResources{
+			Schemas: []packResource{
+				{ID: "pack1/Input", Path: "schemas/input.json"},
+				{ID: "pack1/Output", Path: "schemas/output.json"},
+			},
+			Workflows: []packResource{
+				{ID: "pack1.workflow", Path: "workflows/workflow.yaml"},
+			},
+		},
+	}
+
+	if err := validatePackManifest(manifest); err != nil {
+		t.Fatalf("expected valid schema refs, got: %v", err)
+	}
+
+	manifest.Topics[0].InputSchemaID = "pack1/Missing"
+	err := validatePackManifest(manifest)
+	if err == nil {
+		t.Fatal("expected missing schema ref error")
+	}
+	if !strings.Contains(err.Error(), "topic job.pack1.topic references unknown schema pack1/Missing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestEnsureProtocolCompatible(t *testing.T) {
 	manifest := &packManifest{}
 	if err := ensureProtocolCompatible(manifest); err == nil {
@@ -450,6 +485,148 @@ compatibility:
 	err := runPackInstall([]string{"--gateway", srv.URL, "--force", packDir})
 	if err == nil {
 		t.Fatal("expected runPackInstall to return an error")
+	}
+	if !strings.Contains(err.Error(), "update pack registry") {
+		t.Fatalf("expected updatePackRegistry error, got: %v", err)
+	}
+
+	wantReleaseCalls := []string{"pack:demo-pack", "packs:global"}
+	if !reflect.DeepEqual(releaseCalls, wantReleaseCalls) {
+		t.Fatalf("unexpected release calls\n got: %v\nwant: %v", releaseCalls, wantReleaseCalls)
+	}
+}
+
+func TestRunPackInstallDryRunWithTopicSchemaBindings(t *testing.T) {
+	packDir := t.TempDir()
+	manifest := fmt.Sprintf(`
+apiVersion: cordum.io/v1
+kind: Pack
+metadata:
+  id: demo-pack
+  version: 1.0.0
+compatibility:
+  protocolVersion: %d
+topics:
+  - name: job.demo-pack.echo
+    capability: demo.echo
+    inputSchema: demo-pack/Input
+    outputSchema: demo-pack/Output
+resources:
+  schemas:
+    - id: demo-pack/Input
+      path: schemas/input.json
+    - id: demo-pack/Output
+      path: schemas/output.json
+  workflows:
+    - id: demo-pack.echo
+      path: workflows/echo.yaml
+`, capsdk.DefaultProtocolVersion)
+	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(strings.TrimSpace(manifest)), 0o600); err != nil {
+		t.Fatalf("write pack manifest: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(packDir, "schemas"), 0o700); err != nil {
+		t.Fatalf("mkdir schemas: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(packDir, "workflows"), 0o700); err != nil {
+		t.Fatalf("mkdir workflows: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(packDir, "schemas", "input.json"), []byte(`{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}`), 0o600); err != nil {
+		t.Fatalf("write input schema: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(packDir, "schemas", "output.json"), []byte(`{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}`), 0o600); err != nil {
+		t.Fatalf("write output schema: %v", err)
+	}
+	workflow := `
+id: demo-pack.echo
+name: Demo Echo
+version: "0.1.0"
+steps:
+  echo:
+    id: echo
+    name: Echo
+    type: worker
+    topic: job.demo-pack.echo
+    input:
+      message: ${input.message}
+    input_schema_id: demo-pack/Input
+    output_schema_id: demo-pack/Output
+    meta:
+      pack_id: demo-pack
+      capability: demo.echo
+      risk_tags: []
+      requires: []
+`
+	if err := os.WriteFile(filepath.Join(packDir, "workflows", "echo.yaml"), []byte(strings.TrimSpace(workflow)), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/workflows/"):
+			http.NotFound(w, r)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+
+	if err := runPackInstall([]string{"--gateway", srv.URL, "--force", "--dry-run", packDir}); err != nil {
+		t.Fatalf("expected dry-run install to succeed with topic schema bindings, got: %v", err)
+	}
+}
+
+func TestRunPackUninstallReleasesLocksOnError(t *testing.T) {
+	var releaseCalls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
+			var req struct {
+				Resource string `json:"resource"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode acquire lock request: %v", err)
+			}
+			switch req.Resource {
+			case "packs:global", "pack:demo-pack":
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				t.Fatalf("unexpected acquire lock resource: %q", req.Resource)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
+			var req struct {
+				Resource string `json:"resource"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode release lock request: %v", err)
+			}
+			releaseCalls = append(releaseCalls, req.Resource)
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			if got := r.URL.Query().Get("scope"); got != packRegistryScope {
+				t.Fatalf("unexpected config scope: %q", got)
+			}
+			if got := r.URL.Query().Get("scope_id"); got != packRegistryID {
+				t.Fatalf("unexpected config scope_id: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"scope":"system","scope_id":"packs","data":{"installed":{"demo-pack":{"id":"demo-pack","version":"1.0.0","status":"ACTIVE","overlays":{"config":[],"policy":[]},"resources":{"schemas":{},"workflows":{}}}}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			http.Error(w, "simulated registry failure", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+
+	err := runPackUninstall([]string{"--gateway", srv.URL, "demo-pack"})
+	if err == nil {
+		t.Fatal("expected runPackUninstall to return an error")
 	}
 	if !strings.Contains(err.Error(), "update pack registry") {
 		t.Fatalf("expected updatePackRegistry error, got: %v", err)

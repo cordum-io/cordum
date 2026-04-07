@@ -72,13 +72,20 @@ type WorkerRegistry interface {
 	UpdateHeartbeat(hb *pb.Heartbeat)
 	UpdateHandshake(hs *pb.Handshake)
 	Snapshot() map[string]*pb.Heartbeat
+	ReadinessSnapshot() map[string]WorkerReadiness
 	// IsAlive reports whether the worker has been seen within the TTL window.
 	IsAlive(workerID string) bool
 }
 
+// WorkerReadiness captures the latest readiness state advertised by a worker.
+type WorkerReadiness struct {
+	Ready       bool
+	ReadyTopics []string
+}
+
 // SchedulingStrategy selects the target subject for a job.
 type SchedulingStrategy interface {
-	PickSubject(req *pb.JobRequest, workers map[string]*pb.Heartbeat) (string, error)
+	PickSubject(req *pb.JobRequest, workers map[string]*pb.Heartbeat, readiness map[string]WorkerReadiness) (string, error)
 }
 
 // ConfigProvider resolves effective configuration for a given context.

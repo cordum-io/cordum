@@ -39,6 +39,7 @@ import {
   GitBranch,
   Package,
   Database,
+  Hash,
   Layers,
   Zap,
   Menu,
@@ -95,6 +96,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Extend",
     items: [
       { path: "/packs", label: "Packs", icon: Package },
+      { path: "/topics", label: "Topics", icon: Hash },
       { path: "/schemas", label: "Schemas", icon: Database },
     ],
   },

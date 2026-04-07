@@ -10,6 +10,8 @@ import (
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/schema"
@@ -217,21 +219,23 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	bus := &stubBus{}
 	safetyClient := &stubSafetyClient{snapshots: []string{"snap-test"}}
 	s := &server{
-		memStore:       memStore,
-		jobStore:       jobStore,
-		bus:            bus,
-		workers:        make(map[string]*pb.Heartbeat),
-		workerSeen:     make(map[string]time.Time),
-		clients:        make(map[*websocket.Conn]*wsClient),
-		eventsCh:       make(chan wsEvent, 8),
-		workflowStore:  workflowStore,
-		configSvc:      configSvc,
-		dlqStore:       dlqStore,
-		artifactStore:  artifactStore,
-		lockStore:      lockStore,
-		schemaRegistry: schemaRegistry,
-		safetyClient:   safetyClient,
-		started:        time.Now().UTC(),
+		memStore:              memStore,
+		jobStore:              jobStore,
+		bus:                   bus,
+		workers:               make(map[string]*pb.Heartbeat),
+		workerSeen:            make(map[string]time.Time),
+		clients:               make(map[*websocket.Conn]*wsClient),
+		eventsCh:              make(chan wsEvent, 8),
+		workflowStore:         workflowStore,
+		configSvc:             configSvc,
+		topicRegistry:         topicregistry.NewService(configSvc),
+		workerCredentialStore: workercredentials.NewService(configSvc),
+		dlqStore:              dlqStore,
+		artifactStore:         artifactStore,
+		lockStore:             lockStore,
+		schemaRegistry:        schemaRegistry,
+		safetyClient:          safetyClient,
+		started:               time.Now().UTC(),
 	}
 
 	t.Cleanup(func() {

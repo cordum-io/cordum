@@ -27,6 +27,8 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	// env helpers imported above for IntOr/DurationOr
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/locks"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -57,7 +59,7 @@ const (
 	defaultRateLimitBurst       = 4000
 	defaultPublicRateLimitRPS   = 20
 	defaultPublicRateLimitBurst = 40
-	defaultMaxHeaderBytes  = 1 << 20
+	defaultMaxHeaderBytes       = 1 << 20
 	maxLabelKeyLen              = 256              // Max length for label keys
 	maxLabelValueLen            = 4096             // Max length for label values (4KB)
 	wsAuthSubprotocol           = "cordum-api-key" // #nosec G101 -- subprotocol identifier, not a credential
@@ -111,17 +113,20 @@ type server struct {
 	started time.Time
 	auth    AuthProvider
 
-	workflowStore  *wf.RedisStore
-	workflowEng    *wf.Engine
-	configSvc      *configsvc.Service
-	dlqStore       *store.DLQStore
-	artifactStore  artifacts.Store
-	lockStore      locks.Store
-	schemaRegistry *schema.Registry
-	safetyConn     *grpc.ClientConn
-	safetyClient   pb.SafetyKernelClient
-	userStore      UserStore
-	keyStore       KeyStore
+	workflowStore         *wf.RedisStore
+	workflowEng           *wf.Engine
+	configSvc             *configsvc.Service
+	topicRegistry         *topicregistry.Service
+	workerCredentialStore *workercredentials.Service
+	dlqStore              *store.DLQStore
+	artifactStore         artifacts.Store
+	lockStore             locks.Store
+	schemaRegistry        *schema.Registry
+	schemaEnforcement     schema.EnforcementMode
+	safetyConn            *grpc.ClientConn
+	safetyClient          pb.SafetyKernelClient
+	userStore             UserStore
+	keyStore              KeyStore
 
 	auditExporter audit.AuditSender
 
@@ -435,31 +440,34 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	}
 
 	s := &server{
-		memStore:       memStore,
-		jobStore:       jobStore,
-		bus:            natsBus,
-		workers:        make(map[string]*pb.Heartbeat),
-		workerSeen:     make(map[string]time.Time),
-		clients:        make(map[*websocket.Conn]*wsClient),
-		eventsCh:       make(chan wsEvent, 512),
-		wsClientBufSz:  wsClientBufferSize(),
-		metrics:        gwMetrics,
-		tenant:         tenantID,
-		auth:           provider,
-		started:        time.Now().UTC(),
-		workflowStore:  workflowStore,
-		workflowEng:    workflowEng,
-		configSvc:      configSvc,
-		dlqStore:       dlqStore,
-		artifactStore:  artifactStore,
-		lockStore:      lockStore,
-		schemaRegistry: schemaRegistry,
-		safetyConn:     safetyConn,
-		safetyClient:   safetyClient,
-		userStore:      userStore,
-		keyStore:       keyStore,
-		auditExporter:  auditSender,
-		shutdownCh:     make(chan struct{}),
+		memStore:              memStore,
+		jobStore:              jobStore,
+		bus:                   natsBus,
+		workers:               make(map[string]*pb.Heartbeat),
+		workerSeen:            make(map[string]time.Time),
+		clients:               make(map[*websocket.Conn]*wsClient),
+		eventsCh:              make(chan wsEvent, 512),
+		wsClientBufSz:         wsClientBufferSize(),
+		metrics:               gwMetrics,
+		tenant:                tenantID,
+		auth:                  provider,
+		started:               time.Now().UTC(),
+		workflowStore:         workflowStore,
+		workflowEng:           workflowEng,
+		configSvc:             configSvc,
+		topicRegistry:         topicregistry.NewService(configSvc),
+		workerCredentialStore: workercredentials.NewService(configSvc),
+		dlqStore:              dlqStore,
+		artifactStore:         artifactStore,
+		lockStore:             lockStore,
+		schemaRegistry:        schemaRegistry,
+		schemaEnforcement:     schema.ParseEnforcementMode(os.Getenv("SCHEMA_ENFORCEMENT")),
+		safetyConn:            safetyConn,
+		safetyClient:          safetyClient,
+		userStore:             userStore,
+		keyStore:              keyStore,
+		auditExporter:         auditSender,
+		shutdownCh:            make(chan struct{}),
 	}
 	defer s.Close()
 
@@ -619,8 +627,14 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
 	mux.HandleFunc("GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
 	mux.HandleFunc("GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
+	mux.HandleFunc("GET /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleListWorkerCredentials))
+	mux.HandleFunc("POST /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleCreateWorkerCredential))
+	mux.HandleFunc("DELETE /api/v1/workers/credentials/{worker_id}", s.instrumented("/api/v1/workers/credentials/{worker_id}", s.handleDeleteWorkerCredential))
 	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
+	mux.HandleFunc("GET /api/v1/topics", s.instrumented("/api/v1/topics", s.handleListTopics))
+	mux.HandleFunc("POST /api/v1/topics", s.instrumented("/api/v1/topics", s.handleCreateTopic))
+	mux.HandleFunc("DELETE /api/v1/topics/{name}", s.instrumented("/api/v1/topics/{name}", s.handleDeleteTopic))
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleCreatePool))
 	mux.HandleFunc("PATCH /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleUpdatePool))
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleDeletePool))

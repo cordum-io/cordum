@@ -16,7 +16,7 @@ import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
 import {
   Cpu, Search, RefreshCw, Zap, Shield,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { useWorkers } from "@/hooks/useWorkers";
 import { PoolGroupedView } from "@/components/agents/PoolGroupedView";
@@ -39,6 +39,9 @@ export default function AgentsPage() {
   const [tab, setTab] = useState<"fleet" | "registry" | "pools">("fleet");
   const [drawerWorkerId, setDrawerWorkerId] = useState<string | null>(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const poolFilter = searchParams.get("pool")?.trim() ?? "";
+  const topicFilter = searchParams.get("topic")?.trim() ?? "";
 
   const { data: workers, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["workers"],
@@ -63,6 +66,7 @@ export default function AgentsPage() {
 
   const filtered = sorted.filter((w) => {
     if (statusFilter !== "all" && w.status !== statusFilter) return false;
+    if (poolFilter && (w.pool ?? "") !== poolFilter) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
@@ -91,6 +95,28 @@ export default function AgentsPage() {
           </Button>
         }
       />
+
+      {(poolFilter || topicFilter) && (
+        <div className="instrument-card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              Topic coverage filter
+            </p>
+            <p className="text-sm text-foreground">
+              Showing workers in <span className="font-mono">{poolFilter || "all pools"}</span>
+              {topicFilter && (
+                <>
+                  {" "}for topic <span className="font-mono">{topicFilter}</span>
+                </>
+              )}
+              .
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => navigate("/agents")}>
+            Clear filter
+          </Button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex items-center gap-4 border-b border-border">

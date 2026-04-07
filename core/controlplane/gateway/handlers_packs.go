@@ -19,11 +19,27 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
+
+type packInstallResponse struct {
+	packRecord
+	WorkerCredential *packWorkerCredentialResponse `json:"worker_credential,omitempty"`
+}
+
+type packWorkerCredentialResponse struct {
+	WorkerID      string   `json:"worker_id"`
+	Token         string   `json:"token,omitempty"`
+	AllowedPools  []string `json:"allowed_pools,omitempty"`
+	AllowedTopics []string `json:"allowed_topics,omitempty"`
+	PackID        string   `json:"pack_id,omitempty"`
+	CreatedAt     string   `json:"created_at,omitempty"`
+}
 
 func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
@@ -96,7 +112,7 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanup()
 
-	record, err := s.installPackFromDir(r.Context(), bundleDir, packInstallOptions{
+	record, workerCredential, err := s.installPackFromDir(r.Context(), bundleDir, packInstallOptions{
 		Force:       parseBool(r.FormValue("force")),
 		Upgrade:     parseBool(r.FormValue("upgrade")),
 		Inactive:    parseBool(r.FormValue("inactive")),
@@ -115,26 +131,29 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 
 	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "install pack "+record.ID)
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, record)
+	writeJSON(w, packInstallResponse{
+		packRecord:       record,
+		WorkerCredential: workerCredential,
+	})
 }
 
-func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts packInstallOptions) (packRecord, error) {
+func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts packInstallOptions) (packRecord, *packWorkerCredentialResponse, error) {
 	if s == nil {
-		return packRecord{}, &packInstallError{Status: http.StatusServiceUnavailable, Err: errors.New("gateway unavailable")}
+		return packRecord{}, nil, &packInstallError{Status: http.StatusServiceUnavailable, Err: errors.New("gateway unavailable")}
 	}
 	manifest, err := loadPackManifest(bundleDir)
 	if err != nil {
-		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	if err := validatePackManifest(manifest); err != nil {
-		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	if err := ensureProtocolCompatible(manifest); err != nil {
-		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	if manifest.Compatibility.MinCoreVersion != "" && !opts.Force {
 		if err := ensureCoreVersionCompatible(manifest.Compatibility.MinCoreVersion); err != nil {
-			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 	}
 	owner := strings.TrimSpace(opts.Owner)
@@ -143,17 +162,17 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 	release, err := acquirePackLocks(ctx, s.lockStore, manifest.Metadata.ID, owner)
 	if err != nil {
-		return packRecord{}, &packInstallError{Status: http.StatusConflict, Err: err}
+		return packRecord{}, nil, &packInstallError{Status: http.StatusConflict, Err: err}
 	}
 	defer release()
 
 	schemaPlans, err := s.planSchemas(ctx, bundleDir, manifest, opts.Upgrade)
 	if err != nil {
-		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	workflowPlans, err := s.planWorkflows(ctx, bundleDir, manifest, opts.Upgrade)
 	if err != nil {
-		return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 
 	appliedConfig := []packAppliedConfigOverlay{}
@@ -204,7 +223,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		}
 		if err := s.registerSchema(ctx, plan.ID, plan.Schema); err != nil {
 			rollback()
-			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		appliedSchemas = append(appliedSchemas, plan)
 	}
@@ -214,7 +233,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		}
 		if err := s.registerWorkflow(ctx, plan.Workflow); err != nil {
 			rollback()
-			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		appliedWorkflows = append(appliedWorkflows, plan)
 	}
@@ -226,7 +245,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		applied, err := s.applyConfigOverlay(ctx, overlay, manifest.Metadata.ID, bundleDir)
 		if err != nil {
 			rollback()
-			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		if applied.Overlay.Name != "" {
 			appliedConfig = append(appliedConfig, applied.Overlay)
@@ -237,7 +256,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		applied, err := s.applyPolicyOverlay(ctx, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundleDir)
 		if err != nil {
 			rollback()
-			return packRecord{}, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		if applied.Overlay.Name != "" {
 			appliedPolicy = append(appliedPolicy, applied.Overlay)
@@ -272,11 +291,45 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		},
 		Tests: manifest.Tests,
 	}
-	if err := s.updatePackRegistry(ctx, record); err != nil {
-		rollback()
-		return packRecord{}, &packInstallError{Status: http.StatusInternalServerError, Err: err}
+	registeredTopicNames := []string{}
+	var packCredential *packWorkerCredentialResponse
+	if s.topicRegistry != nil {
+		regs, err := s.packTopicRegistrations(ctx, manifest, status)
+		if err != nil {
+			rollback()
+			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		}
+		if err := s.topicRegistry.SetMany(ctx, regs); err != nil {
+			rollback()
+			return packRecord{}, nil, &packInstallError{Status: http.StatusInternalServerError, Err: err}
+		}
+		for _, reg := range regs {
+			registeredTopicNames = append(registeredTopicNames, reg.Name)
+		}
+		packCredential, err = s.issuePackWorkerCredential(ctx, manifest.Metadata.ID, regs)
+		if err != nil {
+			_ = s.topicRegistry.DeleteMany(ctx, registeredTopicNames)
+			rollback()
+			return packRecord{}, nil, &packInstallError{Status: http.StatusInternalServerError, Err: err}
+		}
 	}
-	return record, nil
+	if err := s.updatePackRegistry(ctx, record); err != nil {
+		if s.workerCredentialStore != nil && packCredential != nil {
+			_ = s.workerCredentialStore.Revoke(ctx, packCredential.WorkerID)
+		}
+		if s.topicRegistry != nil {
+			_ = s.topicRegistry.DeleteMany(ctx, registeredTopicNames)
+		}
+		rollback()
+		return packRecord{}, nil, &packInstallError{Status: http.StatusInternalServerError, Err: err}
+	}
+	if len(registeredTopicNames) > 0 {
+		s.publishConfigChanged("system", "topics")
+	}
+	if packCredential != nil {
+		s.publishConfigChanged("system", "workers")
+	}
+	return record, packCredential, nil
 }
 
 func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
@@ -353,9 +406,105 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "pack operation", err)
 		return
 	}
+	if s.topicRegistry != nil {
+		names := make([]string, 0, len(rec.Manifest.Topics))
+		for _, topic := range rec.Manifest.Topics {
+			names = append(names, topic.Name)
+		}
+		if err := s.topicRegistry.DeleteMany(r.Context(), names); err != nil {
+			writeInternalError(w, r, "pack topic cleanup", err)
+			return
+		}
+		if len(names) > 0 {
+			s.publishConfigChanged("system", "topics")
+		}
+	}
+	if s.workerCredentialStore != nil {
+		if err := s.workerCredentialStore.Revoke(r.Context(), packWorkerID(packID)); err != nil && !errors.Is(err, workercredentials.ErrCredentialNotFound) {
+			writeInternalError(w, r, "pack worker credential cleanup", err)
+			return
+		}
+		s.publishConfigChanged("system", "workers")
+	}
 	s.appendAuditEntryNamed(r.Context(), "uninstall", "pack", packID, rec.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "uninstall pack "+packID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, rec)
+}
+
+func (s *server) packTopicRegistrations(ctx context.Context, manifest *packManifest, packStatus string) ([]topicregistry.Registration, error) {
+	if manifest == nil {
+		return nil, errors.New("pack manifest required")
+	}
+	doc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "default")
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("load pool mappings: %w", err)
+	}
+	topics, _, err := extractPoolsFromConfig(doc)
+	if err != nil {
+		return nil, err
+	}
+	status := topicregistry.StatusActive
+	if strings.EqualFold(packStatus, "INACTIVE") {
+		status = topicregistry.StatusDisabled
+	}
+	out := make([]topicregistry.Registration, 0, len(manifest.Topics))
+	for _, topic := range manifest.Topics {
+		pool := ""
+		if mapped := topics[topic.Name]; len(mapped) > 0 {
+			pool = strings.TrimSpace(mapped[0])
+		}
+		out = append(out, topicregistry.Registration{
+			Name:           topic.Name,
+			Pool:           pool,
+			InputSchemaID:  strings.TrimSpace(topic.InputSchemaID),
+			OutputSchemaID: strings.TrimSpace(topic.OutputSchemaID),
+			PackID:         manifest.Metadata.ID,
+			Requires:       topic.Requires,
+			RiskTags:       topic.RiskTags,
+			Status:         status,
+		})
+	}
+	return out, nil
+}
+
+func (s *server) issuePackWorkerCredential(ctx context.Context, packID string, regs []topicregistry.Registration) (*packWorkerCredentialResponse, error) {
+	if s == nil || s.workerCredentialStore == nil {
+		return nil, nil
+	}
+
+	workerID := packWorkerID(packID)
+	allowedPools := make([]string, 0, len(regs))
+	allowedTopics := make([]string, 0, len(regs))
+	for _, reg := range regs {
+		allowedTopics = append(allowedTopics, reg.Name)
+		if reg.Pool != "" {
+			allowedPools = append(allowedPools, reg.Pool)
+		}
+	}
+
+	issued, err := s.workerCredentialStore.Create(ctx, workercredentials.IssueInput{
+		WorkerID:      workerID,
+		AllowedPools:  allowedPools,
+		AllowedTopics: allowedTopics,
+		PackID:        packID,
+		CreatedBy:     "pack-install",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("issue pack worker credential: %w", err)
+	}
+
+	return &packWorkerCredentialResponse{
+		WorkerID:      issued.Credential.WorkerID,
+		Token:         issued.Token,
+		AllowedPools:  issued.Credential.AllowedPools,
+		AllowedTopics: issued.Credential.AllowedTopics,
+		PackID:        issued.Credential.PackID,
+		CreatedAt:     issued.Credential.CreatedAt,
+	}, nil
+}
+
+func packWorkerID(packID string) string {
+	return strings.TrimSpace(packID)
 }
 
 func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
@@ -1111,7 +1260,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	}
 	defer cleanupDir()
 
-	record, err := s.installPackFromDir(r.Context(), bundleDir, packInstallOptions{
+	record, workerCredential, err := s.installPackFromDir(r.Context(), bundleDir, packInstallOptions{
 		Force:       req.Force,
 		Upgrade:     req.Upgrade,
 		Inactive:    req.Inactive,
@@ -1131,7 +1280,10 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 
 	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "install marketplace pack "+record.ID)
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, record)
+	writeJSON(w, packInstallResponse{
+		packRecord:       record,
+		WorkerCredential: workerCredential,
+	})
 }
 
 func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketplaceResponse, error) {

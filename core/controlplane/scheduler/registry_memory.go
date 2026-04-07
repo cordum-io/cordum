@@ -15,14 +15,18 @@ type MemoryRegistry struct {
 	mu        sync.RWMutex
 	workers   map[string]*workerEntry
 	ttl       time.Duration
+	readyTTL  time.Duration
 	stopCh    chan struct{}
 	closeOnce sync.Once
 }
 
 type workerEntry struct {
-	hb        *pb.Heartbeat
-	handshake *pb.Handshake
-	lastSeen  time.Time
+	hb          *pb.Heartbeat
+	handshake   *pb.Handshake
+	ready       bool
+	readyTopics []string
+	readyAt     time.Time
+	lastSeen    time.Time
 }
 
 const defaultWorkerTTL = 30 * time.Second
@@ -37,9 +41,10 @@ func NewMemoryRegistryWithTTL(ttl time.Duration) *MemoryRegistry {
 		ttl = defaultWorkerTTL
 	}
 	r := &MemoryRegistry{
-		workers: make(map[string]*workerEntry),
-		ttl:     ttl,
-		stopCh:  make(chan struct{}),
+		workers:  make(map[string]*workerEntry),
+		ttl:      ttl,
+		readyTTL: workerReadinessTTLFromEnv(),
+		stopCh:   make(chan struct{}),
 	}
 	go r.expireLoop()
 	return r
@@ -52,7 +57,13 @@ func (r *MemoryRegistry) UpdateHeartbeat(hb *pb.Heartbeat) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.workers[hb.WorkerId] = &workerEntry{hb: hb, lastSeen: time.Now()}
+	now := time.Now()
+	if entry, ok := r.workers[hb.WorkerId]; ok {
+		entry.hb = hb
+		entry.lastSeen = now
+		return
+	}
+	r.workers[hb.WorkerId] = &workerEntry{hb: hb, lastSeen: now}
 }
 
 func (r *MemoryRegistry) UpdateHandshake(hs *pb.Handshake) {
@@ -62,13 +73,23 @@ func (r *MemoryRegistry) UpdateHandshake(hs *pb.Handshake) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := time.Now()
 	entry, ok := r.workers[hs.ComponentId]
 	if ok {
 		entry.handshake = hs
-		entry.lastSeen = time.Now()
+		entry.lastSeen = now
 	} else {
-		r.workers[hs.ComponentId] = &workerEntry{handshake: hs, lastSeen: time.Now()}
+		entry = &workerEntry{handshake: hs, lastSeen: now}
+		r.workers[hs.ComponentId] = entry
 	}
+	topics := readyTopicsFromHandshake(hs)
+	if len(topics) == 0 {
+		entry.clearReadiness()
+		return
+	}
+	entry.ready = true
+	entry.readyTopics = topics
+	entry.readyAt = now
 }
 
 // WorkersForPool returns a slice of workers that belong to the given pool.
@@ -79,7 +100,7 @@ func (r *MemoryRegistry) WorkersForPool(pool string) []*pb.Heartbeat {
 	var result []*pb.Heartbeat
 	now := time.Now()
 	for _, entry := range r.workers {
-		if now.Sub(entry.lastSeen) > r.ttl {
+		if entry.hb == nil || now.Sub(entry.lastSeen) > r.ttl {
 			continue
 		}
 		if entry.hb.GetPool() == pool {
@@ -96,10 +117,30 @@ func (r *MemoryRegistry) Snapshot() map[string]*pb.Heartbeat {
 	now := time.Now()
 	snapshot := make(map[string]*pb.Heartbeat, len(r.workers))
 	for id, entry := range r.workers {
-		if now.Sub(entry.lastSeen) > r.ttl {
+		if entry.hb == nil || now.Sub(entry.lastSeen) > r.ttl {
 			continue
 		}
 		snapshot[id] = entry.hb
+	}
+	return snapshot
+}
+
+func (r *MemoryRegistry) ReadinessSnapshot() map[string]WorkerReadiness {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	now := time.Now()
+	snapshot := make(map[string]WorkerReadiness, len(r.workers))
+	for id, entry := range r.workers {
+		if entry.hb == nil || now.Sub(entry.lastSeen) > r.ttl {
+			continue
+		}
+		state := WorkerReadiness{}
+		if entry.readinessActive(now, r.readyTTL) {
+			state.Ready = true
+			state.ReadyTopics = append([]string(nil), entry.readyTopics...)
+		}
+		snapshot[id] = state
 	}
 	return snapshot
 }
@@ -116,7 +157,7 @@ func (r *MemoryRegistry) IsAlive(workerID string) bool {
 }
 
 func (r *MemoryRegistry) expireLoop() {
-	ticker := time.NewTicker(r.ttl / 2)
+	ticker := time.NewTicker(r.expiryInterval())
 	defer ticker.Stop()
 	for {
 		select {
@@ -135,6 +176,10 @@ func (r *MemoryRegistry) expire() {
 	for id, entry := range r.workers {
 		if now.Sub(entry.lastSeen) > r.ttl {
 			delete(r.workers, id)
+			continue
+		}
+		if entry.readinessExpired(now, r.readyTTL) {
+			entry.clearReadiness()
 		}
 	}
 }
@@ -148,7 +193,7 @@ func (r *MemoryRegistry) Stats() (total int, byPool map[string]int) {
 	now := time.Now()
 	byPool = make(map[string]int)
 	for _, entry := range r.workers {
-		if now.Sub(entry.lastSeen) > r.ttl {
+		if entry.hb == nil || now.Sub(entry.lastSeen) > r.ttl {
 			continue
 		}
 		total++
@@ -203,4 +248,35 @@ func (r *MemoryRegistry) HydrateFromSnapshot(data []byte) error {
 // Close stops background expiry loop. It is safe to call multiple times.
 func (r *MemoryRegistry) Close() {
 	r.closeOnce.Do(func() { close(r.stopCh) })
+}
+
+func (entry *workerEntry) clearReadiness() {
+	entry.ready = false
+	entry.readyTopics = nil
+	entry.readyAt = time.Time{}
+}
+
+func (entry *workerEntry) readinessActive(now time.Time, readyTTL time.Duration) bool {
+	if entry == nil || !entry.ready || len(entry.readyTopics) == 0 || readyTTL <= 0 || entry.readyAt.IsZero() {
+		return false
+	}
+	return now.Sub(entry.readyAt) <= readyTTL
+}
+
+func (entry *workerEntry) readinessExpired(now time.Time, readyTTL time.Duration) bool {
+	if entry == nil || !entry.ready || readyTTL <= 0 || entry.readyAt.IsZero() {
+		return false
+	}
+	return now.Sub(entry.readyAt) > readyTTL
+}
+
+func (r *MemoryRegistry) expiryInterval() time.Duration {
+	interval := r.ttl / 2
+	if readyInterval := r.readyTTL / 2; readyInterval > 0 && (interval <= 0 || readyInterval < interval) {
+		interval = readyInterval
+	}
+	if interval <= 0 {
+		return 10 * time.Millisecond
+	}
+	return interval
 }

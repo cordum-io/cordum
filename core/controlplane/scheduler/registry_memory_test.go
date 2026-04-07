@@ -1,13 +1,32 @@
 package scheduler_test
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/encoding/protowire"
 )
+
+func handshakeWithReadyTopics(componentID string, topics ...string) *pb.Handshake {
+	hs := &pb.Handshake{
+		ComponentId: componentID,
+		Role:        pb.ComponentRole_COMPONENT_ROLE_WORKER,
+	}
+	if len(topics) == 0 {
+		return hs
+	}
+	raw := append([]byte{}, hs.ProtoReflect().GetUnknown()...)
+	for _, topic := range topics {
+		raw = protowire.AppendTag(raw, 6, protowire.BytesType)
+		raw = protowire.AppendString(raw, topic)
+	}
+	hs.ProtoReflect().SetUnknown(raw)
+	return hs
+}
 
 func TestMemoryRegistry_UpdateHeartbeat(t *testing.T) {
 	r := scheduler.NewMemoryRegistry()
@@ -195,5 +214,82 @@ func TestMemoryRegistry_ExpiresStaleWorkers(t *testing.T) {
 	snapshot := r.Snapshot()
 	if len(snapshot) != 0 {
 		t.Fatalf("expected worker to expire, found %d", len(snapshot))
+	}
+}
+
+func TestMemoryRegistry_ReadinessSetOnHandshake(t *testing.T) {
+	r := scheduler.NewMemoryRegistry()
+	t.Cleanup(r.Close)
+
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "worker-ready", Pool: "default"})
+	r.UpdateHandshake(handshakeWithReadyTopics("worker-ready", "job.default", "job.other"))
+
+	readiness := r.ReadinessSnapshot()
+	state, ok := readiness["worker-ready"]
+	if !ok {
+		t.Fatal("expected worker-ready in readiness snapshot")
+	}
+	if !state.Ready {
+		t.Fatal("expected worker to be ready after handshake")
+	}
+	if !reflect.DeepEqual(state.ReadyTopics, []string{"job.default", "job.other"}) {
+		t.Fatalf("unexpected ready topics: %#v", state.ReadyTopics)
+	}
+
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "worker-ready", Pool: "default", ActiveJobs: 1})
+	state = r.ReadinessSnapshot()["worker-ready"]
+	if !state.Ready {
+		t.Fatal("expected readiness to survive heartbeat updates")
+	}
+}
+
+func TestMemoryRegistry_ReadinessTTLExpiry(t *testing.T) {
+	t.Setenv("WORKER_READINESS_TTL", "20ms")
+	r := scheduler.NewMemoryRegistryWithTTL(500 * time.Millisecond)
+	t.Cleanup(r.Close)
+
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "worker-ttl", Pool: "default"})
+	r.UpdateHandshake(handshakeWithReadyTopics("worker-ttl", "job.default"))
+
+	if !r.ReadinessSnapshot()["worker-ttl"].Ready {
+		t.Fatal("expected worker to start ready")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !r.ReadinessSnapshot()["worker-ttl"].Ready {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !r.IsAlive("worker-ttl") {
+		t.Fatal("expected worker heartbeat to remain alive after readiness expiry")
+	}
+	if state := r.ReadinessSnapshot()["worker-ttl"]; state.Ready {
+		t.Fatalf("expected readiness to expire, got %#v", state)
+	}
+	if len(r.Snapshot()) != 1 {
+		t.Fatalf("expected worker heartbeat to remain in snapshot, got %d workers", len(r.Snapshot()))
+	}
+}
+
+func TestMemoryRegistry_ReadinessClearedOnEmptyTopics(t *testing.T) {
+	r := scheduler.NewMemoryRegistry()
+	t.Cleanup(r.Close)
+
+	r.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "worker-empty", Pool: "default"})
+	r.UpdateHandshake(handshakeWithReadyTopics("worker-empty", "job.default"))
+	if !r.ReadinessSnapshot()["worker-empty"].Ready {
+		t.Fatal("expected worker to be ready before clearing topics")
+	}
+
+	r.UpdateHandshake(handshakeWithReadyTopics("worker-empty"))
+	state := r.ReadinessSnapshot()["worker-empty"]
+	if state.Ready {
+		t.Fatalf("expected readiness to clear on empty topics, got %#v", state)
+	}
+	if len(state.ReadyTopics) != 0 {
+		t.Fatalf("expected ready topics to be cleared, got %#v", state.ReadyTopics)
 	}
 }

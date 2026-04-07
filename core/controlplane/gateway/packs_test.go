@@ -17,10 +17,16 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/infra/locks"
 )
 
 func installTestPack(t *testing.T, s *server) {
+	t.Helper()
+	_ = installTestPackResponse(t, s)
+}
+
+func installTestPackResponse(t *testing.T, s *server) packInstallResponse {
 	t.Helper()
 	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
 		Scope:   configsvc.ScopeSystem,
@@ -114,6 +120,12 @@ tenants:
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
 	}
+
+	var resp packInstallResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode install response: %v", err)
+	}
+	return resp
 }
 
 func TestHandleInstallPack(t *testing.T) {
@@ -142,6 +154,64 @@ func TestHandleInstallPack(t *testing.T) {
 	bundles, _ := policyDoc.Data["bundles"].(map[string]any)
 	if bundles == nil || bundles["test-pack/safety"] == nil {
 		t.Fatalf("policy bundle not installed")
+	}
+	reg, registryEmpty, err := s.topicRegistry.Get(ctx, "job.test-pack.collect")
+	if err != nil {
+		t.Fatalf("topic registry lookup: %v", err)
+	}
+	if registryEmpty || reg == nil {
+		t.Fatalf("expected installed pack topic registration, got registryEmpty=%v reg=%v", registryEmpty, reg)
+	}
+	if reg.PackID != "test-pack" || reg.Pool != "test-pack" || reg.Status != topicregistry.StatusActive {
+		t.Fatalf("unexpected topic registration: %+v", reg)
+	}
+}
+
+func TestPackInstallRegistersTopics(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	installTestPack(t, s)
+
+	reg, registryEmpty, err := s.topicRegistry.Get(context.Background(), "job.test-pack.collect")
+	if err != nil {
+		t.Fatalf("topic registry lookup: %v", err)
+	}
+	if registryEmpty || reg == nil {
+		t.Fatalf("expected installed pack topic registration, got registryEmpty=%v reg=%v", registryEmpty, reg)
+	}
+	if reg.PackID != "test-pack" {
+		t.Fatalf("expected pack_id test-pack, got %+v", reg)
+	}
+}
+
+func TestPackInstallGeneratesCredential(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	resp := installTestPackResponse(t, s)
+
+	if resp.WorkerCredential == nil {
+		t.Fatal("expected pack install response to include worker credential")
+	}
+	if resp.WorkerCredential.WorkerID != "test-pack" {
+		t.Fatalf("expected worker id test-pack, got %+v", resp.WorkerCredential)
+	}
+	if resp.WorkerCredential.Token == "" {
+		t.Fatal("expected plaintext worker credential token")
+	}
+	if resp.WorkerCredential.PackID != "test-pack" {
+		t.Fatalf("expected pack id test-pack, got %+v", resp.WorkerCredential)
+	}
+
+	record, ok, err := s.workerCredentialStore.Verify(context.Background(), resp.WorkerCredential.WorkerID, resp.WorkerCredential.Token)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !ok || record == nil {
+		t.Fatalf("expected issued pack credential to verify, got ok=%v record=%v", ok, record)
+	}
+	if record.PackID != "test-pack" {
+		t.Fatalf("expected pack-managed record, got %+v", record)
+	}
+	if len(record.AllowedTopics) != 1 || record.AllowedTopics[0] != "job.test-pack.collect" {
+		t.Fatalf("unexpected allowed topics: %+v", record.AllowedTopics)
 	}
 }
 
@@ -263,6 +333,64 @@ func TestHandleVerifyAndUninstallPack(t *testing.T) {
 	}
 	if rec["status"] != "DISABLED" {
 		t.Fatalf("expected disabled status")
+	}
+	reg, _, err := s.topicRegistry.Get(context.Background(), "job.test-pack.collect")
+	if err != nil {
+		t.Fatalf("topic registry lookup after uninstall: %v", err)
+	}
+	if reg != nil {
+		t.Fatalf("expected pack topic to be removed on uninstall, got %+v", reg)
+	}
+}
+
+func TestPackUninstallRemovesTopics(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	installTestPack(t, s)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/packs/test-pack/uninstall", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", "test-pack")
+	rr := httptest.NewRecorder()
+	s.handleUninstallPack(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	reg, _, err := s.topicRegistry.Get(context.Background(), "job.test-pack.collect")
+	if err != nil {
+		t.Fatalf("topic registry lookup after uninstall: %v", err)
+	}
+	if reg != nil {
+		t.Fatalf("expected pack topic to be removed on uninstall, got %+v", reg)
+	}
+}
+
+func TestPackUninstallRevokesCredential(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	resp := installTestPackResponse(t, s)
+	if resp.WorkerCredential == nil {
+		t.Fatal("expected worker credential from install")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/packs/test-pack/uninstall", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", "test-pack")
+	rr := httptest.NewRecorder()
+	s.handleUninstallPack(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	record, ok, err := s.workerCredentialStore.Verify(context.Background(), resp.WorkerCredential.WorkerID, resp.WorkerCredential.Token)
+	if err != nil {
+		t.Fatalf("Verify revoked credential: %v", err)
+	}
+	if ok {
+		t.Fatal("expected revoked pack credential verification to fail")
+	}
+	if record == nil || !record.Revoked() {
+		t.Fatalf("expected revoked pack credential record, got %+v", record)
 	}
 }
 

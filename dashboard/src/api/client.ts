@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import { useConfigStore } from "../state/config";
 import { logger } from "../lib/logger";
+import type { TopicsResponse } from "./types";
 
 function baseUrl(): string {
   const { apiBaseUrl } = useConfigStore.getState();
@@ -156,6 +157,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function get<T>(path: string): Promise<T> {
   return request<T>(path, { method: "GET" });
+}
+
+type BackendTopicRegistration = {
+  name: string;
+  pool: string;
+  input_schema_id?: string;
+  output_schema_id?: string;
+  pack_id?: string;
+  requires?: string[];
+  risk_tags?: string[];
+  status?: string;
+  active_worker_count?: number;
+};
+
+export async function fetchTopics(): Promise<TopicsResponse> {
+  const res = await get<{
+    items?: BackendTopicRegistration[];
+    registry_empty?: boolean;
+  }>("/topics");
+
+  return {
+    items: (res.items ?? []).map((topic) => ({
+      name: topic.name,
+      pool: topic.pool,
+      inputSchemaId: topic.input_schema_id,
+      outputSchemaId: topic.output_schema_id,
+      packId: topic.pack_id,
+      requires: topic.requires ?? [],
+      riskTags: topic.risk_tags ?? [],
+      status: topic.status ?? "active",
+      activeWorkers: topic.active_worker_count ?? 0,
+    })),
+    registryEmpty: res.registry_empty ?? false,
+  };
 }
 
 export function post<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {

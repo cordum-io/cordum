@@ -5,7 +5,7 @@ import { useDialogA11y } from "@/hooks/useDialogA11y";
 import {
   LayoutGrid, ListChecks, Workflow, Cpu, UserCheck, Shield, ShieldCheck, ShieldAlert, Boxes,
   AlertTriangle, FileText, Settings, Search, Activity, Key, Bell,
-  Users, Server, Globe, Monitor, ArrowRight, GitBranch,
+  Users, Server, Globe, Monitor, ArrowRight, GitBranch, Hash,
 } from "lucide-react";
 
 interface CommandItem {
@@ -32,6 +32,7 @@ export const COMMAND_PALETTE_COMMANDS: CommandItem[] = [
   { id: "simulator", label: "Simulator", section: "Govern", icon: Shield, path: "/govern/overview?tab=simulator", keywords: ["simulator", "test", "dry run", "analytics"] },
   { id: "quarantine", label: "Quarantine", section: "Govern", icon: ShieldAlert, path: "/govern/quarantine", keywords: ["quarantine", "output", "blocked", "review"] },
   { id: "packs", label: "Packs", section: "Navigate", icon: Boxes, path: "/packs", keywords: ["packs", "marketplace", "plugins"] },
+  { id: "topics", label: "Topics", section: "Navigate", icon: Hash, path: "/topics", keywords: ["topics", "registry", "routing", "pool mappings"] },
   { id: "schemas", label: "Schemas", section: "Navigate", icon: Monitor, path: "/schemas", keywords: ["schemas", "types", "definitions"] },
   { id: "dlq", label: "Dead Letter Queue", section: "Navigate", icon: AlertTriangle, path: "/dlq", keywords: ["dlq", "dead letter", "failed", "retry"] },
   { id: "traces", label: "Traces", section: "Navigate", icon: Activity, path: "/traces", keywords: ["traces", "spans", "observability", "telemetry"] },
