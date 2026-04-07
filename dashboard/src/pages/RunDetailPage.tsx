@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import {
   ArrowLeft, Send, Briefcase, Shield, ShieldAlert, GitBranch, Clock,
   CheckCircle2, XCircle, Loader2, MessageSquare, AlertTriangle,
-  ChevronDown, Copy, RotateCcw, Hand,
+  ChevronDown, Copy, Check, RotateCcw, Hand,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
 import { isRunVisibilityActive, isRunVisibilityTerminal, toRunVisibilityState } from "@/lib/runVisibility";
@@ -90,6 +90,7 @@ export default function WorkflowRunDetailPage() {
   const [chatInput, setChatInput] = useState("");
   const [selectedStep, setSelectedStep] = useState<RunStep | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [copiedRunId, setCopiedRunId] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Real data hooks
@@ -214,6 +215,18 @@ export default function WorkflowRunDetailPage() {
     setChatInput("");
   }, [chatInput, chatMutation]);
 
+  const handleCopyRunId = useCallback(async () => {
+    if (!runId) return;
+
+    try {
+      await navigator.clipboard.writeText(runId);
+      setCopiedRunId(true);
+      setTimeout(() => setCopiedRunId(false), 1500);
+    } catch {
+      toast.error("Copy failed");
+    }
+  }, [runId]);
+
   const handleCancel = () => {
     if (!workflowId || !runId) return;
     cancelMutation.mutate(
@@ -310,6 +323,16 @@ export default function WorkflowRunDetailPage() {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-display font-semibold text-foreground">Run {runId?.slice(0, 8)}</span>
+              {runId && (
+                <button
+                  type="button"
+                  onClick={handleCopyRunId}
+                  aria-label="Copy run ID"
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {copiedRunId ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                </button>
+              )}
               <StatusBadge
                 variant={runStatusVariant(run?.status ?? "pending")}
                 dot
@@ -502,10 +525,20 @@ export default function WorkflowRunDetailPage() {
             <span className="text-sm font-display font-semibold text-foreground">Run Chat</span>
             <span className="text-xs font-mono text-muted-foreground ml-auto">{messages.length} messages</span>
           </div>
-          {isChatFallback && (
+          {chatError && (
+            <div className="flex items-center gap-2 px-5 py-1.5 border-b border-destructive/20 bg-destructive/5 text-xs text-destructive">
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              {(chatError as { status?: number })?.status === 401 || (chatError as { status?: number })?.status === 403
+                ? "Chat unavailable — check your API key or permissions"
+                : (chatError as { status?: number })?.status === 404
+                  ? "Chat endpoint not available for this run"
+                  : "Unable to load chat messages"}
+            </div>
+          )}
+          {isChatFallback && !chatError && (
             <div className="flex items-center gap-2 px-5 py-1.5 border-b border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 text-xs text-[var(--color-warning)]">
               <AlertTriangle className="w-3 h-3 shrink-0" />
-              Showing timeline events {chatError ? "(chat unavailable)" : "(no chat messages)"}
+              Showing timeline events (no chat messages)
             </div>
           )}
 
