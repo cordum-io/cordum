@@ -46,7 +46,6 @@ func delayForStep(step *Step, now time.Time) (time.Duration, error) {
 func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 	level := "INFO"
 	message := ""
-	code := ""
 	component := "workflow-engine"
 	traceID := ""
 	details := map[string]string{}
@@ -58,9 +57,6 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 		}
 		if val, ok := v["message"].(string); ok && strings.TrimSpace(val) != "" {
 			message = strings.TrimSpace(val)
-		}
-		if val, ok := v["code"].(string); ok && strings.TrimSpace(val) != "" {
-			code = strings.TrimSpace(val)
 		}
 		if val, ok := v["component"].(string); ok && strings.TrimSpace(val) != "" {
 			component = strings.TrimSpace(val)
@@ -89,9 +85,6 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 		if val := strings.TrimSpace(v["message"]); val != "" {
 			message = val
 		}
-		if val := strings.TrimSpace(v["code"]); val != "" {
-			code = val
-		}
 		if val := strings.TrimSpace(v["component"]); val != "" {
 			component = val
 		}
@@ -109,12 +102,7 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 	}
 
 	return &pb.SystemAlert{
-		// Deprecated fields (keep for backward compat)
-		Level:     level,
-		Message:   message,
-		Component: component,
-		Code:      code,
-		// New enhanced fields
+		Message:         message,
 		Severity:        levelToSeverity(level),
 		SourceComponent: component,
 		Details:         details,

@@ -43,7 +43,7 @@ func NewNATSAuditConsumer(bus AuditBus, exporter Exporter) (*NATSAuditConsumer, 
 // error on failure (nak → JetStream redelivery).
 func (c *NATSAuditConsumer) handle(packet *pb.BusPacket) error {
 	alert := packet.GetAlert()
-	if alert == nil || alert.Component != "audit-export" {
+	if alert == nil || alert.SourceComponent != "audit-export" {
 		// Not an audit event — ack and skip.
 		return nil
 	}
