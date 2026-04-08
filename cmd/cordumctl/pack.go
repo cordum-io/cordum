@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/config"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	sdk "github.com/cordum/cordum/sdk/client"
 	"gopkg.in/yaml.v3"
@@ -64,12 +65,23 @@ type packCompatibility struct {
 }
 
 type packTopic struct {
-	Name       string   `yaml:"name"`
-	Requires   []string `yaml:"requires"`
-	RiskTags   []string `yaml:"riskTags"`
-	Capability string   `yaml:"capability"`
-	InputSchemaID  string `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
-	OutputSchemaID string `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
+	Name           string   `yaml:"name"`
+	Requires       []string `yaml:"requires"`
+	RiskTags       []string `yaml:"riskTags"`
+	Capability     string   `yaml:"capability"`
+	InputSchemaID  string   `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
+	OutputSchemaID string   `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
+}
+
+type topicRegistration struct {
+	Name           string   `json:"name"`
+	Pool           string   `json:"pool,omitempty"`
+	InputSchemaID  string   `json:"input_schema_id,omitempty"`
+	OutputSchemaID string   `json:"output_schema_id,omitempty"`
+	PackID         string   `json:"pack_id,omitempty"`
+	Requires       []string `json:"requires,omitempty"`
+	RiskTags       []string `json:"risk_tags,omitempty"`
+	Status         string   `json:"status"`
 }
 
 type packResources struct {
@@ -265,6 +277,7 @@ func runPackInstall(args []string) error {
 	appliedPolicy := []packAppliedPolicyOverlay{}
 	appliedConfigChanges := []appliedConfigChange{}
 	appliedPolicyChanges := []appliedPolicyChange{}
+	appliedTopics := []topicRegistration{}
 	appliedSchemas := []schemaPlan{}
 	appliedWorkflows := []workflowPlan{}
 	schemaDigests := map[string]string{}
@@ -281,8 +294,13 @@ func runPackInstall(args []string) error {
 		return nil
 	}
 
-	rollback := func() {
-		rollbackPackInstall(ctx, client, appliedPolicyChanges, appliedConfigChanges, appliedWorkflows, appliedSchemas)
+	rollback := func(installErr error) error {
+		rollbackErr := rollbackPackInstall(ctx, client, appliedTopics, appliedPolicyChanges, appliedConfigChanges, appliedWorkflows, appliedSchemas)
+		if rollbackErr == nil {
+			return installErr
+		}
+		fmt.Fprintf(os.Stderr, "WARNING: pack install rollback encountered errors: %v\n", rollbackErr)
+		return errors.Join(installErr, fmt.Errorf("rollback cleanup failed: %w", rollbackErr))
 	}
 
 	for _, plan := range schemaPlans {
@@ -290,8 +308,7 @@ func runPackInstall(args []string) error {
 			continue
 		}
 		if err := client.registerSchema(ctx, plan.ID, plan.Schema); err != nil {
-			rollback()
-			return err
+			return rollback(err)
 		}
 		appliedSchemas = append(appliedSchemas, plan)
 	}
@@ -300,8 +317,7 @@ func runPackInstall(args []string) error {
 			continue
 		}
 		if err := client.createWorkflow(ctx, plan.Workflow); err != nil {
-			rollback()
-			return err
+			return rollback(err)
 		}
 		appliedWorkflows = append(appliedWorkflows, plan)
 	}
@@ -312,8 +328,7 @@ func runPackInstall(args []string) error {
 		}
 		applied, err := applyConfigOverlay(ctx, client, overlay, manifest.Metadata.ID, bundle.Dir)
 		if err != nil {
-			rollback()
-			return err
+			return rollback(err)
 		}
 		if applied.Overlay.Name != "" {
 			appliedConfig = append(appliedConfig, applied.Overlay)
@@ -323,8 +338,7 @@ func runPackInstall(args []string) error {
 	for _, overlay := range manifest.Overlays.Policy {
 		applied, err := applyPolicyOverlay(ctx, client, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundle.Dir)
 		if err != nil {
-			rollback()
-			return err
+			return rollback(err)
 		}
 		if applied.Overlay.Name != "" {
 			appliedPolicy = append(appliedPolicy, applied.Overlay)
@@ -335,6 +349,16 @@ func runPackInstall(args []string) error {
 	status := "ACTIVE"
 	if *inactive || !hasPoolOverlay(appliedConfig) {
 		status = "INACTIVE"
+	}
+	topicRegistrations, err := packTopicRegistrations(ctx, client, manifest, status)
+	if err != nil {
+		return rollback(err)
+	}
+	for _, topic := range topicRegistrations {
+		if err := client.registerTopic(ctx, topic); err != nil {
+			return rollback(fmt.Errorf("register topic %s: %w", topic.Name, err))
+		}
+		appliedTopics = append(appliedTopics, topic)
 	}
 
 	record := packRecord{
@@ -359,8 +383,7 @@ func runPackInstall(args []string) error {
 	}
 
 	if err := updatePackRegistry(ctx, client, record); err != nil {
-		rollback()
-		return err
+		return rollback(err)
 	}
 	fmt.Printf("installed pack %s %s (%s)\n", record.ID, record.Version, record.Status)
 	return nil
@@ -405,6 +428,14 @@ func runPackUninstall(args []string) error {
 	for _, overlay := range record.Overlays.Policy {
 		if err := removePolicyOverlay(ctx, client, overlay); err != nil {
 			return err
+		}
+	}
+	for _, topic := range record.Manifest.Topics {
+		if err := client.removeTopic(ctx, topic.Name); err != nil {
+			if isNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("remove topic %s: %w", topic.Name, err)
 		}
 	}
 	if *purge {
@@ -529,6 +560,7 @@ type appliedPolicyChange struct {
 }
 
 type packInstallRollbackHooks struct {
+	rollbackTopic        func(context.Context, *restClient, topicRegistration) error
 	restorePolicyOverlay func(context.Context, *restClient, appliedPolicyChange) error
 	restoreConfigOverlay func(context.Context, *restClient, appliedConfigChange) error
 	rollbackWorkflow     func(context.Context, *restClient, workflowPlan) error
@@ -538,19 +570,22 @@ type packInstallRollbackHooks struct {
 func rollbackPackInstall(
 	ctx context.Context,
 	client *restClient,
+	appliedTopics []topicRegistration,
 	appliedPolicyChanges []appliedPolicyChange,
 	appliedConfigChanges []appliedConfigChange,
 	appliedWorkflows []workflowPlan,
 	appliedSchemas []schemaPlan,
-) {
-	rollbackPackInstallWithHooks(
+) error {
+	return rollbackPackInstallWithHooks(
 		ctx,
 		client,
+		appliedTopics,
 		appliedPolicyChanges,
 		appliedConfigChanges,
 		appliedWorkflows,
 		appliedSchemas,
 		packInstallRollbackHooks{
+			rollbackTopic:        rollbackTopic,
 			restorePolicyOverlay: restorePolicyOverlay,
 			restoreConfigOverlay: restoreConfigOverlay,
 			rollbackWorkflow:     rollbackWorkflow,
@@ -562,32 +597,51 @@ func rollbackPackInstall(
 func rollbackPackInstallWithHooks(
 	ctx context.Context,
 	client *restClient,
+	appliedTopics []topicRegistration,
 	appliedPolicyChanges []appliedPolicyChange,
 	appliedConfigChanges []appliedConfigChange,
 	appliedWorkflows []workflowPlan,
 	appliedSchemas []schemaPlan,
 	hooks packInstallRollbackHooks,
-) {
+) error {
+	var errs []error
+	for i := len(appliedTopics) - 1; i >= 0; i-- {
+		if hooks.rollbackTopic == nil {
+			continue
+		}
+		if err := hooks.rollbackTopic(ctx, client, appliedTopics[i]); err != nil {
+			slog.Warn("pack install rollback: remove topic failed", "error", err, "topic", appliedTopics[i].Name, "index", i)
+			errs = append(errs, fmt.Errorf("remove topic %s: %w", appliedTopics[i].Name, err))
+		}
+	}
 	for i := len(appliedPolicyChanges) - 1; i >= 0; i-- {
 		if err := hooks.restorePolicyOverlay(ctx, client, appliedPolicyChanges[i]); err != nil {
 			slog.Warn("pack install rollback: restore policy overlay failed", "error", err, "index", i)
+			errs = append(errs, fmt.Errorf("restore policy overlay %s: %w", appliedPolicyChanges[i].Overlay.Name, err))
 		}
 	}
 	for i := len(appliedConfigChanges) - 1; i >= 0; i-- {
 		if err := hooks.restoreConfigOverlay(ctx, client, appliedConfigChanges[i]); err != nil {
 			slog.Warn("pack install rollback: restore config overlay failed", "error", err, "index", i)
+			errs = append(errs, fmt.Errorf("restore config overlay %s: %w", appliedConfigChanges[i].Overlay.Name, err))
 		}
 	}
 	for i := len(appliedWorkflows) - 1; i >= 0; i-- {
 		if err := hooks.rollbackWorkflow(ctx, client, appliedWorkflows[i]); err != nil {
 			slog.Warn("pack install rollback: rollback workflow failed", "error", err, "index", i)
+			errs = append(errs, fmt.Errorf("rollback workflow %s: %w", appliedWorkflows[i].ID, err))
 		}
 	}
 	for i := len(appliedSchemas) - 1; i >= 0; i-- {
 		if err := hooks.rollbackSchema(ctx, client, appliedSchemas[i]); err != nil {
 			slog.Warn("pack install rollback: rollback schema failed", "error", err, "index", i)
+			errs = append(errs, fmt.Errorf("rollback schema %s: %w", appliedSchemas[i].ID, err))
 		}
 	}
+	if len(errs) > 0 {
+		return fmt.Errorf("rollback completed with %d errors: %w", len(errs), errors.Join(errs...))
+	}
+	return nil
 }
 
 func planSchemas(ctx context.Context, client *restClient, dir string, manifest *packManifest, upgrade bool) ([]schemaPlan, error) {
@@ -960,6 +1014,81 @@ func hasPoolOverlay(overlays []packAppliedConfigOverlay) bool {
 	return false
 }
 
+func packTopicRegistrations(ctx context.Context, client *restClient, manifest *packManifest, packStatus string) ([]topicRegistration, error) {
+	if manifest == nil {
+		return nil, errors.New("pack manifest required")
+	}
+	if len(manifest.Topics) == 0 {
+		return []topicRegistration{}, nil
+	}
+
+	topicToPool, err := loadTopicPoolMappings(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
+	status := "active"
+	if strings.EqualFold(packStatus, "INACTIVE") {
+		status = "disabled"
+	}
+
+	out := make([]topicRegistration, 0, len(manifest.Topics))
+	for _, topic := range manifest.Topics {
+		out = append(out, topicRegistration{
+			Name:           topic.Name,
+			Pool:           strings.TrimSpace(topicToPool[topic.Name]),
+			InputSchemaID:  strings.TrimSpace(topic.InputSchemaID),
+			OutputSchemaID: strings.TrimSpace(topic.OutputSchemaID),
+			PackID:         manifest.Metadata.ID,
+			Requires:       topic.Requires,
+			RiskTags:       topic.RiskTags,
+			Status:         status,
+		})
+	}
+	return out, nil
+}
+
+func loadTopicPoolMappings(ctx context.Context, client *restClient) (map[string]string, error) {
+	if client == nil {
+		return map[string]string{}, nil
+	}
+	doc, err := client.getConfig(ctx, "system", "default")
+	if err != nil {
+		if isNotFound(err) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("load pool mappings: %w", err)
+	}
+	return topicPoolMappingsFromConfig(doc)
+}
+
+func topicPoolMappingsFromConfig(doc *configDoc) (map[string]string, error) {
+	if doc == nil || doc.Data == nil {
+		return map[string]string{}, nil
+	}
+	raw, ok := doc.Data["pools"]
+	if !ok || raw == nil {
+		return map[string]string{}, nil
+	}
+	if rawMap, ok := raw.(map[string]any); ok {
+		if rawTopics, ok := rawMap["topics"].(map[string]any); (!ok || len(rawTopics) == 0) && rawMap["pools"] != nil {
+			return map[string]string{}, nil
+		}
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("load pool mappings: %w", err)
+	}
+	poolsCfg, err := config.ParsePoolsConfig(data)
+	if err != nil {
+		return nil, fmt.Errorf("load pool mappings: %w", err)
+	}
+	if poolsCfg == nil {
+		return map[string]string{}, nil
+	}
+	return poolsCfg.TopicToPool(), nil
+}
+
 func applyConfigOverlay(ctx context.Context, client *restClient, overlay packConfigOverlay, packID, dir string) (appliedConfigChange, error) {
 	key := strings.TrimSpace(overlay.Key)
 	if key == "" {
@@ -1186,6 +1315,14 @@ func rollbackWorkflow(ctx context.Context, client *restClient, plan workflowPlan
 		return client.createWorkflow(ctx, plan.Existing)
 	}
 	return client.deleteWorkflow(ctx, plan.ID)
+}
+
+func rollbackTopic(ctx context.Context, client *restClient, topic topicRegistration) error {
+	err := client.removeTopic(ctx, topic.Name)
+	if isNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func runPolicySimulation(ctx context.Context, client *restClient, test packPolicySimulation, packID string) error {
@@ -1860,6 +1997,14 @@ func (c *restClient) registerSchema(ctx context.Context, id string, schema map[s
 		"schema": schema,
 	}
 	return c.doJSON(ctx, http.MethodPost, "/api/v1/schemas", req, nil)
+}
+
+func (c *restClient) registerTopic(ctx context.Context, topic topicRegistration) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/v1/topics", topic, nil)
+}
+
+func (c *restClient) removeTopic(ctx context.Context, name string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/topics/"+url.PathEscape(name), nil, nil)
 }
 
 func (c *restClient) deleteSchema(ctx context.Context, id string) error {

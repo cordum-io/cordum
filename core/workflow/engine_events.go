@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"log/slog"
+	"runtime/debug"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -15,6 +16,10 @@ import (
 // Delays shorter than this use in-memory time.AfterFunc only (fast, no Redis round-trip).
 // Set to 3s to limit the data-loss window on crash while avoiding Redis round-trips for trivial delays.
 const durableDelayThreshold = 3 * time.Second
+
+// buildEventAlertTestHook is nil in production. Tests may set it to inject a
+// panic and verify the alert builder fails closed.
+var buildEventAlertTestHook func()
 
 func delayForStep(step *Step, now time.Time) (time.Duration, error) {
 	if step == nil {
@@ -43,7 +48,24 @@ func delayForStep(step *Step, now time.Time) (time.Duration, error) {
 	return 0, nil
 }
 
-func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
+func buildEventAlert(step *Step, payload any) (alert *pb.SystemAlert) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("workflow: buildEventAlert panic",
+				"panic", r,
+				"stack", string(debug.Stack()),
+			)
+			alert = &pb.SystemAlert{
+				Message:         fmt.Sprintf("event alert build panic: %v", r),
+				Severity:        pb.AlertSeverity_ALERT_SEVERITY_ERROR,
+				SourceComponent: "workflow-engine",
+			}
+		}
+	}()
+	if buildEventAlertTestHook != nil {
+		buildEventAlertTestHook()
+	}
+
 	level := "INFO"
 	message := ""
 	component := "workflow-engine"

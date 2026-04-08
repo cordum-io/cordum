@@ -181,3 +181,83 @@ func TestRevokeWorker(t *testing.T) {
 		t.Fatalf("expected workers config change alert, got %+v", last.packet.GetAlert())
 	}
 }
+
+func TestCreateCredentialEmptyWorkerID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewBufferString(`{"worker_id":"   "}`)), &AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleCreateWorkerCredential(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateCredentialArrayTooLong(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	allowedPools := make([]string, maxCredentialArrayItems+1)
+	for i := range allowedPools {
+		allowedPools[i] = "default"
+	}
+	body, err := json.Marshal(map[string]any{
+		"worker_id":     "external-worker",
+		"allowed_pools": allowedPools,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewReader(body)), &AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleCreateWorkerCredential(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateCredentialPoolNotFound(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewBufferString(`{"worker_id":"external-worker","allowed_pools":["missing-pool"]}`)), &AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleCreateWorkerCredential(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRevokeNonexistentCredential(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/missing-worker", nil), &AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	req.SetPathValue("worker_id", "missing-worker")
+	rec := httptest.NewRecorder()
+
+	s.handleDeleteWorkerCredential(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { get, post } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { Save, RotateCcw, AlertTriangle, Settings, Shield, Database, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -64,10 +65,20 @@ const GROUPS: ConfigGroup[] = [
   },
 ];
 
+export function getChangedConfigKeys(
+  currentValues: Record<string, ConfigValue>,
+  originalValues: Record<string, ConfigValue>,
+): string[] {
+  return Object.keys(currentValues)
+    .filter((key) => currentValues[key] !== originalValues[key])
+    .sort();
+}
+
 export default function SettingsConfigPage() {
   const [values, setValues] = useState<Record<string, ConfigValue>>({});
   const [originalValues, setOriginalValues] = useState<Record<string, ConfigValue>>({});
   const [activeGroup, setActiveGroup] = useState("general");
+  const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
 
   const { data: configData, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["config"],
@@ -93,7 +104,8 @@ export default function SettingsConfigPage() {
     setOriginalValues(initial);
   }, [configData]);
 
-  const hasChanges = JSON.stringify(values) !== JSON.stringify(originalValues);
+  const changedKeys = getChangedConfigKeys(values, originalValues);
+  const hasChanges = changedKeys.length > 0;
 
   const saveMutation = useMutation({
     mutationFn: async () => post("/config", values),
@@ -103,6 +115,14 @@ export default function SettingsConfigPage() {
 
   const updateValue = (key: string, value: ConfigValue) => {
     setValues(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleConfirmSave = () => {
+    saveMutation.mutate(undefined, {
+      onSuccess: () => {
+        setConfirmSaveOpen(false);
+      },
+    });
   };
 
   const currentGroup = GROUPS.find(g => g.id === activeGroup);
@@ -132,7 +152,12 @@ export default function SettingsConfigPage() {
               <Button variant="ghost" size="sm" onClick={() => setValues({ ...originalValues })}>
                 <RotateCcw className="w-3 h-3 mr-1" />Discard
               </Button>
-              <Button variant="primary" size="sm" onClick={() => saveMutation.mutate()} loading={saveMutation.isPending}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setConfirmSaveOpen(true)}
+                loading={saveMutation.isPending}
+              >
                 <Save className="w-3 h-3 mr-1" />Save Changes
               </Button>
             </div>
@@ -225,6 +250,36 @@ export default function SettingsConfigPage() {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmSaveOpen}
+        onClose={() => setConfirmSaveOpen(false)}
+        onConfirm={handleConfirmSave}
+        title="Apply production configuration changes?"
+        description={
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              This will change live cluster configuration and may affect active
+              jobs, safety behavior, or retention policies.
+            </p>
+            {changedKeys.length > 0 && (
+              <div>
+                <p className="text-xs font-mono uppercase tracking-wide text-foreground">
+                  Keys to update
+                </p>
+                <ul className="mt-2 space-y-1 text-xs font-mono text-foreground">
+                  {changedKeys.map((key) => (
+                    <li key={key}>{key}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        }
+        confirmLabel="Save configuration"
+        cancelLabel="Review changes"
+        loading={saveMutation.isPending}
+      />
     </motion.div>
   );
 }

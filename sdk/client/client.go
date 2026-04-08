@@ -233,6 +233,55 @@ type JobSubmitResponse struct {
 	TraceID string `json:"trace_id,omitempty"`
 }
 
+// TopicRegistration mirrors the canonical topic registry record returned by the gateway.
+type TopicRegistration struct {
+	Name              string   `json:"name"`
+	Pool              string   `json:"pool"`
+	InputSchemaID     string   `json:"input_schema_id,omitempty"`
+	OutputSchemaID    string   `json:"output_schema_id,omitempty"`
+	PackID            string   `json:"pack_id,omitempty"`
+	Requires          []string `json:"requires,omitempty"`
+	RiskTags          []string `json:"risk_tags,omitempty"`
+	Status            string   `json:"status"`
+	ActiveWorkerCount int      `json:"active_worker_count,omitempty"`
+}
+
+// TopicCreateInput is the request payload for creating or updating a topic registration.
+type TopicCreateInput struct {
+	Name           string   `json:"name"`
+	Pool           string   `json:"pool,omitempty"`
+	InputSchemaID  string   `json:"input_schema_id,omitempty"`
+	OutputSchemaID string   `json:"output_schema_id,omitempty"`
+	PackID         string   `json:"pack_id,omitempty"`
+	Requires       []string `json:"requires,omitempty"`
+	RiskTags       []string `json:"risk_tags,omitempty"`
+	Status         string   `json:"status,omitempty"`
+}
+
+// WorkerCredentialSummary mirrors a worker credential record returned by the gateway.
+type WorkerCredentialSummary struct {
+	WorkerID      string   `json:"worker_id"`
+	AllowedPools  []string `json:"allowed_pools,omitempty"`
+	AllowedTopics []string `json:"allowed_topics,omitempty"`
+	PackID        string   `json:"pack_id,omitempty"`
+	CreatedBy     string   `json:"created_by"`
+	CreatedAt     string   `json:"created_at"`
+	RevokedAt     string   `json:"revoked_at,omitempty"`
+}
+
+// WorkerCredentialInput is the request payload for issuing or rotating a worker credential.
+type WorkerCredentialInput struct {
+	WorkerID      string   `json:"worker_id"`
+	AllowedPools  []string `json:"allowed_pools,omitempty"`
+	AllowedTopics []string `json:"allowed_topics,omitempty"`
+}
+
+// WorkerCredentialIssued returns the stored credential record plus the plaintext token.
+type WorkerCredentialIssued struct {
+	WorkerCredentialSummary
+	Token string `json:"token"`
+}
+
 func (c *Client) endpoint(path string) string {
 	base := strings.TrimRight(c.BaseURL, "/")
 	return base + path
@@ -469,6 +518,64 @@ func (c *Client) GetStatus(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 
+// ListTopics fetches canonical topic registrations from the gateway.
+func (c *Client) ListTopics(ctx context.Context) ([]TopicRegistration, error) {
+	var resp struct {
+		Items []TopicRegistration `json:"items"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/topics", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// CreateTopic creates or updates a canonical topic registration.
+func (c *Client) CreateTopic(ctx context.Context, input TopicCreateInput) error {
+	if strings.TrimSpace(input.Name) == "" {
+		return fmt.Errorf("topic name required")
+	}
+	return c.doJSON(ctx, http.MethodPost, "/api/v1/topics", input, nil)
+}
+
+// DeleteTopic removes a topic registration by name.
+func (c *Client) DeleteTopic(ctx context.Context, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("topic name required")
+	}
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/topics/"+escapePathSegment(name), nil, nil)
+}
+
+// ListWorkerCredentials fetches issued worker credentials from the gateway.
+func (c *Client) ListWorkerCredentials(ctx context.Context) ([]WorkerCredentialSummary, error) {
+	var resp struct {
+		Items []WorkerCredentialSummary `json:"items"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workers/credentials", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// CreateWorkerCredential creates or rotates a worker credential and returns the plaintext token.
+func (c *Client) CreateWorkerCredential(ctx context.Context, input WorkerCredentialInput) (*WorkerCredentialIssued, error) {
+	if strings.TrimSpace(input.WorkerID) == "" {
+		return nil, fmt.Errorf("worker id required")
+	}
+	var issued WorkerCredentialIssued
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/workers/credentials", input, &issued); err != nil {
+		return nil, err
+	}
+	return &issued, nil
+}
+
+// RevokeWorkerCredential revokes a worker credential by worker ID.
+func (c *Client) RevokeWorkerCredential(ctx context.Context, workerID string) error {
+	if strings.TrimSpace(workerID) == "" {
+		return fmt.Errorf("worker id required")
+	}
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/workers/credentials/"+escapePathSegment(workerID), nil, nil)
+}
+
 // PutArtifact uploads content to the artifact store.
 func (c *Client) PutArtifact(ctx context.Context, content []byte, meta ArtifactMetadata, maxBytes int64) (string, error) {
 	if len(content) == 0 {
@@ -531,12 +638,12 @@ type PoolItem struct {
 
 type PoolDetail struct {
 	PoolItem
-	Status      string         `json:"status"`
-	Description string         `json:"description"`
-	Requires    []string       `json:"requires"`
-	Topics      []string       `json:"topics"`
-	WorkerList  []any          `json:"worker_list"`
-	CapturedAt  string         `json:"captured_at"`
+	Status      string   `json:"status"`
+	Description string   `json:"description"`
+	Requires    []string `json:"requires"`
+	Topics      []string `json:"topics"`
+	WorkerList  []any    `json:"worker_list"`
+	CapturedAt  string   `json:"captured_at"`
 }
 
 type PoolCreateRequest struct {

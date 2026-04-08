@@ -15,6 +15,47 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 )
 
+var ErrPoolNotFound = errors.New("pool not found")
+var ErrTopicNotFound = errors.New("topic not found")
+var ErrTopicPoolMappingNotFound = errors.New("topic pool mapping not found")
+
+type poolNotFoundError struct {
+	pool string
+}
+
+func (e poolNotFoundError) Error() string {
+	return fmt.Sprintf("pool %q not found", e.pool)
+}
+
+func (e poolNotFoundError) Is(target error) bool {
+	return target == ErrPoolNotFound
+}
+
+type topicNotFoundError struct {
+	topic string
+}
+
+func (e topicNotFoundError) Error() string {
+	return fmt.Sprintf("topic %q not found", e.topic)
+}
+
+func (e topicNotFoundError) Is(target error) bool {
+	return target == ErrTopicNotFound
+}
+
+type topicPoolMappingNotFoundError struct {
+	pool  string
+	topic string
+}
+
+func (e topicPoolMappingNotFoundError) Error() string {
+	return fmt.Sprintf("pool %q not mapped to topic %q", e.pool, e.topic)
+}
+
+func (e topicPoolMappingNotFoundError) Is(target error) bool {
+	return target == ErrTopicPoolMappingNotFound
+}
+
 // ---------------------------------------------------------------------------
 // Helpers: extract / write pools from the config document
 // ---------------------------------------------------------------------------
@@ -191,7 +232,7 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 		}
 		existing, ok := poolMap[name]
 		if !ok {
-			return fmt.Errorf("pool %q not found", name)
+			return poolNotFoundError{pool: name}
 		}
 		if req.Requires != nil {
 			existing.Requires = *req.Requires
@@ -215,7 +256,7 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
 			return
 		}
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrPoolNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -256,6 +297,9 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		if _, ok := poolMap[name]; !ok {
+			return poolNotFoundError{pool: name}
+		}
 		if err := pools.ValidatePoolDelete(name, poolMap, topics, force); err != nil {
 			return err
 		}
@@ -277,7 +321,7 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
 			return
 		}
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrPoolNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -333,7 +377,7 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 		}
 		existing, ok := poolMap[name]
 		if !ok {
-			return fmt.Errorf("pool %q not found", name)
+			return poolNotFoundError{pool: name}
 		}
 		if existing.EffectiveStatus() != config.PoolStatusActive {
 			return fmt.Errorf("pool %q is %s, not active — cannot drain", name, existing.EffectiveStatus())
@@ -351,7 +395,7 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
 			return
 		}
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrPoolNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -400,7 +444,7 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if _, ok := poolMap[name]; !ok {
-			return fmt.Errorf("pool %q not found", name)
+			return poolNotFoundError{pool: name}
 		}
 		plist := topics[topic]
 		if slices.Contains(plist, name) {
@@ -415,7 +459,7 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
 			return
 		}
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrPoolNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -453,10 +497,10 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 		}
 		plist, ok := topics[topic]
 		if !ok {
-			return fmt.Errorf("topic %q not found", topic)
+			return topicNotFoundError{topic: topic}
 		}
 		if !slices.Contains(plist, name) {
-			return fmt.Errorf("pool %q not mapped to topic %q", name, topic)
+			return topicPoolMappingNotFoundError{pool: name, topic: topic}
 		}
 		filtered := slices.DeleteFunc(plist, func(p string) bool { return p == name })
 		if len(filtered) == 0 {
@@ -472,7 +516,7 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
 			return
 		}
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not mapped") {
+		if errors.Is(err, ErrTopicNotFound) || errors.Is(err, ErrTopicPoolMappingNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, err.Error())
 			return
 		}

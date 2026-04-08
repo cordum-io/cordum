@@ -17,8 +17,30 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
+
+type fakeConfigChangeBus struct {
+	subscribeCalls    int
+	lastHandler       func(*pb.BusPacket) error
+	reconnectHandler  func(*nats.Conn)
+	disconnectHandler func(*nats.Conn, error)
+}
+
+func (f *fakeConfigChangeBus) ReplaceSubscription(_ *nats.Subscription, _ string, _ string, handler func(*pb.BusPacket) error) (*nats.Subscription, error) {
+	f.subscribeCalls++
+	f.lastHandler = handler
+	return &nats.Subscription{}, nil
+}
+
+func (f *fakeConfigChangeBus) AddReconnectHandler(handler func(*nats.Conn)) {
+	f.reconnectHandler = handler
+}
+
+func (f *fakeConfigChangeBus) AddDisconnectHandler(handler func(*nats.Conn, error)) {
+	f.disconnectHandler = handler
+}
 
 func TestCheckMCPPolicyDenies(t *testing.T) {
 	srv := &server{policy: &config.SafetyPolicy{
@@ -576,6 +598,60 @@ func TestWatchPolicyNotificationTrigger(t *testing.T) {
 		t.Fatal("expected policy to be loaded after notification")
 	}
 	t.Fatalf("expected notification-triggered reload to update policy within deadline, got tenant=%q snapshot=%q", currentPolicy.DefaultTenant, currentSnapshot)
+}
+
+func TestRegisterConfigChangeNotificationsResubscribesOnReconnect(t *testing.T) {
+	fakeBus := &fakeConfigChangeBus{}
+	notifyCh := make(chan struct{}, 1)
+
+	registerConfigChangeNotifications(fakeBus, notifyCh)
+
+	if fakeBus.subscribeCalls != 1 {
+		t.Fatalf("expected initial subscription, got %d", fakeBus.subscribeCalls)
+	}
+	if fakeBus.reconnectHandler == nil {
+		t.Fatal("expected reconnect handler to be registered")
+	}
+	if fakeBus.disconnectHandler == nil {
+		t.Fatal("expected disconnect handler to be registered")
+	}
+	if fakeBus.lastHandler == nil {
+		t.Fatal("expected subscription callback to be installed")
+	}
+
+	fakeBus.reconnectHandler(nil)
+	if fakeBus.subscribeCalls != 2 {
+		t.Fatalf("expected reconnect to re-subscribe, got %d subscriptions", fakeBus.subscribeCalls)
+	}
+
+	if err := fakeBus.lastHandler(&pb.BusPacket{}); err != nil {
+		t.Fatalf("expected config callback to return nil, got %v", err)
+	}
+	select {
+	case <-notifyCh:
+	default:
+		t.Fatal("expected config callback to notify policy watcher")
+	}
+}
+
+func TestRegisterConfigChangeNotificationsRecoversFromClosedChannel(t *testing.T) {
+	fakeBus := &fakeConfigChangeBus{}
+	notifyCh := make(chan struct{})
+	close(notifyCh)
+
+	registerConfigChangeNotifications(fakeBus, notifyCh)
+	if fakeBus.lastHandler == nil {
+		t.Fatal("expected subscription callback to be installed")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("config callback panicked: %v", r)
+		}
+	}()
+	if err := fakeBus.lastHandler(&pb.BusPacket{}); err != nil {
+		t.Fatalf("expected recovered callback to return nil, got %v", err)
+	}
 }
 
 func newTestRedisServer(t *testing.T) (*server, *miniredis.Miniredis) {

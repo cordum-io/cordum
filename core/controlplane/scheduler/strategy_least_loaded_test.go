@@ -199,6 +199,24 @@ func TestPickSubjectFiltersOnReadyTopics(t *testing.T) {
 	}
 }
 
+func TestPickSubjectAllowsUnknownReadinessWorker(t *testing.T) {
+	strategy := NewLeastLoadedStrategy(routingForTopic("job.default", "default"))
+	workers := map[string]*pb.Heartbeat{
+		"w1": {WorkerId: "w1", Pool: "default", ActiveJobs: 0, CpuLoad: 5},
+	}
+	readiness := map[string]WorkerReadiness{
+		"w2": {Ready: true, ReadyTopics: []string{"job.default"}},
+	}
+
+	subject, err := strategy.PickSubject(&pb.JobRequest{Topic: "job.default"}, workers, readiness)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "worker.w1.jobs" {
+		t.Fatalf("expected worker with unknown readiness to remain eligible, got %s", subject)
+	}
+}
+
 func TestFilterPlacementLabels(t *testing.T) {
 	// Only labels with specific prefixes should be treated as placement constraints
 	labels := map[string]string{

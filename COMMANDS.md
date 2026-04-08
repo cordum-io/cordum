@@ -102,32 +102,41 @@ go install ./cmd/cordumctl
 cordumctl --help
 
 # Job operations
-cordumctl job submit --type echo --input '{"message":"hello"}'
-cordumctl job get <job-id>
-cordumctl job list --status pending
-cordumctl job cancel <job-id>
+cordumctl job submit --topic job.hello-pack.echo --prompt "hello"
+cordumctl job status <job-id>
+cordumctl job logs <job-id>
 
 # Workflow operations
-cordumctl workflow create -f workflow.yaml
-cordumctl workflow list
-cordumctl workflow run <workflow-id> --input '{"key":"value"}'
-cordumctl workflow run-status <run-id>
-
-# Policy operations
-cordumctl policy list
-cordumctl policy get <policy-id>
-cordumctl policy simulate --policy policy.yaml --input job.json
-cordumctl policy reload
+cordumctl workflow create --file workflow.json
+cordumctl workflow delete <workflow-id>
+cordumctl run start <workflow-id> --input '{"key":"value"}'
+cordumctl run get <run-id>
+cordumctl run timeline <run-id>
+cordumctl run delete <run-id>
 
 # Approval operations
-cordumctl approval list --status pending
-cordumctl approval approve <job-id> --comment "Approved"
-cordumctl approval reject <job-id> --comment "Rejected"
+cordumctl approval job <job-id> --approve
+cordumctl approval job <job-id> --reject
+
+# DLQ operations
+cordumctl dlq retry <job-id>
 
 # Pack operations
 cordumctl pack list
-cordumctl pack install <pack-name>
-cordumctl pack uninstall <pack-name>
+cordumctl pack install ./my-pack
+cordumctl pack show my-pack
+cordumctl pack verify my-pack
+cordumctl pack uninstall my-pack
+
+# Topic registry
+cordumctl topic list
+cordumctl topic create job.my-pack.process --pool my-pack --input-schema my-pack/ProcessInput --output-schema my-pack/ProcessResult
+cordumctl topic delete job.my-pack.process
+
+# Worker credentials
+cordumctl worker credential list
+cordumctl worker credential create --worker-id external-worker-01 --allowed-pools my-pack --allowed-topics job.my-pack.process
+cordumctl worker credential revoke --worker-id external-worker-01
 
 # Pool management
 cordumctl pool list
@@ -141,7 +150,6 @@ cordumctl pool topic remove <pool-name> job.my-service.process
 
 # Health & status
 cordumctl status
-cordumctl health
 ```
 
 ## Redis Operations

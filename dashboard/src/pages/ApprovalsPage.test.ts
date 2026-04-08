@@ -11,9 +11,10 @@ import {
   resolveDenyReason,
 } from "./ApprovalsPage";
 
-const { hookState } = vi.hoisted(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+const { hookState, toastState } = vi.hoisted(() => {
+  (
+    globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
 
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -41,8 +42,17 @@ const { hookState } = vi.hoisted(() => {
       approvePending: false,
       rejectPending: false,
     },
+    toastState: {
+      error: vi.fn(),
+    },
   };
 });
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: toastState.error,
+  },
+}));
 
 vi.mock("@/hooks/useApprovals", () => ({
   useApprovals: () => ({
@@ -144,12 +154,15 @@ function renderPage() {
 function click(element: Element | null) {
   if (!element) throw new Error("Expected element to exist before clicking");
   act(() => {
-    element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    element.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
   });
 }
 
 function keydown(element: Element | null, key: string) {
-  if (!element) throw new Error("Expected element to exist before dispatching key");
+  if (!element)
+    throw new Error("Expected element to exist before dispatching key");
   act(() => {
     element.dispatchEvent(
       new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
@@ -161,21 +174,20 @@ function findButtonByAriaLabelPrefix(
   container: ParentNode,
   prefix: string,
 ): HTMLButtonElement | null {
-  return (
-    Array.from(container.querySelectorAll("button")).find((button) =>
-      (button.getAttribute("aria-label") ?? "").startsWith(prefix),
-    ) ?? null
-  ) as HTMLButtonElement | null;
+  return (Array.from(container.querySelectorAll("button")).find((button) =>
+    (button.getAttribute("aria-label") ?? "").startsWith(prefix),
+  ) ?? null) as HTMLButtonElement | null;
 }
 
-function findTabButton(container: ParentNode, label: string): HTMLButtonElement | null {
-  return (
-    Array.from(container.querySelectorAll("button")).find(
-      (button) =>
-        button.getAttribute("aria-pressed") !== null &&
-        button.textContent?.includes(label),
-    ) ?? null
-  ) as HTMLButtonElement | null;
+function findTabButton(
+  container: ParentNode,
+  label: string,
+): HTMLButtonElement | null {
+  return (Array.from(container.querySelectorAll("button")).find(
+    (button) =>
+      button.getAttribute("aria-pressed") !== null &&
+      button.textContent?.includes(label),
+  ) ?? null) as HTMLButtonElement | null;
 }
 
 beforeEach(() => {
@@ -189,12 +201,15 @@ beforeEach(() => {
   hookState.rejectMutate = vi.fn();
   hookState.approvePending = false;
   hookState.rejectPending = false;
+  toastState.error.mockReset();
 });
 
 describe("ApprovalsPage deny reason logic", () => {
   describe("resolveDenyReason", () => {
     it("returns custom reason when provided", () => {
-      expect(resolveDenyReason("High risk operation")).toBe("High risk operation");
+      expect(resolveDenyReason("High risk operation")).toBe(
+        "High risk operation",
+      );
     });
 
     it("trims whitespace from custom reason", () => {
@@ -216,7 +231,10 @@ describe("ApprovalsPage deny reason logic", () => {
       const clearTarget = vi.fn();
       const approval = makeApproval({ id: "approval-42" });
 
-      handleDenyConfirm(approval, "Violates compliance policy", { mutate, clearTarget });
+      handleDenyConfirm(approval, "Violates compliance policy", {
+        mutate,
+        clearTarget,
+      });
 
       expect(mutate).toHaveBeenCalledWith({
         id: "approval-42",
@@ -301,6 +319,67 @@ describe("ApprovalsPage drawer a11y", () => {
     expect(FOCUSABLE_SELECTOR).toContain("[tabindex]");
     expect(FOCUSABLE_SELECTOR).toContain('[tabindex="-1"]');
   });
+
+  it("focuses the drawer close button and restores focus to the selected card on close", () => {
+    hookState.approvalsData = { items: [makeWorkflowApproval()] };
+
+    const { container, cleanup } = renderPage();
+    try {
+      const card = container.querySelector(
+        'article[role="button"]',
+      ) as HTMLElement | null;
+      expect(card).not.toBeNull();
+
+      act(() => {
+        card?.focus();
+      });
+
+      click(card);
+
+      const closeButton = container.querySelector(
+        'button[aria-label="Close approval detail"]',
+      ) as HTMLButtonElement | null;
+      expect(closeButton).not.toBeNull();
+      expect(document.activeElement).toBe(closeButton);
+
+      click(closeButton);
+      expect(document.activeElement).toBe(card);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("focuses the denial reason field and restores focus to the deny trigger on close", () => {
+    hookState.approvalsData = { items: [makeWorkflowApproval()] };
+
+    const { container, cleanup } = renderPage();
+    try {
+      const denyButton = findButtonByAriaLabelPrefix(container, "Deny ");
+      expect(denyButton).not.toBeNull();
+
+      act(() => {
+        denyButton?.focus();
+      });
+
+      click(denyButton);
+
+      const denyReasonField = container.querySelector(
+        'textarea[aria-label="Denial reason"]',
+      ) as HTMLTextAreaElement | null;
+      expect(denyReasonField).not.toBeNull();
+      expect(document.activeElement).toBe(denyReasonField);
+
+      const closeButton = container.querySelector(
+        'button[aria-label="Close dialog"]',
+      ) as HTMLButtonElement | null;
+      expect(closeButton).not.toBeNull();
+
+      click(closeButton);
+      expect(document.activeElement).toBe(denyButton);
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe("ApprovalsPage decision-first rendering", () => {
@@ -317,9 +396,9 @@ describe("ApprovalsPage decision-first rendering", () => {
       expect(cardText).toContain("Budget threshold exceeded");
       expect(cardText).toContain("Workflow Gate");
       expect(cardText).toContain("Approve to continue Budget Review.");
-      expect(cardText.indexOf("Approve 1,250 USD request with Acme Travel")).toBeLessThan(
-        cardText.indexOf("apr-77"),
-      );
+      expect(
+        cardText.indexOf("Approve 1,250 USD request with Acme Travel"),
+      ).toBeLessThan(cardText.indexOf("apr-77"));
 
       const approveButton = findButtonByAriaLabelPrefix(container, "Approve ");
       const denyButton = findButtonByAriaLabelPrefix(container, "Deny ");
@@ -327,7 +406,10 @@ describe("ApprovalsPage decision-first rendering", () => {
       expect(denyButton).not.toBeNull();
 
       click(approveButton);
-      expect(hookState.approveMutate).toHaveBeenCalledWith({ id: "apr-77" });
+      expect(hookState.approveMutate).toHaveBeenCalledWith(
+        { id: "apr-77" },
+        expect.objectContaining({ onError: expect.any(Function) }),
+      );
       expect(container.querySelector("#approval-drawer-title")).toBeNull();
     } finally {
       cleanup();
@@ -499,6 +581,74 @@ describe("ApprovalsPage decision-first rendering", () => {
     }
   });
 
+  it("disables approval actions while approve is pending", () => {
+    hookState.approvalsData = { items: [makeWorkflowApproval()] };
+    hookState.approvePending = true;
+
+    const { container, cleanup } = renderPage();
+    try {
+      const approveButton = findButtonByAriaLabelPrefix(container, "Approve ");
+      const denyButton = findButtonByAriaLabelPrefix(container, "Deny ");
+      expect(approveButton?.hasAttribute("disabled")).toBe(true);
+      expect(denyButton?.hasAttribute("disabled")).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("disables deny actions while reject is pending", () => {
+    hookState.approvalsData = { items: [makeWorkflowApproval()] };
+    hookState.rejectPending = true;
+
+    const { container, cleanup } = renderPage();
+    try {
+      const denyButton = findButtonByAriaLabelPrefix(container, "Deny ");
+      expect(denyButton?.hasAttribute("disabled")).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("shows a toast when approving fails", () => {
+    hookState.approvalsData = { items: [makeWorkflowApproval()] };
+    hookState.approveMutate = vi.fn((_input, options) => {
+      options?.onError?.(new Error("approve failed"));
+    });
+
+    const { container, cleanup } = renderPage();
+    try {
+      const approveButton = findButtonByAriaLabelPrefix(container, "Approve ");
+      click(approveButton);
+
+      expect(toastState.error).toHaveBeenCalledTimes(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps the deny dialog open and shows a toast when rejection fails", () => {
+    hookState.approvalsData = { items: [makeWorkflowApproval()] };
+    hookState.rejectMutate = vi.fn((_input, options) => {
+      options?.onError?.(new Error("reject failed"));
+    });
+
+    const { container, cleanup } = renderPage();
+    try {
+      const denyButton = findButtonByAriaLabelPrefix(container, "Deny ");
+      click(denyButton);
+
+      const confirmButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Enter reason to deny"),
+      );
+      click(confirmButton ?? null);
+
+      expect(container.querySelector('textarea[aria-label="Denial reason"]')).not.toBeNull();
+      expect(toastState.error).toHaveBeenCalledTimes(1);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("shows the API error state and lets the user retry", () => {
     hookState.isError = true;
     hookState.error = new Error("Gateway offline");
@@ -508,8 +658,8 @@ describe("ApprovalsPage decision-first rendering", () => {
       expect(container.textContent).toContain("Approval queue unavailable");
       expect(container.textContent).toContain("Gateway offline");
 
-      const retryButton = Array.from(container.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("Try again"),
+      const retryButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Try again"),
       );
       click(retryButton ?? null);
       expect(hookState.refetch).toHaveBeenCalledTimes(1);

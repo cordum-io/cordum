@@ -47,6 +47,10 @@ func main() {
 		runPackCmd(args)
 	case "pool":
 		runPoolCmd(args)
+	case "topic":
+		runTopicCmd(args)
+	case "worker":
+		runWorkerCmd(args)
 	case "job":
 		runJobCmd(args)
 	default:
@@ -351,6 +355,20 @@ Usage:
   cordumctl job submit --topic job.example --prompt \"hello\" [--input input.json]
   cordumctl job status <job_id>
   cordumctl job logs <job_id>
+  cordumctl pool list
+  cordumctl pool get <name>
+  cordumctl pool create <name> [--description text] [--requires cap1,cap2]
+  cordumctl pool update <name> [--description text] [--requires cap1,cap2]
+  cordumctl pool delete <name> [--force]
+  cordumctl pool drain <name> [--timeout 300]
+  cordumctl pool topic add <pool> <topic>
+  cordumctl pool topic remove <pool> <topic>
+  cordumctl topic list
+  cordumctl topic create <name> --pool <pool> [--input-schema id] [--output-schema id] [--pack-id id]
+  cordumctl topic delete <name>
+  cordumctl worker credential list
+  cordumctl worker credential create --worker-id <worker_id> [--allowed-pools pool1,pool2] [--allowed-topics topic1,topic2]
+  cordumctl worker credential revoke --worker-id <worker_id>
   cordumctl pack install <path|url> [--upgrade] [--inactive] [--dry-run]
   cordumctl pack uninstall <pack_id> [--purge]
   cordumctl pack list
@@ -361,6 +379,7 @@ Usage:
 Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)
   --api-key    API key (default from CORDUM_API_KEY)
+  --tenant     Tenant ID (default from CORDUM_TENANT_ID)
   --cacert     CA certificate for TLS verification (also: CORDUM_TLS_CA)
   --insecure   Skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1|true)
 `)

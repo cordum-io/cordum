@@ -86,6 +86,178 @@ func TestGetArtifactEncodesPointer(t *testing.T) {
 	}
 }
 
+func TestListTopics(t *testing.T) {
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("expected GET, got %s", req.Method)
+		}
+		if req.URL.EscapedPath() != "/api/v1/topics" {
+			t.Fatalf("expected /api/v1/topics, got %q", req.URL.EscapedPath())
+		}
+		return jsonResponse(http.StatusOK, `{"items":[{"name":"job.alpha","pool":"pool-a","input_schema_id":"schema/in","output_schema_id":"schema/out","pack_id":"pack-a","requires":["docker"],"risk_tags":["external"],"status":"active","active_worker_count":2}]}`), nil
+	}))
+
+	topics, err := client.ListTopics(context.Background())
+	if err != nil {
+		t.Fatalf("ListTopics error: %v", err)
+	}
+	if len(topics) != 1 {
+		t.Fatalf("expected 1 topic, got %d", len(topics))
+	}
+	if topics[0].Name != "job.alpha" || topics[0].Pool != "pool-a" {
+		t.Fatalf("unexpected topic: %+v", topics[0])
+	}
+	if topics[0].InputSchemaID != "schema/in" || topics[0].OutputSchemaID != "schema/out" {
+		t.Fatalf("unexpected schema bindings: %+v", topics[0])
+	}
+	if topics[0].ActiveWorkerCount != 2 {
+		t.Fatalf("expected active worker count 2, got %d", topics[0].ActiveWorkerCount)
+	}
+}
+
+func TestCreateTopic(t *testing.T) {
+	input := TopicCreateInput{
+		Name:           "job.pack.process",
+		Pool:           "pack-pool",
+		InputSchemaID:  "pack/Input",
+		OutputSchemaID: "pack/Output",
+		PackID:         "pack",
+		Requires:       []string{"docker"},
+		RiskTags:       []string{"external"},
+		Status:         "active",
+	}
+
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", req.Method)
+		}
+		if req.URL.EscapedPath() != "/api/v1/topics" {
+			t.Fatalf("expected /api/v1/topics, got %q", req.URL.EscapedPath())
+		}
+		var got TopicCreateInput
+		if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if got.Name != input.Name ||
+			got.Pool != input.Pool ||
+			got.InputSchemaID != input.InputSchemaID ||
+			got.OutputSchemaID != input.OutputSchemaID ||
+			got.PackID != input.PackID ||
+			got.Status != input.Status ||
+			strings.Join(got.Requires, ",") != strings.Join(input.Requires, ",") ||
+			strings.Join(got.RiskTags, ",") != strings.Join(input.RiskTags, ",") {
+			t.Fatalf("expected %#v, got %#v", input, got)
+		}
+		return jsonResponse(http.StatusCreated, ``), nil
+	}))
+
+	if err := client.CreateTopic(context.Background(), input); err != nil {
+		t.Fatalf("CreateTopic error: %v", err)
+	}
+}
+
+func TestDeleteTopicEncodesName(t *testing.T) {
+	name := "job/topic:alpha"
+	expectedPath := "/api/v1/topics/" + url.PathEscape(name)
+
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodDelete {
+			t.Fatalf("expected DELETE, got %s", req.Method)
+		}
+		if req.URL.EscapedPath() != expectedPath {
+			t.Fatalf("expected path %q, got %q", expectedPath, req.URL.EscapedPath())
+		}
+		return jsonResponse(http.StatusNoContent, ``), nil
+	}))
+
+	if err := client.DeleteTopic(context.Background(), name); err != nil {
+		t.Fatalf("DeleteTopic error: %v", err)
+	}
+}
+
+func TestListWorkerCredentials(t *testing.T) {
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("expected GET, got %s", req.Method)
+		}
+		if req.URL.EscapedPath() != "/api/v1/workers/credentials" {
+			t.Fatalf("expected /api/v1/workers/credentials, got %q", req.URL.EscapedPath())
+		}
+		return jsonResponse(http.StatusOK, `{"items":[{"worker_id":"worker-a","allowed_pools":["pool-a"],"allowed_topics":["job.alpha"],"pack_id":"pack-a","created_by":"admin","created_at":"2026-04-08T10:00:00Z","revoked_at":"2026-04-08T11:00:00Z"}]}`), nil
+	}))
+
+	records, err := client.ListWorkerCredentials(context.Background())
+	if err != nil {
+		t.Fatalf("ListWorkerCredentials error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 credential, got %d", len(records))
+	}
+	if records[0].WorkerID != "worker-a" || records[0].CreatedBy != "admin" {
+		t.Fatalf("unexpected credential: %+v", records[0])
+	}
+	if records[0].RevokedAt == "" {
+		t.Fatalf("expected revoked credential metadata, got %+v", records[0])
+	}
+}
+
+func TestCreateWorkerCredential(t *testing.T) {
+	input := WorkerCredentialInput{
+		WorkerID:      "worker-a",
+		AllowedPools:  []string{"pool-a"},
+		AllowedTopics: []string{"job.alpha"},
+	}
+
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", req.Method)
+		}
+		if req.URL.EscapedPath() != "/api/v1/workers/credentials" {
+			t.Fatalf("expected /api/v1/workers/credentials, got %q", req.URL.EscapedPath())
+		}
+		var got WorkerCredentialInput
+		if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if got.WorkerID != input.WorkerID ||
+			strings.Join(got.AllowedPools, ",") != strings.Join(input.AllowedPools, ",") ||
+			strings.Join(got.AllowedTopics, ",") != strings.Join(input.AllowedTopics, ",") {
+			t.Fatalf("expected %#v, got %#v", input, got)
+		}
+		return jsonResponse(http.StatusCreated, `{"worker_id":"worker-a","allowed_pools":["pool-a"],"allowed_topics":["job.alpha"],"created_by":"admin","created_at":"2026-04-08T10:00:00Z","token":"secret-token"}`), nil
+	}))
+
+	issued, err := client.CreateWorkerCredential(context.Background(), input)
+	if err != nil {
+		t.Fatalf("CreateWorkerCredential error: %v", err)
+	}
+	if issued == nil {
+		t.Fatal("expected issued credential")
+	}
+	if issued.WorkerID != "worker-a" || issued.Token != "secret-token" {
+		t.Fatalf("unexpected issued credential: %+v", issued)
+	}
+}
+
+func TestRevokeWorkerCredentialEncodesWorkerID(t *testing.T) {
+	workerID := "worker/a:1"
+	expectedPath := "/api/v1/workers/credentials/" + url.PathEscape(workerID)
+
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodDelete {
+			t.Fatalf("expected DELETE, got %s", req.Method)
+		}
+		if req.URL.EscapedPath() != expectedPath {
+			t.Fatalf("expected path %q, got %q", expectedPath, req.URL.EscapedPath())
+		}
+		return jsonResponse(http.StatusNoContent, ``), nil
+	}))
+
+	if err := client.RevokeWorkerCredential(context.Background(), workerID); err != nil {
+		t.Fatalf("RevokeWorkerCredential error: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TLS tests
 // ---------------------------------------------------------------------------

@@ -5,6 +5,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+#### Control Plane Boundary Hardening
+- **Topic registry** (`GET/POST/DELETE /api/v1/topics`) — canonical source of truth for registered topics with pool, schema, pack, and status metadata
+- **Submit-time topic validation** — unknown topics rejected with 400 at both gateway and scheduler boundaries; known topics with zero workers stay valid (degraded, `ErrNoWorkers` retry)
+- **Submit-time schema enforcement** — job payloads validated against topic's input schema via JSON Schema draft-07. Modes: `SCHEMA_ENFORCEMENT=enforce|warn|off` (default `warn`)
+- **Worker credential store** (`GET/POST/DELETE /api/v1/workers/credentials`) — hashed tokens (argon2id) for worker attestation. Modes: `WORKER_ATTESTATION=enforce|warn|off` (default `off`)
+- **Worker readiness handshake** — scheduler filters on `ready == true` when `WORKER_READINESS_REQUIRED=true`. Workers must send handshake with `ready_topics` before receiving jobs. Unknown workers allowed (absence ≠ not ready).
+- **Dashboard TopicsPage** — unified view of topics with pool, schema, pack, active workers, and degraded indicators
+- **cordumctl topic** subcommands: `list`, `create`, `delete`
+- **cordumctl worker credential** subcommands: `create`, `list`, `revoke`
+- **SDK client methods** — `ListTopics`, `CreateTopic`, `DeleteTopic`, `ListWorkerCredentials`, `CreateWorkerCredential`, `RevokeWorkerCredential`
+- **ADR-009** — Architecture Decision Record for canonical `TopicRegistration`, `WorkerCredential`, `WorkerSnapshot` types
+- **Pack manifest schema bindings** — `inputSchema`/`outputSchema` fields on pack topic declarations, validated at install time
+
+#### CAP v2.9.0 Integration
+- Upgraded CAP dependency from v2.8.6 to v2.9.0
+- `Agent.Start()` now publishes handshake automatically in Go, Python, and Node SDKs — all 36+ workers get handshake at startup with zero code changes
+- `Heartbeat.auth_token` (field 18) for worker attestation
+- `Handshake.ready_topics` (field 6) for readiness declaration
+- `publishHandshake()` added to Python and Node SDKs (previously Go-only)
+- Migrated all deprecated `SystemAlert` fields (`Level`, `Component`, `Code`) to structured replacements (`Severity`, `SourceComponent`, `ErrorCodeEnum`)
+
+### Fixed
+
+#### Critical
+- **NATS reconnect** — Safety kernel and scheduler re-subscribe to `sys.config.changed` on NATS reconnect. Previously degraded silently to 30s polling on network partition.
+- **Config scope corruption** — `SetWithRetry` now deep-merges config updates, preserving existing keys. Policy bundles no longer silently wiped by pools config pushes. Startup migration moves stale bundles to correct scope.
+- **cordumctl topic registration** — `pack install` now registers topics in topic registry; `pack uninstall` removes them. Fixes #171.
+- **cordumctl lock release** — `runPackInstall` and `runPackUninstall` return errors instead of `os.Exit(1)`, ensuring deferred lock release fires on all error paths.
+- **Safety Kernel NATS subscription** — subscribes to `sys.config.changed` for immediate policy reload (was poll-only with 30s delay).
+- **cordumctl JSON tags** — `packTests` structs now have `json:"..."` tags matching YAML tags, fixing silent registry data corruption.
+
+#### High
+- **Panic recovery** — all NATS subscription callbacks wrapped with `defer recover()` + stack trace logging
+- **Readiness filter** — unknown workers allowed (absence ≠ not ready), preventing new worker traffic starvation
+- **Credential cache** — async refresh in NATS handler (prevents scheduler throughput collapse), merge-on-failure (prevents stale cache)
+- **Rollback reporting** — cordumctl rollback errors tracked and returned, non-zero exit on partial rollback
+- **Dashboard memory leaks** — duplicate WebSocket, IntersectionObserver, CSV blob URL timing
+- **Dashboard error handling** — LoginPage 4xx, RunDetailPage chat error, PackDetailPage null state
+- **Dashboard a11y** — focus traps on modals, aria-labels on stats, localStorage try-catch
+- **Security logging** — `slog.Info`/`slog.Warn` for credential and topic operations
+- **Input validation** — array length limits (max 100 items, 128 chars), URL encoding on dynamic links
+- **lodash** bumped to 4.18.1 (CVE-2026-4800, CVE-2026-2950)
+
 ### Changed
 
 #### CAP v2.5.2 Protocol Integration

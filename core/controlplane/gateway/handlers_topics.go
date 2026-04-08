@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -18,6 +18,7 @@ type createTopicRequest struct {
 	Pool           string   `json:"pool"`
 	InputSchemaID  string   `json:"input_schema_id"`
 	OutputSchemaID string   `json:"output_schema_id"`
+	PackID         string   `json:"pack_id"`
 	Requires       []string `json:"requires"`
 	RiskTags       []string `json:"risk_tags"`
 	Status         string   `json:"status"`
@@ -34,6 +35,11 @@ type topicResponse struct {
 	Status            string   `json:"status"`
 	ActiveWorkerCount int      `json:"active_worker_count"`
 }
+
+const (
+	maxTopicArrayItems  = 100
+	maxTopicArrayString = 128
+)
 
 func (s *server) handleListTopics(w http.ResponseWriter, r *http.Request) {
 	if err := s.requireRole(r, "admin", "operator", "viewer"); err != nil {
@@ -94,21 +100,33 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 
 	req.Name = strings.TrimSpace(req.Name)
 	req.Pool = strings.TrimSpace(req.Pool)
+	req.Requires = trimStringSlice(req.Requires)
+	req.RiskTags = trimStringSlice(req.RiskTags)
 	if err := pools.ValidateTopicName(req.Name); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := pools.ValidatePoolName(req.Pool); err != nil {
+	if err := validateStringArray("requires", req.Requires, maxTopicArrayItems, maxTopicArrayString); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.ensurePoolExists(r.Context(), req.Pool); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			writeErrorJSON(w, http.StatusNotFound, err.Error())
-			return
-		}
+	if err := validateStringArray("risk_tags", req.RiskTags, maxTopicArrayItems, maxTopicArrayString); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if req.Pool != "" {
+		if err := pools.ValidatePoolName(req.Pool); err != nil {
+			writeErrorJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.ensurePoolExists(r.Context(), req.Pool); err != nil {
+			if errors.Is(err, ErrPoolNotFound) {
+				writeErrorJSON(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeErrorJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	existing, _, err := s.topicRegistry.Get(r.Context(), req.Name)
@@ -122,6 +140,7 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 		Pool:           req.Pool,
 		InputSchemaID:  req.InputSchemaID,
 		OutputSchemaID: req.OutputSchemaID,
+		PackID:         req.PackID,
 		Requires:       req.Requires,
 		RiskTags:       req.RiskTags,
 		Status:         req.Status,
@@ -132,6 +151,14 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "topics")
+	slog.Info("topic registration updated",
+		"topic", req.Name,
+		"pool", req.Pool,
+		"pack_id", req.PackID,
+		"actor", policyActorID(r),
+		"role", policyRole(r),
+		"replaced", existing != nil,
+	)
 	s.appendAuditEntryNamed(r.Context(), "create", "topic", req.Name, req.Name, policyActorID(r), policyRole(r), "register topic "+req.Name)
 
 	status := http.StatusCreated
@@ -170,6 +197,13 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.publishConfigChanged("system", "topics")
+	slog.Warn("topic registration deleted",
+		"topic", name,
+		"pool", existing.Pool,
+		"pack_id", existing.PackID,
+		"actor", policyActorID(r),
+		"role", policyRole(r),
+	)
 	s.appendAuditEntryNamed(r.Context(), "delete", "topic", name, name, policyActorID(r), policyRole(r), "delete topic "+name)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -178,7 +212,7 @@ func (s *server) ensurePoolExists(ctx context.Context, pool string) error {
 	doc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "default")
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return fmt.Errorf("pool %q not found", pool)
+			return poolNotFoundError{pool: pool}
 		}
 		return err
 	}
@@ -187,7 +221,7 @@ func (s *server) ensurePoolExists(ctx context.Context, pool string) error {
 		return err
 	}
 	if _, ok := poolMap[pool]; !ok {
-		return fmt.Errorf("pool %q not found", pool)
+		return poolNotFoundError{pool: pool}
 	}
 	return nil
 }

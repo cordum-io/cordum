@@ -8,5 +8,6 @@ export function useTopics() {
     queryFn: fetchTopics,
     staleTime: 15_000,
     refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
   });
 }

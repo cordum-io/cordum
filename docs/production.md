@@ -240,6 +240,60 @@ CORDUM_CORS_ALLOW_ORIGINS="https://dashboard.example.com"
 CORS_ALLOW_ORIGINS="https://dashboard.example.com"
 ```
 
+## Control Plane Boundary Hardening
+
+Before turning on strict topic/schema/worker boundary checks in production, stage the
+rollout explicitly. These controls are shared across the gateway, scheduler, topic
+registry, worker credential store, and dashboard Topics page.
+
+### Feature flags
+
+| Variable | Recommended initial value | Production target | Notes |
+|----------|---------------------------|-------------------|-------|
+| `SCHEMA_ENFORCEMENT` | `warn` | `enforce` | Gateway rejects bad job payloads only in `enforce`; scheduler also enforces before dispatch. |
+| `WORKER_ATTESTATION` | `off` or `warn` | `enforce` | `warn` keeps older workers alive while surfacing missing/invalid credentials in logs. |
+| `WORKER_READINESS_REQUIRED` | `false` | `true` where supported | Keeps legacy heartbeat-only workers schedulable until they send readiness handshakes. |
+| `WORKER_READINESS_TTL` | `60s` | `60s` to `5m` | Increase only if workers handshake infrequently; lower values tighten readiness freshness. |
+
+### Recommended rollout phases
+
+1. **Observe**
+   - Populate the canonical topic registry (`/api/v1/topics` or `cordumctl topic create`)
+   - Provision worker credentials for external fleets
+   - Keep `SCHEMA_ENFORCEMENT=warn`
+   - Keep `WORKER_ATTESTATION=off` or `warn`
+   - Keep `WORKER_READINESS_REQUIRED=false`
+
+2. **Converge**
+   - Make sure every production topic appears in the dashboard Topics page
+   - Verify pack topics point at the correct input/output schemas
+   - Rotate workers onto issued credentials and validate attestation logs are clean
+   - Confirm workers advertise `ready_topics` during startup/handshake
+
+3. **Enforce**
+   - Move `SCHEMA_ENFORCEMENT` to `enforce` after submit-time violations reach zero
+   - Move `WORKER_ATTESTATION` to `enforce` after all production workers have valid credentials
+   - Enable `WORKER_READINESS_REQUIRED=true` only after readiness handshakes are universally present
+
+### Operator checks before enabling enforcement
+
+- `cordumctl topic list` shows every expected topic with the correct pool and schema IDs
+- Dashboard **Topics** page shows no unexpected degraded topics
+- `cordumctl worker credential list` covers all externally managed workers
+- Scheduler logs no recurring `attestation failed`, `unknown_topic`, or `schema_validation_failed` events
+- Staging smoke tests submit representative jobs for every critical topic
+
+### Rollback guidance
+
+If enforcement causes production impact, roll back in this order:
+
+1. Set `WORKER_READINESS_REQUIRED=false`
+2. Downgrade `WORKER_ATTESTATION` from `enforce` to `warn` (or `off` if needed)
+3. Downgrade `SCHEMA_ENFORCEMENT` from `enforce` to `warn`
+
+This preserves visibility while reopening the strictest gates first. Record the failing
+topic, worker ID, or schema ID before rollback so you can close the gap and retry safely.
+
 ## 6) Backup + Restore
 
 ### Backup Strategy

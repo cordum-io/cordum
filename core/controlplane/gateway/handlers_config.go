@@ -73,6 +73,12 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		scopeID = tenant
 	}
+	if scope == configsvc.ScopeSystem && (scopeID == "" || scopeID == "default") {
+		if _, hasBundles := data[policyConfigKey]; hasBundles {
+			writeErrorJSON(w, http.StatusBadRequest, "bundles must be written to system/policy scope, not system/default")
+			return
+		}
+	}
 	err := s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
 		for k, v := range data {
 			doc.Data[k] = v

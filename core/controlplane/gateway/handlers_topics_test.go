@@ -114,3 +114,97 @@ func TestHandleCreateDeleteTopic(t *testing.T) {
 		t.Fatalf("expected deleted topic to be absent, got reg=%v registryEmpty=%v", reg, registryEmpty)
 	}
 }
+
+func TestHandleCreateTopicAllowsDisabledPackTopicWithoutPool(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	body := []byte(`{"name":"job.demo-pack.echo","pack_id":"demo-pack","status":"disabled","input_schema_id":"demo-pack/Input","output_schema_id":"demo-pack/Output"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/topics", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleCreateTopic(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	reg, registryEmpty, err := s.topicRegistry.Get(context.Background(), "job.demo-pack.echo")
+	if err != nil {
+		t.Fatalf("get topic: %v", err)
+	}
+	if registryEmpty || reg == nil {
+		t.Fatalf("expected created disabled topic to exist, got registryEmpty=%v reg=%v", registryEmpty, reg)
+	}
+	if reg.Pool != "" || reg.PackID != "demo-pack" || reg.Status != topicregistry.StatusDisabled {
+		t.Fatalf("unexpected disabled topic record: %+v", reg)
+	}
+}
+
+func TestCreateTopicInvalidName(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/topics", bytes.NewBufferString(`{"name":"job.invalid!topic"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleCreateTopic(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateTopicPoolNotFound(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/topics", bytes.NewBufferString(`{"name":"job.external","pool":"pool-a"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleCreateTopic(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateTopicArrayTooLong(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	requires := make([]string, maxTopicArrayItems+1)
+	for i := range requires {
+		requires[i] = "cap.test"
+	}
+	body, err := json.Marshal(map[string]any{
+		"name":     "job.external",
+		"requires": requires,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/topics", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleCreateTopic(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateTopicServiceFailure(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/topics", bytes.NewBufferString(`{"name":"job.external"}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleCreateTopic(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

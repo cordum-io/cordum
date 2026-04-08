@@ -1,12 +1,20 @@
-import { describe, it, expect } from "vitest";
-import { isSafeReturnUrl, isSafeApiUrl, buildPasswordFallbackUser } from "./LoginPage";
+import { describe, it, expect, vi } from "vitest";
+import {
+  isSafeReturnUrl,
+  isSafeApiUrl,
+  buildPasswordFallbackUser,
+  parseLoginUser,
+  readJsonIfOk,
+} from "./LoginPage";
 
 describe("isSafeReturnUrl", () => {
   it("accepts valid relative paths", () => {
     expect(isSafeReturnUrl("/")).toBe("/");
     expect(isSafeReturnUrl("/dashboard")).toBe("/dashboard");
     expect(isSafeReturnUrl("/jobs?status=failed")).toBe("/jobs?status=failed");
-    expect(isSafeReturnUrl("/workflows/abc/runs/123")).toBe("/workflows/abc/runs/123");
+    expect(isSafeReturnUrl("/workflows/abc/runs/123")).toBe(
+      "/workflows/abc/runs/123",
+    );
   });
 
   it("rejects null/undefined/empty", () => {
@@ -65,7 +73,9 @@ describe("isSafeApiUrl", () => {
   });
 
   it("rejects data: protocol", () => {
-    expect(isSafeApiUrl("data:text/html,<script>alert(1)</script>")).toBe("/api/v1");
+    expect(isSafeApiUrl("data:text/html,<script>alert(1)</script>")).toBe(
+      "/api/v1",
+    );
   });
 
   it("rejects protocol-relative URLs (//)", () => {
@@ -88,5 +98,54 @@ describe("buildPasswordFallbackUser", () => {
     expect(user.display_name).toBe("alice");
     expect(user.tenant).toBe("default");
     expect(user.email).toBe("");
+  });
+});
+
+describe("parseLoginUser", () => {
+  it("returns a typed user when the payload is complete", () => {
+    expect(
+      parseLoginUser({
+        id: "user-1",
+        username: "alice",
+        email: "alice@example.com",
+        display_name: "Alice",
+        roles: ["admin"],
+        tenant: "default",
+      }),
+    ).toEqual({
+      id: "user-1",
+      username: "alice",
+      email: "alice@example.com",
+      display_name: "Alice",
+      roles: ["admin"],
+      tenant: "default",
+    });
+  });
+
+  it("returns null when required user fields are missing", () => {
+    expect(
+      parseLoginUser({
+        username: "alice",
+        roles: ["admin"],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("readJsonIfOk", () => {
+  it("does not read JSON when the response is not ok", async () => {
+    const json = vi.fn();
+    await expect(
+      readJsonIfOk({ ok: false, json } as unknown as Response),
+    ).resolves.toBeNull();
+    expect(json).not.toHaveBeenCalled();
+  });
+
+  it("returns null when JSON parsing fails on a success response", async () => {
+    const json = vi.fn().mockRejectedValue(new Error("bad json"));
+    await expect(
+      readJsonIfOk({ ok: true, json } as unknown as Response),
+    ).resolves.toBeNull();
+    expect(json).toHaveBeenCalledTimes(1);
   });
 });

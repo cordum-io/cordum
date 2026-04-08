@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -412,7 +413,18 @@ func (e *Engine) Start() error {
 	return nil
 }
 
-func (e *Engine) HandlePacket(p *pb.BusPacket) error {
+func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("scheduler: packet subscription panic",
+				"panic", r,
+				"stack", string(debug.Stack()),
+				"trace_id", safeTraceID(p),
+				"sender_id", safeSenderID(p),
+			)
+			err = RetryAfter(fmt.Errorf("scheduler packet handler panic: %v", r), retryDelayStore)
+		}
+	}()
 	if p == nil {
 		return nil
 	}
@@ -567,7 +579,18 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 	}
 }
 
-func (e *Engine) handleConfigChangedPacket(p *pb.BusPacket) error {
+func (e *Engine) handleConfigChangedPacket(p *pb.BusPacket) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("scheduler: config subscription panic",
+				"panic", r,
+				"stack", string(debug.Stack()),
+				"trace_id", safeTraceID(p),
+				"sender_id", safeSenderID(p),
+			)
+			err = nil
+		}
+	}()
 	if p == nil || e.workerCredentialCache == nil {
 		return nil
 	}
@@ -580,11 +603,24 @@ func (e *Engine) handleConfigChangedPacket(p *pb.BusPacket) error {
 	if scope != string(configsvc.ScopeSystem) || scopeID != "workers" {
 		return nil
 	}
-	if err := e.workerCredentialCache.Refresh(e.ctx); err != nil {
-		slog.Warn("worker credential cache refresh failed", "scope", scope, "scope_id", scopeID, "error", err)
-		return nil
+	parentCtx := e.ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
 	}
-	slog.Info("worker credential cache refreshed", "scope", scope, "scope_id", scopeID)
+	go func(traceID, senderID, scope, scopeID string) {
+		ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
+		defer cancel()
+		if err := e.workerCredentialCache.Refresh(ctx); err != nil {
+			slog.Warn("worker credential cache refresh failed",
+				"scope", scope,
+				"scope_id", scopeID,
+				"trace_id", traceID,
+				"sender_id", senderID,
+				"error", err,
+			)
+			return
+		}
+	}(safeTraceID(p), safeSenderID(p), scope, scopeID)
 	return nil
 }
 
@@ -617,7 +653,7 @@ func (e *Engine) allowWorkerHeartbeat(packet *pb.BusPacket, hb *pb.Heartbeat) bo
 			fields = append(fields, "error", err)
 		}
 		if mode.Enforced() {
-			slog.Warn("worker heartbeat rejected: attestation failed", fields...)
+			slog.Error("worker heartbeat rejected: attestation failed", fields...)
 			return false
 		}
 		slog.Warn("worker heartbeat accepted without attestation", fields...)
@@ -1216,7 +1252,20 @@ func reasonCodeForSchedulingError(err error) string {
 }
 
 func (e *Engine) topicRegistration(ctx context.Context, topic string) (*topicregistry.Registration, bool, error) {
-	if e == nil || e.topicRegistry == nil {
+	if e == nil {
+		return nil, true, nil
+	}
+	if e.topicRegistry == nil {
+		mode := e.schemaValidationMode()
+		if mode.Enforced() {
+			return nil, false, fmt.Errorf("topic registry unavailable")
+		}
+		if mode == infraSchema.EnforcementWarn {
+			slog.Warn("topic registry unavailable; skipping topic/schema validation",
+				"topic", strings.TrimSpace(topic),
+				"mode", mode,
+			)
+		}
 		return nil, true, nil
 	}
 	return e.topicRegistry.Get(ctx, topic)
@@ -2004,6 +2053,20 @@ func safeTopic(req *pb.JobRequest) string {
 		return ""
 	}
 	return req.Topic
+}
+
+func safeTraceID(packet *pb.BusPacket) string {
+	if packet == nil {
+		return ""
+	}
+	return strings.TrimSpace(packet.GetTraceId())
+}
+
+func safeSenderID(packet *pb.BusPacket) string {
+	if packet == nil {
+		return ""
+	}
+	return strings.TrimSpace(packet.GetSenderId())
 }
 
 // CancelJob marks a job as cancelled if not already terminal.

@@ -167,6 +167,38 @@ func TestHandleInstallPack(t *testing.T) {
 	}
 }
 
+func TestPackBundlesSurviveConfigPushAfterInstall(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	installTestPack(t, s)
+
+	configBody, err := json.Marshal(map[string]any{
+		"pools": map[string]any{
+			"topics": map[string]any{
+				"job.other": []any{"default"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal config push: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(configBody))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleSetConfig(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("config push failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	policyDoc, err := s.configSvc.Get(context.Background(), configsvc.ScopeSystem, "policy")
+	if err != nil {
+		t.Fatalf("policy doc missing after config push: %v", err)
+	}
+	bundles, _ := policyDoc.Data["bundles"].(map[string]any)
+	if bundles == nil || bundles["test-pack/safety"] == nil {
+		t.Fatalf("expected pack policy bundle to survive config push, got %v", policyDoc.Data["bundles"])
+	}
+}
+
 func TestPackInstallRegistersTopics(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	installTestPack(t, s)

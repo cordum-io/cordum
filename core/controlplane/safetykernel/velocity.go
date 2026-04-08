@@ -37,7 +37,7 @@ redis.call('ZREMRANGEBYSCORE', key, '-inf', tostring(window_start))
 return redis.call('ZCARD', key)
 `
 
-const velocityRedisTimeout = 500 * time.Millisecond
+var velocityRedisTimeout = 500 * time.Millisecond
 
 // ---------------------------------------------------------------------------
 // Metrics

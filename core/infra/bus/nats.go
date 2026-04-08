@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,10 @@ type NatsBus struct {
 
 	subsMu sync.Mutex
 	subs   []*nats.Subscription
+
+	hooksMu            sync.RWMutex
+	reconnectHandlers  []func(*nats.Conn)
+	disconnectHandlers []func(*nats.Conn, error)
 
 	// redis is an optional Redis client for crash-safe message processing.
 	// When set, durable JetStream subscriptions use Redis for idempotency
@@ -55,10 +60,10 @@ const (
 	envNATSTLSInsecure   = "NATS_TLS_INSECURE"
 	envNATSTLSServerName = "NATS_TLS_SERVER_NAME"
 	envNATSAllowPlain    = "CORDUM_NATS_ALLOW_PLAINTEXT"
-	envNATSUsername       = "NATS_USERNAME"
-	envNATSPassword       = "NATS_PASSWORD"
-	envNATSNKey           = "NATS_NKEY"
-	envNATSToken          = "NATS_TOKEN"
+	envNATSUsername      = "NATS_USERNAME"
+	envNATSPassword      = "NATS_PASSWORD"
+	envNATSNKey          = "NATS_NKEY"
+	envNATSToken         = "NATS_TOKEN"
 
 	defaultAckWait = 10 * time.Minute
 	defaultMaxAge  = 7 * 24 * time.Hour
@@ -118,15 +123,18 @@ func NewNatsBus(url string) (*NatsBus, error) {
 		slog.Warn("bus: plaintext NATS allowed in production via override", "url", url)
 	}
 
+	b := &NatsBus{ackWait: defaultAckWait}
 	opts := []nats.Option{
 		nats.Name("cordum-bus"),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2 * time.Second),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			slog.Info("bus: disconnected from nats", "err", err)
+			b.runDisconnectHandlers(nc, err)
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
 			slog.Info("bus: reconnected to nats", "url", nc.ConnectedUrl())
+			b.runReconnectHandlers(nc)
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
 			slog.Info("bus: connection closed")
@@ -150,7 +158,7 @@ func NewNatsBus(url string) (*NatsBus, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect nats %s: %w", url, err)
 	}
-	b := &NatsBus{nc: nc, ackWait: defaultAckWait}
+	b.nc = nc
 	b.initJetStreamFromEnv()
 	return b, nil
 }
@@ -191,6 +199,72 @@ func natsApplyAuth(opts *[]nats.Option) bool {
 func (b *NatsBus) WithRedis(client redis.UniversalClient) *NatsBus {
 	b.redis = client
 	return b
+}
+
+// AddReconnectHandler registers a callback invoked from the underlying NATS
+// reconnect handler. Handlers run best-effort and must be quick.
+func (b *NatsBus) AddReconnectHandler(handler func(*nats.Conn)) {
+	if b == nil || handler == nil {
+		return
+	}
+	b.hooksMu.Lock()
+	b.reconnectHandlers = append(b.reconnectHandlers, handler)
+	b.hooksMu.Unlock()
+}
+
+// AddDisconnectHandler registers a callback invoked from the underlying NATS
+// disconnect handler. Handlers run best-effort and must be quick.
+func (b *NatsBus) AddDisconnectHandler(handler func(*nats.Conn, error)) {
+	if b == nil || handler == nil {
+		return
+	}
+	b.hooksMu.Lock()
+	b.disconnectHandlers = append(b.disconnectHandlers, handler)
+	b.hooksMu.Unlock()
+}
+
+func (b *NatsBus) runReconnectHandlers(nc *nats.Conn) {
+	if b == nil {
+		return
+	}
+	b.hooksMu.RLock()
+	handlers := append([]func(*nats.Conn){}, b.reconnectHandlers...)
+	b.hooksMu.RUnlock()
+	for _, handler := range handlers {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("bus: reconnect handler panic",
+						"panic", r,
+						"stack", string(debug.Stack()),
+					)
+				}
+			}()
+			handler(nc)
+		}()
+	}
+}
+
+func (b *NatsBus) runDisconnectHandlers(nc *nats.Conn, err error) {
+	if b == nil {
+		return
+	}
+	b.hooksMu.RLock()
+	handlers := append([]func(*nats.Conn, error){}, b.disconnectHandlers...)
+	b.hooksMu.RUnlock()
+	for _, handler := range handlers {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("bus: disconnect handler panic",
+						"panic", r,
+						"stack", string(debug.Stack()),
+					)
+				}
+			}()
+			handler(nc, err)
+		}()
+	}
 }
 
 const (
@@ -291,14 +365,31 @@ func (b *NatsBus) Publish(subject string, packet *pb.BusPacket) error {
 // Subscribe attaches a subscription that decodes protobuf packets and invokes the handler.
 // When JetStream is enabled, durable subjects are consumed with explicit ack/nak semantics.
 func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
+	_, err := b.subscribe(subject, queue, handler)
+	return err
+}
+
+// ReplaceSubscription unsubscribes the previous subscription (when valid) and
+// installs a fresh subscription for the same handler. This is primarily used by
+// reconnect callbacks that need to force a clean re-subscribe.
+func (b *NatsBus) ReplaceSubscription(prev *nats.Subscription, subject, queue string, handler func(*pb.BusPacket) error) (*nats.Subscription, error) {
+	if prev != nil && prev.IsValid() {
+		if err := prev.Unsubscribe(); err != nil && !errors.Is(err, nats.ErrBadSubscription) {
+			return nil, fmt.Errorf("unsubscribe %s: %w", subject, err)
+		}
+	}
+	return b.subscribe(subject, queue, handler)
+}
+
+func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) error) (*nats.Subscription, error) {
 	if b == nil || b.nc == nil {
-		return errNilBus
+		return nil, errNilBus
 	}
 	if subject == "" {
-		return errEmptyTopic
+		return nil, errEmptyTopic
 	}
 	if handler == nil {
-		return errors.New("nil handler")
+		return nil, errors.New("nil handler")
 	}
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		cb := func(msg *nats.Msg) {
@@ -432,10 +523,10 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 			sub, err = b.js.QueueSubscribe(subject, queue, cb, opts...)
 		}
 		if err != nil {
-			return fmt.Errorf("subscribe %s: %w", subject, err)
+			return nil, fmt.Errorf("subscribe %s: %w", subject, err)
 		}
 		b.trackSub(sub)
-		return nil
+		return sub, nil
 	}
 
 	cb := func(msg *nats.Msg) {
@@ -451,17 +542,17 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	if queue == "" {
 		sub, err := b.nc.Subscribe(subject, cb)
 		if err != nil {
-			return fmt.Errorf("subscribe %s: %w", subject, err)
+			return nil, fmt.Errorf("subscribe %s: %w", subject, err)
 		}
 		b.trackSub(sub)
-		return nil
+		return sub, nil
 	}
 	sub, err := b.nc.QueueSubscribe(subject, queue, cb)
 	if err != nil {
-		return fmt.Errorf("subscribe %s: %w", subject, err)
+		return nil, fmt.Errorf("subscribe %s: %w", subject, err)
 	}
 	b.trackSub(sub)
-	return nil
+	return sub, nil
 }
 
 // trackSub appends a subscription to the tracked list.

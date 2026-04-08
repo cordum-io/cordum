@@ -77,6 +77,28 @@ func (s *errStrategy) PickSubject(_ *pb.JobRequest, _ map[string]*pb.Heartbeat, 
 	return "", s.err
 }
 
+type panicRegistry struct{}
+
+func (panicRegistry) UpdateHeartbeat(_ *pb.Heartbeat) {
+	panic("registry heartbeat panic")
+}
+
+func (panicRegistry) UpdateHandshake(_ *pb.Handshake) {
+	panic("registry handshake panic")
+}
+
+func (panicRegistry) Snapshot() map[string]*pb.Heartbeat {
+	return nil
+}
+
+func (panicRegistry) ReadinessSnapshot() map[string]WorkerReadiness {
+	return nil
+}
+
+func (panicRegistry) IsAlive(string) bool {
+	return false
+}
+
 type fakeJobStore struct {
 	mu             sync.RWMutex
 	states         map[string]JobState
@@ -567,6 +589,24 @@ func newHandshakePacket(workerID string, topics ...string) *pb.BusPacket {
 	}
 }
 
+func newConfigChangedWorkersPacket() *pb.BusPacket {
+	return &pb.BusPacket{
+		SenderId:        "gateway",
+		TraceId:         "trace-config-workers",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_Alert{
+			Alert: &pb.SystemAlert{
+				Message: "config changed",
+				Details: map[string]string{
+					"scope":    "system",
+					"scope_id": "workers",
+				},
+			},
+		},
+	}
+}
+
 func (s *fakeJobStore) CountActiveByTenant(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
@@ -808,7 +848,7 @@ func TestUnattestedWorkerEnforceMode(t *testing.T) {
 		t.Fatalf("expected enforce mode to reject unattested worker, got %+v", snapshot)
 	}
 	logs := logBuf.String()
-	if !strings.Contains(logs, "worker heartbeat rejected: attestation failed") || !strings.Contains(logs, "reason=auth_token_missing") {
+	if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "worker heartbeat rejected: attestation failed") || !strings.Contains(logs, "reason=auth_token_missing") {
 		t.Fatalf("expected enforce rejection log, got %q", logs)
 	}
 }
@@ -828,6 +868,22 @@ func TestAttestationOffMode(t *testing.T) {
 	}
 	if snapshot["worker-off"] == nil {
 		t.Fatalf("expected worker-off in registry, got %+v", snapshot)
+	}
+}
+
+func TestHandlePacketRecoversFromRegistryPanic(t *testing.T) {
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), panicRegistry{}, NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	err := engine.HandlePacket(newHeartbeatPacket("worker-panic", "worker-panic", "default", ""))
+	if err == nil {
+		t.Fatal("expected retryable error after recovered panic")
+	}
+	var retryErr *retryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected retryableError, got %T", err)
+	}
+	if retryErr.RetryDelay() != retryDelayStore {
+		t.Fatalf("expected retry delay %s, got %s", retryDelayStore, retryErr.RetryDelay())
 	}
 }
 
@@ -960,6 +1016,132 @@ func TestProcessJobReadinessRequiredFiltersUnreadyWorkers(t *testing.T) {
 	}
 	if published[0].subject != "worker.worker-ready.jobs" {
 		t.Fatalf("expected direct worker subject, got %s", published[0].subject)
+	}
+}
+
+func TestHandleConfigChangedPacketRefreshesCredentialCacheAsync(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	cache := &WorkerCredentialCache{
+		list: func(context.Context) ([]workercredentials.Credential, error) {
+			close(started)
+			<-release
+			return []workercredentials.Credential{
+				{
+					WorkerID:       "worker-async",
+					CredentialHash: "$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHQ$L8mNKgHdwNwp0UrEGouGZWlqlImPi0tLxe3LjXLp8dk",
+					CreatedBy:      "test",
+					CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+				},
+			}, nil
+		},
+		records: map[string]workercredentials.Credential{},
+	}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithWorkerCredentialCache(cache)
+
+	start := time.Now()
+	if err := engine.handleConfigChangedPacket(newConfigChangedWorkersPacket()); err != nil {
+		t.Fatalf("handleConfigChangedPacket: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("expected async refresh to return quickly, took %s", elapsed)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("expected async refresh goroutine to start")
+	}
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		cache.mu.RLock()
+		_, ok := cache.records["worker-async"]
+		cache.mu.RUnlock()
+		if ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected async refresh to populate cache")
+}
+
+func TestWorkerCredentialCacheRefreshMergesRecordsAndKeepsExistingOnFailure(t *testing.T) {
+	cache := &WorkerCredentialCache{
+		records: map[string]workercredentials.Credential{
+			"worker-stale": {
+				WorkerID:       "worker-stale",
+				CredentialHash: "hash-stale",
+				CreatedBy:      "test",
+				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	}
+	cache.list = func(context.Context) ([]workercredentials.Credential, error) {
+		return []workercredentials.Credential{
+			{
+				WorkerID:       "worker-stale",
+				CredentialHash: "hash-updated",
+				CreatedBy:      "refresh",
+				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+			},
+			{
+				WorkerID:       "worker-new",
+				CredentialHash: "hash-new",
+				CreatedBy:      "refresh",
+				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+			},
+		}, nil
+	}
+
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	cache.mu.RLock()
+	if got := cache.records["worker-stale"].CredentialHash; got != "hash-updated" {
+		cache.mu.RUnlock()
+		t.Fatalf("expected updated stale worker hash, got %q", got)
+	}
+	if _, ok := cache.records["worker-new"]; !ok {
+		cache.mu.RUnlock()
+		t.Fatal("expected new worker to be merged into cache")
+	}
+	cache.mu.RUnlock()
+
+	cache.list = func(context.Context) ([]workercredentials.Credential, error) {
+		return nil, errors.New("boom")
+	}
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh after error: %v", err)
+	}
+
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+	if _, ok := cache.records["worker-stale"]; !ok {
+		t.Fatal("expected existing worker to remain after refresh failure")
+	}
+	if _, ok := cache.records["worker-new"]; !ok {
+		t.Fatal("expected merged worker to remain after refresh failure")
+	}
+}
+
+func TestProcessJobRetriesWhenTopicRegistryUnavailableAndSchemaEnforced(t *testing.T) {
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithSchemaEnforcement(infraSchema.EnforcementEnforce)
+
+	err := engine.processJob(context.Background(), &pb.JobRequest{JobId: "job-registry-down", Topic: "job.default"}, "trace-registry-down")
+	if err == nil {
+		t.Fatal("expected retryable error when topic registry is unavailable in enforce mode")
+	}
+	var retryErr *retryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected retryableError, got %T", err)
+	}
+	if retryErr.RetryDelay() != retryDelayStore {
+		t.Fatalf("expected retry delay %s, got %s", retryDelayStore, retryErr.RetryDelay())
 	}
 }
 

@@ -132,7 +132,7 @@ describe("TopicsPage", () => {
     try {
       expect(container.textContent).toContain("No topics registered");
       expect(container.textContent).toContain(
-        "Install a pack or register topics via the API",
+        "Install a pack or use `cordumctl topic create`",
       );
     } finally {
       cleanup();

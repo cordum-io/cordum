@@ -52,6 +52,12 @@ The System page writes observability and alerting settings into the config servi
 (scope `system`, scope_id `default`) via `POST /api/v1/config`. Admin role is required
 when enterprise RBAC is enabled.
 
+`system/default` is reserved for general system config only. Policy bundles are
+stored under `cfg:system:policy` (`data.bundles`) and must be managed through the
+policy bundle APIs or a wrapped `/api/v1/config` write targeting `scope=system`,
+`scope_id=policy`. The gateway rejects `bundles` writes to `system/default` and
+migrates legacy startup data from `system/default` into `system/policy`.
+
 Example:
 
 ```json

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,88 @@ import (
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 )
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stderr pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() {
+		os.Stderr = original
+	}()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close stderr reader: %v", err)
+	}
+	return string(data)
+}
+
+func writeTopicRegistryPackFixture(t *testing.T) string {
+	t.Helper()
+
+	packDir := t.TempDir()
+	manifest := fmt.Sprintf(`
+apiVersion: cordum.io/v1
+kind: Pack
+metadata:
+  id: demo-pack
+  version: 1.0.0
+compatibility:
+  protocolVersion: %d
+topics:
+  - name: job.demo-pack.echo
+    capability: demo.echo
+    inputSchema: demo-pack/Input
+    outputSchema: demo-pack/Output
+    riskTags:
+      - safe
+    requires:
+      - local
+resources:
+  schemas:
+    - id: demo-pack/Input
+      path: schemas/input.json
+    - id: demo-pack/Output
+      path: schemas/output.json
+overlays:
+  config:
+    - name: pools
+      key: pools
+      path: overlays/pools.patch.yaml
+`, capsdk.DefaultProtocolVersion)
+	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(strings.TrimSpace(manifest)), 0o600); err != nil {
+		t.Fatalf("write pack manifest: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(packDir, "schemas"), 0o700); err != nil {
+		t.Fatalf("mkdir schemas: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(packDir, "overlays"), 0o700); err != nil {
+		t.Fatalf("mkdir overlays: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(packDir, "schemas", "input.json"), []byte(`{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}`), 0o600); err != nil {
+		t.Fatalf("write input schema: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(packDir, "schemas", "output.json"), []byte(`{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}`), 0o600); err != nil {
+		t.Fatalf("write output schema: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(packDir, "overlays", "pools.patch.yaml"), []byte("topics:\n  job.demo-pack.echo: demo-pack\npools:\n  demo-pack:\n    requires:\n      - local\n"), 0o600); err != nil {
+		t.Fatalf("write pools overlay: %v", err)
+	}
+	return packDir
+}
 
 func TestValidatePackManifest(t *testing.T) {
 	if err := validatePackManifest(nil); err == nil {
@@ -641,12 +724,40 @@ func TestRunPackUninstallReleasesLocksOnError(t *testing.T) {
 func TestRollbackPackInstallWithHooks_ReversesInstallOrderPerStage(t *testing.T) {
 	tests := []struct {
 		name      string
+		topics    []topicRegistration
 		policies  []appliedPolicyChange
 		configs   []appliedConfigChange
 		workflows []workflowPlan
 		schemas   []schemaPlan
 		want      []string
 	}{
+		{
+			name: "topic stage failure rolls back topics before remaining stages",
+			topics: []topicRegistration{
+				{Name: "job.pack.topic.one"},
+				{Name: "job.pack.topic.two"},
+			},
+			policies: []appliedPolicyChange{
+				{Overlay: packAppliedPolicyOverlay{Name: "policy.one"}},
+			},
+			configs: []appliedConfigChange{
+				{Overlay: packAppliedConfigOverlay{Name: "config.one"}},
+			},
+			workflows: []workflowPlan{
+				{ID: "workflow.one"},
+			},
+			schemas: []schemaPlan{
+				{ID: "schema.one"},
+			},
+			want: []string{
+				"topic:job.pack.topic.two",
+				"topic:job.pack.topic.one",
+				"policy:policy.one",
+				"config:config.one",
+				"workflow:workflow.one",
+				"schema:schema.one",
+			},
+		},
 		{
 			name: "schema stage failure rolls back schemas only",
 			schemas: []schemaPlan{
@@ -721,6 +832,10 @@ func TestRollbackPackInstallWithHooks_ReversesInstallOrderPerStage(t *testing.T)
 		t.Run(tt.name, func(t *testing.T) {
 			var got []string
 			hooks := packInstallRollbackHooks{
+				rollbackTopic: func(_ context.Context, _ *restClient, topic topicRegistration) error {
+					got = append(got, "topic:"+topic.Name)
+					return nil
+				},
 				restorePolicyOverlay: func(_ context.Context, _ *restClient, change appliedPolicyChange) error {
 					got = append(got, "policy:"+change.Overlay.Name)
 					return nil
@@ -739,9 +854,10 @@ func TestRollbackPackInstallWithHooks_ReversesInstallOrderPerStage(t *testing.T)
 				},
 			}
 
-			rollbackPackInstallWithHooks(
+			_ = rollbackPackInstallWithHooks(
 				context.Background(),
 				nil,
+				tt.topics,
 				tt.policies,
 				tt.configs,
 				tt.workflows,
@@ -753,6 +869,290 @@ func TestRollbackPackInstallWithHooks_ReversesInstallOrderPerStage(t *testing.T)
 				t.Fatalf("rollback order mismatch\n got: %v\nwant: %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunPackInstallReportsRollbackErrors(t *testing.T) {
+	packDir := writeTopicRegistryPackFixture(t)
+
+	docs := map[string]configDoc{}
+	var removedTopics []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/schemas":
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			key := r.URL.Query().Get("scope") + "|" + r.URL.Query().Get("scope_id")
+			doc, ok := docs[key]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(doc); err != nil {
+				t.Fatalf("encode config doc: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			var req configDoc
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode config request: %v", err)
+			}
+			if req.Scope == packRegistryScope && req.ScopeID == packRegistryID {
+				http.Error(w, "simulated registry failure", http.StatusInternalServerError)
+				return
+			}
+			docs[req.Scope+"|"+req.ScopeID] = req
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/topics":
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/topics/"):
+			removedTopics = append(removedTopics, strings.TrimPrefix(r.URL.Path, "/api/v1/topics/"))
+			http.Error(w, "simulated topic delete failure", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+
+	var err error
+	stderr := captureStderr(t, func() {
+		err = runPackInstall([]string{"--gateway", srv.URL, "--force", packDir})
+	})
+	if err == nil {
+		t.Fatal("expected runPackInstall to return an error")
+	}
+	if !strings.Contains(err.Error(), "update pack registry") {
+		t.Fatalf("expected install error in returned error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rollback cleanup failed") {
+		t.Fatalf("expected rollback failure in returned error, got: %v", err)
+	}
+	if !strings.Contains(stderr, "WARNING: pack install rollback encountered errors") {
+		t.Fatalf("expected rollback warning on stderr, got %q", stderr)
+	}
+	if !reflect.DeepEqual(removedTopics, []string{"job.demo-pack.echo"}) {
+		t.Fatalf("expected rollback cleanup attempt for registered topic, got %v", removedTopics)
+	}
+}
+
+func TestRunPackInstallRegistersTopics(t *testing.T) {
+	packDir := writeTopicRegistryPackFixture(t)
+
+	docs := map[string]configDoc{}
+	var topicRequests []topicRegistration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/schemas":
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			key := r.URL.Query().Get("scope") + "|" + r.URL.Query().Get("scope_id")
+			doc, ok := docs[key]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(doc); err != nil {
+				t.Fatalf("encode config doc: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			var req configDoc
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode config request: %v", err)
+			}
+			docs[req.Scope+"|"+req.ScopeID] = req
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/topics":
+			var req topicRegistration
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode topic request: %v", err)
+			}
+			topicRequests = append(topicRequests, req)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+
+	if err := runPackInstall([]string{"--gateway", srv.URL, "--force", packDir}); err != nil {
+		t.Fatalf("expected install to succeed, got: %v", err)
+	}
+	if len(topicRequests) != 1 {
+		t.Fatalf("expected one topic registration, got %d", len(topicRequests))
+	}
+	got := topicRequests[0]
+	if got.Name != "job.demo-pack.echo" {
+		t.Fatalf("expected topic name job.demo-pack.echo, got %+v", got)
+	}
+	if got.Pool != "demo-pack" || got.InputSchemaID != "demo-pack/Input" || got.OutputSchemaID != "demo-pack/Output" {
+		t.Fatalf("unexpected topic schema/pool fields: %+v", got)
+	}
+	if got.PackID != "demo-pack" || got.Status != "active" {
+		t.Fatalf("unexpected topic ownership/status fields: %+v", got)
+	}
+	if !reflect.DeepEqual(got.Requires, []string{"local"}) || !reflect.DeepEqual(got.RiskTags, []string{"safe"}) {
+		t.Fatalf("unexpected topic policy fields: %+v", got)
+	}
+}
+
+func TestRunPackInstallRollbackRemovesTopics(t *testing.T) {
+	packDir := writeTopicRegistryPackFixture(t)
+
+	docs := map[string]configDoc{}
+	var registeredTopics []string
+	var removedTopics []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/schemas":
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			key := r.URL.Query().Get("scope") + "|" + r.URL.Query().Get("scope_id")
+			doc, ok := docs[key]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(doc); err != nil {
+				t.Fatalf("encode config doc: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			var req configDoc
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode config request: %v", err)
+			}
+			if req.Scope == packRegistryScope && req.ScopeID == packRegistryID {
+				http.Error(w, "simulated registry failure", http.StatusInternalServerError)
+				return
+			}
+			docs[req.Scope+"|"+req.ScopeID] = req
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/topics":
+			var req topicRegistration
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode topic request: %v", err)
+			}
+			registeredTopics = append(registeredTopics, req.Name)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/topics/"):
+			removedTopics = append(removedTopics, strings.TrimPrefix(r.URL.Path, "/api/v1/topics/"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+
+	err := runPackInstall([]string{"--gateway", srv.URL, "--force", packDir})
+	if err == nil {
+		t.Fatal("expected runPackInstall to return an error")
+	}
+	if !strings.Contains(err.Error(), "update pack registry") {
+		t.Fatalf("expected updatePackRegistry error, got: %v", err)
+	}
+	if !reflect.DeepEqual(registeredTopics, []string{"job.demo-pack.echo"}) {
+		t.Fatalf("unexpected registered topics: %v", registeredTopics)
+	}
+	if !reflect.DeepEqual(removedTopics, []string{"job.demo-pack.echo"}) {
+		t.Fatalf("expected rollback to remove registered topic, got %v", removedTopics)
+	}
+}
+
+func TestRunPackUninstallRemovesTopics(t *testing.T) {
+	record := packRecord{
+		ID:      "demo-pack",
+		Version: "1.0.0",
+		Status:  "ACTIVE",
+		Manifest: packRecordManifest{
+			Metadata: packMetadata{ID: "demo-pack", Version: "1.0.0"},
+			Topics: []packTopic{
+				{Name: "job.demo-pack.echo"},
+			},
+		},
+		Overlays: packRecordOverlays{
+			Config: []packAppliedConfigOverlay{},
+			Policy: []packAppliedPolicyOverlay{},
+		},
+		Resources: packRecordResources{
+			Schemas:   map[string]string{},
+			Workflows: map[string]string{},
+		},
+	}
+	docs := map[string]configDoc{
+		packRegistryScope + "|" + packRegistryID: {
+			Scope:   packRegistryScope,
+			ScopeID: packRegistryID,
+			Data: map[string]any{
+				"installed": recordsToAny(map[string]packRecord{
+					"demo-pack": record,
+				}),
+			},
+		},
+	}
+	var removedTopics []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			key := r.URL.Query().Get("scope") + "|" + r.URL.Query().Get("scope_id")
+			doc, ok := docs[key]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(doc); err != nil {
+				t.Fatalf("encode config doc: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			var req configDoc
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode config request: %v", err)
+			}
+			docs[req.Scope+"|"+req.ScopeID] = req
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/topics/"):
+			removedTopics = append(removedTopics, strings.TrimPrefix(r.URL.Path, "/api/v1/topics/"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+
+	if err := runPackUninstall([]string{"--gateway", srv.URL, "demo-pack"}); err != nil {
+		t.Fatalf("expected uninstall to succeed, got: %v", err)
+	}
+	if !reflect.DeepEqual(removedTopics, []string{"job.demo-pack.echo"}) {
+		t.Fatalf("expected uninstall to remove pack topic, got %v", removedTopics)
 	}
 }
 
@@ -832,5 +1232,63 @@ func TestUpdatePackRegistryHandlesNilConfigData(t *testing.T) {
 	}
 	if got := record["id"]; got != "pack.demo" {
 		t.Fatalf("expected posted id pack.demo, got %v", got)
+	}
+}
+
+func TestApplyPolicyOverlayWritesSystemPolicyScope(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "policy.fragment.yaml"), []byte("tenants:\n  default:\n    allow_topics:\n      - job.pack.demo\n"), 0o600); err != nil {
+		t.Fatalf("write policy fragment: %v", err)
+	}
+
+	var getScope string
+	var getScopeID string
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			getScope = r.URL.Query().Get("scope")
+			getScopeID = r.URL.Query().Get("scope_id")
+			http.NotFound(w, r)
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted config: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer srv.Close()
+
+	client := &restClient{baseURL: srv.URL, httpClient: srv.Client()}
+	overlay := packPolicyOverlay{Name: "safety", Path: "policy.fragment.yaml", Strategy: "bundle_fragment"}
+	if _, err := applyPolicyOverlay(context.Background(), client, overlay, "pack.demo", "1.2.3", dir); err != nil {
+		t.Fatalf("applyPolicyOverlay returned error: %v", err)
+	}
+
+	if getScope != policyConfigScope || getScopeID != policyConfigID {
+		t.Fatalf("expected GET scope %s/%s, got %s/%s", policyConfigScope, policyConfigID, getScope, getScopeID)
+	}
+	if posted == nil {
+		t.Fatal("expected setConfig POST body")
+	}
+	if posted["scope"] != policyConfigScope || posted["scope_id"] != policyConfigID {
+		t.Fatalf("expected POST scope %s/%s, got %v/%v", policyConfigScope, policyConfigID, posted["scope"], posted["scope_id"])
+	}
+	data, ok := posted["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data map in POST body, got %T", posted["data"])
+	}
+	bundles, ok := data[policyConfigKey].(map[string]any)
+	if !ok {
+		t.Fatalf("expected bundles map in POST body, got %T", data[policyConfigKey])
+	}
+	if bundles["pack.demo/safety"] == nil {
+		t.Fatalf("expected bundle stored under pack.demo/safety, got %v", bundles)
 	}
 }

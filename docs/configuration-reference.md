@@ -828,6 +828,18 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 | `OUTPUT_POLICY_ENABLED` | `false` | Enable output policy: `true`, `1` |
 | `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when safety kernel is unreachable during pre-dispatch input policy checks. `closed` (default): requeue with backoff. `open`: allow through with warning log and metric. See [safety-kernel.md](safety-kernel.md) for risk implications. |
 
+### Gateway + Scheduler — Boundary Hardening
+
+These flags control the canonical topic registry, schema enforcement, worker attestation,
+and readiness gating described in [ADR 009](adr/009-control-plane-boundary-hardening.md).
+
+| Variable | Default | Type | Service | Description |
+|----------|---------|------|---------|-------------|
+| `SCHEMA_ENFORCEMENT` | `warn` | string (`off`, `warn`, `enforce`) | gateway + scheduler | Controls how registered topic schemas are enforced. The gateway uses it at submit time for `POST /api/v1/jobs`; the scheduler uses the same mode before dispatch. `warn` logs violations and continues, `enforce` rejects/failed-jobs on schema mismatch, `off` skips schema validation. |
+| `WORKER_ATTESTATION` | `off` | string (`off`, `warn`, `enforce`) | scheduler | Controls whether scheduler heartbeat processing requires a valid worker credential token. `warn` accepts the heartbeat but logs attestation failures; `enforce` rejects unattested heartbeats; `off` skips attestation checks. |
+| `WORKER_READINESS_REQUIRED` | `false` | bool | scheduler | When `true`, scheduling only considers workers that have recently advertised matching `ready_topics` in their handshake. When `false`, workers without readiness data remain eligible for backward compatibility. |
+| `WORKER_READINESS_TTL` | `60s` | duration | scheduler | Freshness window for handshake readiness state. After this TTL expires, the worker heartbeat may still be present, but readiness gating treats the worker as not ready until it handshakes again. Invalid or non-positive values fall back to `60s` with a warning log. |
+
 ### Workflow Engine
 
 | Variable | Default | Description |

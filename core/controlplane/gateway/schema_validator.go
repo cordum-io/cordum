@@ -20,8 +20,8 @@ func newSchemaValidator(registry *infraSchema.Registry) *schemaValidator {
 }
 
 func (s *server) schemaValidationMode() infraSchema.EnforcementMode {
-	if s == nil {
-		return infraSchema.EnforcementWarn
+	if s == nil || s.schemaEnforcement == "" {
+		return infraSchema.EnforcementOff
 	}
 	return s.schemaEnforcement.Normalized()
 }

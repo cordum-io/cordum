@@ -78,6 +78,13 @@ export default function AgentsPage() {
     return true;
   });
 
+  const clearFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setTab("fleet");
+    navigate("/agents");
+  };
+
   if (isError) {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load agents"} onRetry={() => void refetch()} />;
   }
@@ -112,7 +119,7 @@ export default function AgentsPage() {
               .
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => navigate("/agents")}>
+          <Button variant="outline" size="sm" onClick={clearFilters}>
             Clear filter
           </Button>
         </div>

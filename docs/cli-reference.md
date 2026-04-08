@@ -15,7 +15,7 @@ is not provided on the command line.
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `--gateway` | `CORDUM_GATEWAY` | `https://localhost:8081` | Gateway base URL |
+| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL |
 | `--api-key` | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `--tenant` | `CORDUM_TENANT_ID` | `default` | Tenant ID |
 | `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification |
@@ -47,6 +47,12 @@ cordumctl status --gateway https://prod:8081 --api-key $KEY --cacert ./certs/ca/
 | `run timeline` | Get run timeline events |
 | `approval job` | Approve or reject a job |
 | `dlq retry` | Retry a dead-letter job |
+| `topic list` | List canonical topic registrations |
+| `topic create` | Register or update a topic |
+| `topic delete` | Delete a topic registration |
+| `worker credential list` | List worker credentials |
+| `worker credential create` | Create or rotate a worker credential |
+| `worker credential revoke` | Revoke a worker credential |
 | `pack create` | Scaffold a new pack |
 | `pack install` | Install a pack |
 | `pack uninstall` | Uninstall a pack |
@@ -380,6 +386,9 @@ my-agent/
 
 Install a pack from a local directory, `.tgz` archive, or HTTPS URL.
 
+This registers pack topics in the canonical topic registry after config overlays
+are applied, so installed packs pass submit-time unknown-topic validation.
+
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--dry-run` | `false` | Print planned changes without applying |
@@ -413,6 +422,8 @@ cordumctl pack install ./my-agent --upgrade
 ### `pack uninstall <pack_id>`
 
 Remove an installed pack.
+
+This also removes the pack's topic registrations from the canonical topic registry.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -494,6 +505,96 @@ These are used by `cordumctl up` and `cordumctl dev`:
 | Maximum file size | 32 MB |
 | Maximum uncompressed size | 256 MB |
 | Supported formats | Directory or `.tgz` archive |
+
+---
+
+## Topic Management
+
+Manage the canonical topic registry used by the gateway, scheduler, and dashboard.
+
+### `cordumctl topic list`
+
+List registered topics with pool mapping, schema bindings, registry status, and active
+worker count.
+
+```bash
+cordumctl topic list
+```
+
+### `cordumctl topic create <name>`
+
+Register a topic or update an existing registration.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--pool` | *(required unless `--status disabled`)* | Worker pool name |
+| `--input-schema` | | Input schema ID |
+| `--output-schema` | | Output schema ID |
+| `--pack-id` | | Owning pack ID |
+| `--requires` | | Comma-separated capability requirements |
+| `--risk-tags` | | Comma-separated risk tags |
+| `--status` | `active` | Topic status: `active`, `deprecated`, or `disabled` |
+
+```bash
+cordumctl topic create job.my-pack.process \
+  --pool my-pack \
+  --input-schema my-pack/ProcessInput \
+  --output-schema my-pack/ProcessResult \
+  --pack-id my-pack \
+  --requires docker,network:egress \
+  --risk-tags external-api
+
+# Disabled topics may omit the pool during staged rollout
+cordumctl topic create job.my-pack.legacy --status disabled
+```
+
+### `cordumctl topic delete <name>`
+
+Delete a topic registration from the canonical registry.
+
+```bash
+cordumctl topic delete job.my-pack.legacy
+```
+
+---
+
+## Worker Credential Management
+
+Provision worker credentials used by scheduler attestation mode.
+
+### `cordumctl worker credential list`
+
+List issued credentials, including allowlists and revocation state.
+
+```bash
+cordumctl worker credential list
+```
+
+### `cordumctl worker credential create --worker-id <worker_id>`
+
+Create a new worker credential or rotate an existing one. The plaintext token is
+printed once and must be stored immediately.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--worker-id` | *(required)* | Worker identity to provision |
+| `--allowed-pools` | | Comma-separated allowed pools |
+| `--allowed-topics` | | Comma-separated allowed topics |
+
+```bash
+cordumctl worker credential create \
+  --worker-id external-worker-01 \
+  --allowed-pools my-pack \
+  --allowed-topics job.my-pack.process
+```
+
+### `cordumctl worker credential revoke --worker-id <worker_id>`
+
+Revoke an issued worker credential.
+
+```bash
+cordumctl worker credential revoke --worker-id external-worker-01
+```
 
 ---
 

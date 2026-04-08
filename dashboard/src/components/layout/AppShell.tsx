@@ -162,7 +162,7 @@ export function AppShell({ children }: AppShellProps) {
   // Accessibility: focus trap for mobile drawer + reduced motion
   const prefersReducedMotion = useReducedMotion();
   const closeMobileMenu = useCallback(() => setMobileOpen(false), []);
-  const drawerRef = useDialogA11y(closeMobileMenu);
+  const drawerRef = useDialogA11y(closeMobileMenu, { enabled: mobileOpen });
   const hamburgerRef = useRef<HTMLButtonElement>(null);
 
   // System health status — derived from GET /status (polled every 10s via useStatus)

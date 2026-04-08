@@ -15,6 +15,9 @@ import (
 
 func newTestVelocityChecker(t *testing.T) (*velocityChecker, *miniredis.Miniredis) {
 	t.Helper()
+	prevTimeout := velocityRedisTimeout
+	velocityRedisTimeout = 2 * time.Second
+	t.Cleanup(func() { velocityRedisTimeout = prevTimeout })
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })

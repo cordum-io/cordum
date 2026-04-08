@@ -147,7 +147,9 @@ func readinessAllowsTopic(workerID, topic string, readiness map[string]WorkerRea
 	}
 	state, ok := readiness[workerID]
 	if !ok {
-		return false
+		// Missing readiness is treated as unknown, not negative evidence.
+		// Newly-seen workers should still be eligible until a handshake says otherwise.
+		return true
 	}
 	return workerReadyForTopic(state, topic)
 }

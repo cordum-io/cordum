@@ -358,6 +358,25 @@ func TestBuildEventAlertEnhancedFields(t *testing.T) {
 	}
 }
 
+func TestBuildEventAlertPanicRecovery(t *testing.T) {
+	buildEventAlertTestHook = func() { panic("stringer exploded") }
+	t.Cleanup(func() { buildEventAlertTestHook = nil })
+
+	alert := buildEventAlert(&Step{ID: "step-panic"}, map[string]any{})
+	if alert == nil {
+		t.Fatal("expected fallback alert")
+	}
+	if alert.Severity != pb.AlertSeverity_ALERT_SEVERITY_ERROR {
+		t.Fatalf("expected error severity, got %v", alert.Severity)
+	}
+	if alert.SourceComponent != "workflow-engine" {
+		t.Fatalf("expected workflow-engine source component, got %q", alert.SourceComponent)
+	}
+	if alert.Message == "" {
+		t.Fatal("expected fallback panic message")
+	}
+}
+
 func TestCloneStepRun(t *testing.T) {
 	sr := &StepRun{StepID: "step", Status: StepStatusSucceeded, Output: "ptr", Children: map[string]*StepRun{
 		"child": {StepID: "child", Status: StepStatusRunning, JobID: "job"},

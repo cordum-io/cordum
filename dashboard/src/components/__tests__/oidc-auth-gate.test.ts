@@ -3,11 +3,20 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthConfig } from "../../api/types";
-import { createTestQueryClient, renderWithQueryClient } from "../../hooks/__tests__/test-utils";
+import {
+  createTestQueryClient,
+  renderWithQueryClient,
+} from "../../hooks/__tests__/test-utils";
 import { usePermission } from "../../hooks/usePermission";
 import { ProtectedRoute } from "../ProtectedRoute";
 
-const { navigateMock, locationState, configState, authConfigState } = vi.hoisted(() => ({
+const {
+  navigateMock,
+  locationState,
+  configState,
+  authConfigState,
+  eventStreamMock,
+} = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   locationState: { pathname: "/secure", search: "" },
   configState: {
@@ -26,10 +35,14 @@ const { navigateMock, locationState, configState, authConfigState } = vi.hoisted
   authConfigState: {
     data: undefined as AuthConfig | undefined,
   },
+  eventStreamMock: vi.fn(),
 }));
 
 vi.mock("react-router-dom", async () => {
-  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  const actual =
+    await vi.importActual<typeof import("react-router-dom")>(
+      "react-router-dom",
+    );
   return {
     ...actual,
     useNavigate: () => navigateMock,
@@ -38,7 +51,8 @@ vi.mock("react-router-dom", async () => {
 });
 
 vi.mock("../../state/config", () => ({
-  useConfigStore: (selector: (state: typeof configState) => unknown) => selector(configState),
+  useConfigStore: (selector: (state: typeof configState) => unknown) =>
+    selector(configState),
 }));
 
 vi.mock("../../hooks/useAuthConfig", () => ({
@@ -46,7 +60,7 @@ vi.mock("../../hooks/useAuthConfig", () => ({
 }));
 
 vi.mock("../../hooks/useEventStream", () => ({
-  useEventStream: () => undefined,
+  useEventStream: eventStreamMock,
 }));
 
 vi.mock("../../hooks/useKeyboardShortcuts", () => ({
@@ -109,10 +123,9 @@ function renderProtectedRoute() {
       React.createElement(
         QueryClientProvider,
         { client: queryClient },
-        React.createElement(
-          ProtectedRoute,
-          { children: React.createElement("div", null, "Secret content") },
-        ),
+        React.createElement(ProtectedRoute, {
+          children: React.createElement("div", null, "Secret content"),
+        }),
       ),
     );
   });
@@ -132,6 +145,7 @@ describe("OIDC auth gating", () => {
     configState.user.roles = ["viewer"];
     configState.principalRole = "viewer";
     authConfigState.data = undefined;
+    eventStreamMock.mockReset();
   });
 
   afterEach(() => {
@@ -149,9 +163,13 @@ describe("OIDC auth gating", () => {
     renderProtectedRoute();
 
     await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/login?returnUrl=%2Fsecure%3Ftab%3Devents", {
-        replace: true,
-      });
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/login?returnUrl=%2Fsecure%3Ftab%3Devents",
+        {
+          replace: true,
+        },
+      );
+      expect(eventStreamMock).not.toHaveBeenCalled();
     });
   });
 
@@ -160,7 +178,10 @@ describe("OIDC auth gating", () => {
 
     const hook = renderWithQueryClient(() => usePermission(["admin"]));
 
-    expect(hook.result.current).toEqual({ allowed: false, userRoles: ["viewer"] });
+    expect(hook.result.current).toEqual({
+      allowed: false,
+      userRoles: ["viewer"],
+    });
     hook.unmount();
   });
 });

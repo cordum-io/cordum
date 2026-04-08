@@ -34,6 +34,7 @@ import (
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -98,6 +99,68 @@ func init() {
 	prometheus.MustRegister(defaultDecisionTotal)
 }
 
+type configChangeBus interface {
+	ReplaceSubscription(prev *nats.Subscription, subject, queue string, handler func(*pb.BusPacket) error) (*nats.Subscription, error)
+	AddReconnectHandler(handler func(*nats.Conn))
+	AddDisconnectHandler(handler func(*nats.Conn, error))
+}
+
+func registerConfigChangeNotifications(natsBus configChangeBus, notifyCh chan struct{}) {
+	if natsBus == nil || notifyCh == nil {
+		return
+	}
+
+	callback := func(_ *pb.BusPacket) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("safety-kernel: config subscription panic",
+					"panic", r,
+					"stack", string(debug.Stack()),
+				)
+				err = nil
+			}
+		}()
+		select {
+		case notifyCh <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+
+	var (
+		subMu     sync.Mutex
+		configSub *nats.Subscription
+	)
+	subscribe := func() error {
+		subMu.Lock()
+		defer subMu.Unlock()
+		sub, err := natsBus.ReplaceSubscription(configSub, capsdk.SubjectConfigChanged, "", callback)
+		if err != nil {
+			return err
+		}
+		configSub = sub
+		return nil
+	}
+
+	natsBus.AddDisconnectHandler(func(_ *nats.Conn, err error) {
+		slog.Error("safety-kernel: NATS disconnected, falling back to poll", "err", err)
+	})
+	natsBus.AddReconnectHandler(func(_ *nats.Conn) {
+		slog.Error("safety-kernel: NATS reconnected, re-subscribing", "subject", capsdk.SubjectConfigChanged)
+		if err := subscribe(); err != nil {
+			slog.Error("safety-kernel: failed to re-subscribe to config change notifications", "subject", capsdk.SubjectConfigChanged, "err", err)
+			return
+		}
+		slog.Info("safety-kernel: re-subscribed to config change notifications", "subject", capsdk.SubjectConfigChanged)
+	})
+
+	if err := subscribe(); err != nil {
+		slog.Warn("safety-kernel: failed to subscribe to config change notifications, relying on poll", "err", err)
+		return
+	}
+	slog.Info("safety-kernel: subscribed to config change notifications", "subject", capsdk.SubjectConfigChanged)
+}
+
 // Run starts the Safety Kernel gRPC server and blocks until it exits.
 func Run(cfg *config.Config) error {
 	if cfg == nil {
@@ -122,17 +185,7 @@ func Run(cfg *config.Config) error {
 
 	notifyCh := make(chan struct{}, 1)
 	if natsBus != nil {
-		if err := natsBus.Subscribe(capsdk.SubjectConfigChanged, "", func(_ *pb.BusPacket) error {
-			select {
-			case notifyCh <- struct{}{}:
-			default:
-			}
-			return nil
-		}); err != nil {
-			slog.Warn("safety-kernel: failed to subscribe to config change notifications, relying on poll", "err", err)
-		} else {
-			slog.Info("safety-kernel: subscribed to config change notifications", "subject", capsdk.SubjectConfigChanged)
-		}
+		registerConfigChangeNotifications(natsBus, notifyCh)
 	}
 
 	lis, err := net.Listen("tcp", cfg.SafetyKernelAddr)

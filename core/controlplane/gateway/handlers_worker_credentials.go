@@ -3,6 +3,7 @@ package gateway
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -30,6 +31,11 @@ type issueWorkerCredentialResponse struct {
 	workerCredentialResponse
 	Token string `json:"token"`
 }
+
+const (
+	maxCredentialArrayItems  = 100
+	maxCredentialArrayString = 128
+)
 
 func (s *server) handleListWorkerCredentials(w http.ResponseWriter, r *http.Request) {
 	if err := s.requireRole(r, "admin"); err != nil {
@@ -71,13 +77,23 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 	}
 
 	req.WorkerID = strings.TrimSpace(req.WorkerID)
+	req.AllowedPools = trimStringSlice(req.AllowedPools)
+	req.AllowedTopics = trimStringSlice(req.AllowedTopics)
 	if err := validateWorkerID(req.WorkerID); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateStringArray("allowed_pools", req.AllowedPools, maxCredentialArrayItems, maxCredentialArrayString); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateStringArray("allowed_topics", req.AllowedTopics, maxCredentialArrayItems, maxCredentialArrayString); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := s.validateWorkerCredentialAccess(r, req.AllowedPools, req.AllowedTopics); err != nil {
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrPoolNotFound) || errors.Is(err, ErrTopicNotFound) {
 			status = http.StatusNotFound
 		}
 		writeErrorJSON(w, status, err.Error())
@@ -112,6 +128,15 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		action = "rotate"
 		verb = "rotate"
 	}
+	slog.Info("worker credential issued",
+		"worker_id", req.WorkerID,
+		"created_by", createdBy,
+		"actor", policyActorID(r),
+		"role", policyRole(r),
+		"rotated", existing != nil,
+		"allowed_pools", len(req.AllowedPools),
+		"allowed_topics", len(req.AllowedTopics),
+	)
 	s.appendAuditEntryNamed(r.Context(), action, "worker_credential", req.WorkerID, req.WorkerID, policyActorID(r), policyRole(r), verb+" worker credential "+req.WorkerID)
 
 	status := http.StatusCreated
@@ -161,6 +186,13 @@ func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Req
 	}
 
 	s.publishConfigChanged("system", "workers")
+	slog.Warn("worker credential revoked",
+		"worker_id", workerID,
+		"created_by", existing.CreatedBy,
+		"pack_id", existing.PackID,
+		"actor", policyActorID(r),
+		"role", policyRole(r),
+	)
 	s.appendAuditEntryNamed(r.Context(), "revoke", "worker_credential", workerID, workerID, policyActorID(r), policyRole(r), "revoke worker credential "+workerID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -186,7 +218,7 @@ func (s *server) validateWorkerCredentialAccess(r *http.Request, allowedPools, a
 			return err
 		}
 		if !registryEmpty && reg == nil {
-			return fmt.Errorf("topic %q not found", topic)
+			return topicNotFoundError{topic: topic}
 		}
 	}
 	return nil

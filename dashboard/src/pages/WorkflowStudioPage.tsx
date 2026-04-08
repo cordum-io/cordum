@@ -1,5 +1,10 @@
 import { WorkflowStudio } from "@/components/workflow-studio/WorkflowStudio";
 
+export const WORKFLOW_STUDIO_PAGE_STYLE = {
+  minHeight: "calc(100vh - 3rem)",
+  height: "calc(100dvh - 3rem)",
+} as const;
+
 /**
  * WorkflowStudioPage
  *
@@ -17,7 +22,7 @@ export default function WorkflowStudioPage() {
   return (
     <div
       className="-m-6 overflow-hidden"
-      style={{ height: "calc(100vh - 3rem)" }}
+      style={WORKFLOW_STUDIO_PAGE_STYLE}
     >
       <WorkflowStudio />
     </div>

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { shouldFetchNextAuditPage } from "./AuditLogPage";
 
 // ---------------------------------------------------------------------------
 // Mock the API client before any imports that reference it
@@ -68,7 +69,9 @@ describe("AuditLogPage API integration", () => {
 
   it("fetches first page with limit=50 and offset=0", async () => {
     const { get } = await import("@/api/client");
-    await (get as unknown as (...args: unknown[]) => Promise<unknown>)("/policy/audit?limit=50&offset=0");
+    await (get as unknown as (...args: unknown[]) => Promise<unknown>)(
+      "/policy/audit?limit=50&offset=0",
+    );
 
     expect(lastFetchParams).not.toBeNull();
     expect(lastFetchParams!.get("limit")).toBe("50");
@@ -107,9 +110,9 @@ describe("AuditLogPage API integration", () => {
 
   it("returns has_more=true when more pages available", async () => {
     const { get } = await import("@/api/client");
-    const result = await (get as unknown as (...args: unknown[]) => Promise<unknown>)(
-      "/policy/audit?limit=25&offset=0",
-    );
+    const result = await (
+      get as unknown as (...args: unknown[]) => Promise<unknown>
+    )("/policy/audit?limit=25&offset=0");
 
     const r = result as { has_more: boolean; items: unknown[]; total: number };
     expect(r.has_more).toBe(true);
@@ -119,9 +122,9 @@ describe("AuditLogPage API integration", () => {
 
   it("returns has_more=false on last page", async () => {
     const { get } = await import("@/api/client");
-    const result = await (get as unknown as (...args: unknown[]) => Promise<unknown>)(
-      "/policy/audit?limit=50&offset=0",
-    );
+    const result = await (
+      get as unknown as (...args: unknown[]) => Promise<unknown>
+    )("/policy/audit?limit=50&offset=0");
 
     const r = result as { has_more: boolean; items: unknown[] };
     expect(r.has_more).toBe(false);
@@ -135,6 +138,23 @@ describe("AuditLogPage API integration", () => {
     );
 
     expect(lastFetchParams!.get("offset")).toBe("50");
+  });
+});
+
+describe("shouldFetchNextAuditPage", () => {
+  it("fetches only when the sentinel is visible and paging is idle", () => {
+    expect(
+      shouldFetchNextAuditPage([{ isIntersecting: true }], true, false),
+    ).toBe(true);
+    expect(
+      shouldFetchNextAuditPage([{ isIntersecting: false }], true, false),
+    ).toBe(false);
+    expect(
+      shouldFetchNextAuditPage([{ isIntersecting: true }], false, false),
+    ).toBe(false);
+    expect(
+      shouldFetchNextAuditPage([{ isIntersecting: true }], true, true),
+    ).toBe(false);
   });
 });
 

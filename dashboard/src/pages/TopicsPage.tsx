@@ -135,7 +135,7 @@ function ResourceLinkCell({
 
 export default function TopicsPage() {
   const navigate = useNavigate();
-  const { data, isLoading, isError, error, refetch } = useTopics();
+  const { data, isLoading, isError, error, isFetching, refetch } = useTopics();
   const topics = data?.items ?? [];
 
   const activeCount = topics.filter((topic) => topic.activeWorkers > 0).length;
@@ -158,9 +158,15 @@ export default function TopicsPage() {
         title="Topics"
         subtitle="Track every registered topic, its pool mapping, linked schemas, owning pack, and runtime coverage."
         actions={(
-          <Button variant="outline" size="sm" onClick={() => void refetch()}>
-            <RefreshCw className="mr-1 h-3 w-3" />
-            Refresh
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isFetching}
+            aria-busy={isFetching}
+            onClick={() => void refetch()}
+          >
+            <RefreshCw className={cn("mr-1 h-3 w-3", isFetching && "animate-spin")} />
+            {isFetching ? "Refreshing" : "Refresh"}
           </Button>
         )}
       />
@@ -171,7 +177,10 @@ export default function TopicsPage() {
             <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
               Registered
             </span>
-            <Hash className="h-4 w-4 text-cordum" />
+            <span className="inline-flex items-center text-cordum">
+              <Hash className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Registered topics</span>
+            </span>
           </div>
           <div className="font-mono text-3xl font-bold text-foreground">
             {isLoading ? "—" : topics.length}
@@ -186,7 +195,10 @@ export default function TopicsPage() {
             <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
               Active
             </span>
-            <Radio className="h-4 w-4 text-[var(--color-success)]" />
+            <span className="inline-flex items-center text-[var(--color-success)]">
+              <Radio className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Topics with active workers</span>
+            </span>
           </div>
           <div className="font-mono text-3xl font-bold text-[var(--color-success)]">
             {isLoading ? "—" : activeCount}
@@ -201,7 +213,10 @@ export default function TopicsPage() {
             <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
               Degraded
             </span>
-            <AlertTriangle className="h-4 w-4 text-[var(--color-warning)]" />
+            <span className="inline-flex items-center text-[var(--color-warning)]">
+              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Degraded topics</span>
+            </span>
           </div>
           <div className="font-mono text-3xl font-bold text-[var(--color-warning)]">
             {isLoading ? "—" : degradedCount}
@@ -229,7 +244,7 @@ export default function TopicsPage() {
           <EmptyState
             icon={<Hash className="h-5 w-5" />}
             title="No topics registered"
-            description="Install a pack or register topics via the API to start routing work through the control plane."
+            description="Install a pack or use `cordumctl topic create` to register a topic before routing work through the control plane."
             action={(
               <Button variant="outline" size="sm" onClick={() => navigate("/packs")}>
                 <Package className="mr-1 h-3 w-3" />
@@ -308,21 +323,21 @@ export default function TopicsPage() {
                     </td>
                     <td className="px-5 py-4">
                       <ResourceLinkCell
-                        href={topic.inputSchemaId ? `/schemas/${topic.inputSchemaId}` : undefined}
+                        href={topic.inputSchemaId ? `/schemas/${encodeURIComponent(topic.inputSchemaId)}` : undefined}
                         value={topic.inputSchemaId}
                         icon={Database}
                       />
                     </td>
                     <td className="px-5 py-4">
                       <ResourceLinkCell
-                        href={topic.outputSchemaId ? `/schemas/${topic.outputSchemaId}` : undefined}
+                        href={topic.outputSchemaId ? `/schemas/${encodeURIComponent(topic.outputSchemaId)}` : undefined}
                         value={topic.outputSchemaId}
                         icon={Database}
                       />
                     </td>
                     <td className="px-5 py-4">
                       <ResourceLinkCell
-                        href={topic.packId ? `/packs/${topic.packId}` : undefined}
+                        href={topic.packId ? `/packs/${encodeURIComponent(topic.packId)}` : undefined}
                         value={topic.packId}
                         icon={Package}
                       />

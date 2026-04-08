@@ -39,6 +39,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -369,6 +370,10 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if err := configSvc.EnsureDefault(context.Background()); err != nil {
 		slog.Warn("auto-bootstrap default config failed", "error", err)
 	}
+	legacyPolicyBundlesMigrated, legacyPolicyBundleCount, err := migrateLegacyPolicyBundles(context.Background(), configSvc)
+	if err != nil {
+		return fmt.Errorf("migrate legacy policy bundles: %w", err)
+	}
 	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis schema registry: %w", err)
@@ -470,6 +475,15 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		shutdownCh:            make(chan struct{}),
 	}
 	defer s.Close()
+	if legacyPolicyBundlesMigrated {
+		s.publishConfigChanged(string(configsvc.ScopeSystem), "default")
+		s.publishConfigChanged(string(configsvc.ScopeSystem), policyConfigID)
+		slog.Info("gateway startup migrated legacy policy bundles",
+			"from_scope", "system/default",
+			"to_scope", "system/"+policyConfigID,
+			"bundle_count", legacyPolicyBundleCount,
+		)
+	}
 
 	// Wire distributed rate limiters. Use Redis-backed counters by default;
 	// fall back to in-memory when REDIS_RATE_LIMIT=false or Redis unavailable.
@@ -921,6 +935,78 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 			}
 		}
 	}
+}
+
+func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bool, int, error) {
+	if svc == nil {
+		return false, 0, nil
+	}
+	defaultDoc, err := svc.Get(ctx, configsvc.ScopeSystem, "default")
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return false, 0, nil
+		}
+		return false, 0, fmt.Errorf("load system/default config: %w", err)
+	}
+	if defaultDoc.Data == nil {
+		return false, 0, nil
+	}
+	rawLegacyBundles := normalizeJSON(defaultDoc.Data[policyConfigKey])
+	legacyBundles, ok := rawLegacyBundles.(map[string]any)
+	if !ok || len(legacyBundles) == 0 {
+		return false, 0, nil
+	}
+	if err := svc.SetWithRetry(ctx, configsvc.ScopeSystem, policyConfigID, 3, func(doc *configsvc.Document) error {
+		if doc.Data == nil {
+			doc.Data = map[string]any{}
+		}
+		rawPolicyBundles := normalizeJSON(doc.Data[policyConfigKey])
+		policyBundles, _ := rawPolicyBundles.(map[string]any)
+		if policyBundles == nil {
+			policyBundles = map[string]any{}
+		}
+		for fragmentID, bundle := range legacyBundles {
+			if _, exists := policyBundles[fragmentID]; exists {
+				continue
+			}
+			policyBundles[fragmentID] = deepCopy(bundle)
+		}
+		doc.Data[policyConfigKey] = policyBundles
+		return nil
+	}); err != nil {
+		return false, 0, fmt.Errorf("merge legacy bundles into system/%s: %w", policyConfigID, err)
+	}
+	if err := deleteSystemDefaultKeyWithRetry(ctx, svc, policyConfigKey, 3); err != nil {
+		return false, 0, fmt.Errorf("remove legacy bundles from system/default: %w", err)
+	}
+	return true, len(legacyBundles), nil
+}
+
+func deleteSystemDefaultKeyWithRetry(ctx context.Context, svc *configsvc.Service, key string, maxAttempts int) error {
+	for attempt := range maxAttempts {
+		doc, err := svc.Get(ctx, configsvc.ScopeSystem, "default")
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				return nil
+			}
+			return fmt.Errorf("load system/default config: %w", err)
+		}
+		if doc.Data == nil {
+			return nil
+		}
+		if _, exists := doc.Data[key]; !exists {
+			return nil
+		}
+		delete(doc.Data, key)
+		if err := svc.Set(ctx, doc); err != nil {
+			if errors.Is(err, configsvc.ErrRevisionConflict) && attempt < maxAttempts-1 {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return configsvc.ErrRevisionConflict
 }
 
 // AuditEvent captures an HTTP request summary for audit export.

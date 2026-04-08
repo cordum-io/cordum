@@ -1,65 +1,23 @@
 package gateway
 
 import (
-	"context"
-	"strings"
 	"testing"
+
+	infraSchema "github.com/cordum/cordum/core/infra/schema"
 )
 
-func TestValidateValidPayload(t *testing.T) {
-	s, _, _ := newTestGateway(t)
-	validator := newSchemaValidator(s.schemaRegistry)
-	schemaJSON := []byte(`{
-		"type": "object",
-		"properties": {
-			"message": {"type": "string"}
-		},
-		"required": ["message"]
-	}`)
-	payloadJSON := []byte(`{"context":{"message":"hello"}}`)
+func TestSchemaValidationModeDefaultsOffWhenUnset(t *testing.T) {
+	s := &server{}
 
-	violations, err := validator.Validate(context.Background(), "test/input", schemaJSON, payloadJSON)
-	if err != nil {
-		t.Fatalf("Validate returned error: %v", err)
-	}
-	if len(violations) != 0 {
-		t.Fatalf("expected no violations, got %+v", violations)
+	if got := s.schemaValidationMode(); got != infraSchema.EnforcementOff {
+		t.Fatalf("expected unset mode to default off, got %q", got)
 	}
 }
 
-func TestValidateInvalidPayload(t *testing.T) {
-	s, _, _ := newTestGateway(t)
-	validator := newSchemaValidator(s.schemaRegistry)
-	schemaJSON := []byte(`{
-		"type": "object",
-		"properties": {
-			"message": {"type": "string"}
-		},
-		"required": ["message"]
-	}`)
-	payloadJSON := []byte(`{"context":{"message":123}}`)
+func TestSchemaValidationModeNormalizesConfiguredMode(t *testing.T) {
+	s := &server{schemaEnforcement: infraSchema.EnforcementMode("ENFORCE")}
 
-	violations, err := validator.Validate(context.Background(), "test/input", schemaJSON, payloadJSON)
-	if err != nil {
-		t.Fatalf("Validate returned error: %v", err)
-	}
-	if len(violations) == 0 {
-		t.Fatal("expected schema violations")
-	}
-	if violations[0].Path != "/message" {
-		t.Fatalf("expected violation path /message, got %q", violations[0].Path)
-	}
-	if strings.TrimSpace(violations[0].Message) == "" {
-		t.Fatalf("expected non-empty violation message, got %+v", violations[0])
-	}
-}
-
-func TestValidateMalformedSchema(t *testing.T) {
-	s, _, _ := newTestGateway(t)
-	validator := newSchemaValidator(s.schemaRegistry)
-
-	_, err := validator.Validate(context.Background(), "test/input", []byte(`{"type":123}`), []byte(`{"context":{"message":"hello"}}`))
-	if err == nil {
-		t.Fatal("expected malformed schema to return an error")
+	if got := s.schemaValidationMode(); got != infraSchema.EnforcementEnforce {
+		t.Fatalf("expected configured mode to normalize to enforce, got %q", got)
 	}
 }

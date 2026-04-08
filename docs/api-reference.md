@@ -1295,7 +1295,207 @@ curl -sS -X POST http://localhost:8081/api/v1/policy/evaluate \
 
 ---
 
-## 10. Packs and Marketplace
+## 10. Topics and Worker Credentials
+
+### Topics
+
+### GET `/api/v1/topics`
+
+- Auth: required + `admin`, `operator`, or `viewer`
+- Response:
+
+```json
+{
+  "items": [
+    {
+      "name": "job.sre-investigator.collect.k8s",
+      "pool": "sre-investigator",
+      "input_schema_id": "sre-investigator/IncidentContext",
+      "output_schema_id": "sre-investigator/IncidentResult",
+      "pack_id": "sre-investigator",
+      "requires": ["kubectl", "network:egress"],
+      "risk_tags": ["network"],
+      "status": "active",
+      "active_worker_count": 2
+    }
+  ],
+  "registry_empty": false
+}
+```
+
+Notes:
+
+- `registry_empty=true` means the canonical topic registry has not been populated yet, so legacy routing may still be the only authority.
+- `active_worker_count` is derived from the latest runtime worker snapshot for the topic's configured pool. A value of `0` means the topic is still valid but currently degraded.
+
+- Errors: `403`, `500`, `503`
+
+### POST `/api/v1/topics`
+
+- Auth: required + `admin`
+- Request schema:
+
+```json
+{
+  "name": "job.sre-investigator.collect.k8s",
+  "pool": "sre-investigator",
+  "input_schema_id": "sre-investigator/IncidentContext",
+  "output_schema_id": "sre-investigator/IncidentResult",
+  "pack_id": "sre-investigator",
+  "requires": ["kubectl", "network:egress"],
+  "risk_tags": ["network"],
+  "status": "active"
+}
+```
+
+Rules:
+
+- `name` must be a valid topic name.
+- `pool` must reference an existing pool unless `status` is `disabled`.
+- `status` may be `active`, `deprecated`, or `disabled`. Omitted status defaults to `active`.
+
+- Response: `201 Created` for a new topic, `200 OK` when updating an existing registration.
+
+```json
+{
+  "name": "job.sre-investigator.collect.k8s",
+  "pool": "sre-investigator",
+  "input_schema_id": "sre-investigator/IncidentContext",
+  "output_schema_id": "sre-investigator/IncidentResult",
+  "pack_id": "sre-investigator",
+  "requires": ["kubectl", "network:egress"],
+  "risk_tags": ["network"],
+  "status": "active"
+}
+```
+
+- Errors: `400`, `403`, `404`, `503`
+
+### DELETE `/api/v1/topics/{name}`
+
+- Auth: required + `admin`
+- Response: `204`
+- Errors: `400`, `403`, `404`, `500`, `503`
+
+### Example: register and list topics
+
+```bash
+curl -sS -X POST http://localhost:8081/api/v1/topics \
+  -H 'X-API-Key: YOUR_API_KEY' \
+  -H 'X-Tenant-ID: default' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name":"job.sre-investigator.collect.k8s",
+    "pool":"sre-investigator",
+    "input_schema_id":"sre-investigator/IncidentContext",
+    "output_schema_id":"sre-investigator/IncidentResult",
+    "pack_id":"sre-investigator",
+    "requires":["kubectl","network:egress"],
+    "risk_tags":["network"],
+    "status":"active"
+  }'
+
+curl -sS http://localhost:8081/api/v1/topics \
+  -H 'X-API-Key: YOUR_API_KEY' \
+  -H 'X-Tenant-ID: default'
+```
+
+### Worker credentials
+
+### GET `/api/v1/workers/credentials`
+
+- Auth: required + `admin`
+- Response:
+
+```json
+{
+  "items": [
+    {
+      "worker_id": "external-worker-01",
+      "allowed_pools": ["sre-investigator"],
+      "allowed_topics": ["job.sre-investigator.collect.k8s"],
+      "pack_id": "",
+      "created_by": "admin",
+      "created_at": "2026-04-07T12:00:00Z"
+    }
+  ]
+}
+```
+
+Notes:
+
+- Revoked credentials remain listable and include `revoked_at`.
+- Pack-managed credentials may include `pack_id`; operator-issued credentials usually leave it empty.
+
+- Errors: `403`, `500`, `503`
+
+### POST `/api/v1/workers/credentials`
+
+- Auth: required + `admin`
+- Request schema:
+
+```json
+{
+  "worker_id": "external-worker-01",
+  "allowed_pools": ["sre-investigator"],
+  "allowed_topics": ["job.sre-investigator.collect.k8s"]
+}
+```
+
+Rules:
+
+- `worker_id` must be non-empty and must not contain whitespace.
+- `allowed_pools` must reference existing pools.
+- `allowed_topics` must reference existing registered topics when the topic registry is populated.
+- Creating a credential for an existing `worker_id` rotates it and returns a fresh token.
+
+- Response: `201 Created` for a new credential, `200 OK` when rotating an existing credential.
+
+```json
+{
+  "worker_id": "external-worker-01",
+  "allowed_pools": ["sre-investigator"],
+  "allowed_topics": ["job.sre-investigator.collect.k8s"],
+  "pack_id": "",
+  "created_by": "admin",
+  "created_at": "2026-04-07T12:00:00Z",
+  "token": "9f8d4c..."
+}
+```
+
+Important:
+
+- The plaintext `token` is returned only once at creation/rotation time. Store it immediately.
+
+- Errors: `400`, `403`, `404`, `500`, `503`
+
+### DELETE `/api/v1/workers/credentials/{worker_id}`
+
+- Auth: required + `admin`
+- Response: `204`
+- Errors: `400`, `403`, `404`, `500`, `503`
+
+### Example: issue and revoke a worker credential
+
+```bash
+curl -sS -X POST http://localhost:8081/api/v1/workers/credentials \
+  -H 'X-API-Key: YOUR_API_KEY' \
+  -H 'X-Tenant-ID: default' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "worker_id":"external-worker-01",
+    "allowed_pools":["sre-investigator"],
+    "allowed_topics":["job.sre-investigator.collect.k8s"]
+  }'
+
+curl -sS -X DELETE http://localhost:8081/api/v1/workers/credentials/external-worker-01 \
+  -H 'X-API-Key: YOUR_API_KEY' \
+  -H 'X-Tenant-ID: default'
+```
+
+---
+
+## 11. Packs and Marketplace
 
 All endpoints in this section require admin role.
 
@@ -1424,7 +1624,7 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
 
 ---
 
-## 11. Resource Locks
+## 12. Resource Locks
 
 ### GET `/api/v1/locks`
 
@@ -1493,7 +1693,7 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
 
 ---
 
-## 12. Health, Status, Workers, Metrics
+## 13. Health, Status, Workers, Metrics
 
 ### GET `/health`
 
@@ -1603,7 +1803,7 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 
 ---
 
-## 13. Memory and Artifacts
+## 14. Memory and Artifacts
 
 ### GET `/api/v1/memory`
 
@@ -1652,7 +1852,7 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 
 ---
 
-## 14. WebSocket Streaming
+## 15. WebSocket Streaming
 
 ### GET `/api/v1/stream`
 
@@ -1669,7 +1869,7 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 
 ---
 
-## 15. MCP Endpoints (HTTP/SSE)
+## 16. MCP Endpoints (HTTP/SSE)
 
 MCP routes are only registered when `mcp.enabled=true` and `mcp.transport=http` in config.
 
@@ -1724,7 +1924,7 @@ curl -sS -X POST http://localhost:8081/mcp/message \
 
 ---
 
-## 16. Admin Endpoints
+## 17. Admin Endpoints
 
 ### `GET /api/v1/admin/locks` — List Active Distributed Locks
 
@@ -1778,7 +1978,7 @@ Returns all active distributed locks held in Redis. This is a read-only diagnost
 
 ---
 
-## 17. Pool Management
+## 18. Pool Management
 
 All pool management endpoints require **admin** role.
 
@@ -1896,6 +2096,9 @@ The following routes are registered in gateway route setup.
 | POST | `/api/v1/auth/keys` |
 | DELETE | `/api/v1/auth/keys/{id}` |
 | GET | `/api/v1/workers` |
+| GET | `/api/v1/workers/credentials` |
+| POST | `/api/v1/workers/credentials` |
+| DELETE | `/api/v1/workers/credentials/{worker_id}` |
 | GET | `/api/v1/status` |
 | GET | `/api/v1/jobs` |
 | POST | `/api/v1/jobs` |
@@ -1925,6 +2128,9 @@ The following routes are registered in gateway route setup.
 | GET | `/api/v1/config` |
 | GET | `/api/v1/config/effective` |
 | POST | `/api/v1/config` |
+| GET | `/api/v1/topics` |
+| POST | `/api/v1/topics` |
+| DELETE | `/api/v1/topics/{name}` |
 | GET | `/api/v1/packs` |
 | GET | `/api/v1/packs/{id}` |
 | POST | `/api/v1/packs/install` |

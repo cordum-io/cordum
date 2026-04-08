@@ -54,7 +54,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const dialogRef = useDialogA11y(() => setOpen(false));
+  const dialogRef = useDialogA11y(() => setOpen(false), { enabled: open });
 
   // Cmd+K to open
   useEffect(() => {

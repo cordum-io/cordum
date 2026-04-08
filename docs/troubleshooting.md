@@ -225,6 +225,132 @@ curl -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
 
 ---
 
+## Boundary Hardening Errors
+
+These checks are part of the control-plane boundary hardening rollout. See
+[configuration-reference.md](configuration-reference.md) for the feature flags and
+[production.md](production.md) for rollout guidance.
+
+### `unknown_topic`
+
+**Error surface**: `POST /api/v1/jobs` returns `400` with `error_code=unknown_topic`.
+
+**Cause**: The canonical topic registry is populated, but the submitted topic is not
+registered there. This usually means the pack was not installed, the topic was never
+created with `cordumctl topic create`, or it was deleted from the registry.
+
+**Diagnostic**:
+```bash
+# Check whether the topic exists in the canonical registry
+cordumctl topic list
+
+# Optional: inspect the raw registry API response
+curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  http://localhost:8081/api/v1/topics | jq .
+```
+
+**Fix**:
+- Install or reinstall the pack that owns the topic: `cordumctl pack install ./my-pack`
+- Or register the topic explicitly:
+
+```bash
+cordumctl topic create job.my-pack.process --pool my-pack
+```
+
+If you are migrating from legacy `pools.yaml` routing, populate the canonical topic
+registry before moving `SCHEMA_ENFORCEMENT` or worker hardening flags to stricter modes.
+
+### `schema_validation_failed`
+
+**Error surface**: `POST /api/v1/jobs` returns `400` with `error_code=schema_validation_failed`
+plus a `violations` array.
+
+**Cause**: The topic is registered with an `input_schema_id`, the request payload does
+not match that schema, and `SCHEMA_ENFORCEMENT=enforce` is enabled. In `warn` mode the
+same mismatch is logged instead of rejected.
+
+**Diagnostic**:
+```bash
+# Identify the topic's bound input schema
+cordumctl topic list
+
+# Fetch the schema document
+curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  http://localhost:8081/api/v1/schemas/SCHEMA_ID | jq .
+```
+
+**Fix**:
+- Compare the request body with the schema referenced by the topic registration
+- Update the caller payload so required fields, types, and enums match
+- If the schema binding is wrong, update the topic registration or pack manifest and redeploy
+
+When rolling out enforcement in production, keep `SCHEMA_ENFORCEMENT=warn` first so you
+can inventory real violations before switching to `enforce`.
+
+### `attestation_failed`
+
+**Error surface**: scheduler logs show `worker heartbeat rejected: attestation failed`
+when `WORKER_ATTESTATION=enforce`, or `worker heartbeat accepted without attestation`
+when `WORKER_ATTESTATION=warn`.
+
+**Cause**: The worker heartbeat is missing a valid credential token, uses a mismatched
+`sender_id`, or is attempting to join a pool not allowed by its credential record.
+
+**Diagnostic**:
+```bash
+# Check scheduler logs for the exact failure reason
+docker compose logs scheduler --tail=100 | grep "attestation failed\|without attestation"
+
+# Review issued worker credentials
+cordumctl worker credential list
+```
+
+Common reasons in logs include `auth_token_missing`, `credential_invalid`,
+`sender_id_mismatch`, and `pool_not_allowed`.
+
+**Fix**:
+- Issue or rotate a credential:
+
+```bash
+cordumctl worker credential create --worker-id external-worker-01 --allowed-pools my-pack
+```
+
+- Store the returned token securely and configure the worker to send it on heartbeats
+- Ensure the worker heartbeat `worker_id`, bus `sender_id`, and credential `worker_id` are identical
+- Ensure the worker is heartbeating into a pool present in `allowed_pools`
+
+Use `WORKER_ATTESTATION=warn` during migration if you need audit visibility before
+hard-failing older workers.
+
+### `worker_not_ready`
+
+**Error surface**: inferred scheduling condition when `WORKER_READINESS_REQUIRED=true`.
+Cordum does not currently emit a dedicated `worker_not_ready` API payload; operators
+usually observe jobs remaining pending or falling back to `no_workers` despite recent
+heartbeats.
+
+**Cause**: The worker has not sent a recent handshake with matching `ready_topics`, or
+its readiness record expired after `WORKER_READINESS_TTL`.
+
+**Diagnostic**:
+```bash
+# Check for scheduler warnings and no-worker symptoms
+docker compose logs scheduler --tail=100 | grep "no workers\|ready"
+
+# Verify the topic is valid and currently mapped
+cordumctl topic list
+```
+
+**Fix**:
+- Ensure the worker fully starts its CAP/Cordum runtime and sends the initial handshake
+  (for SDK-based workers, this usually means calling `Agent.Start()` before expecting dispatch)
+- Ensure the handshake advertises the target topic in `ready_topics`
+- If the worker is healthy but handshakes infrequently, increase `WORKER_READINESS_TTL`
+- Keep `WORKER_READINESS_REQUIRED=false` during migration if you still have legacy workers
+  that only heartbeat and do not yet send readiness metadata
+
+---
+
 ## 3. Safety Kernel Unavailable
 
 **Symptoms**: `cordum_safety_unavailable_total` rising, jobs stuck, scheduler logs show `safety_unavailable`.

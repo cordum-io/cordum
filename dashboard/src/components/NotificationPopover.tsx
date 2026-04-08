@@ -96,7 +96,7 @@ export function NotificationPopover() {
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const dialogRef = useDialogA11y(() => setOpen(false));
+  const dialogRef = useDialogA11y(() => setOpen(false), { enabled: open });
 
   // Close on outside click
   useEffect(() => {

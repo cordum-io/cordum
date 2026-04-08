@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { buildDLQEntryDetails, resolveDLQError } from "./DLQPage";
+import { describe, expect, it, vi } from "vitest";
+import {
+  buildDLQEntryDetails,
+  DLQ_EXPORT_REVOKE_DELAY_MS,
+  resolveDLQError,
+  scheduleDownloadUrlRevoke,
+} from "./DLQPage";
 
 describe("DLQPage expanded row rendering", () => {
   describe("buildDLQEntryDetails", () => {
@@ -89,7 +94,9 @@ describe("DLQPage expanded row rendering", () => {
 
   describe("resolveDLQError", () => {
     it("returns error when present", () => {
-      expect(resolveDLQError({ error: "connection timeout" })).toBe("connection timeout");
+      expect(resolveDLQError({ error: "connection timeout" })).toBe(
+        "connection timeout",
+      );
     });
 
     it("falls back to reason when error is absent", () => {
@@ -97,7 +104,9 @@ describe("DLQPage expanded row rendering", () => {
     });
 
     it("falls back to reason when error is empty string", () => {
-      expect(resolveDLQError({ error: "", reason: "quota exceeded" })).toBe("quota exceeded");
+      expect(resolveDLQError({ error: "", reason: "quota exceeded" })).toBe(
+        "quota exceeded",
+      );
     });
 
     it("returns default message when both error and reason are absent", () => {
@@ -105,11 +114,33 @@ describe("DLQPage expanded row rendering", () => {
     });
 
     it("returns default message when both are empty strings", () => {
-      expect(resolveDLQError({ error: "", reason: "" })).toBe("No error message");
+      expect(resolveDLQError({ error: "", reason: "" })).toBe(
+        "No error message",
+      );
     });
 
     it("prefers error over reason when both present", () => {
-      expect(resolveDLQError({ error: "primary", reason: "secondary" })).toBe("primary");
+      expect(resolveDLQError({ error: "primary", reason: "secondary" })).toBe(
+        "primary",
+      );
     });
+  });
+});
+
+describe("DLQ export URL cleanup", () => {
+  it("revokes exported object URLs after the async safety delay", () => {
+    vi.useFakeTimers();
+    try {
+      const revoke = vi.fn();
+      scheduleDownloadUrlRevoke("blob:dlq-export", revoke);
+
+      expect(revoke).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(DLQ_EXPORT_REVOKE_DELAY_MS - 1);
+      expect(revoke).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(revoke).toHaveBeenCalledWith("blob:dlq-export");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
