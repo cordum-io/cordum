@@ -2,6 +2,14 @@
 default_decision: deny
 
 rules:
+  # Default topic — used by integration test probes and production gates
+  - id: default-topic-allow
+    match:
+      topics:
+        - job.default
+    decision: allow
+    reason: "Default topic for gate probes and integration tests."
+
   # Fraud detection jobs require human approval before execution
   - id: fraud-review-required
     match:
