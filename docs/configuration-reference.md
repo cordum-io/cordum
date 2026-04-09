@@ -725,7 +725,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `TENANT_ID` | — | Single-tenant default ID |
 | `ARTIFACT_MAX_BYTES` | — | Max artifact upload/download size |
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
-| `GATEWAY_POLICY_FAIL_MODE` | `closed` | Behavior when Safety Kernel is unreachable during submit-time policy evaluation. `closed` (default): reject the job with 403/PermissionDenied. `open`: allow the job through with warning log. This controls only the safety-unavailable branch — normal policy deny/throttle/approval decisions are unconditional. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when Safety Kernel is unreachable during policy evaluation (both gateway submit-time and scheduler dispatch-time). `closed` (default): reject the job. `open`: allow with warning log. |
 
 ### Gateway — API Keys
 

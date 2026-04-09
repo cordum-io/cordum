@@ -49,6 +49,14 @@ spec:
               value: {{ .Values.dashboard.env.principalId | quote }}
             - name: CORDUM_PRINCIPAL_ROLE
               value: {{ .Values.dashboard.env.principalRole | quote }}
+            {{- if .Values.dashboard.env.traceUrlTemplate }}
+            - name: CORDUM_TRACE_URL_TEMPLATE
+              value: {{ .Values.dashboard.env.traceUrlTemplate | quote }}
+            {{- end }}
+            {{- if .Values.dashboard.env.apiUpstreamScheme }}
+            - name: CORDUM_API_UPSTREAM_SCHEME
+              value: {{ .Values.dashboard.env.apiUpstreamScheme | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.dashboard.service.port }}
@@ -64,10 +72,28 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
           {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           resources:
             {{- toYaml .Values.dashboard.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-conf
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
 {{- end }}

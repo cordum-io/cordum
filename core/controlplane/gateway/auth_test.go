@@ -41,8 +41,7 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 	for _, key := range []string{
 		"CORDUM_API_KEYS",
 		"CORDUM_API_KEY",
-		"API_KEY",
-		"CORDUM_API_KEYS_PATH",
+				"CORDUM_API_KEYS_PATH",
 		"CORDUM_ALLOW_HEADER_PRINCIPAL",
 		"CORDUM_ALLOW_INSECURE_NO_AUTH",
 		"CORDUM_ENV",
@@ -64,8 +63,7 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 	authKeys := []string{
 		"CORDUM_API_KEYS",
 		"CORDUM_API_KEY",
-		"API_KEY",
-		"CORDUM_API_KEYS_PATH",
+				"CORDUM_API_KEYS_PATH",
 		"CORDUM_JWT_HMAC_SECRET",
 		"CORDUM_JWT_PUBLIC_KEY",
 		"CORDUM_JWT_PUBLIC_KEY_PATH",
@@ -350,7 +348,7 @@ func TestAPIKeyMiddlewareSkipsPublicPaths(t *testing.T) {
 
 func TestBasicAuthPublicPathAllowsAuthConfig(t *testing.T) {
 	provider := newBasicAuthForTest(t, map[string]string{
-		"API_KEY": "test-key",
+		"CORDUM_API_KEY": "test-key",
 	})
 	handler := apiKeyMiddleware(provider, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -435,7 +433,6 @@ func TestBasicAuthRequiresKeyInProduction(t *testing.T) {
 	t.Setenv("CORDUM_ENV", "production")
 	t.Setenv("CORDUM_API_KEYS", "")
 	t.Setenv("CORDUM_API_KEY", "")
-	t.Setenv("API_KEY", "")
 	if _, err := newBasicAuthProvider("default"); err == nil {
 		t.Fatalf("expected api key requirement in production")
 	}

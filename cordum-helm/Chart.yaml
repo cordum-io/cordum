@@ -2,16 +2,63 @@ apiVersion: v2
 name: cordum
 description: AI agent orchestration with built-in governance
 type: application
-version: 0.1.4
-appVersion: "0.1.4"
+version: 0.2.0
+appVersion: "0.2.0"
+icon: https://cordum.io/logo.png
 keywords:
   - ai
   - orchestration
   - workflow
   - governance
+  - safety
+  - licensing
+  - telemetry
+  - kubernetes
+  - helm
 home: https://cordum.io
 sources:
   - https://github.com/cordum-io/cordum
 maintainers:
   - name: Yaron
     email: yaron@cordum.io
+annotations:
+  artifacthub.io/category: ai-machine-learning
+  artifacthub.io/license: BUSL-1.1
+  artifacthub.io/operator: "false"
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/images: |
+    - name: api-gateway
+      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-api-gateway
+    - name: scheduler
+      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-scheduler
+    - name: safety-kernel
+      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-safety-kernel
+    - name: workflow-engine
+      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-workflow-engine
+    - name: context-engine
+      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-context-engine
+    - name: dashboard
+      image: ghcr.io/cordum-io/cordum/dashboard:v0.2.0
+  artifacthub.io/links: |
+    - name: docs
+      url: https://cordum.io/docs/architecture
+    - name: source
+      url: https://github.com/cordum-io/cordum
+    - name: support
+      url: https://github.com/cordum-io/cordum/issues
+  artifacthub.io/changes: |
+    - kind: added
+      description: Added Helm values coverage for licensing, telemetry, logging, and shared TLS controls.
+    - kind: added
+      description: Added gateway auth, audit export, and marketplace configuration support.
+    - kind: added
+      description: Added scheduler, safety kernel, workflow engine, and context engine runtime controls.
+    - kind: added
+      description: Added bundled NATS auth, generated secret templates, and Artifact Hub repository metadata.
+    - kind: security
+      description: Expanded post-install guidance for licensed production rollouts and telemetry review.
+  artifacthub.io/maintainers: |
+    - name: Yaron
+      email: yaron@cordum.io
+    - name: Cordum IO
+      email: yaron@cordum.io

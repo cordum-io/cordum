@@ -32,7 +32,7 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
-            - name: API_KEY
+            - name: CORDUM_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "cordum.fullname" . }}-secrets
@@ -51,7 +51,7 @@ spec:
               while [ "$attempt" -lt "$MAX_RETRIES" ]; do
                 attempt=$((attempt + 1))
                 status=$(curl -s -o /dev/null -w '%{http_code}' \
-                  -H "X-API-Key: $API_KEY" \
+                  -H "X-API-Key: $CORDUM_API_KEY" \
                   -H "X-Tenant-ID: default" \
                   "$GATEWAY_URL/api/v1/config" 2>/dev/null || echo "000")
                 if [ "$status" = "200" ]; then

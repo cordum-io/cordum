@@ -35,6 +35,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # SERVICE must match a directory under cmd/ (e.g. cordum-scheduler).
 ARG SERVICE
+ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
@@ -45,7 +46,7 @@ RUN TARGET="${SERVICE}" ; \
     else echo "Service dir ./cmd/${TARGET} not found for SERVICE=${SERVICE}" && false; fi
 
 RUN --mount=type=cache,target=/go/pkg/mod \
-    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build \
       -ldflags "-s -w -X github.com/cordum/cordum/core/infra/buildinfo.Version=${VERSION} -X github.com/cordum/cordum/core/infra/buildinfo.Commit=${COMMIT} -X github.com/cordum/cordum/core/infra/buildinfo.Date=${BUILD_DATE}" \
       -o /out/${SERVICE} ./cmd/${SERVICE}
 
@@ -63,5 +64,12 @@ COPY --from=builder /out/${SERVICE} /usr/local/bin/app
 ENV NATS_URL=nats://nats:4222 \
     REDIS_URL= \
     SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
+
+LABEL org.opencontainers.image.source="https://github.com/cordum-io/cordum" \
+      org.opencontainers.image.vendor="Cordum" \
+      org.opencontainers.image.title="Cordum Control Plane" \
+      org.opencontainers.image.description="AI agent orchestration with built-in governance" \
+      org.opencontainers.image.licenses="BUSL-1.1" \
+      org.opencontainers.image.url="https://cordum.io"
 
 ENTRYPOINT ["/usr/local/bin/app"]

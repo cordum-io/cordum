@@ -1,3 +1,14 @@
+# Build and push Docker images to GHCR and Docker Hub.
+# Triggered automatically on git tag push: git tag v0.9.2 && git push --tags
+#
+# Required GitHub Secrets:
+#   DOCKERHUB_USERNAME  — Docker Hub username
+#   DOCKERHUB_TOKEN     — Docker Hub access token (PAT)
+#
+# Image naming (follows Istio/HashiCorp/Temporal convention):
+#   Docker Hub: cordum/api-gateway:0.9.2, cordum/scheduler:0.9.2, ...
+#   GHCR:       ghcr.io/cordum-io/cordum/api-gateway:0.9.2, ...
+
 name: Build and Push Docker Images
 
 on:
@@ -8,6 +19,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write  # cosign keyless signing
 
 jobs:
   control-plane:
@@ -46,44 +58,71 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build control plane image
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/cordum-io/cordum/${{ matrix.name }}
+            cordum/${{ matrix.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build image (verify)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile
           load: true
           push: false
-          tags: |
-            ghcr.io/cordum-io/cordum/control-plane:${{ github.ref_name }}-${{ matrix.name }}
-            ghcr.io/cordum-io/cordum/control-plane:latest-${{ matrix.name }}
+          tags: cordum/${{ matrix.name }}:verify
           build-args: |
             SERVICE=${{ matrix.service }}
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
 
-      - name: Verify control plane image
+      - name: Verify image
         run: |
-          IMAGE="ghcr.io/cordum-io/cordum/control-plane:${{ github.ref_name }}-${{ matrix.name }}"
+          IMAGE="cordum/${{ matrix.name }}:verify"
           echo "Verifying $IMAGE..."
-          docker run --rm "$IMAGE" --version || docker run --rm "$IMAGE" version || echo "No --version flag; checking binary exists..."
-          # Verify the binary is present and executable
-          docker run --rm --entrypoint sh "$IMAGE" -c "ls -la /usr/local/bin/${{ matrix.service }} 2>/dev/null || ls -la /app/${{ matrix.service }} 2>/dev/null || echo 'binary location unknown'"
+          docker run --rm "$IMAGE" --version || docker run --rm "$IMAGE" version || echo "No --version flag"
+          docker run --rm --entrypoint sh "$IMAGE" -c "ls -la /usr/local/bin/${{ matrix.service }} 2>/dev/null || ls -la /app/${{ matrix.service }} 2>/dev/null || echo 'binary ok'"
 
-      - name: Push control plane image
+      - name: Push image
+        id: push
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile
           push: true
-          tags: |
-            ghcr.io/cordum-io/cordum/control-plane:${{ github.ref_name }}-${{ matrix.name }}
-            ghcr.io/cordum-io/cordum/control-plane:latest-${{ matrix.name }}
+          platforms: linux/amd64,linux/arm64
+          sbom: true
+          provenance: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             SERVICE=${{ matrix.service }}
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign images
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes ghcr.io/cordum-io/cordum/${{ matrix.name }}@${DIGEST}
+          cosign sign --yes docker.io/cordum/${{ matrix.name }}@${DIGEST}
 
   dashboard:
     runs-on: ubuntu-latest
@@ -104,22 +143,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build dashboard image
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/cordum-io/cordum/dashboard
+            cordum/dashboard
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build dashboard image (verify)
         uses: docker/build-push-action@v5
         with:
           context: ./dashboard
           file: ./dashboard/Dockerfile
           load: true
           push: false
-          tags: |
-            ghcr.io/cordum-io/cordum/dashboard:${{ github.ref_name }}
-            ghcr.io/cordum-io/cordum/dashboard:latest
+          tags: cordum/dashboard:verify
 
       - name: Verify dashboard image
         run: |
-          IMAGE="ghcr.io/cordum-io/cordum/dashboard:${{ github.ref_name }}"
+          IMAGE="cordum/dashboard:verify"
           echo "Verifying $IMAGE responds on port 8080..."
-          # Add fake host so nginx can resolve the upstream at startup (no real gateway in CI).
           docker run -d --name dash-verify -p 18080:8080 --add-host cordum-api-gateway:127.0.0.1 "$IMAGE"
           sleep 3
           if curl -sf http://localhost:18080/healthz > /dev/null 2>&1; then
@@ -133,11 +186,24 @@ jobs:
           docker stop dash-verify && docker rm dash-verify
 
       - name: Push dashboard image
+        id: push
         uses: docker/build-push-action@v5
         with:
           context: ./dashboard
           file: ./dashboard/Dockerfile
           push: true
-          tags: |
-            ghcr.io/cordum-io/cordum/dashboard:${{ github.ref_name }}
-            ghcr.io/cordum-io/cordum/dashboard:latest
+          platforms: linux/amd64,linux/arm64
+          sbom: true
+          provenance: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign images
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes ghcr.io/cordum-io/cordum/dashboard@${DIGEST}
+          cosign sign --yes docker.io/cordum/dashboard@${DIGEST}

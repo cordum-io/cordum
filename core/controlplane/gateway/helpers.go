@@ -323,16 +323,9 @@ func policyMetaFromJobMetadata(m *pb.JobMetadata) *policyMetaRequest {
 }
 
 // isPolicyFailOpen returns true if POLICY_CHECK_FAIL_MODE is "open".
-// This uses the same env var as the scheduler for consistent behavior.
 // Default is "closed" (deny on safety unavailability).
-// Also supports the legacy GATEWAY_POLICY_FAIL_MODE for backward compatibility.
 func isPolicyFailOpen() bool {
-	// Prefer the shared env var used by scheduler and docs.
-	if mode := strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE")); mode != "" {
-		return strings.EqualFold(mode, "open")
-	}
-	// Fallback to legacy gateway-specific env var.
-	mode := strings.TrimSpace(os.Getenv("GATEWAY_POLICY_FAIL_MODE"))
+	mode := strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE"))
 	return strings.EqualFold(mode, "open")
 }
 

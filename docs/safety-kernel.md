@@ -316,7 +316,7 @@ Both HTTP and gRPC job submission paths evaluate policy synchronously before per
 - **Approval required**: Job is created in `APPROVAL` state but NOT published to the bus. The caller receives the job ID and can use the approval endpoint to approve/reject.
 
 **Configuration-dependent** (only consulted when Safety Kernel is unreachable):
-- `GATEWAY_POLICY_FAIL_MODE` controls gateway behavior: `closed` (default) rejects with 403, `open` allows with warning log.
+- `POLICY_CHECK_FAIL_MODE` controls behavior: `closed` (default) rejects with 403, `open` allows with warning log.
 
 **Denied vs Failed**: Denied is a first-class terminal status distinct from failed. In workflow runs, `StepStatusDenied` propagates to `RunStatusDenied` (not `RunStatusFailed`). The status pipeline reports denied in its own bucket. Denied steps support `on_error` recovery chains.
 

@@ -485,12 +485,6 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 	}
 
 	single := NormalizeAPIKey(os.Getenv("CORDUM_API_KEY"))
-	if single == "" {
-		single = NormalizeAPIKey(os.Getenv("API_KEY"))
-		if single != "" {
-			slog.Warn("API_KEY env var is deprecated, use CORDUM_API_KEY instead")
-		}
-	}
 	if single != "" {
 		keys[single] = apiKeyMeta{Role: "admin"}
 		requireKey = true

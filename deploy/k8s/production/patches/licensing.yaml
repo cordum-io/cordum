@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-context-engine
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: context-engine
+        env:
+        - name: CORDUM_LICENSE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cordum-license
+              key: license.json
+        volumeMounts:
+        - name: cordum-license
+          mountPath: /etc/cordum/license.json
+          subPath: license.json
+          readOnly: true
+      volumes:
+      - name: cordum-license
+        secret:
+          secretName: cordum-license
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-safety-kernel
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: safety
+        env:
+        - name: CORDUM_LICENSE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cordum-license
+              key: license.json
+        volumeMounts:
+        - name: cordum-license
+          mountPath: /etc/cordum/license.json
+          subPath: license.json
+          readOnly: true
+      volumes:
+      - name: cordum-license
+        secret:
+          secretName: cordum-license
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-scheduler
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: scheduler
+        env:
+        - name: CORDUM_LICENSE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cordum-license
+              key: license.json
+        volumeMounts:
+        - name: cordum-license
+          mountPath: /etc/cordum/license.json
+          subPath: license.json
+          readOnly: true
+      volumes:
+      - name: cordum-license
+        secret:
+          secretName: cordum-license
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-api-gateway
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: gateway
+        env:
+        - name: CORDUM_LICENSE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cordum-license
+              key: license.json
+        volumeMounts:
+        - name: cordum-license
+          mountPath: /etc/cordum/license.json
+          subPath: license.json
+          readOnly: true
+      volumes:
+      - name: cordum-license
+        secret:
+          secretName: cordum-license
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-workflow-engine
+  namespace: cordum
+spec:
+  template:
+    spec:
+      containers:
+      - name: workflow-engine
+        env:
+        - name: CORDUM_LICENSE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cordum-license
+              key: license.json
+        volumeMounts:
+        - name: cordum-license
+          mountPath: /etc/cordum/license.json
+          subPath: license.json
+          readOnly: true
+      volumes:
+      - name: cordum-license
+        secret:
+          secretName: cordum-license
