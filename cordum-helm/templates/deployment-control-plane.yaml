@@ -229,6 +229,8 @@ spec:
               value: {{ printf ":%d" (int .Values.safetyKernel.service.port) | quote }}
             - name: SAFETY_POLICY_PATH
               value: /etc/cordum/safety.yaml
+            - name: NATS_URL
+              value: {{ include "cordum.natsUrl" . | quote }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
