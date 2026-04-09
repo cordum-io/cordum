@@ -35,11 +35,8 @@ const (
 
 // createUserPipeline creates a user using individual Redis commands instead of
 // Lua. This is Redis Cluster safe since each command targets a single key.
-//
-// The TOCTOU window between the EXISTS checks and SET writes is acceptable
-// because user creation is a low-frequency admin operation with natural
-// serialization (admin UI, CLI). Concurrent duplicate creates would fail on
-// the second attempt's EXISTS check or produce idempotent writes.
+// Username and email uniqueness are enforced atomically via SetNX, with
+// rollback on partial failure (e.g. email claimed after username succeeds).
 
 // userRecord is the internal Redis storage representation that includes the password hash.
 // The User struct uses json:"-" on PasswordHash to prevent API leakage, so we need

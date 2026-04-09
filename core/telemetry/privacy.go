@@ -35,18 +35,19 @@ var (
 )
 
 // NormalizeMode converts an arbitrary string into a supported telemetry mode.
-// Unknown or empty values fall back to anonymous collection, which remains
-// independently opt-out via CORDUM_TELEMETRY_MODE=off.
+// Unknown or empty values default to local_only (collect to Redis, no remote
+// reporting). Operators must explicitly set CORDUM_TELEMETRY_MODE=anonymous
+// to enable remote reporting.
 func NormalizeMode(raw string) Mode {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case string(ModeOff), "disabled", "false", "0", "no":
 		return ModeOff
-	case string(ModeLocalOnly), "local", "local-only":
+	case string(ModeAnonymous), "anon":
+		return ModeAnonymous
+	case "", string(ModeLocalOnly), "local", "local-only":
 		return ModeLocalOnly
-	case "", string(ModeAnonymous), "anon":
-		return ModeAnonymous
 	default:
-		return ModeAnonymous
+		return ModeLocalOnly
 	}
 }
 

@@ -17,11 +17,11 @@ func TestNormalizeMode(t *testing.T) {
 	}
 
 	cases := map[string]Mode{
-		"":           ModeAnonymous,
+		"":           ModeLocalOnly,
 		"off":        ModeOff,
 		"local":      ModeLocalOnly,
 		"anonymous":  ModeAnonymous,
-		"unexpected": ModeAnonymous,
+		"unexpected": ModeLocalOnly,
 	}
 	for input, want := range cases {
 		if got := NormalizeMode(input); got != want {

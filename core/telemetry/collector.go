@@ -119,7 +119,7 @@ func (c *Collector) Start(parent context.Context) {
 		return
 	}
 	telemetryStartupNotice.Do(func() {
-		c.logger.Info("Cordum collects anonymous usage telemetry. Set CORDUM_TELEMETRY_MODE=off to disable.", "mode", c.mode)
+		c.logger.Info("Cordum telemetry is active. Set CORDUM_TELEMETRY_MODE=anonymous to enable remote reporting, or =off to disable.", "mode", c.mode)
 	})
 	if !c.mode.Enabled() || c.store == nil {
 		return
