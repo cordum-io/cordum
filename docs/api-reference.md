@@ -1918,6 +1918,72 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
 
 - Errors: auth/tenant middleware errors (`401`, `403`), `500`.
 
+### POST `/api/v1/telemetry/consent`
+
+- Auth: required + admin
+- Body: `{"mode": "off"}` — set telemetry mode (`off`, `local_only`, `anonymous`). Persisted in Redis and applied immediately.
+- Errors: `400` (invalid mode), auth errors.
+
+### GET `/api/v1/license`
+
+- Auth: required
+- Response schema:
+
+```json
+{
+  "plan": "community",
+  "license": {
+    "mode": "community",
+    "status": "active",
+    "plan": "Community",
+    "features": ["audit", "break_glass_admin"],
+    "limits": {
+      "max_workers": 3,
+      "max_concurrent_jobs": 3,
+      "requests_per_second": 500,
+      "audit_retention_days": 7
+    }
+  },
+  "entitlements": { ... },
+  "rights": null,
+  "expiry_status": "active"
+}
+```
+
+- Notes: Returns current license plan, entitlements, rights, and expiry status. No license = Community tier.
+- Errors: auth errors.
+
+### POST `/api/v1/license/reload`
+
+- Auth: required + admin
+- Re-reads the license from environment/disk and revalidates. Use after installing a new license file.
+- Errors: `500` if license cannot be read/parsed.
+
+### GET `/api/v1/license/usage`
+
+- Auth: required + admin
+- Response: current usage vs entitlement limits (workers, jobs, workflows, schemas, policies, rate limits).
+- Errors: auth errors.
+
+### GET `/api/v1/topics`
+
+- Auth: required
+- Response: `{"items": [{"name": "job.my-pack.process", "pool": "my-pack", "status": "active", "pack_id": "my-pack", "input_schema_id": "", "output_schema_id": "", "requires": [], "risk_tags": []}]}`
+- Notes: Returns all registered topics from the topic registry. Topics are registered automatically when packs are installed.
+
+### PUT `/api/v1/topics`
+
+- Auth: required + admin
+- Body: `{"name": "job.my-topic", "pool": "my-pool", "status": "active"}`
+- Creates or updates a topic registration. Topic names must start with `job.`.
+- Errors: `400` (validation), auth errors.
+
+### DELETE `/api/v1/topics/{name}`
+
+- Auth: required + admin
+- Removes a topic registration.
+- Errors: `404` (not found), auth errors.
+
 ### GET `/api/v1/workers`
 
 - Auth: required + admin

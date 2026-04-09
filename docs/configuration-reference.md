@@ -660,6 +660,26 @@ scanners:
 
 > **Prometheus pod label**: All Cordum metrics include a `pod` const label (`os.Hostname()` or `CORDUM_INSTANCE_ID`) so Prometheus can distinguish replicas in HA deployments. Use `sum by (pod) (cordum_scheduler_jobs_received_total)` for per-replica breakdown.
 
+### Licensing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_LICENSE_FILE` | — | Path to license JSON file. If not set, checks `~/.cordum/license.json` and `/etc/cordum/license.json` |
+| `CORDUM_LICENSE_TOKEN` | — | License token (base64-encoded or raw JSON). Alternative to file-based licensing |
+| `CORDUM_LICENSE_PUBLIC_KEY` | embedded | Base64-encoded Ed25519 public key for signature verification |
+| `CORDUM_LICENSE_PUBLIC_KEY_PATH` | — | Path to public key file (alternative to inline) |
+
+No license = Community tier (3 workers, 3 concurrent jobs, 500 RPS, 7-day audit retention). Invalid or expired licenses degrade to Community — Cordum never crashes or blocks startup due to licensing.
+
+### Telemetry
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_TELEMETRY_MODE` | `anonymous` | Telemetry mode: `off` (no collection), `local_only` (collect but don't report), `anonymous` (collect and report aggregate stats) |
+| `CORDUM_TELEMETRY_ENDPOINT` | `https://telemetry.cordum.io/v1/report` | HTTPS endpoint for anonymous telemetry reports |
+
+Telemetry is independent from licensing. It never collects PII, prompts, secrets, or job content. Operators can opt out at any time via `CORDUM_TELEMETRY_MODE=off` or `POST /api/v1/telemetry/consent`.
+
 ### NATS TLS
 
 | Variable | Default | Description |

@@ -151,8 +151,14 @@ cordumctl pool drain <pool-name> --timeout 300
 cordumctl pool topic add <pool-name> job.my-service.process
 cordumctl pool topic remove <pool-name> job.my-service.process
 
+# License management
+cordumctl license info                    # display license details (plan, entitlements, expiry)
+cordumctl license install ./license.json  # install license from file
+cordumctl status                          # show tier, expiry, usage vs limits
+
 # Health & status
 cordumctl status
+cordumctl status --json                   # machine-readable output
 ```
 
 ## Redis Operations

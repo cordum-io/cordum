@@ -120,6 +120,35 @@ open http://localhost:8082
 ```
 </details>
 
+### Deploy to Kubernetes
+
+```bash
+helm repo add cordum https://charts.cordum.io
+helm install cordum cordum/cordum \
+  --namespace cordum --create-namespace \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.api.host=api.cordum.example.com \
+  --set ingress.dashboard.host=cordum.example.com
+```
+
+See [cordum-helm/](cordum-helm/) for the full Helm chart reference.
+
+**Container images** (multi-arch: amd64 + arm64):
+
+| Image | Registry |
+|-------|----------|
+| `cordum/api-gateway` | [Docker Hub](https://hub.docker.com/r/cordum/api-gateway) |
+| `cordum/scheduler` | [Docker Hub](https://hub.docker.com/r/cordum/scheduler) |
+| `cordum/safety-kernel` | [Docker Hub](https://hub.docker.com/r/cordum/safety-kernel) |
+| `cordum/workflow-engine` | [Docker Hub](https://hub.docker.com/r/cordum/workflow-engine) |
+| `cordum/context-engine` | [Docker Hub](https://hub.docker.com/r/cordum/context-engine) |
+| `cordum/dashboard` | [Docker Hub](https://hub.docker.com/r/cordum/dashboard) |
+
+Also available on GHCR: `ghcr.io/cordum-io/cordum/{service}:{version}`
+
 ### Ports
 
 | Port | Service |

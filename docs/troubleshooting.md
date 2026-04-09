@@ -1254,6 +1254,49 @@ Do **not** apply a manual repair when:
 - the dry-run plan is not the state transition you expect
 - you cannot explain the policy snapshot or job hash drift
 
+## Kubernetes Deployment Issues
+
+### Dashboard or gateway pod in CrashLoopBackOff
+
+**Symptom:** Pod shows `CrashLoopBackOff`, logs show `can't create /tmp/...: Read-only file system`.
+
+**Cause:** The Helm chart sets `readOnlyRootFilesystem: true` in the container security context. The dashboard's nginx entrypoint writes to `/tmp`, `/etc/nginx/conf.d`, `/var/cache/nginx`, and `/var/run`. The gateway's pack install API extracts bundles to `/tmp`.
+
+**Fix:** The Helm chart (v0.2.0+) adds `emptyDir` volumes for all writable paths. If you're on an older chart version, add these volumes manually to the deployment spec.
+
+### Safety kernel logs "NATS connection failed, relying on poll"
+
+**Symptom:** Safety kernel starts but logs `NATS connection failed`. Policy updates from pack installs are delayed.
+
+**Cause:** The safety kernel's `NATS_URL` env var was missing in Helm chart versions before v0.2.0. It defaults to `nats://nats:4222` but the K8s service is `nats://cordum-nats:4222`.
+
+**Fix:** Upgrade to Helm chart v0.2.0+ which sets `NATS_URL` on all services. Verify with `kubectl logs -l app.kubernetes.io/component=safety-kernel | grep "subscribed to config change"`.
+
+### Jobs fail with "unknown topic"
+
+**Symptom:** Workflow steps fail with `{"message": "unknown topic"}`.
+
+**Cause:** The topic is not registered in the topic registry (Redis `cfg:system:topics`). This happens when you run workflows without installing the pack first. Workers connecting via heartbeat do NOT auto-register topics — this is by design (security).
+
+**Fix:** Install the pack before running workflows:
+```bash
+tar -czf pack.tgz -C ./my-pack pack.yaml workflows overlays
+curl -X POST https://api.cordum.example.com/api/v1/packs/install \
+  -H "X-API-Key: $API_KEY" -F "bundle=@pack.tgz"
+```
+The pack install auto-registers topics, pool mappings, policy fragments, and workflows.
+
+### Pack install fails with "invalid archive path"
+
+**Symptom:** `POST /api/v1/packs/install` returns `{"error": "extract tar.gz: validate tar entry path ./: invalid archive path"}`.
+
+**Cause:** The tar bundle includes `./` as a path entry (created by `tar -czf file.tgz .`). The gateway rejects this as a path traversal protection.
+
+**Fix:** Create the tar without the `./` prefix:
+```bash
+tar -czf pack.tgz -C ./my-pack pack.yaml workflows overlays
+```
+
 ## Related Docs
 
 - [production.md](production.md) — Production readiness guide with incident runbooks
