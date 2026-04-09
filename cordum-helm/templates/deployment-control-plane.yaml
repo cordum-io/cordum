@@ -863,6 +863,8 @@ spec:
             - name: metrics
               containerPort: {{ .Values.gateway.service.metricsPort }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.global.tls.enabled }}
             - name: server-tls
               mountPath: /etc/cordum/tls/server
@@ -895,8 +897,9 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
-      {{- if or .Values.global.tls.enabled (ne .Values.licensing.mode "community") }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.global.tls.serverCertSecret }}
         - name: server-tls
           secret:
@@ -912,7 +915,6 @@ spec:
           secret:
             secretName: {{ include "cordum.licenseSecretName" . }}
         {{- end }}
-      {{- end }}
 ---
 {{- end }}
 {{- if .Values.workflowEngine.enabled }}
