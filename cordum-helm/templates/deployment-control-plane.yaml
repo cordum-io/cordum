@@ -73,6 +73,20 @@ spec:
           ports:
             - name: client
               containerPort: {{ .Values.nats.service.port }}
+            - name: monitor
+              containerPort: 8222
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 10
           volumeMounts:
             - name: nats-config
               mountPath: /etc/nats/nats.conf
@@ -144,6 +158,16 @@ spec:
           ports:
             - name: redis
               containerPort: {{ .Values.redis.service.port }}
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
           volumeMounts:
             - name: redis-data
               mountPath: /data

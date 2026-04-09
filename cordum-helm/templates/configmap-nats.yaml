@@ -9,6 +9,7 @@ metadata:
 data:
   nats.conf: |
     port: {{ .Values.nats.service.port }}
+    http_port: 8222
     {{- if .Values.nats.auth.token }}
     authorization {
       token: {{ .Values.nats.auth.token | quote }}
