@@ -5,6 +5,10 @@
 <h1 align="center">Cordum</h1>
 
 <p align="center">
+  <a href="https://artifacthub.io/packages/helm/cordum/cordum"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/cordum" alt="Artifact Hub" /></a>
+</p>
+
+<p align="center">
   <strong>Know What Your AI Agents Are Doing. Before They Do It.</strong><br/>
   The Source-Available <strong>Agent Control Plane</strong> for Governance, Safety, and Trust.
 </p>
