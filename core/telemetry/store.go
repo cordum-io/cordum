@@ -17,6 +17,7 @@ const (
 	historyKey          = "cordum:telemetry:history"
 	lastReportStatusKey = "cordum:telemetry:last_report"
 	collectorLockKey    = "cordum:telemetry:collector:lock"
+	consentModeKey      = "cordum:telemetry:consent:mode"
 	defaultRetention    = 30 * 24 * time.Hour
 	defaultMaxHistory   = 180
 )
@@ -61,6 +62,27 @@ func (s *Store) Close() error {
 		return nil
 	}
 	return s.client.Close()
+}
+
+// GetConsentMode reads the operator's persisted telemetry consent from Redis.
+// Returns empty string if no consent has been recorded.
+func (s *Store) GetConsentMode(ctx context.Context) (string, error) {
+	if s == nil || s.client == nil {
+		return "", nil
+	}
+	val, err := s.client.Get(ctx, consentModeKey).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	return val, err
+}
+
+// SetConsentMode persists the operator's telemetry consent choice in Redis.
+func (s *Store) SetConsentMode(ctx context.Context, mode string) error {
+	if s == nil || s.client == nil {
+		return fmt.Errorf("telemetry store unavailable")
+	}
+	return s.client.Set(ctx, consentModeKey, mode, 0).Err()
 }
 
 func (s *Store) SaveSnapshot(ctx context.Context, payload TelemetryPayload) error {

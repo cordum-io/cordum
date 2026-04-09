@@ -115,7 +115,8 @@ type server struct {
 	started      time.Time
 	auth         AuthProvider
 	entitlements *licensing.EntitlementResolver
-	telemetry    *telemetry.Collector
+	telemetry      *telemetry.Collector
+	telemetryState *telemetry.Store
 
 	workflowStore         *wf.RedisStore
 	workflowEng           *wf.Engine
@@ -489,6 +490,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	if err != nil {
 		return fmt.Errorf("connect telemetry store: %w", err)
 	}
+	s.telemetryState = telemetryStore
+
+	// If operator previously consented via the dashboard, apply that mode
+	if consentMode, cErr := telemetryStore.GetConsentMode(context.Background()); cErr == nil && consentMode != "" {
+		cfg.TelemetryMode = consentMode
+	}
+
 	s.telemetry = telemetry.NewCollector(telemetry.CollectorOptions{
 		Mode:              telemetry.NormalizeMode(cfg.TelemetryMode),
 		Store:             telemetryStore,
@@ -696,6 +704,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/telemetry/inspect", s.instrumented("/api/v1/telemetry/inspect", s.handleGetTelemetryInspect))
 	mux.HandleFunc("GET /api/v1/telemetry/export", s.instrumented("/api/v1/telemetry/export", s.handleGetTelemetryExport))
 	mux.HandleFunc("GET /api/v1/telemetry/usage", s.instrumented("/api/v1/telemetry/usage", s.handleGetTelemetryUsage))
+	mux.HandleFunc("POST /api/v1/telemetry/consent", s.instrumented("/api/v1/telemetry/consent", s.handleSetTelemetryConsent))
 
 	// 2.6 Admin endpoints (read-only, admin auth required)
 	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))

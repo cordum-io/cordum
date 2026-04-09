@@ -58,6 +58,7 @@ type CollectorOptions struct {
 // Collector periodically captures privacy-safe usage telemetry and optionally
 // reports it when anonymous reporting is enabled.
 type Collector struct {
+	mu                sync.RWMutex
 	mode              Mode
 	store             *Store
 	reporter          *Reporter
@@ -114,14 +115,41 @@ func NewCollector(opts CollectorOptions) *Collector {
 	}
 }
 
+// Mode returns the current telemetry mode.
+func (c *Collector) Mode() Mode {
+	if c == nil {
+		return ModeOff
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.mode
+}
+
+// SetMode changes the telemetry mode at runtime. The new mode takes effect
+// on the next collection/report cycle without requiring a restart.
+func (c *Collector) SetMode(mode Mode) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mode = NormalizeMode(string(mode))
+}
+
+func (c *Collector) currentMode() Mode {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.mode
+}
+
 func (c *Collector) Start(parent context.Context) {
 	if c == nil {
 		return
 	}
 	telemetryStartupNotice.Do(func() {
-		c.logger.Info("Cordum telemetry is active. Set CORDUM_TELEMETRY_MODE=anonymous to enable remote reporting, or =off to disable.", "mode", c.mode)
+		c.logger.Info("Cordum telemetry is active. Set CORDUM_TELEMETRY_MODE=anonymous to enable remote reporting, or =off to disable.", "mode", c.currentMode())
 	})
-	if !c.mode.Enabled() || c.store == nil {
+	if !c.currentMode().Enabled() || c.store == nil {
 		return
 	}
 	c.started.Do(func() {
@@ -156,10 +184,11 @@ func (c *Collector) Close() error {
 }
 
 func (c *Collector) Status(ctx context.Context) (*CollectorStatus, error) {
+	mode := c.currentMode()
 	status := &CollectorStatus{
-		Mode: c.mode,
+		Mode: mode,
 	}
-	if c.reporter != nil && c.mode.ReportingEnabled() {
+	if c.reporter != nil && mode.ReportingEnabled() {
 		status.Endpoint = c.reporter.Endpoint()
 	}
 	if c.store == nil {
@@ -219,7 +248,7 @@ func (c *Collector) CollectNow(ctx context.Context) (*TelemetryPayload, error) {
 	if c == nil || c.store == nil {
 		return nil, fmt.Errorf("telemetry collector unavailable")
 	}
-	if !c.mode.Enabled() {
+	if !c.currentMode().Enabled() {
 		return nil, nil
 	}
 	unlock, err := c.acquireLock(ctx)
@@ -242,7 +271,7 @@ func (c *Collector) CollectNow(ctx context.Context) (*TelemetryPayload, error) {
 }
 
 func (c *Collector) ReportNow(ctx context.Context) error {
-	if c == nil || c.store == nil || c.reporter == nil || !c.mode.ReportingEnabled() {
+	if c == nil || c.store == nil || c.reporter == nil || !c.currentMode().ReportingEnabled() {
 		return nil
 	}
 	unlock, err := c.acquireLock(ctx)
@@ -286,7 +315,7 @@ func (c *Collector) loop(ctx context.Context) {
 	defer c.wg.Done()
 
 	_, _ = c.CollectNow(ctx)
-	if c.mode.ReportingEnabled() {
+	if c.currentMode().ReportingEnabled() {
 		_ = c.ReportNow(ctx)
 	}
 
@@ -365,7 +394,7 @@ func (c *Collector) buildPayload(ctx context.Context) (TelemetryPayload, error) 
 	builder := NewPayloadBuilder().
 		WithCollectedAt(time.Now().UTC()).
 		WithInstallID(installID).
-		WithMode(c.mode).
+		WithMode(c.currentMode()).
 		WithVersion(buildinfo.Version).
 		WithTier(c.currentTier()).
 		WithWorkers(registeredWorkers, connectedWorkers).

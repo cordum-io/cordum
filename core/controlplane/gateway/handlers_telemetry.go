@@ -1,7 +1,12 @@
 package gateway
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
+
+	"github.com/cordum/cordum/core/telemetry"
 )
 
 func (s *server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request) {
@@ -77,4 +82,46 @@ func (s *server) handleGetTelemetryUsage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, usage)
+}
+
+func (s *server) handleSetTelemetryConsent(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
+	if s.telemetry == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "telemetry not configured")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1024))
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	mode := telemetry.NormalizeMode(strings.TrimSpace(req.Mode))
+
+	// Persist consent in Redis so it survives restarts
+	if store := s.telemetryState; store != nil {
+		if err := store.SetConsentMode(r.Context(), string(mode)); err != nil {
+			writeInternalError(w, r, "persist telemetry consent", err)
+			return
+		}
+	}
+
+	// Apply immediately
+	s.telemetry.SetMode(mode)
+
+	writeJSON(w, map[string]any{
+		"status": "updated",
+		"mode":   string(mode),
+	})
 }

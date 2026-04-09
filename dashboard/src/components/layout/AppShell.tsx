@@ -18,6 +18,7 @@ import { NotificationPopover } from "@/components/NotificationPopover";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator";
 import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcuts";
 import { TierBadge } from "@/components/TierBadge";
+import { TelemetryConsentBanner } from "@/components/TelemetryConsentBanner";
 import {
   LayoutGrid,
   ListChecks,
@@ -584,6 +585,9 @@ export function AppShell({ children }: AppShellProps) {
             )}
           </div>
         </header>
+
+        {/* Telemetry consent banner */}
+        <TelemetryConsentBanner />
 
         {/* Page content */}
         <main id="main-content" className="flex-1 overflow-y-auto dot-grid">
