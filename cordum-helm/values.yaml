@@ -197,6 +197,18 @@ nats:
   service:
     type: ClusterIP
     port: 4222
+  # External access for workers outside the cluster.
+  # Creates a separate LoadBalancer service for NATS.
+  externalAccess:
+    enabled: false
+    service:
+      type: LoadBalancer
+      port: 4222
+      # Annotations for cloud provider (e.g. AWS NLB, Azure LB)
+      annotations: {}
+        # service.beta.kubernetes.io/aws-load-balancer-type: nlb
+        # service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+        # service.beta.kubernetes.io/azure-load-balancer-internal: "false"
   persistence:
     enabled: true
     size: 1Gi
@@ -285,6 +297,9 @@ ingress:
     paths:
       - path: /
         pathType: Prefix
+    # Enable a separate gRPC Ingress for workers using the CAP gRPC protocol.
+    grpcEnabled: false
+    grpcHost: ""  # defaults to api host if empty
   dashboard:
     host: cordum.local
     paths:
