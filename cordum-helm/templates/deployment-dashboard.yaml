@@ -29,7 +29,7 @@ spec:
       {{- end }}
       containers:
         - name: dashboard
-          image: {{ printf "%s:%s" .Values.dashboard.image.repository .Values.dashboard.image.tag | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.dashboard.image.repository (.Values.dashboard.image.tag | default .Values.global.image.tag) | quote }}
           imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
           env:
             - name: CORDUM_API_BASE_URL

@@ -20,8 +20,11 @@ imagePullSecrets: []
 # Base image settings for control plane components.
 global:
   image:
-    repository: ghcr.io/cordum-io/cordum/control-plane
-    tag: "v0.1.4"
+    # Container registry prefix. Each service appends its own repo name.
+    # GHCR: ghcr.io/cordum-io/cordum  →  ghcr.io/cordum-io/cordum/api-gateway:0.9.4
+    # Docker Hub: docker.io/cordum    →  docker.io/cordum/api-gateway:0.9.4
+    registry: ghcr.io/cordum-io/cordum
+    tag: "0.9.4"
     pullPolicy: IfNotPresent
   # Set to true for production deployments (enables TLS enforcement, strict guards)
   production: false
@@ -310,7 +313,7 @@ gateway:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: api-gateway
+    repository: api-gateway
   service:
     type: ClusterIP
     httpPort: 8081
@@ -349,7 +352,7 @@ scheduler:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: scheduler
+    repository: scheduler
   service:
     type: ClusterIP
     metricsPort: 9090
@@ -376,7 +379,7 @@ safetyKernel:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: safety-kernel
+    repository: safety-kernel
   service:
     type: ClusterIP
     port: 50051
@@ -408,7 +411,7 @@ workflowEngine:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: workflow-engine
+    repository: workflow-engine
   service:
     type: ClusterIP
     port: 9093
@@ -431,7 +434,7 @@ contextEngine:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: context-engine
+    repository: context-engine
   service:
     type: ClusterIP
     port: 50070
@@ -451,8 +454,8 @@ dashboard:
   enabled: true
   replicaCount: 1
   image:
-    repository: ghcr.io/cordum-io/cordum/dashboard
-    tag: "v0.1.4"
+    repository: dashboard
+    tag: ""  # defaults to global.image.tag
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP

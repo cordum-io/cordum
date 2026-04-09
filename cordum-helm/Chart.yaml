@@ -28,17 +28,17 @@ annotations:
   artifacthub.io/prerelease: "false"
   artifacthub.io/images: |
     - name: api-gateway
-      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-api-gateway
+      image: ghcr.io/cordum-io/cordum/api-gateway:0.9.4
     - name: scheduler
-      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-scheduler
+      image: ghcr.io/cordum-io/cordum/scheduler:0.9.4
     - name: safety-kernel
-      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-safety-kernel
+      image: ghcr.io/cordum-io/cordum/safety-kernel:0.9.4
     - name: workflow-engine
-      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-workflow-engine
+      image: ghcr.io/cordum-io/cordum/workflow-engine:0.9.4
     - name: context-engine
-      image: ghcr.io/cordum-io/cordum/control-plane:v0.2.0-context-engine
+      image: ghcr.io/cordum-io/cordum/context-engine:0.9.4
     - name: dashboard
-      image: ghcr.io/cordum-io/cordum/dashboard:v0.2.0
+      image: ghcr.io/cordum-io/cordum/dashboard:0.9.4
   artifacthub.io/links: |
     - name: docs
       url: https://cordum.io/docs/architecture

@@ -218,7 +218,7 @@ spec:
       {{- end }}
       containers:
         - name: safety-kernel
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.safetyKernel.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.safetyKernel.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -406,7 +406,7 @@ spec:
       {{- end }}
       containers:
         - name: scheduler
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.scheduler.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.scheduler.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -583,7 +583,7 @@ spec:
       {{- end }}
       containers:
         - name: api-gateway
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.gateway.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.gateway.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -974,7 +974,7 @@ spec:
       {{- end }}
       containers:
         - name: workflow-engine
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.workflowEngine.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.workflowEngine.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -1110,7 +1110,7 @@ spec:
       {{- end }}
       containers:
         - name: context-engine
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.contextEngine.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.contextEngine.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
