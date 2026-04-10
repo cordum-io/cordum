@@ -199,8 +199,6 @@ For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting
 
 ## Key Features
 
-<!-- Replace with a visual showing the Policy Studio and Safety Kernel in action -->
-
 ![nWwQVRVqwlZKeRbBZvkSof-img-4_1771930611000_na1fn_d29ya2Zsb3ctdmlzdWFsaXphdGlvbg](https://github.com/user-attachments/assets/ee44853d-1e89-463b-bf3c-0ba0481eee68)
 
 | Governance Feature | Why It Matters for Enterprise |
