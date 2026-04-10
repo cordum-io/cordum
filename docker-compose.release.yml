@@ -55,7 +55,7 @@ services:
       start_period: 10s
 
   context-engine:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-context-engine
+    image: ghcr.io/cordum-io/cordum/context-engine:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       redis:
@@ -83,7 +83,7 @@ services:
       start_period: 10s
 
   safety-kernel:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-safety-kernel
+    image: ghcr.io/cordum-io/cordum/safety-kernel:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       nats:
@@ -118,7 +118,7 @@ services:
       start_period: 10s
 
   scheduler:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-scheduler
+    image: ghcr.io/cordum-io/cordum/scheduler:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       nats:
@@ -162,7 +162,7 @@ services:
       start_period: 10s
 
   api-gateway:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-api-gateway
+    image: ghcr.io/cordum-io/cordum/api-gateway:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     networks:
       default:
@@ -219,7 +219,7 @@ services:
       start_period: 10s
 
   workflow-engine:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-workflow-engine
+    image: ghcr.io/cordum-io/cordum/workflow-engine:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       nats:

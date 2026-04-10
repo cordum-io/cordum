@@ -28,24 +28,23 @@ and pulls from GHCR. If those tags are not published in your registry, override
 
 ## Local dev (kind + local images)
 
-The chart expects images like `ghcr.io/cordum-io/cordum/control-plane:<tag>-api-gateway`.
+The chart expects images like `ghcr.io/cordum-io/cordum/api-gateway:<tag>`.
 If you are installing from a local clone without published images, build and
 load images into your cluster and override tags:
 
 ```bash
 docker compose build
 
-for svc in api-gateway scheduler safety-kernel workflow-engine context-engine; do
-  docker tag "cordum-cordum-${svc}:latest" "ghcr.io/cordum-io/cordum/control-plane:dev-${svc}"
+for svc in api-gateway scheduler safety-kernel workflow-engine context-engine dashboard; do
+  docker tag "cordum-cordum-${svc}:latest" "ghcr.io/cordum-io/cordum/${svc}:dev"
 done
-docker tag cordum-cordum-dashboard:latest ghcr.io/cordum-io/cordum/dashboard:dev
 
 kind load docker-image --name cordum \
-  ghcr.io/cordum-io/cordum/control-plane:dev-api-gateway \
-  ghcr.io/cordum-io/cordum/control-plane:dev-scheduler \
-  ghcr.io/cordum-io/cordum/control-plane:dev-safety-kernel \
-  ghcr.io/cordum-io/cordum/control-plane:dev-workflow-engine \
-  ghcr.io/cordum-io/cordum/control-plane:dev-context-engine \
+  ghcr.io/cordum-io/cordum/api-gateway:dev \
+  ghcr.io/cordum-io/cordum/scheduler:dev \
+  ghcr.io/cordum-io/cordum/safety-kernel:dev \
+  ghcr.io/cordum-io/cordum/workflow-engine:dev \
+  ghcr.io/cordum-io/cordum/context-engine:dev \
   ghcr.io/cordum-io/cordum/dashboard:dev
 
 helm upgrade --install cordum ./cordum-helm -n cordum --create-namespace \
