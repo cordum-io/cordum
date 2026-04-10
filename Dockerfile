@@ -50,7 +50,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -ldflags "-s -w -X github.com/cordum/cordum/core/infra/buildinfo.Version=${VERSION} -X github.com/cordum/cordum/core/infra/buildinfo.Commit=${COMMIT} -X github.com/cordum/cordum/core/infra/buildinfo.Date=${BUILD_DATE}" \
       -o /out/${SERVICE} ./cmd/${SERVICE}
 
-FROM alpine:3.19
+FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 RUN adduser -D -u 65532 cordum
 USER cordum
