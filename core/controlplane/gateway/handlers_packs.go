@@ -329,6 +329,9 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	if packCredential != nil {
 		s.publishConfigChanged("system", "workers")
 	}
+	if len(appliedPolicyChanges) > 0 {
+		s.publishConfigChanged(policyConfigScope, policyConfigID)
+	}
 	return record, packCredential, nil
 }
 
@@ -873,6 +876,7 @@ func (s *server) applyPolicyOverlay(ctx context.Context, overlay packPolicyOverl
 	if err := s.configSvc.Set(ctx, doc); err != nil {
 		return appliedPolicyChange{}, err
 	}
+	s.publishConfigChanged(policyConfigScope, policyConfigID)
 	return appliedPolicyChange{
 		Overlay: packAppliedPolicyOverlay{
 			Name:       overlay.Name,
@@ -898,7 +902,11 @@ func (s *server) removePolicyOverlay(ctx context.Context, overlay packAppliedPol
 	}
 	delete(bundles, overlay.FragmentID)
 	doc.Data[policyConfigKey] = bundles
-	return s.configSvc.Set(ctx, doc)
+	if err := s.configSvc.Set(ctx, doc); err != nil {
+		return err
+	}
+	s.publishConfigChanged(policyConfigScope, policyConfigID)
+	return nil
 }
 
 func (s *server) restorePolicyOverlay(ctx context.Context, change appliedPolicyChange) error {
@@ -923,7 +931,11 @@ func (s *server) restorePolicyOverlay(ctx context.Context, change appliedPolicyC
 		bundles[change.Overlay.FragmentID] = deepCopy(change.Previous)
 	}
 	doc.Data[policyConfigKey] = bundles
-	return s.configSvc.Set(ctx, doc)
+	if err := s.configSvc.Set(ctx, doc); err != nil {
+		return err
+	}
+	s.publishConfigChanged(policyConfigScope, policyConfigID)
+	return nil
 }
 
 func (s *server) runPolicySimulation(ctx context.Context, test packPolicySimulation, packID string) (string, string, error) {
