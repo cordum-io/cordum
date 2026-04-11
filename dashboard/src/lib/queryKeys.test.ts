@@ -59,6 +59,8 @@ describe("queryKeys factory", () => {
     expect(queryKeys.policies.bundles()).toEqual(["policy-bundles"]);
     expect(queryKeys.policies.bundle("secops/default")).toEqual(["policy-bundle", "secops/default"]);
     expect(queryKeys.policies.rules()).toEqual(["policy-rules"]);
+    expect(queryKeys.policies.velocityRules()).toEqual(["policy-velocity-rules"]);
+    expect(queryKeys.policies.velocityRuleStats()).toEqual(["policy-velocity-rules", "stats"]);
     expect(queryKeys.policies.config()).toEqual(["policy-config"]);
   });
 

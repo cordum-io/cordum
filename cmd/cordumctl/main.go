@@ -37,6 +37,8 @@ func main() {
 		runStatusCmd(args)
 	case "license":
 		runLicenseCmd(args)
+	case "auth":
+		runAuthCmd(args)
 	case "workflow":
 		runWorkflowCmd(args)
 	case "run":
@@ -360,6 +362,7 @@ Usage:
   cordumctl status [--json]
   cordumctl license install <path>
   cordumctl license info [--json]
+  cordumctl auth sso status [--json]
   cordumctl workflow create --file workflow.json
   cordumctl workflow delete <workflow_id>
   cordumctl run start <workflow_id> [--input input.json|'{...}'|-] [--dry-run] [--debug]

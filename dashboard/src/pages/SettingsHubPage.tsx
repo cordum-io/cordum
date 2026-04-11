@@ -1,25 +1,59 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Settings, Globe, Activity, Key, Server, Bell, Users, ShieldCheck, ShieldAlert, Sparkles,
+  Activity,
+  Bell,
+  Building2,
+  Globe,
+  Key,
+  Lock,
+  Server,
+  Settings,
+  ShieldAlert,
+  ShieldCheck,
+  Sparkles,
+  Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useLicense } from "@/hooks/useLicense";
+import type { LicenseEntitlements } from "@/api/types";
+import { cn } from "@/lib/utils";
 
-const settingsCards = [
+interface SettingsCard {
+  icon: typeof Settings;
+  title: string;
+  description: string;
+  path: string;
+  /** Entitlement key(s) required — shows lock badge when not entitled */
+  entitlement?: (keyof LicenseEntitlements)[];
+}
+
+const settingsCards: SettingsCard[] = [
   { icon: Settings, title: "System Config", description: "Core system configuration and feature flags", path: "/settings/config" },
   { icon: Globe, title: "Environments", description: "Manage deployment environments", path: "/settings/environments" },
   { icon: Activity, title: "System Health", description: "Monitor system health and diagnostics", path: "/settings/health" },
   { icon: Key, title: "API Keys", description: "Manage API keys and access tokens", path: "/settings/keys" },
   { icon: Server, title: "MCP Server", description: "Configure MCP server connections", path: "/settings/mcp" },
   { icon: Bell, title: "Notifications", description: "Notification channels and preferences", path: "/settings/notifications" },
-  { icon: Users, title: "Users & RBAC", description: "User management and role assignments", path: "/settings/users" },
+  { icon: Users, title: "Users & RBAC", description: "User management and role assignments", path: "/settings/users", entitlement: ["rbac"] },
+  { icon: Building2, title: "SSO & SAML", description: "Enterprise identity provider configuration and operator handoff details", path: "/settings/sso", entitlement: ["sso", "saml"] },
+  { icon: Key, title: "SCIM Provisioning", description: "Publish the SCIM endpoint, rotate provisioning tokens, and inspect synced users", path: "/settings/scim", entitlement: ["scim"] },
+  { icon: Activity, title: "Audit Export", description: "SIEM audit event export — webhook, syslog, Datadog, CloudWatch", path: "/settings/audit-export", entitlement: ["siemExport", "auditExport"] },
   { icon: Sparkles, title: "License & Limits", description: "Current plan, entitlements, telemetry mode, and capacity limits", path: "/settings/license" },
   { icon: ShieldCheck, title: "Input Safety", description: "Configure input safety policies", path: "/govern/overview?tab=input-rules" },
   { icon: ShieldAlert, title: "Output Safety", description: "Configure output quarantine settings", path: "/govern/overview?tab=output-rules" },
 ];
 
+function isEntitled(entitlements: LicenseEntitlements | undefined, keys?: (keyof LicenseEntitlements)[]): boolean {
+  if (!keys || keys.length === 0) return true;
+  if (!entitlements) return false;
+  return keys.some((k) => entitlements[k] === true);
+}
+
 export default function SettingsHubPage() {
   const navigate = useNavigate();
+  const { data: license } = useLicense();
+  const entitlements = license?.entitlements;
 
   return (
     <div className="space-y-6">
@@ -29,31 +63,50 @@ export default function SettingsHubPage() {
         subtitle="Configure your Cordum instance."
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {settingsCards.map((card, i) => (
-          <motion.button
-            key={card.path}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.04, duration: 0.3 }}
-            onClick={() => navigate(card.path)}
-            className="instrument-card text-left hover:bg-surface-2/50 transition-all duration-200 group"
-          >
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-2xl bg-cordum/10 flex items-center justify-center shrink-0 group-hover:bg-cordum/20 transition-colors">
-                <card.icon className="w-5 h-5 text-cordum" />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {settingsCards.map((card, i) => {
+          const entitled = isEntitled(entitlements, card.entitlement);
+          const locked = card.entitlement && !entitled;
+
+          return (
+            <motion.button
+              key={card.path}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.04, duration: 0.3 }}
+              onClick={() => navigate(card.path)}
+              className="instrument-card text-left transition-all duration-200 group hover:bg-surface-2/50"
+            >
+              <div className="flex items-start gap-4">
+                <div className={cn(
+                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors",
+                  locked ? "bg-muted/20 group-hover:bg-muted/30" : "bg-cordum/10 group-hover:bg-cordum/20",
+                )}>
+                  <card.icon className={cn("h-5 w-5", locked ? "text-muted-foreground" : "text-cordum")} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className={cn(
+                      "text-sm font-display font-semibold transition-colors",
+                      locked ? "text-muted-foreground" : "text-foreground group-hover:text-cordum",
+                    )}>
+                      {card.title}
+                    </h2>
+                    {locked && (
+                      <span className="inline-flex items-center gap-0.5 rounded-full border border-border/60 bg-surface-1 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        <Lock className="h-2.5 w-2.5" />
+                        Enterprise
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {card.description}
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <h2 className="text-sm font-display font-semibold text-foreground group-hover:text-cordum transition-colors">
-                  {card.title}
-                </h2>
-                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  {card.description}
-                </p>
-              </div>
-            </div>
-          </motion.button>
-        ))}
+            </motion.button>
+          );
+        })}
       </div>
     </div>
   );

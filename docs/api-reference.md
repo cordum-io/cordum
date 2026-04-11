@@ -34,7 +34,22 @@ SDK/CLI callers using unscoped API keys should omit `org_id` or set it to the se
 These paths are public (no API key required), controlled by middleware + auth provider:
 
 - `GET /api/v1/auth/config`
+- `GET /api/v1/auth/sso/oidc/login`
+- `GET /api/v1/auth/sso/oidc/callback`
+- `GET /api/v1/auth/sso/saml/metadata`
+- `GET /api/v1/auth/sso/saml/login`
+- `POST /api/v1/auth/sso/saml/acs`
 - `POST /api/v1/auth/login`
+
+Also public at the API-key middleware layer, but protected by a dedicated SCIM bearer token inside the handler:
+
+- `GET /api/v1/scim/v2/ServiceProviderConfig`
+- `GET /api/v1/scim/v2/Schemas`
+- `GET /api/v1/scim/v2/ResourceTypes`
+- `GET|POST /api/v1/scim/v2/Users`
+- `GET|PUT|PATCH|DELETE /api/v1/scim/v2/Users/{id}`
+- `GET|POST /api/v1/scim/v2/Groups`
+- `GET|PUT|PATCH|DELETE /api/v1/scim/v2/Groups/{id}`
 
 Also public:
 
@@ -47,6 +62,8 @@ Use one of:
 
 - `X-API-Key: <key>`
 - `Authorization: Bearer <jwt-or-session-token>`
+
+SCIM provisioning routes under `/api/v1/scim/v2/*` do **not** use the main API key or browser session. They require `Authorization: Bearer <scim-token>` where the token comes from `CORDUM_SCIM_BEARER_TOKEN` or the admin token-rotation endpoint.
 
 Tenant header is required on protected `/api/*` routes:
 
@@ -108,7 +125,8 @@ Accepted keys:
 
 - Auth: public
 - Request body: none
-- Response: auth capability object
+- Response: auth capability object. When SSO providers are configured, the gateway advertises
+  the published SAML and OIDC connection details used by the dashboard and IdP operators.
 
 ```json
 {
@@ -123,9 +141,130 @@ Accepted keys:
   "require_principal": false,
   "default_tenant": "default",
   "oidc_enabled": false,
-  "oidc_issuer": ""
+  "oidc_issuer": "",
+  "oidc_login_url": "",
+  "oidc_client_id": "",
+  "oidc_redirect_uri": "",
+  "oidc_scopes": [
+    "openid",
+    "profile",
+    "email"
+  ],
+  "oidc_client_secret_masked": ""
 }
 ```
+
+### GET `/api/v1/auth/sso/oidc/login`
+
+- Auth: public
+- License gate: requires the `SSO` entitlement
+- Query params:
+  - `redirect` (optional) — same-origin absolute or relative post-auth URL; when omitted, the gateway falls back to `CORDUM_AUTH_REDIRECT_URL` or `/login`
+- Response: `302 Found` redirect to the OIDC authorization endpoint
+- Errors: `403 tier_limit_exceeded`, `404`, `500`
+
+### GET `/api/v1/auth/sso/oidc/callback`
+
+- Auth: public
+- License gate: requires the `SSO` entitlement
+- Query params:
+  - `state` — state token created by the login endpoint
+  - `code` — authorization code from the IdP
+  - `error` / `error_description` — optional IdP error details
+- Success behavior:
+  - exchanges the authorization code for tokens
+  - validates the returned ID token against the discovered issuer JWKS
+  - provisions or updates the mapped Cordum user
+  - creates a Redis-backed browser session
+  - sets the `cordum_session` HttpOnly cookie
+  - redirects to the resolved UI target with a hash fragment containing `token`, `expires_at`, `user_id`, `username`, `email`, `display_name`, `role`, and `tenant`
+  - when no redirect target is available, returns JSON with `token`, `expires_at`, and `user`
+- Errors: `400`, `401`, `403 tier_limit_exceeded`, `404`, `500`
+
+### GET `/api/v1/auth/sso/saml/metadata`
+
+- Auth: public
+- License gate: requires both SSO and SAML entitlements
+- Response: service-provider metadata XML (`application/samlmetadata+xml`)
+- Errors: `403 tier_limit_exceeded`, `404`, `500`
+
+### GET `/api/v1/auth/sso/saml/login`
+
+- Auth: public
+- License gate: requires both SSO and SAML entitlements
+- Query params:
+  - `redirect` (optional) — same-origin absolute or relative post-auth URL; when omitted, the gateway falls back to `CORDUM_AUTH_REDIRECT_URL` or `/login` on the configured UI origin
+- Response: `302 Found` redirect to the IdP for redirect binding, or an HTML auto-submit form for POST binding
+- Errors: `400`, `403 tier_limit_exceeded`, `404`, `500`
+
+### POST `/api/v1/auth/sso/saml/acs`
+
+- Auth: public
+- License gate: requires both SSO and SAML entitlements
+- Content type: `application/x-www-form-urlencoded`
+- Form fields:
+  - `SAMLResponse` — signed assertion from the IdP
+  - `RelayState` — optional state key created by the login endpoint
+- Success behavior:
+  - creates a Redis-backed browser session
+  - sets the `cordum_session` HttpOnly cookie
+  - redirects to the resolved UI target with a hash fragment containing `token`, `expires_at`, `user_id`, `username`, `email`, `display_name`, `role`, and `tenant`
+- when no redirect target is available, returns JSON with `token`, `expires_at`, and `user`
+- Errors: `400`, `401`, `403 tier_limit_exceeded`, `404`, `500`
+
+### SCIM 2.0 provisioning routes
+
+- Auth: public to the API-key middleware, but each route requires `Authorization: Bearer <scim-token>`
+- License gate: requires the `SCIM` entitlement
+- Media type: `application/scim+json`
+- Tenant behavior: routes operate on the gateway default tenant
+- Error shape: RFC 7644-style SCIM error payloads with `schemas`, `detail`, `status`, and optional `scimType`
+
+Provisioning endpoints:
+
+- `GET /api/v1/scim/v2/ServiceProviderConfig`
+- `GET /api/v1/scim/v2/Schemas`
+- `GET /api/v1/scim/v2/ResourceTypes`
+- `GET|POST /api/v1/scim/v2/Users`
+- `GET|PUT|PATCH|DELETE /api/v1/scim/v2/Users/{id}`
+- `GET|POST /api/v1/scim/v2/Groups`
+- `GET|PUT|PATCH|DELETE /api/v1/scim/v2/Groups/{id}`
+
+Behavior notes:
+
+- `POST /Users` creates or provisions a Redis-backed Cordum user
+- `DELETE /Users/{id}` is a soft delete that disables the user instead of removing the Redis record
+- group membership updates map SCIM groups onto Cordum roles and update referenced users
+- list endpoints support `filter`, `startIndex`, `count`, `sortBy`, and `sortOrder`
+- discovery endpoints advertise PATCH/filter/sort support and the bearer-token auth scheme
+
+Common SCIM request fields:
+
+- user payloads: `userName`, `displayName`, `name.givenName`, `name.familyName`, `emails[].value`, `active`, `roles[].value`
+- group payloads: `displayName`, `externalId`, `members[].value`
+
+Common errors:
+
+- `401` invalid or missing SCIM bearer token
+- `403 tier_limit_exceeded` SCIM entitlement disabled
+- `404` SCIM resource not found
+- `409 uniqueness` duplicate username/email/group name
+
+### GET `/api/v1/scim/settings`
+
+- Auth: required
+- Role: `admin`
+- License gate: requires the `SCIM` entitlement
+- Response: dashboard settings payload containing `endpointUrl`, token metadata, and the current SCIM-managed user list
+- Errors: `401`, `403`, `500`
+
+### POST `/api/v1/scim/settings/token`
+
+- Auth: required
+- Role: `admin`
+- License gate: requires the `SCIM` entitlement
+- Response: generates or rotates a Redis-managed SCIM bearer token and returns the new token plus masked metadata
+- Errors: `401`, `403`, `500`
 
 ### POST `/api/v1/auth/login`
 
@@ -375,6 +514,169 @@ curl -sS -X POST http://localhost:8081/api/v1/auth/keys \
   -H 'Content-Type: application/json' \
   -d '{"name":"ci-key","scopes":["jobs:write"]}'
 ```
+
+---
+
+## 3.5 RBAC Role Management
+
+All endpoints require admin role. Write operations (PUT, DELETE) require the `RBAC` license entitlement — without it, they return `403 tier_limit_exceeded`.
+
+### GET `/api/v1/auth/roles`
+
+- Auth: required + admin
+- Response:
+
+```json
+{
+  "roles": [
+    {
+      "name": "admin",
+      "description": "Full access to all resources",
+      "permissions": ["admin.*"],
+      "inherits": [],
+      "built_in": true,
+      "created_at": "2026-04-11T19:00:00Z",
+      "updated_at": "2026-04-11T19:00:00Z"
+    }
+  ],
+  "entitled": true
+}
+```
+
+- Errors: `403`, `500`, `503`
+
+### GET `/api/v1/auth/roles/{name}`
+
+- Auth: required + admin
+- Response:
+
+```json
+{
+  "role": { "name": "operator", "..." : "..." },
+  "resolved_permissions": ["jobs.read", "jobs.write", "..."]
+}
+```
+
+- `resolved_permissions` includes inherited permissions flattened from the hierarchy
+- Errors: `400`, `403`, `404`, `500`
+
+### PUT `/api/v1/auth/roles/{name}`
+
+- Auth: required + admin + RBAC entitlement
+- Request:
+
+```json
+{
+  "description": "DevOps engineer role",
+  "permissions": ["jobs.read", "jobs.write", "config.read", "config.write"],
+  "inherits": ["viewer"]
+}
+```
+
+- Creates a new role or updates an existing one
+- Validates inheritance: rejects circular inheritance and unknown parent roles
+- Built-in roles: description and permissions can be updated, but inheritance cannot change
+- Errors: `400` (validation), `403` (not admin or not entitled), `500`, `503`
+
+### DELETE `/api/v1/auth/roles/{name}`
+
+- Auth: required + admin + RBAC entitlement
+- Cannot delete built-in roles (admin, operator, viewer)
+- Response: `{"deleted": true, "name": "role_name"}`
+- Errors: `400` (built-in role), `403`, `404`, `500`, `503`
+
+### Available Permissions
+
+| Permission | Description |
+|-----------|-------------|
+| `admin.*` | Full access (wildcard) |
+| `jobs.read` | View jobs |
+| `jobs.write` | Create/edit jobs |
+| `jobs.approve` | Approve jobs |
+| `workflows.read` | View workflows |
+| `workflows.write` | Create/edit workflows |
+| `workers.read` | View workers |
+| `config.read` | View configuration |
+| `config.write` | Edit configuration |
+| `audit.read` | View audit log |
+| `packs.install` | Install packs |
+| `packs.uninstall` | Uninstall packs |
+| `policy.read` | View policies |
+| `policy.write` | Edit policies |
+| `schemas.read` | View schemas |
+| `schemas.write` | Edit schemas |
+| `users.read` | View users |
+| `users.write` | Manage users |
+| `roles.read` | View roles |
+| `roles.write` | Manage roles |
+
+---
+
+## 3.6 Audit Export (SIEM)
+
+All endpoints require admin role. Entitlement-gated by `SIEMExport` or `AuditExport`.
+
+### GET `/api/v1/audit/export/health`
+
+- Auth: required + admin + SIEM entitlement
+- Response:
+
+```json
+{
+  "backend": "webhook",
+  "status": "active",
+  "entitled": true
+}
+```
+
+### GET `/api/v1/audit/export/config`
+
+- Auth: required + admin
+- Returns non-sensitive backend configuration (URLs, regions, flags — never secrets)
+- Response varies by backend type
+
+### POST `/api/v1/audit/export/test`
+
+- Auth: required + admin + SIEM entitlement
+- Sends a test `SIEMEvent` to the configured export backend
+- Response: `{"success": true, "message": "test event sent to webhook backend"}`
+- Errors: `400` (no backend configured), `403` (not entitled), `500`
+
+---
+
+## 3.7 Legal Hold
+
+Per-tenant immutable retention holds on audit data. All endpoints require admin role and `LegalHold` entitlement.
+
+### POST `/api/v1/audit/legal-hold`
+
+- Auth: required + admin + LegalHold entitlement
+- Request:
+
+```json
+{
+  "tenant_id": "default",
+  "reason": "Litigation pending — case #12345"
+}
+```
+
+- `tenant_id` defaults to the server default tenant if omitted
+- Duplicate hold on same tenant returns `409`
+- Response: `201` with `{"hold": {...}}`
+- Errors: `400` (missing reason), `403` (not entitled), `409` (active hold exists), `500`
+
+### GET `/api/v1/audit/legal-holds`
+
+- Auth: required + admin + LegalHold entitlement
+- Query params: `?tenant=<id>` (optional filter)
+- Response: `{"holds": [...]}`
+
+### DELETE `/api/v1/audit/legal-hold/{id}`
+
+- Auth: required + admin + LegalHold entitlement
+- Releases the hold. Does NOT delete retained data — normal TTL resumes.
+- Response: `{"released": true, "id": "..."}`
+- Errors: `404` (hold not found), `409` (already released), `403`, `500`
 
 ---
 
@@ -1131,6 +1433,122 @@ Note: There are no `GET /api/v1/approvals/{id}` or `PUT /api/v1/approvals/{id}` 
   "errors": [ { "fragment_id": "...", "error": "..." } ]
 }
 ```
+
+### GET `/api/v1/policy/velocity-rules`
+
+- Auth: required + admin
+- Response:
+
+```json
+{
+  "items": [
+    {
+      "id": "login-burst",
+      "name": "Login burst guard",
+      "match": {
+        "topics": ["job.auth.login"],
+        "tenants": ["default"],
+        "risk_tags": ["auth"]
+      },
+      "window": "1m0s",
+      "key": "tenant",
+      "threshold": 3,
+      "decision": "require_approval",
+      "reason": "Repeated login attempts require review",
+      "enabled": true,
+      "created_at": "2026-04-11T20:00:00Z",
+      "updated_at": "2026-04-11T20:00:00Z"
+    }
+  ],
+  "count": 1,
+  "limit": 20,
+  "updated_at": "2026-04-11T20:00:00Z",
+  "upgrade_url": "https://cordum.io/pricing"
+}
+```
+
+- Notes:
+  - Velocity rules are stored as policy bundle fragments under `velocity/{id}` in
+    the system policy config document.
+  - Creation is gated by the `velocity_rules` entitlement. Community licenses
+    return `403 tier_limit_exceeded`; Team is limited; Enterprise is unlimited.
+
+### POST `/api/v1/policy/velocity-rules`
+
+- Auth: required + admin
+- Request:
+
+```json
+{
+  "id": "login-burst",
+  "name": "Login burst guard",
+  "match": {
+    "topics": ["job.auth.login"],
+    "tenants": ["default"],
+    "risk_tags": ["auth"]
+  },
+  "window": "1m",
+  "key": "tenant",
+  "threshold": 3,
+  "decision": "require_approval",
+  "reason": "Repeated login attempts require review",
+  "enabled": true
+}
+```
+
+- Response: created rule object (same shape as `GET /api/v1/policy/velocity-rules`)
+- Errors:
+  - `400` invalid rule schema (`window`, `threshold`, or `key`)
+  - `403` `tier_limit_exceeded`
+  - `409` duplicate rule id
+
+### PUT `/api/v1/policy/velocity-rules/{id}`
+
+- Auth: required + admin
+- Request: same schema as create
+- Response: updated rule object
+- Errors: `400`, `403`, `404`
+
+### DELETE `/api/v1/policy/velocity-rules/{id}`
+
+- Auth: required + admin
+- Response: `204 No Content`
+- Errors: `400`, `404`
+
+### GET `/api/v1/policy/velocity-rules/stats`
+
+- Auth: required + admin
+- Response:
+
+```json
+{
+  "items": [
+    {
+      "id": "login-burst",
+      "hit_count_24h": 5,
+      "hit_rate_24h": 0.2083333333,
+      "current_window_count": 4,
+      "current_window_max": 4,
+      "active_buckets": 1,
+      "exceeded_buckets": 1,
+      "last_triggered": "2026-04-11T20:42:00Z",
+      "hourly_hits": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2]
+    }
+  ],
+  "top_rules": [
+    {
+      "id": "login-burst",
+      "hit_count_24h": 5
+    }
+  ],
+  "generated_at": "2026-04-11T20:43:00Z"
+}
+```
+
+- Notes:
+  - Stats are computed from the existing `cordum:velocity:*` Redis sorted sets
+    maintained by the safety kernel.
+  - This endpoint does not change safety-kernel evaluation behavior.
 
 ### GET `/api/v1/policy/bundles`
 
@@ -2369,6 +2787,11 @@ The following routes are registered in gateway route setup.
 |---|---|
 | GET | `/health` |
 | GET | `/api/v1/auth/config` |
+| GET | `/api/v1/auth/sso/oidc/login` |
+| GET | `/api/v1/auth/sso/oidc/callback` |
+| GET | `/api/v1/auth/sso/saml/metadata` |
+| GET | `/api/v1/auth/sso/saml/login` |
+| POST | `/api/v1/auth/sso/saml/acs` |
 | POST | `/api/v1/auth/login` |
 | GET | `/api/v1/auth/session` |
 | POST | `/api/v1/auth/logout` |
@@ -2381,6 +2804,10 @@ The following routes are registered in gateway route setup.
 | GET | `/api/v1/auth/keys` |
 | POST | `/api/v1/auth/keys` |
 | DELETE | `/api/v1/auth/keys/{id}` |
+| GET | `/api/v1/auth/roles` |
+| GET | `/api/v1/auth/roles/{name}` |
+| PUT | `/api/v1/auth/roles/{name}` |
+| DELETE | `/api/v1/auth/roles/{name}` |
 | GET | `/api/v1/workers` |
 | GET | `/api/v1/workers/{id}` |
 | GET | `/api/v1/workers/{id}/jobs` |
@@ -2448,6 +2875,11 @@ The following routes are registered in gateway route setup.
 | POST | `/api/v1/policy/explain` |
 | GET | `/api/v1/policy/snapshots` |
 | GET | `/api/v1/policy/rules` |
+| GET | `/api/v1/policy/velocity-rules` |
+| POST | `/api/v1/policy/velocity-rules` |
+| GET | `/api/v1/policy/velocity-rules/stats` |
+| PUT | `/api/v1/policy/velocity-rules/{id}` |
+| DELETE | `/api/v1/policy/velocity-rules/{id}` |
 | GET | `/api/v1/policy/bundles` |
 | GET | `/api/v1/policy/bundles/{id}` |
 | PUT | `/api/v1/policy/bundles/{id}` |

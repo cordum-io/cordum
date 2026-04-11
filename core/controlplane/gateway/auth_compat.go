@@ -23,6 +23,10 @@ type CompositeAuthProvider = auth.CompositeAuthProvider
 type OIDCProvider = auth.OIDCProvider
 type OIDCConfig = auth.OIDCConfig
 type OIDCAuthAdapter = auth.OIDCAuthAdapter
+type OIDCFlowAdapter = auth.OIDCFlowAdapter
+type SAMLAuthAdapter = auth.SAMLAuthAdapter
+type SAMLService = auth.SAMLService
+type SCIMService = auth.SCIMService
 type AuthConfig = auth.AuthConfig
 type User = auth.User
 type UserStore = auth.UserStore
@@ -35,6 +39,9 @@ type AuthConfigProvider = auth.AuthConfigProvider
 type RouteRegistrar = auth.RouteRegistrar
 type CreateUserRequest = auth.CreateUserRequest
 type ChangePasswordRequest = auth.ChangePasswordRequest
+type RBACStore = auth.RBACStore
+type PermissionChecker = auth.PermissionChecker
+type RoleDefinition = auth.RoleDefinition
 
 // ─── Constant re-exports ────────────────────────────────────────────────────
 
@@ -43,6 +50,15 @@ const (
 	AuthSourceJWT     = auth.AuthSourceJWT
 	AuthSourceOIDC    = auth.AuthSourceOIDC
 	AuthSourceSession = auth.AuthSourceSession
+	samlMetadataPath  = auth.SAMLMetadataPath
+	samlLoginPath     = auth.SAMLLoginPath
+	samlACSPath       = auth.SAMLACSPath
+	oidcLoginPath     = auth.OIDCLoginPath
+	oidcCallbackPath  = auth.OIDCCallbackPath
+	scimBasePath      = auth.SCIMBasePath
+	scimUsersPath     = auth.SCIMUsersPath
+	scimGroupsPath    = auth.SCIMGroupsPath
+	sessionCookieName = auth.SessionCookieName
 )
 
 // ─── Function re-exports (var = pkg.Fn preserves the original signature) ────
@@ -56,12 +72,17 @@ var (
 	newBasicAuthProvider     = auth.NewBasicAuthProvider
 	NewCompositeAuthProvider = auth.NewCompositeAuthProvider
 	NewOIDCAuthAdapter       = auth.NewOIDCAuthAdapter
+	NewOIDCFlowAdapter       = auth.NewOIDCFlowAdapter
 	NewOIDCProvider          = auth.NewOIDCProvider
 	NewOIDCProviderFromEnv   = auth.NewOIDCProviderFromEnv
+	NewSAMLService           = auth.NewSAMLService
+	NewSCIMService           = auth.NewSCIMService
 
 	// Store constructors.
 	NewRedisUserStore    = auth.NewRedisUserStore
 	NewRedisKeyStore     = auth.NewRedisKeyStore
+	NewRBACStore         = auth.NewRBACStore
+	NewPermissionChecker = auth.NewPermissionChecker
 	seedDefaultAdminUser = auth.SeedDefaultAdminUser
 	GenerateRawKey       = auth.GenerateRawKey
 
@@ -70,13 +91,14 @@ var (
 	bcryptCostFromEnv = auth.BcryptCostFromEnv
 
 	// Auth helpers (unexported — used by gateway internals + tests).
-	basicAuthProvider   = auth.ExtractBasicAuth
-	normalizeAPIKey     = auth.NormalizeAPIKey
-	apiKeyFromWebSocket = auth.APIKeyFromWebSocket
-	bearerToken         = auth.BearerToken
-	headerValue         = auth.HeaderValue
-	normalizeRole       = auth.NormalizeRole
-	parseAPIKeys        = auth.ParseAPIKeys
+	basicAuthProvider      = auth.ExtractBasicAuth
+	normalizeAPIKey        = auth.NormalizeAPIKey
+	apiKeyFromWebSocket    = auth.APIKeyFromWebSocket
+	bearerToken            = auth.BearerToken
+	headerValue            = auth.HeaderValue
+	normalizeRole          = auth.NormalizeRole
+	parseAPIKeys           = auth.ParseAPIKeys
+	sessionTokenFromCookie = auth.SessionTokenFromCookie
 )
 
 // ─── Error re-exports ───────────────────────────────────────────────────────
@@ -88,4 +110,6 @@ var (
 	ErrUserDisabled      = auth.ErrUserDisabled
 	ErrLoginThrottled    = auth.ErrLoginThrottled
 	ErrKeyNotFound       = auth.ErrKeyNotFound
+	ErrRoleNotFound      = auth.ErrRoleNotFound
+	ErrBuiltInRole       = auth.ErrBuiltInRole
 )

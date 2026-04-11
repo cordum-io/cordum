@@ -40,8 +40,21 @@ type OIDCConfig struct {
 	Enabled             bool
 	IssuerURL           string
 	Audience            string
-	ClaimTenant         string        // JWT claim -> tenant (default "org_id")
-	ClaimRole           string        // JWT claim -> role (default "cordum_role")
+	ClaimTenant         string // JWT claim -> tenant (default "org_id")
+	ClaimRole           string // JWT claim -> role (default "cordum_role")
+	ClientID            string
+	ClientSecret        string
+	RedirectURI         string
+	Scopes              []string
+	AuthorizationURL    string
+	TokenURL            string
+	UserInfoURL         string
+	EmailClaim          string
+	NameClaim           string
+	UsernameClaim       string
+	DefaultRole         string
+	AutoProvision       bool
+	SyncRoles           bool
 	JWKSRefreshInterval time.Duration // How often to proactively refresh (default 6h)
 	AllowedSigningAlgs  []string      // Restrict algs (default: RS256, RS384, RS512, ES256, ES384, ES512)
 }
@@ -117,6 +130,33 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 	if cfg.ClaimRole == "" {
 		cfg.ClaimRole = "cordum_role"
 	}
+	if cfg.EmailClaim == "" {
+		cfg.EmailClaim = "email"
+	}
+	if cfg.NameClaim == "" {
+		cfg.NameClaim = "name"
+	}
+	if cfg.UsernameClaim == "" {
+		cfg.UsernameClaim = "preferred_username"
+	}
+	if cfg.DefaultRole == "" {
+		cfg.DefaultRole = "viewer"
+	}
+	cfg.DefaultRole = NormalizeRole(cfg.DefaultRole)
+	if cfg.DefaultRole == "" {
+		cfg.DefaultRole = "viewer"
+	}
+	if len(cfg.Scopes) == 0 {
+		cfg.Scopes = []string{"openid", "profile", "email"}
+	} else {
+		cfg.Scopes = normalizeOIDCScopes(cfg.Scopes)
+	}
+	if !cfg.AutoProvision {
+		cfg.AutoProvision = !envBool("CORDUM_OIDC_DISABLE_AUTO_PROVISION")
+	}
+	if !cfg.SyncRoles {
+		cfg.SyncRoles = !envBool("CORDUM_OIDC_DISABLE_ROLE_SYNC")
+	}
 	if cfg.JWKSRefreshInterval <= 0 {
 		cfg.JWKSRefreshInterval = 6 * time.Hour
 	}
@@ -159,12 +199,15 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 		p.allowedAlgs[alg] = struct{}{}
 	}
 
-	// Discover JWKS URI
-	jwksURI, err := p.discover()
+	// Discover provider endpoints.
+	discoveryDoc, err := p.discover()
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery: %w", err)
 	}
-	p.jwksURI = jwksURI
+	p.jwksURI = discoveryDoc.JWKSURI
+	p.cfg.AuthorizationURL = discoveryDoc.AuthorizationEndpoint
+	p.cfg.TokenURL = discoveryDoc.TokenEndpoint
+	p.cfg.UserInfoURL = discoveryDoc.UserInfoEndpoint
 
 	// Fetch initial JWKS with bounded startup context
 	initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -182,15 +225,29 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 // NewOIDCProviderFromEnv creates an OIDCProvider from environment variables.
 // Returns (nil, nil) if OIDC is not enabled.
 func NewOIDCProviderFromEnv() (*OIDCProvider, error) {
-	if !envBool("CORDUM_OIDC_ENABLED") {
+	enabled := envBool("CORDUM_OIDC_ENABLED")
+	clientID := strings.TrimSpace(os.Getenv("CORDUM_OIDC_CLIENT_ID"))
+	if !enabled && clientID == "" {
 		return nil, nil
 	}
 	cfg := OIDCConfig{
-		Enabled:     true,
-		IssuerURL:   strings.TrimSpace(os.Getenv("CORDUM_OIDC_ISSUER")),
-		Audience:    strings.TrimSpace(os.Getenv("CORDUM_OIDC_AUDIENCE")),
-		ClaimTenant: strings.TrimSpace(os.Getenv("CORDUM_OIDC_CLAIM_TENANT")),
-		ClaimRole:   strings.TrimSpace(os.Getenv("CORDUM_OIDC_CLAIM_ROLE")),
+		Enabled:       true,
+		IssuerURL:     strings.TrimSpace(os.Getenv("CORDUM_OIDC_ISSUER")),
+		Audience:      strings.TrimSpace(os.Getenv("CORDUM_OIDC_AUDIENCE")),
+		ClaimTenant:   strings.TrimSpace(os.Getenv("CORDUM_OIDC_CLAIM_TENANT")),
+		ClaimRole:     strings.TrimSpace(os.Getenv("CORDUM_OIDC_CLAIM_ROLE")),
+		ClientID:      clientID,
+		ClientSecret:  strings.TrimSpace(os.Getenv("CORDUM_OIDC_CLIENT_SECRET")),
+		RedirectURI:   strings.TrimSpace(os.Getenv("CORDUM_OIDC_REDIRECT_URI")),
+		EmailClaim:    strings.TrimSpace(os.Getenv("CORDUM_OIDC_EMAIL_CLAIM")),
+		NameClaim:     strings.TrimSpace(os.Getenv("CORDUM_OIDC_NAME_CLAIM")),
+		UsernameClaim: strings.TrimSpace(os.Getenv("CORDUM_OIDC_USERNAME_CLAIM")),
+		DefaultRole:   strings.TrimSpace(os.Getenv("CORDUM_OIDC_DEFAULT_ROLE")),
+		AutoProvision: !envBool("CORDUM_OIDC_DISABLE_AUTO_PROVISION"),
+		SyncRoles:     !envBool("CORDUM_OIDC_DISABLE_ROLE_SYNC"),
+	}
+	if rawScopes := strings.TrimSpace(os.Getenv("CORDUM_OIDC_SCOPES")); rawScopes != "" {
+		cfg.Scopes = normalizeOIDCScopes(splitCSV(rawScopes))
 	}
 	if rawAlgs := strings.TrimSpace(os.Getenv("CORDUM_OIDC_ALLOWED_ALGS")); rawAlgs != "" {
 		algs := normalizeAllowedAlgs(splitCSV(rawAlgs))
@@ -218,22 +275,32 @@ func (p *OIDCProvider) Close() {
 // ValidateJWT parses and validates a JWT token string against the cached JWKS.
 // Returns an AuthContext with identity claims mapped to tenant/role/principal.
 func (p *OIDCProvider) ValidateJWT(tokenString string) (*AuthContext, error) {
+	authCtx, _, err := p.validateJWT(tokenString, p.cfg.Audience)
+	return authCtx, err
+}
+
+// ValidateJWTWithClaims parses and validates a JWT token string and returns the raw claims.
+func (p *OIDCProvider) ValidateJWTWithClaims(tokenString string) (*AuthContext, map[string]any, error) {
+	return p.validateJWT(tokenString, p.cfg.Audience)
+}
+
+func (p *OIDCProvider) validateJWT(tokenString, expectedAudience string) (*AuthContext, map[string]any, error) {
 	parts := strings.Split(tokenString, ".")
 	if len(parts) != 3 {
-		return nil, errors.New("oidc: invalid jwt format")
+		return nil, nil, errors.New("oidc: invalid jwt format")
 	}
 
 	headerRaw, err := decodeSegment(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("oidc: decode header: %w", err)
+		return nil, nil, fmt.Errorf("oidc: decode header: %w", err)
 	}
 	payloadRaw, err := decodeSegment(parts[1])
 	if err != nil {
-		return nil, fmt.Errorf("oidc: decode payload: %w", err)
+		return nil, nil, fmt.Errorf("oidc: decode payload: %w", err)
 	}
 	sig, err := decodeSegment(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("oidc: decode signature: %w", err)
+		return nil, nil, fmt.Errorf("oidc: decode signature: %w", err)
 	}
 
 	var header struct {
@@ -241,75 +308,102 @@ func (p *OIDCProvider) ValidateJWT(tokenString string) (*AuthContext, error) {
 		Kid string `json:"kid"`
 	}
 	if err := json.Unmarshal(headerRaw, &header); err != nil {
-		return nil, fmt.Errorf("oidc: parse header: %w", err)
+		return nil, nil, fmt.Errorf("oidc: parse header: %w", err)
 	}
 	alg := strings.ToUpper(strings.TrimSpace(header.Alg))
 	if alg == "" || alg == "NONE" {
-		return nil, errors.New("oidc: unsupported alg")
+		return nil, nil, errors.New("oidc: unsupported alg")
 	}
 	if !p.isAlgAllowed(alg) {
-		return nil, fmt.Errorf("oidc: alg %q not allowed", alg)
+		return nil, nil, fmt.Errorf("oidc: alg %q not allowed", alg)
 	}
 
 	// Verify signature
 	signingInput := parts[0] + "." + parts[1]
 	if err := p.verifySignature(alg, header.Kid, signingInput, sig); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Parse and validate claims
 	var claims map[string]any
 	if err := json.Unmarshal(payloadRaw, &claims); err != nil {
-		return nil, fmt.Errorf("oidc: parse claims: %w", err)
+		return nil, nil, fmt.Errorf("oidc: parse claims: %w", err)
 	}
-	if err := p.validateClaims(claims); err != nil {
-		return nil, err
+	if err := p.validateClaims(claims, expectedAudience); err != nil {
+		return nil, nil, err
 	}
 
-	return p.authFromClaims(claims), nil
+	return p.authFromClaims(claims), claims, nil
 }
 
-// discover fetches the OpenID Configuration and returns the jwks_uri.
-func (p *OIDCProvider) discover() (string, error) {
+type oidcDiscoveryDocument struct {
+	JWKSURI               string `json:"jwks_uri"`
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	UserInfoEndpoint      string `json:"userinfo_endpoint"`
+}
+
+// discover fetches the OpenID Configuration and returns the validated provider endpoints.
+func (p *OIDCProvider) discover() (*oidcDiscoveryDocument, error) {
 	url := p.cfg.IssuerURL + "/.well-known/openid-configuration"
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	resp, err := p.httpClient.Do(req) // #nosec -- issuer URL is validated during provider initialization.
 	if err != nil {
-		return "", fmt.Errorf("fetch %s: %w", url, err)
+		return nil, fmt.Errorf("fetch %s: %w", url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("oidc discovery returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("oidc discovery returned %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", fmt.Errorf("read discovery: %w", err)
+		return nil, fmt.Errorf("read discovery: %w", err)
 	}
 
-	var doc struct {
-		JWKSURI string `json:"jwks_uri"`
-		Issuer  string `json:"issuer"`
-	}
+	var doc oidcDiscoveryDocument
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return "", fmt.Errorf("parse discovery: %w", err)
+		return nil, fmt.Errorf("parse discovery: %w", err)
 	}
 	if doc.JWKSURI == "" {
-		return "", errors.New("oidc: discovery document missing jwks_uri")
+		return nil, errors.New("oidc: discovery document missing jwks_uri")
 	}
 	// Validate issuer matches config
 	if doc.Issuer != "" && doc.Issuer != p.cfg.IssuerURL {
-		return "", fmt.Errorf("oidc: issuer mismatch: discovery=%q config=%q", doc.Issuer, p.cfg.IssuerURL)
+		return nil, fmt.Errorf("oidc: issuer mismatch: discovery=%q config=%q", doc.Issuer, p.cfg.IssuerURL)
 	}
 	parsedJWKS, err := validateOIDCURL(doc.JWKSURI)
 	if err != nil {
-		return "", fmt.Errorf("oidc: invalid jwks_uri: %w", err)
+		return nil, fmt.Errorf("oidc: invalid jwks_uri: %w", err)
 	}
-	return parsedJWKS.String(), nil
+	doc.JWKSURI = parsedJWKS.String()
+	for label, raw := range map[string]string{
+		"authorization_endpoint": doc.AuthorizationEndpoint,
+		"token_endpoint":         doc.TokenEndpoint,
+		"userinfo_endpoint":      doc.UserInfoEndpoint,
+	} {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		parsed, err := validateOIDCURL(raw)
+		if err != nil {
+			return nil, fmt.Errorf("oidc: invalid %s: %w", label, err)
+		}
+		switch label {
+		case "authorization_endpoint":
+			doc.AuthorizationEndpoint = parsed.String()
+		case "token_endpoint":
+			doc.TokenEndpoint = parsed.String()
+		case "userinfo_endpoint":
+			doc.UserInfoEndpoint = parsed.String()
+		}
+	}
+	return &doc, nil
 }
 
 // refreshJWKS fetches keys from the JWKS endpoint and caches them.
@@ -604,7 +698,7 @@ func verifyEC(key *ecdsa.PublicKey, hashFn func() hash.Hash, sigSize int, signin
 	return nil
 }
 
-func (p *OIDCProvider) validateClaims(claims map[string]any) error {
+func (p *OIDCProvider) validateClaims(claims map[string]any, expectedAudience string) error {
 	now := time.Now()
 	// Validate exp — required to prevent tokens without expiry from granting permanent access
 	exp, ok := numericClaim(claims, "exp")
@@ -625,8 +719,8 @@ func (p *OIDCProvider) validateClaims(claims map[string]any) error {
 		return fmt.Errorf("oidc: issuer mismatch: got %q want %q", iss, p.cfg.IssuerURL)
 	}
 	// Validate aud
-	if p.cfg.Audience != "" {
-		if !audienceMatches(claims["aud"], p.cfg.Audience) {
+	if strings.TrimSpace(expectedAudience) != "" {
+		if !audienceMatches(claims["aud"], expectedAudience) {
 			return errors.New("oidc: audience mismatch")
 		}
 	} else if env.IsProduction() {
@@ -744,6 +838,41 @@ func splitCSV(raw string) []string {
 	return strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t' || r == '\n'
 	})
+}
+
+func normalizeOIDCScopes(scopes []string) []string {
+	seen := make(map[string]struct{}, len(scopes)+1)
+	normalized := make([]string, 0, len(scopes)+1)
+	appendScope := func(scope string) {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return
+		}
+		if _, ok := seen[scope]; ok {
+			return
+		}
+		seen[scope] = struct{}{}
+		normalized = append(normalized, scope)
+	}
+	appendScope("openid")
+	for _, scope := range scopes {
+		appendScope(scope)
+	}
+	return normalized
+}
+
+func maskOIDCSecret(secret string) string {
+	secret = strings.TrimSpace(secret)
+	switch {
+	case secret == "":
+		return ""
+	case len(secret) <= 4:
+		return strings.Repeat("*", len(secret))
+	case len(secret) <= 8:
+		return secret[:2] + strings.Repeat("*", len(secret)-2)
+	default:
+		return secret[:4] + strings.Repeat("*", len(secret)-8) + secret[len(secret)-4:]
+	}
 }
 
 func isSupportedOIDCAlg(alg string) bool {
@@ -879,6 +1008,23 @@ type OIDCAuthAdapter struct {
 // NewOIDCAuthAdapter creates an AuthProvider adapter around an OIDCProvider.
 func NewOIDCAuthAdapter(provider *OIDCProvider, defaultTenant string) *OIDCAuthAdapter {
 	return &OIDCAuthAdapter{provider: provider, defaultTenant: defaultTenant}
+}
+
+func (a *OIDCAuthAdapter) AuthConfig() AuthConfig {
+	cfg := AuthConfig{
+		SessionTTL: authSessionTTLString(),
+	}
+	if a == nil || a.provider == nil {
+		return cfg
+	}
+	providerCfg := a.provider.Config()
+	cfg.OIDCEnabled = providerCfg.Enabled
+	cfg.OIDCIssuer = providerCfg.IssuerURL
+	cfg.OIDCClientID = providerCfg.ClientID
+	cfg.OIDCRedirectURI = providerCfg.RedirectURI
+	cfg.OIDCScopes = append([]string(nil), providerCfg.Scopes...)
+	cfg.OIDCClientSecretMasked = maskOIDCSecret(providerCfg.ClientSecret)
+	return cfg
 }
 
 func (a *OIDCAuthAdapter) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {

@@ -2,7 +2,7 @@
  * DESIGN: "Control Surface" — Login
  * Multi-auth: API Key, Password, OIDC, SAML
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConfigStore } from "@/state/config";
@@ -85,6 +85,39 @@ export function parseLoginUser(value: unknown): User | null {
   };
 }
 
+function buildSamlFragmentUser(fragment: URLSearchParams): User | null {
+  const username =
+    fragment.get("username")?.trim() ||
+    fragment.get("email")?.trim() ||
+    fragment.get("user_id")?.trim() ||
+    "";
+  if (!username) return null;
+
+  const role = fragment.get("role")?.trim() || "viewer";
+  return {
+    id: fragment.get("user_id")?.trim() || username,
+    username,
+    email: fragment.get("email")?.trim() || "",
+    display_name: fragment.get("display_name")?.trim() || username,
+    tenant: fragment.get("tenant")?.trim() || "default",
+    roles: [role],
+  };
+}
+
+export function parseSamlCallbackHash(hash: string): { token: string; user: User } | null {
+  const normalized = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!normalized) return null;
+
+  const fragment = new URLSearchParams(normalized);
+  const token = fragment.get("token")?.trim();
+  if (!token) return null;
+
+  const user = buildSamlFragmentUser(fragment);
+  if (!user) return null;
+
+  return { token, user };
+}
+
 const LOGIN_TIMEOUT = 10_000;
 
 /** Validate returnUrl is a safe relative path — blocks open redirect attacks. */
@@ -122,6 +155,40 @@ export function isSafeApiUrl(url: string): string {
   }
 
   return fallback;
+}
+
+export function buildSamlRedirectTarget(returnUrl: string): string {
+  const target = new URL("/login", window.location.origin);
+  if (returnUrl && returnUrl !== "/") {
+    target.searchParams.set("returnUrl", returnUrl);
+  }
+  return target.toString();
+}
+
+export function buildSamlLoginHref(apiUrl: string, returnUrl: string): string {
+  const baseUrl = isSafeApiUrl(apiUrl);
+  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  const loginUrl = new URL(`${normalizedBaseUrl}/auth/sso/saml/login`, window.location.origin);
+  loginUrl.searchParams.set("redirect", buildSamlRedirectTarget(returnUrl));
+  return loginUrl.toString();
+}
+
+export function buildOidcLoginHref(apiUrl: string, returnUrl: string): string {
+  const baseUrl = isSafeApiUrl(apiUrl);
+  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  const loginUrl = new URL(`${normalizedBaseUrl}/auth/sso/oidc/login`, window.location.origin);
+  loginUrl.searchParams.set("redirect", buildSamlRedirectTarget(returnUrl));
+  return loginUrl.toString();
+}
+
+function parseSSOErrorHash(hash: string): string | null {
+  const normalized = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!normalized) return null;
+  const fragment = new URLSearchParams(normalized);
+  const error = fragment.get("error")?.trim();
+  if (!error) return null;
+  const description = fragment.get("error_description")?.trim();
+  return description || error;
 }
 
 const authModes: {
@@ -181,6 +248,33 @@ export default function LoginPage() {
     toast.success(message, { className: successToastClass });
   const showErrorToast = (message: string) =>
     toast.error(message, { className: errorToastClass });
+
+  useEffect(() => {
+    const normalizedHash = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const token = new URLSearchParams(normalizedHash).get("token")?.trim();
+    if (!token) return;
+
+    const payload = parseSamlCallbackHash(window.location.hash);
+    if (!payload) {
+      showErrorToast("SSO login finished, but the gateway returned incomplete user details");
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      return;
+    }
+
+    login(payload.token, payload.user);
+    showSuccessToast("Signed in");
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    navigate(returnUrl, { replace: true });
+  }, [login, navigate, returnUrl]);
+
+  useEffect(() => {
+    const message = parseSSOErrorHash(window.location.hash);
+    if (!message) return;
+    showErrorToast(message);
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }, []);
 
   const handleApiKeyLogin = async () => {
     if (!apiKey.trim()) {
@@ -291,7 +385,7 @@ export default function LoginPage() {
       toast.warning("Unsafe API URL blocked — using default endpoint");
     }
     toast.info("Redirecting to OIDC provider...");
-    window.location.href = `${baseUrl}/auth/oidc/login`;
+    window.location.href = buildOidcLoginHref(baseUrl, returnUrl);
   };
 
   const handleSamlLogin = () => {
@@ -301,7 +395,7 @@ export default function LoginPage() {
       toast.warning("Unsafe API URL blocked — using default endpoint");
     }
     toast.info("Redirecting to SAML IdP...");
-    window.location.href = `${baseUrl}/auth/saml/login`;
+    window.location.href = buildSamlLoginHref(baseUrl, returnUrl);
   };
 
   const handleSubmit = () => {

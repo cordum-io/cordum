@@ -530,6 +530,37 @@ tenants:
 
 Rules are evaluated top-to-bottom; first match wins.
 
+### Velocity Rule Fragments
+
+Velocity rules are regular `rules[]` entries stored as dedicated policy bundle
+fragments at `cfg:system:policy -> bundles -> velocity/{id}`. They do **not**
+change the safety-kernel evaluator; they only add managed rule fragments that
+use the existing `velocity` block on input rules.
+
+Example fragment:
+
+```yaml
+version: "1"
+rules:
+  - id: login-burst
+    match:
+      topics: ["job.auth.login"]
+      tenants: ["default"]
+      risk_tags: ["auth"]
+    velocity:
+      max_requests: 3
+      window_seconds: 60
+      key: tenant
+    decision: require_approval
+    reason: "Repeated login attempts require review"
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `rules[].velocity.max_requests` | int | Requests allowed inside the sliding window before the rule fires |
+| `rules[].velocity.window_seconds` | int | Sliding-window size in seconds (`1` to `86400`) |
+| `rules[].velocity.key` | string | Bucket key expression (`tenant`, `topic`, `actor_id`, `actor_type`, `capability`, `pack_id`, or `labels.<key>`; compound keys use `:`) |
+
 ### Default Decision
 
 The `default_decision` field at the top of `safety.yaml` controls what happens when no input rule matches a job. The production default is `deny` (fail-closed), meaning unmatched jobs are rejected. To whitelist specific topics, add `decision: allow` rules.
@@ -814,6 +845,79 @@ the IdP and writes the JWKS to `cordum:auth:jwks:<issuerHash>` (TTL 1h). Other r
 from this cache, reducing IdP load from N requests to 1 per refresh cycle. Each replica also
 applies random jitter (0–30s initial, 0–15s per tick) to prevent thundering-herd requests.
 If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior as single-replica).
+
+### Gateway — OIDC Authentication
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_OIDC_ENABLED` | `false` | Enable OIDC JWT validation for bearer tokens |
+| `CORDUM_OIDC_ISSUER` | — | OpenID Connect issuer URL used for discovery |
+| `CORDUM_OIDC_AUDIENCE` | — | Expected audience for bearer-token validation; browser callback validation uses `CORDUM_OIDC_CLIENT_ID` |
+| `CORDUM_OIDC_CLAIM_TENANT` | `org_id` | Claim name used to resolve the Cordum tenant |
+| `CORDUM_OIDC_CLAIM_ROLE` | `cordum_role` | Claim name used to resolve the Cordum role |
+| `CORDUM_OIDC_CLIENT_ID` | — | Enable browser OIDC SSO with this client ID |
+| `CORDUM_OIDC_CLIENT_SECRET` | — | Client secret used during the authorization-code exchange |
+| `CORDUM_OIDC_REDIRECT_URI` | — | Absolute callback URL registered with the IdP (typically `https://<gateway>/api/v1/auth/sso/oidc/callback`) |
+| `CORDUM_OIDC_SCOPES` | `openid,profile,email` | Comma-separated scopes requested during login |
+| `CORDUM_OIDC_STATE_TTL` | `10m` | TTL for OIDC state / nonce tracking entries stored in Redis |
+| `CORDUM_OIDC_ALLOWED_ALGS` | `RS256,RS384,RS512,ES256,ES384,ES512` | Restrict accepted signing algorithms |
+| `CORDUM_OIDC_JWKS_REFRESH_INTERVAL` | `6h` | Background refresh interval for the issuer JWKS cache |
+| `OIDC_JWKS_REFRESH_COOLDOWN` | `1m` | Minimum time between on-demand unknown-`kid` refresh attempts |
+| `CORDUM_OIDC_ISSUER_ALLOWLIST` | — | Optional comma-separated allowlist of issuer hosts/domains |
+| `CORDUM_OIDC_ALLOW_PRIVATE` | `false` in production | Allow private-network issuer hosts in production |
+| `CORDUM_OIDC_ALLOW_HTTP` | `false` in production | Allow plain HTTP issuer / redirect URLs in production |
+| `CORDUM_AUTH_REDIRECT_URL` | `<ui-origin>/login` | Post-auth redirect target used after OIDC or SAML completes |
+| `CORDUM_AUTH_SESSION_TTL` | `24h` | Browser/session token TTL for password, OIDC, and SAML sign-ins |
+
+**Helm / Compose note**: The Helm chart exposes these under `auth.oidc.*`.
+
+### Gateway — SAML Authentication
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_SAML_ENABLED` | `false` | Enable the SAML service-provider endpoints on the gateway |
+| `CORDUM_SAML_IDP_METADATA_URL` | — | Remote IdP metadata URL the gateway should fetch on startup |
+| `CORDUM_SAML_IDP_METADATA` | — | Inline IdP metadata XML (use instead of the URL for air-gapped installs) |
+| `CORDUM_SAML_BASE_URL` | `http://localhost:8081` | External gateway base URL used to publish metadata, ACS, and login endpoints |
+| `CORDUM_SAML_CERT_PATH` | — | PEM certificate path for the service-provider signing / TLS cert |
+| `CORDUM_SAML_KEY_PATH` | — | PEM private-key path paired with `CORDUM_SAML_CERT_PATH` |
+| `CORDUM_SAML_ENTITY_ID` | metadata URL | Explicit SAML entity ID override for the service provider |
+| `CORDUM_SAML_BINDING` | `redirect` | SP-initiated binding used for the login request (`redirect` or `post`) |
+| `CORDUM_SAML_RESPONSE_BINDING` | `post` | Expected ACS response binding (`post` or `redirect`) |
+| `CORDUM_SAML_ALLOW_IDP_INITIATED` | `false` | Allow IdP-initiated SSO responses with no stored RelayState |
+| `CORDUM_SAML_STATE_TTL` | `10m` | TTL for SAML RelayState/request tracking entries stored in Redis |
+| `CORDUM_AUTH_REDIRECT_URL` | `<ui-origin>/login` | Post-auth redirect target used after the ACS callback completes |
+| `CORDUM_AUTH_SESSION_TTL` | `24h` | Browser/session token TTL for password, OIDC, and SAML sign-ins |
+
+**Helm / Compose note**: The Helm chart exposes these under `auth.saml.*`, and `docker-compose.yml` includes the same gateway variables as commented examples for local development.
+
+### Gateway — SCIM Provisioning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_SCIM_BEARER_TOKEN` | — | Shared bearer token required by all SCIM 2.0 provisioning endpoints under `/api/v1/scim/v2/*` |
+
+SCIM provisioning is additionally gated by the `SCIM` license entitlement. When the entitlement is disabled, discovery, user, and group routes return `403 tier_limit_exceeded` even if a bearer token is configured.
+
+If `CORDUM_SCIM_BEARER_TOKEN` is unset, Cordum can generate and store a Redis-backed SCIM token through the admin settings API (`POST /api/v1/scim/settings/token`) and the dashboard page at `/settings/scim`. If the env var is set, that value is used unless an operator later creates a Redis-managed override.
+
+SCIM response locations and the dashboard-published endpoint URL are derived from the external gateway base URL (`CORDUM_API_BASE_URL`, `CORDUM_API_BASE`, or `CORDUM_SAML_BASE_URL`).
+
+**Helm note**: The Helm chart exposes these under `auth.scim.*`, including `auth.scim.existingSecret` for referencing an existing Kubernetes secret instead of placing the bearer token inline.
+
+### Gateway — Advanced RBAC
+
+Advanced RBAC provides role hierarchy with permission-based access control, gated by the `RBAC` license entitlement (Enterprise plan). When the entitlement is disabled, the gateway falls back to basic role string matching (admin/operator/viewer).
+
+RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, operator, viewer) are bootstrapped on startup if not present.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_RBAC_ROLE_DEFS` | — | JSON array of custom role definitions to seed on startup (optional) |
+
+**Dashboard**: The roles management tab at `/settings/users` shows built-in and custom roles. Custom role creation/editing requires the RBAC entitlement.
+
+**API**: Role management endpoints at `/api/v1/auth/roles` (see [API Reference](api-reference.md)).
 
 ### Gateway — User Authentication
 

@@ -91,6 +91,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Govern",
     items: [
       { path: "/govern/overview", label: "Policy Studio", icon: Shield },
+      { path: "/govern/velocity-rules", label: "Velocity Rules", icon: Zap },
       { path: "/govern/tenants", label: "Tenants", icon: Layers },
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
     ],

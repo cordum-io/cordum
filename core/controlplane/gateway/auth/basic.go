@@ -165,6 +165,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 			if redisStore, ok := b.userStore.(*RedisUserStore); ok {
 				authCtx, err := redisStore.ValidateSession(r.Context(), token)
 				if err == nil {
+					authCtx.APIKey = token
 					authCtx.AuthSource = AuthSourceSession
 					return authCtx, nil
 				}
@@ -187,6 +188,9 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 		return nil, errors.New("jwt required")
 	}
 	key := NormalizeAPIKey(r.Header.Get("X-API-Key"))
+	if key == "" {
+		key = sessionTokenFromCookie(r)
+	}
 	if key == "" && (websocket.IsWebSocketUpgrade(r) || strings.TrimSpace(r.Header.Get("Sec-WebSocket-Protocol")) != "") {
 		key = NormalizeAPIKey(APIKeyFromWebSocket(r))
 	}
@@ -279,6 +283,7 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 		if redisStore, ok := b.userStore.(*RedisUserStore); ok {
 			authCtx, err := redisStore.ValidateSession(ctx, key)
 			if err == nil {
+				authCtx.APIKey = key
 				authCtx.AuthSource = AuthSourceSession
 				return authCtx, nil
 			}
@@ -358,7 +363,7 @@ func (b *BasicAuthProvider) AuthConfig() AuthConfig {
 		UserAuthEnabled:  b.userStore != nil,
 		SAMLEnabled:      false,
 		SAMLEnterprise:   true, // SSO is always an enterprise feature
-		SessionTTL:       "24h",
+		SessionTTL:       authSessionTTLString(),
 		RequireRBAC:      false,
 		RequirePrincipal: false,
 		DefaultTenant:    b.defaultTenant,

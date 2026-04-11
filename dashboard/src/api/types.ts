@@ -975,6 +975,11 @@ export interface AuthConfig {
   default_tenant: string;
   oidc_enabled?: boolean;
   oidc_issuer?: string;
+  oidc_login_url?: string;
+  oidc_client_id?: string;
+  oidc_redirect_uri?: string;
+  oidc_scopes?: string[];
+  oidc_client_secret_masked?: string;
 }
 
 export interface ChangePasswordPayload {

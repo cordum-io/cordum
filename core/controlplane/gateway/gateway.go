@@ -110,11 +110,11 @@ type server struct {
 	eventsCh      chan wsEvent
 	wsClientBufSz int
 
-	metrics      infraMetrics.GatewayMetrics
-	tenant       string
-	started      time.Time
-	auth         AuthProvider
-	entitlements *licensing.EntitlementResolver
+	metrics        infraMetrics.GatewayMetrics
+	tenant         string
+	started        time.Time
+	auth           AuthProvider
+	entitlements   *licensing.EntitlementResolver
 	telemetry      *telemetry.Collector
 	telemetryState *telemetry.Store
 
@@ -132,8 +132,12 @@ type server struct {
 	safetyClient          pb.SafetyKernelClient
 	userStore             UserStore
 	keyStore              KeyStore
+	rbacStore             *RBACStore
+	permChecker           *PermissionChecker
 
-	auditExporter audit.AuditSender
+	auditExporter  audit.AuditSender
+	legalHoldStore *audit.LegalHoldStore
+	statusCacheObj *statusCache
 
 	apiRL    rateLimiter
 	publicRL rateLimiter
@@ -251,6 +255,20 @@ func Run(cfg *config.Config) error {
 	return RunWithAuth(cfg, nil)
 }
 
+func samlConfiguredFromEnv() bool {
+	return env.Bool("CORDUM_SAML_ENABLED") ||
+		strings.TrimSpace(os.Getenv("CORDUM_SAML_IDP_METADATA_URL")) != "" ||
+		strings.TrimSpace(os.Getenv("CORDUM_SAML_IDP_METADATA")) != ""
+}
+
+func oidcFlowConfiguredFromEnv() bool {
+	return strings.TrimSpace(os.Getenv("CORDUM_OIDC_CLIENT_ID")) != ""
+}
+
+func scimConfiguredFromEnv() bool {
+	return strings.TrimSpace(os.Getenv("CORDUM_SCIM_BEARER_TOKEN")) != ""
+}
+
 // RunWithAuth starts the gateway with a custom auth provider. When nil, a basic
 // single-tenant provider is used.
 func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers ...*licensing.EntitlementResolver) error {
@@ -270,66 +288,128 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
 	var userStore UserStore
 	var keyStore KeyStore
+	var err error
+	userAuthRequested := env.Bool("CORDUM_USER_AUTH_ENABLED")
+	samlRequested := samlConfiguredFromEnv()
+	oidcFlowRequested := oidcFlowConfiguredFromEnv()
+	scimRequested := scimConfiguredFromEnv() || entitlementResolver.Entitlements().SCIM
+	var basic *BasicAuthProvider
 	if provider == nil {
-		basic, err := newBasicAuthProvider(tenantID)
+		basic, err = newBasicAuthProvider(tenantID)
 		if err != nil {
 			return fmt.Errorf("init auth: %w", err)
 		}
 		provider = basic
-
-		// Initialize user store if enabled via environment
-		if env.Bool("CORDUM_USER_AUTH_ENABLED") {
-			us, err := NewRedisUserStore(cfg.RedisURL)
-			if err != nil {
-				return fmt.Errorf("init user store: %w", err)
-			}
-			userStore = us
-			basic.SetUserStore(us)
-
-			// Initialize managed API key store
-			ks, err := NewRedisKeyStore(cfg.RedisURL)
-			if err != nil {
-				return fmt.Errorf("init key store: %w", err)
-			}
-			keyStore = ks
-			basic.SetKeyStore(ks)
-
-			if strings.TrimSpace(os.Getenv("CORDUM_ADMIN_PASSWORD")) == "" {
-				return fmt.Errorf("cordum_user_auth_enabled is set but cordum_admin_password is empty; set cordum_admin_password to configure the admin account")
-			}
-
-			// Seed default admin user if configured
-			if err := seedDefaultAdminUser(context.Background(), userStore, tenantID); err != nil {
-				slog.Error("seed admin user failed", "error", err)
-			}
+	} else {
+		basic = basicAuthProvider(provider)
+		if usp, ok := provider.(UserStoreProvider); ok {
+			userStore = usp.UserStore()
 		}
+	}
 
-		// Initialize OIDC provider if enabled — wraps basic + OIDC in composite
-		oidcProvider, err := NewOIDCProviderFromEnv()
+	if userStore == nil && (userAuthRequested || samlRequested || oidcFlowRequested || scimRequested) {
+		us, err := NewRedisUserStore(cfg.RedisURL)
 		if err != nil {
-			return fmt.Errorf("init oidc: %w", err)
+			return fmt.Errorf("init user store: %w", err)
 		}
-		if oidcProvider != nil {
-			defer oidcProvider.Close()
-			// Attach Redis client for cross-replica JWKS cache (best effort).
-			if oidcRedis, rErr := redisutil.NewClient(cfg.RedisURL); rErr == nil {
-				oidcProvider.WithRedis(oidcRedis)
-				defer func() { _ = oidcRedis.Close() }()
-			} else {
-				slog.Error("oidc redis cache unavailable, continuing without", "error", rErr)
-			}
-			oidcAdapter := NewOIDCAuthAdapter(oidcProvider, tenantID)
-			composite, err := NewCompositeAuthProvider(basic, oidcAdapter)
+		userStore = us
+		if basic != nil {
+			basic.SetUserStore(us)
+		}
+	} else if basic != nil && basic.UserStore() != nil {
+		userStore = basic.UserStore()
+	}
+
+	if basic != nil && userAuthRequested {
+		ks, err := NewRedisKeyStore(cfg.RedisURL)
+		if err != nil {
+			return fmt.Errorf("init key store: %w", err)
+		}
+		keyStore = ks
+		basic.SetKeyStore(ks)
+
+		if strings.TrimSpace(os.Getenv("CORDUM_ADMIN_PASSWORD")) == "" {
+			return fmt.Errorf("cordum_user_auth_enabled is set but cordum_admin_password is empty; set cordum_admin_password to configure the admin account")
+		}
+
+		if err := seedDefaultAdminUser(context.Background(), basic.UserStore(), tenantID); err != nil {
+			slog.Error("seed admin user failed", "error", err)
+		}
+	}
+
+	// Initialize RBAC store
+	var rbacStore *RBACStore
+	var permChecker *PermissionChecker
+	rbacStore, err = NewRBACStore(cfg.RedisURL)
+	if err != nil {
+		slog.Warn("rbac store init failed, advanced RBAC unavailable", "error", err)
+	} else {
+		if err := rbacStore.BootstrapDefaultRoles(context.Background()); err != nil {
+			slog.Warn("rbac bootstrap default roles failed", "error", err)
+		}
+		permChecker = NewPermissionChecker(rbacStore, func() licensing.Entitlements {
+			return entitlementResolver.Entitlements()
+		})
+	}
+
+	authProviders := []AuthProvider{provider}
+
+	oidcProvider, err := NewOIDCProviderFromEnv()
+	if err != nil {
+		return fmt.Errorf("init oidc: %w", err)
+	}
+	if oidcProvider != nil {
+		defer oidcProvider.Close()
+		if oidcRedis, rErr := redisutil.NewClient(cfg.RedisURL); rErr == nil {
+			oidcProvider.WithRedis(oidcRedis)
+			defer func() { _ = oidcRedis.Close() }()
+		} else {
+			slog.Error("oidc redis cache unavailable, continuing without", "error", rErr)
+		}
+		authProviders = append(authProviders, NewOIDCAuthAdapter(oidcProvider, tenantID))
+		if oidcFlowRequested {
+			oidcFlow, err := NewOIDCFlowAdapter(oidcProvider, userStore, tenantID, entitlementResolver)
 			if err != nil {
-				return fmt.Errorf("init composite auth: %w", err)
+				return fmt.Errorf("init oidc sso: %w", err)
 			}
-			provider = composite
-			oidcCfg := oidcProvider.Config()
-			slog.Info("[OIDC] enabled",
-				"issuer", oidcCfg.IssuerURL,
-				"audience", oidcCfg.Audience,
-			)
+			if oidcFlow != nil && oidcFlow.Enabled() {
+				authProviders = append(authProviders, oidcFlow)
+			}
 		}
+		oidcCfg := oidcProvider.Config()
+		slog.Info("[OIDC] enabled",
+			"issuer", oidcCfg.IssuerURL,
+			"audience", oidcCfg.Audience,
+			"browser_sso", oidcFlowRequested,
+		)
+	}
+
+	if samlRequested {
+		samlService, err := NewSAMLService(userStore, tenantID, entitlementResolver)
+		if err != nil {
+			return fmt.Errorf("init saml: %w", err)
+		}
+		if samlService != nil && samlService.Enabled() {
+			authProviders = append(authProviders, samlService)
+		}
+	}
+
+	if scimRequested {
+		scimService, err := NewSCIMService(userStore, tenantID, entitlementResolver)
+		if err != nil {
+			return fmt.Errorf("init scim: %w", err)
+		}
+		if scimService != nil && scimService.Enabled() {
+			authProviders = append(authProviders, scimService)
+		}
+	}
+
+	if len(authProviders) > 1 {
+		composite, err := NewCompositeAuthProvider(authProviders...)
+		if err != nil {
+			return fmt.Errorf("init composite auth: %w", err)
+		}
+		provider = composite
 	}
 
 	if env.IsProduction() && env.Bool("CORDUM_DASHBOARD_EMBED_API_KEY") {
@@ -482,7 +562,11 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		safetyClient:          safetyClient,
 		userStore:             userStore,
 		keyStore:              keyStore,
+		rbacStore:             rbacStore,
+		permChecker:           permChecker,
 		auditExporter:         auditSender,
+		legalHoldStore:        initLegalHoldStore(cfg.RedisURL),
+		statusCacheObj:        newStatusCache(2 * time.Second),
 		shutdownCh:            make(chan struct{}),
 	}
 	defer s.Close()
@@ -676,6 +760,12 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleCreateKey))
 	mux.HandleFunc("DELETE /api/v1/auth/keys/{id}", s.instrumented("/api/v1/auth/keys/{id}", s.handleRevokeKey))
 
+	// 1.9 RBAC role management (admin only, entitlement-gated)
+	mux.HandleFunc("GET /api/v1/auth/roles", s.instrumented("/api/v1/auth/roles", s.handleListRoles))
+	mux.HandleFunc("GET /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handleGetRole))
+	mux.HandleFunc("PUT /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handlePutRole))
+	mux.HandleFunc("DELETE /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handleDeleteRole))
+
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
 	mux.HandleFunc("GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
@@ -708,6 +798,16 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 2.6 Admin endpoints (read-only, admin auth required)
 	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
+
+	// 2.7 Audit export management (admin only, entitlement-gated)
+	mux.HandleFunc("GET /api/v1/audit/export/health", s.instrumented("/api/v1/audit/export/health", s.handleAuditExportHealth))
+	mux.HandleFunc("GET /api/v1/audit/export/config", s.instrumented("/api/v1/audit/export/config", s.handleAuditExportConfig))
+	mux.HandleFunc("POST /api/v1/audit/export/test", s.instrumented("/api/v1/audit/export/test", s.handleAuditExportTest))
+
+	// 2.8 Legal hold management (admin only, entitlement-gated)
+	mux.HandleFunc("POST /api/v1/audit/legal-hold", s.instrumented("/api/v1/audit/legal-hold", s.handleCreateLegalHold))
+	mux.HandleFunc("GET /api/v1/audit/legal-holds", s.instrumented("/api/v1/audit/legal-holds", s.handleListLegalHolds))
+	mux.HandleFunc("DELETE /api/v1/audit/legal-hold/{id}", s.instrumented("/api/v1/audit/legal-hold/{id}", s.handleReleaseLegalHold))
 
 	// 3. Jobs (Redis ZSet)
 	mux.HandleFunc("GET /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleListJobs))
@@ -798,6 +898,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/policy/output/rules", s.instrumented("/api/v1/policy/output/rules", s.handlePolicyOutputRules))
 	mux.HandleFunc("GET /api/v1/policy/output/stats", s.instrumented("/api/v1/policy/output/stats", s.handlePolicyOutputStats))
 	mux.HandleFunc("PUT /api/v1/policy/output/rules/{id}", s.instrumented("/api/v1/policy/output/rules/{id}", s.handlePutPolicyOutputRule))
+	mux.HandleFunc("GET /api/v1/policy/velocity-rules", s.instrumented("/api/v1/policy/velocity-rules", s.handleVelocityRules))
+	mux.HandleFunc("GET /api/v1/policy/velocity-rules/stats", s.instrumented("/api/v1/policy/velocity-rules/stats", s.handleVelocityRuleStats))
+	mux.HandleFunc("POST /api/v1/policy/velocity-rules", s.instrumented("/api/v1/policy/velocity-rules", s.handleCreateVelocityRule))
+	mux.HandleFunc("PUT /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handlePutVelocityRule))
+	mux.HandleFunc("DELETE /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handleDeleteVelocityRule))
 	mux.HandleFunc("GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
 	mux.HandleFunc("GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
 	mux.HandleFunc("PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))

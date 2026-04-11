@@ -27,12 +27,14 @@ type TierDefaultSpec struct {
 	AuditRetentionDays int64
 	ApprovalMode       ApprovalMode
 	Audit              bool
+	AuditExport        bool
 	RBAC               bool
 	SSO                bool
 	SAML               bool
 	SCIM               bool
 	SIEMExport         bool
 	LegalHold          bool
+	VelocityRules      bool
 	BreakGlassAdmin    bool
 	SupportSLA         bool
 }
@@ -54,7 +56,11 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		AuditRetentionDays: 90,
 		ApprovalMode:       ApprovalModeMulti,
 		Audit:              true,
+		AuditExport:        true,
+		RBAC:               true,
 		BreakGlassAdmin:    true,
+		// SSO, SAML, SCIM available as add-on (set via license entitlements override)
+		// SIEMExport, LegalHold, VelocityRules available as add-on
 	},
 	PlanEnterprise: {
 		MaxWorkers:         Unlimited,
@@ -63,12 +69,14 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		AuditRetentionDays: Unlimited,
 		ApprovalMode:       ApprovalModeCustom,
 		Audit:              true,
+		AuditExport:        true,
 		RBAC:               true,
 		SSO:                true,
 		SAML:               true,
 		SCIM:               true,
 		SIEMExport:         true,
 		LegalHold:          true,
+		VelocityRules:      true,
 		BreakGlassAdmin:    true,
 		SupportSLA:         true,
 	},
@@ -139,12 +147,14 @@ func applyTierDefaultSpec(target *Entitlements, spec TierDefaultSpec) {
 	setNamedIntField(target, spec.AuditRetentionDays, "AuditRetentionDays")
 	setNamedStringField(target, string(spec.ApprovalMode), "ApprovalMode")
 	setNamedBoolField(target, spec.Audit, "Audit")
+	setNamedBoolField(target, spec.AuditExport, "AuditExport")
 	setNamedBoolField(target, spec.RBAC, "RBAC", "AdvancedRBAC")
 	setNamedBoolField(target, spec.SSO, "SSO")
 	setNamedBoolField(target, spec.SAML, "SAML")
 	setNamedBoolField(target, spec.SCIM, "SCIM")
-	setNamedBoolField(target, spec.SIEMExport, "SIEMExport", "AuditExport")
+	setNamedBoolField(target, spec.SIEMExport, "SIEMExport")
 	setNamedBoolField(target, spec.LegalHold, "LegalHold")
+	setNamedBoolField(target, spec.VelocityRules, "VelocityRules")
 	setNamedBoolField(target, spec.BreakGlassAdmin, "BreakGlassAdmin")
 	setNamedBoolField(target, spec.SupportSLA, "SupportSLA")
 }

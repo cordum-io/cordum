@@ -713,6 +713,7 @@ func (s *RedisUserStore) backfillTenantIndex(ctx context.Context) error {
 const (
 	sessionKeyPrefix     = "session:"
 	sessionUserIdxPrefix = "session:user:"
+	samlStateKeyPrefix   = "saml:state:"
 )
 
 // sessionData stores the auth context for a session token.
@@ -819,6 +820,58 @@ func (s *RedisUserStore) ValidateSession(ctx context.Context, token string) (*Au
 		PrincipalID: sd.UserID,
 		Role:        sd.Role,
 	}, nil
+}
+
+// PutSAMLState stores a SAML RelayState entry in Redis with a TTL.
+func (s *RedisUserStore) PutSAMLState(ctx context.Context, state, requestID, redirect string, ttl time.Duration) error {
+	if strings.TrimSpace(state) == "" {
+		return fmt.Errorf("state required")
+	}
+	if ttl <= 0 {
+		return fmt.Errorf("ttl must be positive")
+	}
+	payload, err := json.Marshal(samlStateEntry{
+		RequestID: requestID,
+		Redirect:  redirect,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal saml state: %w", err)
+	}
+	if err := s.client.Set(ctx, samlStateKeyPrefix+state, payload, ttl).Err(); err != nil {
+		return fmt.Errorf("redis set saml state: %w", err)
+	}
+	return nil
+}
+
+// GetSAMLState loads a SAML RelayState entry from Redis.
+func (s *RedisUserStore) GetSAMLState(ctx context.Context, state string) (samlStateEntry, error) {
+	if strings.TrimSpace(state) == "" {
+		return samlStateEntry{}, errSAMLStateNotFound
+	}
+	payload, err := s.client.Get(ctx, samlStateKeyPrefix+state).Bytes()
+	if err == redis.Nil {
+		return samlStateEntry{}, errSAMLStateNotFound
+	}
+	if err != nil {
+		return samlStateEntry{}, fmt.Errorf("redis get saml state: %w", err)
+	}
+	var entry samlStateEntry
+	if err := json.Unmarshal(payload, &entry); err != nil {
+		return samlStateEntry{}, fmt.Errorf("unmarshal saml state: %w", err)
+	}
+	return entry, nil
+}
+
+// DeleteSAMLState removes a SAML RelayState entry from Redis.
+func (s *RedisUserStore) DeleteSAMLState(ctx context.Context, state string) error {
+	if strings.TrimSpace(state) == "" {
+		return nil
+	}
+	if err := s.client.Del(ctx, samlStateKeyPrefix+state).Err(); err != nil {
+		return fmt.Errorf("redis delete saml state: %w", err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

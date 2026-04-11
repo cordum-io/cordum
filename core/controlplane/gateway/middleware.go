@@ -148,8 +148,8 @@ type redisRateLimiter struct {
 const (
 	rateLimitRedisTimeout = 200 * time.Millisecond
 	rateLimitKeyPrefix    = "cordum:rl:"
-	rateLimitWindowSec    = 1  // 1-second sliding window
-	rateLimitTTLSec       = 2  // 2× window for clock-skew safety
+	rateLimitWindowSec    = 1 // 1-second sliding window
+	rateLimitTTLSec       = 2 // 2× window for clock-skew safety
 )
 
 func newRedisRateLimiter(client redis.UniversalClient, rps, burst int) *redisRateLimiter {
@@ -452,14 +452,35 @@ func clientIP(r *http.Request) string {
 // set. This prevents a buggy or malicious provider from bypassing auth on
 // sensitive endpoints.
 var maxPublicPaths = map[string]bool{
-	"/api/v1/auth/config": true,
-	"/api/v1/auth/login":  true,
+	"/api/v1/auth/config":            true,
+	"/api/v1/auth/login":             true,
+	"/api/v1/auth/sso/oidc/login":    true,
+	"/api/v1/auth/sso/oidc/callback": true,
+	"/api/v1/auth/sso/saml/metadata": true,
+	"/api/v1/auth/sso/saml/login":    true,
+	"/api/v1/auth/sso/saml/acs":      true,
+}
+
+var maxPublicPathPrefixes = []string{
+	scimBasePath,
+}
+
+func publicPathWithinCeiling(path string) bool {
+	if maxPublicPaths[path] {
+		return true
+	}
+	for _, prefix := range maxPublicPathPrefixes {
+		if prefix != "" && strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // isAllowedPublicPath returns true only when BOTH the provider AND the
 // hardcoded ceiling agree the path is public.
 func isAllowedPublicPath(auth AuthProvider, path string) bool {
-	if !maxPublicPaths[path] {
+	if !publicPathWithinCeiling(path) {
 		return false
 	}
 	if pp, ok := auth.(PublicPathProvider); ok {

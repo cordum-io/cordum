@@ -107,6 +107,15 @@ func (s *server) activeWorkersSnapshot(now time.Time) []*pb.Heartbeat {
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	// Check cache first — avoids repeated Redis PING + snapshot reads on
+	// every dashboard poll (dashboard polls /api/v1/status every 5-10s).
+	if cached := s.statusCacheObj.Get(); cached != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		writeJSON(w, cached)
+		return
+	}
+
 	now := time.Now().UTC()
 	uptimeSeconds := int64(0)
 	if !s.started.IsZero() {
@@ -230,7 +239,11 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Cache the response for subsequent requests
+	s.statusCacheObj.Set(resp)
+
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", "MISS")
 	writeJSON(w, resp)
 }
 
