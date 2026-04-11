@@ -256,6 +256,11 @@ top-level `bundles` key to prevent future scope corruption.
 Safety kernel merges file/URL policy with config service fragments on load/reload.
 Snapshot hashes are combined (e.g. `baseSnapshot|cfg:<hash>`).
 
+When a pack installs or updates a policy fragment, the installer publishes a NATS
+notification on `sys.config.changed` to signal the safety kernel. The kernel
+picks up the new fragment and reloads policy immediately — no service restart
+required.
+
 Policy rules may include **remediations** to suggest safer alternatives:
 
 ```yaml

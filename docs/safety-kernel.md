@@ -52,6 +52,14 @@ Approval binding behavior:
 - `approval_required` is true for `require_approval`.
 - `approval_ref` is set to the incoming `job_id`.
 
+### Licensing Tier Limits on Velocity Rules
+
+Velocity rules (rate-based policy rules) are capped by the active licensing tier
+entitlements. Community tier gets a limited number of velocity rules; Team tier
+gets a higher limit; Enterprise tier is unlimited. When the velocity rule count
+exceeds the tier limit, excess rules are ignored and a warning is logged during
+policy load.
+
 ## 3. MCP Label Filtering
 
 MCP request context is extracted from job labels:

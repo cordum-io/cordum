@@ -1241,6 +1241,48 @@ Note: There are no `GET /api/v1/approvals/{id}` or `PUT /api/v1/approvals/{id}` 
 - Response: full snapshot object
 - Errors: `400`, `404`
 
+### DELETE `/api/v1/policy/bundles/{id}`
+
+- Auth: required + admin
+- Deletes a policy bundle by ID.
+- Response: `204 No Content`
+- Errors: `400` (invalid id), `404` (not found)
+
+### GET `/api/v1/policy/output/rules`
+
+- Auth: required
+- Response: list of output policy rules.
+
+```json
+{ "items": [{ "id": "rule-1", "name": "PII filter", "enabled": true, "action": "redact", "pattern": "..." }] }
+```
+
+- Errors: auth errors.
+
+### GET `/api/v1/policy/output/stats`
+
+- Auth: required
+- Response: aggregate output policy statistics (quarantine counts, redaction counts, denial counts).
+
+```json
+{ "total_checked": 1024, "quarantined": 12, "redacted": 45, "denied": 3 }
+```
+
+- Errors: auth errors.
+
+### PUT `/api/v1/policy/output/rules/{id}`
+
+- Auth: required + admin
+- Updates an existing output policy rule.
+- Request:
+
+```json
+{ "name": "PII filter", "enabled": true, "action": "redact", "pattern": "..." }
+```
+
+- Response: updated rule object.
+- Errors: `400` (invalid rule), `404` (not found)
+
 ### POST `/api/v1/policy/publish`
 
 - Request schema (`policyPublishRequest`):
@@ -1971,13 +2013,6 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
 - Response: `{"items": [{"name": "job.my-pack.process", "pool": "my-pack", "status": "active", "pack_id": "my-pack", "input_schema_id": "", "output_schema_id": "", "requires": [], "risk_tags": []}]}`
 - Notes: Returns all registered topics from the topic registry. Topics are registered automatically when packs are installed.
 
-### PUT `/api/v1/topics`
-
-- Auth: required + admin
-- Body: `{"name": "job.my-topic", "pool": "my-pool", "status": "active"}`
-- Creates or updates a topic registration. Topic names must start with `job.`.
-- Errors: `400` (validation), auth errors.
-
 ### DELETE `/api/v1/topics/{name}`
 
 - Auth: required + admin
@@ -2012,6 +2047,18 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
 ```
 
 - Errors: `403` (non-admin), plus auth/tenant middleware errors (`401`, `403`).
+
+### GET `/api/v1/workers/{id}`
+
+- Auth: required + admin
+- Response: single `Heartbeat` object for the specified worker.
+- Errors: `404` (worker not found), `403` (non-admin).
+
+### GET `/api/v1/workers/{id}/jobs`
+
+- Auth: required + admin
+- Response: list of jobs currently assigned to or recently completed by the worker.
+- Errors: `404` (worker not found), `403` (non-admin).
 
 ### GET `/metrics`
 
@@ -2201,6 +2248,26 @@ Returns all active distributed locks held in Redis. This is a read-only diagnost
 
 All pool management endpoints require **admin** role.
 
+### GET `/api/v1/pools`
+
+List all worker pools.
+
+**Response (200):**
+```json
+{ "items": [{ "name": "gpu-pool", "status": "active", "requires": ["gpu"], "description": "GPU-enabled pool" }] }
+```
+
+### GET `/api/v1/pools/{name}`
+
+Get details for a specific pool.
+
+**Response (200):**
+```json
+{ "name": "gpu-pool", "status": "active", "requires": ["gpu"], "description": "GPU-enabled pool", "topics": ["job.ml.train"] }
+```
+
+**Errors:** 404 (not found)
+
 ### PUT `/api/v1/pools/{name}`
 
 Create a new worker pool.
@@ -2315,6 +2382,8 @@ The following routes are registered in gateway route setup.
 | POST | `/api/v1/auth/keys` |
 | DELETE | `/api/v1/auth/keys/{id}` |
 | GET | `/api/v1/workers` |
+| GET | `/api/v1/workers/{id}` |
+| GET | `/api/v1/workers/{id}/jobs` |
 | GET | `/api/v1/workers/credentials` |
 | POST | `/api/v1/workers/credentials` |
 | DELETE | `/api/v1/workers/credentials/{worker_id}` |
@@ -2382,6 +2451,7 @@ The following routes are registered in gateway route setup.
 | GET | `/api/v1/policy/bundles` |
 | GET | `/api/v1/policy/bundles/{id}` |
 | PUT | `/api/v1/policy/bundles/{id}` |
+| DELETE | `/api/v1/policy/bundles/{id}` |
 | POST | `/api/v1/policy/bundles/{id}/simulate` |
 | GET | `/api/v1/policy/bundles/snapshots` |
 | POST | `/api/v1/policy/bundles/snapshots` |
@@ -2389,6 +2459,17 @@ The following routes are registered in gateway route setup.
 | POST | `/api/v1/policy/publish` |
 | POST | `/api/v1/policy/rollback` |
 | GET | `/api/v1/policy/audit` |
+| GET | `/api/v1/policy/output/rules` |
+| GET | `/api/v1/policy/output/stats` |
+| PUT | `/api/v1/policy/output/rules/{id}` |
+| GET | `/api/v1/pools` |
+| GET | `/api/v1/pools/{name}` |
+| PUT | `/api/v1/pools/{name}` |
+| PATCH | `/api/v1/pools/{name}` |
+| DELETE | `/api/v1/pools/{name}` |
+| POST | `/api/v1/pools/{name}/drain` |
+| PUT | `/api/v1/pools/{name}/topics/{topic}` |
+| DELETE | `/api/v1/pools/{name}/topics/{topic}` |
 | GET | `/api/v1/admin/locks` |
 | GET | `/api/v1/stream` (websocket upgrade) |
 | GET | `/mcp/sse` |

@@ -75,6 +75,19 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - gRPC service for `BuildWindow` and `UpdateMemory`.
   - Maintains chat history and generic memory under `mem:<memory_id>:*`.
 
+- MCP Server (`cmd/cordum-mcp`; binary `cordum-mcp`)
+  - Model Context Protocol bridge that exposes Cordum capabilities (jobs, workflows, policy) as MCP tools and resources.
+
+- Licensing (`core/licensing/`)
+  - Ed25519-signed license loading and validation with three tiers (Community/Team/Enterprise).
+  - Entitlement enforcement across services: gateway rate limits, scheduler concurrency caps, workflow step limits, safety kernel policy bundle quotas, audit retention periods.
+  - Graceful degradation to Community tier on license expiry.
+  - Config: `CORDUM_LICENSE_FILE`, `CORDUM_LICENSE_TOKEN`, `CORDUM_LICENSE_PUBLIC_KEY`.
+
+- Telemetry (`core/telemetry/`)
+  - Structured metrics collection across all services; Prometheus exposition on each service's metrics port.
+  - License-tier-aware retention and export controls.
+
 - External workers (not in this repo)
   - Subscribe to job topics or direct subjects; honor `sys.job.cancel`.
   - Write results to Redis and publish `sys.job.result`.
@@ -176,6 +189,7 @@ JetStream (optional):
 - `cordum-workflow-engine`
 - `cordum-context-engine`
 - `cordumctl` (CLI)
+- `cordum-mcp` (MCP server)
 
 ## Repo layout
 

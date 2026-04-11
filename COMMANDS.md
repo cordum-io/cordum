@@ -154,6 +154,7 @@ cordumctl pool topic remove <pool-name> job.my-service.process
 # License management
 cordumctl license info                    # display license details (plan, entitlements, expiry)
 cordumctl license install ./license.json  # install license from file
+cordumctl license reload                  # hot-reload license on running gateway (no restart)
 cordumctl status                          # show tier, expiry, usage vs limits
 
 # Health & status

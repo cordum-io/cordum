@@ -438,6 +438,84 @@ done
 - Keep public and enterprise images in separate registries.
 - Audit all API keys and principal roles.
 
+## Licensing Configuration
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CORDUM_LICENSE_FILE` | Path to the license JSON file on disk |
+| `CORDUM_LICENSE_TOKEN` | Inline license token (alternative to file) |
+| `CORDUM_LICENSE_PUBLIC_KEY` | Inline ECDSA public key (PEM) for license signature verification |
+| `CORDUM_LICENSE_PUBLIC_KEY_PATH` | Path to public key file for license verification |
+
+### Tiers
+
+| Tier | Description |
+|------|-------------|
+| **Community** | Default when no license is installed. Enforced limits on workers, concurrent jobs, rate limits, and audit retention. |
+| **Team** | Unlocks higher limits, additional features, and extended audit retention. |
+| **Enterprise** | Full platform capabilities including SAML/SSO, advanced RBAC, unlimited workers, and priority support. |
+
+If no license file or token is provided, the gateway starts in **Community** tier with enforced limits.
+
+### Expiry Lifecycle
+
+1. **Valid** — License is active and within its validity window.
+2. **Warning** (30 days before expiry) — The gateway logs warnings and the dashboard displays an expiry notice. All features remain available.
+3. **Grace period** (14 days after expiry, configurable) — The license is expired but the platform continues operating at its licensed tier with logged warnings.
+4. **Degraded** — After the grace period, the gateway falls back to Community tier limits. The platform never bricks — it degrades gracefully to community defaults.
+
+### CLI Commands
+
+```bash
+cordumctl license install ./license.json   # Install a license from file
+cordumctl license info                     # Display license plan, entitlements, and expiry
+cordumctl license reload                   # Hot-reload license on running gateway (no restart)
+```
+
+### Hot-Reload
+
+Reload a license on a running gateway without restart:
+
+```bash
+curl -X POST https://gateway:8081/api/v1/license/reload \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+The gateway re-reads the license from environment or disk, revalidates the signature, and applies the new entitlements immediately.
+
+## Telemetry Configuration
+
+### Mode
+
+| `CORDUM_TELEMETRY_MODE` | Behavior |
+|--------------------------|----------|
+| `off` | No telemetry data is collected or stored. |
+| `local_only` (default) | Telemetry is collected and stored locally for the dashboard. No data is sent externally. |
+| `anonymous` | Aggregate, anonymized usage data is sent to Cordum. Requires explicit opt-in. |
+
+The default is `local_only` — remote reporting is never enabled without explicit operator opt-in.
+
+### Dashboard Consent
+
+On first visit, the dashboard displays a consent banner explaining telemetry modes. The operator must choose a mode before telemetry data is transmitted externally.
+
+### Inspect Payload
+
+Review exactly what telemetry data would be sent:
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" \
+  https://gateway:8081/api/v1/telemetry/inspect
+```
+
+### Data Principles
+
+- **No PII collected** — telemetry contains only aggregate counts, hashed install ID, and feature flags.
+- No job content, prompts, outputs, user identifiers, or tenant data is ever included.
+- The hashed install ID is a one-way SHA-256 hash of the instance ID — it cannot be reversed to identify the installation.
+
 ## 9) K8s Hardening (recommended)
 
 - Requests/limits for every pod (already in `deploy/k8s/base.yaml`).
@@ -956,6 +1034,11 @@ Complete list of production-relevant environment variables:
 | `REDIS_TLS_KEY` | All | Redis TLS client key path |
 | `REDIS_CLUSTER_ADDRESSES` | All | Redis cluster seed node addresses |
 | `CORDUM_LICENSE_REQUIRED` | Gateway | Enforce enterprise license check |
+| `CORDUM_LICENSE_FILE` | Gateway | Path to license JSON file |
+| `CORDUM_LICENSE_TOKEN` | Gateway | Inline license token |
+| `CORDUM_LICENSE_PUBLIC_KEY` | Gateway | Inline ECDSA public key for license verification |
+| `CORDUM_LICENSE_PUBLIC_KEY_PATH` | Gateway | Path to public key file for license verification |
+| `CORDUM_TELEMETRY_MODE` | Gateway | Telemetry mode: `off`, `local_only` (default), `anonymous` |
 
 ---
 

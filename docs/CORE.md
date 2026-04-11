@@ -366,10 +366,14 @@ P2 core should evolve to:
 
 ## 16) Enterprise licensing and entitlements
 
-Status: Planned. Enterprise features are licensed add-ons (SSO/SAML, advanced
-RBAC, SIEM export, support SLA, custom pack development, managed/on-prem
-deployment). Enterprise binaries and tooling live in the enterprise and tools
-repos; this repo stays platform-only.
+Status: Implemented. Licensing lives in `core/licensing/` with Ed25519 signature
+verification and three tiers (Community/Team/Enterprise). Entitlement enforcement
+is applied across all services: gateway rate limits, scheduler concurrency caps,
+workflow step limits, safety kernel policy bundle quotas, and audit retention
+periods. Licenses degrade gracefully on expiry (services continue at Community
+tier). Enterprise add-ons (license issuance, SSO/SAML, advanced RBAC, SIEM
+export, support SLA) live in the enterprise and tools repos; this repo provides
+the loading, validation, and tier enforcement layer.
 
 ---
 
@@ -561,7 +565,7 @@ Optional: a lightweight dashboard that talks to the gateway for run/status visib
 - Datadog/Coralogix/GitHub/K8s connectors (**packages only**)
 - LLM providers / prompt logic (**packages only**)
 - SRE Investigator logic (**package**)
-- MCP proxy/controller logic (**separate service/package later**)
+- MCP proxy/controller logic (**separate service — `cmd/cordum-mcp/` provides the MCP server bridge**)
 
 Core should provide **governance + runtime**, not domain logic.
 

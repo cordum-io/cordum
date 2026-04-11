@@ -99,7 +99,19 @@ graph LR
 
 ## Quickstart
 
-**Prerequisites:** Docker (4GB+ RAM), Docker Compose, Go 1.24+
+### First Time?
+
+| Goal | Path |
+|------|------|
+| **Just want to try it?** | `./tools/scripts/quickstart.sh` (below) |
+| **Manual step-by-step?** | [docs/quickstart.md](docs/quickstart.md) |
+| **Developing Cordum?** | [CONTRIBUTING.md](CONTRIBUTING.md) |
+
+### Prerequisites
+
+- **Docker Desktop v4+** or **Docker CLI v20.10+** with **Compose v2** (4GB+ RAM allocated)
+- **jq** (recommended, for parsing API responses)
+- **Go 1.24+** (optional, only needed for `cordumctl` or cert generation)
 
 ```bash
 git clone https://github.com/cordum-io/cordum.git
@@ -165,6 +177,8 @@ Also available on GHCR: `ghcr.io/cordum-io/cordum/{service}:{version}`
 | 9093 | Workflow Engine Health |
 | 50051 | Safety Kernel (gRPC) |
 | 50400 | Context Engine (gRPC) |
+
+> **Port conflicts?** If any port is already in use, either stop the conflicting service or override ports in your `.env` file before starting the stack.
 
 ### After Setup
 
