@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import { useConfigStore } from "../state/config";
+import { generateUUID } from "../lib/uuid";
 import { logger } from "../lib/logger";
 import type { TopicsResponse } from "./types";
 
@@ -29,7 +30,7 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------------------
 
 function requestId(): string {
-  return crypto.randomUUID();
+  return generateUUID();
 }
 
 function authHeaders(): Record<string, string> {

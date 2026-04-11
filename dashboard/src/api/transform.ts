@@ -1,4 +1,5 @@
 import YAML from "yaml";
+import { generateUUID } from "../lib/uuid";
 import { logger } from "../lib/logger";
 import { normalizeRunStatusValue } from "../lib/runVisibility";
 import type {
@@ -554,7 +555,7 @@ export function mapOutputSafetyRecord(
 export function mapJobRecord(record: BackendJobRecord): Job {
   let id = record.id;
   if (!id) {
-    id = crypto.randomUUID();
+    id = generateUUID();
     logger.warn("transform", "Job record with empty ID, assigned placeholder", { placeholderId: id });
   }
   const updatedAt = microsToISO(record.updated_at);
