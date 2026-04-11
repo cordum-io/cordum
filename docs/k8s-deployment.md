@@ -199,17 +199,17 @@ The `production/kustomization.yaml` composes:
 ```yaml
 images:
   - name: cordum-context-engine
-    newTag: v0.1.0
+    newTag: v0.9.7
   - name: cordum-safety-kernel
-    newTag: v0.1.0
+    newTag: v0.9.7
   - name: cordum-scheduler
-    newTag: v0.1.0
+    newTag: v0.9.7
   - name: cordum-api-gateway
-    newTag: v0.1.0
+    newTag: v0.9.7
   - name: cordum-workflow-engine
-    newTag: v0.1.0
+    newTag: v0.9.7
   - name: cordum-dashboard
-    newTag: v0.1.0
+    newTag: v0.9.7
 ```
 
 **Replica overrides:**
@@ -758,7 +758,7 @@ The `cordum-helm/` directory provides an alternative deployment method using Hel
 
 ```
 cordum-helm/
-├── Chart.yaml                          # Chart metadata (v0.1.4)
+├── Chart.yaml                          # Chart metadata (v0.9.7)
 ├── values.yaml                         # Default values
 ├── README.md                           # Chart documentation
 └── templates/
@@ -778,7 +778,7 @@ cordum-helm/
 | Key | Default | Description |
 |-----|---------|-------------|
 | `global.image.repository` | `ghcr.io/cordum-io/cordum/control-plane` | Base image for control plane services |
-| `global.image.tag` | `v0.1.4` | Image tag for all services |
+| `global.image.tag` | `v0.9.7` | Image tag for all services |
 | `secrets.apiKey` | `""` | API key (required) |
 | `secrets.adminPassword` | `""` | Admin password for user auth |
 | `nats.enabled` | `true` | Deploy bundled NATS |
@@ -822,7 +822,7 @@ Create a `values-production.yaml` file:
 # values-production.yaml
 global:
   image:
-    tag: "v0.1.4"
+    tag: "v0.9.7"
 
 secrets:
   apiKey: ""  # Set via --set or external secret

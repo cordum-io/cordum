@@ -399,7 +399,7 @@ Document a restore drill and run it at least quarterly.
 - Use versioned images and a staged rollout (dev -> staging -> prod).
 - Validate schema/policy changes in staging before publish.
 - Keep backward compatibility for workflow payloads.
-- The production K8s overlay pins all images to `v0.1.0` — update `kustomization.yaml` images section for upgrades.
+- The production K8s overlay pins all images to `v0.9.7` — update `kustomization.yaml` images section for upgrades.
 
 ### Rolling Upgrade Procedure
 

@@ -51,7 +51,7 @@ variables from your shell, so keep the `export` lines when running scripts.
 ### Use GHCR Images (Release Builds)
 
 ```bash
-export CORDUM_VERSION=v0.1.4
+export CORDUM_VERSION=v0.9.7
 docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```

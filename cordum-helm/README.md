@@ -33,7 +33,7 @@ helm install cordum cordum/cordum -n cordum --create-namespace \
   --set dashboard.env.tenantId=default
 ```
 
-Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.4`)
+Note: the chart defaults to the image tags in `values.yaml` (currently `v0.9.7`)
 and pulls from GHCR. Override `global.image.tag` and `dashboard.image.tag` if
 your registry uses different tags.
 
@@ -44,7 +44,7 @@ Common overrides:
 ```bash
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
-  --set global.image.tag=v0.1.4 \
+  --set global.image.tag=v0.9.7 \
   --set secrets.apiKey=$(openssl rand -hex 32) \
   --set redis.auth.password=$(openssl rand -hex 32) \
   --set gateway.env.tenantId=default \
