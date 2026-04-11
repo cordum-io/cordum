@@ -15,7 +15,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DialogOverlay } from "@/components/ui/DialogOverlay";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
 import { useLicense } from "@/hooks/useLicense";
-import { Search, UserPlus, Users, Shield, Trash2, X, Mail, Key, Plus, Check, Lock } from "lucide-react";
+import { Search, UserPlus, Users, Shield, Trash2, X, Mail, Key, Plus, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { friendlyError } from "@/lib/friendlyError";
