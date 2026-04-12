@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -162,7 +161,6 @@ const (
 // RBACStore manages RBAC role definitions in Redis.
 type RBACStore struct {
 	client *redis.Client
-	mu     sync.RWMutex
 }
 
 // NewRBACStore creates a new Redis-backed RBAC store.

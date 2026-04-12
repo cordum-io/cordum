@@ -191,9 +191,8 @@ func NewSAMLAuthAdapter(store UserStore, defaultTenant string, resolver *licensi
 	if !ok {
 		return nil, errors.New("saml requires session-capable user store")
 	}
-	stateStore := newMemorySAMLStateStore()
+	stateStore := samlStateStore(newMemorySAMLStateStore())
 	if redisStore, ok := store.(*RedisUserStore); ok && redisStore != nil && redisStore.client != nil {
-		stateStore = nil
 		return newConfiguredSAMLAuthAdapter(store, sessionStore, &redisSAMLStateStore{client: redisStore.client}, defaultTenant, resolver)
 	}
 	return newConfiguredSAMLAuthAdapter(store, sessionStore, stateStore, defaultTenant, resolver)
@@ -776,7 +775,7 @@ func readMaybeFile(raw string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return io.ReadAll(file)
 }
 

@@ -303,8 +303,7 @@ func TestOIDCFlowCallbackCreatesSessionFromMappedClaims(t *testing.T) {
 	if !strings.HasPrefix(location.String(), "http://localhost:8081/login?returnUrl=") {
 		t.Fatalf("unexpected redirect %q", location.String())
 	}
-	fragment := url.Values{}
-	fragment, err = url.ParseQuery(location.Fragment)
+	fragment, err := url.ParseQuery(location.Fragment)
 	if err != nil {
 		t.Fatalf("ParseQuery fragment: %v", err)
 	}

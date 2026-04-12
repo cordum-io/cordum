@@ -183,7 +183,7 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.publishConfigChanged(policyConfigScope, policyConfigID)
-	s.appendPolicyAudit(r.Context(), policyAuditEntry{
+	_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{
 		Action:       "create",
 		ResourceType: "velocity_rule",
 		ResourceID:   def.ID,
@@ -303,7 +303,7 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.publishConfigChanged(policyConfigScope, policyConfigID)
-	s.appendPolicyAudit(r.Context(), policyAuditEntry{
+	_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{
 		Action:       "edit",
 		ResourceType: "velocity_rule",
 		ResourceID:   def.ID,
@@ -351,7 +351,7 @@ func (s *server) handleDeleteVelocityRule(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.publishConfigChanged(policyConfigScope, policyConfigID)
-	s.appendPolicyAudit(r.Context(), policyAuditEntry{
+	_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{
 		Action:       "delete",
 		ResourceType: "velocity_rule",
 		ResourceID:   ruleID,
