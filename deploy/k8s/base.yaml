@@ -479,6 +479,35 @@ spec:
           value: :50070
         - name: CONTEXT_ENGINE_METRICS_ADDR
           value: :9094
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
         ports:
         - containerPort: 50070
         - containerPort: 9094
@@ -577,6 +606,35 @@ spec:
           value: :50051
         - name: SAFETY_POLICY_PATH
           value: /etc/cordum/safety.yaml
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
         volumeMounts:
         - name: cordum-safety
           mountPath: /etc/cordum
@@ -683,6 +741,35 @@ spec:
           value: /etc/cordum/pools.yaml
         - name: TIMEOUT_CONFIG_PATH
           value: /etc/cordum/timeouts.yaml
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
         volumeMounts:
         - name: cordum-pools
           mountPath: /etc/cordum/pools.yaml
@@ -841,6 +928,35 @@ spec:
               name: cordum-admin-creds
               key: CORDUM_ADMIN_EMAIL
               optional: true
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
         ports:
         - containerPort: 8080
         - containerPort: 8081
@@ -947,6 +1063,35 @@ spec:
           value: 5s
         - name: WORKFLOW_ENGINE_RUN_SCAN_LIMIT
           value: "200"
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
         ports:
         - containerPort: 9093
         livenessProbe:
@@ -1094,4 +1239,3 @@ spec:
   - name: http
     port: 8080
     targetPort: 8080
-

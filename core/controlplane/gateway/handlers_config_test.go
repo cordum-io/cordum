@@ -282,3 +282,139 @@ func TestConfigWritePublishesNotification_NilBus(t *testing.T) {
 		t.Fatalf("expected 204 even without bus, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestSetConfigRejectsBundlesInSystemDefault(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	payload := map[string]any{
+		"bundles": map[string]any{
+			"test-pack/default": map[string]any{"content": "allow"},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleSetConfig(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if resp["error"] != "bundles must be written to system/policy scope, not system/default" {
+		t.Fatalf("unexpected error: %v", resp["error"])
+	}
+}
+
+func TestSetConfigAllowsBundlesInSystemPolicy(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	payload := map[string]any{
+		"scope":    "system",
+		"scope_id": "policy",
+		"data": map[string]any{
+			"bundles": map[string]any{
+				"test-pack/default": map[string]any{"content": "allow"},
+			},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleSetConfig(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+	doc, err := s.configSvc.Get(context.Background(), configsvc.ScopeSystem, "policy")
+	if err != nil {
+		t.Fatalf("get policy config: %v", err)
+	}
+	bundles, ok := doc.Data["bundles"].(map[string]any)
+	if !ok || bundles["test-pack/default"] == nil {
+		t.Fatalf("expected bundles written to system/policy, got %v", doc.Data["bundles"])
+	}
+}
+
+func TestMigrateLegacyPolicyBundlesMovesDefaultBundlesToPolicy(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"pools": map[string]any{
+				"topics": map[string]any{"job.default": "default"},
+			},
+			"bundles": map[string]any{
+				"legacy-only": map[string]any{"content": "legacy"},
+				"existing":    map[string]any{"content": "stale"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed default config: %v", err)
+	}
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "policy",
+		Data: map[string]any{
+			"bundles": map[string]any{
+				"existing": map[string]any{"content": "current"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed policy config: %v", err)
+	}
+
+	migrated, count, err := migrateLegacyPolicyBundles(ctx, s.configSvc)
+	if err != nil {
+		t.Fatalf("migrate legacy bundles: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration to run")
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 legacy bundles counted, got %d", count)
+	}
+
+	defaultDoc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "default")
+	if err != nil {
+		t.Fatalf("get default config: %v", err)
+	}
+	if _, exists := defaultDoc.Data["bundles"]; exists {
+		t.Fatalf("expected bundles removed from system/default, got %v", defaultDoc.Data["bundles"])
+	}
+	if _, ok := defaultDoc.Data["pools"].(map[string]any); !ok {
+		t.Fatalf("expected sibling pools data preserved, got %v", defaultDoc.Data["pools"])
+	}
+
+	policyDoc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "policy")
+	if err != nil {
+		t.Fatalf("get policy config: %v", err)
+	}
+	bundles, ok := policyDoc.Data["bundles"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected bundles map in policy doc, got %T", policyDoc.Data["bundles"])
+	}
+	legacyOnly, ok := bundles["legacy-only"].(map[string]any)
+	if !ok || legacyOnly["content"] != "legacy" {
+		t.Fatalf("expected legacy-only bundle migrated, got %v", bundles["legacy-only"])
+	}
+	existing, ok := bundles["existing"].(map[string]any)
+	if !ok || existing["content"] != "current" {
+		t.Fatalf("expected existing policy bundle preserved, got %v", bundles["existing"])
+	}
+
+	migrated, count, err = migrateLegacyPolicyBundles(ctx, s.configSvc)
+	if err != nil {
+		t.Fatalf("second migration: %v", err)
+	}
+	if migrated || count != 0 {
+		t.Fatalf("expected idempotent no-op on second run, got migrated=%v count=%d", migrated, count)
+	}
+}

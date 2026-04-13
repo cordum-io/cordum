@@ -19,26 +19,47 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import {
-  Search, RefreshCw, ListChecks, Plus, Eye, Download,
-  ArrowUpDown, ArrowUp, ArrowDown, Shield, X,
+  Search,
+  RefreshCw,
+  ListChecks,
+  Plus,
+  Eye,
+  Download,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Shield,
+  X,
 } from "lucide-react";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { friendlyError } from "@/lib/friendlyError";
 import { toast } from "sonner";
 import { useSubmitJob } from "@/hooks/useJobs";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { safeLocalStorage } from "@/lib/storage";
 
 function jobStatusVariant(status: string) {
   switch (status) {
-    case "running": return "healthy" as const;
-    case "succeeded": return "healthy" as const;
-    case "failed": case "failed_fatal": return "danger" as const;
-    case "denied": return "governance" as const;
-    case "failed_retryable": return "warning" as const;
-    case "pending": case "scheduled": return "warning" as const;
-    case "dispatched": return "info" as const;
-    default: return "muted" as const;
+    case "running":
+      return "healthy" as const;
+    case "succeeded":
+      return "healthy" as const;
+    case "failed":
+    case "failed_fatal":
+      return "danger" as const;
+    case "denied":
+      return "governance" as const;
+    case "failed_retryable":
+      return "warning" as const;
+    case "pending":
+    case "scheduled":
+      return "warning" as const;
+    case "dispatched":
+      return "info" as const;
+    default:
+      return "muted" as const;
   }
 }
 
@@ -46,17 +67,47 @@ type SortKey = "status" | "id" | "topic" | "safety" | "attempts" | "updatedAt";
 type SortDir = "asc" | "desc";
 
 const statusOrder: Record<string, number> = {
-  running: 0, pending: 1, scheduled: 2, dispatched: 3, succeeded: 4, failed: 5, failed_retryable: 5, failed_fatal: 6, cancelled: 7,
+  running: 0,
+  pending: 1,
+  scheduled: 2,
+  dispatched: 3,
+  succeeded: 4,
+  failed: 5,
+  failed_retryable: 5,
+  failed_fatal: 6,
+  cancelled: 7,
 };
 
 const safetyOrder: Record<string, number> = {
-  deny: 0, require_approval: 1, throttle: 2, allow_with_constraints: 3, allow: 4,
+  deny: 0,
+  require_approval: 1,
+  throttle: 2,
+  allow_with_constraints: 3,
+  allow: 4,
 };
 
+export function readStoredJobsPageSize(): number {
+  const raw = safeLocalStorage.getItem("cordum-jobs-page-size");
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 50;
+  }
+  return parsed;
+}
 
-function SubmitJobDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SubmitJobDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
   const navigate = useNavigate();
   const submitJob = useSubmitJob();
+  const dialogRef = useDialogA11y(onClose, {
+    enabled: open,
+    initialFocusSelector: '[data-autofocus="true"]',
+  });
   const [topic, setTopic] = useState("");
   const [prompt, setPrompt] = useState("");
   const [priority, setPriority] = useState("normal");
@@ -64,7 +115,11 @@ function SubmitJobDialog({ open, onClose }: { open: boolean; onClose: () => void
   const handleSubmit = () => {
     if (!topic.trim() || !prompt.trim()) return;
     submitJob.mutate(
-      { topic: topic.trim(), prompt: prompt.trim(), priority: priority as "low" | "normal" | "high" | "critical" },
+      {
+        topic: topic.trim(),
+        prompt: prompt.trim(),
+        priority: priority as "low" | "normal" | "high" | "critical",
+      },
       {
         onSuccess: (data) => {
           toast.success("Job submitted");
@@ -86,58 +141,99 @@ function SubmitJobDialog({ open, onClose }: { open: boolean; onClose: () => void
     <AnimatePresence>
       {open && (
         <>
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-sm" onClick={onClose} />
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-sm"
+            onClick={onClose}
+          />
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[91] w-[520px] max-w-[90vw] bg-surface-1 border border-border rounded-xl shadow-2xl"
           >
-            <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-              <h2 className="font-display font-semibold text-foreground">Submit Job</h2>
-              <button type="button" onClick={onClose} className="p-1 rounded hover:bg-surface-2 text-muted-foreground"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="px-6 py-5 space-y-4">
-              <div>
-                <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">Topic *</label>
-                <Input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. job.code-review" />
+            <div
+              ref={dialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="submit-job-dialog-title"
+            >
+              <div className="px-6 py-4 border-b border-border flex items-center justify-between">
+                <h2
+                  id="submit-job-dialog-title"
+                  className="font-display font-semibold text-foreground"
+                >
+                  Submit Job
+                </h2>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="Close submit job dialog"
+                  className="p-1 rounded hover:bg-surface-2 text-muted-foreground"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-              <div>
-                <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">Prompt *</label>
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  rows={4}
-                  placeholder="Describe the task for the agent..."
-                  className="w-full px-3 py-2 text-xs bg-surface-0 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cordum/30 resize-none"
-                />
+              <div className="px-6 py-5 space-y-4">
+                <div>
+                  <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">
+                    Topic *
+                  </label>
+                  <Input
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    placeholder="e.g. job.code-review"
+                    aria-label="Job topic"
+                    data-autofocus="true"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">
+                    Prompt *
+                  </label>
+                  <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    rows={4}
+                    placeholder="Describe the task for the agent..."
+                    aria-label="Job prompt"
+                    className="w-full px-3 py-2 text-xs bg-surface-0 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cordum/30 resize-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">
+                    Priority
+                  </label>
+                  <Select
+                    value={priority}
+                    onChange={(e) => setPriority(e.target.value)}
+                    aria-label="Job priority"
+                    options={[
+                      { value: "low", label: "Low" },
+                      { value: "normal", label: "Normal" },
+                      { value: "high", label: "High" },
+                      { value: "critical", label: "Critical" },
+                    ]}
+                    className="w-40"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">Priority</label>
-                <Select
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
-                  options={[
-                    { value: "low", label: "Low" },
-                    { value: "normal", label: "Normal" },
-                    { value: "high", label: "High" },
-                    { value: "critical", label: "Critical" },
-                  ]}
-                  className="w-40"
-                />
+              <div className="px-6 py-4 border-t border-border flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={submitJob.isPending}
+                  disabled={!topic.trim() || !prompt.trim()}
+                  onClick={handleSubmit}
+                >
+                  Submit
+                </Button>
               </div>
-            </div>
-            <div className="px-6 py-4 border-t border-border flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-              <Button
-                variant="primary"
-                size="sm"
-                loading={submitJob.isPending}
-                disabled={!topic.trim() || !prompt.trim()}
-                onClick={handleSubmit}
-              >
-                Submit
-              </Button>
             </div>
           </motion.div>
         </>
@@ -156,15 +252,17 @@ export default function JobsPage() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [searchParams, setSearchParams] = useSearchParams();
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
-  const [pageSize, setPageSize] = useState(() =>
-    parseInt(localStorage.getItem("cordum-jobs-page-size") ?? "50", 10),
-  );
+  const [pageSize, setPageSize] = useState(readStoredJobsPageSize);
 
   const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useQuery({
     queryKey: ["jobs"],
     queryFn: async () => {
-      const res = await get<{ items: BackendJobRecord[]; total?: number }>("/jobs?limit=500");
-      const items = (res.items ?? []).map(mapJobRecord).filter((j): j is Job => !!j);
+      const res = await get<{ items: BackendJobRecord[]; total?: number }>(
+        "/jobs?limit=500",
+      );
+      const items = (res.items ?? [])
+        .map(mapJobRecord)
+        .filter((j): j is Job => !!j);
       return { items, total: res.total ?? items.length };
     },
     refetchInterval: 10_000,
@@ -176,46 +274,85 @@ export default function JobsPage() {
     return jobs.map((j) => ({
       ...j,
       _safetyDecision: j.safetyDecision?.type as string | undefined,
-      _matchedRules: j.safetyDecision?.matchedRule ? [j.safetyDecision.matchedRule] : [],
+      _matchedRules: j.safetyDecision?.matchedRule
+        ? [j.safetyDecision.matchedRule]
+        : [],
     }));
   }, [jobs]);
 
-  const tabs = useMemo(() => [
-    { id: "all", label: "All", count: enrichedJobs.length },
-    { id: "running", label: "Running", count: enrichedJobs.filter(j => j.status === "running").length },
-    { id: "pending", label: "Pending", count: enrichedJobs.filter(j => j.status === "pending" || j.status === "scheduled").length },
-    { id: "succeeded", label: "Completed", count: enrichedJobs.filter(j => j.status === "succeeded").length },
-    { id: "failed", label: "Failed", count: enrichedJobs.filter(j => j.status === "failed").length },
-  ], [enrichedJobs]);
+  const tabs = useMemo(
+    () => [
+      { id: "all", label: "All", count: enrichedJobs.length },
+      {
+        id: "running",
+        label: "Running",
+        count: enrichedJobs.filter((j) => j.status === "running").length,
+      },
+      {
+        id: "pending",
+        label: "Pending",
+        count: enrichedJobs.filter(
+          (j) => j.status === "pending" || j.status === "scheduled",
+        ).length,
+      },
+      {
+        id: "succeeded",
+        label: "Completed",
+        count: enrichedJobs.filter((j) => j.status === "succeeded").length,
+      },
+      {
+        id: "failed",
+        label: "Failed",
+        count: enrichedJobs.filter((j) => j.status === "failed").length,
+      },
+    ],
+    [enrichedJobs],
+  );
 
-  const safetyTabs = useMemo(() => [
-    { id: "all", label: "All Decisions" },
-    { id: "allow", label: "Allow" },
-    { id: "deny", label: "Deny" },
-    { id: "require_approval", label: "Approval" },
-    { id: "allow_with_constraints", label: "Constrained" },
-    { id: "throttle", label: "Throttle" },
-  ], []);
+  const safetyTabs = useMemo(
+    () => [
+      { id: "all", label: "All Decisions" },
+      { id: "allow", label: "Allow" },
+      { id: "deny", label: "Deny" },
+      { id: "require_approval", label: "Approval" },
+      { id: "allow_with_constraints", label: "Constrained" },
+      { id: "throttle", label: "Throttle" },
+    ],
+    [],
+  );
 
-  const toggleSort = useCallback((key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("desc");
-    }
-  }, [sortKey]);
+  const toggleSort = useCallback(
+    (key: SortKey) => {
+      if (sortKey === key) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setSortKey(key);
+        setSortDir("desc");
+      }
+    },
+    [sortKey],
+  );
 
   /** Returns aria + keyboard props for a sortable column header. */
-  const sortableThProps = useCallback((col: SortKey) => ({
-    role: "columnheader" as const,
-    tabIndex: 0,
-    "aria-sort": (sortKey === col ? (sortDir === "asc" ? "ascending" : "descending") : "none") as "ascending" | "descending" | "none",
-    onClick: () => toggleSort(col),
-    onKeyDown: (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSort(col); }
-    },
-  }), [sortKey, sortDir, toggleSort]);
+  const sortableThProps = useCallback(
+    (col: SortKey) => ({
+      role: "columnheader" as const,
+      tabIndex: 0,
+      "aria-sort": (sortKey === col
+        ? sortDir === "asc"
+          ? "ascending"
+          : "descending"
+        : "none") as "ascending" | "descending" | "none",
+      onClick: () => toggleSort(col),
+      onKeyDown: (e: React.KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleSort(col);
+        }
+      },
+    }),
+    [sortKey, sortDir, toggleSort],
+  );
 
   const filtered = useMemo(() => {
     let result = enrichedJobs.filter((j) => {
@@ -226,7 +363,8 @@ export default function JobsPage() {
         } else if (j.status !== activeTab) return false;
       }
       // Safety decision filter
-      if (safetyFilter !== "all" && j._safetyDecision !== safetyFilter) return false;
+      if (safetyFilter !== "all" && j._safetyDecision !== safetyFilter)
+        return false;
       // Search
       if (search) {
         const q = search.toLowerCase();
@@ -252,13 +390,17 @@ export default function JobsPage() {
           cmp = (a.topic ?? "").localeCompare(b.topic ?? "");
           break;
         case "safety":
-          cmp = (safetyOrder[a._safetyDecision as string] ?? 99) - (safetyOrder[b._safetyDecision as string] ?? 99);
+          cmp =
+            (safetyOrder[a._safetyDecision as string] ?? 99) -
+            (safetyOrder[b._safetyDecision as string] ?? 99);
           break;
         case "attempts":
           cmp = (a.attempts ?? 0) - (b.attempts ?? 0);
           break;
         case "updatedAt":
-          cmp = new Date(a.updatedAt ?? 0).getTime() - new Date(b.updatedAt ?? 0).getTime();
+          cmp =
+            new Date(a.updatedAt ?? 0).getTime() -
+            new Date(b.updatedAt ?? 0).getTime();
           break;
       }
       return sortDir === "asc" ? cmp : -cmp;
@@ -278,12 +420,15 @@ export default function JobsPage() {
 
   const handlePageChange = useCallback(
     (p: number) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (p <= 1) next.delete("page");
-        else next.set("page", String(p));
-        return next;
-      }, { replace: true });
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (p <= 1) next.delete("page");
+          else next.set("page", String(p));
+          return next;
+        },
+        { replace: true },
+      );
     },
     [setSearchParams],
   );
@@ -291,12 +436,15 @@ export default function JobsPage() {
   const handlePageSizeChange = useCallback(
     (size: number) => {
       setPageSize(size);
-      localStorage.setItem("cordum-jobs-page-size", String(size));
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("page");
-        return next;
-      }, { replace: true });
+      safeLocalStorage.setItem("cordum-jobs-page-size", String(size));
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("page");
+          return next;
+        },
+        { replace: true },
+      );
     },
     [setSearchParams],
   );
@@ -312,9 +460,20 @@ export default function JobsPage() {
 
   const exportCSV = () => {
     const rows = filtered.map((j) =>
-      [j.id, j.status, j.topic ?? "", j._safetyDecision ?? "", j._matchedRules.join(";"), j.attempts ?? 0, j.updatedAt ?? ""].join(",")
+      [
+        j.id,
+        j.status,
+        j.topic ?? "",
+        j._safetyDecision ?? "",
+        j._matchedRules.join(";"),
+        j.attempts ?? 0,
+        j.updatedAt ?? "",
+      ].join(","),
     );
-    const csv = ["id,status,topic,safety_decision,matched_rules,attempts,updatedAt", ...rows].join("\n");
+    const csv = [
+      "id,status,topic,safety_decision,matched_rules,attempts,updatedAt",
+      ...rows,
+    ].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -326,14 +485,24 @@ export default function JobsPage() {
   };
 
   const SortIcon = ({ col }: { col: SortKey }) => {
-    if (sortKey !== col) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30" />;
-    return sortDir === "asc" ? <ArrowUp className="w-3 h-3 ml-1 text-cordum" /> : <ArrowDown className="w-3 h-3 ml-1 text-cordum" />;
+    if (sortKey !== col)
+      return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30" />;
+    return sortDir === "asc" ? (
+      <ArrowUp className="w-3 h-3 ml-1 text-cordum" />
+    ) : (
+      <ArrowDown className="w-3 h-3 ml-1 text-cordum" />
+    );
   };
 
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
 
   if (isError) {
-    return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load jobs"} onRetry={() => void refetch()} />;
+    return (
+      <ErrorBanner
+        message={error instanceof Error ? error.message : "Failed to load jobs"}
+        onRetry={() => void refetch()}
+      />
+    );
   }
 
   return (
@@ -357,7 +526,11 @@ export default function JobsPage() {
               <RefreshCw className="w-3 h-3 mr-1" />
               Refresh
             </Button>
-            <Button variant="primary" size="sm" onClick={() => setShowSubmit(true)}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setShowSubmit(true)}
+            >
               <Plus className="w-3 h-3 mr-1" />
               Submit Job
             </Button>
@@ -379,7 +552,8 @@ export default function JobsPage() {
         </div>
         <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
           {tabs.map((tab) => (
-            <button type="button"
+            <button
+              type="button"
               key={tab.id}
               onClick={() => setActiveTabAndResetPage(tab.id)}
               className={cn(
@@ -391,7 +565,9 @@ export default function JobsPage() {
             >
               {tab.label}
               {tab.count > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-mono bg-surface-2">{tab.count}</span>
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-mono bg-surface-2">
+                  {tab.count}
+                </span>
               )}
             </button>
           ))}
@@ -401,10 +577,13 @@ export default function JobsPage() {
       {/* Safety Decision Filter */}
       <div className="flex items-center gap-2">
         <Shield className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Safety:</span>
+        <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">
+          Safety:
+        </span>
         <div className="flex items-center gap-1">
           {safetyTabs.map((tab) => (
-            <button type="button"
+            <button
+              type="button"
               key={tab.id}
               onClick={() => setSafetyFilter(tab.id)}
               className={cn(
@@ -429,15 +608,31 @@ export default function JobsPage() {
         <EmptyState
           icon={<ListChecks className="w-5 h-5" />}
           title="No jobs found"
-          description={search || activeTab !== "all" || safetyFilter !== "all" ? "Try adjusting your search or filters" : "No jobs have been submitted yet"}
+          description={
+            search || activeTab !== "all" || safetyFilter !== "all"
+              ? "Try adjusting your search or filters"
+              : "No jobs have been submitted yet"
+          }
           action={
             search || activeTab !== "all" || safetyFilter !== "all" ? (
-              <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setActiveTabAndResetPage("all"); setSafetyFilter("all"); }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearch("");
+                  setActiveTabAndResetPage("all");
+                  setSafetyFilter("all");
+                }}
+              >
                 <X className="w-3 h-3 mr-1" />
                 Clear all filters
               </Button>
             ) : (
-              <Button variant="primary" size="sm" onClick={() => setShowSubmit(true)}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setShowSubmit(true)}
+              >
                 <Plus className="w-3 h-3 mr-1" />
                 Submit Job
               </Button>
@@ -452,68 +647,119 @@ export default function JobsPage() {
           className="instrument-card overflow-hidden"
         >
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[800px]">
-            <thead>
-              <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("status")}>
-                  <span className="inline-flex items-center">Status <SortIcon col="status" /></span>
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("id")}>
-                  <span className="inline-flex items-center">Job ID <SortIcon col="id" /></span>
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("topic")}>
-                  <span className="inline-flex items-center">Topic <SortIcon col="topic" /></span>
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("safety")}>
-                  <span className="inline-flex items-center">Safety Decision <SortIcon col="safety" /></span>
-                </th>
-                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("attempts")}>
-                  <span className="inline-flex items-center justify-center">Attempts <SortIcon col="attempts" /></span>
-                </th>
-                <th
-                  className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                  onClick={() => toggleSort("updatedAt")}
-                >
-                  <span className="inline-flex items-center justify-end">Updated <SortIcon col="updatedAt" /></span>
-                </th>
-                <th className="px-5 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedJobs.map((job) => (
-                <tr
-                  key={job.id}
-                  {...clickableRowProps(() => navigate(`/jobs/${job.id}`))}
-                  className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
-                >
-                  <td className="px-5 py-3">
-                    <StatusBadge variant={jobStatusVariant(job.status)} dot pulse={job.status === "running"}>
-                      {job.status}
-                    </StatusBadge>
-                    {job.labels?.safety_bypassed === "true" && (
-                      <span className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono font-medium bg-[var(--color-warning)]/15 text-[var(--color-warning)] border border-[var(--color-warning)]/20" title="Safety bypassed via fail-open">
-                        Bypassed
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 font-mono text-sm text-cordum group-hover:underline">{job.id.slice(0, 16)}</td>
-                  <td className="px-5 py-3 text-sm text-foreground">{job.topic || "—"}</td>
-                  <td className="px-5 py-3">
-                    <SafetyDecisionBadge decision={job._safetyDecision} matchedRules={job._matchedRules} />
-                  </td>
-                  <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">{job.attempts ?? 0}</td>
-                  <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">
-                    {job.updatedAt ? formatRelativeTime(new Date(job.updatedAt).toISOString()) : "—"}
-                  </td>
-                  <td className="px-5 py-3">
-                    <button type="button" className="p-1 rounded hover:bg-surface-2 transition-colors" aria-label="View details">
-                      <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-                    </button>
-                  </td>
+            <table className="w-full min-w-[800px]">
+              <thead>
+                <tr className="border-b border-border bg-surface-0">
+                  <th
+                    className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
+                    {...sortableThProps("status")}
+                  >
+                    <span className="inline-flex items-center">
+                      Status <SortIcon col="status" />
+                    </span>
+                  </th>
+                  <th
+                    className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
+                    {...sortableThProps("id")}
+                  >
+                    <span className="inline-flex items-center">
+                      Job ID <SortIcon col="id" />
+                    </span>
+                  </th>
+                  <th
+                    className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
+                    {...sortableThProps("topic")}
+                  >
+                    <span className="inline-flex items-center">
+                      Topic <SortIcon col="topic" />
+                    </span>
+                  </th>
+                  <th
+                    className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
+                    {...sortableThProps("safety")}
+                  >
+                    <span className="inline-flex items-center">
+                      Safety Decision <SortIcon col="safety" />
+                    </span>
+                  </th>
+                  <th
+                    className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
+                    {...sortableThProps("attempts")}
+                  >
+                    <span className="inline-flex items-center justify-center">
+                      Attempts <SortIcon col="attempts" />
+                    </span>
+                  </th>
+                  <th
+                    className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
+                    onClick={() => toggleSort("updatedAt")}
+                  >
+                    <span className="inline-flex items-center justify-end">
+                      Updated <SortIcon col="updatedAt" />
+                    </span>
+                  </th>
+                  <th className="px-5 py-3"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {paginatedJobs.map((job) => (
+                  <tr
+                    key={job.id}
+                    {...clickableRowProps(() => navigate(`/jobs/${job.id}`))}
+                    className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
+                  >
+                    <td className="px-5 py-3">
+                      <StatusBadge
+                        variant={jobStatusVariant(job.status)}
+                        dot
+                        pulse={job.status === "running"}
+                      >
+                        {job.status}
+                      </StatusBadge>
+                      {job.labels?.safety_bypassed === "true" && (
+                        <span
+                          className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono font-medium bg-[var(--color-warning)]/15 text-[var(--color-warning)] border border-[var(--color-warning)]/20"
+                          title="Safety bypassed via fail-open"
+                        >
+                          Bypassed
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 font-mono text-sm text-cordum group-hover:underline">
+                      {job.id.slice(0, 16)}
+                    </td>
+                    <td className="px-5 py-3 text-sm text-foreground">
+                      {job.topic || "—"}
+                    </td>
+                    <td className="px-5 py-3">
+                      <SafetyDecisionBadge
+                        decision={job._safetyDecision}
+                        matchedRules={job._matchedRules}
+                      />
+                    </td>
+                    <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">
+                      {job.attempts ?? 0}
+                    </td>
+                    <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">
+                      {job.updatedAt
+                        ? formatRelativeTime(
+                            new Date(job.updatedAt).toISOString(),
+                          )
+                        : "—"}
+                    </td>
+                    <td className="px-5 py-3">
+                      <button
+                        type="button"
+                        className="p-1 rounded hover:bg-surface-2 transition-colors"
+                        aria-label="View details"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
           <div className="px-5 py-2 border-t border-border bg-surface-0">
             <Pagination
@@ -526,7 +772,8 @@ export default function JobsPage() {
           </div>
           <div className="flex items-center justify-between px-5 py-2 text-xs font-mono text-muted-foreground">
             <span>
-              {filtered.length} of {enrichedJobs.length} jobs (sorted by {sortKey} {sortDir})
+              {filtered.length} of {enrichedJobs.length} jobs (sorted by{" "}
+              {sortKey} {sortDir})
             </span>
           </div>
         </motion.div>

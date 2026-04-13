@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -13,11 +15,18 @@ import (
 	"sync/atomic"
 
 	capvalidate "github.com/cordum-io/cap/v2/sdk/go"
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
+	infraSchema "github.com/cordum/cordum/core/infra/schema"
+	infraStore "github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -37,6 +46,8 @@ const (
 	safetyThrottleDelay = 5 * time.Second
 	safetyCheckTimeout  = 3 * time.Second
 	maxRenewalFailures  = 3
+	workerCountKey      = "cordum:workers:count"
+	workerCountTTL      = 2 * time.Minute
 
 	// maxSchedulingRetries caps the number of scheduling attempts before
 	// a job is moved to FAILED + DLQ. With exponential backoff (1s→30s max)
@@ -50,25 +61,33 @@ const (
 
 // Engine wires together bus interactions, safety checks, and scheduling decisions.
 type Engine struct {
-	bus                 Bus
-	safety              SafetyChecker
-	outputSafety        OutputSafetyChecker
-	outputSafetyEnabled atomic.Bool
-	asyncFailOpen       atomic.Bool // true = allow on output policy error, false = quarantine
-	inputFailOpen       atomic.Bool // true = allow when kernel down, false = requeue
-	registry            WorkerRegistry
-	strategy            SchedulingStrategy
-	jobStore            JobStore
-	dlqSink             DLQSink
-	metrics             Metrics
-	config              ConfigProvider
-	saga                *SagaManager
-	counterClient       redis.UniversalClient // optional, for operational counters shared across services
-	stopped             atomic.Bool
-	activeHandlers      atomic.Int64
-	wg                  sync.WaitGroup
-	ctx                 context.Context
-	cancel              context.CancelFunc
+	bus                     Bus
+	safety                  SafetyChecker
+	outputSafety            OutputSafetyChecker
+	outputSafetyEnabled     atomic.Bool
+	asyncFailOpen           atomic.Bool // true = allow on output policy error, false = quarantine
+	inputFailOpen           atomic.Bool // true = allow when kernel down, false = requeue
+	registry                WorkerRegistry
+	strategy                SchedulingStrategy
+	jobStore                JobStore
+	dlqSink                 DLQSink
+	metrics                 Metrics
+	config                  ConfigProvider
+	topicRegistry           *topicregistry.Service
+	workerCredentialCache   *WorkerCredentialCache
+	workerAttestation       WorkerAttestationMode
+	workerReadinessRequired bool
+	schemaRegistry          *infraSchema.Registry
+	schemaEnforcement       infraSchema.EnforcementMode
+	saga                    *SagaManager
+	entitlements            *licensing.EntitlementResolver
+	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
+	counterClient           redis.UniversalClient // optional, for operational counters shared across services
+	stopped                 atomic.Bool
+	activeHandlers          atomic.Int64
+	wg                      sync.WaitGroup
+	ctx                     context.Context
+	cancel                  context.CancelFunc
 }
 
 func jobLockKey(jobID string) string {
@@ -211,15 +230,23 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 
 func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy SchedulingStrategy, jobStore JobStore, metrics Metrics) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
+	var contextClient redis.UniversalClient
+	if provider, ok := jobStore.(interface{ Client() redis.UniversalClient }); ok {
+		contextClient = provider.Client()
+	}
 	return &Engine{
-		bus:      bus,
-		safety:   safety,
-		registry: registry,
-		strategy: strategy,
-		jobStore: jobStore,
-		metrics:  metrics,
-		ctx:      ctx,
-		cancel:   cancel,
+		bus:                     bus,
+		safety:                  safety,
+		registry:                registry,
+		strategy:                strategy,
+		jobStore:                jobStore,
+		metrics:                 metrics,
+		contextClient:           contextClient,
+		workerAttestation:       ParseWorkerAttestationMode(os.Getenv("WORKER_ATTESTATION")),
+		workerReadinessRequired: workerReadinessRequiredFromEnv(),
+		schemaEnforcement:       infraSchema.ParseEnforcementMode(os.Getenv("SCHEMA_ENFORCEMENT")),
+		ctx:                     ctx,
+		cancel:                  cancel,
 	}
 }
 
@@ -227,6 +254,44 @@ func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy 
 func (e *Engine) WithConfig(cfg ConfigProvider) *Engine {
 	e.config = cfg
 	return e
+}
+
+// WithTopicRegistry wires the canonical topic registry used for direct bus validation.
+func (e *Engine) WithTopicRegistry(registry *topicregistry.Service) *Engine {
+	e.topicRegistry = registry
+	return e
+}
+
+func (e *Engine) WithSchemaRegistry(registry *infraSchema.Registry) *Engine {
+	e.schemaRegistry = registry
+	return e
+}
+
+func (e *Engine) WithWorkerCredentialCache(cache *WorkerCredentialCache) *Engine {
+	e.workerCredentialCache = cache
+	return e
+}
+
+func (e *Engine) WithWorkerAttestationMode(mode WorkerAttestationMode) *Engine {
+	e.workerAttestation = mode.Normalized()
+	return e
+}
+
+func (e *Engine) WithContextClient(client redis.UniversalClient) *Engine {
+	e.contextClient = client
+	return e
+}
+
+func (e *Engine) WithSchemaEnforcement(mode infraSchema.EnforcementMode) *Engine {
+	e.schemaEnforcement = mode.Normalized()
+	return e
+}
+
+func (e *Engine) schemaValidationMode() infraSchema.EnforcementMode {
+	if e == nil {
+		return infraSchema.EnforcementWarn
+	}
+	return e.schemaEnforcement.Normalized()
 }
 
 // WithSaga wires a saga manager for compensation tracking.
@@ -264,6 +329,64 @@ func (e *Engine) WithOutputSafetyEnabled(enabled bool) *Engine {
 func (e *Engine) WithCounterClient(c redis.UniversalClient) *Engine {
 	e.counterClient = c
 	return e
+}
+
+// WithEntitlements wires the shared runtime entitlement resolver used for
+// scheduler-side tier enforcement. Nil falls back to community defaults.
+func (e *Engine) WithEntitlements(resolver *licensing.EntitlementResolver) *Engine {
+	e.entitlements = resolver
+	return e
+}
+
+func (e *Engine) currentEntitlements() licensing.Entitlements {
+	if e != nil && e.entitlements != nil {
+		return e.entitlements.Entitlements()
+	}
+	return licensing.DefaultEntitlements(licensing.PlanCommunity)
+}
+
+func (e *Engine) currentWorkerCount(ctx context.Context) (int, error) {
+	if e == nil {
+		return 0, nil
+	}
+	if e.counterClient != nil {
+		count, err := e.counterClient.SCard(ctx, workerCountKey).Result()
+		if err == nil {
+			return int(count), nil
+		}
+		if !errors.Is(err, redis.Nil) {
+			slog.Warn("scheduler worker count read failed", "error", err)
+		}
+	}
+	if e.registry == nil {
+		return 0, nil
+	}
+	return len(e.registry.Snapshot()), nil
+}
+
+func (e *Engine) persistWorkerCount(ctx context.Context) {
+	if e == nil || e.counterClient == nil || e.registry == nil {
+		return
+	}
+	snapshot := e.registry.Snapshot()
+	pipe := e.counterClient.TxPipeline()
+	pipe.Del(ctx, workerCountKey)
+	if len(snapshot) > 0 {
+		members := make([]any, 0, len(snapshot))
+		for workerID := range snapshot {
+			workerID = strings.TrimSpace(workerID)
+			if workerID != "" {
+				members = append(members, workerID)
+			}
+		}
+		if len(members) > 0 {
+			pipe.SAdd(ctx, workerCountKey, members...)
+			pipe.Expire(ctx, workerCountKey, workerCountTTL)
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		slog.Warn("scheduler worker count persist failed", "error", err)
+	}
 }
 
 // WithAsyncFailMode sets the behavior when async output checks fail/timeout.
@@ -317,6 +440,14 @@ func (e *Engine) Start() error {
 	if err := e.bus.Subscribe(capsdk.SubjectHandshake, "", e.HandlePacket); err != nil {
 		return fmt.Errorf("subscribe handshake: %w", err)
 	}
+	if e.workerAttestationMode().Enabled() && e.workerCredentialCache != nil {
+		if err := e.workerCredentialCache.Refresh(e.ctx); err != nil {
+			slog.Warn("worker credential cache initial refresh failed", "error", err)
+		}
+		if err := e.bus.Subscribe(capsdk.SubjectConfigChanged, "", e.handleConfigChangedPacket); err != nil {
+			return fmt.Errorf("subscribe config changed: %w", err)
+		}
+	}
 
 	// Periodic registry stats logging for diagnostics
 	type registryStatter interface {
@@ -344,7 +475,18 @@ func (e *Engine) Start() error {
 	return nil
 }
 
-func (e *Engine) HandlePacket(p *pb.BusPacket) error {
+func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("scheduler: packet subscription panic",
+				"panic", r,
+				"stack", string(debug.Stack()),
+				"trace_id", safeTraceID(p),
+				"sender_id", safeSenderID(p),
+			)
+			err = RetryAfter(fmt.Errorf("scheduler packet handler panic: %v", r), retryDelayStore)
+		}
+	}()
 	if p == nil {
 		return nil
 	}
@@ -371,6 +513,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 		if hb == nil {
 			return nil
 		}
+		if !e.allowWorkerHeartbeat(p, hb) {
+			return nil
+		}
 		slog.Info("heartbeat received",
 			"worker_id", hb.WorkerId,
 			"type", hb.Type,
@@ -380,6 +525,11 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 			"pool", hb.Pool,
 		)
 		e.registry.UpdateHeartbeat(hb)
+		if e.counterClient != nil {
+			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+			e.persistWorkerCount(ctx)
+			cancel()
+		}
 		return nil
 	case *pb.BusPacket_JobRequest:
 		req := payload.JobRequest
@@ -484,6 +634,7 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 			"role", hs.Role.String(),
 			"sdk_version", hs.SdkVersion,
 			"supported_versions", hs.SupportedVersions,
+			"ready_topics", readyTopicsFromHandshake(hs),
 		)
 		if hs.Role == pb.ComponentRole_COMPONENT_ROLE_WORKER {
 			e.registry.UpdateHandshake(hs)
@@ -493,6 +644,174 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) error {
 		// Unknown payloads are ignored for now.
 		return nil
 	}
+}
+
+func (e *Engine) handleConfigChangedPacket(p *pb.BusPacket) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("scheduler: config subscription panic",
+				"panic", r,
+				"stack", string(debug.Stack()),
+				"trace_id", safeTraceID(p),
+				"sender_id", safeSenderID(p),
+			)
+			err = nil
+		}
+	}()
+	if p == nil || e.workerCredentialCache == nil {
+		return nil
+	}
+	alert := p.GetAlert()
+	if alert == nil || !strings.EqualFold(strings.TrimSpace(alert.GetMessage()), "config changed") {
+		return nil
+	}
+	scope := strings.TrimSpace(alert.GetDetails()["scope"])
+	scopeID := strings.TrimSpace(alert.GetDetails()["scope_id"])
+	if scope != string(configsvc.ScopeSystem) || scopeID != "workers" {
+		return nil
+	}
+	parentCtx := e.ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	go func(traceID, senderID, scope, scopeID string) {
+		ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
+		defer cancel()
+		if err := e.workerCredentialCache.Refresh(ctx); err != nil {
+			slog.Warn("worker credential cache refresh failed",
+				"scope", scope,
+				"scope_id", scopeID,
+				"trace_id", traceID,
+				"sender_id", senderID,
+				"error", err,
+			)
+			return
+		}
+	}(safeTraceID(p), safeSenderID(p), scope, scopeID)
+	return nil
+}
+
+func (e *Engine) workerAttestationMode() WorkerAttestationMode {
+	return e.workerAttestation.Normalized()
+}
+
+func (e *Engine) allowWorkerHeartbeat(packet *pb.BusPacket, hb *pb.Heartbeat) bool {
+	if hb == nil {
+		return true
+	}
+
+	workerID := strings.TrimSpace(hb.GetWorkerId())
+	mode := e.workerAttestationMode()
+	if mode.Enabled() {
+		senderID := safeSenderID(packet)
+		token := authTokenFromPacket(packet)
+
+		reject := func(reason string, record *workercredentials.Credential, err error) bool {
+			fields := []any{
+				"worker_id", workerID,
+				"sender_id", senderID,
+				"pool", strings.TrimSpace(hb.GetPool()),
+				"mode", mode,
+				"reason", reason,
+			}
+			if record != nil {
+				fields = append(fields, "pack_id", record.PackID)
+			}
+			if err != nil {
+				fields = append(fields, "error", err)
+			}
+			if mode.Enforced() {
+				slog.Error("worker heartbeat rejected: attestation failed", fields...)
+				return false
+			}
+			slog.Warn("worker heartbeat accepted without attestation", fields...)
+			return true
+		}
+
+		if senderID == "" || senderID != workerID {
+			return reject("sender_id_mismatch", nil, nil)
+		}
+		if e.workerCredentialCache == nil {
+			return reject("credential_cache_unavailable", nil, nil)
+		}
+		if token == "" {
+			return reject("auth_token_missing", nil, nil)
+		}
+
+		record, ok, err := e.workerCredentialCache.Verify(workerID, token)
+		if err != nil {
+			return reject("credential_verify_error", nil, err)
+		}
+		if !ok || record == nil {
+			return reject("credential_invalid", nil, nil)
+		}
+		if !poolAllowed(record.AllowedPools, strings.TrimSpace(hb.GetPool())) {
+			return reject("pool_not_allowed", record, nil)
+		}
+	}
+
+	if workerID != "" && e.registry != nil && !e.registry.IsAlive(workerID) {
+		countCtx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+		defer cancel()
+		currentWorkers, err := e.currentWorkerCount(countCtx)
+		if err != nil {
+			slog.Warn("worker limit check skipped: count unavailable",
+				"worker_id", workerID,
+				"error", err,
+			)
+			return true
+		}
+		if limitErr := licensing.CheckWorkerLimit(int64(currentWorkers+1), e.currentEntitlements()); limitErr != nil {
+			slog.Warn("worker heartbeat rejected: tier worker limit exceeded",
+				"worker_id", workerID,
+				"current", currentWorkers,
+				"allowed", limitErr.Allowed,
+				"upgrade_url", limitErr.UpgradeURL,
+			)
+			return false
+		}
+	}
+	return true
+}
+
+func poolAllowed(allowed []string, pool string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	pool = strings.TrimSpace(pool)
+	for _, candidate := range allowed {
+		if strings.TrimSpace(candidate) == pool {
+			return true
+		}
+	}
+	return false
+}
+
+func authTokenFromPacket(packet *pb.BusPacket) string {
+	if packet == nil {
+		return ""
+	}
+	raw := packet.ProtoReflect().GetUnknown()
+	for len(raw) > 0 {
+		fieldNum, wireType, tagLen := protowire.ConsumeTag(raw)
+		if tagLen < 0 {
+			return ""
+		}
+		raw = raw[tagLen:]
+		if fieldNum == 18 && wireType == protowire.BytesType {
+			value, valueLen := protowire.ConsumeBytes(raw)
+			if valueLen < 0 {
+				return ""
+			}
+			return strings.TrimSpace(string(value))
+		}
+		valueLen := protowire.ConsumeFieldValue(fieldNum, wireType, raw)
+		if valueLen < 0 {
+			return ""
+		}
+		raw = raw[valueLen:]
+	}
+	return ""
 }
 
 // Stop prevents new packet handling, then waits for in-flight handlers
@@ -639,6 +958,29 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	jobID := strings.TrimSpace(req.JobId)
 	topic := strings.TrimSpace(req.Topic)
 	dispatchStart := time.Now()
+	reg, registryEmpty, err := e.topicRegistration(lockCtx, topic)
+	if err != nil {
+		return RetryAfter(err, retryDelayStore)
+	} else if !registryEmpty && (reg == nil || reg.Status == topicregistry.StatusDisabled) {
+		slog.Warn("unknown topic rejected",
+			"job_id", jobID,
+			"topic", topic,
+			"trace_id", traceID,
+		)
+		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+			return RetryAfter(err, retryDelayStore)
+		}
+		e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
+		if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, "unknown topic", "unknown_topic"); err != nil {
+			return RetryAfter(err, retryDelayPublish)
+		}
+		return nil
+	}
+	if handled, err := e.applySubmitSchemaValidation(lockCtx, req, traceID, reg); err != nil {
+		return err
+	} else if handled {
+		return nil
+	}
 
 	// Fetch attempt count for exponential backoff on retries.
 	attempts := 0
@@ -823,8 +1165,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	if maxConcurrent := maxConcurrentFromConstraints(record.Constraints); maxConcurrent > 0 && e.jobStore != nil {
 		tenant := ExtractTenant(req)
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		defer cancel()
 		active, err := e.jobStore.CountActiveByTenant(ctx, tenant)
+		cancel()
 		if err != nil {
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -838,6 +1180,27 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			return RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
 		}
 	}
+	if e.jobStore != nil {
+		tenant := ExtractTenant(req)
+		if strings.TrimSpace(tenant) != "" {
+			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+			active, err := e.jobStore.CountActiveByTenant(ctx, tenant)
+			cancel()
+			if err != nil {
+				return RetryAfter(err, retryDelayStore)
+			}
+			if limitErr := licensing.CheckJobConcurrency(int64(active+1), e.currentEntitlements()); limitErr != nil {
+				slog.Info("tier concurrency limit reached",
+					"job_id", jobID,
+					"tenant", tenant,
+					"active", active,
+					"allowed", limitErr.Allowed,
+					"upgrade_url", limitErr.UpgradeURL,
+				)
+				return RetryAfter(limitErr, retryDelayNoWorkers)
+			}
+		}
+	}
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
@@ -849,6 +1212,10 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	}
 
 	workers := e.registry.Snapshot()
+	var readiness map[string]WorkerReadiness
+	if e.workerReadinessRequired {
+		readiness = e.registry.ReadinessSnapshot()
+	}
 	if len(workers) == 0 {
 		slog.Warn("no workers in registry",
 			"topic", topic,
@@ -859,8 +1226,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	for dispatchAttempt := range maxDispatchRetries {
 		if dispatchAttempt > 0 {
 			workers = e.registry.Snapshot()
+			if e.workerReadinessRequired {
+				readiness = e.registry.ReadinessSnapshot()
+			}
 		}
-		subject, err = e.strategy.PickSubject(req, workers)
+		subject, err = e.strategy.PickSubject(req, workers, readiness)
 		if err != nil {
 			break
 		}
@@ -968,6 +1338,10 @@ func isRetryableSchedulingError(err error) bool {
 	if err == nil {
 		return false
 	}
+	var limitErr *licensing.TierLimitError
+	if errors.As(err, &limitErr) {
+		return true
+	}
 	if errors.Is(err, ErrNoWorkers) || errors.Is(err, ErrPoolOverloaded) || errors.Is(err, ErrTenantLimit) || errors.Is(err, ErrNoPoolMapping) {
 		return true
 	}
@@ -979,7 +1353,10 @@ func reasonCodeForSchedulingError(err error) string {
 	if err == nil {
 		return ""
 	}
+	var limitErr *licensing.TierLimitError
 	switch {
+	case errors.As(err, &limitErr):
+		return "tier_limit_exceeded"
 	case errors.Is(err, ErrNoPoolMapping):
 		return "no_pool_mapping"
 	case errors.Is(err, ErrNoWorkers):
@@ -991,6 +1368,142 @@ func reasonCodeForSchedulingError(err error) string {
 	default:
 		return "dispatch_failed"
 	}
+}
+
+func (e *Engine) topicRegistration(ctx context.Context, topic string) (*topicregistry.Registration, bool, error) {
+	if e == nil {
+		return nil, true, nil
+	}
+	if e.topicRegistry == nil {
+		mode := e.schemaValidationMode()
+		if mode.Enforced() {
+			return nil, false, fmt.Errorf("topic registry unavailable")
+		}
+		if mode == infraSchema.EnforcementWarn {
+			slog.Warn("topic registry unavailable; skipping topic/schema validation",
+				"topic", strings.TrimSpace(topic),
+				"mode", mode,
+			)
+		}
+		return nil, true, nil
+	}
+	return e.topicRegistry.Get(ctx, topic)
+}
+
+func (e *Engine) applySubmitSchemaValidation(ctx context.Context, req *pb.JobRequest, traceID string, reg *topicregistry.Registration) (bool, error) {
+	mode := e.schemaValidationMode()
+	if !mode.Enabled() || reg == nil {
+		return false, nil
+	}
+	schemaID := strings.TrimSpace(reg.InputSchemaID)
+	if schemaID == "" {
+		return false, nil
+	}
+
+	payloadJSON, violations, err := e.loadSubmitValidationPayload(ctx, req)
+	if err != nil {
+		return false, RetryAfter(err, retryDelayStore)
+	}
+	if len(violations) > 0 {
+		return e.handleSchemaViolations(req, traceID, schemaID, mode, violations)
+	}
+	if e.schemaRegistry == nil {
+		return e.failSchemaValidation(req, traceID, schemaID, "schema registry unavailable", "schema_registry_unavailable")
+	}
+	schemaJSON, err := e.schemaRegistry.Get(ctx, schemaID)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return e.failSchemaValidation(req, traceID, schemaID, "topic input schema not found", "schema_not_found")
+		}
+		return false, RetryAfter(err, retryDelayStore)
+	}
+	violations, err = infraSchema.ValidateJSONPayload(ctx, e.schemaRegistry, schemaID, schemaJSON, payloadJSON)
+	if err != nil {
+		return e.failSchemaValidation(req, traceID, schemaID, "topic input schema invalid", "schema_invalid")
+	}
+	if len(violations) == 0 {
+		return false, nil
+	}
+	return e.handleSchemaViolations(req, traceID, schemaID, mode, violations)
+}
+
+func (e *Engine) loadSubmitValidationPayload(ctx context.Context, req *pb.JobRequest) ([]byte, []infraSchema.Violation, error) {
+	if req == nil {
+		return []byte("null"), nil, nil
+	}
+	ptr := strings.TrimSpace(req.GetContextPtr())
+	if ptr == "" {
+		return nil, []infraSchema.Violation{{Path: "$.context_ptr", Message: "context payload required for schema validation"}}, nil
+	}
+	if e == nil || e.contextClient == nil {
+		return nil, []infraSchema.Violation{{Path: "$.context_ptr", Message: "context payload unavailable for schema validation"}}, nil
+	}
+	key, err := infraStore.KeyFromPointer(ptr)
+	if err != nil {
+		return nil, []infraSchema.Violation{{Path: "$.context_ptr", Message: "invalid context pointer"}}, nil
+	}
+	data, err := e.contextClient.Get(ctx, key).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, []infraSchema.Violation{{Path: "$.context_ptr", Message: "context payload not found"}}, nil
+		}
+		return nil, nil, fmt.Errorf("load context payload for %s: %w", strings.TrimSpace(req.GetJobId()), err)
+	}
+	return data, nil, nil
+}
+
+func (e *Engine) handleSchemaViolations(req *pb.JobRequest, traceID, schemaID string, mode infraSchema.EnforcementMode, violations []infraSchema.Violation) (bool, error) {
+	if len(violations) == 0 {
+		return false, nil
+	}
+	jobID := strings.TrimSpace(req.GetJobId())
+	topic := strings.TrimSpace(req.GetTopic())
+	if mode.Enforced() {
+		slog.Warn("job request rejected by schema validation",
+			"job_id", jobID,
+			"topic", topic,
+			"schema_id", schemaID,
+			"trace_id", traceID,
+			"violations", violations,
+		)
+		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+			return false, RetryAfter(err, retryDelayStore)
+		}
+		e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
+		if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, "schema validation failed", "schema_validation_failed"); err != nil {
+			return false, RetryAfter(err, retryDelayPublish)
+		}
+		return true, nil
+	}
+	slog.Warn("job request violated topic input schema",
+		"job_id", jobID,
+		"topic", topic,
+		"schema_id", schemaID,
+		"trace_id", traceID,
+		"mode", mode,
+		"violations", violations,
+	)
+	return false, nil
+}
+
+func (e *Engine) failSchemaValidation(req *pb.JobRequest, traceID, schemaID, reason, reasonCode string) (bool, error) {
+	jobID := strings.TrimSpace(req.GetJobId())
+	topic := strings.TrimSpace(req.GetTopic())
+	slog.Error("schema validation unavailable for job request",
+		"job_id", jobID,
+		"topic", topic,
+		"schema_id", schemaID,
+		"trace_id", traceID,
+		"reason", reason,
+	)
+	if err := e.setJobState(jobID, JobStateFailed); err != nil {
+		return false, RetryAfter(err, retryDelayStore)
+	}
+	e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
+	if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, reasonCode); err != nil {
+		return false, RetryAfter(err, retryDelayPublish)
+	}
+	return true, nil
 }
 
 func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, error) {
@@ -1661,6 +2174,20 @@ func safeTopic(req *pb.JobRequest) string {
 	return req.Topic
 }
 
+func safeTraceID(packet *pb.BusPacket) string {
+	if packet == nil {
+		return ""
+	}
+	return strings.TrimSpace(packet.GetTraceId())
+}
+
+func safeSenderID(packet *pb.BusPacket) string {
+	if packet == nil {
+		return ""
+	}
+	return strings.TrimSpace(packet.GetSenderId())
+}
+
 // CancelJob marks a job as cancelled if not already terminal.
 func (e *Engine) CancelJob(ctx context.Context, jobID string) error {
 	if e.jobStore == nil {
@@ -1781,6 +2308,54 @@ func (e *Engine) publishCancel(jobID, reason string) {
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
 	_ = e.bus.Publish(capsdk.SubjectCancel, packet)
+}
+
+func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, approval ApprovalRecord) error {
+	if req == nil {
+		return fmt.Errorf("approval replay requires job request")
+	}
+	switch approval.PublishTarget {
+	case ApprovalPublishTargetSubmit:
+		return e.handleJobRequest(req, traceID)
+	case ApprovalPublishTargetDLQ, ApprovalPublishTargetDLQAndResult:
+		if e.bus == nil {
+			return nil
+		}
+		jobID := strings.TrimSpace(req.GetJobId())
+		if jobID == "" {
+			return fmt.Errorf("approval replay requires job id")
+		}
+		errorMessage := strings.TrimSpace(approval.Reason)
+		if errorMessage == "" {
+			errorMessage = "approval rejected"
+		}
+		packet := &pb.BusPacket{
+			TraceId:         traceID,
+			SenderId:        defaultSenderID,
+			CreatedAt:       timestamppb.Now(),
+			ProtocolVersion: protocolVersionV1,
+			Payload: &pb.BusPacket_JobResult{
+				JobResult: &pb.JobResult{
+					JobId:         jobID,
+					Status:        pb.JobStatus_JOB_STATUS_DENIED,
+					ErrorCode:     "approval_rejected",
+					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
+					ErrorMessage:  errorMessage,
+				},
+			},
+		}
+		if err := e.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
+			return fmt.Errorf("replay approval dlq publish: %w", err)
+		}
+		if approval.PublishTarget == ApprovalPublishTargetDLQAndResult {
+			if err := e.bus.Publish(capsdk.SubjectResult, packet); err != nil {
+				return fmt.Errorf("replay approval result publish: %w", err)
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
 }
 
 func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string, reasonCode string) error {

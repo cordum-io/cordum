@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
@@ -37,7 +38,7 @@ redis.call('ZREMRANGEBYSCORE', key, '-inf', tostring(window_start))
 return redis.call('ZCARD', key)
 `
 
-const velocityRedisTimeout = 500 * time.Millisecond
+var velocityRedisTimeout = 500 * time.Millisecond
 
 // ---------------------------------------------------------------------------
 // Metrics
@@ -219,8 +220,24 @@ func hasVelocityRules(rules []config.PolicyRule) bool {
 func (s *server) evaluateRulesWithVelocity(ctx context.Context, policy *config.SafetyPolicy, input config.PolicyInput, jobID, method string) config.PolicyDecision {
 	rules := policy.EffectiveRules()
 	dryRun := method == "simulate" || method == "explain"
+	velocityRuleLimit := s.velocityRuleLimit()
+	velocityRuleCount := int64(0)
 
 	for _, rule := range rules {
+		if rule.Velocity != nil {
+			velocityRuleCount++
+			if velocityRuleLimit != licensing.Unlimited && velocityRuleCount > velocityRuleLimit {
+				slog.Warn("velocity rule skipped by tier limit",
+					"component", "safety",
+					"rule", rule.ID,
+					"configured_index", velocityRuleCount,
+					"allowed", velocityRuleLimit,
+					"plan", s.resolvedPlan(),
+					"upgrade_url", licensing.DefaultUpgradeURL,
+				)
+				continue
+			}
+		}
 		if !config.MatchRule(rule.Match, input) {
 			continue
 		}

@@ -42,7 +42,7 @@ func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 
 func TestHandleStreamHonorsAPIKeySubprotocol(t *testing.T) {
 	provider := newBasicAuthForTest(t, map[string]string{
-		"API_KEY": "'test-api-key'",
+		"CORDUM_API_KEY": "'test-api-key'",
 	})
 
 	s := &server{

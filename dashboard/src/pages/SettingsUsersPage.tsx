@@ -10,10 +10,12 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { SkeletonTable } from "@/components/ui/Skeleton";
+import { SkeletonTable, SkeletonCard } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DialogOverlay } from "@/components/ui/DialogOverlay";
-import { Search, UserPlus, Users, Shield, Trash2, X, Mail, Key } from "lucide-react";
+import { UpgradePrompt } from "@/components/UpgradePrompt";
+import { useLicense } from "@/hooks/useLicense";
+import { Search, UserPlus, Users, Shield, Trash2, X, Mail, Key, Plus, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { friendlyError } from "@/lib/friendlyError";
@@ -28,14 +30,64 @@ interface User {
   status: "active" | "invited" | "disabled";
 }
 
-const ROLES: { value: string; label: string; desc: string; color: BadgeVariant }[] = [
+interface RoleDefinition {
+  name: string;
+  description: string;
+  permissions: string[];
+  inherits: string[];
+  built_in: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface RolesResponse {
+  roles: RoleDefinition[];
+  entitled: boolean;
+}
+
+const BASIC_ROLES: { value: string; label: string; desc: string; color: BadgeVariant }[] = [
   { value: "admin", label: "Admin", desc: "Full access to all resources", color: "warning" },
   { value: "operator", label: "Operator", desc: "Manage jobs, workflows, approvals", color: "healthy" },
   { value: "viewer", label: "Viewer", desc: "Read-only access", color: "info" },
 ];
 
+const ALL_PERMISSIONS = [
+  { key: "admin.*", label: "Full Admin", category: "System" },
+  { key: "jobs.read", label: "View Jobs", category: "Jobs" },
+  { key: "jobs.write", label: "Create/Edit Jobs", category: "Jobs" },
+  { key: "jobs.approve", label: "Approve Jobs", category: "Jobs" },
+  { key: "workflows.read", label: "View Workflows", category: "Workflows" },
+  { key: "workflows.write", label: "Create/Edit Workflows", category: "Workflows" },
+  { key: "workers.read", label: "View Workers", category: "Workers" },
+  { key: "config.read", label: "View Config", category: "Config" },
+  { key: "config.write", label: "Edit Config", category: "Config" },
+  { key: "audit.read", label: "View Audit Log", category: "Audit" },
+  { key: "packs.install", label: "Install Packs", category: "Packs" },
+  { key: "packs.uninstall", label: "Uninstall Packs", category: "Packs" },
+  { key: "policy.read", label: "View Policies", category: "Policy" },
+  { key: "policy.write", label: "Edit Policies", category: "Policy" },
+  { key: "schemas.read", label: "View Schemas", category: "Schemas" },
+  { key: "schemas.write", label: "Edit Schemas", category: "Schemas" },
+  { key: "users.read", label: "View Users", category: "Users" },
+  { key: "users.write", label: "Manage Users", category: "Users" },
+  { key: "roles.read", label: "View Roles", category: "Roles" },
+  { key: "roles.write", label: "Manage Roles", category: "Roles" },
+];
+
+const PERMISSION_CATEGORIES = [...new Set(ALL_PERMISSIONS.map(p => p.category))];
+
+function hasPermission(perms: string[], perm: string): boolean {
+  if (perms.includes("admin.*")) return true;
+  if (perms.includes(perm)) return true;
+  const ns = perm.split(".")[0];
+  if (perms.includes(`${ns}.*`)) return true;
+  return false;
+}
+
 export default function SettingsUsersPage() {
   const queryClient = useQueryClient();
+  const license = useLicense();
+  const rbacEntitled = license.data?.entitlements?.rbac === true;
   const [activeTab, setActiveTab] = useState("users");
   const [search, setSearch] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -44,6 +96,13 @@ export default function SettingsUsersPage() {
   const [invitePassword, setInvitePassword] = useState("");
   const [inviteRole, setInviteRole] = useState("operator");
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [roleEditOpen, setRoleEditOpen] = useState(false);
+  const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null);
+  const [roleDeleteTarget, setRoleDeleteTarget] = useState<RoleDefinition | null>(null);
+  const [roleName, setRoleName] = useState("");
+  const [roleDesc, setRoleDesc] = useState("");
+  const [rolePerms, setRolePerms] = useState<string[]>([]);
+  const [roleInherits, setRoleInherits] = useState<string[]>([]);
 
   const { data: users, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["users"],
@@ -52,6 +111,13 @@ export default function SettingsUsersPage() {
       return res.data || [];
     },
   });
+
+  const { data: rolesData, isLoading: rolesLoading } = useQuery({
+    queryKey: ["auth", "roles"],
+    queryFn: () => get<RolesResponse>("/auth/roles"),
+  });
+
+  const roles = rolesData?.roles ?? [];
 
   const resetInviteForm = () => {
     setInviteUsername("");
@@ -97,6 +163,69 @@ export default function SettingsUsersPage() {
     },
   });
 
+  const saveRoleMutation = useMutation({
+    mutationFn: async () => {
+      const name = editingRole ? editingRole.name : roleName.toLowerCase().trim().replace(/\s+/g, "_");
+      return put(`/auth/roles/${name}`, {
+        description: roleDesc,
+        permissions: rolePerms,
+        inherits: roleInherits,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["auth", "roles"] });
+      toast.success(editingRole ? "Role updated" : "Role created");
+      closeRoleEditor();
+    },
+    onError: (err: Error) => {
+      { const f = friendlyError(err, editingRole ? "update role" : "create role"); toast.error(f.title, { description: f.description }); };
+    },
+  });
+
+  const deleteRoleMutation = useMutation({
+    mutationFn: async (name: string) => del(`/auth/roles/${name}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["auth", "roles"] });
+      toast.success("Role deleted");
+      setRoleDeleteTarget(null);
+    },
+    onError: (err: Error) => {
+      { const f = friendlyError(err, "delete role"); toast.error(f.title, { description: f.description }); };
+    },
+  });
+
+  function openRoleEditor(role?: RoleDefinition) {
+    if (role) {
+      setEditingRole(role);
+      setRoleName(role.name);
+      setRoleDesc(role.description);
+      setRolePerms([...role.permissions]);
+      setRoleInherits([...role.inherits]);
+    } else {
+      setEditingRole(null);
+      setRoleName("");
+      setRoleDesc("");
+      setRolePerms([]);
+      setRoleInherits([]);
+    }
+    setRoleEditOpen(true);
+  }
+
+  function closeRoleEditor() {
+    setRoleEditOpen(false);
+    setEditingRole(null);
+    setRoleName("");
+    setRoleDesc("");
+    setRolePerms([]);
+    setRoleInherits([]);
+  }
+
+  function togglePerm(perm: string) {
+    setRolePerms(prev =>
+      prev.includes(perm) ? prev.filter(p => p !== perm) : [...prev, perm]
+    );
+  }
+
   const tabs = ["users", "roles"];
   const filtered = (users || []).filter(u =>
     !search || u.email.toLowerCase().includes(search.toLowerCase()) || u.name.toLowerCase().includes(search.toLowerCase())
@@ -140,6 +269,11 @@ export default function SettingsUsersPage() {
             />
           </div>
         )}
+        {activeTab === "roles" && rbacEntitled && (
+          <Button variant="primary" size="sm" onClick={() => openRoleEditor()}>
+            <Plus className="w-3 h-3 mr-1" />Custom Role
+          </Button>
+        )}
       </div>
 
       {/* Users Tab */}
@@ -179,7 +313,10 @@ export default function SettingsUsersPage() {
                         disabled={updateRoleMutation.isPending}
                         className="h-7 px-2 text-xs font-medium rounded-lg border border-border bg-surface-0 text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
                       >
-                        {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                        {BASIC_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                        {roles.filter(r => !r.built_in).map(r => (
+                          <option key={r.name} value={r.name}>{r.name}</option>
+                        ))}
                       </select>
                     </td>
                     <td className="px-5 py-3">
@@ -201,37 +338,143 @@ export default function SettingsUsersPage() {
 
       {/* Roles Tab */}
       {activeTab === "roles" && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {ROLES.map((role, i) => (
-            <motion.div
-              key={role.value}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
-              className="instrument-card"
-            >
-              <div className="flex items-center gap-2 mb-3">
-                <Shield className="w-4 h-4 text-cordum" />
-                <span className="text-sm font-display font-semibold text-foreground capitalize">{role.label}</span>
-                <StatusBadge variant={role.color}>{role.value}</StatusBadge>
+        <div className="space-y-4">
+          {!rbacEntitled && (
+            <UpgradePrompt
+              label="Advanced RBAC"
+              plan={license.data?.plan}
+              forceVisible
+              title="Custom roles require Enterprise"
+              description="Create custom roles with granular permission sets. Built-in roles (Admin, Operator, Viewer) are available on all plans."
+            />
+          )}
+
+          {rolesLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <SkeletonCard /><SkeletonCard /><SkeletonCard />
+            </div>
+          ) : (
+            <>
+              {/* Role cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {roles.map((role, i) => (
+                  <motion.div
+                    key={role.name}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="instrument-card group"
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-cordum" />
+                        <span className="text-sm font-display font-semibold text-foreground capitalize">{role.name}</span>
+                        {role.built_in ? (
+                          <StatusBadge variant="info">built-in</StatusBadge>
+                        ) : (
+                          <StatusBadge variant="healthy">custom</StatusBadge>
+                        )}
+                      </div>
+                      {rbacEntitled && (
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={() => openRoleEditor(role)}
+                            className="p-1 rounded hover:bg-surface-2 transition-colors"
+                            title="Edit role"
+                          >
+                            <Shield className="w-3 h-3 text-muted-foreground" />
+                          </button>
+                          {!role.built_in && (
+                            <button
+                              type="button"
+                              onClick={() => setRoleDeleteTarget(role)}
+                              className="p-1 rounded hover:bg-destructive/10 transition-colors"
+                              title="Delete role"
+                            >
+                              <Trash2 className="w-3 h-3 text-destructive" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-3">{role.description || "No description"}</p>
+                    {role.inherits.length > 0 && (
+                      <p className="text-xs text-muted-foreground mb-2">
+                        Inherits: {role.inherits.map(r => <span key={r} className="inline-flex items-center gap-0.5 mr-1 px-1.5 py-0.5 rounded bg-surface-2 text-foreground text-[10px] font-medium">{r}</span>)}
+                      </p>
+                    )}
+                    <div className="pt-3 border-t border-border">
+                      <p className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest mb-2">Permissions</p>
+                      <div className="flex flex-wrap gap-1">
+                        {role.permissions.includes("admin.*") ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cordum/10 text-cordum text-[10px] font-medium">
+                            <Check className="w-2.5 h-2.5" />All access
+                          </span>
+                        ) : (
+                          role.permissions.slice(0, 6).map(p => (
+                            <span key={p} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-surface-2 text-foreground text-[10px] font-mono">
+                              {p}
+                            </span>
+                          ))
+                        )}
+                        {!role.permissions.includes("admin.*") && role.permissions.length > 6 && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-surface-2 text-muted-foreground text-[10px]">
+                            +{role.permissions.length - 6} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
               </div>
-              <p className="text-xs text-muted-foreground">{role.desc}</p>
-              <div className="mt-3 pt-3 border-t border-border">
-                <p className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest mb-2">Permissions</p>
-                <div className="space-y-1">
-                  {role.value === "admin" && ["All resources", "User management", "System config", "API keys"].map(p => (
-                    <p key={p} className="text-xs text-foreground">&#x2713; {p}</p>
-                  ))}
-                  {role.value === "operator" && ["Jobs & Workflows", "Approvals", "Packs", "Schemas"].map(p => (
-                    <p key={p} className="text-xs text-foreground">&#x2713; {p}</p>
-                  ))}
-                  {role.value === "viewer" && ["Read all resources", "View audit log", "View dashboards"].map(p => (
-                    <p key={p} className="text-xs text-foreground">&#x2713; {p}</p>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          ))}
+
+              {/* Permissions matrix */}
+              {roles.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="instrument-card overflow-x-auto"
+                >
+                  <h3 className="text-sm font-display font-semibold text-foreground mb-4">Permission Matrix</h3>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left px-3 py-2 font-mono font-medium text-muted-foreground uppercase tracking-widest min-w-[180px]">Permission</th>
+                        {roles.map(r => (
+                          <th key={r.name} className="text-center px-3 py-2 font-mono font-medium text-muted-foreground uppercase tracking-widest min-w-[80px] capitalize">{r.name}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {PERMISSION_CATEGORIES.map(cat => (
+                        <>
+                          <tr key={`cat-${cat}`}>
+                            <td colSpan={roles.length + 1} className="px-3 pt-3 pb-1 text-[10px] font-mono font-semibold text-cordum uppercase tracking-widest">{cat}</td>
+                          </tr>
+                          {ALL_PERMISSIONS.filter(p => p.category === cat && p.key !== "admin.*").map(perm => (
+                            <tr key={perm.key} className="border-b border-border/50 last:border-0 hover:bg-surface-1/50 transition-colors">
+                              <td className="px-3 py-1.5 text-foreground">{perm.label}</td>
+                              {roles.map(r => (
+                                <td key={r.name} className="text-center px-3 py-1.5">
+                                  {hasPermission(r.permissions, perm.key) ? (
+                                    <Check className="w-3.5 h-3.5 text-[var(--color-success)] mx-auto" />
+                                  ) : (
+                                    <span className="block w-3.5 h-3.5 mx-auto text-border">—</span>
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </>
+                      ))}
+                    </tbody>
+                  </table>
+                </motion.div>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -287,7 +530,7 @@ export default function SettingsUsersPage() {
               onChange={(e) => setInviteRole(e.target.value)}
               className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
             >
-              {ROLES.map(r => <option key={r.value} value={r.value}>{r.label} — {r.desc}</option>)}
+              {BASIC_ROLES.map(r => <option key={r.value} value={r.value}>{r.label} — {r.desc}</option>)}
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -299,7 +542,121 @@ export default function SettingsUsersPage() {
         </div>
       </DialogOverlay>
 
-      {/* Delete Confirmation */}
+      {/* Role Editor Dialog */}
+      <DialogOverlay open={roleEditOpen} onClose={closeRoleEditor} label={editingRole ? "Edit role" : "Create role"} className="w-[520px] max-h-[80vh] overflow-y-auto bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-display font-semibold text-foreground">{editingRole ? `Edit Role: ${editingRole.name}` : "Create Custom Role"}</h2>
+          <button type="button" onClick={closeRoleEditor} className="p-1 rounded hover:bg-surface-2 transition-colors">
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+        <div className="space-y-4">
+          {!editingRole && (
+            <div>
+              <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Role Name</label>
+              <input
+                type="text"
+                value={roleName}
+                onChange={(e) => setRoleName(e.target.value)}
+                placeholder="devops_engineer"
+                className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              />
+            </div>
+          )}
+          <div>
+            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Description</label>
+            <input
+              type="text"
+              value={roleDesc}
+              onChange={(e) => setRoleDesc(e.target.value)}
+              placeholder="What this role is for"
+              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+            />
+          </div>
+
+          {/* Inherit from */}
+          {!(editingRole?.built_in) && (
+            <div>
+              <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Inherits From</label>
+              <div className="flex flex-wrap gap-2">
+                {roles.filter(r => r.name !== editingRole?.name).map(r => (
+                  <button
+                    key={r.name}
+                    type="button"
+                    onClick={() => setRoleInherits(prev => prev.includes(r.name) ? prev.filter(n => n !== r.name) : [...prev, r.name])}
+                    className={cn(
+                      "px-2.5 py-1 text-xs rounded-lg border transition-colors capitalize",
+                      roleInherits.includes(r.name)
+                        ? "border-cordum bg-cordum/10 text-cordum"
+                        : "border-border bg-surface-2 text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {r.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Permissions */}
+          <div>
+            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-2">Permissions</label>
+            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+              {PERMISSION_CATEGORIES.map(cat => (
+                <div key={cat}>
+                  <p className="text-[10px] font-mono font-semibold text-cordum uppercase tracking-widest mb-1">{cat}</p>
+                  <div className="space-y-0.5">
+                    {ALL_PERMISSIONS.filter(p => p.category === cat).map(perm => {
+                      const checked = rolePerms.includes(perm.key);
+                      const disabled = editingRole?.built_in && perm.key === "admin.*";
+                      return (
+                        <label
+                          key={perm.key}
+                          className={cn(
+                            "flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-2/50 transition-colors cursor-pointer",
+                            disabled && "opacity-50 cursor-not-allowed",
+                          )}
+                        >
+                          <span className={cn(
+                            "flex items-center justify-center w-4 h-4 rounded border transition-colors shrink-0",
+                            checked ? "bg-cordum border-cordum" : "border-border bg-surface-2",
+                          )}>
+                            {checked && <Check className="w-2.5 h-2.5 text-white" />}
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => !disabled && togglePerm(perm.key)}
+                            disabled={disabled}
+                            className="sr-only"
+                          />
+                          <span className="text-xs text-foreground">{perm.label}</span>
+                          <span className="text-[10px] font-mono text-muted-foreground ml-auto">{perm.key}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-border">
+            <Button variant="ghost" size="sm" onClick={closeRoleEditor}>Cancel</Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => saveRoleMutation.mutate()}
+              loading={saveRoleMutation.isPending}
+              disabled={!editingRole && !roleName.trim()}
+            >
+              <Shield className="w-3 h-3 mr-1" />{editingRole ? "Update Role" : "Create Role"}
+            </Button>
+          </div>
+        </div>
+      </DialogOverlay>
+
+      {/* Delete User Confirmation */}
       <ConfirmDialog
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -307,6 +664,17 @@ export default function SettingsUsersPage() {
         title="Remove User"
         description={`Are you sure you want to remove ${deleteTarget?.name}? They will lose all access to this cluster.`}
         confirmLabel="Remove"
+        variant="destructive"
+      />
+
+      {/* Delete Role Confirmation */}
+      <ConfirmDialog
+        open={!!roleDeleteTarget}
+        onClose={() => setRoleDeleteTarget(null)}
+        onConfirm={() => roleDeleteTarget && deleteRoleMutation.mutate(roleDeleteTarget.name)}
+        title="Delete Role"
+        description={`Are you sure you want to delete the "${roleDeleteTarget?.name}" role? Users with this role will need to be reassigned.`}
+        confirmLabel="Delete"
         variant="destructive"
       />
     </motion.div>

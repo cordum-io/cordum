@@ -267,6 +267,16 @@ jobs:
         fi
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        NATS_URL: tls://localhost:4222
+        NATS_TOKEN: cordum-dev-token
+        NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+        NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
+        REDIS_URL: rediss://:cordum-dev@localhost:6379
+        REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        REDIS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+        REDIS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
+        REDIS_TLS_SERVER_NAME: localhost
 
     - name: Dump debug logs on failure
       if: failure()

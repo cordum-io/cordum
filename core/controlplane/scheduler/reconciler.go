@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	infraStore "github.com/cordum/cordum/core/infra/store"
 )
 
 // Reconciler periodically inspects job state to enforce timeouts and cleanup.
@@ -19,6 +21,11 @@ type Reconciler struct {
 	lockTTL          time.Duration
 	mu               sync.RWMutex
 	metrics          Metrics
+}
+
+type approvalRepairStore interface {
+	InspectApprovalRepair(ctx context.Context, jobID string) (*infraStore.ApprovalRepairSnapshot, error)
+	ApplyApprovalRepair(ctx context.Context, params infraStore.ApprovalRepairApplyParams) (*infraStore.ApprovalRepairResult, error)
 }
 
 func NewReconciler(store JobStore, dispatchTimeout, runningTimeout, pollInterval time.Duration) *Reconciler {
@@ -98,6 +105,7 @@ func (r *Reconciler) tick(ctx context.Context) {
 	r.handleTimeouts(ctx, JobStateDispatched, now.Add(-dispatchTimeout), dispatchTimeout)
 	r.handleTimeouts(ctx, JobStateRunning, now.Add(-runningTimeout), runningTimeout)
 	r.handleDeadlineExpirations(ctx, now)
+	r.handleApprovalRepairs(ctx, now)
 }
 
 // UpdateTimeouts replaces dispatch/running timeouts at runtime.
@@ -182,5 +190,71 @@ func (r *Reconciler) handleDeadlineExpirations(ctx context.Context, now time.Tim
 			_ = r.store.SetFailureReason(ctx, rec.ID, "timeout: deadline expired")
 			slog.Info("job deadline expired", "job_id", rec.ID)
 		}
+	}
+}
+
+func (r *Reconciler) handleApprovalRepairs(ctx context.Context, now time.Time) {
+	repairStore, ok := r.store.(approvalRepairStore)
+	if !ok {
+		return
+	}
+
+	const maxIterations = 100
+	cutoffMicros := now.Add(time.Second).UnixNano() / int64(time.Microsecond)
+	for i := 0; i < maxIterations; i++ {
+		records, err := r.store.ListJobsByState(ctx, JobStateApproval, cutoffMicros, 200)
+		if err != nil {
+			slog.Error("list approval repairs", "error", err)
+			return
+		}
+		if len(records) == 0 {
+			return
+		}
+
+		progress := 0
+		for _, rec := range records {
+			snapshot, err := repairStore.InspectApprovalRepair(ctx, rec.ID)
+			if err != nil {
+				slog.Warn("inspect approval repair failed", "job_id", rec.ID, "error", err)
+				continue
+			}
+			plan := infraStore.ClassifyApprovalRepair(*snapshot, infraStore.ApprovalRepairClassifyOptions{})
+			if !plan.Repairable || !autoApplyApprovalRepair(plan) {
+				continue
+			}
+			repaired, err := repairStore.ApplyApprovalRepair(ctx, infraStore.ApprovalRepairApplyParams{
+				JobID: rec.ID,
+				Plan:  plan,
+				Actor: "system/reconciler",
+				Note:  "auto-reconciled inconsistent approval state",
+			})
+			if err != nil {
+				slog.Warn("approval auto-repair failed", "job_id", rec.ID, "kind", plan.Kind, "error", err)
+				continue
+			}
+			slog.Info("approval auto-repaired",
+				"job_id", rec.ID,
+				"kind", plan.Kind,
+				"target_state", repaired.State,
+				"publish_target", repaired.ApprovalRecord.PublishTarget,
+				"publish_status", repaired.ApprovalRecord.PublishStatus)
+			progress++
+		}
+
+		if progress == 0 {
+			return
+		}
+	}
+	slog.Error("max iterations reached while processing approval repairs")
+}
+
+func autoApplyApprovalRepair(plan infraStore.ApprovalRepairPlan) bool {
+	switch plan.Kind {
+	case infraStore.ApprovalRepairApplyApprovedResolution,
+		infraStore.ApprovalRepairApplyRejectedResolution,
+		infraStore.ApprovalRepairInvalidateStaleRequest:
+		return true
+	default:
+		return false
 	}
 }

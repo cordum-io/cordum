@@ -13,6 +13,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/secrets"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -119,7 +120,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 	payloadReq.MemoryId = explicitMemoryID
 	payloadReq.applyDefaults(s.tenant)
-	if err := payloadReq.validate(s.tenant); err != nil {
+	if err := payloadReq.validate(s.tenant, s.promptCharLimit()); err != nil {
+		var limitErr *licensing.TierLimitError
+		if errors.As(err, &limitErr) {
+			return nil, status.Error(codes.PermissionDenied, limitErr.Error())
+		}
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 

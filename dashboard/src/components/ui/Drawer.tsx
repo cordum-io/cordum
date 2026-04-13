@@ -15,7 +15,7 @@ export function Drawer({
   size?: "sm" | "md" | "lg" | "xl" | "full";
   label?: string;
 }) {
-  const dialogRef = useDialogA11y(onClose);
+  const dialogRef = useDialogA11y(onClose, { enabled: open });
 
   if (!open) {
     return null;

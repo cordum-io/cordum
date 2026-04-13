@@ -8,7 +8,7 @@ RUN npm ci --legacy-peer-deps
 COPY . .
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.25-alpine
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 USER root
 RUN apk add --no-cache curl gettext
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html

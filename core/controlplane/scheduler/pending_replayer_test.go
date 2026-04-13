@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
+	infraStore "github.com/cordum/cordum/core/infra/store"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -317,6 +320,153 @@ func TestPendingReplayerSkipsAlreadyTransitionedApprovedJobs(t *testing.T) {
 	// The job should NOT be re-submitted since it's no longer in JobStateApproval
 	if len(bus.published) != 0 {
 		t.Fatalf("expected already-transitioned job to be skipped, but %d messages were published", len(bus.published))
+	}
+}
+
+func TestPendingReplayerMarksApprovalSubmitIntentPublished(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := infraStore.NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("new redis job store: %v", err)
+	}
+	defer func() {
+		_ = store.Close()
+		srv.Close()
+	}()
+
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-approved-pending-intent",
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	ctx := context.Background()
+	if err := store.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := store.SetState(ctx, req.GetJobId(), JobStateApproval); err != nil {
+		t.Fatalf("set approval state: %v", err)
+	}
+	hash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, req.GetJobId(), SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+	if _, err := store.ResolveApproval(ctx, infraStore.ApprovalResolutionParams{
+		JobID:       req.GetJobId(),
+		Decision:    ApprovalDecisionApprove,
+		ResultState: JobStatePending,
+		ApprovedBy:  "alice",
+		LabelUpdates: map[string]string{
+			"approval_granted": "true",
+		},
+	}); err != nil {
+		t.Fatalf("resolve approval: %v", err)
+	}
+
+	replayer := NewPendingReplayer(engine, store, 0, time.Millisecond)
+	replayer.replayPending(ctx, time.Now().Add(time.Second))
+
+	record, err := store.GetApprovalRecord(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.PublishStatus != ApprovalPublishPublished {
+		t.Fatalf("expected submit publish intent to be marked published, got %q", record.PublishStatus)
+	}
+	if record.PublishedAt <= 0 {
+		t.Fatalf("expected published_at > 0, got %d", record.PublishedAt)
+	}
+}
+
+func TestPendingReplayerReplaysRejectedApprovalPublishes(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := infraStore.NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("new redis job store: %v", err)
+	}
+	defer func() {
+		_ = store.Close()
+		srv.Close()
+	}()
+
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-rejected-replay",
+		Topic:    capsdk.SubjectWorkflowApprovalGate,
+		TenantId: "default",
+	}
+	ctx := context.Background()
+	if err := store.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := store.SetState(ctx, req.GetJobId(), JobStateApproval); err != nil {
+		t.Fatalf("set approval state: %v", err)
+	}
+	hash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, req.GetJobId(), SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   workflowGateSnapshot,
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+	if _, err := store.ResolveApproval(ctx, infraStore.ApprovalResolutionParams{
+		JobID:         req.GetJobId(),
+		Decision:      ApprovalDecisionReject,
+		ResultState:   JobStateDenied,
+		ApprovedBy:    "bob",
+		Reason:        "denied",
+		PublishTarget: ApprovalPublishTargetDLQAndResult,
+	}); err != nil {
+		t.Fatalf("resolve reject: %v", err)
+	}
+
+	replayer := NewPendingReplayer(engine, store, 0, time.Millisecond)
+	replayer.replayRejected(ctx, time.Now().Add(time.Second))
+
+	published := bus.snapshotPublished()
+	if len(published) != 2 {
+		t.Fatalf("expected DLQ + result replay publishes, got %d", len(published))
+	}
+	record, err := store.GetApprovalRecord(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.PublishStatus != ApprovalPublishPublished {
+		t.Fatalf("expected reject publish intent to be marked published, got %q", record.PublishStatus)
+	}
+	if record.PublishedAt <= 0 {
+		t.Fatalf("expected published_at > 0, got %d", record.PublishedAt)
 	}
 }
 

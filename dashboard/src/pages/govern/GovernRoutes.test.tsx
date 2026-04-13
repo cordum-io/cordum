@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LEGACY_POLICY_ROUTE_REDIRECTS } from "@/App";
 import { derivePolicyAccess } from "@/hooks/usePolicyAccess";
+import { APP_SHELL_NAV_SECTIONS } from "@/components/layout/AppShell";
 
 describe("GOVERN legacy redirect contract", () => {
   it("maps major legacy policy paths to the expected GOVERN destinations", () => {
@@ -9,7 +10,13 @@ describe("GOVERN legacy redirect contract", () => {
     expect(LEGACY_POLICY_ROUTE_REDIRECTS.tenants).toBe("/govern/tenants");
     expect(LEGACY_POLICY_ROUTE_REDIRECTS.bundles).toBe("/govern/overview?tab=bundles");
     expect(LEGACY_POLICY_ROUTE_REDIRECTS.simulator).toBe("/govern/overview?tab=simulator");
+    expect(LEGACY_POLICY_ROUTE_REDIRECTS.velocityRules).toBe("/govern/velocity-rules");
     expect(LEGACY_POLICY_ROUTE_REDIRECTS.quarantine).toBe("/govern/quarantine");
+  });
+
+  it("exposes velocity rules in the GOVERN navigation shell", () => {
+    const governSection = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
+    expect(governSection?.items.some((item) => item.path === "/govern/velocity-rules")).toBe(true);
   });
 });
 

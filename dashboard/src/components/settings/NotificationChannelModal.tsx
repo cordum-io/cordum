@@ -8,6 +8,7 @@ import { cn } from "../../lib/utils";
 import { notificationChannelSchema } from "../../lib/settingsSchemas";
 import { useSaveNotificationChannel } from "../../hooks/useSettings";
 import type { NotificationChannel, NotificationChannelType } from "../../api/types";
+import { generateUUID } from "@/lib/uuid";
 
 // ---------------------------------------------------------------------------
 // Provider definitions
@@ -315,7 +316,7 @@ export function NotificationChannelModal({
   const selectedType = watch("type");
 
   function onSubmit(data: ChannelForm) {
-    const id = channel?.id ?? `ch-${crypto.randomUUID().slice(0, 8)}`;
+    const id = channel?.id ?? `ch-${generateUUID().slice(0, 8)}`;
     saveChannel.mutate(
       {
         id,

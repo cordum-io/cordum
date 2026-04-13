@@ -53,10 +53,8 @@ func (p *NATSAuditPublisher) Send(event SIEMEvent) {
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_Alert{
 			Alert: &pb.SystemAlert{
-				Level:           "INFO",
 				Severity:        pb.AlertSeverity_ALERT_SEVERITY_INFO,
 				Message:         string(payload),
-				Component:       "audit-export",
 				SourceComponent: "audit-export",
 				Details: map[string]string{
 					"event_type": event.EventType,

@@ -90,12 +90,27 @@ func ValidatePackManifest(manifest *PackManifest) error {
 			return fmt.Errorf("topic %q must be namespaced under job.%s.*", topic.Name, id)
 		}
 	}
+	schemaIDs := make(map[string]struct{}, len(manifest.Resources.Schemas))
 	for _, res := range manifest.Resources.Schemas {
 		if res.ID == "" || res.Path == "" {
 			return errors.New("schema id and path required")
 		}
 		if !strings.HasPrefix(res.ID, id+"/") {
 			return fmt.Errorf("schema id %q must be namespaced under %s/", res.ID, id)
+		}
+		schemaIDs[res.ID] = struct{}{}
+	}
+	for _, topic := range manifest.Topics {
+		for _, schemaID := range []string{
+			strings.TrimSpace(topic.InputSchemaID),
+			strings.TrimSpace(topic.OutputSchemaID),
+		} {
+			if schemaID == "" {
+				continue
+			}
+			if _, ok := schemaIDs[schemaID]; !ok {
+				return fmt.Errorf("topic %s references unknown schema %s", topic.Name, schemaID)
+			}
 		}
 	}
 	for _, res := range manifest.Resources.Workflows {

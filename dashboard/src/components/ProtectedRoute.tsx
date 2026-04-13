@@ -7,7 +7,6 @@ import { AppShell } from "./layout/AppShell";
 import { CommandPalette } from "./CommandPalette";
 import { get } from "../api/client";
 import { ApiError } from "../api/client";
-import { useEventStream } from "../hooks/useEventStream";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useAuthConfig } from "../hooks/useAuthConfig";
 import { useCrossTabSync } from "../hooks/useCrossTabSync";
@@ -25,19 +24,21 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: authConfig, isLoading: authLoading } = useAuthConfig();
-  const requiresAuth = !!authConfig && (
-    authConfig.password_enabled ||
-    authConfig.user_auth_enabled ||
-    authConfig.saml_enabled ||
-    authConfig.oidc_enabled
-  );
+  const requiresAuth =
+    !!authConfig &&
+    (authConfig.password_enabled ||
+      authConfig.user_auth_enabled ||
+      authConfig.saml_enabled ||
+      authConfig.oidc_enabled);
   const isAuthorized = !requiresAuth || isAuthenticated;
 
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthorized) {
       const returnUrl = location.pathname + location.search;
-      navigate(`/login?returnUrl=${encodeURIComponent(returnUrl)}`, { replace: true });
+      navigate(`/login?returnUrl=${encodeURIComponent(returnUrl)}`, {
+        replace: true,
+      });
     }
   }, [authLoading, isAuthorized, navigate, location.pathname, location.search]);
 
@@ -54,7 +55,10 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // Handle 401 from session validation
   const addToast = useToastStore((s) => s.addToast);
   useEffect(() => {
-    if (sessionQuery.error instanceof ApiError && sessionQuery.error.status === 401) {
+    if (
+      sessionQuery.error instanceof ApiError &&
+      sessionQuery.error.status === 401
+    ) {
       addToast({
         type: "warning",
         title: "Session expired",
@@ -64,9 +68,6 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
       logout();
     }
   }, [sessionQuery.error, logout, addToast]);
-
-  // Connect WebSocket when authenticated (disconnects on unmount / logout)
-  useEventStream();
 
   // Register global keyboard shortcuts
   useKeyboardShortcuts();

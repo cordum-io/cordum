@@ -159,6 +159,20 @@ func (s *RedisStore) ListWorkflows(ctx context.Context, orgID string, limit int6
 	return out, nil
 }
 
+// CountWorkflows returns the number of workflow definitions, optionally scoped
+// by org.
+func (s *RedisStore) CountWorkflows(ctx context.Context, orgID string) (int64, error) {
+	index := workflowAllIndexKey()
+	if orgID != "" {
+		index = workflowOrgIndexKey(orgID)
+	}
+	count, err := s.client.ZCard(ctx, index).Result()
+	if err != nil {
+		return 0, fmt.Errorf("count workflows: %w", err)
+	}
+	return count, nil
+}
+
 // CreateRun persists a new workflow run and indexes it by workflow.
 func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	if run == nil || run.ID == "" || run.WorkflowID == "" {
@@ -329,6 +343,16 @@ func (s *RedisStore) CountActiveRuns(ctx context.Context, orgID string) (int, er
 		return 0, fmt.Errorf("count active runs: %w", err)
 	}
 	return int(count), nil
+}
+
+// CountRunsSince returns the number of workflow runs updated on or after the
+// provided time.
+func (s *RedisStore) CountRunsSince(ctx context.Context, since time.Time) (int64, error) {
+	count, err := s.client.ZCount(ctx, runAllIndexKey(), fmt.Sprintf("%d", since.UTC().Unix()), "+inf").Result()
+	if err != nil {
+		return 0, fmt.Errorf("count runs since: %w", err)
+	}
+	return count, nil
 }
 
 // ListRunsByWorkflow returns recent runs for a workflow.

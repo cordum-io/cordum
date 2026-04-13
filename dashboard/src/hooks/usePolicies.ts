@@ -10,6 +10,7 @@ import type {
   ApiResponse,
   PolicySnapshotSummary,
   PolicySnapshot,
+  SafetyDecisionType,
 } from "../api/types";
 
 export type { PolicySnapshot, PolicySnapshotSummary };
@@ -335,6 +336,250 @@ export function usePolicyAudit() {
       return { items };
     },
     staleTime: 30_000,
+  });
+}
+
+export interface VelocityRuleMatch {
+  topics: string[];
+  tenants: string[];
+  risk_tags: string[];
+}
+
+export interface VelocityRule {
+  id: string;
+  name: string;
+  match: VelocityRuleMatch;
+  window: string;
+  key: string;
+  threshold: number;
+  decision: SafetyDecisionType;
+  reason: string;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface VelocityRuleStats {
+  id: string;
+  hitCount24h: number;
+  hitRate24h: number;
+  currentWindowCount: number;
+  currentWindowMax: number;
+  activeBuckets: number;
+  exceededBuckets: number;
+  lastTriggered?: string;
+  hourlyHits: number[];
+}
+
+export interface VelocityRuleInput {
+  id: string;
+  name: string;
+  match: Partial<VelocityRuleMatch>;
+  window: string;
+  key: string;
+  threshold: number;
+  decision: SafetyDecisionType;
+  reason: string;
+  enabled?: boolean;
+}
+
+export interface VelocityRuleListResult {
+  items: VelocityRule[];
+  count: number;
+  limit: number;
+  upgradeUrl?: string;
+}
+
+export interface VelocityRuleStatsResult {
+  items: VelocityRuleStats[];
+  topRules: VelocityRuleStats[];
+  generatedAt?: string;
+}
+
+type BackendVelocityRule = {
+  id?: string;
+  name?: string;
+  match?: {
+    topics?: string[];
+    tenants?: string[];
+    risk_tags?: string[];
+  };
+  window?: string;
+  key?: string;
+  threshold?: number;
+  decision?: string;
+  reason?: string;
+  enabled?: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type BackendVelocityRuleStats = {
+  id?: string;
+  hit_count_24h?: number;
+  hit_rate_24h?: number;
+  current_window_count?: number;
+  current_window_max?: number;
+  active_buckets?: number;
+  exceeded_buckets?: number;
+  last_triggered?: string;
+  hourly_hits?: number[];
+};
+
+function mapVelocityRule(raw: BackendVelocityRule): VelocityRule {
+  return {
+    id: raw.id?.trim() ?? "",
+    name: raw.name?.trim() || raw.id?.trim() || "",
+    match: {
+      topics: raw.match?.topics ?? [],
+      tenants: raw.match?.tenants ?? [],
+      risk_tags: raw.match?.risk_tags ?? [],
+    },
+    window: raw.window?.trim() ?? "",
+    key: raw.key?.trim() ?? "",
+    threshold: typeof raw.threshold === "number" ? raw.threshold : 0,
+    decision: normalizeDecisionType(raw.decision ?? "") as SafetyDecisionType,
+    reason: raw.reason?.trim() ?? "",
+    enabled: raw.enabled !== false,
+    createdAt: raw.created_at?.trim() || undefined,
+    updatedAt: raw.updated_at?.trim() || undefined,
+  };
+}
+
+function mapVelocityRuleStats(raw: BackendVelocityRuleStats): VelocityRuleStats {
+  return {
+    id: raw.id?.trim() ?? "",
+    hitCount24h: typeof raw.hit_count_24h === "number" ? raw.hit_count_24h : 0,
+    hitRate24h: typeof raw.hit_rate_24h === "number" ? raw.hit_rate_24h : 0,
+    currentWindowCount:
+      typeof raw.current_window_count === "number" ? raw.current_window_count : 0,
+    currentWindowMax:
+      typeof raw.current_window_max === "number" ? raw.current_window_max : 0,
+    activeBuckets: typeof raw.active_buckets === "number" ? raw.active_buckets : 0,
+    exceededBuckets:
+      typeof raw.exceeded_buckets === "number" ? raw.exceeded_buckets : 0,
+    lastTriggered: raw.last_triggered?.trim() || undefined,
+    hourlyHits: raw.hourly_hits ?? [],
+  };
+}
+
+function velocityRulePath(id: string): string {
+  return `/policy/velocity-rules/${encodeURIComponent(id)}`;
+}
+
+function describeVelocityRuleError(error: Error): string {
+  if (error instanceof ApiError) {
+    const detail = readApiErrorDetail(error);
+    if (detail) {
+      return detail;
+    }
+    return `Velocity rule request failed (status ${error.status}).`;
+  }
+  return error.message;
+}
+
+export function useVelocityRules() {
+  return useQuery<VelocityRuleListResult>({
+    queryKey: queryKeys.policies.velocityRules(),
+    queryFn: async () => {
+      const response = await get<{
+        items?: BackendVelocityRule[];
+        count?: number;
+        limit?: number;
+        upgrade_url?: string;
+      }>("/policy/velocity-rules");
+      const items = (response.items ?? []).map(mapVelocityRule).filter((rule) => rule.id !== "");
+      return {
+        items,
+        count: typeof response.count === "number" ? response.count : items.length,
+        limit: typeof response.limit === "number" ? response.limit : 0,
+        upgradeUrl: response.upgrade_url?.trim() || undefined,
+      };
+    },
+    staleTime: 10_000,
+  });
+}
+
+export function useVelocityRuleStats() {
+  return useQuery<VelocityRuleStatsResult>({
+    queryKey: queryKeys.policies.velocityRuleStats(),
+    queryFn: async () => {
+      const response = await get<{
+        items?: BackendVelocityRuleStats[];
+        top_rules?: BackendVelocityRuleStats[];
+        generated_at?: string;
+      }>("/policy/velocity-rules/stats");
+      return {
+        items: (response.items ?? []).map(mapVelocityRuleStats).filter((item) => item.id !== ""),
+        topRules: (response.top_rules ?? []).map(mapVelocityRuleStats).filter((item) => item.id !== ""),
+        generatedAt: response.generated_at?.trim() || undefined,
+      };
+    },
+    staleTime: 10_000,
+  });
+}
+
+export function useCreateVelocityRule() {
+  const queryClient = useQueryClient();
+  return useMutation<VelocityRule, Error, VelocityRuleInput>({
+    mutationFn: async (input) =>
+      mapVelocityRule(await post<BackendVelocityRule>("/policy/velocity-rules", input)),
+    onSuccess: () => {
+      useToastStore.getState().addToast({ type: "success", title: "Velocity rule created" });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.velocityRules() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.velocityRuleStats() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
+    },
+    onError: (error) => {
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Failed to create velocity rule",
+        description: describeVelocityRuleError(error),
+      });
+    },
+  });
+}
+
+export function useUpdateVelocityRule() {
+  const queryClient = useQueryClient();
+  return useMutation<VelocityRule, Error, VelocityRuleInput>({
+    mutationFn: async (input) =>
+      mapVelocityRule(await put<BackendVelocityRule>(velocityRulePath(input.id), input)),
+    onSuccess: () => {
+      useToastStore.getState().addToast({ type: "success", title: "Velocity rule updated" });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.velocityRules() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.velocityRuleStats() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
+    },
+    onError: (error) => {
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Failed to update velocity rule",
+        description: describeVelocityRuleError(error),
+      });
+    },
+  });
+}
+
+export function useDeleteVelocityRule() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      await del<void>(velocityRulePath(id));
+    },
+    onSuccess: () => {
+      useToastStore.getState().addToast({ type: "success", title: "Velocity rule deleted" });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.velocityRules() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.velocityRuleStats() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.rules() });
+    },
+    onError: (error) => {
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Failed to delete velocity rule",
+        description: describeVelocityRuleError(error),
+      });
+    },
   });
 }
 

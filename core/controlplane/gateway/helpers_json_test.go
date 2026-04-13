@@ -43,11 +43,11 @@ func TestMaxBodyMiddleware_OversizedContentLength(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("expected 413, got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "too large") {
-		t.Fatalf("expected 'too large' in body, got %s", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "tier_limit_exceeded") {
+		t.Fatalf("expected tier limit error in body, got %s", rr.Body.String())
 	}
 }
 
@@ -73,8 +73,11 @@ func TestMaxBodyMiddleware_OversizedChunkedBody(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("expected 413, got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "max_body_bytes") {
+		t.Fatalf("expected max_body_bytes limit in body, got %s", rr.Body.String())
 	}
 }
 
@@ -152,8 +155,11 @@ func TestMaxBodyMiddleware_LimitsDELETEWithBody(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("expected 413 for oversized DELETE body, got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for oversized DELETE body, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "tier_limit_exceeded") {
+		t.Fatalf("expected tier limit error in body, got %s", rr.Body.String())
 	}
 }
 

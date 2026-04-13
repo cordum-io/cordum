@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -405,6 +408,484 @@ func TestRedisJobStoreApprovalRecord(t *testing.T) {
 	}
 	if got.PolicySnapshot != record.PolicySnapshot || got.JobHash != record.JobHash {
 		t.Fatalf("unexpected approval linkage: %#v", got)
+	}
+}
+
+func TestRedisJobStoreSeedsExplicitApprovalLifecycle(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	jobID := "job-approval-lifecycle"
+	if err := store.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		ApprovalRef:      "approval-1",
+		JobHash:          "hash-1",
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	sd, err := store.GetSafetyDecision(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get safety decision: %v", err)
+	}
+	if sd.ApprovalStatus != model.ApprovalStatusPending {
+		t.Fatalf("expected pending approval status, got %q", sd.ApprovalStatus)
+	}
+	if sd.Actionability != model.ApprovalActionabilityActionable {
+		t.Fatalf("expected actionable approval, got %q", sd.Actionability)
+	}
+	if sd.ApprovalRevision != 1 {
+		t.Fatalf("expected approval revision 1, got %d", sd.ApprovalRevision)
+	}
+
+	record, err := store.GetApprovalRecord(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	normalized := NormalizeApprovalRecord(model.JobStateApproval, sd, record)
+	if normalized.Status != model.ApprovalStatusPending {
+		t.Fatalf("expected normalized pending status, got %q", normalized.Status)
+	}
+	if normalized.Actionability != model.ApprovalActionabilityActionable {
+		t.Fatalf("expected normalized actionable approval, got %q", normalized.Actionability)
+	}
+	if normalized.Revision != 1 {
+		t.Fatalf("expected normalized revision 1, got %d", normalized.Revision)
+	}
+}
+
+func TestRedisJobStoreResolveApprovalAtomically(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	req := &pb.JobRequest{
+		JobId:    "job-resolve-approve",
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := store.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := store.SetState(ctx, req.GetJobId(), model.JobStateApproval); err != nil {
+		t.Fatalf("set approval state: %v", err)
+	}
+	hash, err := hashApprovalJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash request: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, req.GetJobId(), model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	resolved, err := store.ResolveApproval(ctx, ApprovalResolutionParams{
+		JobID:          req.GetJobId(),
+		Decision:       model.ApprovalDecisionApprove,
+		ResultState:    model.JobStatePending,
+		ApprovedBy:     "alice",
+		ApprovedRole:   "admin",
+		Reason:         "approved",
+		Note:           "looks good",
+		PolicySnapshot: "snap-1",
+		LabelUpdates: map[string]string{
+			"approval_granted": "true",
+			"approval_reason":  "approved",
+			bus.LabelBusMsgID:  "approval:" + req.GetJobId(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve approval: %v", err)
+	}
+	if resolved.State != model.JobStatePending {
+		t.Fatalf("expected pending state, got %s", resolved.State)
+	}
+
+	state, err := store.GetState(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state != model.JobStatePending {
+		t.Fatalf("expected pending state persisted, got %s", state)
+	}
+
+	persistedReq, err := store.GetJobRequest(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get job request: %v", err)
+	}
+	if persistedReq.Labels["approval_granted"] != "true" {
+		t.Fatalf("expected approval_granted label, got %#v", persistedReq.Labels)
+	}
+
+	record, err := store.GetApprovalRecord(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.Status != model.ApprovalStatusApproved {
+		t.Fatalf("expected approved status, got %q", record.Status)
+	}
+	if record.Decision != model.ApprovalDecisionApprove {
+		t.Fatalf("expected approve decision, got %q", record.Decision)
+	}
+	if record.Revision != 2 {
+		t.Fatalf("expected revision 2, got %d", record.Revision)
+	}
+	if record.PublishStatus != model.ApprovalPublishPending {
+		t.Fatalf("expected pending publish status, got %q", record.PublishStatus)
+	}
+	if record.PublishTarget != model.ApprovalPublishTargetSubmit {
+		t.Fatalf("expected submit publish target, got %q", record.PublishTarget)
+	}
+
+	if err := store.MarkApprovalPublishComplete(ctx, req.GetJobId(), record.Revision, record.PublishTarget); err != nil {
+		t.Fatalf("mark publish complete: %v", err)
+	}
+	record, err = store.GetApprovalRecord(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get approval record after mark complete: %v", err)
+	}
+	if record.PublishStatus != model.ApprovalPublishPublished {
+		t.Fatalf("expected published status after mark complete, got %q", record.PublishStatus)
+	}
+	if record.PublishedAt <= 0 {
+		t.Fatalf("expected published_at > 0, got %d", record.PublishedAt)
+	}
+}
+
+func TestRedisJobStoreResolveApprovalRejectsStaleApproveRequest(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	req := &pb.JobRequest{
+		JobId:    "job-resolve-stale",
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := store.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := store.SetState(ctx, req.GetJobId(), model.JobStateApproval); err != nil {
+		t.Fatalf("set approval state: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, req.GetJobId(), model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          "stale-hash",
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	_, err = store.ResolveApproval(ctx, ApprovalResolutionParams{
+		JobID:       req.GetJobId(),
+		Decision:    model.ApprovalDecisionApprove,
+		ResultState: model.JobStatePending,
+		ApprovedBy:  "alice",
+	})
+	var conflict *ApprovalConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected approval conflict, got %v", err)
+	}
+	if conflict.Code != model.ApprovalConflictStaleRequest {
+		t.Fatalf("expected stale request conflict, got %q", conflict.Code)
+	}
+
+	state, err := store.GetState(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state != model.JobStateApproval {
+		t.Fatalf("expected approval state unchanged, got %s", state)
+	}
+}
+
+func TestRedisJobStoreResolveRejectSeedsDLQPublishIntent(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	req := &pb.JobRequest{
+		JobId:    "job-resolve-reject",
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := store.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := store.SetState(ctx, req.GetJobId(), model.JobStateApproval); err != nil {
+		t.Fatalf("set approval state: %v", err)
+	}
+	hash, err := hashApprovalJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash request: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, req.GetJobId(), model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	if _, err := store.ResolveApproval(ctx, ApprovalResolutionParams{
+		JobID:       req.GetJobId(),
+		Decision:    model.ApprovalDecisionReject,
+		ResultState: model.JobStateDenied,
+		ApprovedBy:  "bob",
+		Reason:      "denied",
+	}); err != nil {
+		t.Fatalf("resolve reject: %v", err)
+	}
+
+	record, err := store.GetApprovalRecord(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.PublishStatus != model.ApprovalPublishPending {
+		t.Fatalf("expected pending publish status, got %q", record.PublishStatus)
+	}
+	if record.PublishTarget != model.ApprovalPublishTargetDLQ {
+		t.Fatalf("expected dlq publish target, got %q", record.PublishTarget)
+	}
+}
+
+func TestClassifyApprovalRepairPrefersResolutionOverPendingPublishWhileAwaitingApproval(t *testing.T) {
+	plan := ClassifyApprovalRepair(ApprovalRepairSnapshot{
+		JobID: "job-repair-pending",
+		State: model.JobStateApproval,
+		ApprovalRecord: ApprovalRecord{
+			Status:        model.ApprovalStatusApproved,
+			Decision:      model.ApprovalDecisionApprove,
+			Actionability: model.ApprovalStatusApproved.DefaultActionability(),
+			PublishStatus: model.ApprovalPublishPending,
+			PublishTarget: model.ApprovalPublishTargetSubmit,
+		},
+	}, ApprovalRepairClassifyOptions{})
+
+	if plan.Kind != ApprovalRepairApplyApprovedResolution {
+		t.Fatalf("expected approved resolution repair, got %q", plan.Kind)
+	}
+	if !plan.Repairable {
+		t.Fatal("expected repair plan to be repairable")
+	}
+}
+
+func TestRedisJobStoreApplyApprovalRepairApprovedResolution(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	req := &pb.JobRequest{
+		JobId:    "job-repair-approved",
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels: map[string]string{
+			"approval_granted": "true",
+		},
+	}
+	if err := store.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := store.SetState(ctx, req.GetJobId(), model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := hashApprovalJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash request: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, req.GetJobId(), model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	snapshot, err := store.InspectApprovalRepair(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("inspect repair: %v", err)
+	}
+	plan := ClassifyApprovalRepair(*snapshot, ApprovalRepairClassifyOptions{})
+	if plan.Kind != ApprovalRepairApplyApprovedResolution {
+		t.Fatalf("expected approved repair plan, got %q", plan.Kind)
+	}
+
+	repaired, err := store.ApplyApprovalRepair(ctx, ApprovalRepairApplyParams{
+		JobID: req.GetJobId(),
+		Plan:  plan,
+		Actor: "operator-1",
+		Note:  "operator repair",
+	})
+	if err != nil {
+		t.Fatalf("apply repair: %v", err)
+	}
+	if repaired.State != model.JobStatePending {
+		t.Fatalf("expected pending state, got %s", repaired.State)
+	}
+	if repaired.ApprovalRecord.PublishTarget != model.ApprovalPublishTargetSubmit {
+		t.Fatalf("expected submit publish target, got %q", repaired.ApprovalRecord.PublishTarget)
+	}
+	if repaired.ApprovalRecord.PublishStatus != model.ApprovalPublishPending {
+		t.Fatalf("expected pending publish status, got %q", repaired.ApprovalRecord.PublishStatus)
+	}
+
+	state, err := store.GetState(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state != model.JobStatePending {
+		t.Fatalf("expected pending state persisted, got %s", state)
+	}
+	record, err := store.GetApprovalRecord(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.Status != model.ApprovalStatusApproved {
+		t.Fatalf("expected approved status, got %q", record.Status)
+	}
+	if record.Decision != model.ApprovalDecisionApprove {
+		t.Fatalf("expected approve decision, got %q", record.Decision)
+	}
+	if !strings.Contains(record.Note, "repair: operator repair") {
+		t.Fatalf("expected repair note recorded, got %q", record.Note)
+	}
+	persistedReq, err := store.GetJobRequest(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("get repaired request: %v", err)
+	}
+	if persistedReq.Labels["approval_granted"] != "true" {
+		t.Fatalf("expected approval_granted label, got %#v", persistedReq.Labels)
+	}
+	if persistedReq.Labels[bus.LabelBusMsgID] != "approval:"+req.GetJobId() {
+		t.Fatalf("expected approval label bus msg id, got %#v", persistedReq.Labels)
+	}
+}
+
+func TestRedisJobStoreApplyApprovalRepairInvalidatesStaleRequest(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	req := &pb.JobRequest{
+		JobId:    "job-repair-stale",
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	hash, err := hashApprovalJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash request: %v", err)
+	}
+	req.Labels = map[string]string{"priority": "high"}
+	if err := store.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := store.SetState(ctx, req.GetJobId(), model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, req.GetJobId(), model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	snapshot, err := store.InspectApprovalRepair(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("inspect repair: %v", err)
+	}
+	plan := ClassifyApprovalRepair(*snapshot, ApprovalRepairClassifyOptions{})
+	if plan.Kind != ApprovalRepairInvalidateStaleRequest {
+		t.Fatalf("expected stale request invalidation, got %q", plan.Kind)
+	}
+
+	repaired, err := store.ApplyApprovalRepair(ctx, ApprovalRepairApplyParams{
+		JobID: req.GetJobId(),
+		Plan:  plan,
+		Actor: "operator-2",
+		Note:  "stale request",
+	})
+	if err != nil {
+		t.Fatalf("apply repair: %v", err)
+	}
+	if repaired.State != model.JobStateDenied {
+		t.Fatalf("expected denied state, got %s", repaired.State)
+	}
+	if repaired.ApprovalRecord.Status != model.ApprovalStatusInvalidated {
+		t.Fatalf("expected invalidated status, got %q", repaired.ApprovalRecord.Status)
+	}
+	if repaired.ApprovalRecord.PublishTarget != "" {
+		t.Fatalf("expected no publish target, got %q", repaired.ApprovalRecord.PublishTarget)
 	}
 }
 

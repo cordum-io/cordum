@@ -14,6 +14,8 @@ const (
 	defaultTimeoutConfig = "config/timeouts.yaml"
 	defaultSafetyPolicy  = "config/safety.yaml"
 	defaultContextEngine = ":50070"
+	defaultTelemetryMode = "anonymous"
+	defaultTelemetryURL  = "https://telemetry.cordum.io/v1/report"
 	envNATSURL           = "NATS_URL"
 	envRedisURL          = "REDIS_URL"
 	envSafetyKernelAddr  = "SAFETY_KERNEL_ADDR"
@@ -22,6 +24,8 @@ const (
 	envTimeoutConfigPath = "TIMEOUT_CONFIG_PATH"
 	envSafetyPolicyPath  = "SAFETY_POLICY_PATH"
 	envOutputPolicy      = "OUTPUT_POLICY_ENABLED"
+	envTelemetryMode     = "CORDUM_TELEMETRY_MODE"
+	envTelemetryURL      = "CORDUM_TELEMETRY_ENDPOINT"
 )
 
 // Config holds runtime configuration for the control plane components.
@@ -34,6 +38,8 @@ type Config struct {
 	TimeoutConfigPath   string
 	SafetyPolicyPath    string
 	OutputPolicyEnabled bool
+	TelemetryMode       string
+	TelemetryEndpoint   string
 }
 
 // Load returns configuration using environment variables with sane defaults.
@@ -70,6 +76,14 @@ func Load() *Config {
 		safetyPolicy = defaultSafetyPolicy
 	}
 	outputPolicyEnabled := strings.EqualFold(os.Getenv(envOutputPolicy), "true") || os.Getenv(envOutputPolicy) == "1"
+	telemetryMode := strings.TrimSpace(os.Getenv(envTelemetryMode))
+	if telemetryMode == "" {
+		telemetryMode = defaultTelemetryMode
+	}
+	telemetryEndpoint := strings.TrimSpace(os.Getenv(envTelemetryURL))
+	if telemetryEndpoint == "" {
+		telemetryEndpoint = defaultTelemetryURL
+	}
 
 	cfg := &Config{
 		NatsURL:             natsURL,
@@ -80,6 +94,8 @@ func Load() *Config {
 		TimeoutConfigPath:   timeoutCfg,
 		SafetyPolicyPath:    safetyPolicy,
 		OutputPolicyEnabled: outputPolicyEnabled,
+		TelemetryMode:       telemetryMode,
+		TelemetryEndpoint:   telemetryEndpoint,
 	}
 
 	// Warn when using localhost defaults — likely misconfiguration in non-dev deployments.

@@ -5,7 +5,12 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useForm, useFieldArray } from "react-hook-form";
+import {
+  useForm,
+  useFieldArray,
+  type FieldErrors,
+  type FieldError,
+} from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
@@ -51,7 +56,39 @@ interface SchemaVersion {
   changelog?: string;
 }
 
-function SchemaCreateForm() {
+function readFieldErrorMessage(error?: FieldError): string | null {
+  return typeof error?.message === "string" ? error.message : null;
+}
+
+export function getSchemaCreateErrorMessages(
+  errors: FieldErrors<CreateSchemaForm>,
+): string[] {
+  const messages = new Set<string>();
+
+  const push = (value?: string | null) => {
+    if (value) messages.add(value);
+  };
+
+  push(readFieldErrorMessage(errors.id));
+  push(readFieldErrorMessage(errors.type));
+  push(readFieldErrorMessage(errors.description));
+  push(readFieldErrorMessage(errors.fields as FieldError | undefined));
+  push(readFieldErrorMessage(errors.fields?.root));
+
+  if (Array.isArray(errors.fields)) {
+    errors.fields.forEach((fieldError) => {
+      if (!fieldError) return;
+      push(readFieldErrorMessage(fieldError.name));
+      push(readFieldErrorMessage(fieldError.type));
+      push(readFieldErrorMessage(fieldError.required));
+      push(readFieldErrorMessage(fieldError.description));
+    });
+  }
+
+  return Array.from(messages);
+}
+
+export function SchemaCreateForm() {
   const navigate = useNavigate();
   const registerSchema = useRegisterSchema();
   const { register, control, handleSubmit, formState: { errors, isSubmitting } } = useForm<CreateSchemaForm>({
@@ -64,6 +101,7 @@ function SchemaCreateForm() {
     },
   });
   const { fields, append, remove } = useFieldArray({ control, name: "fields" });
+  const errorMessages = getSchemaCreateErrorMessages(errors);
 
   function onSubmit(data: CreateSchemaForm) {
     const properties: Record<string, unknown> = {};
@@ -101,6 +139,19 @@ function SchemaCreateForm() {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        {errorMessages.length > 0 && (
+          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-4">
+            <p className="text-xs font-mono uppercase tracking-wide text-destructive">
+              Validation issues
+            </p>
+            <ul className="mt-2 space-y-1 text-sm text-destructive">
+              {errorMessages.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="instrument-card p-6 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -113,11 +164,13 @@ function SchemaCreateForm() {
               <select {...register("type")} className="w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30">
                 {SCHEMA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
+              {errors.type && <p className="mt-1 text-xs text-destructive">{errors.type.message}</p>}
             </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">Description</label>
             <input {...register("description")} placeholder="Optional description" className="w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
+            {errors.description && <p className="mt-1 text-xs text-destructive">{errors.description.message}</p>}
           </div>
         </div>
 
@@ -128,7 +181,11 @@ function SchemaCreateForm() {
               <Plus className="w-3.5 h-3.5" />Add Field
             </button>
           </div>
-          {errors.fields?.root && <p className="text-xs text-destructive">{errors.fields.root.message}</p>}
+          {(errors.fields?.root || readFieldErrorMessage(errors.fields as FieldError | undefined)) && (
+            <p className="text-xs text-destructive">
+              {errors.fields?.root?.message ?? readFieldErrorMessage(errors.fields as FieldError | undefined)}
+            </p>
+          )}
 
           <div className="space-y-3">
             {fields.map((field, index) => (
@@ -137,14 +194,20 @@ function SchemaCreateForm() {
                   <input {...register(`fields.${index}.name`)} placeholder="Field name" className="w-full rounded-lg border border-border bg-surface-0 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
                   {errors.fields?.[index]?.name && <p className="mt-0.5 text-xs text-destructive">{errors.fields[index].name?.message}</p>}
                 </div>
-                <select {...register(`fields.${index}.type`)} className="rounded-lg border border-border bg-surface-0 px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30">
-                  {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+                <div>
+                  <select {...register(`fields.${index}.type`)} className="rounded-lg border border-border bg-surface-0 px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30">
+                    {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  {errors.fields?.[index]?.type && <p className="mt-0.5 text-xs text-destructive">{errors.fields[index].type?.message}</p>}
+                </div>
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap py-1.5">
                   <input type="checkbox" {...register(`fields.${index}.required`)} className="rounded border-border" />
                   Required
                 </label>
-                <input {...register(`fields.${index}.description`)} placeholder="Description" className="w-full rounded-lg border border-border bg-surface-0 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
+                <div>
+                  <input {...register(`fields.${index}.description`)} placeholder="Description" className="w-full rounded-lg border border-border bg-surface-0 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
+                  {errors.fields?.[index]?.description && <p className="mt-0.5 text-xs text-destructive">{errors.fields[index].description?.message}</p>}
+                </div>
                 <button type="button" onClick={() => fields.length > 1 && remove(index)} disabled={fields.length <= 1} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>

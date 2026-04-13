@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -408,7 +407,20 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			"approval_ref":      record.ApprovalRef,
 		}
 		approvalRecord, approvalErr := s.jobStore.GetApprovalRecord(r.Context(), job.ID)
+		approvalRecord = store.NormalizeApprovalRecord(job.State, record, approvalRecord)
 		hasResolvedApproval := approvalErr == nil && approvalRecord.ApprovedBy != ""
+		if approvalRecord.Status != "" {
+			item["approval_status"] = approvalRecord.Status
+		}
+		if approvalRecord.Actionability != "" {
+			item["approval_actionability"] = approvalRecord.Actionability
+		}
+		if approvalRecord.Revision > 0 {
+			item["approval_revision"] = approvalRecord.Revision
+		}
+		if approvalRecord.Decision != "" {
+			item["approval_decision"] = approvalRecord.Decision
+		}
 		// Merge approval resolution fields when an approval record exists.
 		if hasResolvedApproval {
 			item["resolved_by"] = approvalRecord.ApprovedBy
@@ -533,6 +545,23 @@ type handlerResult struct {
 	body   any
 }
 
+type approvalRepairRequest struct {
+	Apply bool   `json:"apply"`
+	Note  string `json:"note"`
+}
+
+func approvalConflictPayload(status int, code model.ApprovalConflictCode, message string) map[string]any {
+	payload := map[string]any{
+		"error":  message,
+		"status": status,
+		"code":   string(code),
+	}
+	if code == model.ApprovalConflictRetryableLock {
+		payload["retryable"] = true
+	}
+	return payload
+}
+
 // withApprovalLock acquires a per-job distributed lock, executes fn, and
 // releases the lock on return. Returns store.ErrLockBusy-style error if
 // the lock cannot be acquired within a short deadline.
@@ -568,6 +597,241 @@ func (s *server) withApprovalLock(ctx context.Context, jobID string, fn func(ctx
 		}
 	}()
 	return fn(ctx)
+}
+
+func (s *server) approvalRepairPlan(ctx context.Context, jobID string) (*store.ApprovalRepairSnapshot, store.ApprovalRepairPlan, error) {
+	snapshot, err := s.jobStore.InspectApprovalRepair(ctx, jobID)
+	if err != nil {
+		return nil, store.ApprovalRepairPlan{}, err
+	}
+	opts := store.ApprovalRepairClassifyOptions{}
+	if snapshot.RunID != "" && s.workflowStore != nil {
+		if run, err := s.workflowStore.GetRun(ctx, snapshot.RunID); err == nil && run != nil {
+			opts.WorkflowTerminal = wf.IsTerminalRunStatus(run.Status)
+		}
+	}
+	if snapshot.Topic != capsdk.SubjectApprovalGate &&
+		snapshot.Topic != capsdk.SubjectWorkflowApprovalGate &&
+		strings.TrimSpace(snapshot.SafetyRecord.PolicySnapshot) != "" &&
+		s.safetyClient != nil {
+		if resp, err := s.safetyClient.ListSnapshots(ctx, &pb.ListSnapshotsRequest{}); err == nil && resp != nil {
+			currentSnapshot := ""
+			if len(resp.GetSnapshots()) > 0 {
+				currentSnapshot = strings.TrimSpace(resp.GetSnapshots()[0])
+			}
+			if currentSnapshot != "" && snapshotBase(currentSnapshot) != snapshotBase(snapshot.SafetyRecord.PolicySnapshot) {
+				opts.StaleSnapshot = true
+			}
+		}
+	}
+	plan := store.ClassifyApprovalRepair(*snapshot, opts)
+	return snapshot, plan, nil
+}
+
+func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.ApprovalRepairResult) error {
+	if repaired == nil || repaired.Request == nil || repaired.ApprovalRecord.PublishTarget == "" {
+		return nil
+	}
+	switch repaired.ApprovalRecord.PublishTarget {
+	case model.ApprovalPublishTargetSubmit:
+		packet := &pb.BusPacket{
+			TraceId:         repaired.TraceID,
+			SenderId:        "api-gateway",
+			CreatedAt:       timestamppb.Now(),
+			ProtocolVersion: capsdk.DefaultProtocolVersion,
+			Payload: &pb.BusPacket_JobRequest{
+				JobRequest: repaired.Request,
+			},
+		}
+		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+			return err
+		}
+	case model.ApprovalPublishTargetDLQ, model.ApprovalPublishTargetDLQAndResult:
+		errorMessage := "approval rejected"
+		if msg := strings.TrimSpace(repaired.ApprovalRecord.Reason); msg != "" {
+			errorMessage = msg
+		}
+		packet := &pb.BusPacket{
+			TraceId:         repaired.TraceID,
+			SenderId:        "api-gateway",
+			CreatedAt:       timestamppb.Now(),
+			ProtocolVersion: capsdk.DefaultProtocolVersion,
+			Payload: &pb.BusPacket_JobResult{
+				JobResult: &pb.JobResult{
+					JobId:         repaired.JobID,
+					Status:        pb.JobStatus_JOB_STATUS_DENIED,
+					ErrorCode:     "approval_rejected",
+					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
+					ErrorMessage:  errorMessage,
+				},
+			},
+		}
+		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
+			return err
+		}
+		if repaired.ApprovalRecord.PublishTarget == model.ApprovalPublishTargetDLQAndResult {
+			if err := s.bus.Publish(capsdk.SubjectResult, packet); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.jobStore.MarkApprovalPublishComplete(ctx, repaired.JobID, repaired.ApprovalRecord.Revision, repaired.ApprovalRecord.PublishTarget); err != nil {
+		slog.Warn("mark repaired approval publish complete failed", "job_id", repaired.JobID, "error", err)
+	}
+	return nil
+}
+
+func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
+	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
+		return
+	}
+	var body approvalRepairRequest
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			writeJSONDecodeError(w, err, "invalid body")
+			return
+		}
+	}
+	jobID, ok := requirePathParam(w, r, "job_id")
+	if !ok {
+		return
+	}
+
+	var result handlerResult
+	lockErr := s.withApprovalLock(r.Context(), jobID, func(ctx context.Context) error {
+		if tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID); tenantErr != nil {
+			slog.Warn("repair: tenant lookup failed", "job_id", jobID, "error", tenantErr)
+		} else if tenant != "" {
+			if err := s.requireTenantAccess(r, tenant); err != nil {
+				result = handlerResult{http.StatusForbidden, "tenant access denied"}
+				return nil
+			}
+		}
+
+		snapshot, plan, err := s.approvalRepairPlan(ctx, jobID)
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				result = handlerResult{http.StatusNotFound, "job not found"}
+				return nil
+			}
+			slog.Error("approval repair inspection failed", "job_id", jobID, "error", err)
+			result = handlerResult{http.StatusInternalServerError, "failed to inspect approval repair"}
+			return nil
+		}
+
+		response := map[string]any{
+			"job_id":     jobID,
+			"apply":      body.Apply,
+			"applied":    false,
+			"repairable": plan.Repairable,
+			"state":      snapshot.State,
+			"trace_id":   snapshot.TraceID,
+			"approval":   snapshot.ApprovalRecord,
+			"plan":       plan,
+		}
+		if !body.Apply {
+			result = handlerResult{http.StatusOK, response}
+			return nil
+		}
+		if !plan.Repairable {
+			response["error"] = "approval does not require repair"
+			response["status"] = http.StatusConflict
+			response["code"] = "not_repairable"
+			result = handlerResult{http.StatusConflict, response}
+			return nil
+		}
+
+		actorID := strings.TrimSpace(policyActorID(r))
+		if actorID == "" {
+			actorID = "system/repair"
+		}
+		repaired, err := s.jobStore.ApplyApprovalRepair(ctx, store.ApprovalRepairApplyParams{
+			JobID: jobID,
+			Plan:  plan,
+			Actor: actorID,
+			Note:  strings.TrimSpace(body.Note),
+		})
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				result = handlerResult{http.StatusNotFound, "job not found"}
+				return nil
+			}
+			if strings.Contains(err.Error(), "state changed") {
+				result = handlerResult{
+					http.StatusConflict,
+					approvalConflictPayload(http.StatusConflict, model.ApprovalConflictRetryableLock, "approval changed during repair; retry"),
+				}
+				return nil
+			}
+			slog.Error("approval repair apply failed", "job_id", jobID, "kind", plan.Kind, "error", err)
+			result = handlerResult{http.StatusInternalServerError, "failed to apply approval repair"}
+			return nil
+		}
+
+		finalApproval := repaired.ApprovalRecord
+		publishDeferred := false
+		publishError := ""
+		if repaired.ApprovalRecord.PublishTarget != "" {
+			if s.bus == nil {
+				publishDeferred = true
+			} else if err := s.publishApprovalRepair(ctx, repaired); err != nil {
+				publishDeferred = true
+				publishError = err.Error()
+				slog.Error("approval repair publish failed",
+					"job_id", jobID,
+					"kind", plan.Kind,
+					"target", repaired.ApprovalRecord.PublishTarget,
+					"error", err)
+			} else if updated, err := s.jobStore.GetApprovalRecord(ctx, jobID); err == nil {
+				finalApproval = updated
+			}
+		}
+
+		slog.Info("approval repaired",
+			"job_id", jobID,
+			"kind", plan.Kind,
+			"actor", actorID,
+			"role", policyRole(r),
+			"target_state", repaired.State,
+			"publish_target", finalApproval.PublishTarget,
+			"publish_status", finalApproval.PublishStatus)
+		s.appendAuditEntryNamed(ctx, "repair", "job", jobID, snapshot.Topic, actorID, policyRole(r), "repair approval "+jobID+" ("+string(plan.Kind)+")")
+
+		response["applied"] = true
+		response["state"] = repaired.State
+		response["approval"] = finalApproval
+		response["repairable"] = true
+		if publishDeferred {
+			response["publish_deferred"] = true
+		}
+		if publishError != "" {
+			response["publish_error"] = publishError
+		}
+		result = handlerResult{http.StatusOK, response}
+		return nil
+	})
+	if lockErr != nil {
+		if strings.Contains(lockErr.Error(), "lock busy") {
+			writeJSON(w, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictRetryableLock, "repair in progress; retry"))
+			return
+		}
+		writeInternalError(w, r, "repair lock", lockErr)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if result.status >= 400 {
+		if msg, ok := result.body.(string); ok {
+			writeErrorJSON(w, result.status, msg)
+		} else {
+			w.WriteHeader(result.status)
+			if err := json.NewEncoder(w).Encode(result.body); err != nil {
+				slog.Warn("json encode approval repair error failed", "error", err)
+			}
+		}
+		return
+	}
+	writeJSON(w, result.body)
 }
 
 func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
@@ -636,7 +900,17 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "job not awaiting approval (state="+string(state)+")")
-			result = handlerResult{http.StatusConflict, "job not awaiting approval"}
+			conflictCode := model.ApprovalConflictNotActionable
+			conflictMessage := "job not awaiting approval"
+			switch state {
+			case model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning,
+				model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateDenied, model.JobStateQuarantined:
+				conflictCode = model.ApprovalConflictAlreadyResolved
+				conflictMessage = "approval already resolved"
+			case model.JobStateTimeout:
+				conflictMessage = "approval expired"
+			}
+			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflictCode, conflictMessage)}
 			return nil
 		}
 
@@ -661,7 +935,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					if wf.IsTerminalRunStatus(run.Status) {
 						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
 						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), msg)
-						result = handlerResult{http.StatusConflict, msg}
+						result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
 						return nil
 					}
 				}
@@ -675,12 +949,12 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		}
 		if !safetyRecord.ApprovalRequired && safetyRecord.Decision != model.SafetyRequireApproval {
 			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "job not awaiting approval (safety record)")
-			result = handlerResult{http.StatusConflict, "job not awaiting approval"}
+			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictNotActionable, "job not awaiting approval")}
 			return nil
 		}
 		if safetyRecord.JobHash == "" {
 			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "approval job hash unavailable")
-			result = handlerResult{http.StatusConflict, "approval job hash unavailable"}
+			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleRequest, "approval job hash unavailable")}
 			return nil
 		}
 		topic := strings.TrimSpace(req.GetTopic())
@@ -696,7 +970,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		} else {
 			if policySnapshot == "" {
 				s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "approval policy snapshot unavailable")
-				result = handlerResult{http.StatusConflict, "approval policy snapshot unavailable"}
+				result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleSnapshot, "approval policy snapshot unavailable")}
 				return nil
 			}
 			if s.safetyClient == nil {
@@ -714,59 +988,17 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			}
 			if currentSnapshot == "" || snapshotBase(currentSnapshot) != snapshotBase(policySnapshot) {
 				s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "policy snapshot changed")
-				result = handlerResult{http.StatusConflict, "policy snapshot changed; re-evaluate before approving"}
+				result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleSnapshot, "policy snapshot changed; re-evaluate before approving")}
 				return nil
 			}
 		}
-		hash, err := scheduler.HashJobRequest(req)
-		if err != nil {
-			result = handlerResult{http.StatusInternalServerError, "failed to hash job request"}
-			return nil
-		}
-		if hash != safetyRecord.JobHash {
-			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "job request changed")
-			result = handlerResult{http.StatusConflict, "job request changed; approval rejected"}
-			return nil
-		}
-		if req.Labels == nil {
-			req.Labels = map[string]string{}
-		}
-		req.Labels["approval_granted"] = "true"
 		reason := strings.TrimSpace(body.Reason)
 		note := strings.TrimSpace(body.Note)
-		if reason != "" {
-			req.Labels["approval_reason"] = reason
-		}
-		if note != "" {
-			req.Labels["approval_note"] = note
-		}
-		// Stable idempotency key per job so NATS dedup works on retries.
-		req.Labels[bus.LabelBusMsgID] = "approval:" + jobID
-		if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
-			if strings.Contains(err.Error(), "transaction failed") {
-				result = handlerResult{http.StatusConflict, "concurrent approval conflict; retry"}
-				return nil
-			}
-			result = handlerResult{http.StatusInternalServerError, "failed to persist approval request"}
-			return nil
-		}
 		approvedBy := strings.TrimSpace(policyActorID(r))
 		if approvedBy == "" {
 			approvedBy = "system/unknown"
 		}
 		approvalRole := strings.TrimSpace(policyRole(r))
-		if err := s.jobStore.SetApprovalRecord(ctx, jobID, store.ApprovalRecord{
-			ApprovedBy:     approvedBy,
-			ApprovedRole:   approvalRole,
-			ApprovedAt:     time.Now().UnixMicro(),
-			Reason:         reason,
-			Note:           note,
-			PolicySnapshot: policySnapshot,
-			JobHash:        safetyRecord.JobHash,
-		}); err != nil {
-			result = handlerResult{http.StatusInternalServerError, "failed to persist approval record"}
-			return nil
-		}
 
 		// Re-check workflow run terminal status under lock right before
 		// the state transition to prevent approving dead workflow runs.
@@ -776,50 +1008,70 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					if wf.IsTerminalRunStatus(run.Status) {
 						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
 						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), msg)
-						result = handlerResult{http.StatusConflict, msg}
+						result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
 						return nil
 					}
 				}
 			}
 		}
 
-		if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
-			if strings.Contains(err.Error(), "transaction failed") {
-				result = handlerResult{http.StatusConflict, "concurrent approval conflict; retry"}
+		labelUpdates := map[string]string{
+			"approval_granted": "true",
+			bus.LabelBusMsgID:  "approval:" + jobID,
+		}
+		if reason != "" {
+			labelUpdates["approval_reason"] = reason
+		}
+		if note != "" {
+			labelUpdates["approval_note"] = note
+		}
+		resolved, err := s.jobStore.ResolveApproval(ctx, store.ApprovalResolutionParams{
+			JobID:          jobID,
+			Decision:       model.ApprovalDecisionApprove,
+			ResultState:    model.JobStatePending,
+			ApprovedBy:     approvedBy,
+			ApprovedRole:   approvalRole,
+			Reason:         reason,
+			Note:           note,
+			PolicySnapshot: policySnapshot,
+			LabelUpdates:   labelUpdates,
+		})
+		if err != nil {
+			var conflict *store.ApprovalConflictError
+			if errors.As(err, &conflict) {
+				result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflict.Code, conflict.Message)}
 				return nil
 			}
-			result = handlerResult{http.StatusInternalServerError, "set job state failed"}
+			result = handlerResult{http.StatusInternalServerError, "failed to persist approval resolution"}
 			return nil
 		}
-		traceID, traceErr := s.jobStore.GetTraceID(ctx, jobID)
-		if traceErr != nil {
-			slog.Warn("approve: trace ID lookup failed, using empty",
-				"job_id", jobID, "error", traceErr)
-		}
 		packet := &pb.BusPacket{
-			TraceId:         traceID,
+			TraceId:         resolved.TraceID,
 			SenderId:        "api-gateway",
 			CreatedAt:       timestamppb.Now(),
 			ProtocolVersion: capsdk.DefaultProtocolVersion,
 			Payload: &pb.BusPacket_JobRequest{
-				JobRequest: req,
+				JobRequest: resolved.Request,
 			},
 		}
 		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 			result = handlerResult{http.StatusBadGateway, "publish approval failed"}
 			return nil
 		}
+		if err := s.jobStore.MarkApprovalPublishComplete(ctx, jobID, resolved.ApprovalRecord.Revision, resolved.ApprovalRecord.PublishTarget); err != nil {
+			slog.Warn("mark approval publish complete failed", "job_id", jobID, "error", err)
+		}
 		slog.Info("job approved",
-			"job_id", jobID, "trace_id", traceID,
-			"topic", req.GetTopic(), "actor", policyActorID(r),
+			"job_id", jobID, "trace_id", resolved.TraceID,
+			"topic", resolved.Request.GetTopic(), "actor", policyActorID(r),
 			"role", policyRole(r))
-		s.appendAuditEntryNamed(ctx, "approve", "job", jobID, req.GetTopic(), policyActorID(r), policyRole(r), "approve job "+jobID)
-		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID, "trace_id": traceID}}
+		s.appendAuditEntryNamed(ctx, "approve", "job", jobID, resolved.Request.GetTopic(), policyActorID(r), policyRole(r), "approve job "+jobID)
+		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID, "trace_id": resolved.TraceID}}
 		return nil
 	})
 	if lockErr != nil {
 		if strings.Contains(lockErr.Error(), "lock busy") {
-			writeErrorJSON(w, http.StatusConflict, "approval in progress; retry")
+			writeJSON(w, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictRetryableLock, "approval in progress; retry"))
 			return
 		}
 		writeInternalError(w, r, "approval lock", lockErr)
@@ -831,7 +1083,10 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		if msg, ok := result.body.(string); ok {
 			writeErrorJSON(w, result.status, msg)
 		} else {
-			writeJSON(w, result.body)
+			w.WriteHeader(result.status)
+			if err := json.NewEncoder(w).Encode(result.body); err != nil {
+				slog.Warn("json encode approval error failed", "error", err)
+			}
 		}
 		return
 	}
@@ -881,7 +1136,16 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			s.appendAuditEntryNamed(ctx, "reject_failed", "job", jobID, "", policyActorID(r), policyRole(r), "job not awaiting approval (state="+string(state)+")")
-			result = handlerResult{http.StatusConflict, "job not awaiting approval"}
+			conflictCode := model.ApprovalConflictNotActionable
+			conflictMessage := "job not awaiting approval"
+			switch state {
+			case model.JobStateDenied:
+				conflictCode = model.ApprovalConflictAlreadyResolved
+				conflictMessage = "approval already resolved"
+			case model.JobStateTimeout:
+				conflictMessage = "approval expired"
+			}
+			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflictCode, conflictMessage)}
 			return nil
 		}
 		if tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID); tenantErr != nil {
@@ -890,6 +1154,23 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			if err := s.requireTenantAccess(r, tenant); err != nil {
 				result = handlerResult{http.StatusForbidden, "tenant access denied"}
 				return nil
+			}
+		}
+		req, reqErr := s.jobStore.GetJobRequest(ctx, jobID)
+		if reqErr != nil {
+			result = handlerResult{http.StatusNotFound, "job request not found"}
+			return nil
+		}
+		if req.Labels != nil {
+			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
+				if run, runErr := s.workflowStore.GetRun(ctx, runID); runErr == nil && run != nil {
+					if wf.IsTerminalRunStatus(run.Status) {
+						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
+						s.appendAuditEntryNamed(ctx, "reject_failed", "job", jobID, "", policyActorID(r), policyRole(r), msg)
+						result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
+						return nil
+					}
+				}
 			}
 		}
 		safetyRecord, safetyErr := s.jobStore.GetSafetyDecision(ctx, jobID)
@@ -904,33 +1185,36 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			approvedBy = "system/unknown"
 		}
 		approvalRole := strings.TrimSpace(policyRole(r))
-		if err := s.jobStore.SetApprovalRecord(ctx, jobID, store.ApprovalRecord{
+		publishTarget := model.ApprovalPublishTargetDLQ
+		if req != nil && strings.TrimSpace(req.GetTopic()) == capsdk.SubjectWorkflowApprovalGate {
+			publishTarget = model.ApprovalPublishTargetDLQAndResult
+		}
+		resolved, err := s.jobStore.ResolveApproval(ctx, store.ApprovalResolutionParams{
+			JobID:          jobID,
+			Decision:       model.ApprovalDecisionReject,
+			ResultState:    model.JobStateDenied,
 			ApprovedBy:     approvedBy,
 			ApprovedRole:   approvalRole,
-			ApprovedAt:     time.Now().UnixMicro(),
 			Reason:         reason,
 			Note:           note,
 			PolicySnapshot: safetyRecord.PolicySnapshot,
-			JobHash:        safetyRecord.JobHash,
-		}); err != nil {
-			result = handlerResult{http.StatusInternalServerError, "failed to persist approval record"}
+			PublishTarget:  publishTarget,
+		})
+		if err != nil {
+			var conflict *store.ApprovalConflictError
+			if errors.As(err, &conflict) {
+				result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflict.Code, conflict.Message)}
+				return nil
+			}
+			result = handlerResult{http.StatusInternalServerError, "failed to persist approval resolution"}
 			return nil
-		}
-		if err := s.jobStore.SetState(ctx, jobID, model.JobStateDenied); err != nil {
-			result = handlerResult{http.StatusInternalServerError, "set job state failed"}
-			return nil
-		}
-		traceID, traceErr := s.jobStore.GetTraceID(ctx, jobID)
-		if traceErr != nil {
-			slog.Warn("reject: trace ID lookup failed, using empty",
-				"job_id", jobID, "error", traceErr)
 		}
 		errorMessage := "approval rejected"
 		if reason != "" {
 			errorMessage = reason
 		}
 		packet := &pb.BusPacket{
-			TraceId:         traceID,
+			TraceId:         resolved.TraceID,
 			SenderId:        "api-gateway",
 			CreatedAt:       timestamppb.Now(),
 			ProtocolVersion: capsdk.DefaultProtocolVersion,
@@ -946,16 +1230,22 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			slog.Error("publish dlq on approval reject failed", "job_id", jobID, "error", err)
-		}
-		rejectTopic, topicErr := s.jobStore.GetTopic(ctx, jobID)
-		if topicErr != nil {
-			slog.Warn("reject: topic lookup failed", "job_id", jobID, "error", topicErr)
-		}
-		if rejectTopic == capsdk.SubjectWorkflowApprovalGate {
-			if err := s.bus.Publish(capsdk.SubjectResult, packet); err != nil {
-				slog.Error("publish result on workflow gate reject failed", "job_id", jobID, "error", err)
+		} else {
+			rejectTopic := strings.TrimSpace(resolved.Request.GetTopic())
+			publishComplete := true
+			if rejectTopic == capsdk.SubjectWorkflowApprovalGate {
+				if err := s.bus.Publish(capsdk.SubjectResult, packet); err != nil {
+					slog.Error("publish result on workflow gate reject failed", "job_id", jobID, "error", err)
+					publishComplete = false
+				}
+			}
+			if publishComplete {
+				if err := s.jobStore.MarkApprovalPublishComplete(ctx, jobID, resolved.ApprovalRecord.Revision, resolved.ApprovalRecord.PublishTarget); err != nil {
+					slog.Warn("mark approval reject publish complete failed", "job_id", jobID, "error", err)
+				}
 			}
 		}
+		rejectTopic := strings.TrimSpace(resolved.Request.GetTopic())
 		slog.Info("job rejected",
 			"job_id", jobID, "topic", rejectTopic,
 			"actor", policyActorID(r), "role", policyRole(r),
@@ -966,7 +1256,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	})
 	if lockErr != nil {
 		if strings.Contains(lockErr.Error(), "lock busy") {
-			writeErrorJSON(w, http.StatusConflict, "rejection in progress; retry")
+			writeJSON(w, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictRetryableLock, "rejection in progress; retry"))
 			return
 		}
 		writeInternalError(w, r, "rejection lock", lockErr)
@@ -978,7 +1268,10 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		if msg, ok := result.body.(string); ok {
 			writeErrorJSON(w, result.status, msg)
 		} else {
-			writeJSON(w, result.body)
+			w.WriteHeader(result.status)
+			if err := json.NewEncoder(w).Encode(result.body); err != nil {
+				slog.Warn("json encode approval error failed", "error", err)
+			}
 		}
 		return
 	}

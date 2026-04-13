@@ -285,7 +285,7 @@ func TestPutJobContextAndDelay(t *testing.T) {
 func TestBuildEventAlert(t *testing.T) {
 	payload := map[string]any{"level": "warn", "message": "hi", "code": "c1", "component": "cmp"}
 	alert := buildEventAlert(&Step{ID: "step"}, payload)
-	if alert.Level != "WARN" || alert.Message != "hi" || alert.Code != "c1" || alert.Component != "cmp" {
+	if alert.Severity != pb.AlertSeverity_ALERT_SEVERITY_WARNING || alert.Message != "hi" || alert.SourceComponent != "cmp" {
 		t.Fatalf("unexpected alert: %#v", alert)
 	}
 	alert = buildEventAlert(&Step{ID: "step", Name: "Named"}, map[string]any{})
@@ -327,18 +327,7 @@ func TestBuildEventAlertEnhancedFields(t *testing.T) {
 	}
 	alert := buildEventAlert(&Step{ID: "step1"}, payload)
 
-	// Deprecated fields still populated
-	if alert.Level != "ERROR" {
-		t.Fatalf("expected Level ERROR, got %s", alert.Level)
-	}
-	if alert.Component != "storage" {
-		t.Fatalf("expected Component storage, got %s", alert.Component)
-	}
-	if alert.Code != "DISK_FULL" {
-		t.Fatalf("expected Code DISK_FULL, got %s", alert.Code)
-	}
-
-	// New enhanced fields
+	// Structured fields (migrated from deprecated level/component/code)
 	if alert.Severity != pb.AlertSeverity_ALERT_SEVERITY_ERROR {
 		t.Fatalf("expected severity ERROR, got %v", alert.Severity)
 	}
@@ -366,6 +355,25 @@ func TestBuildEventAlertEnhancedFields(t *testing.T) {
 	}
 	if alertStr.TraceId != "trace-xyz" {
 		t.Fatalf("expected trace_id trace-xyz, got %s", alertStr.TraceId)
+	}
+}
+
+func TestBuildEventAlertPanicRecovery(t *testing.T) {
+	buildEventAlertTestHook = func() { panic("stringer exploded") }
+	t.Cleanup(func() { buildEventAlertTestHook = nil })
+
+	alert := buildEventAlert(&Step{ID: "step-panic"}, map[string]any{})
+	if alert == nil {
+		t.Fatal("expected fallback alert")
+	}
+	if alert.Severity != pb.AlertSeverity_ALERT_SEVERITY_ERROR {
+		t.Fatalf("expected error severity, got %v", alert.Severity)
+	}
+	if alert.SourceComponent != "workflow-engine" {
+		t.Fatalf("expected workflow-engine source component, got %q", alert.SourceComponent)
+	}
+	if alert.Message == "" {
+		t.Fatal("expected fallback panic message")
 	}
 }
 

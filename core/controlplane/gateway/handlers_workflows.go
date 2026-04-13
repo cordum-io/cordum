@@ -16,6 +16,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/validation"
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/google/uuid"
@@ -197,6 +198,16 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	if err := validateWorkflowSteps(req.Steps); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if limitErr := licensing.CheckWorkflowSteps(int64(len(req.Steps)), s.currentEntitlements()); limitErr != nil {
+		writeTierLimitJSON(w, limitErr)
+		return
+	}
+	if requestedApprovalMode := requestedApprovalModeForWorkflow(req.Steps); requestedApprovalMode != "" {
+		if limitErr := licensing.CheckApprovalMode(requestedApprovalMode, s.approvalModeLimit()); limitErr != nil {
+			writeTierLimitJSON(w, limitErr)
+			return
+		}
 	}
 	if err := validateDAG(req.Steps); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
@@ -381,9 +392,10 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	dryRun := parseBool(r.URL.Query().Get("dry_run"))
-	limit := s.maxConcurrentRuns(r.Context(), orgID, teamID)
+	configLimit := s.maxConcurrentRuns(r.Context(), orgID, teamID)
+	tierLimit := s.currentEntitlements().MaxActiveWorkflows
 	var releaseAdmissionLock func()
-	if limit > 0 {
+	if configLimit > 0 || tierLimit > 0 {
 		releaseAdmissionLock, err = s.acquireWorkflowAdmissionLock(r.Context(), orgID)
 		if err != nil {
 			slog.Error("workflow admission lock failed", "org_id", orgID, "error", err)
@@ -418,7 +430,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		}
 		reservedKey = true
 	}
-	if limit > 0 {
+	if configLimit > 0 || tierLimit > 0 {
 		count, err := s.workflowStore.CountActiveRuns(r.Context(), orgID)
 		if err != nil {
 			if reservedKey && idempotencyKey != "" {
@@ -434,7 +446,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to enforce max concurrent runs")
 			return
 		}
-		if count >= limit {
+		if configLimit > 0 && count >= configLimit {
 			if reservedKey && idempotencyKey != "" {
 				cleanupRunIdempotencyReservation(
 					r.Context(),
@@ -445,6 +457,19 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 				)
 			}
 			writeErrorJSON(w, http.StatusTooManyRequests, "max concurrent runs reached")
+			return
+		}
+		if limitErr := licensing.CheckActiveWorkflows(int64(count+1), s.currentEntitlements()); limitErr != nil {
+			if reservedKey && idempotencyKey != "" {
+				cleanupRunIdempotencyReservation(
+					r.Context(),
+					idempotencyKey,
+					runID,
+					"failed to cleanup idempotency key after tier workflow limit rejection",
+					s.workflowStore.DeleteRunIdempotencyKey,
+				)
+			}
+			writeTierLimitJSON(w, limitErr)
 			return
 		}
 	}
@@ -561,9 +586,10 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 		return
 	}
-	limit := s.maxConcurrentRuns(r.Context(), origRun.OrgID, origRun.TeamID)
+	configLimit := s.maxConcurrentRuns(r.Context(), origRun.OrgID, origRun.TeamID)
+	tierLimit := s.currentEntitlements().MaxActiveWorkflows
 	var releaseAdmissionLock func()
-	if limit > 0 {
+	if configLimit > 0 || tierLimit > 0 {
 		releaseAdmissionLock, err = s.acquireWorkflowAdmissionLock(r.Context(), origRun.OrgID)
 		if err != nil {
 			slog.Error("workflow admission lock failed", "org_id", origRun.OrgID, "error", err)
@@ -581,8 +607,12 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to enforce max concurrent runs")
 			return
 		}
-		if count >= limit {
+		if configLimit > 0 && count >= configLimit {
 			writeErrorJSON(w, http.StatusTooManyRequests, "max concurrent runs reached")
+			return
+		}
+		if limitErr := licensing.CheckActiveWorkflows(int64(count+1), s.currentEntitlements()); limitErr != nil {
+			writeTierLimitJSON(w, limitErr)
 			return
 		}
 	}
@@ -1043,6 +1073,35 @@ func validateWorkflowSteps(steps map[string]wf.Step) error {
 		}
 	}
 	return nil
+}
+
+func requestedApprovalModeForWorkflow(steps map[string]wf.Step) string {
+	approvalIDs := make(map[string]struct{})
+	for stepID, step := range steps {
+		if step.Type == wf.StepTypeApproval {
+			approvalIDs[stepID] = struct{}{}
+		}
+	}
+	switch len(approvalIDs) {
+	case 0:
+		return ""
+	case 1:
+		return string(licensing.ApprovalModeSingle)
+	}
+	for stepID := range approvalIDs {
+		step := steps[stepID]
+		for _, dep := range step.DependsOn {
+			if _, ok := approvalIDs[strings.TrimSpace(dep)]; ok {
+				return string(licensing.ApprovalModeCustom)
+			}
+		}
+		if target := strings.TrimSpace(step.OnError); target != "" {
+			if _, ok := approvalIDs[target]; ok {
+				return string(licensing.ApprovalModeCustom)
+			}
+		}
+	}
+	return string(licensing.ApprovalModeMulti)
 }
 
 // validateDAG checks for circular dependencies and dangling references in a step graph.

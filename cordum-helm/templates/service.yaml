@@ -17,6 +17,32 @@ spec:
     app.kubernetes.io/component: nats
 ---
 {{- end }}
+{{- if and .Values.nats.enabled .Values.nats.externalAccess.enabled }}
+# External NATS service for workers outside the cluster.
+# Workers connect to this endpoint using TLS + token auth.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cordum.fullname" . }}-nats-external
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+    cordum.io/external: "true"
+  {{- with .Values.nats.externalAccess.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.nats.externalAccess.service.type }}
+  ports:
+    - name: client
+      port: {{ .Values.nats.externalAccess.service.port }}
+      targetPort: client
+  selector:
+    {{- include "cordum.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+---
+{{- end }}
 {{- if .Values.redis.enabled }}
 apiVersion: v1
 kind: Service

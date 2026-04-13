@@ -2,6 +2,8 @@
 // Saved audit filter presets — localStorage persistence
 // ---------------------------------------------------------------------------
 
+import { generateUUID } from "./uuid";
+
 const STORAGE_KEY = "cordum:audit:savedFilters";
 
 export interface SerializedFilterState {
@@ -112,7 +114,7 @@ export function updateSavedFilter(
 }
 
 export function generateFilterId(): string {
-  return crypto.randomUUID();
+  return generateUUID();
 }
 
 export function summarizeFilters(filters: SerializedFilterState): string {

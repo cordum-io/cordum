@@ -6,6 +6,7 @@ import { useToastStore } from "../state/toast";
 import type { StreamEvent } from "../api/types";
 import { API_PATHS } from "../lib/constants";
 import { normalizeDecisionType } from "../api/transform";
+import { generateUUID } from "../lib/uuid";
 import { logger } from "../lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   if (packet.jobRequest) {
     const jobId = String(packet.jobRequest.jobId ?? "");
     return {
-      id: traceId || jobId || crypto.randomUUID(),
+      id: traceId || jobId || generateUUID(),
       type: "job.submit",
       timestamp: ts,
       payload: {
@@ -90,7 +91,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
     const jobId = String(packet.jobResult.jobId ?? "");
     const status = normalizeEnum(packet.jobResult.status);
     return {
-      id: traceId || jobId || crypto.randomUUID(),
+      id: traceId || jobId || generateUUID(),
       type: status ? `job.result.${status}` : "job.result",
       timestamp: ts,
       payload: {
@@ -106,7 +107,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   if (packet.jobProgress) {
     const jobId = String(packet.jobProgress.jobId ?? "");
     return {
-      id: traceId || jobId || crypto.randomUUID(),
+      id: traceId || jobId || generateUUID(),
       type: "job.progress",
       timestamp: ts,
       payload: {
@@ -120,7 +121,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   if (packet.jobCancel) {
     const jobId = String(packet.jobCancel.jobId ?? "");
     return {
-      id: traceId || jobId || crypto.randomUUID(),
+      id: traceId || jobId || generateUUID(),
       type: "job.cancel",
       timestamp: ts,
       payload: {
@@ -132,7 +133,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   if (packet.heartbeat) {
     const workerId = String(packet.heartbeat.workerId ?? "");
     return {
-      id: traceId || workerId || crypto.randomUUID(),
+      id: traceId || workerId || generateUUID(),
       type: "worker.heartbeat",
       timestamp: ts,
       payload: {
@@ -145,7 +146,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   }
   if (packet.alert) {
     return {
-      id: traceId || crypto.randomUUID(),
+      id: traceId || generateUUID(),
       type: "system.alert",
       timestamp: ts,
       payload: packet.alert as Record<string, unknown>,

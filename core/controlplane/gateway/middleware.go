@@ -18,6 +18,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -71,13 +72,13 @@ func rateLimitFromEnv(rpsEnv, burstEnv string, defaultRPS, defaultBurst int) (in
 	return rps, burst
 }
 
-func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
-	rps, burst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRateLimitRPS, defaultRateLimitBurst)
+func newKeyedRateLimiterFromEnvWithDefaults(defaultRPS, defaultBurst int) *keyedRateLimiter {
+	rps, burst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRPS, defaultBurst)
 	return newKeyedRateLimiter(rps, burst)
 }
 
-func newPublicRateLimiterFromEnv() *keyedRateLimiter {
-	rps, burst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
+func newPublicRateLimiterFromEnvWithDefaults(defaultRPS, defaultBurst int) *keyedRateLimiter {
+	rps, burst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultRPS, defaultBurst)
 	return newKeyedRateLimiter(rps, burst)
 }
 
@@ -147,8 +148,8 @@ type redisRateLimiter struct {
 const (
 	rateLimitRedisTimeout = 200 * time.Millisecond
 	rateLimitKeyPrefix    = "cordum:rl:"
-	rateLimitWindowSec    = 1  // 1-second sliding window
-	rateLimitTTLSec       = 2  // 2× window for clock-skew safety
+	rateLimitWindowSec    = 1 // 1-second sliding window
+	rateLimitTTLSec       = 2 // 2× window for clock-skew safety
 )
 
 func newRedisRateLimiter(client redis.UniversalClient, rps, burst int) *redisRateLimiter {
@@ -190,11 +191,17 @@ type rateLimiter interface {
 	Allow(key string) bool
 }
 
-// defaultAPILimiter and defaultPublicLimiter are in-memory fallbacks used when
-// Redis-backed rate limiting is not wired up (e.g. during tests or before
-// RunWithAuth completes).
-var defaultAPILimiter rateLimiter = newKeyedRateLimiterFromEnv()
-var defaultPublicLimiter rateLimiter = newPublicRateLimiterFromEnv()
+func entitlementBodyBytesLimit(resolvers ...*licensing.EntitlementResolver) int64 {
+	for _, resolver := range resolvers {
+		if resolver == nil {
+			continue
+		}
+		if limit := resolver.Entitlements().MaxBodyBytes; limit > 0 {
+			return limit
+		}
+	}
+	return maxJSONBodyBytes()
+}
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -445,14 +452,35 @@ func clientIP(r *http.Request) string {
 // set. This prevents a buggy or malicious provider from bypassing auth on
 // sensitive endpoints.
 var maxPublicPaths = map[string]bool{
-	"/api/v1/auth/config": true,
-	"/api/v1/auth/login":  true,
+	"/api/v1/auth/config":            true,
+	"/api/v1/auth/login":             true,
+	"/api/v1/auth/sso/oidc/login":    true,
+	"/api/v1/auth/sso/oidc/callback": true,
+	"/api/v1/auth/sso/saml/metadata": true,
+	"/api/v1/auth/sso/saml/login":    true,
+	"/api/v1/auth/sso/saml/acs":      true,
+}
+
+var maxPublicPathPrefixes = []string{
+	scimBasePath,
+}
+
+func publicPathWithinCeiling(path string) bool {
+	if maxPublicPaths[path] {
+		return true
+	}
+	for _, prefix := range maxPublicPathPrefixes {
+		if prefix != "" && strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // isAllowedPublicPath returns true only when BOTH the provider AND the
 // hardcoded ceiling agree the path is public.
 func isAllowedPublicPath(auth AuthProvider, path string) bool {
-	if !maxPublicPaths[path] {
+	if !publicPathWithinCeiling(path) {
 		return false
 	}
 	if pp, ok := auth.(PublicPathProvider); ok {

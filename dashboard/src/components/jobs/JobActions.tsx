@@ -5,7 +5,9 @@ import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { useCancelJob, useRetryJob } from "../../hooks/useJobs";
 import { logger } from "../../lib/logger";
+import { friendlyError } from "../../lib/friendlyError";
 import type { Job, JobStatus } from "../../api/types";
+import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
 // State helpers
@@ -67,11 +69,12 @@ export function JobActions({ job }: JobActionsProps) {
         close();
       },
       onError: (err) => {
+        const friendly = friendlyError(err, "cancel job");
         setFeedback({
           type: "error",
-          message: err.message || "Failed to cancel job.",
+          message: friendly.description,
         });
-        close();
+        toast.error(friendly.title, { description: friendly.description });
       },
     });
   }, [job.id, cancelMutation, close]);
@@ -84,11 +87,12 @@ export function JobActions({ job }: JobActionsProps) {
         close();
       },
       onError: (err) => {
+        const friendly = friendlyError(err, "retry job");
         setFeedback({
           type: "error",
-          message: err.message || "Failed to retry job.",
+          message: friendly.description,
         });
-        close();
+        toast.error(friendly.title, { description: friendly.description });
       },
     });
   }, [job.id, retryMutation, close]);

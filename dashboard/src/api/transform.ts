@@ -1,14 +1,17 @@
 import YAML from "yaml";
+import { generateUUID } from "../lib/uuid";
 import { logger } from "../lib/logger";
 import { normalizeRunStatusValue } from "../lib/runVisibility";
 import type {
   Job,
   JobStatus,
+  ApprovalActionability,
   OutputDecision,
   OutputFinding,
   OutputSafetyRecord,
   SafetyDecision,
   Approval,
+  ApprovalStatus,
   ApprovalContextStatus,
   ApprovalDecisionSummary,
   ApprovalDecisionSummaryCompleteness,
@@ -105,6 +108,10 @@ export interface BackendJobDetail extends BackendJobRecord {
   approval_at?: number;
   approval_reason?: string;
   approval_note?: string;
+  approval_status?: ApprovalStatus;
+  approval_actionability?: ApprovalActionability;
+  approval_revision?: number;
+  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
 }
 
 export interface BackendWorkflowStep {
@@ -242,6 +249,10 @@ export interface BackendApprovalItem {
   resolved_at?: number;
   resolved_by?: string;
   resolved_comment?: string;
+  approval_status?: ApprovalStatus;
+  approval_actionability?: ApprovalActionability;
+  approval_revision?: number;
+  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
   constraints?: Record<string, unknown>;
   job_input?: Record<string, unknown>;
   decision_summary?: BackendApprovalDecisionSummary;
@@ -544,7 +555,7 @@ export function mapOutputSafetyRecord(
 export function mapJobRecord(record: BackendJobRecord): Job {
   let id = record.id;
   if (!id) {
-    id = crypto.randomUUID();
+    id = generateUUID();
     logger.warn("transform", "Job record with empty ID, assigned placeholder", { placeholderId: id });
   }
   const updatedAt = microsToISO(record.updated_at);
@@ -629,6 +640,10 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
     approvalAt: detail.approval_at,
     approvalReason: detail.approval_reason,
     approvalNote: detail.approval_note,
+    approvalStatus: detail.approval_status,
+    approvalActionability: detail.approval_actionability,
+    approvalRevision: detail.approval_revision,
+    approvalDecision: detail.approval_decision,
   };
 }
 
@@ -808,24 +823,70 @@ export function deriveApprovalStatus(
   jobState: string | undefined,
   decision: string | undefined,
   resolvedBy?: string,
-): string {
-  const d = (decision || "").toLowerCase();
+  explicitStatus?: string,
+  explicitDecision?: string,
+): ApprovalStatus {
+  const normalizedExplicit = (explicitStatus || "").trim().toLowerCase();
+  if (
+    normalizedExplicit === "pending" ||
+    normalizedExplicit === "approved" ||
+    normalizedExplicit === "rejected" ||
+    normalizedExplicit === "expired" ||
+    normalizedExplicit === "invalidated" ||
+    normalizedExplicit === "repaired"
+  ) {
+    return normalizedExplicit;
+  }
+  const d = (explicitDecision || decision || "").toLowerCase();
   const s = (jobState || "").toLowerCase();
   if (d === "approve" || d === "approved") return "approved";
   if (d === "reject" || d === "rejected" || d === "deny")
-    return "denied";
-  if (s === "denied") return "denied";
-  if (s === "output_quarantined") return "quarantined";
+    return "rejected";
+  if (d === "expire" || d === "expired") return "expired";
+  if (d === "invalidate" || d === "invalidated") return "invalidated";
+  if (d === "repair" || d === "repaired") return "repaired";
+  if (s === "denied") return "rejected";
+  if (s === "output_quarantined") return "approved";
   if (s === "timeout") return "expired";
   if (s === "approval_required") return "pending";
   // Job resolved through approval flow — derive from post-approval state.
   if (resolvedBy) {
-    if (s === "denied") return "denied";
+    if (s === "denied") return "rejected";
     return "approved";
   }
   if (s === "succeeded" || s === "failed" || s === "cancelled" || s === "pending")
     return "approved";
   return "pending";
+}
+
+export function deriveApprovalActionability(
+  explicitActionability: string | undefined,
+  status: ApprovalStatus,
+): ApprovalActionability {
+  const normalizedExplicit = (explicitActionability || "").trim().toLowerCase();
+  if (
+    normalizedExplicit === "actionable" ||
+    normalizedExplicit === "resolved" ||
+    normalizedExplicit === "expired" ||
+    normalizedExplicit === "invalidated" ||
+    normalizedExplicit === "repaired"
+  ) {
+    return normalizedExplicit;
+  }
+  switch (status) {
+    case "pending":
+      return "actionable";
+    case "expired":
+      return "expired";
+    case "invalidated":
+      return "invalidated";
+    case "repaired":
+      return "repaired";
+    case "approved":
+    case "rejected":
+    default:
+      return "resolved";
+  }
 }
 
 function deriveHumanSummary(
@@ -848,6 +909,17 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
   const requestedAt = job.updatedAt || new Date().toISOString();
   const waitMs = now - new Date(requestedAt).getTime();
   const decisionSummary = mapApprovalDecisionSummary(item.decision_summary);
+  const status = deriveApprovalStatus(
+    item.job.state,
+    item.decision,
+    item.resolved_by,
+    item.approval_status,
+    item.approval_decision,
+  );
+  const actionability = deriveApprovalActionability(
+    item.approval_actionability,
+    status,
+  );
 
   const workflowContext =
     item.workflow_id || item.workflow_run_id
@@ -865,7 +937,7 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
   return {
     id: item.approval_ref || job.id,
     jobId: job.id,
-    status: deriveApprovalStatus(item.job.state, item.decision, item.resolved_by),
+    status,
     requestedAt,
     resolvedAt: (item.resolved_at ? microsToISO(item.resolved_at) : undefined) ?? undefined,
     actor: item.resolved_by,
@@ -897,6 +969,13 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     contextPtr: item.context_ptr,
     jobInput: item.job_input as Record<string, unknown> | undefined,
     constraints: item.constraints,
+    actionability,
+    revision: item.approval_revision,
+    approvalDecision: item.approval_decision,
+    approval_status: item.approval_status ?? status,
+    approval_actionability: item.approval_actionability ?? actionability,
+    approval_revision: item.approval_revision,
+    approval_decision: item.approval_decision,
   };
 }
 

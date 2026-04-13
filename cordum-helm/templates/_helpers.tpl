@@ -80,6 +80,127 @@ redisPassword
 {{- end -}}
 {{- end -}}
 
+{{- define "cordum.licenseSecretName" -}}
+{{- if .Values.licensing.existingSecret -}}
+{{- .Values.licensing.existingSecret -}}
+{{- else -}}
+{{- printf "%s-license" (include "cordum.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.natsTokenSecretName" -}}
+{{- if .Values.nats.auth.existingTokenSecret -}}
+{{- .Values.nats.auth.existingTokenSecret -}}
+{{- else -}}
+{{- printf "%s-nats-token" (include "cordum.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.jwtSecretName" -}}
+{{- printf "%s-jwt" (include "cordum.fullname" .) -}}
+{{- end -}}
+
+{{- define "cordum.auditWebhookSecretName" -}}
+{{- printf "%s-audit-webhook" (include "cordum.fullname" .) -}}
+{{- end -}}
+
+{{- define "cordum.auditDatadogSecretName" -}}
+{{- printf "%s-audit-datadog" (include "cordum.fullname" .) -}}
+{{- end -}}
+
+{{- define "cordum.sharedEnv" -}}
+{{- if .Values.nats.auth.token }}
+- name: NATS_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cordum.natsTokenSecretName" . }}
+      key: {{ .Values.nats.auth.existingTokenSecretKey | default "NATS_TOKEN" }}
+{{- end }}
+{{- if .Values.nats.auth.username }}
+- name: NATS_USERNAME
+  value: {{ .Values.nats.auth.username | quote }}
+{{- end }}
+{{- if .Values.nats.auth.password }}
+- name: NATS_PASSWORD
+  value: {{ .Values.nats.auth.password | quote }}
+{{- end }}
+{{- if .Values.nats.auth.nkey }}
+- name: NATS_NKEY
+  value: {{ .Values.nats.auth.nkey | quote }}
+{{- end }}
+{{- if .Values.nats.tls.serverName }}
+- name: NATS_TLS_SERVER_NAME
+  value: {{ .Values.nats.tls.serverName | quote }}
+{{- end }}
+{{- if .Values.nats.tls.insecure }}
+- name: NATS_TLS_INSECURE
+  value: "true"
+{{- end }}
+{{- if .Values.redis.tls.serverName }}
+- name: REDIS_TLS_SERVER_NAME
+  value: {{ .Values.redis.tls.serverName | quote }}
+{{- end }}
+{{- if .Values.redis.tls.insecure }}
+- name: REDIS_TLS_INSECURE
+  value: "true"
+{{- end }}
+{{- if and .Values.redis.cluster.enabled (gt (len .Values.redis.cluster.addresses) 0) }}
+- name: REDIS_CLUSTER_ADDRESSES
+  value: {{ join "," .Values.redis.cluster.addresses | quote }}
+{{- end }}
+{{- if gt (int .Values.redis.pool.size) 0 }}
+- name: REDIS_POOL_SIZE
+  value: {{ .Values.redis.pool.size | quote }}
+{{- end }}
+{{- if gt (int .Values.redis.pool.minIdleConns) 0 }}
+- name: REDIS_MIN_IDLE_CONNS
+  value: {{ .Values.redis.pool.minIdleConns | quote }}
+{{- end }}
+{{- if and (eq .Values.licensing.mode "token") (or .Values.licensing.token .Values.licensing.existingSecret) }}
+- name: CORDUM_LICENSE_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cordum.licenseSecretName" . }}
+      key: license.json
+{{- end }}
+{{- if .Values.licensing.publicKey }}
+- name: CORDUM_LICENSE_PUBLIC_KEY
+  value: {{ .Values.licensing.publicKey | quote }}
+{{- end }}
+{{- if .Values.licensing.publicKeyPath }}
+- name: CORDUM_LICENSE_PUBLIC_KEY_PATH
+  value: {{ .Values.licensing.publicKeyPath | quote }}
+{{- end }}
+{{- if eq .Values.licensing.mode "file" }}
+- name: CORDUM_LICENSE_FILE
+  value: {{ default "/etc/cordum/license.json" .Values.licensing.file | quote }}
+{{- end }}
+{{- if .Values.telemetry.mode }}
+- name: CORDUM_TELEMETRY_MODE
+  value: {{ .Values.telemetry.mode | quote }}
+{{- end }}
+{{- if .Values.logging.level }}
+- name: CORDUM_LOG_LEVEL
+  value: {{ .Values.logging.level | quote }}
+{{- end }}
+{{- if .Values.logging.format }}
+- name: CORDUM_LOG_FORMAT
+  value: {{ .Values.logging.format | quote }}
+{{- end }}
+{{- if .Values.global.tls.minVersion }}
+- name: CORDUM_TLS_MIN_VERSION
+  value: {{ .Values.global.tls.minVersion | quote }}
+{{- end }}
+- name: CORDUM_INSTANCE_ID
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+{{- if .Values.nats.allowPlaintext }}
+- name: CORDUM_NATS_ALLOW_PLAINTEXT
+  value: "true"
+{{- end }}
+{{- end -}}
+
 {{/*
 Production safety validations — hard-fail on dangerous combinations.
 TLS is mandatory in production mode; network policies and persistence

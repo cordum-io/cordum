@@ -8,6 +8,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/licensing"
 )
 
 func main() {
@@ -15,7 +16,9 @@ func main() {
 	slog.Info("cordum safety kernel starting...")
 	buildinfo.Log("cordum-safety-kernel")
 	cfg := config.Load()
-	if err := safetykernel.Run(cfg); err != nil {
+	entitlementResolver := licensing.NewEntitlementResolver()
+	entitlementResolver.Init()
+	if err := safetykernel.RunWithEntitlements(cfg, entitlementResolver); err != nil {
 		slog.Error("safety-kernel error", "error", err)
 		os.Exit(1)
 	}

@@ -5,6 +5,10 @@
 <h1 align="center">Cordum</h1>
 
 <p align="center">
+  <a href="https://artifacthub.io/packages/helm/cordum/cordum"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/cordum" alt="Artifact Hub" /></a>
+</p>
+
+<p align="center">
   <strong>Know What Your AI Agents Are Doing. Before They Do It.</strong><br/>
   The Source-Available <strong>Agent Control Plane</strong> for Governance, Safety, and Trust.
 </p>
@@ -95,7 +99,19 @@ graph LR
 
 ## Quickstart
 
-**Prerequisites:** Docker (4GB+ RAM), Docker Compose, Go 1.24+
+### First Time?
+
+| Goal | Path |
+|------|------|
+| **Just want to try it?** | `./tools/scripts/quickstart.sh` (below) |
+| **Manual step-by-step?** | [docs/quickstart.md](docs/quickstart.md) |
+| **Developing Cordum?** | [CONTRIBUTING.md](CONTRIBUTING.md) |
+
+### Prerequisites
+
+- **Docker Desktop v4+** or **Docker CLI v20.10+** with **Compose v2** (4GB+ RAM allocated)
+- **jq** (recommended, for parsing API responses)
+- **Go 1.24+** (optional, only needed for `cordumctl` or cert generation)
 
 ```bash
 git clone https://github.com/cordum-io/cordum.git
@@ -120,6 +136,34 @@ open http://localhost:8082
 ```
 </details>
 
+### Deploy to Kubernetes
+
+```bash
+helm install cordum oci://ghcr.io/cordum-io/cordum/charts/cordum \
+  --namespace cordum --create-namespace \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.api.host=api.cordum.example.com \
+  --set ingress.dashboard.host=cordum.example.com
+```
+
+See [cordum-helm/](cordum-helm/) for the full Helm chart reference. Chart also available on [Artifact Hub](https://artifacthub.io/packages/helm/cordum/cordum).
+
+**Container images** (multi-arch: amd64 + arm64):
+
+| Image | Registry |
+|-------|----------|
+| `cordum/api-gateway` | [Docker Hub](https://hub.docker.com/r/cordum/api-gateway) |
+| `cordum/scheduler` | [Docker Hub](https://hub.docker.com/r/cordum/scheduler) |
+| `cordum/safety-kernel` | [Docker Hub](https://hub.docker.com/r/cordum/safety-kernel) |
+| `cordum/workflow-engine` | [Docker Hub](https://hub.docker.com/r/cordum/workflow-engine) |
+| `cordum/context-engine` | [Docker Hub](https://hub.docker.com/r/cordum/context-engine) |
+| `cordum/dashboard` | [Docker Hub](https://hub.docker.com/r/cordum/dashboard) |
+
+Also available on GHCR: `ghcr.io/cordum-io/cordum/{service}:{version}`
+
 ### Ports
 
 | Port | Service |
@@ -133,6 +177,8 @@ open http://localhost:8082
 | 9093 | Workflow Engine Health |
 | 50051 | Safety Kernel (gRPC) |
 | 50400 | Context Engine (gRPC) |
+
+> **Port conflicts?** If any port is already in use, either stop the conflicting service or override ports in your `.env` file before starting the stack.
 
 ### After Setup
 
@@ -166,8 +212,6 @@ docker compose logs -f api-gateway
 For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Key Features
-
-<!-- Replace with a visual showing the Policy Studio and Safety Kernel in action -->
 
 ![nWwQVRVqwlZKeRbBZvkSof-img-4_1771930611000_na1fn_d29ya2Zsb3ctdmlzdWFsaXphdGlvbg](https://github.com/user-attachments/assets/ee44853d-1e89-463b-bf3c-0ba0481eee68)
 

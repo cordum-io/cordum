@@ -46,13 +46,14 @@ describe("AppShell systemStatus derivation", () => {
 });
 
 describe("AppShell GOVERN navigation", () => {
-  it("exposes three GOVERN entries (Policy Studio, Tenants, Quarantine)", () => {
+  it("exposes four GOVERN entries (Policy Studio, Velocity Rules, Tenants, Quarantine)", () => {
     const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(govern).toBeDefined();
 
     const labels = govern?.items.map((item) => item.label);
     expect(labels).toEqual([
       "Policy Studio",
+      "Velocity Rules",
       "Tenants",
       "Quarantine",
     ]);

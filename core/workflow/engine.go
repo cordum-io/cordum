@@ -13,6 +13,7 @@ import (
 
 	schemas "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -47,6 +48,7 @@ type Engine struct {
 	config           ConfigProvider
 	schemaRegistry   *schemas.Registry
 	outputSafety     model.OutputSafetyChecker // optional output policy enforcement on step results
+	entitlements     *licensing.EntitlementResolver
 
 	// timerMu guards pendingTimers. pendingTimers tracks cancellable delay
 	// timers so they can be stopped on engine shutdown without leaking goroutines.
@@ -245,6 +247,13 @@ func (e *Engine) WithOutputSafety(c model.OutputSafetyChecker) *Engine {
 	return e
 }
 
+// WithEntitlements wires the shared runtime entitlement resolver used for
+// workflow tier enforcement. Nil falls back to community defaults.
+func (e *Engine) WithEntitlements(resolver *licensing.EntitlementResolver) *Engine {
+	e.entitlements = resolver
+	return e
+}
+
 // WithContext sets the parent context for the lock manager. Cancelling this
 // context stops all lock renewal goroutines, preventing Redis ops after shutdown.
 // If not called, defaults to context.Background().
@@ -274,6 +283,68 @@ func (e *Engine) WithMaxForEachItems(limit int) *Engine {
 // caller should skip processing — another replica owns this run.
 func (e *Engine) lockRun(runID string) (func(), bool) {
 	return e.lockMgr.acquire(runID)
+}
+
+func (e *Engine) currentEntitlements() licensing.Entitlements {
+	if e != nil && e.entitlements != nil {
+		return e.entitlements.Entitlements()
+	}
+	return licensing.DefaultEntitlements(licensing.PlanCommunity)
+}
+
+func (e *Engine) approvalModeLimit() string {
+	mode := strings.TrimSpace(e.currentEntitlements().ApprovalMode)
+	if mode == "" {
+		return string(licensing.ApprovalModeSingle)
+	}
+	return mode
+}
+
+func requestedApprovalModeForWorkflow(steps map[string]*Step) string {
+	approvalIDs := make(map[string]struct{})
+	for stepID, step := range steps {
+		if step != nil && step.Type == StepTypeApproval {
+			approvalIDs[stepID] = struct{}{}
+		}
+	}
+	switch len(approvalIDs) {
+	case 0:
+		return ""
+	case 1:
+		return string(licensing.ApprovalModeSingle)
+	}
+	for stepID := range approvalIDs {
+		step := steps[stepID]
+		if step == nil {
+			continue
+		}
+		for _, dep := range step.DependsOn {
+			if _, ok := approvalIDs[strings.TrimSpace(dep)]; ok {
+				return string(licensing.ApprovalModeCustom)
+			}
+		}
+		if target := strings.TrimSpace(step.OnError); target != "" {
+			if _, ok := approvalIDs[target]; ok {
+				return string(licensing.ApprovalModeCustom)
+			}
+		}
+	}
+	return string(licensing.ApprovalModeMulti)
+}
+
+func (e *Engine) validateWorkflowDefinition(wf *Workflow) error {
+	if wf == nil {
+		return nil
+	}
+	if limitErr := licensing.CheckWorkflowSteps(int64(len(wf.Steps)), e.currentEntitlements()); limitErr != nil {
+		return limitErr
+	}
+	if requested := requestedApprovalModeForWorkflow(wf.Steps); requested != "" {
+		if limitErr := licensing.CheckApprovalMode(requested, e.approvalModeLimit()); limitErr != nil {
+			return limitErr
+		}
+	}
+	return nil
 }
 
 // HandleJobResult updates step/run state and dispatches next steps if ready.

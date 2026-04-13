@@ -98,6 +98,9 @@ func TestListApprovalsBasic(t *testing.T) {
 		item := raw.(map[string]any)
 		assert.NotNil(t, item["job"], "each item should have a job field")
 		assert.NotEmpty(t, item["decision"], "each item should have a decision")
+		assert.Equal(t, "pending", item["approval_status"])
+		assert.Equal(t, "actionable", item["approval_actionability"])
+		assert.Equal(t, float64(1), item["approval_revision"])
 	}
 }
 

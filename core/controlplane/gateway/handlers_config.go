@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -72,6 +73,12 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		scopeID = tenant
+	}
+	if scope == configsvc.ScopeSystem && (scopeID == "" || scopeID == "default") {
+		if _, hasBundles := data[policyConfigKey]; hasBundles {
+			writeErrorJSON(w, http.StatusBadRequest, "bundles must be written to system/policy scope, not system/default")
+			return
+		}
 	}
 	err := s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
 		for k, v := range data {
@@ -255,6 +262,23 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid schema")
 		return
+	}
+	_, err = s.schemaRegistry.Get(r.Context(), req.ID)
+	schemaExists := err == nil
+	if err != nil && !errors.Is(err, redis.Nil) {
+		writeInternalError(w, r, "schema lookup", err)
+		return
+	}
+	if !schemaExists {
+		count, err := s.schemaCount(r.Context())
+		if err != nil {
+			writeInternalError(w, r, "schema count", err)
+			return
+		}
+		if limitErr := licensing.CheckSchemaCount(int64(count+1), s.currentEntitlements()); limitErr != nil {
+			writeTierLimitJSON(w, limitErr)
+			return
+		}
 	}
 	if err := s.schemaRegistry.Register(r.Context(), req.ID, data); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())

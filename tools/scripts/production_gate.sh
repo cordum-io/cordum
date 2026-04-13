@@ -324,7 +324,7 @@ ensure_mock_bank_worker() {
 
   if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]]; then
     # Use nohup so the worker survives when the $() subshell (from run_gate) exits.
-    nohup env NATS_URL="${NATS_URL}" REDIS_URL="${REDIS_URL}" \
+    nohup env NATS_URL="${NATS_URL}" NATS_TOKEN="${NATS_TOKEN:-}" REDIS_URL="${REDIS_URL}" \
       NATS_TLS_CA="${NATS_TLS_CA:-}" NATS_TLS_CERT="${NATS_TLS_CERT:-}" NATS_TLS_KEY="${NATS_TLS_KEY:-}" NATS_TLS_SERVER_NAME="${NATS_TLS_SERVER_NAME:-}" \
       REDIS_TLS_CA="${REDIS_TLS_CA:-}" REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" REDIS_TLS_SERVER_NAME="${REDIS_TLS_SERVER_NAME:-}" \
       go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 &

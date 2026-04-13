@@ -73,4 +73,24 @@ dev-down:
 dev-logs:
 	docker compose logs -f
 
-.PHONY: proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke dev-up dev-down dev-logs
+help:
+	@echo ""
+	@echo "Cordum Makefile targets:"
+	@echo ""
+	@echo "  make help               Show this help message"
+	@echo "  make build              Build all services (runs proto first)"
+	@echo "  make build SERVICE=X    Build a single service (e.g. SERVICE=cordum-scheduler)"
+	@echo "  make proto              Regenerate protobuf Go code"
+	@echo "  make test               Run all Go tests"
+	@echo "  make test-integration   Run integration tests (requires Docker)"
+	@echo "  make coverage           Full coverage report"
+	@echo "  make coverage-core      Core coverage check (80% minimum)"
+	@echo "  make openapi            Regenerate OpenAPI spec"
+	@echo "  make docker SERVICE=X   Build Docker image for a service"
+	@echo "  make smoke              Run platform smoke tests"
+	@echo "  make dev-up             Start all services via docker compose"
+	@echo "  make dev-down           Stop all services"
+	@echo "  make dev-logs           Tail docker compose logs"
+	@echo ""
+
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke dev-up dev-down dev-logs

@@ -73,6 +73,20 @@ spec:
           ports:
             - name: client
               containerPort: {{ .Values.nats.service.port }}
+            - name: monitor
+              containerPort: 8222
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 10
           volumeMounts:
             - name: nats-config
               mountPath: /etc/nats/nats.conf
@@ -144,6 +158,16 @@ spec:
           ports:
             - name: redis
               containerPort: {{ .Values.redis.service.port }}
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
           volumeMounts:
             - name: redis-data
               mountPath: /data
@@ -194,7 +218,7 @@ spec:
       {{- end }}
       containers:
         - name: safety-kernel
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.safetyKernel.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.safetyKernel.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -205,6 +229,8 @@ spec:
               value: {{ printf ":%d" (int .Values.safetyKernel.service.port) | quote }}
             - name: SAFETY_POLICY_PATH
               value: /etc/cordum/safety.yaml
+            - name: NATS_URL
+              value: {{ include "cordum.natsUrl" . | quote }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
@@ -232,6 +258,63 @@ spec:
             - name: REDIS_TLS_KEY
               value: /etc/cordum/tls/client/tls.key
             {{- end }}
+            {{- include "cordum.sharedEnv" . | nindent 12 }}
+            {{- if .Values.safetyKernel.policy.reloadInterval }}
+            - name: SAFETY_POLICY_RELOAD_INTERVAL
+              value: {{ .Values.safetyKernel.policy.reloadInterval | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.publicKey }}
+            - name: SAFETY_POLICY_PUBLIC_KEY
+              value: {{ .Values.safetyKernel.policy.publicKey | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.signature }}
+            - name: SAFETY_POLICY_SIGNATURE
+              value: {{ .Values.safetyKernel.policy.signature | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.signaturePath }}
+            - name: SAFETY_POLICY_SIGNATURE_PATH
+              value: {{ .Values.safetyKernel.policy.signaturePath | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.signatureRequired }}
+            - name: SAFETY_POLICY_SIGNATURE_REQUIRED
+              value: "true"
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.url }}
+            - name: SAFETY_POLICY_URL
+              value: {{ .Values.safetyKernel.policy.url | quote }}
+            {{- end }}
+            {{- if gt (len .Values.safetyKernel.policy.urlAllowlist) 0 }}
+            - name: SAFETY_POLICY_URL_ALLOWLIST
+              value: {{ join "," .Values.safetyKernel.policy.urlAllowlist | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.configScope }}
+            - name: SAFETY_POLICY_CONFIG_SCOPE
+              value: {{ .Values.safetyKernel.policy.configScope | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.configId }}
+            - name: SAFETY_POLICY_CONFIG_ID
+              value: {{ .Values.safetyKernel.policy.configId | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.configKey }}
+            - name: SAFETY_POLICY_CONFIG_KEY
+              value: {{ .Values.safetyKernel.policy.configKey | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.policy.configDisable }}
+            - name: SAFETY_POLICY_CONFIG_DISABLE
+              value: "true"
+            {{- end }}
+            {{- if gt (int .Values.safetyKernel.policy.maxBytes) 0 }}
+            - name: SAFETY_POLICY_MAX_BYTES
+              value: {{ .Values.safetyKernel.policy.maxBytes | quote }}
+            {{- end }}
+            {{- if .Values.safetyKernel.cache.ttl }}
+            - name: SAFETY_DECISION_CACHE_TTL
+              value: {{ .Values.safetyKernel.cache.ttl | quote }}
+            {{- end }}
+            {{- if gt (int .Values.safetyKernel.cache.maxSize) 0 }}
+            - name: SAFETY_DECISION_CACHE_MAX_SIZE
+              value: {{ .Values.safetyKernel.cache.maxSize | quote }}
+            {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.safetyKernel.service.port }}
@@ -245,6 +328,12 @@ spec:
               readOnly: true
             - name: client-tls
               mountPath: /etc/cordum/tls/client
+              readOnly: true
+            {{- end }}
+            {{- if ne .Values.licensing.mode "community" }}
+            - name: license
+              mountPath: /etc/cordum/license.json
+              subPath: license.json
               readOnly: true
             {{- end }}
           livenessProbe:
@@ -279,6 +368,11 @@ spec:
             secretName: {{ .Values.global.tls.clientCertSecret }}
         {{- end }}
         {{- end }}
+        {{- if ne .Values.licensing.mode "community" }}
+        - name: license
+          secret:
+            secretName: {{ include "cordum.licenseSecretName" . }}
+        {{- end }}
 ---
 {{- end }}
 {{- if .Values.scheduler.enabled }}
@@ -312,7 +406,7 @@ spec:
       {{- end }}
       containers:
         - name: scheduler
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.scheduler.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.scheduler.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -357,6 +451,51 @@ spec:
               value: /etc/cordum/tls/client/tls.key
             - name: SAFETY_KERNEL_TLS_CA
               value: /etc/cordum/tls/client/ca.crt
+            - name: CONTEXT_ENGINE_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            {{- end }}
+            {{- include "cordum.sharedEnv" . | nindent 12 }}
+            {{- if .Values.scheduler.metrics.addr }}
+            - name: SCHEDULER_METRICS_ADDR
+              value: {{ .Values.scheduler.metrics.addr | quote }}
+            {{- end }}
+            {{- if .Values.scheduler.metrics.public }}
+            - name: SCHEDULER_METRICS_PUBLIC
+              value: "true"
+            {{- end }}
+            {{- if .Values.scheduler.env.configReloadInterval }}
+            - name: SCHEDULER_CONFIG_RELOAD_INTERVAL
+              value: {{ .Values.scheduler.env.configReloadInterval | quote }}
+            {{- end }}
+            {{- if .Values.scheduler.env.workerAttestation }}
+            - name: WORKER_ATTESTATION
+              value: {{ .Values.scheduler.env.workerAttestation | quote }}
+            {{- end }}
+            {{- if .Values.scheduler.env.workerReadinessRequired }}
+            - name: WORKER_READINESS_REQUIRED
+              value: "true"
+            {{- end }}
+            {{- if .Values.scheduler.env.workerReadinessTTL }}
+            - name: WORKER_READINESS_TTL
+              value: {{ .Values.scheduler.env.workerReadinessTTL | quote }}
+            {{- end }}
+            {{- if .Values.scheduler.env.schemaEnforcement }}
+            - name: SCHEMA_ENFORCEMENT
+              value: {{ .Values.scheduler.env.schemaEnforcement | quote }}
+            {{- end }}
+            {{- if gt (int .Values.scheduler.env.dlqMaxSize) 0 }}
+            - name: SCHEDULER_DLQ_MAX_SIZE
+              value: {{ .Values.scheduler.env.dlqMaxSize | quote }}
+            {{- end }}
+            {{- if .Values.outputPolicy.enabled }}
+            - name: OUTPUT_POLICY_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.outputPolicy.failMode }}
+            - name: OUTPUT_POLICY_FAIL_MODE
+              value: {{ .Values.outputPolicy.failMode | quote }}
+            - name: POLICY_CHECK_FAIL_MODE
+              value: {{ .Values.outputPolicy.failMode | quote }}
             {{- end }}
           ports:
             - name: metrics
@@ -371,6 +510,12 @@ spec:
             {{- if .Values.global.tls.enabled }}
             - name: client-tls
               mountPath: /etc/cordum/tls/client
+              readOnly: true
+            {{- end }}
+            {{- if ne .Values.licensing.mode "community" }}
+            - name: license
+              mountPath: /etc/cordum/license.json
+              subPath: license.json
               readOnly: true
             {{- end }}
           livenessProbe:
@@ -399,6 +544,11 @@ spec:
         - name: client-tls
           secret:
             secretName: {{ .Values.global.tls.clientCertSecret }}
+        {{- end }}
+        {{- if ne .Values.licensing.mode "community" }}
+        - name: license
+          secret:
+            secretName: {{ include "cordum.licenseSecretName" . }}
         {{- end }}
 ---
 {{- end }}
@@ -433,7 +583,7 @@ spec:
       {{- end }}
       containers:
         - name: api-gateway
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.gateway.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.gateway.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -455,11 +605,6 @@ spec:
               value: {{ include "cordum.redisUrl" . | quote }}
             - name: SAFETY_KERNEL_ADDR
               value: {{ include "cordum.safetyKernelAddr" . | quote }}
-            - name: API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cordum.fullname" . }}-secrets
-                  key: apiKey
             - name: CORDUM_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -518,6 +663,300 @@ spec:
             - name: CONTEXT_ENGINE_TLS_CA
               value: /etc/cordum/tls/client/ca.crt
             {{- end }}
+            {{- include "cordum.sharedEnv" . | nindent 12 }}
+            {{- if .Values.telemetry.endpoint }}
+            - name: CORDUM_TELEMETRY_ENDPOINT
+              value: {{ .Values.telemetry.endpoint | quote }}
+            {{- end }}
+            {{- if .Values.auth.jwt.hmacSecret }}
+            - name: CORDUM_JWT_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-jwt" (include "cordum.fullname" .) }}
+                  key: hmacSecret
+            {{- end }}
+            {{- if .Values.auth.jwt.publicKey }}
+            - name: CORDUM_JWT_PUBLIC_KEY
+              value: {{ .Values.auth.jwt.publicKey | quote }}
+            {{- end }}
+            {{- if .Values.auth.jwt.publicKeyPath }}
+            - name: CORDUM_JWT_PUBLIC_KEY_PATH
+              value: {{ .Values.auth.jwt.publicKeyPath | quote }}
+            {{- end }}
+            {{- if .Values.auth.jwt.issuer }}
+            - name: CORDUM_JWT_ISSUER
+              value: {{ .Values.auth.jwt.issuer | quote }}
+            {{- end }}
+            {{- if .Values.auth.jwt.audience }}
+            - name: CORDUM_JWT_AUDIENCE
+              value: {{ .Values.auth.jwt.audience | quote }}
+            {{- end }}
+            {{- if .Values.auth.jwt.defaultRole }}
+            - name: CORDUM_JWT_DEFAULT_ROLE
+              value: {{ .Values.auth.jwt.defaultRole | quote }}
+            {{- end }}
+            {{- if .Values.auth.jwt.clockSkew }}
+            - name: CORDUM_JWT_CLOCK_SKEW
+              value: {{ .Values.auth.jwt.clockSkew | quote }}
+            {{- end }}
+            {{- if .Values.auth.jwt.required }}
+            - name: CORDUM_JWT_REQUIRED
+              value: "true"
+            {{- end }}
+            {{- if .Values.auth.oidc.enabled }}
+            - name: CORDUM_OIDC_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.auth.oidc.issuer }}
+            - name: CORDUM_OIDC_ISSUER
+              value: {{ .Values.auth.oidc.issuer | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.audience }}
+            - name: CORDUM_OIDC_AUDIENCE
+              value: {{ .Values.auth.oidc.audience | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.claimTenant }}
+            - name: CORDUM_OIDC_CLAIM_TENANT
+              value: {{ .Values.auth.oidc.claimTenant | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.claimRole }}
+            - name: CORDUM_OIDC_CLAIM_ROLE
+              value: {{ .Values.auth.oidc.claimRole | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.clientId }}
+            - name: CORDUM_OIDC_CLIENT_ID
+              value: {{ .Values.auth.oidc.clientId | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.clientSecret }}
+            - name: CORDUM_OIDC_CLIENT_SECRET
+              value: {{ .Values.auth.oidc.clientSecret | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.redirectUri }}
+            - name: CORDUM_OIDC_REDIRECT_URI
+              value: {{ .Values.auth.oidc.redirectUri | quote }}
+            {{- end }}
+            {{- if gt (len .Values.auth.oidc.scopes) 0 }}
+            - name: CORDUM_OIDC_SCOPES
+              value: {{ join "," .Values.auth.oidc.scopes | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.stateTtl }}
+            - name: CORDUM_OIDC_STATE_TTL
+              value: {{ .Values.auth.oidc.stateTtl | quote }}
+            {{- end }}
+            {{- if gt (len .Values.auth.oidc.allowedAlgs) 0 }}
+            - name: CORDUM_OIDC_ALLOWED_ALGS
+              value: {{ join "," .Values.auth.oidc.allowedAlgs | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.jwksRefreshInterval }}
+            - name: CORDUM_OIDC_JWKS_REFRESH_INTERVAL
+              value: {{ .Values.auth.oidc.jwksRefreshInterval | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.jwksRefreshCooldown }}
+            - name: OIDC_JWKS_REFRESH_COOLDOWN
+              value: {{ .Values.auth.oidc.jwksRefreshCooldown | quote }}
+            {{- end }}
+            {{- if gt (len .Values.auth.oidc.issuerAllowlist) 0 }}
+            - name: CORDUM_OIDC_ISSUER_ALLOWLIST
+              value: {{ join "," .Values.auth.oidc.issuerAllowlist | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.allowPrivate }}
+            - name: CORDUM_OIDC_ALLOW_PRIVATE
+              value: "true"
+            {{- end }}
+            {{- if .Values.auth.oidc.allowHttp }}
+            - name: CORDUM_OIDC_ALLOW_HTTP
+              value: "true"
+            {{- end }}
+            {{- if .Values.auth.saml.enabled }}
+            - name: CORDUM_SAML_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.auth.saml.idpMetadataUrl }}
+            - name: CORDUM_SAML_IDP_METADATA_URL
+              value: {{ .Values.auth.saml.idpMetadataUrl | quote }}
+            {{- end }}
+            {{- if .Values.auth.saml.baseUrl }}
+            - name: CORDUM_SAML_BASE_URL
+              value: {{ .Values.auth.saml.baseUrl | quote }}
+            {{- end }}
+            {{- if .Values.auth.saml.entityId }}
+            - name: CORDUM_SAML_ENTITY_ID
+              value: {{ .Values.auth.saml.entityId | quote }}
+            {{- end }}
+            {{- if .Values.auth.saml.binding }}
+            - name: CORDUM_SAML_BINDING
+              value: {{ .Values.auth.saml.binding | quote }}
+            {{- end }}
+            {{- if .Values.auth.saml.responseBinding }}
+            - name: CORDUM_SAML_RESPONSE_BINDING
+              value: {{ .Values.auth.saml.responseBinding | quote }}
+            {{- end }}
+            {{- if .Values.auth.saml.allowIdpInitiated }}
+            - name: CORDUM_SAML_ALLOW_IDP_INITIATED
+              value: "true"
+            {{- end }}
+            {{- if .Values.auth.saml.stateTtl }}
+            - name: CORDUM_SAML_STATE_TTL
+              value: {{ .Values.auth.saml.stateTtl | quote }}
+            {{- end }}
+            {{- if .Values.auth.saml.redirectUrl }}
+            - name: CORDUM_AUTH_REDIRECT_URL
+              value: {{ .Values.auth.saml.redirectUrl | quote }}
+            {{- end }}
+            {{- if or .Values.auth.saml.certSecret (and .Values.auth.saml.cert .Values.auth.saml.key) }}
+            - name: CORDUM_SAML_CERT_PATH
+              value: /etc/cordum/saml/tls.crt
+            - name: CORDUM_SAML_KEY_PATH
+              value: /etc/cordum/saml/tls.key
+            {{- end }}
+            {{- if .Values.auth.scim.existingSecret }}
+            - name: CORDUM_SCIM_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.scim.existingSecret | quote }}
+                  key: {{ .Values.auth.scim.existingSecretKey | quote }}
+            {{- else if .Values.auth.scim.bearerToken }}
+            - name: CORDUM_SCIM_BEARER_TOKEN
+              value: {{ .Values.auth.scim.bearerToken | quote }}
+            {{- end }}
+            {{- if .Values.auth.apiKeys }}
+            - name: CORDUM_API_KEYS
+              value: {{ .Values.auth.apiKeys | quote }}
+            {{- end }}
+            {{- if .Values.auth.apiKeysPath }}
+            - name: CORDUM_API_KEYS_PATH
+              value: {{ .Values.auth.apiKeysPath | quote }}
+            {{- end }}
+            {{- if .Values.auth.skipSecretValidation }}
+            - name: CORDUM_SKIP_SECRET_VALIDATION
+              value: "true"
+            {{- end }}
+            {{- if .Values.audit.export.type }}
+            - name: CORDUM_AUDIT_EXPORT_TYPE
+              value: {{ .Values.audit.export.type | quote }}
+            {{- end }}
+            {{- if .Values.audit.export.webhook.url }}
+            - name: CORDUM_AUDIT_EXPORT_WEBHOOK_URL
+              value: {{ .Values.audit.export.webhook.url | quote }}
+            {{- end }}
+            {{- if .Values.audit.export.webhook.secret }}
+            - name: CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-audit-webhook" (include "cordum.fullname" .) }}
+                  key: secret
+            {{- end }}
+            {{- if .Values.audit.export.syslog.addr }}
+            - name: CORDUM_AUDIT_EXPORT_SYSLOG_ADDR
+              value: {{ .Values.audit.export.syslog.addr | quote }}
+            {{- end }}
+            {{- if .Values.audit.export.datadog.apiKey }}
+            - name: CORDUM_AUDIT_EXPORT_DD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-audit-datadog" (include "cordum.fullname" .) }}
+                  key: apiKey
+            {{- end }}
+            {{- if .Values.audit.export.datadog.site }}
+            - name: CORDUM_AUDIT_EXPORT_DD_SITE
+              value: {{ .Values.audit.export.datadog.site | quote }}
+            {{- end }}
+            {{- if .Values.audit.export.datadog.tags }}
+            - name: CORDUM_AUDIT_EXPORT_DD_TAGS
+              value: {{ .Values.audit.export.datadog.tags | quote }}
+            {{- end }}
+            {{- if .Values.audit.export.cloudwatch.logGroup }}
+            - name: CORDUM_AUDIT_EXPORT_CW_LOG_GROUP
+              value: {{ .Values.audit.export.cloudwatch.logGroup | quote }}
+            {{- end }}
+            {{- if .Values.audit.export.cloudwatch.logStream }}
+            - name: CORDUM_AUDIT_EXPORT_CW_LOG_STREAM
+              value: {{ .Values.audit.export.cloudwatch.logStream | quote }}
+            {{- end }}
+            {{- if and (eq .Values.audit.export.type "cloudwatch") .Values.audit.export.cloudwatch.awsRegion }}
+            - name: AWS_REGION
+              value: {{ .Values.audit.export.cloudwatch.awsRegion | quote }}
+            {{- end }}
+            {{- if gt (int .Values.audit.bufferSize) 0 }}
+            - name: CORDUM_AUDIT_BUFFER_SIZE
+              value: {{ .Values.audit.bufferSize | quote }}
+            {{- end }}
+            {{- if gt (int .Values.audit.export.maxRetries) 0 }}
+            - name: CORDUM_AUDIT_EXPORT_MAX_RETRIES
+              value: {{ .Values.audit.export.maxRetries | quote }}
+            {{- end }}
+            {{- if .Values.audit.readSampleRate }}
+            - name: CORDUM_AUDIT_READ_SAMPLE_RATE
+              value: {{ .Values.audit.readSampleRate | quote }}
+            {{- end }}
+            {{- if .Values.audit.transport }}
+            - name: AUDIT_TRANSPORT
+              value: {{ .Values.audit.transport | quote }}
+            {{- end }}
+            {{- if .Values.gateway.env.metricsAddr }}
+            - name: GATEWAY_METRICS_ADDR
+              value: {{ .Values.gateway.env.metricsAddr | quote }}
+            {{- end }}
+            {{- if .Values.gateway.env.metricsPublic }}
+            - name: GATEWAY_METRICS_PUBLIC
+              value: "true"
+            {{- end }}
+            {{- if gt (int .Values.gateway.env.maxJsonBodyBytes) 0 }}
+            - name: GATEWAY_MAX_JSON_BODY_BYTES
+              value: {{ .Values.gateway.env.maxJsonBodyBytes | quote }}
+            {{- end }}
+            {{- if gt (int .Values.gateway.env.wsClientBufferSize) 0 }}
+            - name: CORDUM_WS_CLIENT_BUFFER_SIZE
+              value: {{ .Values.gateway.env.wsClientBufferSize | quote }}
+            {{- end }}
+            {{- if gt (int .Values.gateway.env.hstsMaxAge) 0 }}
+            - name: CORDUM_HSTS_MAX_AGE
+              value: {{ .Values.gateway.env.hstsMaxAge | quote }}
+            {{- end }}
+            {{- if .Values.gateway.env.httpReadTimeout }}
+            - name: GATEWAY_HTTP_READ_TIMEOUT
+              value: {{ .Values.gateway.env.httpReadTimeout | quote }}
+            {{- end }}
+            {{- if .Values.gateway.env.httpWriteTimeout }}
+            - name: GATEWAY_HTTP_WRITE_TIMEOUT
+              value: {{ .Values.gateway.env.httpWriteTimeout | quote }}
+            {{- end }}
+            {{- if or .Values.gateway.env.contextEngineAddr .Values.contextEngine.enabled }}
+            - name: CONTEXT_ENGINE_ADDR
+              value: {{ default (printf "%s-context-engine:%d" (include "cordum.fullname" .) (int .Values.contextEngine.service.port)) .Values.gateway.env.contextEngineAddr | quote }}
+            {{- end }}
+            {{- if .Values.gateway.env.idempotencyTTL }}
+            - name: CORDUM_IDEMPOTENCY_TTL
+              value: {{ .Values.gateway.env.idempotencyTTL | quote }}
+            {{- end }}
+            {{- if .Values.gateway.env.sessionTTL }}
+            - name: CORDUM_SESSION_TTL
+              value: {{ .Values.gateway.env.sessionTTL | quote }}
+            {{- end }}
+            {{- if gt (int .Values.gateway.env.artifactMaxBytes) 0 }}
+            - name: ARTIFACT_MAX_BYTES
+              value: {{ .Values.gateway.env.artifactMaxBytes | quote }}
+            {{- end }}
+            {{- if .Values.outputPolicy.enabled }}
+            - name: OUTPUT_POLICY_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.outputPolicy.failMode }}
+            - name: POLICY_CHECK_FAIL_MODE
+              value: {{ .Values.outputPolicy.failMode | quote }}
+            {{- end }}
+            {{- if .Values.marketplace.allowHttp }}
+            - name: CORDUM_MARKETPLACE_ALLOW_HTTP
+              value: "true"
+            {{- end }}
+            {{- if .Values.marketplace.httpTimeout }}
+            - name: CORDUM_MARKETPLACE_HTTP_TIMEOUT
+              value: {{ .Values.marketplace.httpTimeout | quote }}
+            {{- end }}
+            {{- if .Values.gateway.goMaxProcs }}
+            - name: GOMAXPROCS
+              value: {{ .Values.gateway.goMaxProcs | quote }}
+            {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.gateway.service.grpcPort }}
@@ -526,12 +965,25 @@ spec:
             - name: metrics
               containerPort: {{ .Values.gateway.service.metricsPort }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.global.tls.enabled }}
             - name: server-tls
               mountPath: /etc/cordum/tls/server
               readOnly: true
             - name: client-tls
               mountPath: /etc/cordum/tls/client
+              readOnly: true
+            {{- end }}
+            {{- if ne .Values.licensing.mode "community" }}
+            - name: license
+              mountPath: /etc/cordum/license.json
+              subPath: license.json
+              readOnly: true
+            {{- end }}
+            {{- if or .Values.auth.saml.certSecret (and .Values.auth.saml.cert .Values.auth.saml.key) }}
+            - name: saml
+              mountPath: /etc/cordum/saml
               readOnly: true
             {{- end }}
           livenessProbe:
@@ -552,8 +1004,9 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
-      {{- if .Values.global.tls.enabled }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.global.tls.serverCertSecret }}
         - name: server-tls
           secret:
@@ -564,7 +1017,16 @@ spec:
           secret:
             secretName: {{ .Values.global.tls.clientCertSecret }}
         {{- end }}
-      {{- end }}
+        {{- if ne .Values.licensing.mode "community" }}
+        - name: license
+          secret:
+            secretName: {{ include "cordum.licenseSecretName" . }}
+        {{- end }}
+        {{- if or .Values.auth.saml.certSecret (and .Values.auth.saml.cert .Values.auth.saml.key) }}
+        - name: saml
+          secret:
+            secretName: {{ default (printf "%s-saml" (include "cordum.fullname" .)) .Values.auth.saml.certSecret }}
+        {{- end }}
 ---
 {{- end }}
 {{- if .Values.workflowEngine.enabled }}
@@ -598,7 +1060,7 @@ spec:
       {{- end }}
       containers:
         - name: workflow-engine
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.workflowEngine.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.workflowEngine.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -638,15 +1100,38 @@ spec:
             - name: REDIS_TLS_KEY
               value: /etc/cordum/tls/client/tls.key
             {{- end }}
+            {{- include "cordum.sharedEnv" . | nindent 12 }}
+            {{- if gt (int .Values.workflowEngine.env.foreachMaxItems) 0 }}
+            - name: WORKFLOW_FOREACH_MAX_ITEMS
+              value: {{ .Values.workflowEngine.env.foreachMaxItems | quote }}
+            {{- end }}
+            {{- if gt (int .Values.workflowEngine.env.exprMaxLength) 0 }}
+            - name: WORKFLOW_EXPR_MAX_LENGTH
+              value: {{ .Values.workflowEngine.env.exprMaxLength | quote }}
+            {{- end }}
+            {{- if gt (int .Values.workflowEngine.env.exprTimeoutMs) 0 }}
+            - name: WORKFLOW_EXPR_TIMEOUT_MS
+              value: {{ .Values.workflowEngine.env.exprTimeoutMs | quote }}
+            {{- end }}
+            {{- if gt (int .Values.workflowEngine.env.exprMaxResultItems) 0 }}
+            - name: WORKFLOW_EXPR_MAX_RESULT_ITEMS
+              value: {{ .Values.workflowEngine.env.exprMaxResultItems | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.workflowEngine.service.port }}
-          {{- if .Values.global.tls.enabled }}
           volumeMounts:
+            {{- if .Values.global.tls.enabled }}
             - name: client-tls
               mountPath: /etc/cordum/tls/client
               readOnly: true
-          {{- end }}
+            {{- end }}
+            {{- if ne .Values.licensing.mode "community" }}
+            - name: license
+              mountPath: /etc/cordum/license.json
+              subPath: license.json
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -665,11 +1150,18 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.workflowEngine.resources | nindent 12 }}
-      {{- if and .Values.global.tls.enabled .Values.global.tls.clientCertSecret }}
+      {{- if or .Values.global.tls.enabled (ne .Values.licensing.mode "community") }}
       volumes:
+        {{- if and .Values.global.tls.enabled .Values.global.tls.clientCertSecret }}
         - name: client-tls
           secret:
             secretName: {{ .Values.global.tls.clientCertSecret }}
+        {{- end }}
+        {{- if ne .Values.licensing.mode "community" }}
+        - name: license
+          secret:
+            secretName: {{ include "cordum.licenseSecretName" . }}
+        {{- end }}
       {{- end }}
 ---
 {{- end }}
@@ -704,7 +1196,7 @@ spec:
       {{- end }}
       containers:
         - name: context-engine
-          image: {{ printf "%s:%s-%s" .Values.global.image.repository .Values.global.image.tag .Values.contextEngine.image.tagSuffix | quote }}
+          image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.contextEngine.image.repository .Values.global.image.tag | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           env:
             {{- if .Values.global.production }}
@@ -736,6 +1228,19 @@ spec:
             - name: REDIS_TLS_KEY
               value: /etc/cordum/tls/client/tls.key
             {{- end }}
+            {{- include "cordum.sharedEnv" . | nindent 12 }}
+            {{- if gt (int .Values.contextEngine.env.maxEntryBytes) 0 }}
+            - name: CONTEXT_ENGINE_MAX_ENTRY_BYTES
+              value: {{ .Values.contextEngine.env.maxEntryBytes | quote }}
+            {{- end }}
+            {{- if gt (int .Values.contextEngine.env.maxChunkScan) 0 }}
+            - name: CONTEXT_ENGINE_MAX_CHUNK_SCAN
+              value: {{ .Values.contextEngine.env.maxChunkScan | quote }}
+            {{- end }}
+            {{- if .Values.contextEngine.metricsPublic }}
+            - name: CONTEXT_ENGINE_METRICS_PUBLIC
+              value: "true"
+            {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.contextEngine.service.port }}
@@ -748,6 +1253,12 @@ spec:
               readOnly: true
             - name: client-tls
               mountPath: /etc/cordum/tls/client
+              readOnly: true
+            {{- end }}
+            {{- if ne .Values.licensing.mode "community" }}
+            - name: license
+              mountPath: /etc/cordum/license.json
+              subPath: license.json
               readOnly: true
             {{- end }}
           livenessProbe:
@@ -767,7 +1278,7 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.contextEngine.resources | nindent 12 }}
-      {{- if .Values.global.tls.enabled }}
+      {{- if or .Values.global.tls.enabled (ne .Values.licensing.mode "community") }}
       volumes:
         {{- if .Values.global.tls.serverCertSecret }}
         - name: server-tls
@@ -778,6 +1289,11 @@ spec:
         - name: client-tls
           secret:
             secretName: {{ .Values.global.tls.clientCertSecret }}
+        {{- end }}
+        {{- if ne .Values.licensing.mode "community" }}
+        - name: license
+          secret:
+            secretName: {{ include "cordum.licenseSecretName" . }}
         {{- end }}
       {{- end }}
 {{- end }}

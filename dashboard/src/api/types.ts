@@ -31,6 +31,37 @@ export type JobStatus =
   | "output_quarantined"
   | "quarantined";
 
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "invalidated"
+  | "repaired";
+
+export type ApprovalActionability =
+  | "actionable"
+  | "resolved"
+  | "expired"
+  | "invalidated"
+  | "repaired";
+
+export type ApprovalConflictCode =
+  | "approval_already_resolved"
+  | "approval_retryable_lock"
+  | "approval_terminal_run"
+  | "approval_stale_snapshot"
+  | "approval_stale_request"
+  | "approval_not_actionable";
+
+export interface ApprovalConflictPayload {
+  code?: ApprovalConflictCode;
+  error?: string;
+  message?: string;
+  retryable?: boolean;
+  status?: number;
+}
+
 export type OutputDecision = "ALLOW" | "QUARANTINE" | "REDACT";
 
 export interface OutputFinding {
@@ -170,6 +201,10 @@ export interface Job {
   approvalAt?: number;
   approvalReason?: string;
   approvalNote?: string;
+  approvalStatus?: ApprovalStatus;
+  approvalActionability?: ApprovalActionability;
+  approvalRevision?: number;
+  approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +626,26 @@ export interface Pool {
 }
 
 // ---------------------------------------------------------------------------
+// Topics
+// ---------------------------------------------------------------------------
+
+export interface TopicRegistration {
+  name: string;
+  pool: string;
+  inputSchemaId?: string;
+  outputSchemaId?: string;
+  packId?: string;
+  requires: string[];
+  riskTags: string[];
+  status: string;
+  activeWorkers: number;
+}
+
+export interface TopicsResponse extends ApiResponse<TopicRegistration[]> {
+  registryEmpty?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Packs
 // ---------------------------------------------------------------------------
 
@@ -731,7 +786,7 @@ export interface ApprovalWorkflowContext {
 export interface Approval {
   id: string;
   jobId: string;
-  status: string;
+  status: ApprovalStatus;
   requestedAt: string;
   resolvedAt?: string;
   actor?: string;
@@ -757,6 +812,9 @@ export interface Approval {
   contextPtr?: string;
   jobInput?: Record<string, unknown>;
   constraints?: Record<string, unknown>;
+  actionability?: ApprovalActionability;
+  revision?: number;
+  approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
   // Backend-compatible fields
   job?: {
     id: string;
@@ -778,6 +836,10 @@ export interface Approval {
   policy_snapshot?: string;
   policy_reason?: string;
   approval_required?: boolean;
+  approval_status?: ApprovalStatus;
+  approval_actionability?: ApprovalActionability;
+  approval_revision?: number;
+  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
 }
 
 export interface ApprovalHistoryEntry {
@@ -913,6 +975,11 @@ export interface AuthConfig {
   default_tenant: string;
   oidc_enabled?: boolean;
   oidc_issuer?: string;
+  oidc_login_url?: string;
+  oidc_client_id?: string;
+  oidc_redirect_uri?: string;
+  oidc_scopes?: string[];
+  oidc_client_secret_masked?: string;
 }
 
 export interface ChangePasswordPayload {
@@ -922,6 +989,100 @@ export interface ChangePasswordPayload {
 
 export interface ResetUserPasswordPayload {
   password: string;
+}
+
+// ---------------------------------------------------------------------------
+// Licensing
+// ---------------------------------------------------------------------------
+
+export type LicensePlan = "community" | "team" | "enterprise";
+export type LicenseApprovalMode = "single" | "multi" | "custom";
+export type TelemetryMode = "off" | "local_only" | "anonymous";
+
+export interface LicenseRights {
+  hostedService: boolean;
+  embedding: boolean;
+  resale: boolean;
+  whiteLabel: boolean;
+  supportSla: boolean;
+}
+
+export interface LicenseEntitlements {
+  approvalMode?: LicenseApprovalMode | string;
+  telemetryMode?: TelemetryMode | string;
+  maxWorkers?: number;
+  requestsPerSecond?: number;
+  maxConcurrentJobs?: number;
+  maxWorkflowSteps?: number;
+  maxActiveWorkflows?: number;
+  maxTenants?: number;
+  maxSchemaCount?: number;
+  maxPromptChars?: number;
+  maxBodyBytes?: number;
+  maxArtifactBytes?: number;
+  maxPolicyBundles?: number;
+  auditRetentionDays?: number;
+  sso?: boolean;
+  saml?: boolean;
+  scim?: boolean;
+  rbac?: boolean;
+  audit?: boolean;
+  auditExport?: boolean;
+  siemExport?: boolean;
+  legalHold?: boolean;
+  velocityRules?: boolean;
+  breakGlassAdmin?: boolean;
+  features?: Record<string, boolean>;
+  limits?: Record<string, number>;
+}
+
+export interface LicenseInfo {
+  mode?: string;
+  status?: string;
+  plan?: LicensePlan | string;
+  orgId?: string;
+  licenseId?: string;
+  deploymentType?: string;
+  issuedAt?: string;
+  notBefore?: string;
+  expiresAt?: string;
+  features?: string[];
+  limits?: Record<string, number>;
+}
+
+export interface LicenseSummary {
+  plan: LicensePlan | string;
+  entitlements: LicenseEntitlements;
+  rights: LicenseRights | null;
+  license?: LicenseInfo | null;
+  expiryStatus?: string;
+}
+
+export interface TierUsageMetric<TAllowed = number | string> {
+  current?: number;
+  allowed?: TAllowed;
+  registered?: number;
+  connected?: number;
+}
+
+export interface LicenseUsage {
+  workers: TierUsageMetric<number>;
+  concurrentJobs: TierUsageMetric<number>;
+  activeWorkflows: TierUsageMetric<number>;
+  workflowSteps: TierUsageMetric<number>;
+  schemas: TierUsageMetric<number>;
+  policyBundles: TierUsageMetric<number>;
+  requestsPerSecond: TierUsageMetric<number>;
+  promptChars: TierUsageMetric<number>;
+  bodyBytes: TierUsageMetric<number>;
+  approvalMode: TierUsageMetric<string>;
+}
+
+export interface LicenseUsageSummary {
+  tenantId: string;
+  plan: LicensePlan | string;
+  license?: LicenseInfo | null;
+  usage: LicenseUsage;
 }
 
 // ---------------------------------------------------------------------------

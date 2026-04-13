@@ -51,17 +51,17 @@ variables from your shell, so keep the `export` lines when running scripts.
 ### Use GHCR Images (Release Builds)
 
 ```bash
-export CORDUM_VERSION=v0.1.4
+export CORDUM_VERSION=v0.9.7
 docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```
 
 Release images:
-- `ghcr.io/cordum-io/cordum/control-plane:<version>-api-gateway`
-- `ghcr.io/cordum-io/cordum/control-plane:<version>-scheduler`
-- `ghcr.io/cordum-io/cordum/control-plane:<version>-safety-kernel`
-- `ghcr.io/cordum-io/cordum/control-plane:<version>-workflow-engine`
-- `ghcr.io/cordum-io/cordum/control-plane:<version>-context-engine`
+- `ghcr.io/cordum-io/cordum/api-gateway:<version>`
+- `ghcr.io/cordum-io/cordum/scheduler:<version>`
+- `ghcr.io/cordum-io/cordum/safety-kernel:<version>`
+- `ghcr.io/cordum-io/cordum/workflow-engine:<version>`
+- `ghcr.io/cordum-io/cordum/context-engine:<version>`
 - `ghcr.io/cordum-io/cordum/dashboard:<version>`
 
 ### Smoke Test (No Workers Required)

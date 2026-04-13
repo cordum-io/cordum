@@ -224,6 +224,48 @@ func mergeDeep(dst, src map[string]any) {
 	}
 }
 
+func cloneMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = cloneValue(v)
+	}
+	return out
+}
+
+func cloneValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		return cloneMap(v)
+	case []any:
+		out := make([]any, len(v))
+		for i, child := range v {
+			out[i] = cloneValue(child)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func shouldPreserveSystemDefaultKeys(scope Scope, scopeID string) bool {
+	return scope == ScopeSystem && (scopeID == "" || scopeID == "default")
+}
+
+func mergePreservingKeys(original, updated map[string]any) map[string]any {
+	if original == nil {
+		return cloneMap(updated)
+	}
+	merged := cloneMap(original)
+	if merged == nil {
+		merged = map[string]any{}
+	}
+	mergeDeep(merged, updated)
+	return merged
+}
+
 // EnsureDefault creates the system/default config document with minimal sensible
 // defaults if one does not already exist. This is idempotent — repeated calls are
 // no-ops when the document exists. Called during gateway/scheduler startup to
@@ -263,8 +305,14 @@ func (s *Service) SetWithRetry(ctx context.Context, scope Scope, scopeID string,
 				Data:    map[string]any{},
 			}
 		}
+		originalData := cloneMap(doc.Data)
 		if err := applyFn(doc); err != nil {
 			return fmt.Errorf("apply config changes: %w", err)
+		}
+		if shouldPreserveSystemDefaultKeys(scope, scopeID) {
+			// Protect the shared system/default document from partial overwrite
+			// patterns where a caller replaces doc.Data with a subset map.
+			doc.Data = mergePreservingKeys(originalData, doc.Data)
 		}
 		if err := s.Set(ctx, doc); err != nil {
 			if errors.Is(err, ErrRevisionConflict) && attempt < maxAttempts-1 {

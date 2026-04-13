@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/config"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	sdk "github.com/cordum/cordum/sdk/client"
 	"gopkg.in/yaml.v3"
@@ -64,10 +65,23 @@ type packCompatibility struct {
 }
 
 type packTopic struct {
-	Name       string   `yaml:"name"`
-	Requires   []string `yaml:"requires"`
-	RiskTags   []string `yaml:"riskTags"`
-	Capability string   `yaml:"capability"`
+	Name           string   `yaml:"name"`
+	Requires       []string `yaml:"requires"`
+	RiskTags       []string `yaml:"riskTags"`
+	Capability     string   `yaml:"capability"`
+	InputSchemaID  string   `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
+	OutputSchemaID string   `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
+}
+
+type topicRegistration struct {
+	Name           string   `json:"name"`
+	Pool           string   `json:"pool,omitempty"`
+	InputSchemaID  string   `json:"input_schema_id,omitempty"`
+	OutputSchemaID string   `json:"output_schema_id,omitempty"`
+	PackID         string   `json:"pack_id,omitempty"`
+	Requires       []string `json:"requires,omitempty"`
+	RiskTags       []string `json:"risk_tags,omitempty"`
+	Status         string   `json:"status"`
 }
 
 type packResources struct {
@@ -102,24 +116,24 @@ type packPolicyOverlay struct {
 }
 
 type packTests struct {
-	PolicySimulations []packPolicySimulation `yaml:"policySimulations"`
+	PolicySimulations []packPolicySimulation `yaml:"policySimulations" json:"policySimulations"`
 }
 
 type packPolicySimulation struct {
-	Name           string                      `yaml:"name"`
-	Request        packPolicySimulationRequest `yaml:"request"`
-	ExpectDecision string                      `yaml:"expectDecision"`
+	Name           string                      `yaml:"name" json:"name"`
+	Request        packPolicySimulationRequest `yaml:"request" json:"request"`
+	ExpectDecision string                      `yaml:"expectDecision" json:"expectDecision"`
 }
 
 type packPolicySimulationRequest struct {
-	TenantId   string   `yaml:"tenantId"`
-	Topic      string   `yaml:"topic"`
-	Capability string   `yaml:"capability"`
-	RiskTags   []string `yaml:"riskTags"`
-	Requires   []string `yaml:"requires"`
-	PackId     string   `yaml:"packId"`
-	ActorId    string   `yaml:"actorId"`
-	ActorType  string   `yaml:"actorType"`
+	TenantId   string   `yaml:"tenantId" json:"tenantId"`
+	Topic      string   `yaml:"topic" json:"topic"`
+	Capability string   `yaml:"capability" json:"capability"`
+	RiskTags   []string `yaml:"riskTags" json:"riskTags"`
+	Requires   []string `yaml:"requires" json:"requires"`
+	PackId     string   `yaml:"packId" json:"packId"`
+	ActorId    string   `yaml:"actorId" json:"actorId"`
+	ActorType  string   `yaml:"actorType" json:"actorType"`
 }
 
 type packRecord struct {
@@ -183,9 +197,13 @@ func runPackCmd(args []string) {
 	case "create":
 		runPackCreate(args[1:])
 	case "install":
-		runPackInstall(args[1:])
+		if err := runPackInstall(args[1:]); err != nil {
+			fail(err.Error())
+		}
 	case "uninstall":
-		runPackUninstall(args[1:])
+		if err := runPackUninstall(args[1:]); err != nil {
+			fail(err.Error())
+		}
 	case "list":
 		runPackList(args[1:])
 	case "show":
@@ -198,7 +216,7 @@ func runPackCmd(args []string) {
 	}
 }
 
-func runPackInstall(args []string) {
+func runPackInstall(args []string) error {
 	fs := newFlagSet("pack install")
 	dryRun := fs.Bool("dry-run", false, "print planned changes without writing")
 	force := fs.Bool("force", false, "skip core version check")
@@ -206,51 +224,60 @@ func runPackInstall(args []string) {
 	inactive := fs.Bool("inactive", false, "install without pool mappings")
 	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
-		fail("pack path or url required")
+		return errors.New("pack path or url required")
 	}
 
 	tlsTransport, tlsErr := sdk.BuildTLSTransportErr(fs.tlsOptions())
 	if tlsErr != nil {
-		fail(fmt.Sprintf("tls configuration error: %v", tlsErr))
+		return fmt.Errorf("tls configuration error: %w", tlsErr)
 	}
 
 	bundle, err := loadPackBundle(fs.Arg(0), tlsTransport)
-	check(err)
+	if err != nil {
+		return err
+	}
 	defer bundle.Cleanup()
 
 	manifest, err := loadPackManifest(bundle.Dir)
-	check(err)
+	if err != nil {
+		return err
+	}
 	if err := validatePackManifest(manifest); err != nil {
-		fail(err.Error())
+		return err
 	}
 	if err := ensureProtocolCompatible(manifest); err != nil {
-		fail(err.Error())
+		return err
 	}
 
 	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, tlsTransport)
 	ctx := context.Background()
 	if !*force {
 		if err := enforceCoreVersion(ctx, client, manifest); err != nil {
-			fail(err.Error())
+			return err
 		}
 	}
 	owner := lockOwner()
 	release, err := acquirePackLocks(ctx, client, manifest.Metadata.ID, owner)
 	if err != nil {
 		release()
+		return err
 	}
-	check(err)
 	defer release()
 
 	schemaPlans, err := planSchemas(ctx, client, bundle.Dir, manifest, *upgrade)
-	check(err)
+	if err != nil {
+		return err
+	}
 	workflowPlans, err := planWorkflows(ctx, client, bundle.Dir, manifest, *upgrade)
-	check(err)
+	if err != nil {
+		return err
+	}
 
 	appliedConfig := []packAppliedConfigOverlay{}
 	appliedPolicy := []packAppliedPolicyOverlay{}
 	appliedConfigChanges := []appliedConfigChange{}
 	appliedPolicyChanges := []appliedPolicyChange{}
+	appliedTopics := []topicRegistration{}
 	appliedSchemas := []schemaPlan{}
 	appliedWorkflows := []workflowPlan{}
 	schemaDigests := map[string]string{}
@@ -264,16 +291,16 @@ func runPackInstall(args []string) {
 
 	if *dryRun {
 		fmt.Printf("pack %s %s: dry-run\n", manifest.Metadata.ID, manifest.Metadata.Version)
-		return
+		return nil
 	}
 
-	rollback := func() {
-		rollbackPackInstall(ctx, client, appliedPolicyChanges, appliedConfigChanges, appliedWorkflows, appliedSchemas)
-	}
-
-	installFail := func(err error) {
-		rollback()
-		fail(err.Error())
+	rollback := func(installErr error) error {
+		rollbackErr := rollbackPackInstall(ctx, client, appliedTopics, appliedPolicyChanges, appliedConfigChanges, appliedWorkflows, appliedSchemas)
+		if rollbackErr == nil {
+			return installErr
+		}
+		fmt.Fprintf(os.Stderr, "WARNING: pack install rollback encountered errors: %v\n", rollbackErr)
+		return errors.Join(installErr, fmt.Errorf("rollback cleanup failed: %w", rollbackErr))
 	}
 
 	for _, plan := range schemaPlans {
@@ -281,7 +308,7 @@ func runPackInstall(args []string) {
 			continue
 		}
 		if err := client.registerSchema(ctx, plan.ID, plan.Schema); err != nil {
-			installFail(err)
+			return rollback(err)
 		}
 		appliedSchemas = append(appliedSchemas, plan)
 	}
@@ -290,7 +317,7 @@ func runPackInstall(args []string) {
 			continue
 		}
 		if err := client.createWorkflow(ctx, plan.Workflow); err != nil {
-			installFail(err)
+			return rollback(err)
 		}
 		appliedWorkflows = append(appliedWorkflows, plan)
 	}
@@ -301,7 +328,7 @@ func runPackInstall(args []string) {
 		}
 		applied, err := applyConfigOverlay(ctx, client, overlay, manifest.Metadata.ID, bundle.Dir)
 		if err != nil {
-			installFail(err)
+			return rollback(err)
 		}
 		if applied.Overlay.Name != "" {
 			appliedConfig = append(appliedConfig, applied.Overlay)
@@ -311,7 +338,7 @@ func runPackInstall(args []string) {
 	for _, overlay := range manifest.Overlays.Policy {
 		applied, err := applyPolicyOverlay(ctx, client, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundle.Dir)
 		if err != nil {
-			installFail(err)
+			return rollback(err)
 		}
 		if applied.Overlay.Name != "" {
 			appliedPolicy = append(appliedPolicy, applied.Overlay)
@@ -322,6 +349,16 @@ func runPackInstall(args []string) {
 	status := "ACTIVE"
 	if *inactive || !hasPoolOverlay(appliedConfig) {
 		status = "INACTIVE"
+	}
+	topicRegistrations, err := packTopicRegistrations(ctx, client, manifest, status)
+	if err != nil {
+		return rollback(err)
+	}
+	for _, topic := range topicRegistrations {
+		if err := client.registerTopic(ctx, topic); err != nil {
+			return rollback(fmt.Errorf("register topic %s: %w", topic.Name, err))
+		}
+		appliedTopics = append(appliedTopics, topic)
 	}
 
 	record := packRecord{
@@ -345,21 +382,24 @@ func runPackInstall(args []string) {
 		Tests: manifest.Tests,
 	}
 
-	check(updatePackRegistry(ctx, client, record))
+	if err := updatePackRegistry(ctx, client, record); err != nil {
+		return rollback(err)
+	}
 	fmt.Printf("installed pack %s %s (%s)\n", record.ID, record.Version, record.Status)
+	return nil
 }
 
-func runPackUninstall(args []string) {
+func runPackUninstall(args []string) error {
 	fs := newFlagSet("pack uninstall")
 	purge := fs.Bool("purge", false, "delete workflows and schemas")
 	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
-		fail("pack id required")
+		return errors.New("pack id required")
 	}
 	packID := fs.Arg(0)
 	tlsTransport, tlsErr := sdk.BuildTLSTransportErr(fs.tlsOptions())
 	if tlsErr != nil {
-		fail(fmt.Sprintf("tls configuration error: %v", tlsErr))
+		return fmt.Errorf("tls configuration error: %w", tlsErr)
 	}
 	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, tlsTransport)
 	ctx := context.Background()
@@ -367,22 +407,36 @@ func runPackUninstall(args []string) {
 	release, err := acquirePackLocks(ctx, client, packID, owner)
 	if err != nil {
 		release()
+		return err
 	}
-	check(err)
 	defer release()
 
 	record, err := getPackRecord(ctx, client, packID)
-	check(err)
+	if err != nil {
+		return err
+	}
 	if record == nil {
-		fail("pack not installed")
+		return errors.New("pack not installed")
 	}
 
 	for i := len(record.Overlays.Config) - 1; i >= 0; i-- {
 		overlay := record.Overlays.Config[i]
-		check(removeConfigOverlay(ctx, client, overlay))
+		if err := removeConfigOverlay(ctx, client, overlay); err != nil {
+			return err
+		}
 	}
 	for _, overlay := range record.Overlays.Policy {
-		check(removePolicyOverlay(ctx, client, overlay))
+		if err := removePolicyOverlay(ctx, client, overlay); err != nil {
+			return err
+		}
+	}
+	for _, topic := range record.Manifest.Topics {
+		if err := client.removeTopic(ctx, topic.Name); err != nil {
+			if isNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("remove topic %s: %w", topic.Name, err)
+		}
 	}
 	if *purge {
 		for wfID := range record.Resources.Workflows {
@@ -398,8 +452,11 @@ func runPackUninstall(args []string) {
 	}
 
 	record.Status = "DISABLED"
-	check(updatePackRegistry(ctx, client, *record))
+	if err := updatePackRegistry(ctx, client, *record); err != nil {
+		return err
+	}
 	fmt.Printf("uninstalled pack %s (%s)\n", record.ID, record.Status)
+	return nil
 }
 
 func restClientFromFlags(fs *flagSet) *restClient {
@@ -503,6 +560,7 @@ type appliedPolicyChange struct {
 }
 
 type packInstallRollbackHooks struct {
+	rollbackTopic        func(context.Context, *restClient, topicRegistration) error
 	restorePolicyOverlay func(context.Context, *restClient, appliedPolicyChange) error
 	restoreConfigOverlay func(context.Context, *restClient, appliedConfigChange) error
 	rollbackWorkflow     func(context.Context, *restClient, workflowPlan) error
@@ -512,19 +570,22 @@ type packInstallRollbackHooks struct {
 func rollbackPackInstall(
 	ctx context.Context,
 	client *restClient,
+	appliedTopics []topicRegistration,
 	appliedPolicyChanges []appliedPolicyChange,
 	appliedConfigChanges []appliedConfigChange,
 	appliedWorkflows []workflowPlan,
 	appliedSchemas []schemaPlan,
-) {
-	rollbackPackInstallWithHooks(
+) error {
+	return rollbackPackInstallWithHooks(
 		ctx,
 		client,
+		appliedTopics,
 		appliedPolicyChanges,
 		appliedConfigChanges,
 		appliedWorkflows,
 		appliedSchemas,
 		packInstallRollbackHooks{
+			rollbackTopic:        rollbackTopic,
 			restorePolicyOverlay: restorePolicyOverlay,
 			restoreConfigOverlay: restoreConfigOverlay,
 			rollbackWorkflow:     rollbackWorkflow,
@@ -536,32 +597,51 @@ func rollbackPackInstall(
 func rollbackPackInstallWithHooks(
 	ctx context.Context,
 	client *restClient,
+	appliedTopics []topicRegistration,
 	appliedPolicyChanges []appliedPolicyChange,
 	appliedConfigChanges []appliedConfigChange,
 	appliedWorkflows []workflowPlan,
 	appliedSchemas []schemaPlan,
 	hooks packInstallRollbackHooks,
-) {
+) error {
+	var errs []error
+	for i := len(appliedTopics) - 1; i >= 0; i-- {
+		if hooks.rollbackTopic == nil {
+			continue
+		}
+		if err := hooks.rollbackTopic(ctx, client, appliedTopics[i]); err != nil {
+			slog.Warn("pack install rollback: remove topic failed", "error", err, "topic", appliedTopics[i].Name, "index", i)
+			errs = append(errs, fmt.Errorf("remove topic %s: %w", appliedTopics[i].Name, err))
+		}
+	}
 	for i := len(appliedPolicyChanges) - 1; i >= 0; i-- {
 		if err := hooks.restorePolicyOverlay(ctx, client, appliedPolicyChanges[i]); err != nil {
 			slog.Warn("pack install rollback: restore policy overlay failed", "error", err, "index", i)
+			errs = append(errs, fmt.Errorf("restore policy overlay %s: %w", appliedPolicyChanges[i].Overlay.Name, err))
 		}
 	}
 	for i := len(appliedConfigChanges) - 1; i >= 0; i-- {
 		if err := hooks.restoreConfigOverlay(ctx, client, appliedConfigChanges[i]); err != nil {
 			slog.Warn("pack install rollback: restore config overlay failed", "error", err, "index", i)
+			errs = append(errs, fmt.Errorf("restore config overlay %s: %w", appliedConfigChanges[i].Overlay.Name, err))
 		}
 	}
 	for i := len(appliedWorkflows) - 1; i >= 0; i-- {
 		if err := hooks.rollbackWorkflow(ctx, client, appliedWorkflows[i]); err != nil {
 			slog.Warn("pack install rollback: rollback workflow failed", "error", err, "index", i)
+			errs = append(errs, fmt.Errorf("rollback workflow %s: %w", appliedWorkflows[i].ID, err))
 		}
 	}
 	for i := len(appliedSchemas) - 1; i >= 0; i-- {
 		if err := hooks.rollbackSchema(ctx, client, appliedSchemas[i]); err != nil {
 			slog.Warn("pack install rollback: rollback schema failed", "error", err, "index", i)
+			errs = append(errs, fmt.Errorf("rollback schema %s: %w", appliedSchemas[i].ID, err))
 		}
 	}
+	if len(errs) > 0 {
+		return fmt.Errorf("rollback completed with %d errors: %w", len(errs), errors.Join(errs...))
+	}
+	return nil
 }
 
 func planSchemas(ctx context.Context, client *restClient, dir string, manifest *packManifest, upgrade bool) ([]schemaPlan, error) {
@@ -723,12 +803,27 @@ func validatePackManifest(manifest *packManifest) error {
 			return fmt.Errorf("topic %q must be namespaced under job.%s.*", topic.Name, id)
 		}
 	}
+	schemaIDs := make(map[string]struct{}, len(manifest.Resources.Schemas))
 	for _, res := range manifest.Resources.Schemas {
 		if res.ID == "" || res.Path == "" {
 			return errors.New("schema id and path required")
 		}
 		if !strings.HasPrefix(res.ID, id+"/") {
 			return fmt.Errorf("schema id %q must be namespaced under %s/", res.ID, id)
+		}
+		schemaIDs[res.ID] = struct{}{}
+	}
+	for _, topic := range manifest.Topics {
+		for _, schemaID := range []string{
+			strings.TrimSpace(topic.InputSchemaID),
+			strings.TrimSpace(topic.OutputSchemaID),
+		} {
+			if schemaID == "" {
+				continue
+			}
+			if _, ok := schemaIDs[schemaID]; !ok {
+				return fmt.Errorf("topic %s references unknown schema %s", topic.Name, schemaID)
+			}
 		}
 	}
 	for _, res := range manifest.Resources.Workflows {
@@ -917,6 +1012,81 @@ func hasPoolOverlay(overlays []packAppliedConfigOverlay) bool {
 		}
 	}
 	return false
+}
+
+func packTopicRegistrations(ctx context.Context, client *restClient, manifest *packManifest, packStatus string) ([]topicRegistration, error) {
+	if manifest == nil {
+		return nil, errors.New("pack manifest required")
+	}
+	if len(manifest.Topics) == 0 {
+		return []topicRegistration{}, nil
+	}
+
+	topicToPool, err := loadTopicPoolMappings(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
+	status := "active"
+	if strings.EqualFold(packStatus, "INACTIVE") {
+		status = "disabled"
+	}
+
+	out := make([]topicRegistration, 0, len(manifest.Topics))
+	for _, topic := range manifest.Topics {
+		out = append(out, topicRegistration{
+			Name:           topic.Name,
+			Pool:           strings.TrimSpace(topicToPool[topic.Name]),
+			InputSchemaID:  strings.TrimSpace(topic.InputSchemaID),
+			OutputSchemaID: strings.TrimSpace(topic.OutputSchemaID),
+			PackID:         manifest.Metadata.ID,
+			Requires:       topic.Requires,
+			RiskTags:       topic.RiskTags,
+			Status:         status,
+		})
+	}
+	return out, nil
+}
+
+func loadTopicPoolMappings(ctx context.Context, client *restClient) (map[string]string, error) {
+	if client == nil {
+		return map[string]string{}, nil
+	}
+	doc, err := client.getConfig(ctx, "system", "default")
+	if err != nil {
+		if isNotFound(err) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("load pool mappings: %w", err)
+	}
+	return topicPoolMappingsFromConfig(doc)
+}
+
+func topicPoolMappingsFromConfig(doc *configDoc) (map[string]string, error) {
+	if doc == nil || doc.Data == nil {
+		return map[string]string{}, nil
+	}
+	raw, ok := doc.Data["pools"]
+	if !ok || raw == nil {
+		return map[string]string{}, nil
+	}
+	if rawMap, ok := raw.(map[string]any); ok {
+		if rawTopics, ok := rawMap["topics"].(map[string]any); (!ok || len(rawTopics) == 0) && rawMap["pools"] != nil {
+			return map[string]string{}, nil
+		}
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("load pool mappings: %w", err)
+	}
+	poolsCfg, err := config.ParsePoolsConfig(data)
+	if err != nil {
+		return nil, fmt.Errorf("load pool mappings: %w", err)
+	}
+	if poolsCfg == nil {
+		return map[string]string{}, nil
+	}
+	return poolsCfg.TopicToPool(), nil
 }
 
 func applyConfigOverlay(ctx context.Context, client *restClient, overlay packConfigOverlay, packID, dir string) (appliedConfigChange, error) {
@@ -1145,6 +1315,14 @@ func rollbackWorkflow(ctx context.Context, client *restClient, plan workflowPlan
 		return client.createWorkflow(ctx, plan.Existing)
 	}
 	return client.deleteWorkflow(ctx, plan.ID)
+}
+
+func rollbackTopic(ctx context.Context, client *restClient, topic topicRegistration) error {
+	err := client.removeTopic(ctx, topic.Name)
+	if isNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func runPolicySimulation(ctx context.Context, client *restClient, test packPolicySimulation, packID string) error {
@@ -1819,6 +1997,14 @@ func (c *restClient) registerSchema(ctx context.Context, id string, schema map[s
 		"schema": schema,
 	}
 	return c.doJSON(ctx, http.MethodPost, "/api/v1/schemas", req, nil)
+}
+
+func (c *restClient) registerTopic(ctx context.Context, topic topicRegistration) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/v1/topics", topic, nil)
+}
+
+func (c *restClient) removeTopic(ctx context.Context, name string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/topics/"+url.PathEscape(name), nil, nil)
 }
 
 func (c *restClient) deleteSchema(ctx context.Context, id string) error {

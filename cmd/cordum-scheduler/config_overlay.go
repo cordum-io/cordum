@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
@@ -19,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
@@ -28,6 +31,68 @@ type configSnapshot struct {
 	PoolsHash    string
 	Timeouts     *config.TimeoutsConfig
 	TimeoutsHash string
+}
+
+type configChangeSubscriber interface {
+	ReplaceSubscription(prev *nats.Subscription, subject, queue string, handler func(*pb.BusPacket) error) (*nats.Subscription, error)
+	AddReconnectHandler(handler func(*nats.Conn))
+	AddDisconnectHandler(handler func(*nats.Conn, error))
+}
+
+func registerSchedulerConfigNotifications(natsBus configChangeSubscriber, notifyCh chan struct{}) {
+	if natsBus == nil || notifyCh == nil {
+		return
+	}
+
+	callback := func(_ *pb.BusPacket) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("scheduler: config subscription panic",
+					"panic", r,
+					"stack", string(debug.Stack()),
+				)
+				err = nil
+			}
+		}()
+		select {
+		case notifyCh <- struct{}{}:
+		default: // coalesce rapid notifications
+		}
+		return nil
+	}
+
+	var (
+		subMu     sync.Mutex
+		configSub *nats.Subscription
+	)
+	subscribe := func() error {
+		subMu.Lock()
+		defer subMu.Unlock()
+		sub, err := natsBus.ReplaceSubscription(configSub, capsdk.SubjectConfigChanged, "", callback)
+		if err != nil {
+			return err
+		}
+		configSub = sub
+		return nil
+	}
+
+	natsBus.AddDisconnectHandler(func(_ *nats.Conn, err error) {
+		slog.Error("scheduler: NATS disconnected, relying on poll", "error", err)
+	})
+	natsBus.AddReconnectHandler(func(_ *nats.Conn) {
+		slog.Error("scheduler: NATS reconnected, re-subscribing", "subject", capsdk.SubjectConfigChanged)
+		if err := subscribe(); err != nil {
+			slog.Error("scheduler: failed to re-subscribe to config change notifications", "subject", capsdk.SubjectConfigChanged, "error", err)
+			return
+		}
+		slog.Info("scheduler: re-subscribed to config change notifications", "subject", capsdk.SubjectConfigChanged)
+	})
+
+	if err := subscribe(); err != nil {
+		slog.Warn("scheduler: failed to subscribe to config change notifications, relying on poll", "error", err)
+		return
+	}
+	slog.Info("scheduler: subscribed to config change notifications", "subject", capsdk.SubjectConfigChanged)
 }
 
 func bootstrapConfig(ctx context.Context, svc *configsvc.Service, pools *config.PoolsConfig, timeouts *config.TimeoutsConfig) error {
@@ -190,17 +255,7 @@ func watchConfigChanges(ctx context.Context, svc *configsvc.Service, fallbackPoo
 	// as a fallback in case the notification is missed.
 	notifyCh := make(chan struct{}, 1)
 	if natsBus != nil {
-		if err := natsBus.Subscribe(capsdk.SubjectConfigChanged, "", func(_ *pb.BusPacket) error {
-			select {
-			case notifyCh <- struct{}{}:
-			default: // coalesce rapid notifications
-			}
-			return nil
-		}); err != nil {
-			slog.Warn("scheduler: failed to subscribe to config change notifications, relying on poll", "error", err)
-		} else {
-			slog.Info("scheduler: subscribed to config change notifications", "subject", capsdk.SubjectConfigChanged)
-		}
+		registerSchedulerConfigNotifications(natsBus, notifyCh)
 	}
 
 	ticker := time.NewTicker(interval)

@@ -33,6 +33,8 @@ type PackTopic struct {
 	Requires   []string `yaml:"requires" json:"requires"`
 	RiskTags   []string `yaml:"riskTags" json:"riskTags"`
 	Capability string   `yaml:"capability" json:"capability"`
+	InputSchemaID  string `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
+	OutputSchemaID string `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
 }
 
 // PackResources lists schemas and workflows bundled in the pack.

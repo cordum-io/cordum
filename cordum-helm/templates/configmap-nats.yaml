@@ -9,6 +9,12 @@ metadata:
 data:
   nats.conf: |
     port: {{ .Values.nats.service.port }}
+    http_port: 8222
+    {{- if .Values.nats.auth.token }}
+    authorization {
+      token: {{ .Values.nats.auth.token | quote }}
+    }
+    {{- end }}
     jetstream {
       store_dir: {{ .Values.nats.jetstream.storeDir | quote }}
       sync_interval: {{ .Values.nats.jetstream.syncInterval | quote }}

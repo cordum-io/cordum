@@ -16,8 +16,11 @@ import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
 import {
   Cpu, Search, RefreshCw, Zap, Shield,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { TierLimitBar } from "@/components/TierLimitBar";
+import { UpgradePrompt } from "@/components/UpgradePrompt";
+import { useLicenseUsage } from "@/hooks/useLicense";
 import { useWorkers } from "@/hooks/useWorkers";
 import { PoolGroupedView } from "@/components/agents/PoolGroupedView";
 import { WorkerDetailDrawer } from "@/components/agents/WorkerDetailDrawer";
@@ -39,6 +42,9 @@ export default function AgentsPage() {
   const [tab, setTab] = useState<"fleet" | "registry" | "pools">("fleet");
   const [drawerWorkerId, setDrawerWorkerId] = useState<string | null>(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const poolFilter = searchParams.get("pool")?.trim() ?? "";
+  const topicFilter = searchParams.get("topic")?.trim() ?? "";
 
   const { data: workers, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["workers"],
@@ -56,6 +62,8 @@ export default function AgentsPage() {
   const idleCount = allWorkers.filter((w) => w.status === "idle").length;
   const busyCount = allWorkers.filter((w) => w.status === "busy").length;
   const offlineCount = allWorkers.filter((w) => w.status === "offline").length;
+  const { data: licenseUsage } = useLicenseUsage();
+  const workerMetric = licenseUsage?.usage?.workers;
 
   // Sort: offline agents go to the bottom
   const statusOrder: Record<string, number> = { busy: 0, idle: 1, draining: 2, offline: 3 };
@@ -63,6 +71,7 @@ export default function AgentsPage() {
 
   const filtered = sorted.filter((w) => {
     if (statusFilter !== "all" && w.status !== statusFilter) return false;
+    if (poolFilter && (w.pool ?? "") !== poolFilter) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
@@ -73,6 +82,13 @@ export default function AgentsPage() {
     }
     return true;
   });
+
+  const clearFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setTab("fleet");
+    navigate("/agents");
+  };
 
   if (isError) {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load agents"} onRetry={() => void refetch()} />;
@@ -91,6 +107,43 @@ export default function AgentsPage() {
           </Button>
         }
       />
+
+      {workerMetric && (
+        <div className="space-y-3">
+          <TierLimitBar
+            label="Workers"
+            metric={workerMetric}
+            detail={
+              typeof workerMetric.registered === "number" && typeof workerMetric.connected === "number"
+                ? `${workerMetric.registered.toLocaleString()} registered · ${workerMetric.connected.toLocaleString()} connected`
+                : "Registered and connected workers count toward the active tier."
+            }
+          />
+          <UpgradePrompt label="Workers" metric={workerMetric} plan={licenseUsage?.plan} />
+        </div>
+      )}
+
+      {(poolFilter || topicFilter) && (
+        <div className="instrument-card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              Topic coverage filter
+            </p>
+            <p className="text-sm text-foreground">
+              Showing workers in <span className="font-mono">{poolFilter || "all pools"}</span>
+              {topicFilter && (
+                <>
+                  {" "}for topic <span className="font-mono">{topicFilter}</span>
+                </>
+              )}
+              .
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={clearFilters}>
+            Clear filter
+          </Button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex items-center gap-4 border-b border-border">

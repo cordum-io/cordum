@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -32,6 +34,20 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusDenied || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
 		e.markRunTerminal(run.ID)
 		return nil
+	}
+	if run.Status == RunStatusPending {
+		if err := e.validateWorkflowDefinition(wfDef); err != nil {
+			return err
+		}
+		if strings.TrimSpace(run.OrgID) != "" {
+			activeRuns, err := e.store.CountActiveRuns(ctx, run.OrgID)
+			if err != nil {
+				return fmt.Errorf("count active runs: %w", err)
+			}
+			if limitErr := licensing.CheckActiveWorkflows(int64(activeRuns), e.currentEntitlements()); limitErr != nil {
+				return limitErr
+			}
+		}
 	}
 	return e.scheduleReady(ctx, wfDef, run)
 }

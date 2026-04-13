@@ -285,6 +285,71 @@ func TestSetWithRetry(t *testing.T) {
 	}
 }
 
+func TestSetWithRetryPreservesMissingSystemDefaultKeys(t *testing.T) {
+	svc := newSvc(t)
+	defer func() { _ = svc.Close() }()
+
+	ctx := context.Background()
+	if err := svc.Set(ctx, &Document{
+		Scope:   ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"pools": map[string]any{
+				"topics": map[string]any{
+					"job.existing": "default",
+				},
+				"pools": map[string]any{
+					"default": map[string]any{"requires": []any{}},
+				},
+			},
+			"bundles": map[string]any{
+				"pack/default": map[string]any{"content": "package policy"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := svc.SetWithRetry(ctx, ScopeSystem, "default", 3, func(doc *Document) error {
+		doc.Data = map[string]any{
+			"pools": map[string]any{
+				"topics": map[string]any{
+					"job.new": "new-pool",
+				},
+			},
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("SetWithRetry: %v", err)
+	}
+
+	final, err := svc.Get(ctx, ScopeSystem, "default")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	bundles, ok := final.Data["bundles"].(map[string]any)
+	if !ok || bundles["pack/default"] == nil {
+		t.Fatalf("expected bundles preserved, got %v", final.Data["bundles"])
+	}
+	pools, ok := final.Data["pools"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected pools map, got %T", final.Data["pools"])
+	}
+	topics, ok := pools["topics"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected pools.topics map, got %T", pools["topics"])
+	}
+	if topics["job.existing"] != "default" {
+		t.Fatalf("expected existing topic preserved, got %v", topics["job.existing"])
+	}
+	if topics["job.new"] != "new-pool" {
+		t.Fatalf("expected new topic merged, got %v", topics["job.new"])
+	}
+	if _, ok := pools["pools"].(map[string]any); !ok {
+		t.Fatalf("expected sibling pools.pools preserved, got %v", pools["pools"])
+	}
+}
+
 func TestSetNewDocument(t *testing.T) {
 	svc := newSvc(t)
 	ctx := context.Background()

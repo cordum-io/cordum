@@ -214,9 +214,11 @@ type AuthLoginResponse struct {
 
 func sessionTTL() time.Duration {
 	const fallback = 24 * time.Hour
-	if raw := strings.TrimSpace(os.Getenv("CORDUM_SESSION_TTL")); raw != "" {
-		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
+	for _, key := range []string{"CORDUM_AUTH_SESSION_TTL", "CORDUM_SESSION_TTL"} {
+		if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
+			if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+				return d
+			}
 		}
 	}
 	return fallback
@@ -366,11 +368,24 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			key = tok
 		}
 	}
+	if key == "" {
+		key = sessionTokenFromCookie(r)
+	}
 	if strings.HasPrefix(key, "session-") && s.userStore != nil {
 		if redisStore, ok := s.userStore.(*RedisUserStore); ok {
 			_ = redisStore.DeleteSession(r.Context(), key)
 		}
 	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

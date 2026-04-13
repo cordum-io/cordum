@@ -2,20 +2,34 @@
  * DESIGN: "Control Surface" — Login
  * Multi-auth: API Key, Password, OIDC, SAML
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConfigStore } from "@/state/config";
 import { Button } from "@/components/ui/Button";
+import type { User } from "@/api/types";
 import { toast } from "sonner";
-import { KeyRound, ArrowRight, Layers, Lock, Globe, Building2, ChevronDown } from "lucide-react";
+import {
+  KeyRound,
+  ArrowRight,
+  Layers,
+  Lock,
+  Globe,
+  Building2,
+  ChevronDown,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type AuthMode = "api_key" | "password" | "oidc" | "saml";
 
 /** Build a minimal fallback user when the server returns { token } without user data. */
 export function buildPasswordFallbackUser(username: string): {
-  id: string; username: string; email: string; display_name: string; roles: string[]; tenant: string;
+  id: string;
+  username: string;
+  email: string;
+  display_name: string;
+  roles: string[];
+  tenant: string;
 } {
   const trimmed = username.trim();
   return {
@@ -26,6 +40,82 @@ export function buildPasswordFallbackUser(username: string): {
     roles: ["viewer"],
     tenant: "default",
   };
+}
+
+export async function readJsonIfOk<T>(
+  response: Pick<Response, "ok" | "json">,
+): Promise<T | null> {
+  if (!response.ok) return null;
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export function parseLoginUser(value: unknown): User | null {
+  if (!value || typeof value !== "object") return null;
+
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.username !== "string" ||
+    typeof candidate.email !== "string" ||
+    typeof candidate.display_name !== "string" ||
+    typeof candidate.tenant !== "string" ||
+    !Array.isArray(candidate.roles) ||
+    !candidate.roles.every((role) => typeof role === "string")
+  ) {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    username: candidate.username,
+    email: candidate.email,
+    display_name: candidate.display_name,
+    roles: candidate.roles,
+    tenant: candidate.tenant,
+    ...(typeof candidate.createdAt === "string"
+      ? { createdAt: candidate.createdAt }
+      : {}),
+    ...(typeof candidate.lastLogin === "string"
+      ? { lastLogin: candidate.lastLogin }
+      : {}),
+  };
+}
+
+function buildSamlFragmentUser(fragment: URLSearchParams): User | null {
+  const username =
+    fragment.get("username")?.trim() ||
+    fragment.get("email")?.trim() ||
+    fragment.get("user_id")?.trim() ||
+    "";
+  if (!username) return null;
+
+  const role = fragment.get("role")?.trim() || "viewer";
+  return {
+    id: fragment.get("user_id")?.trim() || username,
+    username,
+    email: fragment.get("email")?.trim() || "",
+    display_name: fragment.get("display_name")?.trim() || username,
+    tenant: fragment.get("tenant")?.trim() || "default",
+    roles: [role],
+  };
+}
+
+export function parseSamlCallbackHash(hash: string): { token: string; user: User } | null {
+  const normalized = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!normalized) return null;
+
+  const fragment = new URLSearchParams(normalized);
+  const token = fragment.get("token")?.trim();
+  if (!token) return null;
+
+  const user = buildSamlFragmentUser(fragment);
+  if (!user) return null;
+
+  return { token, user };
 }
 
 const LOGIN_TIMEOUT = 10_000;
@@ -67,11 +157,70 @@ export function isSafeApiUrl(url: string): string {
   return fallback;
 }
 
-const authModes: { id: AuthMode; label: string; icon: React.ReactNode; description: string }[] = [
-  { id: "api_key", label: "API Key", icon: <KeyRound className="w-4 h-4" />, description: "Connect with an API key" },
-  { id: "password", label: "Password", icon: <Lock className="w-4 h-4" />, description: "Username & password login" },
-  { id: "oidc", label: "OIDC / SSO", icon: <Globe className="w-4 h-4" />, description: "OpenID Connect provider" },
-  { id: "saml", label: "SAML / Enterprise", icon: <Building2 className="w-4 h-4" />, description: "Enterprise SAML SSO" },
+export function buildSamlRedirectTarget(returnUrl: string): string {
+  const target = new URL("/login", window.location.origin);
+  if (returnUrl && returnUrl !== "/") {
+    target.searchParams.set("returnUrl", returnUrl);
+  }
+  return target.toString();
+}
+
+export function buildSamlLoginHref(apiUrl: string, returnUrl: string): string {
+  const baseUrl = isSafeApiUrl(apiUrl);
+  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  const loginUrl = new URL(`${normalizedBaseUrl}/auth/sso/saml/login`, window.location.origin);
+  loginUrl.searchParams.set("redirect", buildSamlRedirectTarget(returnUrl));
+  return loginUrl.toString();
+}
+
+export function buildOidcLoginHref(apiUrl: string, returnUrl: string): string {
+  const baseUrl = isSafeApiUrl(apiUrl);
+  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  const loginUrl = new URL(`${normalizedBaseUrl}/auth/sso/oidc/login`, window.location.origin);
+  loginUrl.searchParams.set("redirect", buildSamlRedirectTarget(returnUrl));
+  return loginUrl.toString();
+}
+
+function parseSSOErrorHash(hash: string): string | null {
+  const normalized = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!normalized) return null;
+  const fragment = new URLSearchParams(normalized);
+  const error = fragment.get("error")?.trim();
+  if (!error) return null;
+  const description = fragment.get("error_description")?.trim();
+  return description || error;
+}
+
+const authModes: {
+  id: AuthMode;
+  label: string;
+  icon: React.ReactNode;
+  description: string;
+}[] = [
+  {
+    id: "api_key",
+    label: "API Key",
+    icon: <KeyRound className="w-4 h-4" />,
+    description: "Connect with an API key",
+  },
+  {
+    id: "password",
+    label: "Password",
+    icon: <Lock className="w-4 h-4" />,
+    description: "Username & password login",
+  },
+  {
+    id: "oidc",
+    label: "OIDC / SSO",
+    icon: <Globe className="w-4 h-4" />,
+    description: "OpenID Connect provider",
+  },
+  {
+    id: "saml",
+    label: "SAML / Enterprise",
+    icon: <Building2 className="w-4 h-4" />,
+    description: "Enterprise SAML SSO",
+  },
 ];
 
 export default function LoginPage() {
@@ -91,10 +240,41 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const successToastClass = "border border-[color:var(--color-success)]/30 bg-card text-[var(--color-success)]";
-  const errorToastClass = "border border-destructive/30 bg-card text-destructive";
-  const showSuccessToast = (message: string) => toast.success(message, { className: successToastClass });
-  const showErrorToast = (message: string) => toast.error(message, { className: errorToastClass });
+  const successToastClass =
+    "border border-[color:var(--color-success)]/30 bg-card text-[var(--color-success)]";
+  const errorToastClass =
+    "border border-destructive/30 bg-card text-destructive";
+  const showSuccessToast = (message: string) =>
+    toast.success(message, { className: successToastClass });
+  const showErrorToast = (message: string) =>
+    toast.error(message, { className: errorToastClass });
+
+  useEffect(() => {
+    const normalizedHash = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const token = new URLSearchParams(normalizedHash).get("token")?.trim();
+    if (!token) return;
+
+    const payload = parseSamlCallbackHash(window.location.hash);
+    if (!payload) {
+      showErrorToast("SSO login finished, but the gateway returned incomplete user details");
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      return;
+    }
+
+    login(payload.token, payload.user);
+    showSuccessToast("Signed in");
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    navigate(returnUrl, { replace: true });
+  }, [login, navigate, returnUrl]);
+
+  useEffect(() => {
+    const message = parseSSOErrorHash(window.location.hash);
+    if (!message) return;
+    showErrorToast(message);
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }, []);
 
   const handleApiKeyLogin = async () => {
     if (!apiKey.trim()) {
@@ -112,19 +292,27 @@ export default function LoginPage() {
         headers: { Authorization: `Bearer ${apiKey.trim()}` },
         signal: AbortSignal.timeout(LOGIN_TIMEOUT),
       });
-      if (res.ok) {
-        const user = await res.json();
-        login(apiKey.trim(), user);
-        showSuccessToast("Connected to Cordum");
-        navigate(returnUrl);
-      } else {
-        const msg = res.status === 401 || res.status === 403
-          ? "Invalid API key"
-          : res.status >= 500
-            ? "Server error — try again later"
-            : `Connection failed (HTTP ${res.status})`;
+      if (!res.ok) {
+        const msg =
+          res.status === 401 || res.status === 403
+            ? "Invalid API key"
+            : res.status >= 500
+              ? "Server error — try again later"
+              : `Connection failed (HTTP ${res.status})`;
         showErrorToast(msg);
+        return;
       }
+      const rawUser = await readJsonIfOk<Record<string, unknown>>(res);
+      const user = parseLoginUser(rawUser);
+      if (!user) {
+        showErrorToast(
+          "Connected, but the server returned an invalid user response",
+        );
+        return;
+      }
+      login(apiKey.trim(), user);
+      showSuccessToast("Connected to Cordum");
+      navigate(returnUrl);
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
         showErrorToast("Request timed out — check your connection");
@@ -151,18 +339,34 @@ export default function LoginPage() {
       const res = await fetch(`${baseUrl}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim(), password: password.trim() }),
+        body: JSON.stringify({
+          username: username.trim(),
+          password: password.trim(),
+        }),
         signal: AbortSignal.timeout(LOGIN_TIMEOUT),
       });
-      if (res.ok) {
-        const data = await res.json();
-        // Fallback user when server returns { token } without user data.
-        login(data.token || "session", data.user || buildPasswordFallbackUser(username));
-        showSuccessToast("Logged in");
-        navigate(returnUrl);
-      } else {
+      if (!res.ok) {
         showErrorToast("Invalid credentials");
+        return;
       }
+      const data = await readJsonIfOk<{
+        token?: string;
+        user?: Record<string, unknown>;
+      }>(res);
+      if (!data) {
+        showErrorToast(
+          "Login succeeded, but the server returned an invalid session payload",
+        );
+        return;
+      }
+      const parsedUser = parseLoginUser(data.user);
+      // Fallback user when server returns { token } without user data.
+      login(
+        data.token || "session",
+        parsedUser || buildPasswordFallbackUser(username),
+      );
+      showSuccessToast("Logged in");
+      navigate(returnUrl);
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
         showErrorToast("Request timed out — check your connection");
@@ -181,7 +385,7 @@ export default function LoginPage() {
       toast.warning("Unsafe API URL blocked — using default endpoint");
     }
     toast.info("Redirecting to OIDC provider...");
-    window.location.href = `${baseUrl}/auth/oidc/login`;
+    window.location.href = buildOidcLoginHref(baseUrl, returnUrl);
   };
 
   const handleSamlLogin = () => {
@@ -191,15 +395,19 @@ export default function LoginPage() {
       toast.warning("Unsafe API URL blocked — using default endpoint");
     }
     toast.info("Redirecting to SAML IdP...");
-    window.location.href = `${baseUrl}/auth/saml/login`;
+    window.location.href = buildSamlLoginHref(baseUrl, returnUrl);
   };
 
   const handleSubmit = () => {
     switch (authMode) {
-      case "api_key": return handleApiKeyLogin();
-      case "password": return handlePasswordLogin();
-      case "oidc": return handleOidcLogin();
-      case "saml": return handleSamlLogin();
+      case "api_key":
+        return handleApiKeyLogin();
+      case "password":
+        return handlePasswordLogin();
+      case "oidc":
+        return handleOidcLogin();
+      case "saml":
+        return handleSamlLogin();
     }
   };
 
@@ -223,23 +431,35 @@ export default function LoginPage() {
           <div className="w-14 h-14 rounded-xl bg-cordum/10 border border-cordum/20 flex items-center justify-center mb-4 glow-cordum">
             <Layers className="w-7 h-7 text-cordum" />
           </div>
-          <h1 className="text-2xl font-bold font-display text-foreground tracking-tight">Cordum</h1>
-          <p className="text-xs font-mono text-muted-foreground mt-1 uppercase tracking-[0.15em]">Agent Control Plane</p>
+          <h1 className="text-2xl font-bold font-display text-foreground tracking-tight">
+            Cordum
+          </h1>
+          <p className="text-xs font-mono text-muted-foreground mt-1 uppercase tracking-[0.15em]">
+            Agent Control Plane
+          </p>
         </div>
 
         {/* Form — Mac glass card style */}
         <div className="surface-card space-y-5 rounded-3xl border border-border bg-[color:var(--surface-glass)] p-6 shadow-glow backdrop-blur-xl">
           {/* Auth Mode Selector */}
           <div className="relative">
-            <button type="button"
+            <button
+              type="button"
               onClick={() => setShowModeSelector(!showModeSelector)}
               className="w-full flex items-center justify-between h-9 px-3 text-sm bg-surface-0 border border-border rounded-2xl text-foreground hover:bg-surface-1 transition-colors"
             >
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">{currentMode.icon}</span>
+                <span className="text-muted-foreground">
+                  {currentMode.icon}
+                </span>
                 <span className="font-medium">{currentMode.label}</span>
               </div>
-              <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform", showModeSelector && "rotate-180")} />
+              <ChevronDown
+                className={cn(
+                  "w-3.5 h-3.5 text-muted-foreground transition-transform",
+                  showModeSelector && "rotate-180",
+                )}
+              />
             </button>
 
             <AnimatePresence>
@@ -251,18 +471,40 @@ export default function LoginPage() {
                   className="absolute top-full left-0 right-0 mt-1 bg-surface-1 border border-border rounded-2xl shadow-xl z-20 overflow-hidden"
                 >
                   {authModes.map((mode) => (
-                    <button type="button"
+                    <button
+                      type="button"
                       key={mode.id}
-                      onClick={() => { setAuthMode(mode.id); setShowModeSelector(false); }}
+                      onClick={() => {
+                        setAuthMode(mode.id);
+                        setShowModeSelector(false);
+                      }}
                       className={cn(
                         "w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-2 transition-colors",
-                        authMode === mode.id && "bg-cordum/5"
+                        authMode === mode.id && "bg-cordum/5",
                       )}
                     >
-                      <span className={cn("text-muted-foreground", authMode === mode.id && "text-cordum")}>{mode.icon}</span>
+                      <span
+                        className={cn(
+                          "text-muted-foreground",
+                          authMode === mode.id && "text-cordum",
+                        )}
+                      >
+                        {mode.icon}
+                      </span>
                       <div>
-                        <p className={cn("text-sm font-medium", authMode === mode.id ? "text-cordum" : "text-foreground")}>{mode.label}</p>
-                        <p className="text-xs text-muted-foreground">{mode.description}</p>
+                        <p
+                          className={cn(
+                            "text-sm font-medium",
+                            authMode === mode.id
+                              ? "text-cordum"
+                              : "text-foreground",
+                          )}
+                        >
+                          {mode.label}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {mode.description}
+                        </p>
                       </div>
                     </button>
                   ))}
@@ -399,7 +641,10 @@ export default function LoginPage() {
 
         <p className="text-center text-xs text-muted-foreground">
           Need help? Check the{" "}
-          <a href="https://cordum.io/docs" className="text-cordum hover:text-cordum-bright transition-colors">
+          <a
+            href="https://cordum.io/docs"
+            className="text-cordum hover:text-cordum-bright transition-colors"
+          >
             documentation
           </a>
         </p>

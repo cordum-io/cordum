@@ -35,11 +35,8 @@ const (
 
 // createUserPipeline creates a user using individual Redis commands instead of
 // Lua. This is Redis Cluster safe since each command targets a single key.
-//
-// The TOCTOU window between the EXISTS checks and SET writes is acceptable
-// because user creation is a low-frequency admin operation with natural
-// serialization (admin UI, CLI). Concurrent duplicate creates would fail on
-// the second attempt's EXISTS check or produce idempotent writes.
+// Username and email uniqueness are enforced atomically via SetNX, with
+// rollback on partial failure (e.g. email claimed after username succeeds).
 
 // userRecord is the internal Redis storage representation that includes the password hash.
 // The User struct uses json:"-" on PasswordHash to prevent API leakage, so we need
@@ -289,36 +286,44 @@ func (s *RedisUserStore) Create(ctx context.Context, user *User, password string
 	tenantIdx := userTenantIndexPrefix + user.Tenant
 	idVal := user.Tenant + ":" + user.Username
 
-	// Phase 1: Check username and email uniqueness (individual commands,
-	// Redis Cluster safe — no multi-key Lua).
-	exists, err := s.client.Exists(ctx, key).Result()
+	// Atomically claim the username key using SetNX (SET if Not eXists).
+	// This prevents the TOCTOU race where two concurrent creates both pass
+	// an Exists check before either writes.
+	claimed, err := s.client.SetNX(ctx, key, string(data), 0).Result()
 	if err != nil {
-		return fmt.Errorf("redis check username: %w", err)
+		return fmt.Errorf("redis claim username: %w", err)
 	}
-	if exists > 0 {
+	if !claimed {
 		return ErrUserAlreadyExists
 	}
+
+	// Atomically claim the email key if present.
 	if emailKey != "" {
-		emailExists, eErr := s.client.Exists(ctx, emailKey).Result()
+		emailClaimed, eErr := s.client.SetNX(ctx, emailKey, emailVal, 0).Result()
 		if eErr != nil {
-			return fmt.Errorf("redis check email: %w", eErr)
+			// Roll back the username key.
+			s.client.Del(ctx, key)
+			return fmt.Errorf("redis claim email: %w", eErr)
 		}
-		if emailExists > 0 {
+		if !emailClaimed {
+			// Email already taken — roll back the username key.
+			s.client.Del(ctx, key)
 			return ErrUserAlreadyExists
 		}
 	}
 
-	// Phase 2: Create all user records via pipeline.
+	// Write the remaining index keys (id lookup, tenant index).
 	pipe := s.client.Pipeline()
-	pipe.Set(ctx, key, string(data), 0)
 	pipe.Set(ctx, idKey, idVal, 0)
-	if emailKey != "" {
-		pipe.Set(ctx, emailKey, emailVal, 0)
-	}
 	pipe.SAdd(ctx, tenantIdx, user.ID)
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("redis create user: %w", err)
+		// Roll back claimed keys on pipeline failure.
+		s.client.Del(ctx, key)
+		if emailKey != "" {
+			s.client.Del(ctx, emailKey)
+		}
+		return fmt.Errorf("redis create user indexes: %w", err)
 	}
 	return nil
 }
@@ -708,6 +713,7 @@ func (s *RedisUserStore) backfillTenantIndex(ctx context.Context) error {
 const (
 	sessionKeyPrefix     = "session:"
 	sessionUserIdxPrefix = "session:user:"
+	samlStateKeyPrefix   = "saml:state:"
 )
 
 // sessionData stores the auth context for a session token.
@@ -814,6 +820,58 @@ func (s *RedisUserStore) ValidateSession(ctx context.Context, token string) (*Au
 		PrincipalID: sd.UserID,
 		Role:        sd.Role,
 	}, nil
+}
+
+// PutSAMLState stores a SAML RelayState entry in Redis with a TTL.
+func (s *RedisUserStore) PutSAMLState(ctx context.Context, state, requestID, redirect string, ttl time.Duration) error {
+	if strings.TrimSpace(state) == "" {
+		return fmt.Errorf("state required")
+	}
+	if ttl <= 0 {
+		return fmt.Errorf("ttl must be positive")
+	}
+	payload, err := json.Marshal(samlStateEntry{
+		RequestID: requestID,
+		Redirect:  redirect,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal saml state: %w", err)
+	}
+	if err := s.client.Set(ctx, samlStateKeyPrefix+state, payload, ttl).Err(); err != nil {
+		return fmt.Errorf("redis set saml state: %w", err)
+	}
+	return nil
+}
+
+// GetSAMLState loads a SAML RelayState entry from Redis.
+func (s *RedisUserStore) GetSAMLState(ctx context.Context, state string) (samlStateEntry, error) {
+	if strings.TrimSpace(state) == "" {
+		return samlStateEntry{}, errSAMLStateNotFound
+	}
+	payload, err := s.client.Get(ctx, samlStateKeyPrefix+state).Bytes()
+	if err == redis.Nil {
+		return samlStateEntry{}, errSAMLStateNotFound
+	}
+	if err != nil {
+		return samlStateEntry{}, fmt.Errorf("redis get saml state: %w", err)
+	}
+	var entry samlStateEntry
+	if err := json.Unmarshal(payload, &entry); err != nil {
+		return samlStateEntry{}, fmt.Errorf("unmarshal saml state: %w", err)
+	}
+	return entry, nil
+}
+
+// DeleteSAMLState removes a SAML RelayState entry from Redis.
+func (s *RedisUserStore) DeleteSAMLState(ctx context.Context, state string) error {
+	if strings.TrimSpace(state) == "" {
+		return nil
+	}
+	if err := s.client.Del(ctx, samlStateKeyPrefix+state).Err(); err != nil {
+		return fmt.Errorf("redis delete saml state: %w", err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

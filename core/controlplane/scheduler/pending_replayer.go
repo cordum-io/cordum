@@ -91,6 +91,7 @@ func (r *PendingReplayer) tick(ctx context.Context) {
 	cutoff := time.Now().Add(-r.pendingAge)
 	r.replayPending(ctx, cutoff)
 	r.replayApproved(ctx, cutoff)
+	r.replayRejected(ctx, cutoff)
 	r.replayScheduled(ctx, cutoff)
 }
 
@@ -102,6 +103,10 @@ func (r *PendingReplayer) replayPending(ctx context.Context, cutoff time.Time) {
 		slog.Error("job store missing GetJobRequest")
 		return
 	}
+	approvalStore, _ := r.store.(interface {
+		GetApprovalRecord(context.Context, string) (ApprovalRecord, error)
+		MarkApprovalPublishComplete(context.Context, string, int64, ApprovalPublishTarget) error
+	})
 
 	cutoffMicros := cutoff.UnixNano() / int64(time.Microsecond)
 	records, err := r.store.ListJobsByState(ctx, JobStatePending, cutoffMicros, 200)
@@ -124,6 +129,13 @@ func (r *PendingReplayer) replayPending(ctx context.Context, cutoff time.Time) {
 		if err := r.engine.handleJobRequest(req, rec.TraceID); err != nil {
 			slog.Error("replay job failed", "job_id", rec.ID, "error", err)
 		} else {
+			if approvalStore != nil {
+				if approval, err := approvalStore.GetApprovalRecord(ctx, rec.ID); err == nil && approval.HasPendingPublish() && approval.PublishTarget == ApprovalPublishTargetSubmit {
+					if err := approvalStore.MarkApprovalPublishComplete(ctx, rec.ID, approval.Revision, approval.PublishTarget); err != nil {
+						slog.Warn("mark approval publish complete failed", "job_id", rec.ID, "error", err)
+					}
+				}
+			}
 			replayed++
 			if r.metrics != nil {
 				r.metrics.IncOrphanReplayed(req.Topic)
@@ -185,6 +197,61 @@ func (r *PendingReplayer) replayApproved(ctx context.Context, cutoff time.Time) 
 	}
 	if replayed > 0 {
 		slog.Info("replayed approved jobs", "count", replayed)
+	}
+}
+
+func (r *PendingReplayer) replayRejected(ctx context.Context, cutoff time.Time) {
+	store, ok := r.store.(interface {
+		GetJobRequest(context.Context, string) (*pb.JobRequest, error)
+		GetApprovalRecord(context.Context, string) (ApprovalRecord, error)
+		MarkApprovalPublishComplete(context.Context, string, int64, ApprovalPublishTarget) error
+	})
+	if !ok {
+		return
+	}
+
+	cutoffMicros := cutoff.UnixNano() / int64(time.Microsecond)
+	records, err := r.store.ListJobsByState(ctx, JobStateDenied, cutoffMicros, 200)
+	if err != nil {
+		slog.Error("list denied jobs failed", "error", err)
+		return
+	}
+	if len(records) == 0 {
+		return
+	}
+
+	replayed := 0
+	for _, rec := range records {
+		currentState, err := r.store.GetState(ctx, rec.ID)
+		if err != nil || currentState != JobStateDenied {
+			continue
+		}
+
+		approval, err := store.GetApprovalRecord(ctx, rec.ID)
+		if err != nil || !approval.HasPendingPublish() {
+			continue
+		}
+		if approval.PublishTarget != ApprovalPublishTargetDLQ && approval.PublishTarget != ApprovalPublishTargetDLQAndResult {
+			continue
+		}
+
+		req, err := store.GetJobRequest(ctx, rec.ID)
+		if err != nil || req == nil {
+			slog.Error("load rejected job request failed", "job_id", rec.ID, "error", err)
+			continue
+		}
+		if err := r.engine.replayApprovalPublish(rec.TraceID, req, approval); err != nil {
+			slog.Error("replay rejected approval failed", "job_id", rec.ID, "error", err)
+			continue
+		}
+		if err := store.MarkApprovalPublishComplete(ctx, rec.ID, approval.Revision, approval.PublishTarget); err != nil {
+			slog.Warn("mark rejected approval publish complete failed", "job_id", rec.ID, "error", err)
+			continue
+		}
+		replayed++
+	}
+	if replayed > 0 {
+		slog.Info("replayed rejected approvals", "count", replayed)
 	}
 }
 

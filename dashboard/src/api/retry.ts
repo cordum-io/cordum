@@ -1,4 +1,5 @@
 import { ApiError } from "./client";
+import type { ApprovalConflictPayload } from "./types";
 
 /** Status codes that should never be retried — the request will fail the same way. */
 const NON_RETRIABLE_STATUSES = [400, 401, 403, 404, 409, 410];
@@ -22,11 +23,16 @@ const JITTER_MS = 500;
  * - Retries 5xx, network errors, and 429 up to {@link MAX_RETRIES} times
  */
 export function shouldRetry(failureCount: number, error: Error): boolean {
-  if (
-    error instanceof ApiError &&
-    NON_RETRIABLE_STATUSES.includes(error.status)
-  ) {
-    return false;
+  if (error instanceof ApiError) {
+    if (error.status === 409) {
+      const body = error.body as ApprovalConflictPayload | null | undefined;
+      if (body?.code === "approval_retryable_lock" || body?.retryable === true) {
+        return failureCount < MAX_RETRIES;
+      }
+    }
+    if (NON_RETRIABLE_STATUSES.includes(error.status)) {
+      return false;
+    }
   }
   return failureCount < MAX_RETRIES;
 }

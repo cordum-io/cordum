@@ -8,6 +8,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/licensing"
 )
 
 func main() {
@@ -15,7 +16,9 @@ func main() {
 	slog.Info("cordum api gateway starting...")
 	buildinfo.Log("cordum-api-gateway")
 	cfg := config.Load()
-	if err := gateway.Run(cfg); err != nil {
+	entitlementResolver := licensing.NewEntitlementResolver()
+	entitlementResolver.Init()
+	if err := gateway.RunWithAuth(cfg, nil, entitlementResolver); err != nil {
 		slog.Error("api gateway error", "error", err)
 		os.Exit(1)
 	}

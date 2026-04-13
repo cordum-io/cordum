@@ -36,8 +36,8 @@ func NewClient(url string) (redis.UniversalClient, error) {
 	if len(addrs) == 0 {
 		addrs = []string{opts.Addr}
 	}
-	poolSize := getEnvInt(envRedisPoolSize, defaultPoolSize)
-	minIdle := getEnvInt(envRedisMinIdleConns, defaultMinIdleConns)
+	poolSize := getEnvIntAtLeast(envRedisPoolSize, defaultPoolSize, 1)
+	minIdle := getEnvIntAtLeast(envRedisMinIdleConns, defaultMinIdleConns, 0)
 	uopts := &redis.UniversalOptions{
 		Addrs:        addrs,
 		Username:     opts.Username,
@@ -181,14 +181,24 @@ func parseAddrListEnv(key string) []string {
 	return out
 }
 
-func getEnvInt(key string, defaultVal int) int {
+func getEnvIntAtLeast(key string, defaultVal int, minVal int) int {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
 		return defaultVal
 	}
 	v, err := strconv.Atoi(raw)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid int env var, using default", "key", sanitizeLogValue(key), "value", sanitizeLogValue(raw), "default", defaultVal)
+	if err != nil || v < minVal {
+		slog.Warn(
+			"invalid int env var, using default",
+			"key",
+			sanitizeLogValue(key),
+			"value",
+			sanitizeLogValue(raw),
+			"default",
+			defaultVal,
+			"min_allowed",
+			minVal,
+		)
 		return defaultVal
 	}
 	return v

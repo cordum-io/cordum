@@ -28,8 +28,8 @@ func TestCreateWorkflow_OversizedBody(t *testing.T) {
 	rr := httptest.NewRecorder()
 	s.handleCreateWorkflow(rr, req)
 
-	assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, "expected 413 for oversized workflow body")
-	assert.Contains(t, rr.Body.String(), "too large")
+	assert.Equal(t, http.StatusForbidden, rr.Code, "expected 403 for oversized workflow body")
+	assert.Contains(t, rr.Body.String(), "tier_limit_exceeded")
 }
 
 func TestCreateWorkflow_MalformedJSON(t *testing.T) {
@@ -211,7 +211,8 @@ func TestAcquireLock_OversizedBody(t *testing.T) {
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
 
-	assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "tier_limit_exceeded")
 }
 
 func TestReleaseLock_MalformedJSON(t *testing.T) {
@@ -261,7 +262,8 @@ func TestStartRun_OversizedBody(t *testing.T) {
 	rr := httptest.NewRecorder()
 	s.handleStartRun(rr, req)
 
-	assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "tier_limit_exceeded")
 }
 
 func TestStartRun_MalformedJSON(t *testing.T) {
@@ -301,7 +303,8 @@ func TestPolicyCheck_OversizedBody(t *testing.T) {
 	rr := httptest.NewRecorder()
 	s.handlePolicyCheck(rr, req, "evaluate")
 
-	assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "tier_limit_exceeded")
 }
 
 // ---------------------------------------------------------------------------

@@ -19,10 +19,11 @@ The sidebar provides access to all major sections:
 | 5 | `/approvals` | Approvals | Pending count (yellow) |
 | 6 | `/policies` | Policy Studio | |
 | 7 | `/packs` | Packs | |
-| 8 | `/dlq` | Dead Letters | Entry count (red) |
-| 9 | `/audit` | Audit Log | |
+| 8 | `/topics` | Topics | Degraded count (warning) |
+| 9 | `/dlq` | Dead Letters | Entry count (red) |
+| 10 | `/audit` | Audit Log | |
 | --- | --- | *separator* | |
-| 10 | `/settings` | Settings | Fixed bottom |
+| 11 | `/settings` | Settings | Fixed bottom |
 
 **Command Palette**: Press `Cmd+K` (Mac) or `Ctrl+K` (Windows/Linux) to open the command palette for quick navigation and search across all resource types.
 
@@ -255,6 +256,36 @@ Browse and manage model packs — bundles of capabilities, policy fragments, and
 - Policy fragments included in each pack
 
 See [docs/pack.md](pack.md) for the pack format specification and CLI commands.
+
+---
+
+### Topics (`/topics`)
+
+Track the canonical topic registry that drives gateway validation, scheduler routing,
+and pack-owned schema bindings.
+
+**Summary cards**:
+- **Registered** — total topics currently present in the registry
+- **Active** — topics whose mapped pool has one or more active workers
+- **Degraded** — valid topics with zero active workers
+
+**Topic registry table**:
+- **Topic** — topic name, degraded indicator, capability/risk chips
+- **Pool** — mapped worker pool
+- **Input schema** — links to the schema detail page when bound
+- **Output schema** — links to the schema detail page when bound
+- **Pack** — links to the owning pack
+- **Active workers** — links to the Agent Fleet filtered by pool + topic
+- **Status** — runtime status (`active` / `degraded`) plus registry status (`active`, `deprecated`, `disabled`)
+
+**Operational behavior**:
+- Topics with zero workers are shown as **Degraded**, but remain valid registry entries
+- Empty registry state prompts operators to install a pack or run `cordumctl topic create`
+- Registry/API failures render an inline error banner with retry action
+- Manual refresh updates counts and table state without leaving the page
+
+Use the Topics page during boundary-hardening rollout to confirm that every production
+topic is registered, bound to the expected schemas, and backed by live worker coverage.
 
 ---
 

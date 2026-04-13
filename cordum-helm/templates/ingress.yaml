@@ -6,10 +6,13 @@ metadata:
   labels:
     {{- include "cordum.labels" . | nindent 4 }}
     app.kubernetes.io/component: api-gateway
-  {{- with .Values.ingress.annotations }}
   annotations:
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
+    {{- if .Values.ingress.api.grpcEnabled }}
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    {{- end }}
 spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className | quote }}
@@ -31,6 +34,40 @@ spec:
                 port:
                   number: {{ $.Values.gateway.service.httpPort }}
           {{- end }}
+{{- if .Values.ingress.api.grpcEnabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cordum.fullname" . }}-grpc
+  labels:
+    {{- include "cordum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.api.grpcHost | default .Values.ingress.api.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "cordum.fullname" $ }}-api-gateway
+                port:
+                  number: {{ $.Values.gateway.service.grpcPort }}
+{{- end }}
 ---
 {{- end }}
 {{- if and .Values.ingress.enabled .Values.dashboard.enabled }}

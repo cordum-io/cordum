@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
-	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -59,6 +63,268 @@ func TestHandleSubmitJobHTTP(t *testing.T) {
 	}
 	if bus.published[0].subject != capsdk.SubjectSubmit {
 		t.Fatalf("unexpected publish subject: %s", bus.published[0].subject)
+	}
+}
+
+func TestSubmitJobUnknownTopicRejects400(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	if err := s.topicRegistry.Set(context.Background(), topicregistry.Registration{
+		Name:   "job.allowed",
+		Pool:   "pool-a",
+		Status: topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.unknown",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error_code"] != "unknown_topic" {
+		t.Fatalf("expected error_code unknown_topic, got %#v", resp["error_code"])
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no bus publish, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobKnownTopicZeroWorkersAccepted(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	if err := s.topicRegistry.Set(context.Background(), topicregistry.Registration{
+		Name:   "job.test",
+		Pool:   "pool-a",
+		Status: topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.test",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 1 {
+		t.Fatalf("expected one publish, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobEmptyRegistryAllowsAll(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.unregistered",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 1 {
+		t.Fatalf("expected one publish, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobSchemaEnforceRejectsInvalidPayload(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.schemaEnforcement = infraSchema.EnforcementEnforce
+	registerSubmitSchemaTopic(t, s, "job.structured", "demo/input")
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.structured",
+		"context": map[string]any{
+			"message": 123,
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error_code"] != "schema_validation_failed" {
+		t.Fatalf("expected schema_validation_failed, got %#v", resp["error_code"])
+	}
+	violations, ok := resp["violations"].([]any)
+	if !ok || len(violations) == 0 {
+		t.Fatalf("expected violations array, got %#v", resp["violations"])
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no publish on schema reject, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobSchemaWarnAllowsInvalidPayload(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.schemaEnforcement = infraSchema.EnforcementWarn
+	registerSubmitSchemaTopic(t, s, "job.structured", "demo/input")
+
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.structured",
+		"context": map[string]any{
+			"message": 123,
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(logBuf.String(), "submit payload violated topic input schema") {
+		t.Fatalf("expected schema warning log, got %q", logBuf.String())
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 1 {
+		t.Fatalf("expected one publish, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobSchemaOffSkipsValidation(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.schemaEnforcement = infraSchema.EnforcementOff
+	registerSubmitSchemaTopic(t, s, "job.structured", "demo/input")
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.structured",
+		"context": map[string]any{
+			"message": 123,
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 1 {
+		t.Fatalf("expected one publish, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobNoSchemaSkipsValidation(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.schemaEnforcement = infraSchema.EnforcementEnforce
+	if err := s.topicRegistry.Set(context.Background(), topicregistry.Registration{
+		Name:   "job.structured",
+		Pool:   "pool-a",
+		Status: topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  "job.structured",
+		"context": map[string]any{
+			"message": 123,
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 1 {
+		t.Fatalf("expected one publish, got %d", len(bus.published))
+	}
+}
+
+func registerSubmitSchemaTopic(t *testing.T, s *server, topic, schemaID string) {
+	t.Helper()
+	if err := s.schemaRegistry.Register(context.Background(), schemaID, []byte(`{
+		"type": "object",
+		"properties": {
+			"message": {"type": "string"}
+		},
+		"required": ["message"]
+	}`)); err != nil {
+		t.Fatalf("register schema: %v", err)
+	}
+	if err := s.topicRegistry.Set(context.Background(), topicregistry.Registration{
+		Name:          topic,
+		Pool:          "pool-a",
+		InputSchemaID: schemaID,
+		Status:        topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
 	}
 }
 

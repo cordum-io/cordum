@@ -16,6 +16,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/licensing"
 	"log/slog"
 
 	"github.com/cordum/cordum/core/infra/registry"
@@ -35,6 +36,12 @@ const (
 
 // Run starts the workflow engine control-plane component.
 func Run(cfg *config.Config) error {
+	return RunWithEntitlements(cfg, nil)
+}
+
+// RunWithEntitlements starts the workflow engine with an optional shared
+// entitlement resolver. Nil falls back to community defaults.
+func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
 	if cfg == nil {
 		cfg = config.Load()
 	}
@@ -104,7 +111,12 @@ func Run(cfg *config.Config) error {
 		slog.Warn("handshake publish failed", "error", err)
 	}
 
-	engine := NewEngine(workflowStore, natsBus).WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry).WithRunLocker(jobStore)
+	engine := NewEngine(workflowStore, natsBus).
+		WithMemory(memStore).
+		WithConfig(configSvc).
+		WithSchemaRegistry(schemaRegistry).
+		WithEntitlements(resolver).
+		WithRunLocker(jobStore)
 	if maxForEachItems > 0 {
 		engine = engine.WithMaxForEachItems(maxForEachItems)
 	}

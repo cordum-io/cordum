@@ -16,6 +16,7 @@ import { Textarea } from "../ui/Textarea";
 import { TagInput } from "../ui/TagInput";
 import { KeyValueEditor } from "../ui/KeyValueEditor";
 import { ComboboxInput } from "../ui/ComboboxInput";
+import { generateUUID } from "@/lib/uuid";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -420,7 +421,7 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
                       variant="outline"
                       size="sm"
                       onClick={() =>
-                        setValue("idempotency_key", crypto.randomUUID(), {
+                        setValue("idempotency_key", generateUUID(), {
                           shouldDirty: true,
                           shouldTouch: true,
                         })

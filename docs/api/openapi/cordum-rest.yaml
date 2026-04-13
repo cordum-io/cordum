@@ -2673,12 +2673,36 @@ components:
           type: boolean
         saml_enabled:
           type: boolean
+        saml_enterprise:
+          type: boolean
+        saml_login_url:
+          type: string
+        saml_metadata_url:
+          type: string
         oidc_enabled:
           type: boolean
-        require_2fa:
+        oidc_issuer:
+          type: string
+        oidc_login_url:
+          type: string
+        oidc_client_id:
+          type: string
+        oidc_redirect_uri:
+          type: string
+        oidc_scopes:
+          type: array
+          items:
+            type: string
+        oidc_client_secret_masked:
+          type: string
+        session_ttl:
+          type: string
+        require_rbac:
           type: boolean
-        session_ttl_seconds:
-          type: integer
+        require_principal:
+          type: boolean
+        default_tenant:
+          type: string
 
     LoginRequest:
       type: object

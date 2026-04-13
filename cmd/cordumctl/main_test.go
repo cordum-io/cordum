@@ -369,6 +369,30 @@ func TestReorderArgsMixedOrder(t *testing.T) {
 	}
 }
 
+func TestParseArgsApprovalRepairFlagsAfterPositional(t *testing.T) {
+	t.Setenv("CORDUM_GATEWAY", "http://localhost:8081")
+	t.Setenv("CORDUM_API_KEY", "")
+	t.Setenv("CORDUM_TENANT_ID", "default")
+	t.Setenv("CORDUM_TLS_CA", "")
+	t.Setenv("CORDUM_TLS_INSECURE", "")
+
+	fs := newFlagSet("approval repair")
+	apply := fs.Bool("apply", false, "apply repair")
+	note := fs.String("note", "", "repair note")
+
+	fs.ParseArgs([]string{"job-123", "--apply", "--note", "operator fix"})
+
+	if !*apply {
+		t.Fatal("expected apply=true")
+	}
+	if *note != "operator fix" {
+		t.Fatalf("expected note parsed, got %q", *note)
+	}
+	if fs.NArg() != 1 || fs.Arg(0) != "job-123" {
+		t.Fatalf("expected positional arg 'job-123', got %v", fs.Args())
+	}
+}
+
 func TestReorderArgsNoFlags(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	args := []string{"pos1", "pos2"}

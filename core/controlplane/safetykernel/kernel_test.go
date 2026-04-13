@@ -17,8 +17,30 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
+
+type fakeConfigChangeBus struct {
+	subscribeCalls    int
+	lastHandler       func(*pb.BusPacket) error
+	reconnectHandler  func(*nats.Conn)
+	disconnectHandler func(*nats.Conn, error)
+}
+
+func (f *fakeConfigChangeBus) ReplaceSubscription(_ *nats.Subscription, _ string, _ string, handler func(*pb.BusPacket) error) (*nats.Subscription, error) {
+	f.subscribeCalls++
+	f.lastHandler = handler
+	return &nats.Subscription{}, nil
+}
+
+func (f *fakeConfigChangeBus) AddReconnectHandler(handler func(*nats.Conn)) {
+	f.reconnectHandler = handler
+}
+
+func (f *fakeConfigChangeBus) AddDisconnectHandler(handler func(*nats.Conn, error)) {
+	f.disconnectHandler = handler
+}
 
 func TestCheckMCPPolicyDenies(t *testing.T) {
 	srv := &server{policy: &config.SafetyPolicy{
@@ -267,7 +289,7 @@ rules:
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, snapshot, err := loader.loadFragments(context.Background())
+	policy, snapshot, _, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}
@@ -326,7 +348,7 @@ default_decision: maybe
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, snapshot, err := loader.loadFragments(context.Background())
+	policy, snapshot, _, err := loader.loadFragments(context.Background())
 	// Malformed fragments are now skipped instead of failing all
 	if err != nil {
 		t.Fatalf("expected no error (malformed fragments should be skipped): %v", err)
@@ -413,7 +435,7 @@ func TestPolicyLoaderFromSource(t *testing.T) {
 	}
 
 	loader := &policyLoader{source: path}
-	policy, snapshot, err := loader.Load(context.Background())
+	policy, snapshot, _, err := loader.Load(context.Background())
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
@@ -424,7 +446,7 @@ func TestPolicyLoaderFromSource(t *testing.T) {
 
 func TestNewPolicyLoaderDefaults(t *testing.T) {
 	t.Setenv("SAFETY_POLICY_CONFIG_DISABLE", "1")
-	loader := newPolicyLoader(nil, "")
+	loader := newPolicyLoader(nil, "", nil)
 	if loader.configSvc != nil {
 		t.Fatalf("expected config service disabled")
 	}
@@ -433,7 +455,7 @@ func TestNewPolicyLoaderDefaults(t *testing.T) {
 	}
 	loader.Close()
 
-	loader = newPolicyLoader(nil, "/tmp/policy.yaml")
+	loader = newPolicyLoader(nil, "/tmp/policy.yaml", nil)
 	if !loader.ShouldWatch() {
 		t.Fatalf("expected ShouldWatch true when source set")
 	}
@@ -495,7 +517,7 @@ func TestWatchPolicy_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		srv.watchPolicy(ctx, loader)
+		srv.watchPolicy(ctx, loader, nil)
 		close(done)
 	}()
 
@@ -506,6 +528,129 @@ func TestWatchPolicy_ContextCancel(t *testing.T) {
 		// Success: goroutine exited.
 	case <-time.After(2 * time.Second):
 		t.Fatal("watchPolicy did not exit after context cancellation (goroutine leak)")
+	}
+}
+
+func TestWatchPolicyNotificationTrigger(t *testing.T) {
+	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "1h")
+
+	dir := t.TempDir()
+	policyPath := dir + "/policy.yaml"
+	if err := os.WriteFile(policyPath, []byte("default_tenant: default\ntenants:\n  default:\n    allow_topics:\n      - job.default.*\n"), 0o600); err != nil {
+		t.Fatalf("write initial policy: %v", err)
+	}
+
+	srv := &server{}
+	srv.setPolicy(&config.SafetyPolicy{
+		DefaultTenant: "default",
+		Tenants: map[string]config.TenantPolicy{
+			"default": {AllowTopics: []string{"job.default.*"}},
+		},
+	}, "initial-snapshot")
+
+	loader := &policyLoader{source: policyPath}
+	notifyCh := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		srv.watchPolicy(ctx, loader, notifyCh)
+		close(done)
+	}()
+
+	if err := os.WriteFile(policyPath, []byte("default_tenant: updated\ntenants:\n  updated:\n    allow_topics:\n      - job.updated.*\n"), 0o600); err != nil {
+		cancel()
+		<-done
+		t.Fatalf("write updated policy: %v", err)
+	}
+
+	notifyCh <- struct{}{}
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		srv.mu.RLock()
+		currentPolicy := srv.policy
+		currentSnapshot := srv.snapshot
+		srv.mu.RUnlock()
+		if currentPolicy != nil && currentPolicy.DefaultTenant == "updated" && currentSnapshot != "initial-snapshot" {
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("watchPolicy did not exit after notification test cancellation")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchPolicy did not exit after notification timeout cancellation")
+	}
+
+	srv.mu.RLock()
+	currentPolicy := srv.policy
+	currentSnapshot := srv.snapshot
+	srv.mu.RUnlock()
+	if currentPolicy == nil {
+		t.Fatal("expected policy to be loaded after notification")
+	}
+	t.Fatalf("expected notification-triggered reload to update policy within deadline, got tenant=%q snapshot=%q", currentPolicy.DefaultTenant, currentSnapshot)
+}
+
+func TestRegisterConfigChangeNotificationsResubscribesOnReconnect(t *testing.T) {
+	fakeBus := &fakeConfigChangeBus{}
+	notifyCh := make(chan struct{}, 1)
+
+	registerConfigChangeNotifications(fakeBus, notifyCh)
+
+	if fakeBus.subscribeCalls != 1 {
+		t.Fatalf("expected initial subscription, got %d", fakeBus.subscribeCalls)
+	}
+	if fakeBus.reconnectHandler == nil {
+		t.Fatal("expected reconnect handler to be registered")
+	}
+	if fakeBus.disconnectHandler == nil {
+		t.Fatal("expected disconnect handler to be registered")
+	}
+	if fakeBus.lastHandler == nil {
+		t.Fatal("expected subscription callback to be installed")
+	}
+
+	fakeBus.reconnectHandler(nil)
+	if fakeBus.subscribeCalls != 2 {
+		t.Fatalf("expected reconnect to re-subscribe, got %d subscriptions", fakeBus.subscribeCalls)
+	}
+
+	if err := fakeBus.lastHandler(&pb.BusPacket{}); err != nil {
+		t.Fatalf("expected config callback to return nil, got %v", err)
+	}
+	select {
+	case <-notifyCh:
+	default:
+		t.Fatal("expected config callback to notify policy watcher")
+	}
+}
+
+func TestRegisterConfigChangeNotificationsRecoversFromClosedChannel(t *testing.T) {
+	fakeBus := &fakeConfigChangeBus{}
+	notifyCh := make(chan struct{})
+	close(notifyCh)
+
+	registerConfigChangeNotifications(fakeBus, notifyCh)
+	if fakeBus.lastHandler == nil {
+		t.Fatal("expected subscription callback to be installed")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("config callback panicked: %v", r)
+		}
+	}()
+	if err := fakeBus.lastHandler(&pb.BusPacket{}); err != nil {
+		t.Fatalf("expected recovered callback to return nil, got %v", err)
 	}
 }
 
@@ -1113,7 +1258,7 @@ func TestWatchPolicyReloadFailureKeepsOldPolicy(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		srv.watchPolicy(ctx, loader)
+		srv.watchPolicy(ctx, loader, nil)
 		close(done)
 	}()
 

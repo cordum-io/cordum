@@ -6,6 +6,7 @@ import { Input } from "../ui/Input";
 import { notificationRuleSchema, type NotificationRuleForm } from "../../lib/settingsSchemas";
 import { useNotificationRules, useSaveNotificationRules } from "../../hooks/useSettings";
 import type { NotificationChannel, NotificationRule } from "../../api/types";
+import { generateUUID } from "@/lib/uuid";
 
 // ---------------------------------------------------------------------------
 // NotificationRuleModal
@@ -43,7 +44,7 @@ export function NotificationRuleModal({
   });
 
   function onSubmit(data: NotificationRuleForm) {
-    const id = rule?.id ?? `rule-${crypto.randomUUID().slice(0, 8)}`;
+    const id = rule?.id ?? `rule-${generateUUID().slice(0, 8)}`;
     const newRule: NotificationRule = {
       id,
       eventPattern: data.eventPattern,

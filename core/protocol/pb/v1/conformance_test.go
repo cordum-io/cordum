@@ -110,18 +110,7 @@ func TestConformanceEnhancedAlert(t *testing.T) {
 		t.Fatal("expected alert payload")
 	}
 
-	// Legacy fields (must still be populated during transition).
-	if alert.GetLevel() != "CRITICAL" {
-		t.Fatalf("level = %q, want %q", alert.GetLevel(), "CRITICAL")
-	}
-	if alert.GetComponent() != "scheduler" {
-		t.Fatalf("component = %q, want %q", alert.GetComponent(), "scheduler")
-	}
-	if alert.GetCode() != "SIGNATURE_INVALID" {
-		t.Fatalf("code = %q, want %q", alert.GetCode(), "SIGNATURE_INVALID")
-	}
-
-	// Enhanced fields.
+	// Structured fields (replacements for deprecated level/component/code).
 	if alert.GetSeverity() != AlertSeverity_ALERT_SEVERITY_CRITICAL {
 		t.Fatalf("severity = %v, want CRITICAL", alert.GetSeverity())
 	}

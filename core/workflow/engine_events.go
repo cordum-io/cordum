@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"log/slog"
+	"runtime/debug"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -15,6 +16,10 @@ import (
 // Delays shorter than this use in-memory time.AfterFunc only (fast, no Redis round-trip).
 // Set to 3s to limit the data-loss window on crash while avoiding Redis round-trips for trivial delays.
 const durableDelayThreshold = 3 * time.Second
+
+// buildEventAlertTestHook is nil in production. Tests may set it to inject a
+// panic and verify the alert builder fails closed.
+var buildEventAlertTestHook func()
 
 func delayForStep(step *Step, now time.Time) (time.Duration, error) {
 	if step == nil {
@@ -43,10 +48,26 @@ func delayForStep(step *Step, now time.Time) (time.Duration, error) {
 	return 0, nil
 }
 
-func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
+func buildEventAlert(step *Step, payload any) (alert *pb.SystemAlert) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("workflow: buildEventAlert panic",
+				"panic", r,
+				"stack", string(debug.Stack()),
+			)
+			alert = &pb.SystemAlert{
+				Message:         fmt.Sprintf("event alert build panic: %v", r),
+				Severity:        pb.AlertSeverity_ALERT_SEVERITY_ERROR,
+				SourceComponent: "workflow-engine",
+			}
+		}
+	}()
+	if buildEventAlertTestHook != nil {
+		buildEventAlertTestHook()
+	}
+
 	level := "INFO"
 	message := ""
-	code := ""
 	component := "workflow-engine"
 	traceID := ""
 	details := map[string]string{}
@@ -58,9 +79,6 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 		}
 		if val, ok := v["message"].(string); ok && strings.TrimSpace(val) != "" {
 			message = strings.TrimSpace(val)
-		}
-		if val, ok := v["code"].(string); ok && strings.TrimSpace(val) != "" {
-			code = strings.TrimSpace(val)
 		}
 		if val, ok := v["component"].(string); ok && strings.TrimSpace(val) != "" {
 			component = strings.TrimSpace(val)
@@ -89,9 +107,6 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 		if val := strings.TrimSpace(v["message"]); val != "" {
 			message = val
 		}
-		if val := strings.TrimSpace(v["code"]); val != "" {
-			code = val
-		}
 		if val := strings.TrimSpace(v["component"]); val != "" {
 			component = val
 		}
@@ -109,12 +124,7 @@ func buildEventAlert(step *Step, payload any) *pb.SystemAlert {
 	}
 
 	return &pb.SystemAlert{
-		// Deprecated fields (keep for backward compat)
-		Level:     level,
-		Message:   message,
-		Component: component,
-		Code:      code,
-		// New enhanced fields
+		Message:         message,
 		Severity:        levelToSeverity(level),
 		SourceComponent: component,
 		Details:         details,

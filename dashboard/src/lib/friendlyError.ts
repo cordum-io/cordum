@@ -1,4 +1,5 @@
 import { ApiError } from "@/api/client";
+import type { ApprovalConflictPayload } from "@/api/types";
 import { logger } from "./logger";
 
 export interface FriendlyError {
@@ -28,6 +29,30 @@ const ERROR_CODE_MAP: Record<string, FriendlyError> = {
   TENANT_MISMATCH: {
     title: "Tenant access denied",
     description: "You don't have access to this tenant's resources. Switch to the correct tenant.",
+  },
+  approval_already_resolved: {
+    title: "Already resolved",
+    description: "This approval was already processed. Refresh to review the recorded decision.",
+  },
+  approval_retryable_lock: {
+    title: "Approval is updating",
+    description: "Another decision or repair is already in progress. Wait a moment, refresh, and try again.",
+  },
+  approval_terminal_run: {
+    title: "Workflow already moved on",
+    description: "This workflow run is no longer waiting on this approval. Refresh to review the final lifecycle state.",
+  },
+  approval_stale_snapshot: {
+    title: "Policy snapshot changed",
+    description: "The governing policy changed since this approval was created. Refresh and review the latest request before deciding.",
+  },
+  approval_stale_request: {
+    title: "Approval request is stale",
+    description: "The underlying job request changed since this approval was created. Refresh before making a decision.",
+  },
+  approval_not_actionable: {
+    title: "Approval can’t be decided",
+    description: "This approval is no longer actionable. Refresh to see its latest lifecycle state.",
   },
 };
 
@@ -84,6 +109,16 @@ const STATUS_MAP: Record<number, FriendlyError> = {
   },
 };
 
+function getStructuredErrorCode(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const structured = body as ApprovalConflictPayload & { error?: unknown };
+  if (typeof structured.code === "string") return structured.code;
+  if (typeof structured.error === "string" && ERROR_CODE_MAP[structured.error]) {
+    return structured.error;
+  }
+  return undefined;
+}
+
 /**
  * Translates raw errors into user-friendly messages with recovery actions.
  * Always logs the technical error for debugging.
@@ -100,8 +135,9 @@ export function friendlyError(err: unknown, context?: string): FriendlyError {
 
     // Check for structured error code in body
     const body = err.body as Record<string, unknown> | null | undefined;
-    if (body?.error && typeof body.error === "string" && ERROR_CODE_MAP[body.error]) {
-      return ERROR_CODE_MAP[body.error];
+    const structuredCode = getStructuredErrorCode(body);
+    if (structuredCode && ERROR_CODE_MAP[structuredCode]) {
+      return ERROR_CODE_MAP[structuredCode];
     }
 
     // Check for validation errors array

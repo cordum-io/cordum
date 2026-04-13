@@ -27,6 +27,19 @@ cat > "${CONFIG_PATH}" <<CONFIGEOF
 }
 CONFIGEOF
 
+# --- Resolve DNS and upstream host for nginx ---
+# K8s uses kube-dns, Docker uses 127.0.0.11. Auto-detect from /etc/resolv.conf.
+DETECTED_DNS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null || echo "127.0.0.11")
+export CORDUM_DNS_RESOLVER="${DETECTED_DNS:-127.0.0.11}"
+
+# In K8s, nginx resolver needs FQDN. Detect K8s by checking for service account.
+if [ -d "/var/run/secrets/kubernetes.io" ]; then
+  K8S_NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null || echo "cordum")
+  export CORDUM_API_UPSTREAM_HOST="${CORDUM_API_UPSTREAM_HOST:-cordum-api-gateway.${K8S_NAMESPACE}.svc.cluster.local}"
+else
+  export CORDUM_API_UPSTREAM_HOST="${CORDUM_API_UPSTREAM_HOST:-cordum-api-gateway}"
+fi
+
 # --- Resolve API upstream scheme (http for dev, https for prod) ---
 export CORDUM_UPSTREAM_SCHEME="${CORDUM_API_UPSTREAM_SCHEME:-http}"
 
@@ -38,7 +51,7 @@ else
   export CORDUM_PROXY_SSL_TRUSTED_CA=""
 fi
 
-envsubst '$CORDUM_UPSTREAM_SCHEME $CORDUM_PROXY_SSL_VERIFY $CORDUM_PROXY_SSL_TRUSTED_CA' \
+envsubst '$CORDUM_DNS_RESOLVER $CORDUM_API_UPSTREAM_HOST $CORDUM_UPSTREAM_SCHEME $CORDUM_PROXY_SSL_VERIFY $CORDUM_PROXY_SSL_TRUSTED_CA' \
   < /etc/nginx/templates/nginx.conf.template \
   > /etc/nginx/conf.d/default.conf
 

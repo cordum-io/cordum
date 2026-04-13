@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,58 +13,69 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/model"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
-	jobStateKeyPrefix           = "job:state:"
-	jobResultPtrKeyPrefix       = "job:result_ptr:"
-	jobMetaKeyPrefix            = "job:meta:"
-	jobRequestKeyPrefix         = "job:req:"
-	jobEventsKeyPrefix          = "job:events:"
-	jobOutputDecisionKeySuffix  = ":output_decision"
-	metaFieldWorkerID           = "worker_id"
-	metaFieldTopic              = "topic"
-	metaFieldTenant             = "tenant"
-	metaFieldPrincipal          = "principal"
-	metaFieldTeam               = "team"
-	metaFieldMemory             = "memory_id"
-	metaFieldTraceID            = "trace_id"
-	metaFieldLabels             = "labels"
-	metaFieldActorID            = "actor_id"
-	metaFieldActorType          = "actor_type"
-	metaFieldIdempotencyKey     = "idempotency_key"
-	metaFieldCapability         = "capability"
-	metaFieldRiskTags           = "risk_tags"
-	metaFieldRequires           = "requires"
-	metaFieldPackID             = "pack_id"
-	metaFieldAttempts           = "attempts"
-	metaFieldDeadline           = "deadline_unix"
-	metaFieldSafetyDecision     = "safety_decision"
-	metaFieldSafetyReason       = "safety_reason"
-	metaFieldSafetyRuleID       = "safety_rule_id"
-	metaFieldSafetySnapshot     = "safety_snapshot"
-	metaFieldSafetyChecked      = "safety_checked_at"
-	metaFieldSafetyConstraints  = "safety_constraints"
-	metaFieldSafetyRemediations = "safety_remediations"
-	metaFieldOutputSafety       = "output_safety"
-	metaFieldApprovalRequired   = "safety_approval_required"
-	metaFieldApprovalRef        = "safety_approval_ref"
-	metaFieldSafetyJobHash      = "safety_job_hash"
-	metaFieldApprovalBy         = "approval_by"
-	metaFieldApprovalRole       = "approval_role"
-	metaFieldApprovalAt         = "approval_at"
-	metaFieldApprovalReason     = "approval_reason"
-	metaFieldApprovalNote       = "approval_note"
-	metaFieldApprovalSnapshot   = "approval_policy_snapshot"
-	metaFieldApprovalJobHash    = "approval_job_hash"
-	envJobMetaTTL               = "JOB_META_TTL"
-	envJobMetaTTLSeconds        = "JOB_META_TTL_SECONDS"
+	jobStateKeyPrefix              = "job:state:"
+	jobResultPtrKeyPrefix          = "job:result_ptr:"
+	jobMetaKeyPrefix               = "job:meta:"
+	jobRequestKeyPrefix            = "job:req:"
+	jobEventsKeyPrefix             = "job:events:"
+	jobOutputDecisionKeySuffix     = ":output_decision"
+	metaFieldWorkerID              = "worker_id"
+	metaFieldTopic                 = "topic"
+	metaFieldTenant                = "tenant"
+	metaFieldPrincipal             = "principal"
+	metaFieldTeam                  = "team"
+	metaFieldMemory                = "memory_id"
+	metaFieldTraceID               = "trace_id"
+	metaFieldLabels                = "labels"
+	metaFieldActorID               = "actor_id"
+	metaFieldActorType             = "actor_type"
+	metaFieldIdempotencyKey        = "idempotency_key"
+	metaFieldCapability            = "capability"
+	metaFieldRiskTags              = "risk_tags"
+	metaFieldRequires              = "requires"
+	metaFieldPackID                = "pack_id"
+	metaFieldAttempts              = "attempts"
+	metaFieldDeadline              = "deadline_unix"
+	metaFieldSafetyDecision        = "safety_decision"
+	metaFieldSafetyReason          = "safety_reason"
+	metaFieldSafetyRuleID          = "safety_rule_id"
+	metaFieldSafetySnapshot        = "safety_snapshot"
+	metaFieldSafetyChecked         = "safety_checked_at"
+	metaFieldSafetyConstraints     = "safety_constraints"
+	metaFieldSafetyRemediations    = "safety_remediations"
+	metaFieldOutputSafety          = "output_safety"
+	metaFieldApprovalRequired      = "safety_approval_required"
+	metaFieldApprovalRef           = "safety_approval_ref"
+	metaFieldSafetyJobHash         = "safety_job_hash"
+	metaFieldApprovalBy            = "approval_by"
+	metaFieldApprovalRole          = "approval_role"
+	metaFieldApprovalAt            = "approval_at"
+	metaFieldApprovalReason        = "approval_reason"
+	metaFieldApprovalNote          = "approval_note"
+	metaFieldApprovalSnapshot      = "approval_policy_snapshot"
+	metaFieldApprovalJobHash       = "approval_job_hash"
+	metaFieldApprovalStatus        = "approval_status"
+	metaFieldApprovalActionable    = "approval_actionability"
+	metaFieldApprovalRevision      = "approval_revision"
+	metaFieldApprovalDecision      = "approval_decision"
+	metaFieldApprovalPublishStatus = "approval_publish_status"
+	metaFieldApprovalPublishTarget = "approval_publish_target"
+	metaFieldApprovalPublishedAt   = "approval_published_at"
+	envJobMetaTTL                  = "JOB_META_TTL"
+	envJobMetaTTLSeconds           = "JOB_META_TTL_SECONDS"
 )
 
 var (
@@ -82,7 +96,7 @@ var (
 		// detects unsafe content. See ADR-005 (output-policy-2-phase).
 		// SCHEDULED self-transition allowed for dispatch publish rollback
 		// (DISPATCHED→SCHEDULED fails, second replay starts at SCHEDULED).
-		model.JobStateScheduled: {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
+		model.JobStateScheduled:  {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
 		model.JobStateDispatched: {model.JobStateScheduled, model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
 		model.JobStateRunning:    {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
 		// Succeeded → Quarantined: async output scanning may flag content after the
@@ -144,11 +158,44 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 	}
 }
 
+func hashApprovalJobRequest(req *pb.JobRequest) (string, error) {
+	if req == nil {
+		return "", fmt.Errorf("job request required")
+	}
+	clone, ok := proto.Clone(req).(*pb.JobRequest)
+	if !ok || clone == nil {
+		return "", fmt.Errorf("job request clone failed")
+	}
+	if clone.Labels != nil {
+		for key := range clone.Labels {
+			lower := strings.ToLower(key)
+			if strings.HasPrefix(lower, "approval_") || key == bus.LabelBusMsgID {
+				delete(clone.Labels, key)
+			}
+		}
+		if len(clone.Labels) == 0 {
+			clone.Labels = nil
+		}
+	}
+	if clone.Env != nil {
+		delete(clone.Env, config.EffectiveConfigEnvVar)
+		if len(clone.Env) == 0 {
+			clone.Env = nil
+		}
+	}
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // RedisJobStore implements model.JobStore backed by Redis.
 type RedisJobStore struct {
-	client          redis.UniversalClient
-	metaTTL         time.Duration
-	idempotencyTTL  time.Duration // TTL for idempotency keys; must outlive job lifecycle
+	client         redis.UniversalClient
+	metaTTL        time.Duration
+	idempotencyTTL time.Duration // TTL for idempotency keys; must outlive job lifecycle
 }
 
 // Client returns the underlying Redis client for use by other subsystems
@@ -158,14 +205,195 @@ func (s *RedisJobStore) Client() redis.UniversalClient {
 }
 
 // ApprovalRecord captures approval audit metadata stored on a job.
-type ApprovalRecord struct {
+type ApprovalRecord = model.ApprovalRecord
+
+// ApprovalConflictError captures a machine-readable approval conflict.
+type ApprovalConflictError struct {
+	Code    model.ApprovalConflictCode
+	Message string
+}
+
+func (e *ApprovalConflictError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Code != "" {
+		return string(e.Code)
+	}
+	return "approval conflict"
+}
+
+type ApprovalResolutionParams struct {
+	JobID          string
+	Decision       model.ApprovalDecision
+	ResultState    model.JobState
 	ApprovedBy     string
 	ApprovedRole   string
-	ApprovedAt     int64
 	Reason         string
 	Note           string
 	PolicySnapshot string
-	JobHash        string
+	LabelUpdates   map[string]string
+	PublishTarget  model.ApprovalPublishTarget
+}
+
+type ApprovalResolutionResult struct {
+	JobID          string
+	TraceID        string
+	State          model.JobState
+	Request        *pb.JobRequest
+	ApprovalRecord ApprovalRecord
+	SafetyRecord   model.SafetyDecisionRecord
+}
+
+type ApprovalRepairKind string
+
+const (
+	ApprovalRepairNone                    ApprovalRepairKind = "none"
+	ApprovalRepairReplayPendingPublish    ApprovalRepairKind = "replay_pending_publish"
+	ApprovalRepairApplyApprovedResolution ApprovalRepairKind = "apply_approved_resolution"
+	ApprovalRepairApplyRejectedResolution ApprovalRepairKind = "apply_rejected_resolution"
+	ApprovalRepairInvalidateTerminalRun   ApprovalRepairKind = "invalidate_terminal_run"
+	ApprovalRepairInvalidateStaleRequest  ApprovalRepairKind = "invalidate_stale_request"
+	ApprovalRepairInvalidateStaleSnapshot ApprovalRepairKind = "invalidate_stale_snapshot"
+)
+
+type ApprovalRepairClassifyOptions struct {
+	WorkflowTerminal bool
+	StaleSnapshot    bool
+}
+
+type ApprovalRepairSnapshot struct {
+	JobID          string
+	State          model.JobState
+	TraceID        string
+	Topic          string
+	RunID          string
+	Request        *pb.JobRequest
+	RequestHash    string
+	SafetyRecord   model.SafetyDecisionRecord
+	ApprovalRecord ApprovalRecord
+}
+
+type ApprovalRepairPlan struct {
+	JobID          string                      `json:"job_id"`
+	Kind           ApprovalRepairKind          `json:"kind"`
+	Repairable     bool                        `json:"repairable"`
+	Reason         string                      `json:"reason,omitempty"`
+	CurrentState   model.JobState              `json:"current_state,omitempty"`
+	TargetState    model.JobState              `json:"target_state,omitempty"`
+	ApprovalStatus model.ApprovalStatus        `json:"approval_status,omitempty"`
+	Actionability  model.ApprovalActionability `json:"actionability,omitempty"`
+	Decision       model.ApprovalDecision      `json:"decision,omitempty"`
+	PublishTarget  model.ApprovalPublishTarget `json:"publish_target,omitempty"`
+	Topic          string                      `json:"topic,omitempty"`
+	RunID          string                      `json:"run_id,omitempty"`
+	RequestHash    string                      `json:"request_hash,omitempty"`
+}
+
+type ApprovalRepairApplyParams struct {
+	JobID string
+	Plan  ApprovalRepairPlan
+	Actor string
+	Note  string
+}
+
+type ApprovalRepairResult struct {
+	JobID          string
+	TraceID        string
+	State          model.JobState
+	Request        *pb.JobRequest
+	ApprovalRecord ApprovalRecord
+	Plan           ApprovalRepairPlan
+}
+
+func derivedApprovalStatus(state model.JobState, safety model.SafetyDecisionRecord, record ApprovalRecord) model.ApprovalStatus {
+	if record.Status != "" {
+		return record.Status
+	}
+	switch record.Decision {
+	case model.ApprovalDecisionApprove:
+		return model.ApprovalStatusApproved
+	case model.ApprovalDecisionReject:
+		return model.ApprovalStatusRejected
+	case model.ApprovalDecisionExpire:
+		return model.ApprovalStatusExpired
+	case model.ApprovalDecisionInvalidate:
+		return model.ApprovalStatusInvalidated
+	case model.ApprovalDecisionRepair:
+		return model.ApprovalStatusRepaired
+	}
+	switch state {
+	case model.JobStateApproval:
+		if safety.ApprovalRequired || safety.Decision == model.SafetyRequireApproval {
+			return model.ApprovalStatusPending
+		}
+	case model.JobStateDenied:
+		return model.ApprovalStatusRejected
+	case model.JobStateTimeout:
+		if safety.ApprovalRequired || safety.Decision == model.SafetyRequireApproval {
+			return model.ApprovalStatusExpired
+		}
+	case model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning,
+		model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateQuarantined:
+		if record.ApprovedBy != "" || safety.ApprovalRequired || safety.Decision == model.SafetyRequireApproval {
+			return model.ApprovalStatusApproved
+		}
+	}
+	if record.ApprovedBy != "" {
+		return model.ApprovalStatusApproved
+	}
+	if safety.ApprovalRequired || safety.Decision == model.SafetyRequireApproval {
+		return model.ApprovalStatusPending
+	}
+	return ""
+}
+
+func derivedApprovalDecision(record ApprovalRecord) model.ApprovalDecision {
+	if record.Decision != "" {
+		return record.Decision
+	}
+	switch record.Status {
+	case model.ApprovalStatusApproved:
+		return model.ApprovalDecisionApprove
+	case model.ApprovalStatusRejected:
+		return model.ApprovalDecisionReject
+	case model.ApprovalStatusExpired:
+		return model.ApprovalDecisionExpire
+	case model.ApprovalStatusInvalidated:
+		return model.ApprovalDecisionInvalidate
+	case model.ApprovalStatusRepaired:
+		return model.ApprovalDecisionRepair
+	default:
+		return ""
+	}
+}
+
+func derivedApprovalRevision(safety model.SafetyDecisionRecord, record ApprovalRecord) int64 {
+	if record.Revision > 0 {
+		return record.Revision
+	}
+	if safety.ApprovalRevision > 0 {
+		return safety.ApprovalRevision
+	}
+	if safety.ApprovalRequired || safety.Decision == model.SafetyRequireApproval {
+		return 1
+	}
+	return 0
+}
+
+// NormalizeApprovalRecord returns a canonical lifecycle view even for legacy
+// approvals that only persisted approval_by + job state.
+func NormalizeApprovalRecord(state model.JobState, safety model.SafetyDecisionRecord, record ApprovalRecord) ApprovalRecord {
+	record.Status = derivedApprovalStatus(state, safety, record)
+	record.Decision = derivedApprovalDecision(record)
+	if record.Actionability == "" {
+		record.Actionability = record.Status.DefaultActionability()
+	}
+	record.Revision = derivedApprovalRevision(safety, record)
+	return record
 }
 
 // CancelJob atomically cancels a job if it is not already terminal.
@@ -444,6 +672,16 @@ func (s *RedisJobStore) ListRecentJobs(ctx context.Context, limit int64) ([]mode
 		return nil, fmt.Errorf("job store list recent jobs: %w", err)
 	}
 	return s.buildJobRecords(ctx, members)
+}
+
+// CountRecentJobsSince returns the number of jobs updated on or after the given
+// time using the bounded recent-jobs index.
+func (s *RedisJobStore) CountRecentJobsSince(ctx context.Context, since time.Time) (int64, error) {
+	count, err := s.client.ZCount(ctx, "job:recent", fmt.Sprintf("%d", since.UTC().UnixMicro()), "+inf").Result()
+	if err != nil {
+		return 0, fmt.Errorf("job store count recent jobs since %s: %w", since.UTC().Format(time.RFC3339), err)
+	}
+	return count, nil
 }
 
 // ListRecentJobsByScore returns jobs at or below the provided updated_at score (cursor) ordered desc.
@@ -1283,6 +1521,20 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	if record.ApprovalRequired {
 		approvalStr = "true"
 	}
+	approvalStatus := record.ApprovalStatus
+	approvalActionability := record.Actionability
+	approvalRevision := record.ApprovalRevision
+	if record.ApprovalRequired {
+		if approvalStatus == "" {
+			approvalStatus = model.ApprovalStatusPending
+		}
+		if approvalActionability == "" {
+			approvalActionability = approvalStatus.DefaultActionability()
+		}
+		if approvalRevision <= 0 {
+			approvalRevision = 1
+		}
+	}
 	fields := map[string]any{
 		metaFieldSafetyDecision:   string(record.Decision),
 		metaFieldSafetyReason:     record.Reason,
@@ -1294,6 +1546,14 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	}
 	if record.JobHash != "" {
 		fields[metaFieldSafetyJobHash] = record.JobHash
+	}
+	if record.ApprovalRequired {
+		fields[metaFieldApprovalStatus] = string(approvalStatus)
+		fields[metaFieldApprovalActionable] = string(approvalActionability)
+		fields[metaFieldApprovalRevision] = approvalRevision
+		if record.ApprovalDecision != "" {
+			fields[metaFieldApprovalDecision] = string(record.ApprovalDecision)
+		}
 	}
 	if constraintsJSON != "" {
 		fields[metaFieldSafetyConstraints] = constraintsJSON
@@ -1321,6 +1581,10 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 		"approval_ref":      record.ApprovalRef,
 		"job_hash":          record.JobHash,
 		"checked_at":        record.CheckedAt,
+		"approval_status":   approvalStatus,
+		"actionability":     approvalActionability,
+		"approval_revision": approvalRevision,
+		"approval_decision": record.ApprovalDecision,
 	}
 	encoded, _ := json.Marshal(entry)
 
@@ -1404,6 +1668,9 @@ func (s *RedisJobStore) SetApprovalRecord(ctx context.Context, jobID string, rec
 	if record.ApprovedAt == 0 {
 		record.ApprovedAt = nowUnixMicros()
 	}
+	if record.Status != "" && record.Actionability == "" {
+		record.Actionability = record.Status.DefaultActionability()
+	}
 	fields := map[string]any{
 		metaFieldApprovalBy:       record.ApprovedBy,
 		metaFieldApprovalRole:     record.ApprovedRole,
@@ -1412,6 +1679,27 @@ func (s *RedisJobStore) SetApprovalRecord(ctx context.Context, jobID string, rec
 		metaFieldApprovalNote:     record.Note,
 		metaFieldApprovalSnapshot: record.PolicySnapshot,
 		metaFieldApprovalJobHash:  record.JobHash,
+	}
+	if record.Status != "" {
+		fields[metaFieldApprovalStatus] = string(record.Status)
+	}
+	if record.Actionability != "" {
+		fields[metaFieldApprovalActionable] = string(record.Actionability)
+	}
+	if record.Revision > 0 {
+		fields[metaFieldApprovalRevision] = record.Revision
+	}
+	if record.Decision != "" {
+		fields[metaFieldApprovalDecision] = string(record.Decision)
+	}
+	if record.PublishStatus != "" {
+		fields[metaFieldApprovalPublishStatus] = string(record.PublishStatus)
+	}
+	if record.PublishTarget != "" {
+		fields[metaFieldApprovalPublishTarget] = string(record.PublishTarget)
+	}
+	if record.PublishedAt > 0 {
+		fields[metaFieldApprovalPublishedAt] = record.PublishedAt
 	}
 	pipe := s.client.TxPipeline()
 	pipe.HSet(ctx, jobMetaKey(jobID), fields)
@@ -1442,13 +1730,845 @@ func (s *RedisJobStore) GetApprovalRecord(ctx context.Context, jobID string) (Ap
 		Note:           data[metaFieldApprovalNote],
 		PolicySnapshot: data[metaFieldApprovalSnapshot],
 		JobHash:        data[metaFieldApprovalJobHash],
+		Status:         model.ApprovalStatus(data[metaFieldApprovalStatus]),
+		Actionability:  model.ApprovalActionability(data[metaFieldApprovalActionable]),
+		Decision:       model.ApprovalDecision(data[metaFieldApprovalDecision]),
+		PublishStatus:  model.ApprovalPublishStatus(data[metaFieldApprovalPublishStatus]),
+		PublishTarget:  model.ApprovalPublishTarget(data[metaFieldApprovalPublishTarget]),
 	}
 	if raw := data[metaFieldApprovalAt]; raw != "" {
 		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			record.ApprovedAt = parsed
 		}
 	}
+	if raw := data[metaFieldApprovalRevision]; raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			record.Revision = parsed
+		}
+	}
+	if raw := data[metaFieldApprovalPublishedAt]; raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			record.PublishedAt = parsed
+		}
+	}
 	return record, nil
+}
+
+// MarkApprovalPublishComplete marks the durable approval side-effect intent as
+// published for the expected approval revision.
+func (s *RedisJobStore) MarkApprovalPublishComplete(ctx context.Context, jobID string, revision int64, target model.ApprovalPublishTarget) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	metaKey := jobMetaKey(jobID)
+	return s.client.Watch(ctx, func(tx *redis.Tx) error {
+		meta, err := tx.HMGet(ctx, metaKey,
+			metaFieldApprovalRevision,
+			metaFieldApprovalPublishStatus,
+			metaFieldApprovalPublishTarget,
+		).Result()
+		if err != nil {
+			return fmt.Errorf("job store mark approval publish complete %s: %w", jobID, err)
+		}
+
+		currentRevision := int64(0)
+		if raw, ok := meta[0].(string); ok && raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				currentRevision = parsed
+			}
+		}
+		if revision > 0 && currentRevision > 0 && currentRevision != revision {
+			return nil
+		}
+
+		currentStatus, _ := meta[1].(string)
+		currentTarget, _ := meta[2].(string)
+		if currentStatus == string(model.ApprovalPublishPublished) {
+			return nil
+		}
+		if target != "" && currentTarget != "" && currentTarget != string(target) {
+			return nil
+		}
+		if strings.TrimSpace(currentTarget) == "" {
+			return nil
+		}
+
+		now := nowUnixMicros()
+		pipe := tx.TxPipeline()
+		pipe.HSet(ctx, metaKey, map[string]any{
+			metaFieldApprovalPublishStatus: string(model.ApprovalPublishPublished),
+			metaFieldApprovalPublishedAt:   now,
+		})
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, metaKey, s.metaTTL)
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return fmt.Errorf("job store mark approval publish complete %s exec: %w", jobID, err)
+		}
+		return nil
+	}, metaKey)
+}
+
+func (s *RedisJobStore) InspectApprovalRepair(ctx context.Context, jobID string) (*ApprovalRepairSnapshot, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("jobID required")
+	}
+	state, err := s.GetState(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	req, err := s.GetJobRequest(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	safetyRecord, err := s.GetSafetyDecision(ctx, jobID)
+	if err != nil && err != redis.Nil {
+		return nil, err
+	}
+	approvalRecord, err := s.GetApprovalRecord(ctx, jobID)
+	if err != nil && err != redis.Nil {
+		return nil, err
+	}
+	approvalRecord = NormalizeApprovalRecord(state, safetyRecord, approvalRecord)
+	requestHash := ""
+	if req != nil {
+		if hash, err := hashApprovalJobRequest(req); err == nil {
+			requestHash = hash
+		}
+	}
+	traceID, _ := s.GetTraceID(ctx, jobID)
+	topic := ""
+	runID := ""
+	if req != nil {
+		topic = strings.TrimSpace(req.GetTopic())
+		if req.Labels != nil {
+			runID = strings.TrimSpace(req.Labels["run_id"])
+		}
+	}
+	return &ApprovalRepairSnapshot{
+		JobID:          jobID,
+		State:          state,
+		TraceID:        traceID,
+		Topic:          topic,
+		RunID:          runID,
+		Request:        req,
+		RequestHash:    requestHash,
+		SafetyRecord:   safetyRecord,
+		ApprovalRecord: approvalRecord,
+	}, nil
+}
+
+func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepairClassifyOptions) ApprovalRepairPlan {
+	plan := ApprovalRepairPlan{
+		JobID:        snapshot.JobID,
+		Kind:         ApprovalRepairNone,
+		CurrentState: snapshot.State,
+		Topic:        snapshot.Topic,
+		RunID:        snapshot.RunID,
+		RequestHash:  snapshot.RequestHash,
+	}
+	approval := snapshot.ApprovalRecord
+
+	if snapshot.State != model.JobStateApproval && approval.HasPendingPublish() {
+		plan.Kind = ApprovalRepairReplayPendingPublish
+		plan.Repairable = true
+		plan.Reason = "approval decision committed but publish intent is still pending"
+		plan.TargetState = snapshot.State
+		plan.ApprovalStatus = approval.Status
+		plan.Actionability = approval.Actionability
+		plan.Decision = approval.Decision
+		plan.PublishTarget = approval.PublishTarget
+		return plan
+	}
+
+	if snapshot.State != model.JobStateApproval {
+		return plan
+	}
+
+	isApprovedResolution := approval.Decision == model.ApprovalDecisionApprove || approval.Status == model.ApprovalStatusApproved
+	if !isApprovedResolution && snapshot.Request != nil && snapshot.Request.Labels != nil {
+		isApprovedResolution = strings.EqualFold(strings.TrimSpace(snapshot.Request.Labels["approval_granted"]), "true")
+	}
+	if isApprovedResolution {
+		plan.Kind = ApprovalRepairApplyApprovedResolution
+		plan.Repairable = true
+		plan.Reason = "approval was already resolved as approved while the job remained awaiting approval"
+		plan.TargetState = model.JobStatePending
+		plan.ApprovalStatus = model.ApprovalStatusApproved
+		plan.Actionability = model.ApprovalStatusApproved.DefaultActionability()
+		plan.Decision = model.ApprovalDecisionApprove
+		plan.PublishTarget = model.ApprovalPublishTargetSubmit
+		return plan
+	}
+
+	isRejectedResolution := approval.Decision == model.ApprovalDecisionReject || approval.Status == model.ApprovalStatusRejected
+	if isRejectedResolution {
+		plan.Kind = ApprovalRepairApplyRejectedResolution
+		plan.Repairable = true
+		plan.Reason = "approval was already resolved as rejected while the job remained awaiting approval"
+		plan.TargetState = model.JobStateDenied
+		plan.ApprovalStatus = model.ApprovalStatusRejected
+		plan.Actionability = model.ApprovalStatusRejected.DefaultActionability()
+		plan.Decision = model.ApprovalDecisionReject
+		plan.PublishTarget = model.ApprovalPublishTargetDLQ
+		if snapshot.Topic == capsdk.SubjectWorkflowApprovalGate {
+			plan.PublishTarget = model.ApprovalPublishTargetDLQAndResult
+		}
+		return plan
+	}
+
+	if opts.WorkflowTerminal {
+		plan.Kind = ApprovalRepairInvalidateTerminalRun
+		plan.Repairable = true
+		plan.Reason = "workflow run already reached a terminal state; approval is no longer valid"
+		plan.TargetState = model.JobStateDenied
+		plan.ApprovalStatus = model.ApprovalStatusInvalidated
+		plan.Actionability = model.ApprovalStatusInvalidated.DefaultActionability()
+		plan.Decision = model.ApprovalDecisionInvalidate
+		return plan
+	}
+
+	if opts.StaleSnapshot {
+		plan.Kind = ApprovalRepairInvalidateStaleSnapshot
+		plan.Repairable = true
+		plan.Reason = "policy snapshot changed since the approval request was created"
+		plan.TargetState = model.JobStateDenied
+		plan.ApprovalStatus = model.ApprovalStatusInvalidated
+		plan.Actionability = model.ApprovalStatusInvalidated.DefaultActionability()
+		plan.Decision = model.ApprovalDecisionInvalidate
+		return plan
+	}
+
+	if snapshot.SafetyRecord.JobHash != "" && snapshot.RequestHash != "" && snapshot.RequestHash != snapshot.SafetyRecord.JobHash {
+		plan.Kind = ApprovalRepairInvalidateStaleRequest
+		plan.Repairable = true
+		plan.Reason = "job request changed since the approval request was created"
+		plan.TargetState = model.JobStateDenied
+		plan.ApprovalStatus = model.ApprovalStatusInvalidated
+		plan.Actionability = model.ApprovalStatusInvalidated.DefaultActionability()
+		plan.Decision = model.ApprovalDecisionInvalidate
+		return plan
+	}
+
+	return plan
+}
+
+func (s *RedisJobStore) ApplyApprovalRepair(ctx context.Context, params ApprovalRepairApplyParams) (*ApprovalRepairResult, error) {
+	if strings.TrimSpace(params.JobID) == "" {
+		return nil, fmt.Errorf("jobID required")
+	}
+	if params.Plan.Kind == ApprovalRepairNone {
+		return nil, fmt.Errorf("approval repair plan required")
+	}
+	jobID := strings.TrimSpace(params.JobID)
+	metaKey := jobMetaKey(jobID)
+	stateKey := jobStateKey(jobID)
+	reqKey := jobRequestKey(jobID)
+
+	var result ApprovalRepairResult
+	err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+		meta, err := tx.HGetAll(ctx, metaKey).Result()
+		if err != nil && err != redis.Nil {
+			return fmt.Errorf("job store apply approval repair %s: %w", jobID, err)
+		}
+		stateValue := meta["state"]
+		if stateValue == "" {
+			stateValue, err = tx.Get(ctx, stateKey).Result()
+			if err == redis.Nil {
+				return redis.Nil
+			}
+			if err != nil {
+				return fmt.Errorf("job store apply approval repair %s state: %w", jobID, err)
+			}
+		}
+		currentState := model.JobState(stateValue)
+		if params.Plan.CurrentState != "" && currentState != params.Plan.CurrentState {
+			return fmt.Errorf("approval repair state changed from %s to %s", params.Plan.CurrentState, currentState)
+		}
+
+		reqBytes, err := tx.Get(ctx, reqKey).Bytes()
+		if err == redis.Nil {
+			reqBytes = nil
+		} else if err != nil {
+			return fmt.Errorf("job store apply approval repair %s request: %w", jobID, err)
+		}
+		var req *pb.JobRequest
+		if len(reqBytes) > 0 {
+			var decoded pb.JobRequest
+			if err := protojson.Unmarshal(reqBytes, &decoded); err != nil {
+				return fmt.Errorf("unmarshal job request: %w", err)
+			}
+			req = &decoded
+		}
+
+		safetyRecord := model.SafetyDecisionRecord{
+			Decision:         model.SafetyDecision(meta[metaFieldSafetyDecision]),
+			Reason:           meta[metaFieldSafetyReason],
+			RuleID:           meta[metaFieldSafetyRuleID],
+			PolicySnapshot:   meta[metaFieldSafetySnapshot],
+			ApprovalRequired: meta[metaFieldApprovalRequired] == "true",
+			ApprovalRef:      meta[metaFieldApprovalRef],
+			JobHash:          meta[metaFieldSafetyJobHash],
+			ApprovalStatus:   model.ApprovalStatus(meta[metaFieldApprovalStatus]),
+			Actionability:    model.ApprovalActionability(meta[metaFieldApprovalActionable]),
+			ApprovalDecision: model.ApprovalDecision(meta[metaFieldApprovalDecision]),
+		}
+		if raw := meta[metaFieldApprovalRevision]; raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				safetyRecord.ApprovalRevision = parsed
+			}
+		}
+
+		approvalRecord := ApprovalRecord{
+			ApprovedBy:     meta[metaFieldApprovalBy],
+			ApprovedRole:   meta[metaFieldApprovalRole],
+			Reason:         meta[metaFieldApprovalReason],
+			Note:           meta[metaFieldApprovalNote],
+			PolicySnapshot: meta[metaFieldApprovalSnapshot],
+			JobHash:        meta[metaFieldApprovalJobHash],
+			Status:         model.ApprovalStatus(meta[metaFieldApprovalStatus]),
+			Actionability:  model.ApprovalActionability(meta[metaFieldApprovalActionable]),
+			Decision:       model.ApprovalDecision(meta[metaFieldApprovalDecision]),
+			PublishStatus:  model.ApprovalPublishStatus(meta[metaFieldApprovalPublishStatus]),
+			PublishTarget:  model.ApprovalPublishTarget(meta[metaFieldApprovalPublishTarget]),
+		}
+		if raw := meta[metaFieldApprovalAt]; raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				approvalRecord.ApprovedAt = parsed
+			}
+		}
+		if raw := meta[metaFieldApprovalRevision]; raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				approvalRecord.Revision = parsed
+			}
+		}
+		if raw := meta[metaFieldApprovalPublishedAt]; raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				approvalRecord.PublishedAt = parsed
+			}
+		}
+		approvalRecord = NormalizeApprovalRecord(currentState, safetyRecord, approvalRecord)
+
+		if params.Plan.Kind == ApprovalRepairReplayPendingPublish {
+			result = ApprovalRepairResult{
+				JobID:          jobID,
+				TraceID:        meta[metaFieldTraceID],
+				State:          currentState,
+				Request:        req,
+				ApprovalRecord: approvalRecord,
+				Plan:           params.Plan,
+			}
+			return nil
+		}
+
+		now := nowUnixMicros()
+		revision := approvalRecord.Revision + 1
+		if revision <= 0 {
+			revision = 1
+		}
+		approvalStatus := params.Plan.ApprovalStatus
+		if approvalStatus == "" {
+			approvalStatus = approvalRecord.Status
+		}
+		actionability := params.Plan.Actionability
+		if actionability == "" {
+			actionability = approvalStatus.DefaultActionability()
+		}
+		decision := params.Plan.Decision
+		if decision == "" {
+			decision = approvalRecord.Decision
+		}
+		publishTarget := params.Plan.PublishTarget
+		publishStatus := model.ApprovalPublishStatus("")
+		if publishTarget != "" {
+			publishStatus = model.ApprovalPublishPending
+		}
+		approvedBy := strings.TrimSpace(approvalRecord.ApprovedBy)
+		approvedRole := strings.TrimSpace(approvalRecord.ApprovedRole)
+		approvedAt := approvalRecord.ApprovedAt
+		if approvedAt == 0 {
+			approvedAt = now
+		}
+		if approvedBy == "" {
+			if actor := strings.TrimSpace(params.Actor); actor != "" {
+				approvedBy = actor
+				if approvedRole == "" {
+					approvedRole = "system"
+				}
+			} else {
+				approvedBy = "system/repair"
+				if approvedRole == "" {
+					approvedRole = "system"
+				}
+			}
+		}
+		reason := strings.TrimSpace(approvalRecord.Reason)
+		if reason == "" && decision == model.ApprovalDecisionInvalidate {
+			reason = strings.TrimSpace(params.Plan.Reason)
+		}
+		note := strings.TrimSpace(approvalRecord.Note)
+		repairNote := strings.TrimSpace(params.Note)
+		if repairNote == "" {
+			repairNote = strings.TrimSpace(params.Plan.Reason)
+		}
+		if repairNote != "" {
+			repairEntry := "repair: " + repairNote
+			if note == "" {
+				note = repairEntry
+			} else if !strings.Contains(note, repairEntry) {
+				note = note + "\n" + repairEntry
+			}
+		}
+		policySnapshot := strings.TrimSpace(approvalRecord.PolicySnapshot)
+		if policySnapshot == "" {
+			policySnapshot = strings.TrimSpace(safetyRecord.PolicySnapshot)
+		}
+		jobHash := strings.TrimSpace(approvalRecord.JobHash)
+		if jobHash == "" {
+			jobHash = strings.TrimSpace(safetyRecord.JobHash)
+		}
+
+		if req != nil {
+			if req.Labels == nil {
+				req.Labels = map[string]string{}
+			}
+			if params.Plan.Kind == ApprovalRepairApplyApprovedResolution {
+				req.Labels["approval_granted"] = "true"
+				req.Labels[bus.LabelBusMsgID] = "approval:" + jobID
+				if reason != "" {
+					req.Labels["approval_reason"] = reason
+				}
+				if note != "" {
+					req.Labels["approval_note"] = note
+				}
+			}
+		}
+
+		fields := map[string]any{
+			"state":                     string(params.Plan.TargetState),
+			"updated_at":                now,
+			metaFieldApprovalBy:         approvedBy,
+			metaFieldApprovalRole:       approvedRole,
+			metaFieldApprovalAt:         approvedAt,
+			metaFieldApprovalReason:     reason,
+			metaFieldApprovalNote:       note,
+			metaFieldApprovalSnapshot:   policySnapshot,
+			metaFieldApprovalJobHash:    jobHash,
+			metaFieldApprovalStatus:     string(approvalStatus),
+			metaFieldApprovalActionable: string(actionability),
+			metaFieldApprovalRevision:   revision,
+			metaFieldApprovalDecision:   string(decision),
+		}
+		if publishStatus != "" {
+			fields[metaFieldApprovalPublishStatus] = string(publishStatus)
+			fields[metaFieldApprovalPublishTarget] = string(publishTarget)
+		}
+		if req != nil && len(req.Labels) > 0 {
+			if labelsJSON, err := json.Marshal(req.Labels); err == nil {
+				fields[metaFieldLabels] = string(labelsJSON)
+			}
+		}
+
+		attempts := 0
+		if raw := meta[metaFieldAttempts]; raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+				attempts = parsed
+			}
+		}
+		fields[metaFieldAttempts] = attempts
+		reqPayload := []byte(nil)
+		if req != nil {
+			reqPayload, err = protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(req)
+			if err != nil {
+				return fmt.Errorf("marshal repaired job request: %w", err)
+			}
+		}
+
+		tenant := meta[metaFieldTenant]
+		pipe := tx.TxPipeline()
+		pipe.HSet(ctx, metaKey, fields)
+		if publishStatus == "" {
+			pipe.HDel(ctx, metaKey,
+				metaFieldApprovalPublishStatus,
+				metaFieldApprovalPublishTarget,
+				metaFieldApprovalPublishedAt,
+			)
+		} else {
+			pipe.HDel(ctx, metaKey, metaFieldApprovalPublishedAt)
+		}
+		if reqPayload != nil {
+			if s.metaTTL > 0 {
+				pipe.Set(ctx, reqKey, reqPayload, s.metaTTL)
+			} else {
+				pipe.Set(ctx, reqKey, reqPayload, 0)
+			}
+		}
+		pipe.Set(ctx, stateKey, string(params.Plan.TargetState), 0)
+		if prevIdx := stateIndexKey(currentState); prevIdx != "" && currentState != params.Plan.TargetState {
+			pipe.ZRem(ctx, prevIdx, jobID)
+		}
+		if idx := stateIndexKey(params.Plan.TargetState); idx != "" {
+			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
+		}
+		if tenant != "" {
+			activeKey := tenantActiveKey(tenant)
+			if isActiveState(params.Plan.TargetState) {
+				pipe.SAdd(ctx, activeKey, jobID)
+			} else if terminalStates[params.Plan.TargetState] {
+				pipe.SRem(ctx, activeKey, jobID)
+			}
+		}
+		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
+		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, metaKey, s.metaTTL)
+			pipe.Expire(ctx, stateKey, s.metaTTL)
+			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
+		}
+		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, params.Plan.TargetState))
+		if terminalStates[params.Plan.TargetState] {
+			pipe.ZRem(ctx, deadlineIndexKey(), jobID)
+			pipe.HDel(ctx, metaKey, metaFieldDeadline)
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return fmt.Errorf("job store apply approval repair %s exec: %w", jobID, err)
+		}
+
+		result = ApprovalRepairResult{
+			JobID:   jobID,
+			TraceID: meta[metaFieldTraceID],
+			State:   params.Plan.TargetState,
+			Request: req,
+			ApprovalRecord: ApprovalRecord{
+				ApprovedBy:     approvedBy,
+				ApprovedRole:   approvedRole,
+				ApprovedAt:     approvedAt,
+				Reason:         reason,
+				Note:           note,
+				PolicySnapshot: policySnapshot,
+				JobHash:        jobHash,
+				Status:         approvalStatus,
+				Actionability:  actionability,
+				Revision:       revision,
+				Decision:       decision,
+				PublishStatus:  publishStatus,
+				PublishTarget:  publishTarget,
+			},
+			Plan: params.Plan,
+		}
+		return nil
+	}, metaKey, stateKey, reqKey)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ResolveApproval atomically persists the approval decision, request-label
+// mutations, and state transition in a single Redis WATCH/TX block.
+func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalResolutionParams) (*ApprovalResolutionResult, error) {
+	if strings.TrimSpace(params.JobID) == "" {
+		return nil, fmt.Errorf("jobID required")
+	}
+	if params.Decision == "" {
+		return nil, fmt.Errorf("approval decision required")
+	}
+	if params.ResultState == "" {
+		return nil, fmt.Errorf("approval result state required")
+	}
+	jobID := strings.TrimSpace(params.JobID)
+	metaKey := jobMetaKey(jobID)
+	stateKey := jobStateKey(jobID)
+	reqKey := jobRequestKey(jobID)
+
+	var result ApprovalResolutionResult
+	err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+		meta, err := tx.HGetAll(ctx, metaKey).Result()
+		if err != nil && err != redis.Nil {
+			return fmt.Errorf("job store resolve approval %s: %w", jobID, err)
+		}
+		stateValue := meta["state"]
+		if stateValue == "" {
+			stateValue, err = tx.Get(ctx, stateKey).Result()
+			if err == redis.Nil {
+				return redis.Nil
+			}
+			if err != nil {
+				return fmt.Errorf("job store resolve approval %s state: %w", jobID, err)
+			}
+		}
+		currentState := model.JobState(stateValue)
+
+		safetyRecord := model.SafetyDecisionRecord{
+			Decision:         model.SafetyDecision(meta[metaFieldSafetyDecision]),
+			Reason:           meta[metaFieldSafetyReason],
+			RuleID:           meta[metaFieldSafetyRuleID],
+			PolicySnapshot:   meta[metaFieldSafetySnapshot],
+			ApprovalRequired: meta[metaFieldApprovalRequired] == "true",
+			ApprovalRef:      meta[metaFieldApprovalRef],
+			JobHash:          meta[metaFieldSafetyJobHash],
+			ApprovalStatus:   model.ApprovalStatus(meta[metaFieldApprovalStatus]),
+			Actionability:    model.ApprovalActionability(meta[metaFieldApprovalActionable]),
+			ApprovalDecision: model.ApprovalDecision(meta[metaFieldApprovalDecision]),
+		}
+		if raw := meta[metaFieldApprovalRevision]; raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				safetyRecord.ApprovalRevision = parsed
+			}
+		}
+		approvalRecord := ApprovalRecord{
+			ApprovedBy:     meta[metaFieldApprovalBy],
+			ApprovedRole:   meta[metaFieldApprovalRole],
+			Reason:         meta[metaFieldApprovalReason],
+			Note:           meta[metaFieldApprovalNote],
+			PolicySnapshot: meta[metaFieldApprovalSnapshot],
+			JobHash:        meta[metaFieldApprovalJobHash],
+			Status:         model.ApprovalStatus(meta[metaFieldApprovalStatus]),
+			Actionability:  model.ApprovalActionability(meta[metaFieldApprovalActionable]),
+			Decision:       model.ApprovalDecision(meta[metaFieldApprovalDecision]),
+			PublishStatus:  model.ApprovalPublishStatus(meta[metaFieldApprovalPublishStatus]),
+			PublishTarget:  model.ApprovalPublishTarget(meta[metaFieldApprovalPublishTarget]),
+		}
+		if raw := meta[metaFieldApprovalAt]; raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				approvalRecord.ApprovedAt = parsed
+			}
+		}
+		if raw := meta[metaFieldApprovalRevision]; raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				approvalRecord.Revision = parsed
+			}
+		}
+		if raw := meta[metaFieldApprovalPublishedAt]; raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				approvalRecord.PublishedAt = parsed
+			}
+		}
+		approvalRecord = NormalizeApprovalRecord(currentState, safetyRecord, approvalRecord)
+
+		if currentState != model.JobStateApproval {
+			conflict := &ApprovalConflictError{
+				Code:    model.ApprovalConflictNotActionable,
+				Message: "job not awaiting approval",
+			}
+			switch approvalRecord.Status {
+			case model.ApprovalStatusApproved, model.ApprovalStatusRejected:
+				conflict.Code = model.ApprovalConflictAlreadyResolved
+				conflict.Message = "approval already resolved"
+			case model.ApprovalStatusExpired:
+				conflict.Message = "approval expired"
+			case model.ApprovalStatusInvalidated:
+				conflict.Message = "approval invalidated"
+			case model.ApprovalStatusRepaired:
+				conflict.Message = "approval already repaired"
+			}
+			return conflict
+		}
+		if approvalRecord.Actionability != "" && approvalRecord.Actionability != model.ApprovalActionabilityActionable {
+			conflict := &ApprovalConflictError{
+				Code:    model.ApprovalConflictNotActionable,
+				Message: "approval is no longer actionable",
+			}
+			if approvalRecord.Status == model.ApprovalStatusApproved || approvalRecord.Status == model.ApprovalStatusRejected {
+				conflict.Code = model.ApprovalConflictAlreadyResolved
+				conflict.Message = "approval already resolved"
+			}
+			return conflict
+		}
+
+		reqBytes, err := tx.Get(ctx, reqKey).Bytes()
+		if err == redis.Nil {
+			return fmt.Errorf("job request not found")
+		}
+		if err != nil {
+			return fmt.Errorf("job store resolve approval %s request: %w", jobID, err)
+		}
+		var req pb.JobRequest
+		if err := protojson.Unmarshal(reqBytes, &req); err != nil {
+			return fmt.Errorf("unmarshal job request: %w", err)
+		}
+		if params.Decision == model.ApprovalDecisionApprove {
+			hash, err := hashApprovalJobRequest(&req)
+			if err != nil {
+				return fmt.Errorf("hash approval request: %w", err)
+			}
+			if safetyRecord.JobHash == "" || hash != safetyRecord.JobHash {
+				return &ApprovalConflictError{
+					Code:    model.ApprovalConflictStaleRequest,
+					Message: "job request changed; approval no longer valid",
+				}
+			}
+		}
+		if req.Labels == nil {
+			req.Labels = map[string]string{}
+		}
+		for key, value := range params.LabelUpdates {
+			if strings.TrimSpace(value) == "" {
+				delete(req.Labels, key)
+				continue
+			}
+			req.Labels[key] = value
+		}
+		reqPayload, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(&req)
+		if err != nil {
+			return fmt.Errorf("marshal resolved job request: %w", err)
+		}
+
+		now := nowUnixMicros()
+		revision := approvalRecord.Revision + 1
+		if revision <= 1 {
+			revision = 2
+		}
+		status := model.ApprovalStatusApproved
+		switch params.Decision {
+		case model.ApprovalDecisionReject:
+			status = model.ApprovalStatusRejected
+		case model.ApprovalDecisionExpire:
+			status = model.ApprovalStatusExpired
+		case model.ApprovalDecisionInvalidate:
+			status = model.ApprovalStatusInvalidated
+		case model.ApprovalDecisionRepair:
+			status = model.ApprovalStatusRepaired
+		}
+		publishTarget := params.PublishTarget
+		switch params.Decision {
+		case model.ApprovalDecisionApprove:
+			if publishTarget == "" {
+				publishTarget = model.ApprovalPublishTargetSubmit
+			}
+		case model.ApprovalDecisionReject:
+			if publishTarget == "" {
+				publishTarget = model.ApprovalPublishTargetDLQ
+			}
+		}
+		publishStatus := model.ApprovalPublishStatus("")
+		if publishTarget != "" {
+			publishStatus = model.ApprovalPublishPending
+		}
+		resolvedRecord := ApprovalRecord{
+			ApprovedBy:     strings.TrimSpace(params.ApprovedBy),
+			ApprovedRole:   strings.TrimSpace(params.ApprovedRole),
+			ApprovedAt:     now,
+			Reason:         strings.TrimSpace(params.Reason),
+			Note:           strings.TrimSpace(params.Note),
+			PolicySnapshot: strings.TrimSpace(params.PolicySnapshot),
+			JobHash:        safetyRecord.JobHash,
+			Status:         status,
+			Actionability:  status.DefaultActionability(),
+			Revision:       revision,
+			Decision:       params.Decision,
+			PublishStatus:  publishStatus,
+			PublishTarget:  publishTarget,
+		}
+		if resolvedRecord.PolicySnapshot == "" {
+			resolvedRecord.PolicySnapshot = safetyRecord.PolicySnapshot
+		}
+
+		attempts := 0
+		if raw := meta[metaFieldAttempts]; raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+				attempts = parsed
+			}
+		}
+		tenant := meta[metaFieldTenant]
+		fields := map[string]any{
+			"state":                     string(params.ResultState),
+			"updated_at":                now,
+			metaFieldAttempts:           attempts,
+			metaFieldApprovalBy:         resolvedRecord.ApprovedBy,
+			metaFieldApprovalRole:       resolvedRecord.ApprovedRole,
+			metaFieldApprovalAt:         resolvedRecord.ApprovedAt,
+			metaFieldApprovalReason:     resolvedRecord.Reason,
+			metaFieldApprovalNote:       resolvedRecord.Note,
+			metaFieldApprovalSnapshot:   resolvedRecord.PolicySnapshot,
+			metaFieldApprovalJobHash:    resolvedRecord.JobHash,
+			metaFieldApprovalStatus:     string(resolvedRecord.Status),
+			metaFieldApprovalActionable: string(resolvedRecord.Actionability),
+			metaFieldApprovalRevision:   revision,
+			metaFieldApprovalDecision:   string(resolvedRecord.Decision),
+		}
+		if resolvedRecord.PublishStatus != "" {
+			fields[metaFieldApprovalPublishStatus] = string(resolvedRecord.PublishStatus)
+		}
+		if resolvedRecord.PublishTarget != "" {
+			fields[metaFieldApprovalPublishTarget] = string(resolvedRecord.PublishTarget)
+		}
+		if len(req.Labels) > 0 {
+			if labelsJSON, err := json.Marshal(req.Labels); err == nil {
+				fields[metaFieldLabels] = string(labelsJSON)
+			}
+		}
+
+		pipe := tx.TxPipeline()
+		pipe.HSet(ctx, metaKey, fields)
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, metaKey, s.metaTTL)
+		}
+		if s.metaTTL > 0 {
+			pipe.Set(ctx, reqKey, reqPayload, s.metaTTL)
+		} else {
+			pipe.Set(ctx, reqKey, reqPayload, 0)
+		}
+		pipe.Set(ctx, stateKey, string(params.ResultState), 0)
+
+		if prevIdx := stateIndexKey(currentState); prevIdx != "" {
+			pipe.ZRem(ctx, prevIdx, jobID)
+		}
+		if idx := stateIndexKey(params.ResultState); idx != "" {
+			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
+		}
+
+		if tenant != "" {
+			activeKey := tenantActiveKey(tenant)
+			if isActiveState(params.ResultState) {
+				pipe.SAdd(ctx, activeKey, jobID)
+			} else if terminalStates[params.ResultState] {
+				pipe.SRem(ctx, activeKey, jobID)
+			}
+		}
+
+		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
+		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, stateKey, s.metaTTL)
+			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
+		}
+		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, params.ResultState))
+		if terminalStates[params.ResultState] {
+			pipe.ZRem(ctx, deadlineIndexKey(), jobID)
+			pipe.HDel(ctx, metaKey, metaFieldDeadline)
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			if errors.Is(err, redis.TxFailedErr) {
+				return &ApprovalConflictError{
+					Code:    model.ApprovalConflictRetryableLock,
+					Message: "concurrent approval conflict; retry",
+				}
+			}
+			return fmt.Errorf("job store resolve approval %s exec: %w", jobID, err)
+		}
+
+		result = ApprovalResolutionResult{
+			JobID:          jobID,
+			TraceID:        meta[metaFieldTraceID],
+			State:          params.ResultState,
+			Request:        &req,
+			ApprovalRecord: resolvedRecord,
+			SafetyRecord:   safetyRecord,
+		}
+		return nil
+	}, metaKey, stateKey, reqKey)
+	if err != nil {
+		if err == redis.Nil {
+			return nil, err
+		}
+		var conflict *ApprovalConflictError
+		if errors.As(err, &conflict) {
+			return nil, conflict
+		}
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (model.SafetyDecisionRecord, error) {
@@ -1458,15 +2578,23 @@ func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (mo
 		return model.SafetyDecisionRecord{}, fmt.Errorf("job store get safety decision %s: %w", jobID, err)
 	}
 	record := model.SafetyDecisionRecord{
-		Decision:       model.SafetyDecision(data[metaFieldSafetyDecision]),
-		Reason:         data[metaFieldSafetyReason],
-		RuleID:         data[metaFieldSafetyRuleID],
-		PolicySnapshot: data[metaFieldSafetySnapshot],
-		ApprovalRef:    data[metaFieldApprovalRef],
-		JobHash:        data[metaFieldSafetyJobHash],
+		Decision:         model.SafetyDecision(data[metaFieldSafetyDecision]),
+		Reason:           data[metaFieldSafetyReason],
+		RuleID:           data[metaFieldSafetyRuleID],
+		PolicySnapshot:   data[metaFieldSafetySnapshot],
+		ApprovalRef:      data[metaFieldApprovalRef],
+		JobHash:          data[metaFieldSafetyJobHash],
+		ApprovalStatus:   model.ApprovalStatus(data[metaFieldApprovalStatus]),
+		Actionability:    model.ApprovalActionability(data[metaFieldApprovalActionable]),
+		ApprovalDecision: model.ApprovalDecision(data[metaFieldApprovalDecision]),
 	}
 	if data[metaFieldApprovalRequired] == "true" {
 		record.ApprovalRequired = true
+	}
+	if raw := data[metaFieldApprovalRevision]; raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			record.ApprovalRevision = parsed
+		}
 	}
 	if raw := data[metaFieldSafetyChecked]; raw != "" {
 		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
@@ -1508,18 +2636,24 @@ func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, l
 			continue
 		}
 		record := model.SafetyDecisionRecord{
-			Decision:       model.SafetyDecision(stringFromEntry(entry, "decision")),
-			Reason:         stringFromEntry(entry, "reason"),
-			RuleID:         stringFromEntry(entry, "rule_id"),
-			PolicySnapshot: stringFromEntry(entry, "policy_snapshot"),
-			ApprovalRef:    stringFromEntry(entry, "approval_ref"),
-			JobHash:        stringFromEntry(entry, "job_hash"),
+			Decision:         model.SafetyDecision(stringFromEntry(entry, "decision")),
+			Reason:           stringFromEntry(entry, "reason"),
+			RuleID:           stringFromEntry(entry, "rule_id"),
+			PolicySnapshot:   stringFromEntry(entry, "policy_snapshot"),
+			ApprovalRef:      stringFromEntry(entry, "approval_ref"),
+			JobHash:          stringFromEntry(entry, "job_hash"),
+			ApprovalStatus:   model.ApprovalStatus(stringFromEntry(entry, "approval_status")),
+			Actionability:    model.ApprovalActionability(stringFromEntry(entry, "actionability")),
+			ApprovalDecision: model.ApprovalDecision(stringFromEntry(entry, "approval_decision")),
 		}
 		if val, ok := entry["approval_required"].(bool); ok {
 			record.ApprovalRequired = val
 		}
 		if val, ok := entry["checked_at"].(float64); ok {
 			record.CheckedAt = int64(val)
+		}
+		if val, ok := entry["approval_revision"].(float64); ok {
+			record.ApprovalRevision = int64(val)
 		}
 		if rawConstraints, ok := entry["constraints"].(map[string]any); ok && rawConstraints != nil {
 			if data, err := json.Marshal(rawConstraints); err == nil {

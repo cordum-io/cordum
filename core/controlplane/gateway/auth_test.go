@@ -41,7 +41,6 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 	for _, key := range []string{
 		"CORDUM_API_KEYS",
 		"CORDUM_API_KEY",
-		"API_KEY",
 		"CORDUM_API_KEYS_PATH",
 		"CORDUM_ALLOW_HEADER_PRINCIPAL",
 		"CORDUM_ALLOW_INSECURE_NO_AUTH",
@@ -64,7 +63,6 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider
 	authKeys := []string{
 		"CORDUM_API_KEYS",
 		"CORDUM_API_KEY",
-		"API_KEY",
 		"CORDUM_API_KEYS_PATH",
 		"CORDUM_JWT_HMAC_SECRET",
 		"CORDUM_JWT_PUBLIC_KEY",
@@ -350,7 +348,7 @@ func TestAPIKeyMiddlewareSkipsPublicPaths(t *testing.T) {
 
 func TestBasicAuthPublicPathAllowsAuthConfig(t *testing.T) {
 	provider := newBasicAuthForTest(t, map[string]string{
-		"API_KEY": "test-key",
+		"CORDUM_API_KEY": "test-key",
 	})
 	handler := apiKeyMiddleware(provider, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -435,7 +433,6 @@ func TestBasicAuthRequiresKeyInProduction(t *testing.T) {
 	t.Setenv("CORDUM_ENV", "production")
 	t.Setenv("CORDUM_API_KEYS", "")
 	t.Setenv("CORDUM_API_KEY", "")
-	t.Setenv("API_KEY", "")
 	if _, err := newBasicAuthProvider("default"); err == nil {
 		t.Fatalf("expected api key requirement in production")
 	}
@@ -450,6 +447,12 @@ type maliciousPathAuth struct{ publicPathAuth }
 
 func (m *maliciousPathAuth) IsPublicPath(path string) bool {
 	return strings.HasPrefix(path, "/api/")
+}
+
+type scimPrefixAuth struct{ publicPathAuth }
+
+func (s *scimPrefixAuth) IsPublicPath(path string) bool {
+	return strings.HasPrefix(path, scimBasePath)
 }
 
 func TestPublicPathCeilingBlocksArbitraryPaths(t *testing.T) {
@@ -481,13 +484,50 @@ func TestPublicPathCeilingAllowsWhitelistedPaths(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	for _, path := range []string{"/api/v1/auth/config", "/api/v1/auth/login"} {
+	for _, path := range []string{
+		"/api/v1/auth/config",
+		"/api/v1/auth/login",
+		"/api/v1/auth/sso/oidc/login",
+		"/api/v1/auth/sso/oidc/callback",
+		"/api/v1/auth/sso/saml/metadata",
+		"/api/v1/auth/sso/saml/login",
+		"/api/v1/auth/sso/saml/acs",
+	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
 			t.Errorf("GET %s: expected 200 got %d", path, rr.Code)
 		}
+	}
+}
+
+func TestPublicPathCeilingAllowsSCIMPrefixPaths(t *testing.T) {
+	auth := &scimPrefixAuth{}
+	handler := apiKeyMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, path := range []string{
+		scimUsersPath,
+		scimUsersPath + "/user-1",
+		scimGroupsPath,
+		scimGroupsPath + "/group-1",
+		scimBasePath + "/ServiceProviderConfig",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET %s: expected 200 got %d", path, rr.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scim/settings", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/v1/scim/settings: expected 401 got %d", rr.Code)
 	}
 }
 
@@ -512,10 +552,47 @@ func TestTenantMiddlewareCeilingAllowsWhitelistedPaths(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	for _, path := range []string{
+		"/api/v1/auth/config",
+		"/api/v1/auth/sso/oidc/login",
+		"/api/v1/auth/sso/oidc/callback",
+		"/api/v1/auth/sso/saml/metadata",
+		"/api/v1/auth/sso/saml/login",
+		"/api/v1/auth/sso/saml/acs",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET %s: expected 200 got %d", path, rr.Code)
+		}
+	}
+}
+
+func TestTenantMiddlewareCeilingAllowsSCIMPrefixPaths(t *testing.T) {
+	auth := &scimPrefixAuth{}
+	handler := tenantMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, path := range []string{
+		scimUsersPath,
+		scimUsersPath + "/user-1",
+		scimGroupsPath + "/group-1",
+		scimBasePath + "/Schemas",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET %s: expected 200 got %d", path, rr.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scim/settings", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Errorf("GET /api/v1/auth/config: expected 200 got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("GET /api/v1/scim/settings: expected 403 got %d", rr.Code)
 	}
 }

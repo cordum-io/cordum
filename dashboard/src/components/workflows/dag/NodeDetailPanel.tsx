@@ -32,6 +32,7 @@ import { RunStatusBadge } from "../../StatusBadge";
 import { useApproveJob, useRejectJob } from "../../../hooks/useApprovals";
 import type { WorkflowStep, WorkflowRun } from "../../../api/types";
 import { cn } from "../../../lib/utils";
+import { friendlyError } from "../../../lib/friendlyError";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -332,6 +333,10 @@ function ApprovalDetail({
   const output = runStep?.output ?? {};
   const config = runStep?.config ?? step.config ?? {};
   const approvalStatus = (output.status as string) ?? runStep?.status ?? "pending";
+  const approvalActionability =
+    (output.actionability as string) ??
+    (output.approvalActionability as string) ??
+    (approvalStatus === "pending" ? "actionable" : "resolved");
   const actor = (output.actor as string) ?? "";
   const existingComment = (output.comment as string) ?? "";
   const resolvedAt = (output.resolvedAt as string) ?? runStep?.completedAt;
@@ -351,6 +356,7 @@ function ApprovalDetail({
 
   const isWaiting =
     runStep?.status === "waiting" || runStep?.status === "pending";
+  const isActionable = approvalActionability === "actionable";
 
   const isPending = approveJob.isPending || rejectJob.isPending;
 
@@ -370,14 +376,17 @@ function ApprovalDetail({
 
     if (jobId && JOB_ID_PATTERN.test(jobId)) {
       approveJob.mutate(
-        { id: jobId, comment: comment.trim() || undefined },
+        { jobId, comment: comment.trim() || undefined },
         {
           onSuccess: () => {
             setActionSuccess("Approved");
             setComment("");
             invalidateRuns();
           },
-          onError: (err) => setActionError(err.message),
+          onError: (err) => {
+            const friendly = friendlyError(err, "approve workflow approval");
+            setActionError(`${friendly.title}: ${friendly.description}`);
+          },
         },
       );
     }
@@ -390,14 +399,17 @@ function ApprovalDetail({
 
     if (jobId && JOB_ID_PATTERN.test(jobId)) {
       rejectJob.mutate(
-        { id: jobId, reason, comment: comment.trim() || undefined },
+        { jobId, reason, comment: comment.trim() || undefined },
         {
           onSuccess: () => {
             setActionSuccess("Rejected");
             setComment("");
             invalidateRuns();
           },
-          onError: (err) => setActionError(err.message),
+          onError: (err) => {
+            const friendly = friendlyError(err, "reject workflow approval");
+            setActionError(`${friendly.title}: ${friendly.description}`);
+          },
         },
       );
     }
@@ -416,6 +428,10 @@ function ApprovalDetail({
                   ? "success"
                   : approvalStatus === "rejected"
                     ? "danger"
+                    : approvalStatus === "invalidated"
+                      ? "danger"
+                      : approvalStatus === "repaired"
+                        ? "info"
                     : "warning"
               }
             >
@@ -423,6 +439,7 @@ function ApprovalDetail({
             </Badge>
           }
         />
+        <InfoRow label="Actionability" value={approvalActionability.replace(/_/g, " ")} />
       </Section>
 
       {actor && (
@@ -445,7 +462,7 @@ function ApprovalDetail({
       )}
 
       {/* In-context approve / reject actions */}
-      {isWaiting && (
+      {isWaiting && isActionable && (
         <div className="space-y-3 rounded-xl border border-border p-3">
           <Textarea
             placeholder="Add a comment (optional)..."
@@ -490,6 +507,15 @@ function ApprovalDetail({
             <p className="text-xs font-medium text-danger">{actionError}</p>
           )}
         </div>
+      )}
+
+      {isWaiting && !isActionable && (
+        <Card className="border-border bg-surface2/40">
+          <p className="text-xs font-semibold text-ink">Approval no longer actionable</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            This workflow step is no longer waiting for a human decision. Refresh the run to inspect the latest lifecycle state.
+          </p>
+        </Card>
       )}
     </div>
   );

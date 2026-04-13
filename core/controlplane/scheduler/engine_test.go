@@ -5,16 +5,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	infraSchema "github.com/cordum/cordum/core/infra/schema"
+	infraStore "github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -35,7 +42,7 @@ type NaiveStrategy struct{}
 
 func NewNaiveStrategy() *NaiveStrategy { return &NaiveStrategy{} }
 
-func (s *NaiveStrategy) PickSubject(req *pb.JobRequest, _ map[string]*pb.Heartbeat) (string, error) {
+func (s *NaiveStrategy) PickSubject(req *pb.JobRequest, _ map[string]*pb.Heartbeat, _ map[string]WorkerReadiness) (string, error) {
 	if req == nil || req.Topic == "" {
 		return "", fmt.Errorf("missing topic")
 	}
@@ -66,8 +73,30 @@ type errStrategy struct {
 	err error
 }
 
-func (s *errStrategy) PickSubject(_ *pb.JobRequest, _ map[string]*pb.Heartbeat) (string, error) {
+func (s *errStrategy) PickSubject(_ *pb.JobRequest, _ map[string]*pb.Heartbeat, _ map[string]WorkerReadiness) (string, error) {
 	return "", s.err
+}
+
+type panicRegistry struct{}
+
+func (panicRegistry) UpdateHeartbeat(_ *pb.Heartbeat) {
+	panic("registry heartbeat panic")
+}
+
+func (panicRegistry) UpdateHandshake(_ *pb.Handshake) {
+	panic("registry handshake panic")
+}
+
+func (panicRegistry) Snapshot() map[string]*pb.Heartbeat {
+	return nil
+}
+
+func (panicRegistry) ReadinessSnapshot() map[string]WorkerReadiness {
+	return nil
+}
+
+func (panicRegistry) IsAlive(string) bool {
+	return false
 }
 
 type fakeJobStore struct {
@@ -258,6 +287,326 @@ func (s *fakeJobStore) GetAttempts(_ context.Context, jobID string) (int, error)
 	return s.attempts[jobID], nil
 }
 
+func TestSchedulerRejectsUnknownTopicFromBus(t *testing.T) {
+	redisSrv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer redisSrv.Close()
+
+	configSvc, err := configsvc.New("redis://" + redisSrv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	defer func() { _ = configSvc.Close() }()
+
+	regSvc := topicregistry.NewService(configSvc)
+	if err := regSvc.Set(context.Background(), topicregistry.Registration{
+		Name:   "job.allowed",
+		Pool:   "default",
+		Status: topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	bus := &fakeBus{}
+	store := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).WithTopicRegistry(regSvc)
+
+	req := &pb.JobRequest{JobId: "job-unknown-topic", Topic: "job.missing", TenantId: "default"}
+	packet := &pb.BusPacket{
+		TraceId: "trace-unknown-topic",
+		Payload: &pb.BusPacket_JobRequest{JobRequest: req},
+	}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("HandlePacket returned error: %v", err)
+	}
+
+	state, err := store.GetState(context.Background(), req.JobId)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state != JobStateFailed {
+		t.Fatalf("expected failed state, got %q", state)
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	for _, msg := range bus.published {
+		if msg.subject == req.Topic {
+			t.Fatalf("unexpected dispatch publish to unknown topic: %+v", msg)
+		}
+	}
+	if len(bus.published) == 0 || bus.published[0].subject != capsdk.SubjectDLQ {
+		t.Fatalf("expected DLQ publish for unknown topic, got %+v", bus.published)
+	}
+}
+
+func TestSchedulerSchemaEnforceRejects(t *testing.T) {
+	jobStore, regSvc, schemaRegistry, cleanup := newSchedulerSchemaTestDeps(t)
+	defer cleanup()
+
+	ctxKey := infraStore.MakeContextKey("job-schema-enforce")
+	if err := jobStore.Client().Set(context.Background(), ctxKey, []byte(`{"context":{"message":123}}`), 0).Err(); err != nil {
+		t.Fatalf("seed context: %v", err)
+	}
+	if err := schemaRegistry.Register(context.Background(), "demo/input", []byte(`{
+		"type": "object",
+		"properties": {
+			"message": {"type": "string"}
+		},
+		"required": ["message"]
+	}`)); err != nil {
+		t.Fatalf("register schema: %v", err)
+	}
+	if err := regSvc.Set(context.Background(), topicregistry.Registration{
+		Name:          "job.structured",
+		Pool:          "default",
+		InputSchemaID: "demo/input",
+		Status:        topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), jobStore, nil).
+		WithTopicRegistry(regSvc).
+		WithSchemaRegistry(schemaRegistry).
+		WithContextClient(jobStore.Client()).
+		WithSchemaEnforcement(infraSchema.EnforcementEnforce)
+
+	req := &pb.JobRequest{
+		JobId:      "job-schema-enforce",
+		Topic:      "job.structured",
+		TenantId:   "default",
+		ContextPtr: infraStore.PointerForKey(ctxKey),
+	}
+	packet := &pb.BusPacket{
+		TraceId: "trace-schema-enforce",
+		Payload: &pb.BusPacket_JobRequest{JobRequest: req},
+	}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("HandlePacket returned error: %v", err)
+	}
+
+	state, err := jobStore.GetState(context.Background(), req.JobId)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state != JobStateFailed {
+		t.Fatalf("expected failed state, got %q", state)
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	for _, msg := range bus.published {
+		if msg.subject == req.Topic {
+			t.Fatalf("unexpected dispatch publish for schema-rejected job: %+v", msg)
+		}
+	}
+	if len(bus.published) == 0 || bus.published[0].subject != capsdk.SubjectDLQ {
+		t.Fatalf("expected DLQ publish for schema rejection, got %+v", bus.published)
+	}
+}
+
+func TestSchedulerSchemaWarnAllows(t *testing.T) {
+	jobStore, regSvc, schemaRegistry, cleanup := newSchedulerSchemaTestDeps(t)
+	defer cleanup()
+
+	ctxKey := infraStore.MakeContextKey("job-schema-warn")
+	if err := jobStore.Client().Set(context.Background(), ctxKey, []byte(`{"context":{"message":123}}`), 0).Err(); err != nil {
+		t.Fatalf("seed context: %v", err)
+	}
+	if err := schemaRegistry.Register(context.Background(), "demo/input", []byte(`{
+		"type": "object",
+		"properties": {
+			"message": {"type": "string"}
+		},
+		"required": ["message"]
+	}`)); err != nil {
+		t.Fatalf("register schema: %v", err)
+	}
+	if err := regSvc.Set(context.Background(), topicregistry.Registration{
+		Name:          "job.structured",
+		Pool:          "default",
+		InputSchemaID: "demo/input",
+		Status:        topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	var logBuf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), jobStore, nil).
+		WithTopicRegistry(regSvc).
+		WithSchemaRegistry(schemaRegistry).
+		WithContextClient(jobStore.Client()).
+		WithSchemaEnforcement(infraSchema.EnforcementWarn)
+
+	req := &pb.JobRequest{
+		JobId:      "job-schema-warn",
+		Topic:      "job.structured",
+		TenantId:   "default",
+		ContextPtr: infraStore.PointerForKey(ctxKey),
+	}
+	packet := &pb.BusPacket{
+		TraceId: "trace-schema-warn",
+		Payload: &pb.BusPacket_JobRequest{JobRequest: req},
+	}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("HandlePacket returned error: %v", err)
+	}
+
+	state, err := jobStore.GetState(context.Background(), req.JobId)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state != JobStateRunning {
+		t.Fatalf("expected running state after warn-mode allow, got %q", state)
+	}
+	if !strings.Contains(logBuf.String(), "job request violated topic input schema") {
+		t.Fatalf("expected schema warning log, got %q", logBuf.String())
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 1 || bus.published[0].subject != req.Topic {
+		t.Fatalf("expected dispatch publish to %s, got %+v", req.Topic, bus.published)
+	}
+}
+
+func newSchedulerSchemaTestDeps(t *testing.T) (*infraStore.RedisJobStore, *topicregistry.Service, *infraSchema.Registry, func()) {
+	t.Helper()
+
+	redisSrv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+
+	redisURL := "redis://" + redisSrv.Addr()
+	jobStore, err := infraStore.NewRedisJobStore(redisURL)
+	if err != nil {
+		redisSrv.Close()
+		t.Fatalf("job store: %v", err)
+	}
+	configSvc, err := configsvc.New(redisURL)
+	if err != nil {
+		_ = jobStore.Close()
+		redisSrv.Close()
+		t.Fatalf("config svc: %v", err)
+	}
+	schemaRegistry, err := infraSchema.NewRegistry(redisURL)
+	if err != nil {
+		_ = configSvc.Close()
+		_ = jobStore.Close()
+		redisSrv.Close()
+		t.Fatalf("schema registry: %v", err)
+	}
+	cleanup := func() {
+		_ = schemaRegistry.Close()
+		_ = configSvc.Close()
+		_ = jobStore.Close()
+		redisSrv.Close()
+	}
+	return jobStore, topicregistry.NewService(configSvc), schemaRegistry, cleanup
+}
+
+func newWorkerAttestationTestDeps(t *testing.T) (*workercredentials.Service, *WorkerCredentialCache, func()) {
+	t.Helper()
+
+	redisSrv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	redisURL := "redis://" + redisSrv.Addr()
+
+	configSvc, err := configsvc.New(redisURL)
+	if err != nil {
+		redisSrv.Close()
+		t.Fatalf("config svc: %v", err)
+	}
+
+	service := workercredentials.NewService(configSvc)
+	cache := NewWorkerCredentialCache(service)
+	cleanup := func() {
+		_ = configSvc.Close()
+		redisSrv.Close()
+	}
+	return service, cache, cleanup
+}
+
+func newHeartbeatPacket(workerID, senderID, pool, token string) *pb.BusPacket {
+	packet := &pb.BusPacket{
+		SenderId:        senderID,
+		TraceId:         "trace-" + workerID,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_Heartbeat{
+			Heartbeat: &pb.Heartbeat{
+				WorkerId: workerID,
+				Pool:     pool,
+				Type:     "cpu",
+			},
+		},
+	}
+	if token != "" {
+		raw := append([]byte{}, packet.ProtoReflect().GetUnknown()...)
+		raw = protowire.AppendTag(raw, 18, protowire.BytesType)
+		raw = protowire.AppendString(raw, token)
+		packet.ProtoReflect().SetUnknown(raw)
+	}
+	return packet
+}
+
+func newHandshakePacket(workerID string, topics ...string) *pb.BusPacket {
+	hs := &pb.Handshake{
+		ComponentId:       workerID,
+		Role:              pb.ComponentRole_COMPONENT_ROLE_WORKER,
+		SdkVersion:        "2.8.6",
+		SupportedVersions: []int32{1},
+	}
+	if len(topics) > 0 {
+		raw := append([]byte{}, hs.ProtoReflect().GetUnknown()...)
+		for _, topic := range topics {
+			raw = protowire.AppendTag(raw, 6, protowire.BytesType)
+			raw = protowire.AppendString(raw, topic)
+		}
+		hs.ProtoReflect().SetUnknown(raw)
+	}
+	return &pb.BusPacket{
+		SenderId:        workerID,
+		TraceId:         "trace-hs-" + workerID,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload:         &pb.BusPacket_Handshake{Handshake: hs},
+	}
+}
+
+func newConfigChangedWorkersPacket() *pb.BusPacket {
+	return &pb.BusPacket{
+		SenderId:        "gateway",
+		TraceId:         "trace-config-workers",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &pb.BusPacket_Alert{
+			Alert: &pb.SystemAlert{
+				Message: "config changed",
+				Details: map[string]string{
+					"scope":    "system",
+					"scope_id": "workers",
+				},
+			},
+		},
+	}
+}
+
 func (s *fakeJobStore) CountActiveByTenant(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
@@ -393,6 +742,151 @@ func TestEngineHandleHeartbeatStoresWorker(t *testing.T) {
 	}
 }
 
+func TestAttestedWorkerAccepted(t *testing.T) {
+	service, cache, cleanup := newWorkerAttestationTestDeps(t)
+	defer cleanup()
+
+	issued, err := service.Create(context.Background(), workercredentials.IssueInput{
+		WorkerID:     "worker-attested",
+		AllowedPools: []string{"default"},
+		CreatedBy:    "test",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	registry := newTestRegistry(t)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithWorkerCredentialCache(cache).
+		WithWorkerAttestationMode(WorkerAttestationEnforce)
+
+	if err := engine.HandlePacket(newHeartbeatPacket("worker-attested", "worker-attested", "default", issued.Token)); err != nil {
+		t.Fatalf("HandlePacket: %v", err)
+	}
+
+	snapshot := registry.Snapshot()
+	if len(snapshot) != 1 {
+		t.Fatalf("expected 1 attested worker, got %d", len(snapshot))
+	}
+	if snapshot["worker-attested"] == nil || snapshot["worker-attested"].Pool != "default" {
+		t.Fatalf("unexpected registry snapshot: %+v", snapshot)
+	}
+}
+
+func TestUnattestedWorkerWarnMode(t *testing.T) {
+	service, cache, cleanup := newWorkerAttestationTestDeps(t)
+	defer cleanup()
+
+	if _, err := service.Create(context.Background(), workercredentials.IssueInput{
+		WorkerID:     "worker-warn",
+		AllowedPools: []string{"default"},
+		CreatedBy:    "test",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	var logBuf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	registry := newTestRegistry(t)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithWorkerCredentialCache(cache).
+		WithWorkerAttestationMode(WorkerAttestationWarn)
+
+	if err := engine.HandlePacket(newHeartbeatPacket("worker-warn", "worker-warn", "default", "")); err != nil {
+		t.Fatalf("HandlePacket: %v", err)
+	}
+
+	snapshot := registry.Snapshot()
+	if len(snapshot) != 1 {
+		t.Fatalf("expected warn mode to keep worker, got %d", len(snapshot))
+	}
+	logs := logBuf.String()
+	if !strings.Contains(logs, "worker heartbeat accepted without attestation") || !strings.Contains(logs, "reason=auth_token_missing") {
+		t.Fatalf("expected warn log for unattested worker, got %q", logs)
+	}
+}
+
+func TestUnattestedWorkerEnforceMode(t *testing.T) {
+	service, cache, cleanup := newWorkerAttestationTestDeps(t)
+	defer cleanup()
+
+	if _, err := service.Create(context.Background(), workercredentials.IssueInput{
+		WorkerID:     "worker-enforce",
+		AllowedPools: []string{"default"},
+		CreatedBy:    "test",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	var logBuf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	registry := newTestRegistry(t)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithWorkerCredentialCache(cache).
+		WithWorkerAttestationMode(WorkerAttestationEnforce)
+
+	if err := engine.HandlePacket(newHeartbeatPacket("worker-enforce", "worker-enforce", "default", "")); err != nil {
+		t.Fatalf("HandlePacket: %v", err)
+	}
+
+	if snapshot := registry.Snapshot(); len(snapshot) != 0 {
+		t.Fatalf("expected enforce mode to reject unattested worker, got %+v", snapshot)
+	}
+	logs := logBuf.String()
+	if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "worker heartbeat rejected: attestation failed") || !strings.Contains(logs, "reason=auth_token_missing") {
+		t.Fatalf("expected enforce rejection log, got %q", logs)
+	}
+}
+
+func TestAttestationOffMode(t *testing.T) {
+	registry := newTestRegistry(t)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithWorkerAttestationMode(WorkerAttestationOff)
+
+	if err := engine.HandlePacket(newHeartbeatPacket("worker-off", "spoofed-sender", "default", "")); err != nil {
+		t.Fatalf("HandlePacket: %v", err)
+	}
+
+	snapshot := registry.Snapshot()
+	if len(snapshot) != 1 {
+		t.Fatalf("expected attestation off mode to skip checks, got %+v", snapshot)
+	}
+	if snapshot["worker-off"] == nil {
+		t.Fatalf("expected worker-off in registry, got %+v", snapshot)
+	}
+}
+
+func TestHandlePacketRecoversFromRegistryPanic(t *testing.T) {
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), panicRegistry{}, NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	err := engine.HandlePacket(newHeartbeatPacket("worker-panic", "worker-panic", "default", ""))
+	if err == nil {
+		t.Fatal("expected retryable error after recovered panic")
+	}
+	var retryErr *retryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected retryableError, got %T", err)
+	}
+	if retryErr.RetryDelay() != retryDelayStore {
+		t.Fatalf("expected retry delay %s, got %s", retryDelayStore, retryErr.RetryDelay())
+	}
+}
+
 func TestHandleHandshakeRegistersWorker(t *testing.T) {
 	bus := &fakeBus{}
 	registry := newTestRegistry(t)
@@ -457,6 +951,197 @@ func TestHandleHandshakeIgnoresNonWorker(t *testing.T) {
 	registry.mu.RUnlock()
 	if ok {
 		t.Fatal("non-worker handshake should not be registered")
+	}
+}
+
+func TestHandshakeWithReadyTopicsSetsReady(t *testing.T) {
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	if err := engine.HandlePacket(newHeartbeatPacket("worker-ready", "worker-ready", "default", "")); err != nil {
+		t.Fatalf("handle heartbeat: %v", err)
+	}
+	if err := engine.HandlePacket(newHandshakePacket("worker-ready", "job.default", "job.other")); err != nil {
+		t.Fatalf("handle handshake: %v", err)
+	}
+
+	readiness := registry.ReadinessSnapshot()
+	state, ok := readiness["worker-ready"]
+	if !ok {
+		t.Fatal("expected worker-ready in readiness snapshot")
+	}
+	if !state.Ready {
+		t.Fatal("expected worker to be ready after handshake")
+	}
+	if len(state.ReadyTopics) != 2 || state.ReadyTopics[0] != "job.default" || state.ReadyTopics[1] != "job.other" {
+		t.Fatalf("unexpected ready topics: %#v", state.ReadyTopics)
+	}
+}
+
+func TestProcessJobReadinessRequiredFiltersUnreadyWorkers(t *testing.T) {
+	t.Setenv(workerReadinessRequiredEnvVariable, "true")
+
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewLeastLoadedStrategy(routingForTopic("job.default", "default")), jobStore, nil)
+
+	if err := engine.HandlePacket(newHeartbeatPacket("worker-ready", "worker-ready", "default", "")); err != nil {
+		t.Fatalf("handle heartbeat: %v", err)
+	}
+
+	err := engine.processJob(context.Background(), &pb.JobRequest{JobId: "job-unready", Topic: "job.default"}, "trace-unready")
+	if err == nil {
+		t.Fatal("expected retryable error when readiness is required but missing")
+	}
+	var retryErr *retryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected retryableError, got %T", err)
+	}
+	if len(bus.snapshotPublished()) != 0 {
+		t.Fatalf("expected no publishes while worker is unready, got %d", len(bus.snapshotPublished()))
+	}
+
+	if err := engine.HandlePacket(newHandshakePacket("worker-ready", "job.default")); err != nil {
+		t.Fatalf("handle handshake: %v", err)
+	}
+	if err := engine.processJob(context.Background(), &pb.JobRequest{JobId: "job-ready", Topic: "job.default"}, "trace-ready"); err != nil {
+		t.Fatalf("process job after readiness: %v", err)
+	}
+
+	published := bus.snapshotPublished()
+	if len(published) != 1 {
+		t.Fatalf("expected one publish after readiness handshake, got %d", len(published))
+	}
+	if published[0].subject != "worker.worker-ready.jobs" {
+		t.Fatalf("expected direct worker subject, got %s", published[0].subject)
+	}
+}
+
+func TestHandleConfigChangedPacketRefreshesCredentialCacheAsync(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	cache := &WorkerCredentialCache{
+		list: func(context.Context) ([]workercredentials.Credential, error) {
+			close(started)
+			<-release
+			return []workercredentials.Credential{
+				{
+					WorkerID:       "worker-async",
+					CredentialHash: "$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHQ$L8mNKgHdwNwp0UrEGouGZWlqlImPi0tLxe3LjXLp8dk",
+					CreatedBy:      "test",
+					CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+				},
+			}, nil
+		},
+		records: map[string]workercredentials.Credential{},
+	}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithWorkerCredentialCache(cache)
+
+	start := time.Now()
+	if err := engine.handleConfigChangedPacket(newConfigChangedWorkersPacket()); err != nil {
+		t.Fatalf("handleConfigChangedPacket: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("expected async refresh to return quickly, took %s", elapsed)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("expected async refresh goroutine to start")
+	}
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		cache.mu.RLock()
+		_, ok := cache.records["worker-async"]
+		cache.mu.RUnlock()
+		if ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected async refresh to populate cache")
+}
+
+func TestWorkerCredentialCacheRefreshMergesRecordsAndKeepsExistingOnFailure(t *testing.T) {
+	cache := &WorkerCredentialCache{
+		records: map[string]workercredentials.Credential{
+			"worker-stale": {
+				WorkerID:       "worker-stale",
+				CredentialHash: "hash-stale",
+				CreatedBy:      "test",
+				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	}
+	cache.list = func(context.Context) ([]workercredentials.Credential, error) {
+		return []workercredentials.Credential{
+			{
+				WorkerID:       "worker-stale",
+				CredentialHash: "hash-updated",
+				CreatedBy:      "refresh",
+				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+			},
+			{
+				WorkerID:       "worker-new",
+				CredentialHash: "hash-new",
+				CreatedBy:      "refresh",
+				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+			},
+		}, nil
+	}
+
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	cache.mu.RLock()
+	if got := cache.records["worker-stale"].CredentialHash; got != "hash-updated" {
+		cache.mu.RUnlock()
+		t.Fatalf("expected updated stale worker hash, got %q", got)
+	}
+	if _, ok := cache.records["worker-new"]; !ok {
+		cache.mu.RUnlock()
+		t.Fatal("expected new worker to be merged into cache")
+	}
+	cache.mu.RUnlock()
+
+	cache.list = func(context.Context) ([]workercredentials.Credential, error) {
+		return nil, errors.New("boom")
+	}
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh after error: %v", err)
+	}
+
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+	if _, ok := cache.records["worker-stale"]; !ok {
+		t.Fatal("expected existing worker to remain after refresh failure")
+	}
+	if _, ok := cache.records["worker-new"]; !ok {
+		t.Fatal("expected merged worker to remain after refresh failure")
+	}
+}
+
+func TestProcessJobRetriesWhenTopicRegistryUnavailableAndSchemaEnforced(t *testing.T) {
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithSchemaEnforcement(infraSchema.EnforcementEnforce)
+
+	err := engine.processJob(context.Background(), &pb.JobRequest{JobId: "job-registry-down", Topic: "job.default"}, "trace-registry-down")
+	if err == nil {
+		t.Fatal("expected retryable error when topic registry is unavailable in enforce mode")
+	}
+	var retryErr *retryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected retryableError, got %T", err)
+	}
+	if retryErr.RetryDelay() != retryDelayStore {
+		t.Fatalf("expected retry delay %s, got %s", retryDelayStore, retryErr.RetryDelay())
 	}
 }
 

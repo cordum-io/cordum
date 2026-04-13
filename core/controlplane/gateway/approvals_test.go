@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,6 +101,122 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	}
 	if bus.published[0].subject != capsdk.SubjectSubmit {
 		t.Fatalf("expected publish to %s got %s", capsdk.SubjectSubmit, bus.published[0].subject)
+	}
+}
+
+func TestApproveJobMarksPublishIntentComplete(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-1"})
+
+	jobID := uuid.NewString()
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"ok"}`))
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	rr := httptest.NewRecorder()
+	s.handleApproveJob(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.PublishStatus != model.ApprovalPublishPublished {
+		t.Fatalf("expected published approval submit intent, got %q", record.PublishStatus)
+	}
+	if record.PublishTarget != model.ApprovalPublishTargetSubmit {
+		t.Fatalf("expected submit publish target, got %q", record.PublishTarget)
+	}
+	if record.PublishedAt <= 0 {
+		t.Fatalf("expected published_at > 0, got %d", record.PublishedAt)
+	}
+}
+
+func TestApproveJobPublishFailureLeavesPendingIntent(t *testing.T) {
+	s, bus, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-1"})
+	bus.publishErr = errors.New("submit unavailable")
+	bus.failSubject = capsdk.SubjectSubmit
+
+	jobID := uuid.NewString()
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"ok"}`))
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	rr := httptest.NewRecorder()
+	s.handleApproveJob(rr, httpReq)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.PublishStatus != model.ApprovalPublishPending {
+		t.Fatalf("expected pending publish intent, got %q", record.PublishStatus)
+	}
+	if record.PublishTarget != model.ApprovalPublishTargetSubmit {
+		t.Fatalf("expected submit publish target, got %q", record.PublishTarget)
+	}
+	if record.PublishedAt != 0 {
+		t.Fatalf("expected published_at to remain 0, got %d", record.PublishedAt)
 	}
 }
 
@@ -287,6 +404,13 @@ func TestApproveJobRejectsOnSnapshotMismatch(t *testing.T) {
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("expected 409 got %d body=%s", rr.Code, rr.Body.String())
 	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["code"] != string(model.ApprovalConflictStaleSnapshot) {
+		t.Fatalf("expected stale snapshot code, got %#v", resp["code"])
+	}
 	state, _ := s.jobStore.GetState(context.Background(), jobID)
 	if state != model.JobStateApproval {
 		t.Fatalf("expected approval state got %s", state)
@@ -311,11 +435,15 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
 	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
 		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,
 		PolicySnapshot:   "snap-1",
-		JobHash:          "hash",
+		JobHash:          hash,
 	}); err != nil {
 		t.Fatalf("set safety decision: %v", err)
 	}
@@ -356,6 +484,327 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	}
 	if record.ApprovedAt <= 0 {
 		t.Fatalf("expected ApprovedAt > 0 on rejection, got %d", record.ApprovedAt)
+	}
+}
+
+func TestRejectJobMarksPublishIntentComplete(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	jobID := "job-reject-publish-complete"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(`{"reason":"nope"}`))
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
+	rr := httptest.NewRecorder()
+	s.handleRejectJob(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.PublishStatus != model.ApprovalPublishPublished {
+		t.Fatalf("expected published reject intent, got %q", record.PublishStatus)
+	}
+	if record.PublishTarget != model.ApprovalPublishTargetDLQ {
+		t.Fatalf("expected dlq publish target, got %q", record.PublishTarget)
+	}
+	if record.PublishedAt <= 0 {
+		t.Fatalf("expected published_at > 0, got %d", record.PublishedAt)
+	}
+}
+
+func TestRejectWorkflowGateResultPublishFailureLeavesPendingIntent(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	bus.publishErr = errors.New("result unavailable")
+	bus.failSubject = capsdk.SubjectResult
+
+	jobID := "job-reject-workflow-gate-pending"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    capsdk.SubjectWorkflowApprovalGate,
+		TenantId: "default",
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "workflow-gate",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(`{"reason":"denied"}`))
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
+	rr := httptest.NewRecorder()
+	s.handleRejectJob(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.PublishStatus != model.ApprovalPublishPending {
+		t.Fatalf("expected pending reject publish intent, got %q", record.PublishStatus)
+	}
+	if record.PublishTarget != model.ApprovalPublishTargetDLQAndResult {
+		t.Fatalf("expected dlq_and_result publish target, got %q", record.PublishTarget)
+	}
+	if record.PublishedAt != 0 {
+		t.Fatalf("expected published_at to remain 0, got %d", record.PublishedAt)
+	}
+}
+
+func TestRepairApprovalDryRunClassifiesTerminalWorkflowRun(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-1"})
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	run := &wf.WorkflowRun{
+		ID:         "run-repair-terminal",
+		WorkflowID: "wf-repair-terminal",
+		OrgID:      "default",
+		Status:     wf.RunStatusSucceeded,
+		Steps:      map[string]*wf.StepRun{},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := s.workflowStore.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	jobID := "job-repair-terminal"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels: map[string]string{
+			"run_id":      run.ID,
+			"workflow_id": run.WorkflowID,
+		},
+	}
+	if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(`{}`))
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	rr := httptest.NewRecorder()
+	s.handleRepairApproval(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	plan, _ := payload["plan"].(map[string]any)
+	if got, _ := plan["kind"].(string); got != "invalidate_terminal_run" {
+		t.Fatalf("expected terminal run repair plan, got %q", got)
+	}
+	if got, _ := plan["repairable"].(bool); !got {
+		t.Fatalf("expected repairable plan, got %#v", plan)
+	}
+	if applied, _ := payload["applied"].(bool); applied {
+		t.Fatalf("expected dry-run response, got %#v", payload)
+	}
+}
+
+func TestRepairApprovalDryRunClassifiesStaleSnapshot(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-current"})
+
+	ctx := context.Background()
+	jobID := "job-repair-stale-snapshot"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-legacy",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(`{}`))
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	rr := httptest.NewRecorder()
+	s.handleRepairApproval(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	plan, _ := payload["plan"].(map[string]any)
+	if got, _ := plan["kind"].(string); got != "invalidate_stale_snapshot" {
+		t.Fatalf("expected stale snapshot repair plan, got %q", got)
+	}
+}
+
+func TestRepairApprovalApplyApprovedResolutionPublishesAndAudits(t *testing.T) {
+	s, bus, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-1"})
+	auditSender := &testAuditSender{}
+	s.auditExporter = auditSender
+
+	ctx := context.Background()
+	jobID := "job-repair-approved"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels: map[string]string{
+			"approval_granted": "true",
+		},
+	}
+	if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	body := `{"apply":true,"note":"operator fix"}`
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(body))
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	rr := httptest.NewRecorder()
+	s.handleRepairApproval(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	state, err := s.jobStore.GetState(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state != model.JobStatePending {
+		t.Fatalf("expected pending state, got %s", state)
+	}
+	record, err := s.jobStore.GetApprovalRecord(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get approval record: %v", err)
+	}
+	if record.Status != model.ApprovalStatusApproved {
+		t.Fatalf("expected approved status, got %q", record.Status)
+	}
+	if record.PublishStatus != model.ApprovalPublishPublished {
+		t.Fatalf("expected published repair intent, got %q", record.PublishStatus)
+	}
+	if !strings.Contains(record.Note, "repair: operator fix") {
+		t.Fatalf("expected repair note to be persisted, got %q", record.Note)
+	}
+	if len(bus.published) != 1 || bus.published[0].subject != capsdk.SubjectSubmit {
+		t.Fatalf("expected repaired approval to publish submit once, got %#v", bus.published)
+	}
+	if auditSender.Len() == 0 {
+		t.Fatal("expected repair audit event")
+	}
+	if got := auditSender.Get(0).Action; got != "repair" {
+		t.Fatalf("expected repair audit action, got %q", got)
 	}
 }
 

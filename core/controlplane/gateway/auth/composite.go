@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 )
 
 // CompositeAuthProvider tries multiple AuthProvider implementations in order.
@@ -86,21 +87,18 @@ func (c *CompositeAuthProvider) IsPublicPath(path string) bool {
 
 // AuthConfig delegates to the first provider that implements AuthConfigProvider.
 func (c *CompositeAuthProvider) AuthConfig() AuthConfig {
+	cfg := AuthConfig{}
+	found := false
 	for _, p := range c.providers {
 		if acp, ok := p.(AuthConfigProvider); ok {
-			cfg := acp.AuthConfig()
-			// Enrich with OIDC info if any provider is OIDC
-			for _, op := range c.providers {
-				if oidc, ok := op.(*OIDCAuthAdapter); ok {
-					cfg.OIDCEnabled = true
-					cfg.OIDCIssuer = oidc.provider.cfg.IssuerURL
-					break
-				}
-			}
-			return cfg
+			cfg = mergeAuthConfig(cfg, acp.AuthConfig())
+			found = true
 		}
 	}
-	return AuthConfig{}
+	if !found {
+		return AuthConfig{}
+	}
+	return cfg
 }
 
 // RegisterRoutes delegates to any provider that implements RouteRegistrar.
@@ -110,6 +108,48 @@ func (c *CompositeAuthProvider) RegisterRoutes(mux *http.ServeMux, wrap func(str
 			rr.RegisterRoutes(mux, wrap)
 		}
 	}
+}
+
+func mergeAuthConfig(current, next AuthConfig) AuthConfig {
+	current.PasswordEnabled = current.PasswordEnabled || next.PasswordEnabled
+	current.UserAuthEnabled = current.UserAuthEnabled || next.UserAuthEnabled
+	current.SAMLEnabled = current.SAMLEnabled || next.SAMLEnabled
+	current.SAMLEnterprise = current.SAMLEnterprise || next.SAMLEnterprise
+	current.RequireRBAC = current.RequireRBAC || next.RequireRBAC
+	current.RequirePrincipal = current.RequirePrincipal || next.RequirePrincipal
+	current.OIDCEnabled = current.OIDCEnabled || next.OIDCEnabled
+
+	if strings.TrimSpace(next.SAMLLoginURL) != "" {
+		current.SAMLLoginURL = next.SAMLLoginURL
+	}
+	if strings.TrimSpace(next.SAMLMetadataURL) != "" {
+		current.SAMLMetadataURL = next.SAMLMetadataURL
+	}
+	if strings.TrimSpace(next.SessionTTL) != "" && current.SessionTTL == "" {
+		current.SessionTTL = next.SessionTTL
+	}
+	if strings.TrimSpace(next.DefaultTenant) != "" && current.DefaultTenant == "" {
+		current.DefaultTenant = next.DefaultTenant
+	}
+	if strings.TrimSpace(next.OIDCIssuer) != "" {
+		current.OIDCIssuer = next.OIDCIssuer
+	}
+	if strings.TrimSpace(next.OIDCLoginURL) != "" {
+		current.OIDCLoginURL = next.OIDCLoginURL
+	}
+	if strings.TrimSpace(next.OIDCClientID) != "" {
+		current.OIDCClientID = next.OIDCClientID
+	}
+	if strings.TrimSpace(next.OIDCRedirectURI) != "" {
+		current.OIDCRedirectURI = next.OIDCRedirectURI
+	}
+	if len(next.OIDCScopes) > 0 {
+		current.OIDCScopes = append([]string(nil), next.OIDCScopes...)
+	}
+	if strings.TrimSpace(next.OIDCClientSecretMasked) != "" {
+		current.OIDCClientSecretMasked = next.OIDCClientSecretMasked
+	}
+	return current
 }
 
 // BasicProvider returns the first BasicAuthProvider in the composite, or nil.

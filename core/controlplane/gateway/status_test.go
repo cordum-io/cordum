@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -37,7 +38,7 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 		t.Fatalf("unexpected workers list")
 	}
 
-	s.auth = stubLicenseAuth{info: &LicenseInfo{Mode: "enterprise", Status: "active", Plan: "Enterprise"}}
+	setTestEntitlements(t, s, licensing.PlanEnterprise, nil)
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	statusReq.Header.Set("X-Tenant-ID", "default")
@@ -376,32 +377,6 @@ func (e *errorMemStore) GetResult(context.Context, string) ([]byte, error) {
 	return nil, fmt.Errorf("store unavailable")
 }
 func (e *errorMemStore) Close() error { return nil }
-
-type stubLicenseAuth struct {
-	info *LicenseInfo
-}
-
-func (s stubLicenseAuth) AuthenticateHTTP(*http.Request) (*AuthContext, error) {
-	return &AuthContext{}, nil
-}
-
-func (s stubLicenseAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
-	return &AuthContext{}, nil
-}
-
-func (s stubLicenseAuth) RequireRole(*http.Request, ...string) error { return nil }
-
-func (s stubLicenseAuth) ResolveTenant(_ *http.Request, requested, _ string) (string, error) {
-	return requested, nil
-}
-
-func (s stubLicenseAuth) RequireTenantAccess(*http.Request, string) error { return nil }
-
-func (s stubLicenseAuth) ResolvePrincipal(_ *http.Request, requested string) (string, error) {
-	return requested, nil
-}
-
-func (s stubLicenseAuth) LicenseInfo() *LicenseInfo { return s.info }
 
 func TestHandleStatusHAFields(t *testing.T) {
 	s, _, _ := newTestGateway(t)

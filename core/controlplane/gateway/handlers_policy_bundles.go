@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -447,6 +448,18 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	bundles, _ := rawBundles.(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}
+	}
+	if _, exists := bundles[bundleID]; !exists {
+		customBundleCount := 0
+		for existingBundleID := range bundles {
+			if strings.HasPrefix(existingBundleID, policyStudioPrefix) {
+				customBundleCount++
+			}
+		}
+		if limitErr := licensing.CheckPolicyBundleLimit(int64(customBundleCount+1), s.currentEntitlements()); limitErr != nil {
+			writeTierLimitJSON(w, limitErr)
+			return
+		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	bundle, _ := bundles[bundleID].(map[string]any)

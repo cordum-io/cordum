@@ -31,7 +31,7 @@ export function DialogOverlay({
   className,
   backdropClose = true,
 }: DialogOverlayProps) {
-  const dialogRef = useDialogA11y(onClose);
+  const dialogRef = useDialogA11y(onClose, { enabled: open });
   const { fadeIn, scaleIn } = useMotionConfig();
 
   return (

@@ -6,6 +6,7 @@ import { useConfigStore } from "@/state/config";
 import { useUiStore } from "@/state/ui";
 import { useApprovals } from "@/hooks/useApprovals";
 import { useDLQ } from "@/hooks/useDLQ";
+import { useLicense } from "@/hooks/useLicense";
 import { useQuarantinedJobs } from "@/hooks/useOutputPolicy";
 import { useStatus } from "@/hooks/useStatus";
 import { useWorkerEvents } from "@/hooks/useWorkers";
@@ -16,6 +17,8 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { NotificationPopover } from "@/components/NotificationPopover";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator";
 import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcuts";
+import { TierBadge } from "@/components/TierBadge";
+import { TelemetryConsentBanner } from "@/components/TelemetryConsentBanner";
 import {
   LayoutGrid,
   ListChecks,
@@ -39,6 +42,7 @@ import {
   GitBranch,
   Package,
   Database,
+  Hash,
   Layers,
   Zap,
   Menu,
@@ -87,6 +91,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Govern",
     items: [
       { path: "/govern/overview", label: "Policy Studio", icon: Shield },
+      { path: "/govern/velocity-rules", label: "Velocity Rules", icon: Zap },
       { path: "/govern/tenants", label: "Tenants", icon: Layers },
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
     ],
@@ -95,6 +100,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Extend",
     items: [
       { path: "/packs", label: "Packs", icon: Package },
+      { path: "/topics", label: "Topics", icon: Hash },
       { path: "/schemas", label: "Schemas", icon: Database },
     ],
   },
@@ -156,11 +162,12 @@ export function AppShell({ children }: AppShellProps) {
   const dlqCount = dlqData?.items?.length ?? 0;
   const { data: quarantineData } = useQuarantinedJobs();
   const quarantineCount = quarantineData?.items?.length ?? 0;
+  const { data: licenseSummary } = useLicense();
 
   // Accessibility: focus trap for mobile drawer + reduced motion
   const prefersReducedMotion = useReducedMotion();
   const closeMobileMenu = useCallback(() => setMobileOpen(false), []);
-  const drawerRef = useDialogA11y(closeMobileMenu);
+  const drawerRef = useDialogA11y(closeMobileMenu, { enabled: mobileOpen });
   const hamburgerRef = useRef<HTMLButtonElement>(null);
 
   // System health status — derived from GET /status (polled every 10s via useStatus)
@@ -528,6 +535,17 @@ export function AppShell({ children }: AppShellProps) {
             </button>
           </div>
           <div className="flex items-center gap-2">
+            {licenseSummary?.plan && (
+              <button
+                type="button"
+                onClick={() => navigate("/settings/license")}
+                className="hidden rounded-full md:block"
+                title="View current plan and limits"
+                aria-label="Open license and limits page"
+              >
+                <TierBadge plan={licenseSummary.plan} className="hover:opacity-90" />
+              </button>
+            )}
             <ConnectionIndicator />
 
             {/* Pending approvals badge in top bar */}
@@ -568,6 +586,9 @@ export function AppShell({ children }: AppShellProps) {
             )}
           </div>
         </header>
+
+        {/* Telemetry consent banner */}
+        <TelemetryConsentBanner />
 
         {/* Page content */}
         <main id="main-content" className="flex-1 overflow-y-auto dot-grid">

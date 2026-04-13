@@ -33,7 +33,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - HTTP/WS endpoints for jobs, workflows/runs, approvals, config, policy (bundles + publish/rollback/audit), DLQ, schemas, locks, artifacts, workers, traces, packs.
   - Marketplace endpoints for pack discovery/installs (gateway seeds `cfg:system:pack_catalogs` with the official catalog; override via env or config).
   - gRPC service (`CordumApi`) for job submit/status.
-  - Submit-time policy evaluation: both HTTP and gRPC submit paths call the Safety Kernel before persisting state or publishing to the bus. Policy deny returns 403/PermissionDenied, throttle returns 429/ResourceExhausted, and require_human creates the job in APPROVAL state without publishing. When the Safety Kernel is unavailable, `GATEWAY_POLICY_FAIL_MODE` controls behavior: `closed` (default) rejects the job, `open` allows it.
+  - Submit-time policy evaluation: both HTTP and gRPC submit paths call the Safety Kernel before persisting state or publishing to the bus. Policy deny returns 403/PermissionDenied, throttle returns 429/ResourceExhausted, and require_human creates the job in APPROVAL state without publishing. When the Safety Kernel is unavailable, `POLICY_CHECK_FAIL_MODE` controls behavior: `closed` (default) rejects the job, `open` allows it.
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
   - Enforces API key + tenant headers and CORS allowlist if configured (HTTP `X-API-Key` + `X-Tenant-ID`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` + `?tenant_id=<tenant>`).
   - OSS auth uses an API key allowlist (`CORDUM_API_KEYS`, `CORDUM_API_KEY`, or `CORDUM_API_KEYS_PATH`) with optional role/tenant metadata and a single-tenant default (`TENANT_ID`, default `default`). HTTP requests must supply `X-Tenant-ID`.
@@ -46,7 +46,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 
 - Scheduler (`core/controlplane/scheduler`, `cmd/cordum-scheduler`; binary `cordum-scheduler`)
   - Subscribes to `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.heartbeat`.
-  - Calls Safety Kernel before dispatch (allow/deny/approve/throttle/constraints). When the Safety Kernel is unreachable, `WithInputFailMode` controls behavior: `closed` (default) denies the job, `open` allows it. This is separate from the gateway's `GATEWAY_POLICY_FAIL_MODE` — the gateway evaluates policy at submit time, while the scheduler evaluates at dispatch time.
+  - Calls Safety Kernel before dispatch (allow/deny/approve/throttle/constraints). When the Safety Kernel is unreachable, `WithInputFailMode` controls behavior: `closed` (default) denies the job, `open` allows it. Both gateway and scheduler use `POLICY_CHECK_FAIL_MODE` — the gateway evaluates policy at submit time, the scheduler at dispatch time.
   - Routes jobs using pool mapping + least-loaded strategy, labels, and requires-based pool eligibility.
   - Persists job state in Redis and emits DLQ for non-success results.
   - Reconciler marks stale `DISPATCHED`/`RUNNING` jobs as `TIMEOUT`.
@@ -74,6 +74,19 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 - Context Engine (`core/contextwindow/engine`, `cmd/cordum-context-engine`; binary `cordum-context-engine`)
   - gRPC service for `BuildWindow` and `UpdateMemory`.
   - Maintains chat history and generic memory under `mem:<memory_id>:*`.
+
+- MCP Server (`cmd/cordum-mcp`; binary `cordum-mcp`)
+  - Model Context Protocol bridge that exposes Cordum capabilities (jobs, workflows, policy) as MCP tools and resources.
+
+- Licensing (`core/licensing/`)
+  - Ed25519-signed license loading and validation with three tiers (Community/Team/Enterprise).
+  - Entitlement enforcement across services: gateway rate limits, scheduler concurrency caps, workflow step limits, safety kernel policy bundle quotas, audit retention periods.
+  - Graceful degradation to Community tier on license expiry.
+  - Config: `CORDUM_LICENSE_FILE`, `CORDUM_LICENSE_TOKEN`, `CORDUM_LICENSE_PUBLIC_KEY`.
+
+- Telemetry (`core/telemetry/`)
+  - Structured metrics collection across all services; Prometheus exposition on each service's metrics port.
+  - License-tier-aware retention and export controls.
 
 - External workers (not in this repo)
   - Subscribe to job topics or direct subjects; honor `sys.job.cancel`.
@@ -176,6 +189,7 @@ JetStream (optional):
 - `cordum-workflow-engine`
 - `cordum-context-engine`
 - `cordumctl` (CLI)
+- `cordum-mcp` (MCP server)
 
 ## Repo layout
 

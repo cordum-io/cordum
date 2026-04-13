@@ -11,15 +11,17 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/cordum/cordum/core/licensing"
 )
 
 // Event types emitted by the audit subsystem.
 const (
-	EventSafetyDecision = "safety.decision"
-	EventSafetyApproval = "safety.approval"
-	EventPolicyChange   = "safety.policy_change"
+	EventSafetyDecision  = "safety.decision"
+	EventSafetyApproval  = "safety.approval"
+	EventPolicyChange    = "safety.policy_change"
 	EventSafetyViolation = "safety.violation"
-	EventSystemAuth     = "system.auth"
+	EventSystemAuth      = "system.auth"
 )
 
 // Severity levels for SIEM events.
@@ -60,6 +62,49 @@ type Exporter interface {
 // returns a BufferedExporter wrapping the configured backend.
 // Returns nil (no error) if export is disabled (type "none" or empty).
 func NewExporterFromEnv() (*BufferedExporter, error) {
+	exp, err := exporterFromEnv()
+	if err != nil || exp == nil {
+		return nil, err
+	}
+	return NewBufferedExporter(exp), nil
+}
+
+// NewExporterFromEnvWithEntitlements reads CORDUM_AUDIT_EXPORT_* environment
+// variables and applies runtime entitlement gates for SIEM export and audit
+// retention. Invalid or missing resolvers gracefully fall back to community
+// defaults.
+func NewExporterFromEnvWithEntitlements(resolver *licensing.EntitlementResolver) (*BufferedExporter, error) {
+	typ := strings.ToLower(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE"))
+	if typ == "" || typ == "none" {
+		return nil, nil
+	}
+	if !siemExportEnabled(currentEntitlements(resolver)) {
+		slog.Warn("audit SIEM export disabled by entitlement",
+			"type", typ,
+			"plan", resolvedPlan(resolver),
+			"upgrade_url", licensing.DefaultUpgradeURL,
+		)
+		return nil, nil
+	}
+
+	exp, err := exporterFromEnv()
+	if err != nil || exp == nil {
+		return nil, err
+	}
+	return NewBufferedExporter(exp, WithRetentionTTL(RetentionTTLFromEntitlements(currentEntitlements(resolver)))), nil
+}
+
+// parseSyslogAddr parses "tcp://host:port" or "udp://host:port".
+func parseSyslogAddr(addr string) (network, address string, err error) {
+	for _, proto := range []string{"tcp://", "udp://"} {
+		if strings.HasPrefix(addr, proto) {
+			return strings.TrimSuffix(proto, "://"), strings.TrimPrefix(addr, proto), nil
+		}
+	}
+	return "", "", fmt.Errorf("audit config: syslog address must start with tcp:// or udp:// (got %q)", addr)
+}
+
+func exporterFromEnv() (Exporter, error) {
 	typ := strings.ToLower(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE"))
 	if typ == "" || typ == "none" {
 		return nil, nil
@@ -124,15 +169,64 @@ func NewExporterFromEnv() (*BufferedExporter, error) {
 	}
 
 	slog.Info("audit SIEM export enabled", "type", typ) // #nosec -- value is validated against a fixed allowlist.
-	return NewBufferedExporter(exp), nil
+	return exp, nil
 }
 
-// parseSyslogAddr parses "tcp://host:port" or "udp://host:port".
-func parseSyslogAddr(addr string) (network, address string, err error) {
-	for _, proto := range []string{"tcp://", "udp://"} {
-		if strings.HasPrefix(addr, proto) {
-			return strings.TrimSuffix(proto, "://"), strings.TrimPrefix(addr, proto), nil
+func currentEntitlements(resolver *licensing.EntitlementResolver) licensing.Entitlements {
+	if resolver != nil {
+		return resolver.Entitlements()
+	}
+	return licensing.DefaultEntitlements(licensing.PlanCommunity)
+}
+
+func resolvedPlan(resolver *licensing.EntitlementResolver) licensing.Plan {
+	if resolver != nil {
+		return resolver.ResolvedPlan()
+	}
+	return licensing.PlanCommunity
+}
+
+func siemExportEnabled(entitlements licensing.Entitlements) bool {
+	return entitlements.FeatureEnabled("siem_export") || entitlements.FeatureEnabled("audit_export")
+}
+
+// LegalHoldEnabled reports whether legal hold is permitted by the current
+// entitlements payload.
+func LegalHoldEnabled(entitlements licensing.Entitlements) bool {
+	return entitlements.FeatureEnabled("legal_hold")
+}
+
+// RetentionTTLFromEntitlements converts the current audit retention entitlement
+// into a TTL. A zero duration means unlimited retention.
+func RetentionTTLFromEntitlements(entitlements licensing.Entitlements) time.Duration {
+	days := entitlements.AuditRetentionDays
+	if days == 0 && entitlements.Limits != nil {
+		if limit, ok := entitlements.Limits["audit_retention_days"]; ok {
+			days = limit
 		}
 	}
-	return "", "", fmt.Errorf("audit config: syslog address must start with tcp:// or udp:// (got %q)", addr)
+	switch {
+	case days == licensing.Unlimited:
+		return 0
+	case days <= 0:
+		return 7 * 24 * time.Hour
+	default:
+		return time.Duration(days) * 24 * time.Hour
+	}
+}
+
+// RequireLegalHoldEntitlement returns a tier-limit error when legal hold is not
+// enabled for the current plan/entitlements.
+func RequireLegalHoldEntitlement(resolver *licensing.EntitlementResolver) error {
+	entitlements := currentEntitlements(resolver)
+	if LegalHoldEnabled(entitlements) {
+		return nil
+	}
+	return &licensing.TierLimitError{
+		Limit:      "legal_hold",
+		Allowed:    0,
+		Current:    1,
+		Plan:       resolvedPlan(resolver).DisplayName(),
+		UpgradeURL: licensing.DefaultUpgradeURL,
+	}
 }

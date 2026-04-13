@@ -38,8 +38,10 @@ const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
 const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudioPage"));
 const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
 const PacksPage = lazy(() => import("./pages/PacksPage"));
+const PackDetailPage = lazy(() => import("./pages/PackDetailPage"));
 const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
+const TopicsPage = lazy(() => import("./pages/TopicsPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const DLQPage = lazy(() => import("./pages/DLQPage"));
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
@@ -49,9 +51,14 @@ const SettingsNotificationsPage = lazy(() => import("./pages/SettingsNotificatio
 const SettingsEnvironmentsPage = lazy(() => import("./pages/SettingsEnvironmentsPage"));
 const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
 const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
+const SettingsLicensePage = lazy(() => import("./pages/settings/LicensePage"));
+const SettingsSSOPage = lazy(() => import("./pages/settings/SettingsSSOPage"));
+const SettingsSCIMPage = lazy(() => import("./pages/settings/SettingsSCIMPage"));
+const SettingsAuditExportPage = lazy(() => import("./pages/settings/SettingsAuditExportPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
 const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
+const GovernVelocityRulesPage = lazy(() => import("./pages/govern/VelocityRulesPage"));
 const GovernTenantsPage = lazy(() => import("./pages/govern/TenantsPage"));
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
@@ -84,6 +91,7 @@ export const LEGACY_POLICY_ROUTE_REDIRECTS = {
   tenants: "/govern/tenants",
   bundles: "/govern/overview?tab=bundles",
   simulator: "/govern/overview?tab=simulator",
+  velocityRules: "/govern/velocity-rules",
   history: "/govern/overview?tab=bundles",
   analytics: "/govern/overview?tab=simulator",
   publish: "/govern/overview?tab=bundles",
@@ -142,6 +150,7 @@ function ProtectedRoutes() {
           <Route path="/govern/overview" element={<GovernPolicyOverviewPage />} />
           <Route path="/govern/input-rules" element={<PolicyTabRedirect tab="input-rules" />} />
           <Route path="/govern/output-rules" element={<PolicyTabRedirect tab="output-rules" />} />
+          <Route path="/govern/velocity-rules" element={<GovernVelocityRulesPage />} />
           <Route path="/govern/tenants" element={<GovernTenantsPage />} />
           <Route path="/govern/tenants/:id" element={<GovernTenantDetailPage />} />
           <Route path="/govern/bundles/:id" element={<GovernBundleDetailPage />} />
@@ -169,6 +178,8 @@ function ProtectedRoutes() {
 
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />
+          <Route path="/packs/:id" element={<PackDetailPage />} />
+          <Route path="/topics" element={<TopicsPage />} />
           <Route path="/schemas" element={<SchemasPage />} />
           <Route path="/schemas/:id" element={<SchemaDetailPage />} />
 
@@ -185,6 +196,10 @@ function ProtectedRoutes() {
           <Route path="/settings/environments" element={<SettingsEnvironmentsPage />} />
           <Route path="/settings/config" element={<SettingsConfigPage />} />
           <Route path="/settings/mcp" element={<SettingsMcpPage />} />
+          <Route path="/settings/sso" element={<SettingsSSOPage />} />
+          <Route path="/settings/scim" element={<SettingsSCIMPage />} />
+          <Route path="/settings/audit-export" element={<SettingsAuditExportPage />} />
+          <Route path="/settings/license" element={<SettingsLicensePage />} />
 
           {/* Legacy redirects */}
           <Route path="/pools" element={<Navigate to="/agents" replace />} />

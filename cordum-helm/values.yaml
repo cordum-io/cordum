@@ -20,8 +20,11 @@ imagePullSecrets: []
 # Base image settings for control plane components.
 global:
   image:
-    repository: ghcr.io/cordum-io/cordum/control-plane
-    tag: "v0.1.4"
+    # Container registry prefix. Each service appends its own repo name.
+    # GHCR: ghcr.io/cordum-io/cordum  →  ghcr.io/cordum-io/cordum/api-gateway:0.9.4
+    # Docker Hub: docker.io/cordum    →  docker.io/cordum/api-gateway:0.9.4
+    registry: ghcr.io/cordum-io/cordum
+    tag: "0.9.4"
     pullPolicy: IfNotPresent
   # Set to true for production deployments (enables TLS enforcement, strict guards)
   production: false
@@ -32,6 +35,7 @@ global:
     serverCertSecret: ""
     # K8s Secret name for client TLS (NATS/Redis connections)
     clientCertSecret: ""
+    minVersion: "" # CORDUM_TLS_MIN_VERSION
 
 secrets:
   apiKey: ""
@@ -177,6 +181,17 @@ external:
 nats:
   enabled: true
   image: nats:2.10-alpine
+  auth:
+    token: "" # NATS_TOKEN
+    existingTokenSecret: "" # NATS_TOKEN
+    existingTokenSecretKey: "NATS_TOKEN" # NATS_TOKEN
+    username: "" # NATS_USERNAME
+    password: "" # NATS_PASSWORD
+    nkey: "" # NATS_NKEY
+  tls:
+    serverName: "" # NATS_TLS_SERVER_NAME
+    insecure: false # NATS_TLS_INSECURE
+  allowPlaintext: false # CORDUM_NATS_ALLOW_PLAINTEXT
   containerSecurityContext:
     readOnlyRootFilesystem: false
     allowPrivilegeEscalation: false
@@ -185,6 +200,18 @@ nats:
   service:
     type: ClusterIP
     port: 4222
+  # External access for workers outside the cluster.
+  # Creates a separate LoadBalancer service for NATS.
+  externalAccess:
+    enabled: false
+    service:
+      type: LoadBalancer
+      port: 4222
+      # Annotations for cloud provider (e.g. AWS NLB, Azure LB)
+      annotations: {}
+        # service.beta.kubernetes.io/aws-load-balancer-type: nlb
+        # service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+        # service.beta.kubernetes.io/azure-load-balancer-internal: "false"
   persistence:
     enabled: true
     size: 1Gi
@@ -192,6 +219,10 @@ nats:
   jetstream:
     storeDir: /data/jetstream
     syncInterval: "1s"
+    ackWait: "" # NATS_JS_ACK_WAIT
+    maxAge: "" # NATS_JS_MAX_AGE
+    replicas: 0 # NATS_JS_REPLICAS
+    maxAckPending: 0 # NATS_MAX_ACK_PENDING
   resources:
     limits:
       cpu: 500m
@@ -203,6 +234,16 @@ nats:
 redis:
   enabled: true
   image: redis:7-alpine
+  tls:
+    serverName: "" # REDIS_TLS_SERVER_NAME
+    insecure: false # REDIS_TLS_INSECURE
+  cluster:
+    enabled: false # REDIS_CLUSTER_ADDRESSES
+    addresses: [] # REDIS_CLUSTER_ADDRESSES
+  pool:
+    size: 0 # REDIS_POOL_SIZE
+    minIdleConns: 0 # REDIS_MIN_IDLE_CONNS
+  dataTTL: "" # REDIS_DATA_TTL
   containerSecurityContext:
     readOnlyRootFilesystem: false
     allowPrivilegeEscalation: false
@@ -259,6 +300,9 @@ ingress:
     paths:
       - path: /
         pathType: Prefix
+    # Enable a separate gRPC Ingress for workers using the CAP gRPC protocol.
+    grpcEnabled: false
+    grpcHost: ""  # defaults to api host if empty
   dashboard:
     host: cordum.local
     paths:
@@ -269,7 +313,7 @@ gateway:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: api-gateway
+    repository: api-gateway
   service:
     type: ClusterIP
     httpPort: 8081
@@ -281,10 +325,25 @@ gateway:
     apiRateLimitBurst: 100
     redisDataTTL: 24h
     jobMetaTTL: 168h
+    metricsAddr: "" # GATEWAY_METRICS_ADDR
+    metricsPublic: false # GATEWAY_METRICS_PUBLIC
+    maxJsonBodyBytes: 0 # GATEWAY_MAX_JSON_BODY_BYTES
+    wsClientBufferSize: 0 # CORDUM_WS_CLIENT_BUFFER_SIZE
+    hstsMaxAge: 0 # CORDUM_HSTS_MAX_AGE
+    httpReadTimeout: "" # GATEWAY_HTTP_READ_TIMEOUT
+    httpWriteTimeout: "" # GATEWAY_HTTP_WRITE_TIMEOUT
+    contextEngineAddr: "" # CONTEXT_ENGINE_ADDR
+    idempotencyTTL: "" # CORDUM_IDEMPOTENCY_TTL
+    sessionTTL: "" # CORDUM_SESSION_TTL
+    artifactMaxBytes: 0 # ARTIFACT_MAX_BYTES
     # User authentication settings
     userAuthEnabled: false
     adminUsername: admin
     adminEmail: ""
+  # GOMAXPROCS controls Go runtime parallelism. Set to match CPU limit for
+  # best container performance (e.g. "4" when cpu limit is 4000m). Leave empty
+  # for Go runtime default (auto-detect, which may over-count in containers).
+  goMaxProcs: "" # GOMAXPROCS
   resources:
     limits:
       cpu: 1000m
@@ -297,13 +356,21 @@ scheduler:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: scheduler
+    repository: scheduler
   service:
     type: ClusterIP
     metricsPort: 9090
   env:
     jobMetaTTL: 168h
     workerSnapshotInterval: 5s
+    configReloadInterval: "" # SCHEDULER_CONFIG_RELOAD_INTERVAL
+    workerAttestation: off # WORKER_ATTESTATION
+    workerReadinessRequired: false # WORKER_READINESS_REQUIRED
+    workerReadinessTTL: "" # WORKER_READINESS_TTL
+    schemaEnforcement: warn # SCHEMA_ENFORCEMENT
+  metrics:
+    addr: "" # SCHEDULER_METRICS_ADDR
+    public: false # SCHEDULER_METRICS_PUBLIC
   resources:
     limits:
       cpu: 1000m
@@ -316,10 +383,26 @@ safetyKernel:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: safety-kernel
+    repository: safety-kernel
   service:
     type: ClusterIP
     port: 50051
+  policy:
+    reloadInterval: "" # SAFETY_POLICY_RELOAD_INTERVAL
+    publicKey: "" # SAFETY_POLICY_PUBLIC_KEY
+    signature: "" # SAFETY_POLICY_SIGNATURE
+    signaturePath: "" # SAFETY_POLICY_SIGNATURE_PATH
+    signatureRequired: false # SAFETY_POLICY_SIGNATURE_REQUIRED
+    url: "" # SAFETY_POLICY_URL
+    urlAllowlist: [] # SAFETY_POLICY_URL_ALLOWLIST
+    configScope: system # SAFETY_POLICY_CONFIG_SCOPE
+    configId: policy # SAFETY_POLICY_CONFIG_ID
+    configKey: bundles # SAFETY_POLICY_CONFIG_KEY
+    configDisable: false # SAFETY_POLICY_CONFIG_DISABLE
+    maxBytes: 0 # SAFETY_POLICY_MAX_BYTES
+  cache:
+    ttl: "" # SAFETY_DECISION_CACHE_TTL
+    maxSize: 0 # SAFETY_DECISION_CACHE_MAX_SIZE
   resources:
     limits:
       cpu: 500m
@@ -332,13 +415,17 @@ workflowEngine:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: workflow-engine
+    repository: workflow-engine
   service:
     type: ClusterIP
     port: 9093
   env:
     scanInterval: 5s
     runScanLimit: 200
+    foreachMaxItems: 0 # WORKFLOW_FOREACH_MAX_ITEMS
+    exprMaxLength: 0 # WORKFLOW_EXPR_MAX_LENGTH
+    exprTimeoutMs: 0 # WORKFLOW_EXPR_TIMEOUT_MS
+    exprMaxResultItems: 0 # WORKFLOW_EXPR_MAX_RESULT_ITEMS
   resources:
     limits:
       cpu: 1000m
@@ -351,10 +438,14 @@ contextEngine:
   enabled: true
   replicaCount: 1
   image:
-    tagSuffix: context-engine
+    repository: context-engine
   service:
     type: ClusterIP
     port: 50070
+  env:
+    maxEntryBytes: 0 # CONTEXT_ENGINE_MAX_ENTRY_BYTES
+    maxChunkScan: 0 # CONTEXT_ENGINE_MAX_CHUNK_SCAN
+  metricsPublic: false # CONTEXT_ENGINE_METRICS_PUBLIC
   resources:
     limits:
       cpu: 500m
@@ -367,8 +458,8 @@ dashboard:
   enabled: true
   replicaCount: 1
   image:
-    repository: ghcr.io/cordum-io/cordum/dashboard
-    tag: "v0.1.4"
+    repository: dashboard
+    tag: ""  # defaults to global.image.tag
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -379,6 +470,8 @@ dashboard:
     tenantId: default
     principalId: ""
     principalRole: ""
+    traceUrlTemplate: "" # CORDUM_TRACE_URL_TEMPLATE
+    apiUpstreamScheme: "" # CORDUM_API_UPSTREAM_SCHEME
   resources:
     limits:
       cpu: 500m
@@ -386,6 +479,103 @@ dashboard:
     requests:
       cpu: 50m
       memory: 128Mi
+
+
+licensing:
+  mode: community # selects CORDUM_LICENSE_FILE / CORDUM_LICENSE_TOKEN
+  file: "" # CORDUM_LICENSE_FILE
+  token: "" # CORDUM_LICENSE_TOKEN
+  existingSecret: "" # CORDUM_LICENSE_TOKEN
+  publicKey: "" # CORDUM_LICENSE_PUBLIC_KEY
+  publicKeyPath: "" # CORDUM_LICENSE_PUBLIC_KEY_PATH
+
+telemetry:
+  mode: local_only # CORDUM_TELEMETRY_MODE
+  endpoint: https://telemetry.cordum.io/v1/report # CORDUM_TELEMETRY_ENDPOINT
+
+logging:
+  level: info # CORDUM_LOG_LEVEL
+  format: text # CORDUM_LOG_FORMAT
+
+marketplace:
+  provider: none # chart-only selector (no direct runtime env var)
+  allowHttp: false # CORDUM_MARKETPLACE_ALLOW_HTTP
+  httpTimeout: "" # CORDUM_MARKETPLACE_HTTP_TIMEOUT
+
+
+auth:
+  jwt:
+    hmacSecret: "" # CORDUM_JWT_HMAC_SECRET
+    publicKey: "" # CORDUM_JWT_PUBLIC_KEY
+    publicKeyPath: "" # CORDUM_JWT_PUBLIC_KEY_PATH
+    issuer: "" # CORDUM_JWT_ISSUER
+    audience: "" # CORDUM_JWT_AUDIENCE
+    defaultRole: "" # CORDUM_JWT_DEFAULT_ROLE
+    clockSkew: "" # CORDUM_JWT_CLOCK_SKEW
+    required: false # CORDUM_JWT_REQUIRED
+  oidc:
+    enabled: false # CORDUM_OIDC_ENABLED
+    issuer: "" # CORDUM_OIDC_ISSUER
+    audience: "" # CORDUM_OIDC_AUDIENCE
+    claimTenant: "" # CORDUM_OIDC_CLAIM_TENANT
+    claimRole: "" # CORDUM_OIDC_CLAIM_ROLE
+    clientId: "" # CORDUM_OIDC_CLIENT_ID
+    clientSecret: "" # CORDUM_OIDC_CLIENT_SECRET
+    redirectUri: "" # CORDUM_OIDC_REDIRECT_URI
+    scopes: [] # CORDUM_OIDC_SCOPES
+    stateTtl: "" # CORDUM_OIDC_STATE_TTL
+    allowedAlgs: [] # CORDUM_OIDC_ALLOWED_ALGS
+    jwksRefreshInterval: "" # CORDUM_OIDC_JWKS_REFRESH_INTERVAL
+    jwksRefreshCooldown: "" # OIDC_JWKS_REFRESH_COOLDOWN
+    issuerAllowlist: [] # CORDUM_OIDC_ISSUER_ALLOWLIST
+    allowPrivate: false # CORDUM_OIDC_ALLOW_PRIVATE
+    allowHttp: false # CORDUM_OIDC_ALLOW_HTTP
+  saml:
+    enabled: false # CORDUM_SAML_ENABLED
+    idpMetadataUrl: "" # CORDUM_SAML_IDP_METADATA_URL
+    baseUrl: "" # CORDUM_SAML_BASE_URL
+    entityId: "" # CORDUM_SAML_ENTITY_ID
+    binding: "" # CORDUM_SAML_BINDING
+    responseBinding: "" # CORDUM_SAML_RESPONSE_BINDING
+    allowIdpInitiated: false # CORDUM_SAML_ALLOW_IDP_INITIATED
+    stateTtl: "" # CORDUM_SAML_STATE_TTL
+    redirectUrl: "" # CORDUM_AUTH_REDIRECT_URL
+    certSecret: "" # existing K8s TLS secret with tls.crt/tls.key
+    cert: "" # inline PEM used only when certSecret is empty
+    key: "" # inline PEM used only when certSecret is empty
+  scim:
+    bearerToken: "" # CORDUM_SCIM_BEARER_TOKEN
+    existingSecret: "" # existing K8s secret containing the SCIM bearer token
+    existingSecretKey: "CORDUM_SCIM_BEARER_TOKEN" # key inside auth.scim.existingSecret
+  apiKeys: "" # CORDUM_API_KEYS
+  apiKeysPath: "" # CORDUM_API_KEYS_PATH
+  skipSecretValidation: false # CORDUM_SKIP_SECRET_VALIDATION
+
+audit:
+  transport: buffer # AUDIT_TRANSPORT
+  export:
+    type: none # CORDUM_AUDIT_EXPORT_TYPE
+    maxRetries: 3 # CORDUM_AUDIT_EXPORT_MAX_RETRIES
+    webhook:
+      url: "" # CORDUM_AUDIT_EXPORT_WEBHOOK_URL
+      secret: "" # CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET
+    syslog:
+      addr: "" # CORDUM_AUDIT_EXPORT_SYSLOG_ADDR
+    datadog:
+      apiKey: "" # CORDUM_AUDIT_EXPORT_DD_API_KEY
+      site: "" # CORDUM_AUDIT_EXPORT_DD_SITE
+      tags: "" # CORDUM_AUDIT_EXPORT_DD_TAGS
+    cloudwatch:
+      logGroup: "" # CORDUM_AUDIT_EXPORT_CW_LOG_GROUP
+      logStream: "" # CORDUM_AUDIT_EXPORT_CW_LOG_STREAM
+      awsRegion: "" # AWS_REGION
+  bufferSize: 1000 # CORDUM_AUDIT_BUFFER_SIZE
+  readSampleRate: 0.0 # CORDUM_AUDIT_READ_SAMPLE_RATE
+
+outputPolicy:
+  enabled: false # OUTPUT_POLICY_ENABLED
+  failMode: closed # OUTPUT_POLICY_FAIL_MODE
+  scannersPath: config/output_scanners.yaml # OUTPUT_SCANNERS_PATH
 
 configBootstrap:
   # Run a post-install/post-upgrade Job that ensures the system/default config

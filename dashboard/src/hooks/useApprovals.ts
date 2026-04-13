@@ -3,7 +3,13 @@ import { get, post, ApiError } from "../api/client";
 import { logger } from "../lib/logger";
 import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
-import type { Approval, ApprovalHistoryEntry, ApiResponse } from "../api/types";
+import type {
+  Approval,
+  ApprovalConflictCode,
+  ApprovalConflictPayload,
+  ApprovalHistoryEntry,
+  ApiResponse,
+} from "../api/types";
 import { mapApprovalItem, type BackendApprovalItem, type BackendPolicyAuditEntry } from "../api/transform";
 
 type ApprovalsSnapshot = { previous: [QueryKey, ApiResponse<Approval[]> | undefined][] };
@@ -99,31 +105,48 @@ function filterApprovalsByStatus(items: Approval[], status?: string): Approval[]
   return items.filter((item) => item.status.toLowerCase() === normalized);
 }
 
+function matchesApprovalIdentifier(approval: Approval, identifier: string): boolean {
+  return approval.id === identifier || approval.jobId === identifier;
+}
+
 function removeApprovalFromList(
   old: ApiResponse<Approval[]> | undefined,
-  id: string,
+  identifier: string,
 ): ApiResponse<Approval[]> | undefined {
   if (!old?.items) return old;
-  return { ...old, items: old.items.filter((approval) => approval.id !== id) };
+  return {
+    ...old,
+    items: old.items.filter((approval) => !matchesApprovalIdentifier(approval, identifier)),
+  };
 }
 
 function restoreApprovalToList(
   old: ApiResponse<Approval[]> | undefined,
-  id: string,
+  identifier: string,
   originalItem?: Approval,
 ): ApiResponse<Approval[]> | undefined {
   if (!old?.items || !originalItem) return old;
-  if (old.items.some((approval) => approval.id === id)) return old;
+  if (old.items.some((approval) => matchesApprovalIdentifier(approval, identifier))) return old;
   return { ...old, items: [...old.items, originalItem] };
 }
 
 function findApprovalInSnapshot(
   snapshot: ApprovalsSnapshot | undefined,
-  id: string,
+  identifier: string,
 ): Approval | undefined {
   return snapshot?.previous
     ?.flatMap(([, data]) => data?.items ?? [])
-    ?.find((approval) => approval.id === id);
+    ?.find((approval) => matchesApprovalIdentifier(approval, identifier));
+}
+
+function getApprovalConflictCode(err: unknown): ApprovalConflictCode | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409) return undefined;
+  const body = err.body as ApprovalConflictPayload | null | undefined;
+  return body?.code;
+}
+
+function shouldKeepOptimisticRemoval(err: unknown): boolean {
+  return getApprovalConflictCode(err) === "approval_already_resolved";
 }
 
 export function useApprovalHistory(filters: ApprovalHistoryFilters = {}) {
@@ -194,7 +217,7 @@ function invalidateApprovals(queryClient: ReturnType<typeof useQueryClient>) {
 
 // Approve a job approval request
 interface ApproveInput {
-  id: string;
+  jobId: string;
   comment?: string;
 }
 
@@ -202,46 +225,39 @@ export function useApproveJob() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, ApproveInput, ApprovalsSnapshot>({
     mutationKey: ["approve-job"],
-    mutationFn: ({ id, comment }) => {
-      logger.info("approvals", "Approving job", { id });
-      return post<void>(`/approvals/${encodeURIComponent(id)}/approve`, comment ? { note: comment } : undefined);
+    mutationFn: ({ jobId, comment }) => {
+      logger.info("approvals", "Approving job", { jobId });
+      return post<void>(`/approvals/${encodeURIComponent(jobId)}/approve`, comment ? { note: comment } : undefined);
     },
-    onMutate: async ({ id }) => {
+    onMutate: async ({ jobId }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.approvals.all });
       const previous = queryClient.getQueriesData<ApiResponse<Approval[]>>({ queryKey: queryKeys.approvals.all });
       queryClient.setQueriesData<ApiResponse<Approval[]>>(
         { queryKey: queryKeys.approvals.all },
-        (old) => removeApprovalFromList(old, id),
+        (old) => removeApprovalFromList(old, jobId),
       );
       return { previous };
     },
-    onSuccess: (_, { id }) => {
-      logger.info("approvals", "Job approved", { id });
+    onSuccess: (_, { jobId }) => {
+      logger.info("approvals", "Job approved", { jobId });
       useToastStore.getState().addToast({ type: "success", title: "Approved" });
     },
-    onError: (err, { id }, context) => {
-      const is409 = err instanceof ApiError && err.status === 409;
-      // On 409 the job already moved past APPROVAL_REQUIRED — the optimistic
-      // removal is correct, so don't restore. Only restore on real failures.
-      if (!is409) {
-        const originalItem = findApprovalInSnapshot(context, id);
+    onError: (err, { jobId }, context) => {
+      if (!shouldKeepOptimisticRemoval(err)) {
+        const originalItem = findApprovalInSnapshot(context, jobId);
         if (originalItem) {
           queryClient.setQueriesData<ApiResponse<Approval[]>>(
             { queryKey: queryKeys.approvals.all },
-            (old) => restoreApprovalToList(old, id, originalItem),
+            (old) => restoreApprovalToList(old, jobId, originalItem),
           );
         }
       }
-      if (is409) {
-        logger.info("approvals", "Approve stale — already resolved", { id });
+      const conflictCode = getApprovalConflictCode(err);
+      if (conflictCode) {
+        logger.info("approvals", "Approve conflicted", { jobId, conflictCode });
       } else {
-        logger.error("approvals", "Approve failed", { id, error: err.message });
+        logger.error("approvals", "Approve failed", { jobId, error: err.message });
       }
-      useToastStore.getState().addToast(
-        is409
-          ? { type: "info", title: "Already resolved", description: "This approval was already processed" }
-          : { type: "error", title: "Approval failed", description: err.message },
-      );
     },
     onSettled: () => {
       invalidateApprovals(queryClient);
@@ -252,7 +268,7 @@ export function useApproveJob() {
 
 // Reject a job approval request (reason required)
 interface RejectInput {
-  id: string;
+  jobId: string;
   reason: string;
   comment?: string;
 }
@@ -261,46 +277,39 @@ export function useRejectJob() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, RejectInput, ApprovalsSnapshot>({
     mutationKey: ["reject-job"],
-    mutationFn: ({ id, reason, comment }) => {
-      logger.info("approvals", "Rejecting job", { id, reason });
-      return post<void>(`/approvals/${encodeURIComponent(id)}/reject`, { reason, note: comment });
+    mutationFn: ({ jobId, reason, comment }) => {
+      logger.info("approvals", "Rejecting job", { jobId, reason });
+      return post<void>(`/approvals/${encodeURIComponent(jobId)}/reject`, { reason, note: comment });
     },
-    onMutate: async ({ id }) => {
+    onMutate: async ({ jobId }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.approvals.all });
       const previous = queryClient.getQueriesData<ApiResponse<Approval[]>>({ queryKey: queryKeys.approvals.all });
       queryClient.setQueriesData<ApiResponse<Approval[]>>(
         { queryKey: queryKeys.approvals.all },
-        (old) => removeApprovalFromList(old, id),
+        (old) => removeApprovalFromList(old, jobId),
       );
       return { previous };
     },
-    onSuccess: (_, { id }) => {
-      logger.info("approvals", "Job rejected", { id });
+    onSuccess: (_, { jobId }) => {
+      logger.info("approvals", "Job rejected", { jobId });
       useToastStore.getState().addToast({ type: "success", title: "Rejected" });
     },
-    onError: (err, { id }, context) => {
-      const is409 = err instanceof ApiError && err.status === 409;
-      // On 409 the job already moved past APPROVAL_REQUIRED — the optimistic
-      // removal is correct, so don't restore. Only restore on real failures.
-      if (!is409) {
-        const originalItem = findApprovalInSnapshot(context, id);
+    onError: (err, { jobId }, context) => {
+      if (!shouldKeepOptimisticRemoval(err)) {
+        const originalItem = findApprovalInSnapshot(context, jobId);
         if (originalItem) {
           queryClient.setQueriesData<ApiResponse<Approval[]>>(
             { queryKey: queryKeys.approvals.all },
-            (old) => restoreApprovalToList(old, id, originalItem),
+            (old) => restoreApprovalToList(old, jobId, originalItem),
           );
         }
       }
-      if (is409) {
-        logger.info("approvals", "Reject stale — already resolved", { id });
+      const conflictCode = getApprovalConflictCode(err);
+      if (conflictCode) {
+        logger.info("approvals", "Reject conflicted", { jobId, conflictCode });
       } else {
-        logger.error("approvals", "Reject failed", { id, error: err.message });
+        logger.error("approvals", "Reject failed", { jobId, error: err.message });
       }
-      useToastStore.getState().addToast(
-        is409
-          ? { type: "info", title: "Already resolved", description: "This approval was already processed" }
-          : { type: "error", title: "Rejection failed", description: err.message },
-      );
     },
     onSettled: () => {
       invalidateApprovals(queryClient);
@@ -313,7 +322,10 @@ export function useRejectJob() {
 export const __approvalsInternal = {
   buildHistoryParams,
   filterApprovalsByStatus,
+  matchesApprovalIdentifier,
   removeApprovalFromList,
   restoreApprovalToList,
   findApprovalInSnapshot,
+  getApprovalConflictCode,
+  shouldKeepOptimisticRemoval,
 };

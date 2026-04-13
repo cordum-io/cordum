@@ -77,20 +77,41 @@ if [[ -z "${run_id}" || "${run_id}" == "null" ]]; then
 fi
 log "run id: ${run_id}"
 
+log "waiting for workflow engine to initialize step"
+job_id=""
+for _ in {1..20}; do
+  job_id=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" \
+    "${API_BASE}/api/v1/workflow-runs/${run_id}" | jq -r '.steps.approve.job_id // empty')
+  if [[ -n "${job_id}" ]]; then
+    break
+  fi
+  sleep 0.5
+done
+if [[ -z "${job_id}" ]]; then
+  echo "workflow engine did not initialize step within 10s" >&2
+  exit 1
+fi
+log "step job id: ${job_id}"
+
 log "approving step"
 curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${json_header[@]}" \
-  -X POST "${API_BASE}/api/v1/workflows/${wf_id}/runs/${run_id}/steps/approve/approve" \
+  -X POST "${API_BASE}/api/v1/approvals/${job_id}/approve" \
   -d '{"approved": true}' >/dev/null
 
 status=""
-for _ in {1..10}; do
+for _ in {1..20}; do
   status=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${run_id}" | jq -r '.status')
   if [[ "${status}" == "succeeded" ]]; then
     break
   fi
-  sleep 0.2
+  sleep 0.5
 done
 log "run status: ${status}"
+
+if [[ "${status}" != "succeeded" ]]; then
+  echo "expected run status 'succeeded', got '${status}'" >&2
+  exit 1
+fi
 
 log "deleting run"
 curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" -X DELETE "${API_BASE}/api/v1/workflow-runs/${run_id}" >/dev/null

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ApiError } from "@/api/client";
 import type { Approval, ApiResponse } from "@/api/types";
 import { __approvalsInternal } from "./useApprovals";
 
@@ -164,6 +165,33 @@ describe("useApprovals internals", () => {
       "a-2",
     );
     expect(found?.id).toBe("a-2");
+  });
+
+  it("matches approvals by job id so actions target the backend job identifier", () => {
+    const approval = makeApproval({ id: "approval-ref-1", jobId: "job-1" });
+    expect(__approvalsInternal.matchesApprovalIdentifier(approval, "approval-ref-1")).toBe(true);
+    expect(__approvalsInternal.matchesApprovalIdentifier(approval, "job-1")).toBe(true);
+    expect(__approvalsInternal.matchesApprovalIdentifier(approval, "job-2")).toBe(false);
+  });
+
+  it("keeps optimistic removal only for already-resolved approval conflicts", () => {
+    const alreadyResolved = new ApiError(409, "already resolved", {
+      code: "approval_already_resolved",
+    });
+    const retryable = new ApiError(409, "retry", {
+      code: "approval_retryable_lock",
+      retryable: true,
+    });
+
+    expect(__approvalsInternal.getApprovalConflictCode(alreadyResolved)).toBe(
+      "approval_already_resolved",
+    );
+    expect(__approvalsInternal.getApprovalConflictCode(retryable)).toBe(
+      "approval_retryable_lock",
+    );
+    expect(__approvalsInternal.shouldKeepOptimisticRemoval(alreadyResolved)).toBe(true);
+    expect(__approvalsInternal.shouldKeepOptimisticRemoval(retryable)).toBe(false);
+    expect(__approvalsInternal.shouldKeepOptimisticRemoval(new Error("boom"))).toBe(false);
   });
 
   // ---------------------------------------------------------------------------

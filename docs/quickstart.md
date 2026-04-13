@@ -1,5 +1,7 @@
 # Cordum Quick Start (5 minutes)
 
+> **Time estimate:** First run takes ~3 minutes (Docker image builds). Subsequent starts take ~30 seconds.
+
 This walkthrough starts a local stack and runs a minimal approval-only workflow
 without any external workers.
 
@@ -15,10 +17,10 @@ export CORDUM_TENANT_ID=default
 
 ## Prerequisites
 
-- Docker + Docker Compose
-- curl
-- jq
-- Go (optional, only if using `cordumctl`)
+- **Docker Desktop v4+** or **Docker CLI v20.10+** with **Compose v2** (4GB+ RAM allocated)
+- **curl**
+- **jq** (recommended, for parsing API responses in this guide)
+- **Go 1.24+** (optional, only if using `cordumctl`)
 
 ## Step 1: Set API key + tenant
 
@@ -127,6 +129,18 @@ curl -sS -X DELETE http://localhost:8081/api/v1/workflows/${workflow_id}?org_id=
   -H "X-API-Key: ${API_KEY}" \
   -H "X-Tenant-ID: ${TENANT_ID}" >/dev/null
 ```
+
+## Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| **Port already in use** | Change ports in `.env` or stop the conflicting service (`lsof -i :8081` to find it) |
+| **API key missing / 401 errors** | Generate one with `openssl rand -hex 32` and export as `CORDUM_API_KEY`, or use `quickstart.sh` which handles this automatically |
+| **Dashboard shows empty** | Normal on a fresh install. Create a workflow first (Step 4 above) or run the smoke test |
+| **TLS / certificate errors** | `quickstart.sh` generates self-signed certs. Your browser will show a warning -- this is expected for local dev. Delete `./certs/` and re-run to regenerate |
+| **Docker out of memory** | Allocate at least 4 GB RAM to Docker Desktop |
+
+For more, see [troubleshooting.md](troubleshooting.md).
 
 ## Next steps
 

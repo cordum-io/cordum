@@ -84,8 +84,8 @@ func TestNATSAuditPublisher_PublishesToSubject(t *testing.T) {
 	if alert == nil {
 		t.Fatalf("expected alert payload, got nil")
 	}
-	if alert.Component != "audit-export" {
-		t.Fatalf("expected component=audit-export, got %q", alert.Component)
+	if alert.SourceComponent != "audit-export" {
+		t.Fatalf("expected source_component=audit-export, got %q", alert.SourceComponent)
 	}
 
 	// Verify the JSON payload round-trips.
@@ -158,7 +158,7 @@ func TestNATSAuditConsumer_ExportsEvent(t *testing.T) {
 	packet := &pb.BusPacket{
 		Payload: &pb.BusPacket_Alert{
 			Alert: &pb.SystemAlert{
-				Component: "audit-export",
+				SourceComponent: "audit-export",
 				Message:   string(payload),
 			},
 		},
@@ -198,7 +198,7 @@ func TestNATSAuditConsumer_RetryOnExportFailure(t *testing.T) {
 	packet := &pb.BusPacket{
 		Payload: &pb.BusPacket_Alert{
 			Alert: &pb.SystemAlert{
-				Component: "audit-export",
+				SourceComponent: "audit-export",
 				Message:   string(payload),
 			},
 		},
@@ -267,7 +267,7 @@ func TestNATSAuditConsumer_MalformedPayloadAcks(t *testing.T) {
 	packet := &pb.BusPacket{
 		Payload: &pb.BusPacket_Alert{
 			Alert: &pb.SystemAlert{
-				Component: "audit-export",
+				SourceComponent: "audit-export",
 				Message:   "{invalid json",
 			},
 		},

@@ -20,6 +20,7 @@ export interface ConfirmDialogProps {
   loading?: boolean;
   isPending?: boolean;
   icon?: React.ElementType;
+  initialFocusSelector?: string;
 }
 
 export function ConfirmDialog({
@@ -38,6 +39,7 @@ export function ConfirmDialog({
   loading,
   isPending,
   icon: Icon = AlertTriangle,
+  initialFocusSelector,
 }: ConfirmDialogProps) {
   const resolvedDescription = description ?? message ?? "";
   const resolvedLoading = loading ?? isPending ?? false;
@@ -58,7 +60,10 @@ export function ConfirmDialog({
     resolvedOnClose();
   };
 
-  const dialogRef = useDialogA11y(handleClose);
+  const dialogRef = useDialogA11y(handleClose, {
+    enabled: open,
+    initialFocusSelector,
+  });
 
   return (
     <AnimatePresence>
@@ -96,6 +101,7 @@ export function ConfirmDialog({
                 </div>
                 <button type="button"
                   onClick={handleClose}
+                  aria-label="Close dialog"
                   className="shrink-0 p-1 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="w-4 h-4" />

@@ -1,5 +1,32 @@
 Cordum {{ .Chart.Version }} has been deployed to namespace {{ .Release.Namespace }}.
 
+Release summary:
+  License tier: {{- if eq .Values.licensing.mode "community" }} Community{{- else }} Licensed ({{ .Values.licensing.mode }} mode; resolve plan with `cordumctl status`){{- end }}
+  Telemetry mode: {{ default "local_only" .Values.telemetry.mode }}
+
+Install a license:
+  # Apply a token during upgrade/install
+  helm upgrade {{ .Release.Name }} . \
+    --set licensing.mode=token \
+    --set-string licensing.token=<license-token>
+
+  # Or install a license after deployment
+  cordumctl license install --file ./license.json
+
+Check platform status:
+  cordumctl status
+
+{{- if and .Values.global.production (eq .Values.licensing.mode "community") }}
+
+  *** WARNING: global.production=true with Community tier ***
+  Production deployments should configure a license before enabling licensed features.
+  Example:
+    helm upgrade {{ .Release.Name }} . \
+      --set licensing.mode=token \
+      --set-string licensing.token=<license-token>
+
+{{- end }}
+
 {{- if not .Values.global.production }}
 
   *** WARNING: global.production is FALSE ***

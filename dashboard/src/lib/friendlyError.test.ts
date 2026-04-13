@@ -55,6 +55,27 @@ describe("friendlyError", () => {
     expect(result.description).toContain("conflicts");
   });
 
+  it("maps approval conflict codes from the backend code field", () => {
+    const retryable = friendlyError(
+      new ApiError(409, "Conflict", { code: "approval_retryable_lock", retryable: true }),
+      "test",
+    );
+    expect(retryable.title).toBe("Approval is updating");
+    expect(retryable.description).toContain("Wait a moment");
+
+    const staleSnapshot = friendlyError(
+      new ApiError(409, "Conflict", { code: "approval_stale_snapshot" }),
+      "test",
+    );
+    expect(staleSnapshot.title).toBe("Policy snapshot changed");
+
+    const notActionable = friendlyError(
+      new ApiError(409, "Conflict", { code: "approval_not_actionable" }),
+      "test",
+    );
+    expect(notActionable.title).toBe("Approval can’t be decided");
+  });
+
   it("formats validation errors array from body", () => {
     const err = new ApiError(422, "Validation", {
       errors: [

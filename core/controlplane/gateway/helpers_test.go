@@ -2,6 +2,10 @@ package gateway
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -10,10 +14,13 @@ import (
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/gorilla/websocket"
@@ -23,6 +30,8 @@ import (
 type stubBus struct {
 	mu          sync.Mutex
 	published   []publishedMessage
+	publishErr  error
+	failSubject string
 	subs        map[string][]func(*pb.BusPacket) error
 	queueGroups map[string][]string // subject -> queue groups used
 }
@@ -35,7 +44,12 @@ type publishedMessage struct {
 func (b *stubBus) Publish(subject string, packet *pb.BusPacket) error {
 	b.mu.Lock()
 	b.published = append(b.published, publishedMessage{subject: subject, packet: packet})
+	err := b.publishErr
+	failSubject := b.failSubject
 	b.mu.Unlock()
+	if err != nil && (failSubject == "" || failSubject == subject) {
+		return err
+	}
 	return nil
 }
 
@@ -216,22 +230,26 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 
 	bus := &stubBus{}
 	safetyClient := &stubSafetyClient{snapshots: []string{"snap-test"}}
+	entitlements := licensing.NewEntitlementResolver()
 	s := &server{
-		memStore:       memStore,
-		jobStore:       jobStore,
-		bus:            bus,
-		workers:        make(map[string]*pb.Heartbeat),
-		workerSeen:     make(map[string]time.Time),
-		clients:        make(map[*websocket.Conn]*wsClient),
-		eventsCh:       make(chan wsEvent, 8),
-		workflowStore:  workflowStore,
-		configSvc:      configSvc,
-		dlqStore:       dlqStore,
-		artifactStore:  artifactStore,
-		lockStore:      lockStore,
-		schemaRegistry: schemaRegistry,
-		safetyClient:   safetyClient,
-		started:        time.Now().UTC(),
+		memStore:              memStore,
+		jobStore:              jobStore,
+		bus:                   bus,
+		workers:               make(map[string]*pb.Heartbeat),
+		workerSeen:            make(map[string]time.Time),
+		clients:               make(map[*websocket.Conn]*wsClient),
+		eventsCh:              make(chan wsEvent, 8),
+		entitlements:          entitlements,
+		workflowStore:         workflowStore,
+		configSvc:             configSvc,
+		topicRegistry:         topicregistry.NewService(configSvc),
+		workerCredentialStore: workercredentials.NewService(configSvc),
+		dlqStore:              dlqStore,
+		artifactStore:         artifactStore,
+		lockStore:             lockStore,
+		schemaRegistry:        schemaRegistry,
+		safetyClient:          safetyClient,
+		started:               time.Now().UTC(),
 	}
 
 	t.Cleanup(func() {
@@ -246,6 +264,51 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	})
 
 	return s, bus, safetyClient
+}
+
+func setTestEntitlements(t *testing.T, s *server, plan licensing.Plan, mutate func(*licensing.Entitlements)) {
+	t.Helper()
+
+	entitlements := licensing.DefaultEntitlements(plan)
+	if mutate != nil {
+		mutate(&entitlements)
+	}
+
+	setTestLicense(t, s, licensing.Claims{
+		Plan:         string(plan),
+		Entitlements: &entitlements,
+	})
+}
+
+func setTestLicense(t *testing.T, s *server, claims licensing.Claims) {
+	t.Helper()
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate signing key: %v", err)
+	}
+
+	payloadBytes, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal license payload: %v", err)
+	}
+
+	licenseBytes, err := json.Marshal(map[string]any{
+		"payload":   json.RawMessage(payloadBytes),
+		"signature": base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payloadBytes)),
+	})
+	if err != nil {
+		t.Fatalf("marshal license: %v", err)
+	}
+
+	t.Setenv("CORDUM_LICENSE_FILE", "")
+	t.Setenv("CORDUM_LICENSE_TOKEN", string(licenseBytes))
+	t.Setenv("CORDUM_LICENSE_PUBLIC_KEY_PATH", "")
+	t.Setenv("CORDUM_LICENSE_PUBLIC_KEY", base64.StdEncoding.EncodeToString(publicKey))
+
+	resolver := licensing.NewEntitlementResolver()
+	resolver.Init()
+	s.entitlements = resolver
 }
 
 // failingSafetyClient is a test stub whose Evaluate always returns an error,

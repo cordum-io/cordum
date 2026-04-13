@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -110,15 +111,31 @@ func (r *submitJobRequest) applyDefaults(defaultTenant string) {
 	r.TenantId = r.OrgId // Ensure TenantId is consistent with OrgId
 }
 
-func (r *submitJobRequest) validate(defaultTenant string) error {
+func (r *submitJobRequest) validate(defaultTenant string, promptLimits ...int) error {
 	if r == nil {
 		return errors.New("request required")
 	}
 	if len(r.Prompt) == 0 {
 		return errors.New("prompt is required")
 	}
-	if len(r.Prompt) > maxPromptChars {
-		return fmt.Errorf("prompt too long (>%d chars)", maxPromptChars)
+	promptLimit := maxPromptChars
+	for _, limit := range promptLimits {
+		if limit > 0 {
+			promptLimit = limit
+			break
+		}
+	}
+	if len(r.Prompt) > promptLimit {
+		return fmt.Errorf(
+			"prompt too long (>%d chars): %w",
+			promptLimit,
+			&licensing.TierLimitError{
+				Limit:      "max_prompt_chars",
+				Current:    int64(len(r.Prompt)),
+				Allowed:    int64(promptLimit),
+				UpgradeURL: licensing.DefaultUpgradeURL,
+			},
+		)
 	}
 	if r.Topic == "" {
 		return errors.New("topic is required")
@@ -306,16 +323,9 @@ func policyMetaFromJobMetadata(m *pb.JobMetadata) *policyMetaRequest {
 }
 
 // isPolicyFailOpen returns true if POLICY_CHECK_FAIL_MODE is "open".
-// This uses the same env var as the scheduler for consistent behavior.
 // Default is "closed" (deny on safety unavailability).
-// Also supports the legacy GATEWAY_POLICY_FAIL_MODE for backward compatibility.
 func isPolicyFailOpen() bool {
-	// Prefer the shared env var used by scheduler and docs.
-	if mode := strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE")); mode != "" {
-		return strings.EqualFold(mode, "open")
-	}
-	// Fallback to legacy gateway-specific env var.
-	mode := strings.TrimSpace(os.Getenv("GATEWAY_POLICY_FAIL_MODE"))
+	mode := strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE"))
 	return strings.EqualFold(mode, "open")
 }
 
@@ -889,6 +899,8 @@ const (
 
 var errRequestBodyTooLarge = errors.New("request body too large")
 
+type requestBodyLimitKey struct{}
+
 func maxJSONBodyBytes() int64 {
 	if raw := strings.TrimSpace(os.Getenv(envGatewayMaxJSONBodyBytes)); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
@@ -913,6 +925,28 @@ func writeErrorJSON(w http.ResponseWriter, status int, message string) {
 	resp := map[string]any{"error": message, "status": status}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Warn("json encode error response failed", "error", err)
+	}
+}
+
+func writeTierLimitJSON(w http.ResponseWriter, limitErr *licensing.TierLimitError) {
+	if limitErr == nil {
+		writeErrorJSON(w, http.StatusForbidden, "tier_limit_exceeded")
+		return
+	}
+	payload := limitErr.ToHTTPError()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"error":       payload.Code,
+		"code":        payload.Code,
+		"status":      http.StatusForbidden,
+		"message":     payload.Message,
+		"limit":       payload.Limit,
+		"current":     payload.Current,
+		"allowed":     payload.Allowed,
+		"upgrade_url": payload.UpgradeURL,
+	}); err != nil {
+		slog.Warn("json encode tier limit response failed", "error", err)
 	}
 }
 
@@ -947,6 +981,9 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 		return errors.New("request required")
 	}
 	limit := maxJSONBodyBytes()
+	if requestLimit, ok := requestBodyLimitFromContext(r.Context()); ok && requestLimit > 0 {
+		limit = requestLimit
+	}
 	if limit > 0 {
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
@@ -954,7 +991,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	if err := dec.Decode(dst); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			return errRequestBodyTooLarge
+			return tierLimitFromMaxBytes(int64(maxErr.Limit))
 		}
 		return err
 	}
@@ -962,6 +999,11 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 }
 
 func writeJSONDecodeError(w http.ResponseWriter, err error, invalidMsg string) {
+	var limitErr *licensing.TierLimitError
+	if errors.As(err, &limitErr) {
+		writeTierLimitJSON(w, limitErr)
+		return
+	}
 	if errors.Is(err, errRequestBodyTooLarge) {
 		writeErrorJSON(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
@@ -972,7 +1014,7 @@ func writeJSONDecodeError(w http.ResponseWriter, err error, invalidMsg string) {
 // maxBodyMiddleware enforces a body size limit on all requests that carry a
 // body to prevent large-body DoS. Multipart uploads are excluded since those
 // routes manage their own limits (e.g. pack install).
-func maxBodyMiddleware(next http.Handler) http.Handler {
+func maxBodyMiddleware(next http.Handler, resolvers ...*licensing.EntitlementResolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip requests that never carry a body or have no body present.
 		if r.Body == nil || r.Body == http.NoBody || r.Method == http.MethodHead || r.Method == http.MethodOptions {
@@ -987,11 +1029,19 @@ func maxBodyMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		limit := maxJSONBodyBytes()
+		limit := entitlementBodyBytesLimit(resolvers...)
+		if limit > 0 {
+			r = r.WithContext(context.WithValue(r.Context(), requestBodyLimitKey{}, limit))
+		}
 
 		// Fast reject if Content-Length is declared and exceeds limit.
 		if r.ContentLength > limit {
-			writeErrorJSON(w, http.StatusRequestEntityTooLarge, "request body too large")
+			writeTierLimitJSON(w, &licensing.TierLimitError{
+				Limit:      "max_body_bytes",
+				Current:    r.ContentLength,
+				Allowed:    limit,
+				UpgradeURL: licensing.DefaultUpgradeURL,
+			})
 			return
 		}
 
@@ -1002,6 +1052,26 @@ func maxBodyMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func requestBodyLimitFromContext(ctx context.Context) (int64, bool) {
+	if ctx == nil {
+		return 0, false
+	}
+	limit, ok := ctx.Value(requestBodyLimitKey{}).(int64)
+	return limit, ok
+}
+
+func tierLimitFromMaxBytes(limit int64) *licensing.TierLimitError {
+	if limit <= 0 {
+		limit = maxJSONBodyBytes()
+	}
+	return &licensing.TierLimitError{
+		Limit:      "max_body_bytes",
+		Current:    limit + 1,
+		Allowed:    limit,
+		UpgradeURL: licensing.DefaultUpgradeURL,
+	}
 }
 
 // ---------- List limits (from gateway_limits.go) ----------

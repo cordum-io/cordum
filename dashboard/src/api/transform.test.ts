@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeUrgencyLevel,
+  deriveApprovalActionability,
   deriveApprovalStatus,
   mapApprovalItem,
   mapDLQEntry,
@@ -105,9 +106,9 @@ describe("api/transform mappings", () => {
       expected: string;
     }> = [
       { decision: "approved", expected: "approved" },
-      { decision: "reject", expected: "denied" },
-      { jobState: "DENIED", expected: "denied" },
-      { jobState: "OUTPUT_QUARANTINED", expected: "quarantined" },
+      { decision: "reject", expected: "rejected" },
+      { jobState: "DENIED", expected: "rejected" },
+      { jobState: "OUTPUT_QUARANTINED", expected: "approved" },
       { jobState: "TIMEOUT", expected: "expired" },
       { jobState: "APPROVAL_REQUIRED", expected: "pending" },
       { jobState: "SUCCEEDED", expected: "approved" },
@@ -119,6 +120,14 @@ describe("api/transform mappings", () => {
         deriveApprovalStatus(testCase.jobState, testCase.decision),
       ).toBe(testCase.expected);
     }
+  });
+
+  it("derives approval actionability from explicit fields or lifecycle fallback", () => {
+    expect(deriveApprovalActionability("actionable", "pending")).toBe("actionable");
+    expect(deriveApprovalActionability(undefined, "pending")).toBe("actionable");
+    expect(deriveApprovalActionability(undefined, "approved")).toBe("resolved");
+    expect(deriveApprovalActionability(undefined, "invalidated")).toBe("invalidated");
+    expect(deriveApprovalActionability(undefined, "repaired")).toBe("repaired");
   });
 
   it("maps approval items and handles missing job payload safely", () => {
@@ -137,6 +146,7 @@ describe("api/transform mappings", () => {
 
     expect(approval).not.toBeNull();
     expect(approval?.status).toBe("pending");
+    expect(approval?.actionability).toBe("actionable");
     expect(approval?.humanSummary).toContain('Job on "job.review"');
     expect(approval?.urgencyLevel).toBeDefined();
   });
@@ -279,6 +289,10 @@ describe("api/transform mappings", () => {
       resolved_by: "manager-2",
       resolved_at: 1_709_000_002_000_000,
       resolved_comment: "over budget for this quarter",
+      approval_status: "rejected",
+      approval_actionability: "resolved",
+      approval_revision: 2,
+      approval_decision: "reject",
       workflow_id: "wf-10",
       workflow_name: "Expense Approval",
       workflow_run_id: "run-10",
@@ -311,7 +325,10 @@ describe("api/transform mappings", () => {
     });
 
     expect(approval).not.toBeNull();
-    expect(approval?.status).toBe("denied");
+    expect(approval?.status).toBe("rejected");
+    expect(approval?.actionability).toBe("resolved");
+    expect(approval?.revision).toBe(2);
+    expect(approval?.approvalDecision).toBe("reject");
     expect(approval?.actor).toBe("manager-2");
     expect(approval?.comment).toBe("over budget for this quarter");
     expect(approval?.decisionSummary?.vendor).toBe("Contoso Travel");

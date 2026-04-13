@@ -35,6 +35,10 @@ func main() {
 		runUpCmd(args)
 	case "status":
 		runStatusCmd(args)
+	case "license":
+		runLicenseCmd(args)
+	case "auth":
+		runAuthCmd(args)
 	case "workflow":
 		runWorkflowCmd(args)
 	case "run":
@@ -47,6 +51,10 @@ func main() {
 		runPackCmd(args)
 	case "pool":
 		runPoolCmd(args)
+	case "topic":
+		runTopicCmd(args)
+	case "worker":
+		runWorkerCmd(args)
 	case "job":
 		runJobCmd(args)
 	default:
@@ -184,6 +192,18 @@ func runApprovalCmd(args []string) {
 		}
 		client := newClientFromFlags(fs)
 		check(client.ApproveJob(context.Background(), fs.Arg(0), *approve))
+	case "repair":
+		fs := newFlagSet("approval repair")
+		apply := fs.Bool("apply", false, "apply the repair plan (default: dry-run)")
+		note := fs.String("note", "", "operator note stored with the repair")
+		fs.ParseArgs(args[1:])
+		if fs.NArg() < 1 {
+			fail("usage: approval repair <job_id>")
+		}
+		client := newClientFromFlags(fs)
+		resp, err := client.RepairApproval(context.Background(), fs.Arg(0), *apply, *note)
+		check(err)
+		printJSON(resp)
 	default:
 		usage()
 		os.Exit(1)
@@ -339,7 +359,10 @@ Usage:
   cordumctl generate-certs [--dir ./certs] [--force] [--days 365]
   cordumctl dev [--file docker-compose.yml] [--build] [--detach]
   cordumctl up [--file docker-compose.yml] [--build] [--detach]
-  cordumctl status
+  cordumctl status [--json]
+  cordumctl license install <path>
+  cordumctl license info [--json]
+  cordumctl auth sso status [--json]
   cordumctl workflow create --file workflow.json
   cordumctl workflow delete <workflow_id>
   cordumctl run start <workflow_id> [--input input.json|'{...}'|-] [--dry-run] [--debug]
@@ -347,10 +370,25 @@ Usage:
   cordumctl run delete <run_id>
   cordumctl run timeline <run_id>
   cordumctl approval job <job_id> (--approve|--reject)
+  cordumctl approval repair <job_id> [--apply] [--note "text"]
   cordumctl dlq retry <job_id>
   cordumctl job submit --topic job.example --prompt \"hello\" [--input input.json]
   cordumctl job status <job_id>
   cordumctl job logs <job_id>
+  cordumctl pool list
+  cordumctl pool get <name>
+  cordumctl pool create <name> [--description text] [--requires cap1,cap2]
+  cordumctl pool update <name> [--description text] [--requires cap1,cap2]
+  cordumctl pool delete <name> [--force]
+  cordumctl pool drain <name> [--timeout 300]
+  cordumctl pool topic add <pool> <topic>
+  cordumctl pool topic remove <pool> <topic>
+  cordumctl topic list
+  cordumctl topic create <name> --pool <pool> [--input-schema id] [--output-schema id] [--pack-id id]
+  cordumctl topic delete <name>
+  cordumctl worker credential list
+  cordumctl worker credential create --worker-id <worker_id> [--allowed-pools pool1,pool2] [--allowed-topics topic1,topic2]
+  cordumctl worker credential revoke --worker-id <worker_id>
   cordumctl pack install <path|url> [--upgrade] [--inactive] [--dry-run]
   cordumctl pack uninstall <pack_id> [--purge]
   cordumctl pack list
@@ -361,6 +399,7 @@ Usage:
 Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)
   --api-key    API key (default from CORDUM_API_KEY)
+  --tenant     Tenant ID (default from CORDUM_TENANT_ID)
   --cacert     CA certificate for TLS verification (also: CORDUM_TLS_CA)
   --insecure   Skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1|true)
 `)

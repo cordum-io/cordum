@@ -8,11 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordum/cordum/core/licensing"
 	wf "github.com/cordum/cordum/core/workflow"
 )
 
 func TestWorkflowLifecycleHandlers(t *testing.T) {
 	s, bus, _ := newTestGateway(t)
+	setTestEntitlements(t, s, licensing.PlanTeam, nil)
 	s.workflowEng = wf.NewEngine(s.workflowStore, bus).
 		WithMemory(s.memStore).
 		WithConfig(s.configSvc).

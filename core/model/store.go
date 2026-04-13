@@ -7,6 +7,30 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
+// ApprovalRecord captures approval audit metadata plus explicit lifecycle state.
+type ApprovalRecord struct {
+	ApprovedBy     string                `json:"approved_by,omitempty"`
+	ApprovedRole   string                `json:"approved_role,omitempty"`
+	ApprovedAt     int64                 `json:"approved_at,omitempty"`
+	Reason         string                `json:"reason,omitempty"`
+	Note           string                `json:"note,omitempty"`
+	PolicySnapshot string                `json:"policy_snapshot,omitempty"`
+	JobHash        string                `json:"job_hash,omitempty"`
+	Status         ApprovalStatus        `json:"status,omitempty"`
+	Actionability  ApprovalActionability `json:"actionability,omitempty"`
+	Revision       int64                 `json:"revision,omitempty"`
+	Decision       ApprovalDecision      `json:"decision,omitempty"`
+	PublishStatus  ApprovalPublishStatus `json:"publish_status,omitempty"`
+	PublishTarget  ApprovalPublishTarget `json:"publish_target,omitempty"`
+	PublishedAt    int64                 `json:"published_at,omitempty"`
+}
+
+// HasPendingPublish reports whether the approval still has durable side effects
+// that need replay after the decision commit.
+func (r ApprovalRecord) HasPendingPublish() bool {
+	return r.PublishStatus == ApprovalPublishPending && r.PublishTarget != ""
+}
+
 // JobStore tracks job state and result pointers.
 type JobStore interface {
 	SetState(ctx context.Context, jobID string, state JobState) error

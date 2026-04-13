@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isRunVisibilityActive, isRunVisibilityTerminal, toRunVisibilityState } from "../lib/runVisibility";
+import {
+  isRunVisibilityActive,
+  isRunVisibilityTerminal,
+  toRunVisibilityState,
+} from "../lib/runVisibility";
+import { resolveRunChatBanner } from "./RunDetailPage";
 
 /**
  * Tests for RunDetailPage logic: skipped step detection, live vs historical indicator.
@@ -16,8 +21,10 @@ function isTerminal(status: string): boolean {
 function stepClasses(status: string): string[] {
   const classes: string[] = [];
   if (status === "pending") classes.push("text-muted-foreground");
-  if (status === "skipped") classes.push("text-muted-foreground", "line-through", "opacity-50");
-  if (status !== "pending" && status !== "skipped") classes.push("text-foreground");
+  if (status === "skipped")
+    classes.push("text-muted-foreground", "line-through", "opacity-50");
+  if (status !== "pending" && status !== "skipped")
+    classes.push("text-foreground");
   return classes;
 }
 
@@ -87,25 +94,61 @@ describe("Live vs historical indicator", () => {
   });
 });
 
+describe("resolveRunChatBanner", () => {
+  it("shows a timeline fallback warning when chat fails but timeline data exists", () => {
+    expect(resolveRunChatBanner({ status: 500 }, true)).toEqual({
+      tone: "warning",
+      message: "Chat unavailable, showing timeline events instead.",
+    });
+  });
+
+  it("shows auth guidance for 401/403 chat failures without fallback data", () => {
+    expect(resolveRunChatBanner({ status: 401 }, false)).toEqual({
+      tone: "danger",
+      message: "Chat unavailable — check your API key or permissions",
+    });
+    expect(resolveRunChatBanner({ status: 403 }, false)).toEqual({
+      tone: "danger",
+      message: "Chat unavailable — check your API key or permissions",
+    });
+  });
+
+  it("shows the non-error fallback banner when only timeline events are available", () => {
+    expect(resolveRunChatBanner(null, true)).toEqual({
+      tone: "warning",
+      message: "Showing timeline events (no chat messages)",
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // mapStepStatus — waiting must NOT collapse to running
 // ---------------------------------------------------------------------------
 
 function mapStepStatus(status?: string): string {
   switch (status) {
-    case "completed": return "succeeded";
-    case "succeeded": return "succeeded";
-    case "queued": return "pending";
-    case "running": return "running";
-    case "waiting": return "waiting";
+    case "completed":
+      return "succeeded";
+    case "succeeded":
+      return "succeeded";
+    case "queued":
+      return "pending";
+    case "running":
+      return "running";
+    case "waiting":
+      return "waiting";
     case "quarantined":
-    case "output_quarantined": return "quarantined";
+    case "output_quarantined":
+      return "quarantined";
     case "denied":
     case "blocked":
     case "failed":
-    case "timed_out": return "failed";
-    case "cancelled": return "skipped";
-    default: return "pending";
+    case "timed_out":
+      return "failed";
+    case "cancelled":
+      return "skipped";
+    default:
+      return "pending";
   }
 }
 

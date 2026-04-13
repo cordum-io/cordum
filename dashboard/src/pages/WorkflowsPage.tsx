@@ -8,6 +8,8 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { get } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { TierLimitBar } from "@/components/TierLimitBar";
+import { UpgradePrompt } from "@/components/UpgradePrompt";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -15,6 +17,7 @@ import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Search, Plus, Workflow, RefreshCw, Eye, GitBranch } from "lucide-react";
 import { formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { useLicenseUsage } from "@/hooks/useLicense";
 
 interface WorkflowSummary {
   id: string;
@@ -31,6 +34,7 @@ interface WorkflowSummary {
 export default function WorkflowsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const { data: licenseUsage } = useLicenseUsage();
 
   const { data: workflows, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["workflows"],
@@ -64,6 +68,9 @@ export default function WorkflowsPage() {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load workflows"} onRetry={() => void refetch()} />;
   }
 
+  const activeWorkflowMetric = licenseUsage?.usage?.activeWorkflows;
+  const workflowStepMetric = licenseUsage?.usage?.workflowSteps;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -83,6 +90,28 @@ export default function WorkflowsPage() {
           </div>
         }
       />
+
+      {(activeWorkflowMetric || workflowStepMetric) && (
+        <div className="space-y-3">
+          <div className="grid gap-4 xl:grid-cols-2">
+            {activeWorkflowMetric && (
+              <TierLimitBar
+                label="Active workflows"
+                metric={activeWorkflowMetric}
+                detail="Concurrent workflow runs count against this ceiling."
+              />
+            )}
+            {workflowStepMetric && (
+              <TierLimitBar
+                label="Workflow steps / run"
+                metric={workflowStepMetric}
+                detail={`Approval mode: ${(licenseUsage?.usage?.approvalMode.allowed ?? "—").toString()}`}
+              />
+            )}
+          </div>
+          <UpgradePrompt label="Active workflows" metric={activeWorkflowMetric} plan={licenseUsage?.plan} />
+        </div>
+      )}
 
       {/* Search — showcase style */}
       <div className="relative max-w-sm">

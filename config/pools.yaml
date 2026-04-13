@@ -1,6 +1,6 @@
 topics:
   job.default: default
-  job.demo-mock-bank.transfer: megacorp-banking
+  job.demo-mock-bank.transfer: demo-mock-bank
   job.demo-guardrails.write: demo-guardrails
   job.demo-guardrails.safe: demo-guardrails
   job.demo-guardrails.dangerous: demo-guardrails
@@ -41,6 +41,8 @@ topics:
   job.b2b.vendor-email: b2b-vendor-email
 pools:
   default:
+    requires: []
+  demo-mock-bank:
     requires: []
   megacorp-banking:
     requires: []

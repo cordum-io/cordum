@@ -31,32 +31,32 @@ func TestParseBoolEnv(t *testing.T) {
 func TestGetEnvIntDefault(t *testing.T) {
 	// No env var set — should return default.
 	t.Setenv(envRedisPoolSize, "")
-	assert.Equal(t, 20, getEnvInt(envRedisPoolSize, 20))
+	assert.Equal(t, 20, getEnvIntAtLeast(envRedisPoolSize, 20, 1))
 }
 
 func TestGetEnvIntCustomValue(t *testing.T) {
 	t.Setenv(envRedisPoolSize, "50")
-	assert.Equal(t, 50, getEnvInt(envRedisPoolSize, 20))
+	assert.Equal(t, 50, getEnvIntAtLeast(envRedisPoolSize, 20, 1))
 }
 
 func TestGetEnvIntBadValue(t *testing.T) {
 	t.Setenv(envRedisPoolSize, "abc")
-	assert.Equal(t, 20, getEnvInt(envRedisPoolSize, 20))
+	assert.Equal(t, 20, getEnvIntAtLeast(envRedisPoolSize, 20, 1))
 }
 
 func TestGetEnvIntZeroFallsBack(t *testing.T) {
 	t.Setenv(envRedisPoolSize, "0")
-	assert.Equal(t, 20, getEnvInt(envRedisPoolSize, 20))
+	assert.Equal(t, 20, getEnvIntAtLeast(envRedisPoolSize, 20, 1))
 }
 
 func TestGetEnvIntNegativeFallsBack(t *testing.T) {
 	t.Setenv(envRedisPoolSize, "-5")
-	assert.Equal(t, 20, getEnvInt(envRedisPoolSize, 20))
+	assert.Equal(t, 20, getEnvIntAtLeast(envRedisPoolSize, 20, 1))
 }
 
 func TestRedisMinIdleFromEnv(t *testing.T) {
 	t.Setenv(envRedisMinIdleConns, "10")
-	assert.Equal(t, 10, getEnvInt(envRedisMinIdleConns, 5))
+	assert.Equal(t, 10, getEnvIntAtLeast(envRedisMinIdleConns, 5, 0))
 }
 
 func TestTLSConfigFromEnvErrors(t *testing.T) {

@@ -86,16 +86,21 @@ type apiKeyMeta struct {
 
 // AuthConfig describes authentication capabilities for the dashboard.
 type AuthConfig struct {
-	PasswordEnabled  bool   `json:"password_enabled"`
-	UserAuthEnabled  bool   `json:"user_auth_enabled"`
-	SAMLEnabled      bool   `json:"saml_enabled"`
-	SAMLEnterprise   bool   `json:"saml_enterprise"`
-	SAMLLoginURL     string `json:"saml_login_url,omitempty"`
-	SAMLMetadataURL  string `json:"saml_metadata_url,omitempty"`
-	SessionTTL       string `json:"session_ttl"`
-	RequireRBAC      bool   `json:"require_rbac"`
-	RequirePrincipal bool   `json:"require_principal"`
-	DefaultTenant    string `json:"default_tenant"`
-	OIDCEnabled      bool   `json:"oidc_enabled,omitempty"`
-	OIDCIssuer       string `json:"oidc_issuer,omitempty"`
+	PasswordEnabled        bool     `json:"password_enabled"`
+	UserAuthEnabled        bool     `json:"user_auth_enabled"`
+	SAMLEnabled            bool     `json:"saml_enabled"`
+	SAMLEnterprise         bool     `json:"saml_enterprise"`
+	SAMLLoginURL           string   `json:"saml_login_url,omitempty"`
+	SAMLMetadataURL        string   `json:"saml_metadata_url,omitempty"`
+	SessionTTL             string   `json:"session_ttl"`
+	RequireRBAC            bool     `json:"require_rbac"`
+	RequirePrincipal       bool     `json:"require_principal"`
+	DefaultTenant          string   `json:"default_tenant"`
+	OIDCEnabled            bool     `json:"oidc_enabled,omitempty"`
+	OIDCIssuer             string   `json:"oidc_issuer,omitempty"`
+	OIDCLoginURL           string   `json:"oidc_login_url,omitempty"`
+	OIDCClientID           string   `json:"oidc_client_id,omitempty"`
+	OIDCRedirectURI        string   `json:"oidc_redirect_uri,omitempty"`
+	OIDCScopes             []string `json:"oidc_scopes,omitempty"`
+	OIDCClientSecretMasked string   `json:"oidc_client_secret_masked,omitempty"`
 }
