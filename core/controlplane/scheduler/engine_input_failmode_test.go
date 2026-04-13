@@ -5,8 +5,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/stretchr/testify/assert"
 )
 
 // inputFailOpenSpy tracks IncInputFailOpen calls alongside all other Metrics methods.
@@ -169,4 +171,63 @@ func TestWithInputFailMode_InvalidValue(t *testing.T) {
 	if spy.getFailOpenCount("sys.unavailable") != 0 {
 		t.Fatal("IncInputFailOpen should NOT be called with invalid fail mode")
 	}
+}
+
+// TestInputFailMode_PerTenant verifies that per-tenant fail mode overrides
+// work correctly through the engine's processJob path.
+func TestInputFailMode_PerTenant(t *testing.T) {
+	spy := newInputFailOpenSpy()
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), spy)
+
+	// Set global fail mode to closed.
+	engine.WithInputFailMode("closed")
+
+	// Configure a resolver where "prod" is fail-closed, "sandbox" is fail-open.
+	provider := newMockFailModeProvider()
+	provider.setTenantConfig("prod", "closed", "closed")
+	provider.setTenantConfig("sandbox", "open", "open")
+
+	resolver := NewFailModeResolver(provider, 1*time.Hour)
+	resolver.SetSystemInputMode("closed")
+	resolver.RefreshTenant(context.Background(), "prod")
+	resolver.RefreshTenant(context.Background(), "sandbox")
+	engine.WithFailModeResolver(resolver)
+
+	// Tenant "prod" should be fail-closed: safety unavailable → retryable error.
+	reqProd := &pb.JobRequest{
+		JobId:    "job-prod-1",
+		Topic:    "sys.unavailable",
+		TenantId: "prod",
+	}
+	err := engine.processJob(context.Background(), reqProd, "trace-prod-1")
+	assert.NotNil(t, err, "prod tenant should get retryable error (fail-closed)")
+	retryErr, ok := err.(*retryableError)
+	assert.True(t, ok, "expected retryableError for prod")
+	assert.Contains(t, retryErr.Error(), "safety unavailable")
+
+	assert.Equal(t, 0, spy.getFailOpenCount("sys.unavailable"),
+		"IncInputFailOpen should NOT be called for fail-closed tenant")
+	assert.Equal(t, 1, spy.getUnavailableCount("sys.unavailable"),
+		"IncSafetyUnavailable should be called once for prod")
+
+	// Tenant "sandbox" should be fail-open: safety unavailable → job allowed through.
+	reqSandbox := &pb.JobRequest{
+		JobId:    "job-sandbox-1",
+		Topic:    "sys.unavailable",
+		TenantId: "sandbox",
+	}
+	err = engine.processJob(context.Background(), reqSandbox, "trace-sandbox-1")
+	if err != nil {
+		// A retryable error from no-workers is acceptable — the key check is
+		// that we did NOT get a "safety unavailable" retry.
+		if retryErr, ok := err.(*retryableError); ok {
+			assert.NotContains(t, retryErr.Error(), "safety unavailable",
+				"fail-open should NOT retry for safety unavailable")
+		}
+	}
+
+	assert.Equal(t, 1, spy.getFailOpenCount("sys.unavailable"),
+		"IncInputFailOpen should be called once for sandbox")
+	assert.Equal(t, 2, spy.getUnavailableCount("sys.unavailable"),
+		"IncSafetyUnavailable should be called twice total")
 }

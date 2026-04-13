@@ -82,6 +82,7 @@ type Engine struct {
 	saga                    *SagaManager
 	entitlements            *licensing.EntitlementResolver
 	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
+	failModeResolver        *FailModeResolver
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
 	activeHandlers          atomic.Int64
@@ -411,6 +412,39 @@ func (e *Engine) WithInputFailMode(mode string) *Engine {
 
 func (e *Engine) isInputFailOpen() bool {
 	return e.inputFailOpen.Load()
+}
+
+// WithFailModeResolver wires a per-tenant fail mode resolver. When set, the
+// resolver's per-tenant overrides take precedence over the global atomic flags.
+func (e *Engine) WithFailModeResolver(r *FailModeResolver) *Engine {
+	e.failModeResolver = r
+	return e
+}
+
+// FailModeResolver returns the per-tenant fail mode resolver, or nil if not
+// configured. Used by the config reload loop to update system defaults.
+func (e *Engine) FailModeResolver() *FailModeResolver {
+	return e.failModeResolver
+}
+
+// isInputFailOpenForTenant returns the input fail mode for a specific tenant.
+// If a FailModeResolver is configured, the per-tenant override is used.
+// Otherwise, the global atomic flag is returned.
+func (e *Engine) isInputFailOpenForTenant(orgID string) bool {
+	if e.failModeResolver != nil {
+		return e.failModeResolver.InputFailOpen(orgID)
+	}
+	return e.inputFailOpen.Load()
+}
+
+// isAsyncFailOpenForTenant returns the async output fail mode for a specific
+// tenant. If a FailModeResolver is configured, the per-tenant override is used.
+// Otherwise, the global atomic flag is returned.
+func (e *Engine) isAsyncFailOpenForTenant(orgID string) bool {
+	if e.failModeResolver != nil {
+		return e.failModeResolver.AsyncFailOpen(orgID)
+	}
+	return e.asyncFailOpen.Load()
 }
 
 // isApprovalGateTopic returns true if the topic is a synthetic approval gate
@@ -1068,7 +1102,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		if e.metrics != nil {
 			e.metrics.IncSafetyUnavailable(topic)
 		}
-		if e.isInputFailOpen() {
+		if e.isInputFailOpenForTenant(req.GetTenantId()) {
 			slog.Warn("safety kernel unavailable — FAIL-OPEN: allowing job",
 				"job_id", jobID, "topic", topic, "reason", record.Reason,
 				"trace_id", traceID, "input_fail_mode", "open")
@@ -1873,7 +1907,7 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 		e.observeOutputEvalDuration(topic, elapsed.Seconds())
 		if err != nil {
 			e.incAsyncOutputTimeout(topic)
-			if e.isAsyncFailOpen() {
+			if e.isAsyncFailOpenForTenant(reqCopy.GetTenantId()) {
 				slog.Warn("async output check failed, fail-open: allowing", "job_id", jobID, "error", err)
 				e.incOutputPolicySkipped(topic)
 				return

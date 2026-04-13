@@ -327,6 +327,14 @@ func reloadFailModes(ctx context.Context, svc *configsvc.Service, engine *schedu
 		engine.WithOutputSafetyEnabled(enabled)
 		slog.Info("scheduler output policy enabled updated", "enabled", enabled, "trigger", trigger)
 	}
+	if r := engine.FailModeResolver(); r != nil {
+		if mode, ok := schedulerCfg["input_fail_mode"].(string); ok {
+			r.SetSystemInputMode(mode)
+		}
+		if mode, ok := schedulerCfg["output_fail_mode"].(string); ok {
+			r.SetSystemAsyncMode(mode)
+		}
+	}
 }
 
 func buildRouting(pools *config.PoolsConfig) scheduler.PoolRouting {

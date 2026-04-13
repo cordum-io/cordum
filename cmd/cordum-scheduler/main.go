@@ -368,6 +368,10 @@ func main() {
 		engine.WithInputFailMode(fm)
 	}
 	engine.WithCounterClient(jobStore.Client())
+	if configSvc != nil {
+		resolver := scheduler.NewFailModeResolver(configSvc, 30*time.Second)
+		engine.WithFailModeResolver(resolver)
+	}
 
 	if err := engine.Start(); err != nil {
 		slog.Error("failed to start scheduler engine", "error", err)
