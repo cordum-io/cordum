@@ -705,6 +705,94 @@ func (s *RedisJobStore) ListRecentJobsByScore(ctx context.Context, cursor int64,
 	return s.buildJobRecords(ctx, members)
 }
 
+// ListRecentJobsByTimeRange returns job IDs from the job:recent sorted set whose
+// scores fall within [fromMicros, toMicros]. Results are paginated via cursor
+// (offset) and limit. Scores are stored as microsecond timestamps.
+func (s *RedisJobStore) ListRecentJobsByTimeRange(ctx context.Context, fromMicros, toMicros, cursor, limit int64) ([]string, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	members, err := s.client.ZRangeByScore(ctx, "job:recent", &redis.ZRangeBy{
+		Min:    fmt.Sprintf("%d", fromMicros),
+		Max:    fmt.Sprintf("%d", toMicros),
+		Offset: cursor,
+		Count:  limit,
+	}).Result()
+	if err != nil {
+		return nil, fmt.Errorf("job store list recent jobs by time range: %w", err)
+	}
+	return members, nil
+}
+
+// GetJobRequests batch-fetches serialized job request payloads for the given IDs
+// using a Redis pipeline. Returns raw bytes keyed by job ID; IDs whose keys have
+// expired or are missing are silently omitted.
+func (s *RedisJobStore) GetJobRequests(ctx context.Context, jobIDs []string) (map[string][]byte, error) {
+	if len(jobIDs) == 0 {
+		return map[string][]byte{}, nil
+	}
+	pipe := s.client.Pipeline()
+	cmds := make(map[string]*redis.StringCmd, len(jobIDs))
+	for _, id := range jobIDs {
+		if id == "" {
+			continue
+		}
+		cmds[id] = pipe.Get(ctx, jobRequestKey(id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("job store get job requests pipeline: %w", err)
+	}
+	out := make(map[string][]byte, len(cmds))
+	for id, cmd := range cmds {
+		data, err := cmd.Bytes()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				continue
+			}
+			slog.Warn("job-store: pipeline GET job request failed", "job_id", id, "error", err)
+			continue
+		}
+		out[id] = data
+	}
+	return out, nil
+}
+
+// GetJobMetas batch-fetches job metadata hashes for the given IDs using a Redis
+// pipeline. Returns a map of job ID to field map. Missing or expired keys are
+// silently omitted.
+func (s *RedisJobStore) GetJobMetas(ctx context.Context, jobIDs []string) (map[string]map[string]string, error) {
+	if len(jobIDs) == 0 {
+		return map[string]map[string]string{}, nil
+	}
+	pipe := s.client.Pipeline()
+	cmds := make(map[string]*redis.MapStringStringCmd, len(jobIDs))
+	for _, id := range jobIDs {
+		if id == "" {
+			continue
+		}
+		cmds[id] = pipe.HGetAll(ctx, jobMetaKey(id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("job store get job metas pipeline: %w", err)
+	}
+	out := make(map[string]map[string]string, len(cmds))
+	for id, cmd := range cmds {
+		fields, err := cmd.Result()
+		if err != nil {
+			slog.Warn("job-store: pipeline HGETALL job meta failed", "job_id", id, "error", err)
+			continue
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		out[id] = fields
+	}
+	return out, nil
+}
+
 func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) ([]model.JobRecord, error) {
 	out := make([]model.JobRecord, 0, len(members))
 	if len(members) == 0 {

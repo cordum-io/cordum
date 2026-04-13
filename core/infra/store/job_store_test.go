@@ -2106,3 +2106,198 @@ func TestBuildJobRecordsPipelineError(t *testing.T) {
 		t.Fatal("expected error when Redis is down, got nil")
 	}
 }
+
+func TestListRecentJobsByTimeRange(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+
+	// Insert three jobs with known timestamps via SetState which adds to job:recent.
+	if err := store.SetState(ctx, "tr-job-1", model.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := store.SetState(ctx, "tr-job-2", model.JobStateDispatched); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := store.SetState(ctx, "tr-job-3", model.JobStateRunning); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	// Query the full time range — should get all 3 jobs.
+	from := time.Now().Add(-1 * time.Hour).UnixMicro()
+	to := time.Now().Add(1 * time.Hour).UnixMicro()
+	ids, err := store.ListRecentJobsByTimeRange(ctx, from, to, 0, 100)
+	if err != nil {
+		t.Fatalf("ListRecentJobsByTimeRange: %v", err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 jobs, got %d: %v", len(ids), ids)
+	}
+
+	// Query with limit=2 should return first 2 in score order.
+	ids, err = store.ListRecentJobsByTimeRange(ctx, from, to, 0, 2)
+	if err != nil {
+		t.Fatalf("ListRecentJobsByTimeRange with limit: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 jobs, got %d", len(ids))
+	}
+
+	// Query with cursor=2 should return the remaining 1.
+	ids, err = store.ListRecentJobsByTimeRange(ctx, from, to, 2, 100)
+	if err != nil {
+		t.Fatalf("ListRecentJobsByTimeRange with cursor: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 job at cursor=2, got %d", len(ids))
+	}
+
+	// Query a future time range — should return 0 jobs.
+	futureFrom := time.Now().Add(1 * time.Hour).UnixMicro()
+	futureTo := time.Now().Add(2 * time.Hour).UnixMicro()
+	ids, err = store.ListRecentJobsByTimeRange(ctx, futureFrom, futureTo, 0, 100)
+	if err != nil {
+		t.Fatalf("ListRecentJobsByTimeRange future range: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected 0 jobs in future range, got %d", len(ids))
+	}
+}
+
+func TestGetJobRequests(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+
+	// Store two job requests.
+	req1 := &pb.JobRequest{JobId: "req-job-1", Topic: "job.test", TenantId: "tenant-a"}
+	req2 := &pb.JobRequest{JobId: "req-job-2", Topic: "job.other", TenantId: "tenant-b"}
+	if err := store.SetJobRequest(ctx, req1); err != nil {
+		t.Fatalf("set job request 1: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req2); err != nil {
+		t.Fatalf("set job request 2: %v", err)
+	}
+
+	// Batch fetch both plus a missing key.
+	result, err := store.GetJobRequests(ctx, []string{"req-job-1", "req-job-2", "req-job-missing"})
+	if err != nil {
+		t.Fatalf("GetJobRequests: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	if _, ok := result["req-job-1"]; !ok {
+		t.Fatal("missing req-job-1 in results")
+	}
+	if _, ok := result["req-job-2"]; !ok {
+		t.Fatal("missing req-job-2 in results")
+	}
+	if _, ok := result["req-job-missing"]; ok {
+		t.Fatal("expected missing key to be absent")
+	}
+
+	// Empty input.
+	result, err = store.GetJobRequests(ctx, nil)
+	if err != nil {
+		t.Fatalf("GetJobRequests empty: %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected 0 results for empty input, got %d", len(result))
+	}
+}
+
+func TestGetJobMetas(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+
+	// Store two jobs' metadata via SetJobMeta.
+	req1 := &pb.JobRequest{
+		JobId:    "meta-job-1",
+		Topic:    "job.alpha",
+		TenantId: "t1",
+		Meta:     &pb.JobMetadata{TenantId: "t1", ActorId: "actor-1"},
+	}
+	req2 := &pb.JobRequest{
+		JobId:    "meta-job-2",
+		Topic:    "job.beta",
+		TenantId: "t2",
+		Meta:     &pb.JobMetadata{TenantId: "t2", Capability: "cap-a"},
+	}
+	if err := store.SetJobMeta(ctx, req1); err != nil {
+		t.Fatalf("set job meta 1: %v", err)
+	}
+	if err := store.SetJobMeta(ctx, req2); err != nil {
+		t.Fatalf("set job meta 2: %v", err)
+	}
+
+	// Batch fetch.
+	result, err := store.GetJobMetas(ctx, []string{"meta-job-1", "meta-job-2", "meta-job-missing"})
+	if err != nil {
+		t.Fatalf("GetJobMetas: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	m1, ok := result["meta-job-1"]
+	if !ok {
+		t.Fatal("missing meta-job-1")
+	}
+	if m1["topic"] != "job.alpha" {
+		t.Fatalf("expected topic job.alpha, got %s", m1["topic"])
+	}
+	if m1["tenant"] != "t1" {
+		t.Fatalf("expected tenant t1, got %s", m1["tenant"])
+	}
+
+	m2, ok := result["meta-job-2"]
+	if !ok {
+		t.Fatal("missing meta-job-2")
+	}
+	if m2["topic"] != "job.beta" {
+		t.Fatalf("expected topic job.beta, got %s", m2["topic"])
+	}
+	if m2["capability"] != "cap-a" {
+		t.Fatalf("expected capability cap-a, got %s", m2["capability"])
+	}
+
+	if _, ok := result["meta-job-missing"]; ok {
+		t.Fatal("expected missing key to be absent")
+	}
+
+	// Empty input.
+	result, err = store.GetJobMetas(ctx, nil)
+	if err != nil {
+		t.Fatalf("GetJobMetas empty: %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected 0 results for empty input, got %d", len(result))
+	}
+}

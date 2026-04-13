@@ -914,6 +914,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/policy/publish", s.instrumented("/api/v1/policy/publish", s.handlePublishPolicyBundles))
 	mux.HandleFunc("POST /api/v1/policy/rollback", s.instrumented("/api/v1/policy/rollback", s.handleRollbackPolicyBundles))
 	mux.HandleFunc("GET /api/v1/policy/audit", s.instrumented("/api/v1/policy/audit", s.handleListPolicyAudit))
+	mux.HandleFunc("POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
 
 	// 12.5 MCP (HTTP/SSE) routes
 	if err := s.registerMCPRoutes(mux); err != nil {
