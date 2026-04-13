@@ -248,11 +248,7 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 		collected int
 	)
 
-	for {
-		if collected >= maxJobs {
-			break
-		}
-
+	for collected < maxJobs {
 		jobIDs, err := s.jobStore.ListRecentJobsByTimeRange(ctx, fromMicros, toMicros, cursor, int64(replayBatchSize))
 		if err != nil {
 			writeInternalError(w, r, "policy replay list jobs", err)
