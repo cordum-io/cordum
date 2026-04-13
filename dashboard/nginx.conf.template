@@ -68,7 +68,7 @@ server {
     proxy_pass $ws_upstream;
     proxy_http_version 1.1;
     proxy_ssl_server_name on;
-    proxy_ssl_verify ${CORDUM_PROXY_SSL_VERIFY};
+    proxy_ssl_verify off;
     ${CORDUM_PROXY_SSL_TRUSTED_CA}
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
