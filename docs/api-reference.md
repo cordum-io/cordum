@@ -1463,7 +1463,7 @@ Note: There are no `GET /api/v1/approvals/{id}` or `PUT /api/v1/approvals/{id}` 
   "count": 1,
   "limit": 20,
   "updated_at": "2026-04-11T20:00:00Z",
-  "upgrade_url": "https://cordum.io/pricing"
+  "upgrade_url": ""
 }
 ```
 

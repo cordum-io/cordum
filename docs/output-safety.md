@@ -72,7 +72,16 @@ For succeeded jobs, scheduler output safety handling is:
 - `REDACT`: keep success state but prefer `redacted_ptr` when returned.
 - `ALLOW`: release result as normal.
 
-Output safety failures are fail-open in scheduler hot path (result flow continues, metric counted as skipped).
+Output safety failures default to **fail-closed** (quarantine on error). The behavior is configurable:
+
+| Mode | Behavior | When to use |
+|------|----------|-------------|
+| `closed` (default) | Quarantine job on checker error/timeout | Production, regulated, high-risk tenants |
+| `open` | Allow result through, count as skipped | Development, low-risk tenants |
+
+Configure via environment variable `OUTPUT_POLICY_FAIL_MODE` at scheduler startup, or at runtime through the config service (`PUT /api/v1/config` with `{"scheduler":{"output_fail_mode":"open"}}`). Runtime changes are hot-reloaded every 30 seconds.
+
+A Redis-backed circuit breaker (3 failures → open for 30s → half-open probe) protects against cascading failures when the output safety checker is persistently unavailable.
 
 ## Dashboard Data Shape
 `GET /api/v1/jobs/{id}` now includes optional:
@@ -93,8 +102,9 @@ Scheduler exports output safety metrics:
 - `cordum_output_check_latency_seconds{phase="sync|async"}`
 
 ## Failure Modes
-- Checker unavailable/error: scheduler logs error, marks check skipped.
-- Missing request context for result: check skipped.
+- Checker unavailable/error: behavior depends on `output_fail_mode` setting. Default (`closed`) quarantines the job; `open` allows the result and increments `cordum_output_policy_skipped_total`.
+- Circuit breaker open (3+ consecutive failures): all output checks are blocked until the breaker transitions to half-open after 30 seconds.
+- Missing request context for result: check skipped (metadata unavailable, not a checker failure).
 - Corrupt stored output safety payload: gateway/store tolerate and return empty record.
 
 ## Performance Notes

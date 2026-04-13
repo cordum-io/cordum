@@ -1,6 +1,6 @@
 # Cordum Roadmap
 
-> **Last Updated:** February 20, 2026
+> **Last Updated:** April 13, 2026
 
 This roadmap outlines our vision for Cordum's evolution. Priorities may shift based on community feedback and production learnings.
 

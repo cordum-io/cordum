@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://cordum.io/_next/image?url=%2Flogo.png&w=1200&q=75" alt="Cordum" width="200"/>
+  <img src="docs/assets/logo.png" alt="Cordum" width="200"/>
 </p>
 
 <h1 align="center">Cordum</h1>
@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <a href="https://cordum.io">Website</a> · <a href="https://cordum.io/docs">Docs</a> · <a href="https://cordum.io/blog">Blog</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a> · <a href="https://github.com/cordum-io/cordum/discussions">Discussions</a>
+  <a href="https://discord.gg/nvHzPCcWWt">Discord</a> · <a href="https://github.com/cordum-io/cordum/discussions">Discussions</a> · <a href="docs/">Docs</a>
 </p>
 
 ---
@@ -333,23 +333,23 @@ Extend Cordum with [30+ integration packs](https://github.com/cordum-io/cordum-p
 
 | Pack | Category | Description |
 |------|----------|-------------|
-| [Slack](https://cordum.io/integrations/slack) | Communication | Approval notifications and agent alerts |
-| [GitHub](https://cordum.io/integrations/github) | DevOps | Govern agent actions on repositories |
-| [AWS](https://cordum.io/integrations/aws) | Cloud | Policy-gated cloud operations |
-| [Kubernetes](https://cordum.io/integrations/kubernetes-triage) | DevOps | Governed incident remediation |
-| [Terraform](https://cordum.io/integrations/terraform) | DevOps | Pre-apply governance for IaC |
-| [Datadog](https://cordum.io/integrations/datadog) | Monitoring | Alert-triggered governed workflows |
-| [LangChain](https://cordum.io/integrations/langchain) | AI Framework | Governance for LangChain tool calls |
-| [MCP Bridge](https://cordum.io/integrations/mcp-bridge) | AI Framework | Gateway governance for MCP tools |
+| Slack | Communication | Approval notifications and agent alerts |
+| GitHub | DevOps | Govern agent actions on repositories |
+| AWS | Cloud | Policy-gated cloud operations |
+| Kubernetes | DevOps | Governed incident remediation |
+| Terraform | DevOps | Pre-apply governance for IaC |
+| Datadog | Monitoring | Alert-triggered governed workflows |
+| LangChain | AI Framework | Governance for LangChain tool calls |
+| MCP Bridge | AI Framework | Gateway governance for MCP tools |
 
-[Browse all integrations →](https://cordum.io/integrations)
+[Browse all integrations →](https://github.com/cordum-io/cordum-packs)
 
 ## Community
 
 - **Discord:** [Join the conversation](https://discord.gg/nvHzPCcWWt)
 - **GitHub Discussions:** [Ask questions](https://github.com/cordum-io/cordum/discussions)
 - **Twitter/X:** [@Cordum_io](https://x.com/Cordum_io)
-- **Email:** [admin@cordum.io](mailto:admin@cordum.io)
+- **Email:** See [SECURITY.md](SECURITY.md) for contact details
 
 ## Enterprise
 
@@ -359,7 +359,7 @@ Cordum Enterprise adds:
 - SIEM export
 - Priority support
 
-[Contact us](mailto:admin@cordum.io) for pricing.
+See [cordum-enterprise](https://github.com/cordum-io/cordum-enterprise) for details.
 
 ## Governance
 
@@ -388,7 +388,7 @@ See [CHANGELOG.md](CHANGELOG.md) for a detailed log of all changes by version.
 | Framework agnostic | ✅ Any via CAP | ❌ Python only | ❌ NVIDIA stack | ❌ |
 | MCP governance | ✅ Bridge + Gateway | ❌ | ❌ | ❌ |
 
-[See detailed comparisons →](https://cordum.io/compare/ai-governance-platforms)
+[See detailed comparisons →](docs/comparison.md)
 
 ## Contributing
 
@@ -421,7 +421,7 @@ See [LICENSE](LICENSE) for full terms.
 
 <p align="center">
   <strong>Ready to govern your AI agents?</strong><br/>
-  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://cordum.io/integrations">Integrations</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a>
+  <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://github.com/cordum-io/cordum-packs">Integrations</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a>
 </p>
 
 <p align="center">
