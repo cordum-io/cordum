@@ -50,6 +50,15 @@ function bindEvents() {
     appendChat("client", text);
     handleChatMessage(text);
   });
+
+  const resetBtn = document.getElementById("resetConfig");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      localStorage.removeItem(STORAGE_KEY);
+      location.reload();
+    });
+  }
 }
 
 function appendChat(role, text) {
