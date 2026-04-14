@@ -1105,21 +1105,10 @@ func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
 		wsClientBufSz: 8,
 		auth:          provider,
 	}
-	// Signal shutdown before restoring globals so in-flight goroutines
-	// exit before the package-level vars are changed back.
-	t.Cleanup(func() {
-		close(shutdownCh)
-		time.Sleep(20 * time.Millisecond)
-		wsPingInterval = prevPingInterval
-		wsPongTimeout = prevPongTimeout
-		wsRevalidateInterval = prevRevalidateInterval
-		wsRevalidateRetryDelay = prevRetryDelay
-	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
 	srv := newIPv4Server(t, apiKeyMiddleware(provider, mux))
-	defer srv.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
 	token := base64.RawURLEncoding.EncodeToString([]byte("live-key"))
@@ -1128,7 +1117,18 @@ func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("websocket dial failed: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
+	// Cleanup order: close WS, close server, signal shutdown, wait for
+	// goroutines to drain, THEN restore package-level vars.
+	t.Cleanup(func() {
+		_ = conn.Close()
+		srv.Close()
+		close(shutdownCh)
+		time.Sleep(50 * time.Millisecond)
+		wsPingInterval = prevPingInterval
+		wsPongTimeout = prevPongTimeout
+		wsRevalidateInterval = prevRevalidateInterval
+		wsRevalidateRetryDelay = prevRetryDelay
+	})
 
 	readErr := startTestWSReadPump(conn)
 	time.Sleep(4 * wsRevalidateInterval)

@@ -11,12 +11,31 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"log/slog"
 )
+
+// syncBuffer is a thread-safe bytes.Buffer for capturing log output in tests.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (sb *syncBuffer) Write(p []byte) (int, error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.Write(p)
+}
+
+func (sb *syncBuffer) String() string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.String()
+}
 
 func TestParseOptionsNoTLS(t *testing.T) {
 	opts, err := ParseOptions("redis://localhost:6379")
@@ -133,7 +152,7 @@ func TestNewClient_EnvOverrides(t *testing.T) {
 
 func TestPoolStatsLogging(t *testing.T) {
 	prevLogger := slog.Default()
-	var logBuf bytes.Buffer
+	var logBuf syncBuffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prevLogger) })
 
