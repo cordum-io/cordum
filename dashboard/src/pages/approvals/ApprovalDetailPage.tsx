@@ -137,30 +137,6 @@ function SectionEmpty({ message }: { message: string }) {
   );
 }
 
-function SectionError({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry?: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-2 text-sm text-destructive">
-      <AlertTriangle className="h-4 w-4 shrink-0" />
-      <span>{message}</span>
-      {onRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="underline text-xs ml-1"
-        >
-          Retry
-        </button>
-      )}
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Section: What
 // ---------------------------------------------------------------------------

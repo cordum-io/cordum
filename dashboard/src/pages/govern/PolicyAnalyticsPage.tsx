@@ -15,8 +15,6 @@ import {
   BarChart3,
 } from "lucide-react";
 import {
-  BarChart,
-  Bar,
   AreaChart,
   Area,
   ResponsiveContainer,
