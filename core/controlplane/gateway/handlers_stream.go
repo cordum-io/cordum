@@ -808,10 +808,12 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	connStart := time.Now()
-	// Capture ping/pong values once to avoid data races if globals are
+	// Capture timing values once to avoid data races if globals are
 	// overwritten by tests after the handler goroutines have started.
 	pingInterval := wsPingInterval
 	pongTimeout := wsPongTimeout
+	revalidateInterval := wsRevalidateInterval
+	revalidateRetryDelay := wsRevalidateRetryDelay
 	connID := newWSConnectionID()
 	remoteIP := clientIP(r)
 	disconnectState := &wsDisconnectState{}
@@ -886,7 +888,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		client.closeChannel()
 	}()
 
-	revalidate := time.NewTicker(wsRevalidateInterval)
+	revalidate := time.NewTicker(revalidateInterval)
 	defer revalidate.Stop()
 	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
@@ -908,7 +910,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-revalidate.C:
 			if s.auth != nil && client.apiKey != "" {
-				if err := s.revalidateWSAuthWithRetry(wsCtx, client.apiKey, connID); err != nil {
+				if err := s.revalidateWSAuthWithRetry(wsCtx, client.apiKey, connID, revalidateRetryDelay); err != nil {
 					disconnectState.Set(disconnectRevalidation, err)
 					slog.Info("ws credential revoked, closing",
 						"conn_id", connID,
@@ -1011,6 +1013,8 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	s.startWSConnectionSummaryLogger()
 	pingInterval := wsPingInterval
 	pongTimeout := wsPongTimeout
+	revalidateInterval := wsRevalidateInterval
+	revalidateRetryDelay := wsRevalidateRetryDelay
 	_ = ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
 	ws.SetPongHandler(func(string) error {
 		wsPongsReceived.Inc()
@@ -1062,7 +1066,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 		client.closeChannel()
 	}()
 
-	revalidate := time.NewTicker(wsRevalidateInterval)
+	revalidate := time.NewTicker(revalidateInterval)
 	defer revalidate.Stop()
 	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
@@ -1084,7 +1088,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-revalidate.C:
 			if s.auth != nil && client.apiKey != "" {
-				if err := s.revalidateWSAuthWithRetry(wsCtx, client.apiKey, connID); err != nil {
+				if err := s.revalidateWSAuthWithRetry(wsCtx, client.apiKey, connID, revalidateRetryDelay); err != nil {
 					disconnectState.Set(disconnectRevalidation, err)
 					slog.Info("job ws credential revoked, closing",
 						"conn_id", connID,
@@ -1141,7 +1145,7 @@ func (s *server) revalidateWSAuth(apiKey string) error {
 	return err
 }
 
-func (s *server) revalidateWSAuthWithRetry(ctx context.Context, apiKey, connID string) error {
+func (s *server) revalidateWSAuthWithRetry(ctx context.Context, apiKey, connID string, retryDelay time.Duration) error {
 	for attempt := 1; attempt <= 3; attempt++ {
 		err := s.revalidateWSAuth(apiKey)
 		if err == nil {
@@ -1157,7 +1161,7 @@ func (s *server) revalidateWSAuthWithRetry(ctx context.Context, apiKey, connID s
 			slog.Warn("ws auth revalidation transient failure exhausted retries; keeping connection alive",
 				"conn_id", connID,
 				"attempts", attempt,
-				"retry_delay", wsRevalidateRetryDelay,
+				"retry_delay", retryDelay,
 				"error", err)
 			return nil
 		}
@@ -1165,9 +1169,9 @@ func (s *server) revalidateWSAuthWithRetry(ctx context.Context, apiKey, connID s
 			"conn_id", connID,
 			"attempt", attempt,
 			"max_attempts", 3,
-			"retry_delay", wsRevalidateRetryDelay,
+			"retry_delay", retryDelay,
 			"error", err)
-		timer := time.NewTimer(wsRevalidateRetryDelay)
+		timer := time.NewTimer(retryDelay)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
