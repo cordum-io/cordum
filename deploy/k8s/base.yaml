@@ -512,17 +512,24 @@ spec:
         - containerPort: 50070
         - containerPort: 9094
           name: metrics
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 9094
+          failureThreshold: 30
+          periodSeconds: 2
         livenessProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: 9094
-          initialDelaySeconds: 5
+          initialDelaySeconds: 10
           periodSeconds: 10
         readinessProbe:
-          grpc:
-            port: 50070
+          httpGet:
+            path: /readyz
+            port: 9094
           initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
         resources:
           requests:
             cpu: 100m
@@ -641,16 +648,26 @@ spec:
           readOnly: true
         ports:
         - containerPort: 50051
+        - containerPort: 9095
+          name: admin
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 9095
+          failureThreshold: 30
+          periodSeconds: 2
         livenessProbe:
-          grpc:
-            port: 50051
-          initialDelaySeconds: 5
+          httpGet:
+            path: /healthz
+            port: 9095
+          initialDelaySeconds: 10
           periodSeconds: 10
         readinessProbe:
-          grpc:
-            port: 50051
+          httpGet:
+            path: /readyz
+            port: 9095
           initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
         resources:
           requests:
             cpu: 100m
@@ -781,18 +798,24 @@ spec:
           readOnly: true
         ports:
         - containerPort: 9090
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 9090
+          failureThreshold: 30
+          periodSeconds: 2
         livenessProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: 9090
-          initialDelaySeconds: 5
+          initialDelaySeconds: 10
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
+            path: /readyz
             port: 9090
           initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
         resources:
           requests:
             cpu: 150m
@@ -961,18 +984,24 @@ spec:
         - containerPort: 8080
         - containerPort: 8081
         - containerPort: 9092
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 8081
+          failureThreshold: 30
+          periodSeconds: 2
         livenessProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: 8081
-          initialDelaySeconds: 5
+          initialDelaySeconds: 10
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
+            path: /readyz
             port: 8081
           initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
         resources:
           requests:
             cpu: 200m
@@ -1094,18 +1123,24 @@ spec:
         #   value: text
         ports:
         - containerPort: 9093
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 9093
+          failureThreshold: 30
+          periodSeconds: 2
         livenessProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: 9093
-          initialDelaySeconds: 5
+          initialDelaySeconds: 10
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
+            path: /readyz
             port: 9093
           initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
         resources:
           requests:
             cpu: 150m

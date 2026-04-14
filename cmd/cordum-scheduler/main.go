@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/logging"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -182,8 +184,10 @@ func main() {
 	}
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
-	health := &healthDeps{}
-	metricsMux.Handle("/health", health)
+	healthDep := &healthDeps{}
+	metricsMux.Handle("/health", healthDep)
+	probes := health.New()
+	probes.Register(metricsMux)
 	metricsSrv := &http.Server{
 		Addr:              metricsAddr,
 		Handler:           metricsMux,
@@ -257,9 +261,23 @@ func main() {
 	sagaManager.WithSafety(safetyClient)
 
 	// Populate health check dependencies now that all critical deps are created.
-	health.jobStore = jobStore
-	health.bus = natsBus
-	health.safetyClient = safetyClient
+	healthDep.jobStore = jobStore
+	healthDep.bus = natsBus
+	healthDep.safetyClient = safetyClient
+
+	// Register readiness checks for the probe endpoints.
+	probes.RegisterReadiness("redis", func(ctx context.Context) error {
+		if jobStore == nil {
+			return fmt.Errorf("not initialized")
+		}
+		return jobStore.Ping(ctx)
+	})
+	probes.RegisterReadiness("nats", func(ctx context.Context) error {
+		if natsBus == nil || !natsBus.IsConnected() {
+			return fmt.Errorf("disconnected")
+		}
+		return nil
+	})
 
 	var outputSafetyClient *scheduler.OutputSafetyClient
 	if cfg.OutputPolicyEnabled {
@@ -377,6 +395,7 @@ func main() {
 		slog.Error("failed to start scheduler engine", "error", err)
 		os.Exit(1)
 	}
+	probes.SetStartupComplete()
 
 	snapshotStore, err := store.NewRedisStore(cfg.RedisURL)
 	if err != nil {

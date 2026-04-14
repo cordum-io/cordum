@@ -2,15 +2,17 @@
 
 ## Overview
 
-Cordum uses three secrets that must be rotated periodically or after any suspected compromise.
+Cordum uses five credential groups that must be rotated periodically or after any suspected compromise. All secrets live in `.env` (never committed — see `.gitignore`). Reference `.env.example` for the full variable catalog.
 
 ## Secrets
 
-| Secret | Env Var | Min Length | Generate |
-|--------|---------|-----------|----------|
-| Redis password | `REDIS_PASSWORD` | 12 chars | `openssl rand -hex 16` |
-| API key | `CORDUM_API_KEY` | 32 chars | `openssl rand -hex 32` |
-| Admin password | `CORDUM_ADMIN_PASSWORD` | 16 chars | `openssl rand -base64 24` |
+| Secret | Env Var | Min Length | Generate | Used By |
+|--------|---------|-----------|----------|---------|
+| Redis password | `REDIS_PASSWORD` | 12 chars | `openssl rand -hex 16` | All services via `REDIS_URL` |
+| API key | `CORDUM_API_KEY` | 32 chars | `openssl rand -hex 32` | Gateway, dashboard |
+| Admin password | `CORDUM_ADMIN_PASSWORD` | 16 chars | `openssl rand -base64 24` | Gateway (user auth) |
+| NATS token | `NATS_TOKEN` | 16 chars | `openssl rand -hex 16` | All services via NATS auth |
+| License token | `CORDUM_LICENSE_TOKEN` | n/a | Issued by licensing portal | Gateway, scheduler, safety kernel, workflow engine |
 
 ## Rotation Procedures
 
@@ -40,6 +42,18 @@ Cordum uses three secrets that must be rotated periodically or after any suspect
 2. Update `.env` with new `CORDUM_ADMIN_PASSWORD`
 3. Restart the gateway (new password takes effect on next login)
 4. Log in with new credentials to verify
+
+### NATS Token
+
+The NATS token is set in two places: `.env` (for services) and `config/nats.dev-tls.conf` (for the NATS server). Both must match.
+
+1. Generate new token: `openssl rand -hex 16`
+2. Update `NATS_TOKEN` in `.env`
+3. Update `authorization.token` in `config/nats.dev-tls.conf`
+4. Restart NATS and all dependent services: `docker compose down && docker compose up -d`
+5. Verify: check service logs for NATS connection errors
+
+**Note:** Unlike Redis, NATS does not support live token rotation. All services must be restarted together.
 
 ## After a Suspected Compromise
 

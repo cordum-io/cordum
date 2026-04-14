@@ -28,6 +28,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/locks"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -167,6 +168,7 @@ type server struct {
 
 	workerExpireStop chan struct{}
 	workerExpireOnce sync.Once
+	probes           *health.ProbeServer
 }
 
 // snapshotFromRedis reads the full scheduler worker snapshot from Redis.
@@ -833,7 +835,20 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		}
 	}()
 
-	// 1. Health (root path for k8s probes + /api/v1 alias for dashboard)
+	// 1. Health probes (/healthz, /readyz, /livez) + backward-compatible aliases.
+	s.probes = health.New()
+	s.probes.RegisterReadiness("nats", func(ctx context.Context) error {
+		_, connected := s.natsHealthStatus()
+		if !connected {
+			return fmt.Errorf("nats disconnected")
+		}
+		return nil
+	})
+	s.probes.RegisterReadiness("redis", func(ctx context.Context) error {
+		_, err := s.redisHealthStatus(ctx)
+		return err
+	})
+	s.probes.Register(mux)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /api/v1/health", s.instrumented("/api/v1/health", s.handleHealth))
 
@@ -1048,6 +1063,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		return fmt.Errorf("http tls required in production")
 	}
 
+	if s.probes != nil {
+		s.probes.SetStartupComplete()
+	}
 	slog.Info("http listening", "addr", httpAddr)
 	srv := &http.Server{
 		Addr:              httpAddr,

@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/cordum/cordum/core/infra/env"
 )
 
 const (
@@ -96,6 +98,13 @@ func Load() *Config {
 		OutputPolicyEnabled: outputPolicyEnabled,
 		TelemetryMode:       telemetryMode,
 		TelemetryEndpoint:   telemetryEndpoint,
+	}
+
+	// Hard-error in production if required infrastructure URLs are missing.
+	// In dev mode, fall back to localhost defaults with a warning.
+	if err := env.ValidateProductionConfig(); err != nil {
+		slog.Error("FATAL: "+err.Error(), "hint", "set NATS_URL and REDIS_URL for production deployments")
+		os.Exit(1)
 	}
 
 	// Warn when using localhost defaults — likely misconfiguration in non-dev deployments.

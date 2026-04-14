@@ -1,10 +1,12 @@
 package safetykernel
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -1588,7 +1590,40 @@ func TestVelocityBundleRule_NoJobID_StillEnforces(t *testing.T) {
 	}
 }
 
-func TestVelocityBundleRule_RedisUnavailable_FailOpen(t *testing.T) {
+func TestVelocityBundleRule_RedisUnavailable_FailClosed(t *testing.T) {
+	policy := bundleVelocityPolicy()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	srv := &server{
+		resultClient:    client,
+		velocityChecker: newVelocityChecker(client),
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    100,
+	}
+	srv.setPolicy(policy, "snap-velocity-failclosed")
+
+	// Close Redis to simulate unavailability.
+	mr.Close()
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-failclosed",
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": "sess-failclosed"},
+	}
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("check error: %v", err)
+	}
+	// Fail-closed: velocity check unavailable → require_approval.
+	if resp.GetDecision() == pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatal("expected non-ALLOW (fail-closed when Redis unavailable), got ALLOW")
+	}
+}
+
+func TestVelocityBundleRule_RedisUnavailable_FailOpenOverride(t *testing.T) {
+	t.Setenv("VELOCITY_FAIL_MODE", "open")
 	policy := bundleVelocityPolicy()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -1614,9 +1649,54 @@ func TestVelocityBundleRule_RedisUnavailable_FailOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check error: %v", err)
 	}
-	// Fail-open: velocity rule skipped, fallthrough allow should fire.
+	// Fail-open override: velocity rule skipped, fallthrough allow should fire.
 	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
-		t.Fatalf("expected ALLOW (fail-open when Redis unavailable), got %v reason=%q", resp.GetDecision(), resp.GetReason())
+		t.Fatalf("expected ALLOW (fail-open override when Redis unavailable), got %v reason=%q", resp.GetDecision(), resp.GetReason())
+	}
+}
+
+// TestVelocityBundleRule_RedisError_NoRuleLeakInLogs verifies that when
+// velocity checks fail, the error log does NOT expose rule IDs or bucket keys.
+func TestVelocityBundleRule_RedisError_NoRuleLeakInLogs(t *testing.T) {
+	policy := bundleVelocityPolicy()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	srv := &server{
+		resultClient:    client,
+		velocityChecker: newVelocityChecker(client),
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    100,
+	}
+	srv.setPolicy(policy, "snap-velocity-logleak")
+
+	// Capture slog output.
+	var logBuf bytes.Buffer
+	handler := slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError})
+	origLogger := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	defer slog.SetDefault(origLogger)
+
+	mr.Close()
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-logleak",
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": "sess-logleak"},
+	}
+	_, _ = srv.Check(context.Background(), req)
+
+	logOutput := logBuf.String()
+	// Rule IDs from the policy should NOT appear in the log.
+	for _, ruleID := range []string{"visa-velocity-by-session", "visa-velocity-global"} {
+		if strings.Contains(logOutput, ruleID) {
+			t.Fatalf("log output leaks rule ID %q: %s", ruleID, logOutput)
+		}
+	}
+	// Bucket keys (velocity:*) should NOT appear.
+	if strings.Contains(logOutput, "velocity:") {
+		t.Fatalf("log output leaks bucket key: %s", logOutput)
 	}
 }
 

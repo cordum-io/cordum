@@ -148,6 +148,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers,
     signal,
+    credentials: "include",
   });
   return handleResponse<T>(res, { method, path, requestId: reqId, startMs });
 }

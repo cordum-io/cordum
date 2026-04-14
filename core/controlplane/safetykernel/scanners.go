@@ -95,7 +95,7 @@ func newPIIScanner() *piiScanner {
 		email: regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`),
 		ssn:   regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
 		phone: regexp.MustCompile(`\b(?:\+?1[\s\-]?)?(?:\(?\d{3}\)?[\s\-]?)\d{3}[\s\-]?\d{4}\b`),
-		card:  regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`),
+		card:  regexp.MustCompile(`\b\d(?:[ -]?\d){12,18}\b`),
 	}
 }
 

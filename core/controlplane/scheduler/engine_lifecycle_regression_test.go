@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/infra/bus"
 	infraStore "github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -100,5 +101,87 @@ func TestHandleJobRequestStateReadErrorDoesNotDispatchDuplicate(t *testing.T) {
 	}
 	if len(bus.published) != 0 {
 		t.Fatalf("expected no dispatch after recovered state read, got %d publishes", len(bus.published))
+	}
+}
+
+// failingSetJobMetaStore fails on SetJobMeta to simulate store persistence failure.
+type failingSetJobMetaStore struct {
+	*fakeJobStore
+	setMetaErr error
+}
+
+func (s *failingSetJobMetaStore) SetJobMeta(_ context.Context, _ *pb.JobRequest) error {
+	return s.setMetaErr
+}
+
+func TestHandleJobRequest_StoreFailure_ReturnsRetryAfter(t *testing.T) {
+	// When SetJobMeta fails, handleJobRequest must return a RetryAfter error
+	// so the bus NAKs the message for redelivery instead of ACKing.
+	store := &failingSetJobMetaStore{
+		fakeJobStore: newFakeJobStore(),
+		setMetaErr:   errors.New("redis connection refused"),
+	}
+	b := &fakeBus{}
+	engine := NewEngine(b, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{JobId: "job-persist-fail", Topic: "job.default"}
+	err := engine.handleJobRequest(req, "trace-persist-fail")
+	if err == nil {
+		t.Fatal("expected error on store failure")
+	}
+	if _, ok := bus.RetryDelay(err); !ok {
+		t.Fatalf("expected RetryAfter error for NAK/redelivery, got plain error: %v", err)
+	}
+	// Verify job was NOT dispatched
+	if len(b.published) != 0 {
+		t.Fatalf("expected no dispatch when store persistence fails, got %d publishes", len(b.published))
+	}
+}
+
+func TestHandleJobRequest_StoreSuccess_ReturnsNil(t *testing.T) {
+	// Normal flow: store persistence succeeds, handler returns nil → bus ACKs.
+	store := newFakeJobStore()
+	b := &fakeBus{}
+	engine := NewEngine(b, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{JobId: "job-persist-ok", Topic: "job.default"}
+	err := engine.handleJobRequest(req, "trace-persist-ok")
+	// Should return nil (or a scheduling error that's not store-related)
+	if err != nil {
+		if _, ok := bus.RetryDelay(err); ok {
+			t.Fatalf("store success should not return RetryAfter, got: %v", err)
+		}
+	}
+}
+
+func TestHandleJobRequest_Idempotent_OnRedelivery(t *testing.T) {
+	// When a job is already dispatched, a redelivered message should be
+	// a no-op (ACK without re-processing).
+	store := newFakeJobStore()
+	b := &fakeBus{}
+	engine := NewEngine(b, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{JobId: "job-redelivery", Topic: "job.default"}
+
+	// First call: processes the job.
+	if err := engine.handleJobRequest(req, "trace-1"); err != nil {
+		if _, ok := bus.RetryDelay(err); ok {
+			t.Fatalf("first call failed with retryable error: %v", err)
+		}
+	}
+
+	dispatchCount := len(b.published)
+
+	// Mark the job as dispatched (simulating successful first processing).
+	store.mu.Lock()
+	store.states["job-redelivery"] = JobStateDispatched
+	store.mu.Unlock()
+
+	// Second call: redelivery of same job. Should be idempotent — no re-dispatch.
+	if err := engine.handleJobRequest(req, "trace-2"); err != nil {
+		t.Fatalf("redelivered job should not error: %v", err)
+	}
+	if len(b.published) != dispatchCount {
+		t.Fatalf("redelivered job should not dispatch again: before=%d after=%d", dispatchCount, len(b.published))
 	}
 }

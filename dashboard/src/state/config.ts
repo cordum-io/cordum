@@ -19,27 +19,16 @@ export function registerQueryClient(qc: { clear: () => void; cancelQueries: () =
 // Persistence helpers
 // ---------------------------------------------------------------------------
 
-// SECURITY NOTE: API key stored in localStorage for stateless SPA auth.
-// Accepted risk — mitigated by: no dangerouslySetInnerHTML, X-Tenant-ID
-// isolation, CSP headers, and HttpOnly not applicable (JS needs the token).
-const TOKEN_KEY = "cordum-api-key";
+// SECURITY: API key is NOT stored in localStorage. Authentication uses httpOnly
+// cookies set by the gateway on login. The apiKey field in Zustand is memory-only
+// (for backward compat with embedded API key mode and X-API-Key header fallback).
+const TOKEN_KEY = "cordum-api-key"; // legacy — cleared on login, never written
 const USER_KEY = "cordum-user";
 const LOGIN_TS_KEY = "cordum-login-ts";
 
-function loadToken(): string {
+function clearLegacyToken(): void {
   if (typeof window !== "undefined") {
-    return window.localStorage.getItem(TOKEN_KEY) ?? "";
-  }
-  return "";
-}
-
-function persistToken(key: string): void {
-  if (typeof window !== "undefined") {
-    if (key) {
-      window.localStorage.setItem(TOKEN_KEY, key);
-    } else {
-      window.localStorage.removeItem(TOKEN_KEY);
-    }
+    window.localStorage.removeItem(TOKEN_KEY);
   }
 }
 
@@ -131,16 +120,18 @@ interface ConfigState {
 
 export const useConfigStore = create<ConfigState>((set, get) => {
   const savedUser = loadUser();
+  // Clear any legacy token from localStorage (migrated to httpOnly cookie auth)
+  clearLegacyToken();
   return {
     apiBaseUrl: "",
-    apiKey: loadToken(),
+    apiKey: "",
     tenantId: savedUser?.tenant ?? "",
     principalId: savedUser?.id ?? "",
     principalRole: savedUser?.roles?.[0] ?? "",
     traceUrlTemplate: "",
     approvalSlaMs: 900_000, // 15 minutes default
     user: savedUser,
-    isAuthenticated: !!loadToken(),
+    isAuthenticated: !!savedUser,
     isLoggingOut: false,
     loginTimestamp: loadLoginTimestamp(),
     tenantLocked: !!(savedUser?.tenant),
@@ -148,9 +139,6 @@ export const useConfigStore = create<ConfigState>((set, get) => {
 
     update: (patch) =>
       set((s) => {
-        if (patch.apiKey !== undefined) {
-          persistToken(patch.apiKey);
-        }
         // Defense-in-depth: prevent tenant impersonation via store mutation
         if (s.tenantLocked && patch.tenantId !== undefined && patch.tenantId !== s.tenantId) {
           logger.warn("config-store", "Blocked tenantId change while locked", {
@@ -176,7 +164,8 @@ export const useConfigStore = create<ConfigState>((set, get) => {
     login: (token, user) => {
       logger.info("config-store", "Login", { userId: user.id, tenant: user.tenant });
       const now = Date.now();
-      persistToken(token);
+      // Token stays in memory only — auth cookie set by server handles persistence.
+      clearLegacyToken();
       persistUser(user);
       persistLoginTimestamp(now);
       set({
@@ -200,7 +189,7 @@ export const useConfigStore = create<ConfigState>((set, get) => {
       } else {
         logger.info("config-store", "Logout");
       }
-      persistToken("");
+      clearLegacyToken();
       persistUser(null);
       persistLoginTimestamp(null);
       useEventStore.getState().reset();

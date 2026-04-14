@@ -30,6 +30,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	infraHealth "github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
@@ -287,6 +288,42 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	if env.Bool(env.EnvGRPCReflection) {
 		reflection.Register(grpcServer)
 	}
+
+	// Admin HTTP server for health probes (Docker/K8s).
+	adminAddr := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_ADMIN_ADDR"))
+	if adminAddr == "" {
+		adminAddr = ":9095"
+	}
+	skProbes := infraHealth.New()
+	skProbes.RegisterReadiness("redis", func(ctx context.Context) error {
+		if srv.resultClient == nil {
+			return fmt.Errorf("not initialized")
+		}
+		return srv.resultClient.Ping(ctx).Err()
+	})
+	adminMux := http.NewServeMux()
+	skProbes.Register(adminMux)
+	adminMux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	adminSrv := &http.Server{
+		Addr:              adminAddr,
+		Handler:           adminMux,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	go func() {
+		slog.Info("safety-kernel: admin server started", "addr", adminAddr)
+		if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("safety-kernel: admin server error", "error", err)
+		}
+	}()
+	skProbes.SetStartupComplete()
 
 	slog.Info("safety-kernel: listening", "addr", cfg.SafetyKernelAddr)
 
@@ -644,7 +681,6 @@ func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 }
 
 func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
-	currentVersion := s.policyVersion.Load()
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if s.cache == nil {
@@ -654,7 +690,10 @@ func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
 	if !ok {
 		return nil
 	}
-	if entry.policyVersion != currentVersion {
+	// Read version inside cacheMu to prevent TOCTOU: setPolicyWithBundleCount
+	// bumps the atomic version before clearing cache under this same lock, so
+	// any read here always reflects the latest version.
+	if entry.policyVersion != s.policyVersion.Load() {
 		delete(s.cache, key)
 		return nil
 	}

@@ -275,7 +275,8 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 	if err != nil {
 		return 0, nil, fmt.Errorf("create request: %w", err)
 	}
-	if err := validateOutboundTargetURL(req.Context(), req.URL, b.allowedHosts, b.allowPrivateHosts); err != nil {
+	pinnedIPs, err := validateAndResolveOutboundURL(req.Context(), req.URL, b.allowedHosts, b.allowPrivateHosts)
+	if err != nil {
 		return 0, nil, fmt.Errorf("validate request target: %w", err)
 	}
 	if body != nil {
@@ -300,7 +301,15 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 	if client == nil {
 		client = SafeHTTPClient(10 * time.Second)
 	}
-	// #nosec G704 -- URL is validated via validateOutboundTargetURL above.
+	// Pin DNS resolution to prevent rebinding attacks (TOCTOU).
+	if len(pinnedIPs) > 0 {
+		client = &http.Client{
+			Timeout:       client.Timeout,
+			CheckRedirect: client.CheckRedirect,
+			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
+		}
+	}
+	// #nosec G704 -- URL is validated and DNS-pinned via validateAndResolveOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, fmt.Errorf("request failed: %w", err)

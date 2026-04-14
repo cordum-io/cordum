@@ -18,6 +18,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	infraHealth "github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/logging"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/tlsreload"
@@ -62,6 +63,8 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	ceProbes := infraHealth.New()
+	ceProbes.Register(metricsMux)
 	metricsSrv := &http.Server{
 		Addr:              metricsAddr,
 		Handler:           metricsMux,
@@ -140,6 +143,7 @@ func main() {
 		reflection.Register(server)
 	}
 
+	ceProbes.SetStartupComplete()
 	slog.Info("context engine listening", "addr", addr, "redis", cfg.RedisURL)
 
 	// Graceful shutdown: on SIGINT/SIGTERM, drain in-flight RPCs then stop.

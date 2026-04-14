@@ -86,6 +86,7 @@ type Engine struct {
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
 	activeHandlers          atomic.Int64
+	activeRenewals          atomic.Int64
 	wg                      sync.WaitGroup
 	ctx                     context.Context
 	cancel                  context.CancelFunc
@@ -156,6 +157,8 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 	renewDone := make(chan struct{})
 	go func() {
 		defer close(renewDone)
+		e.activeRenewals.Add(1)
+		defer e.activeRenewals.Add(-1)
 		ticker := time.NewTicker(ttl / 3)
 		defer ticker.Stop()
 		consecutiveFailures := 0
@@ -880,6 +883,11 @@ func (e *Engine) Stop() {
 	}
 }
 
+// ActiveRenewals returns the current number of active lock renewal goroutines.
+func (e *Engine) ActiveRenewals() int64 {
+	return e.activeRenewals.Load()
+}
+
 func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 	if req == nil {
 		return nil
@@ -973,9 +981,14 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 		}
 
 		if err := e.processJob(lockCtx, req, traceID); err != nil {
+			// Retryable scheduling errors (no workers available) are ACKed — the
+			// job is already persisted above and the reconciler will pick it up.
 			if isRetryableSchedulingError(err) {
 				return nil
 			}
+			// Other errors propagate to the bus: RetryAfter → NAK for retry,
+			// plain error → ACK (non-retryable). Job metadata is already stored
+			// at this point, so ACK on non-retryable error is safe.
 			return err
 		}
 		return nil

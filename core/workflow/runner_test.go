@@ -54,7 +54,7 @@ func TestNewReconcilerDefaults(t *testing.T) {
 }
 
 func TestStartHealthServer(t *testing.T) {
-	srv := startHealthServer("127.0.0.1:0")
+	srv := startHealthServer("127.0.0.1:0", nil)
 	defer func() {
 		_ = srv.Shutdown(context.Background())
 	}()

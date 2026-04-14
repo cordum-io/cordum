@@ -565,3 +565,149 @@ func TestHandleRevokeKeyViewerDenied(t *testing.T) {
 		t.Fatalf("expected 403 for viewer revoking keys, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestLogin_SetsHttpOnlyCookie(t *testing.T) {
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"cookie-test-key","role":"admin","principal_id":"alice","tenant":"default"}]`,
+	})
+	s := &server{auth: provider, tenant: "default"}
+
+	body := `{"username":"alice","password":"cookie-test-key"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleLogin(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	cookies := rec.Result().Cookies()
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == sessionCookieName {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected session cookie to be set on login")
+	}
+	if !sessionCookie.HttpOnly {
+		t.Fatal("session cookie must be HttpOnly")
+	}
+	if sessionCookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("expected SameSite=Lax, got %v", sessionCookie.SameSite)
+	}
+	if sessionCookie.Path != "/" {
+		t.Fatalf("expected cookie path /, got %q", sessionCookie.Path)
+	}
+	if sessionCookie.Value == "" {
+		t.Fatal("session cookie value must not be empty")
+	}
+}
+
+func TestLogin_UserAuth_SetsHttpOnlyCookie(t *testing.T) {
+	s, store := setupLoginIntegration(t)
+	ctx := context.Background()
+
+	user := &User{Username: "cookie-user", Tenant: "default", Role: "admin"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	body := `{"username":"cookie-user","password":"SecurePass1!xy"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleLogin(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	cookies := rec.Result().Cookies()
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == sessionCookieName {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected session cookie on user/password login")
+	}
+	if !sessionCookie.HttpOnly {
+		t.Fatal("session cookie must be HttpOnly")
+	}
+	if !strings.HasPrefix(sessionCookie.Value, "session-") {
+		t.Fatalf("expected session- prefix in cookie value, got %q", sessionCookie.Value)
+	}
+}
+
+func TestLogout_ClearsCookie(t *testing.T) {
+	s := &server{tenant: "default"}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.Header.Set("X-API-Key", "some-token")
+	rec := httptest.NewRecorder()
+	s.handleLogout(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+
+	cookies := rec.Result().Cookies()
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == sessionCookieName {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected session cookie to be cleared on logout")
+	}
+	if sessionCookie.MaxAge != -1 {
+		t.Fatalf("expected MaxAge=-1 (delete), got %d", sessionCookie.MaxAge)
+	}
+	if sessionCookie.Value != "" {
+		t.Fatalf("expected empty cookie value on logout, got %q", sessionCookie.Value)
+	}
+}
+
+func TestCSPHeader(t *testing.T) {
+	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("expected Content-Security-Policy header")
+	}
+	if !strings.Contains(csp, "default-src") {
+		t.Fatalf("CSP missing default-src directive: %q", csp)
+	}
+	if !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Fatalf("CSP missing frame-ancestors 'none': %q", csp)
+	}
+}
+
+func TestCORSAllowCredentials(t *testing.T) {
+	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	creds := rec.Header().Get("Access-Control-Allow-Credentials")
+	if creds != "true" {
+		t.Fatalf("expected Access-Control-Allow-Credentials: true, got %q", creds)
+	}
+}

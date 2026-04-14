@@ -631,3 +631,88 @@ func TestConcurrentCacheReads(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPolicyCacheTOCTOU(t *testing.T) {
+	// Verify that concurrent policy reload + evaluation never returns
+	// a stale cached decision. This is the TOCTOU scenario: if the
+	// policyVersion is read before cacheMu, a reload between the read
+	// and lock acquisition could cause a stale version match.
+
+	policyAllow := &config.SafetyPolicy{
+		Version:         "v1",
+		DefaultDecision: "allow",
+	}
+	policyDeny := &config.SafetyPolicy{
+		Version:         "v2",
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{Match: config.PolicyMatch{Topics: []string{"job.test"}}, Decision: "deny", Reason: "blocked"},
+		},
+	}
+
+	srv := &server{
+		cacheTTL:     5 * time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 1000,
+	}
+	srv.setPolicy(policyAllow, "snap-allow")
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-toctou",
+		Topic:  "job.test",
+		Tenant: "default",
+	}
+
+	// Warm the cache with an ALLOW decision under policyAllow.
+	resp, err := srv.evaluate(context.Background(), req, "check")
+	if err != nil {
+		t.Fatalf("initial evaluate: %v", err)
+	}
+	if resp.Decision != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("expected initial ALLOW, got %v", resp.Decision)
+	}
+
+	// Now reload to policyDeny while concurrent readers are hitting the cache.
+	var wg sync.WaitGroup
+	staleCount := make(chan int, 1)
+	stale := 0
+
+	// Start 10 reader goroutines that evaluate continuously.
+	stop := make(chan struct{})
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_, _ = srv.evaluate(context.Background(), req, "check")
+				}
+			}
+		}()
+	}
+
+	// Reload policy to deny.
+	srv.setPolicy(policyDeny, "snap-deny")
+
+	// After reload, all evaluations must return DENY — no stale ALLOW.
+	for i := 0; i < 100; i++ {
+		r, err := srv.evaluate(context.Background(), req, "check")
+		if err != nil {
+			t.Fatalf("post-reload evaluate: %v", err)
+		}
+		if r.Decision == pb.DecisionType_DECISION_TYPE_ALLOW {
+			stale++
+		}
+	}
+
+	close(stop)
+	wg.Wait()
+	staleCount <- stale
+
+	if s := <-staleCount; s > 0 {
+		t.Fatalf("TOCTOU: %d/100 evaluations returned stale ALLOW after policy reload to DENY", s)
+	}
+}
