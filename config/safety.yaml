@@ -60,26 +60,10 @@ rules:
     decision: allow
     reason: "Read-only validation and notification jobs are auto-approved."
 
-  # Mock-bank transfers: deny blocked risk level, allow everything else.
-  # Order matters — first-match wins. The deny rule must come before the
-  # fallback allow so that high-value transfers are correctly blocked.
-  # Review-level approval is handled by the workflow's own approval steps,
-  # not by the safety policy.
-  - id: bank-transfer-blocked
-    match:
-      topics:
-        - job.demo-mock-bank.transfer
-      risk_tags:
-        - blocked
-    decision: deny
-    reason: "High-value bank transfers are blocked by policy."
-
-  - id: bank-transfer-allow
-    match:
-      topics:
-        - job.demo-mock-bank.transfer
-    decision: allow
-    reason: "Bank transfer jobs are auto-approved unless explicitly blocked."
+  # Mock-bank transfer rules are defined in the pack overlay
+  # (demo/mock-bank/pack/overlays/policy.fragment.yaml) and should NOT
+  # be duplicated here. The pack rules have finer granularity (blocked,
+  # review, low risk levels).
 
   # TX4: B2B Multi-Agent Onboarding — allow all B2B topics.
   - id: b2b-orchestrate-allow

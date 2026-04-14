@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/redis/go-redis/v9"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -25,6 +27,25 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 	slog.Debug("run starting", "component", "workflow", "workflowId", workflowID, "runId", runID, "traceId", runID)
 	wfDef, err := e.store.GetWorkflow(ctx, workflowID)
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			// Workflow doesn't exist. Check if the run exists — if it does,
+			// the workflow was deleted after the run was created (orphaned run).
+			// Mark it as failed instead of retrying forever.
+			run, rerr := e.store.GetRun(ctx, runID)
+			if rerr == nil && run != nil {
+				slog.Warn("workflow deleted, failing orphaned run",
+					"workflow_id", workflowID, "run_id", runID)
+				now := time.Now().UTC()
+				run.Status = RunStatusFailed
+				run.CompletedAt = &now
+				run.Error = map[string]any{"message": "workflow deleted"}
+				_ = e.store.UpdateRun(ctx, run)
+				e.markRunTerminal(run.ID)
+				return nil // terminal — don't retry
+			}
+			// Neither workflow nor run exists — transient or cleanup scenario.
+			// Return error so delay poller preserves the timer for retry.
+		}
 		return fmt.Errorf("get workflow: %w", err)
 	}
 	run, err := e.store.GetRun(ctx, runID)
