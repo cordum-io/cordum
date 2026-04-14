@@ -144,6 +144,18 @@ func sanitizeLogValue(s string) string {
 	}, s)
 }
 
+func syncApprovalQueueDepth(ctx context.Context, jobStore *store.RedisJobStore, approvalMetrics infraMetrics.ApprovalMetrics) {
+	if jobStore == nil || approvalMetrics == nil {
+		return
+	}
+	count, err := jobStore.CountJobsByState(ctx, scheduler.JobStateApproval)
+	if err != nil {
+		slog.Warn("approval queue depth sync failed", "error", err)
+		return
+	}
+	approvalMetrics.SetApprovalQueueDepth("all", int(count))
+}
+
 func main() {
 	logging.Init("scheduler")
 	slog.Info("cordum scheduler starting...")
@@ -170,6 +182,7 @@ func main() {
 	}
 
 	metrics := infraMetrics.NewProm("cordum_scheduler")
+	approvalMetrics := infraMetrics.NewApprovalProm("cordum")
 	metricsAddr := strings.TrimSpace(os.Getenv("SCHEDULER_METRICS_ADDR"))
 	if metricsAddr == "" {
 		metricsAddr = ":9090"
@@ -206,6 +219,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() { _ = jobStore.Close() }()
+	syncApprovalQueueDepth(context.Background(), jobStore, approvalMetrics)
 
 	var dlqStore *store.DLQStore
 	dlqStore, err = store.NewDLQStore(cfg.RedisURL, 0)
@@ -454,7 +468,8 @@ func main() {
 	}
 
 	dispatchTimeout, runningTimeout, scanInterval := reconcilerTimeouts(snapshot.Timeouts)
-	reconciler := scheduler.NewReconciler(jobStore, dispatchTimeout, runningTimeout, scanInterval)
+	reconciler := scheduler.NewReconciler(jobStore, dispatchTimeout, runningTimeout, scanInterval).
+		WithApprovalMetrics(approvalMetrics)
 	go reconciler.Start(ctx)
 	pendingReplayer := scheduler.NewPendingReplayer(engine, jobStore, dispatchTimeout, scanInterval)
 	go pendingReplayer.Start(ctx)

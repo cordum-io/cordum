@@ -95,7 +95,7 @@ func (s *fakeReconcileStore) ListExpiredDeadlines(_ context.Context, nowUnix int
 	var out []JobRecord
 	for id, ts := range s.dead {
 		if ts <= nowUnix {
-			out = append(out, JobRecord{ID: id, DeadlineUnix: ts})
+			out = append(out, JobRecord{ID: id, State: s.states[id], DeadlineUnix: ts})
 			if limit > 0 && int64(len(out)) >= limit {
 				break
 			}
@@ -117,6 +117,18 @@ func (s *fakeReconcileStore) ListJobsByState(_ context.Context, state JobState, 
 		}
 	}
 	return out, nil
+}
+
+func (s *fakeReconcileStore) CountJobsByState(_ context.Context, state JobState) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var count int64
+	for _, st := range s.states {
+		if st == state {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *fakeReconcileStore) AddJobToTrace(_ context.Context, traceID, jobID string) error {
@@ -258,6 +270,31 @@ func (s *fakeReconcileStore) CancelJob(_ context.Context, jobID string) (JobStat
 	return JobStateCancelled, nil
 }
 
+type approvalMetricsSpy struct {
+	queueDepth map[string]int
+	decisions  map[string]int
+	expired    int
+}
+
+func newApprovalMetricsSpy() *approvalMetricsSpy {
+	return &approvalMetricsSpy{
+		queueDepth: make(map[string]int),
+		decisions:  make(map[string]int),
+	}
+}
+
+func (m *approvalMetricsSpy) SetApprovalQueueDepth(riskTier string, depth int) {
+	m.queueDepth[riskTier] = depth
+}
+
+func (m *approvalMetricsSpy) IncApprovalExpired() {
+	m.expired++
+}
+
+func (m *approvalMetricsSpy) IncApprovalDecision(decision string) {
+	m.decisions[decision]++
+}
+
 func TestReconcilerTimeouts(t *testing.T) {
 	store := newFakeReconcileStore()
 
@@ -381,6 +418,55 @@ func TestReconcilerSetsFailureReasonOnDeadlineExpiry(t *testing.T) {
 	reason, _ := store.GetFailureReason(context.Background(), "deadline-job")
 	if reason != "timeout: deadline expired" {
 		t.Fatalf("expected reason 'timeout: deadline expired', got %q", reason)
+	}
+}
+
+func TestReconcilerTracksApprovalExpiryMetricsOnTimeout(t *testing.T) {
+	store := newFakeReconcileStore()
+	store.states["approval-timeout"] = JobStateApproval
+	store.updated["approval-timeout"] = toUnixMicros(time.Now().Add(-5 * time.Minute))
+	metrics := newApprovalMetricsSpy()
+
+	rec := NewReconciler(store, time.Minute, time.Minute, time.Second).
+		WithApprovalMetrics(metrics)
+	rec.handleTimeouts(context.Background(), JobStateApproval, time.Now().Add(-time.Minute))
+
+	if state, _ := store.GetState(context.Background(), "approval-timeout"); state != JobStateTimeout {
+		t.Fatalf("expected approval-timeout to be TIMEOUT, got %s", state)
+	}
+	if metrics.expired != 1 {
+		t.Fatalf("expected expired metric increment, got %d", metrics.expired)
+	}
+	if metrics.decisions["expired"] != 1 {
+		t.Fatalf("expected expired decision increment, got %d", metrics.decisions["expired"])
+	}
+	if metrics.queueDepth["all"] != 0 {
+		t.Fatalf("expected queue depth 0 after expiry, got %d", metrics.queueDepth["all"])
+	}
+}
+
+func TestReconcilerTracksApprovalExpiryMetricsOnDeadline(t *testing.T) {
+	store := newFakeReconcileStore()
+	store.states["approval-deadline"] = JobStateApproval
+	store.updated["approval-deadline"] = toUnixMicros(time.Now())
+	store.dead["approval-deadline"] = time.Now().Add(-time.Minute).Unix()
+	metrics := newApprovalMetricsSpy()
+
+	rec := NewReconciler(store, time.Minute, time.Minute, time.Second).
+		WithApprovalMetrics(metrics)
+	rec.handleDeadlineExpirations(context.Background(), time.Now())
+
+	if state, _ := store.GetState(context.Background(), "approval-deadline"); state != JobStateTimeout {
+		t.Fatalf("expected approval-deadline to be TIMEOUT, got %s", state)
+	}
+	if metrics.expired != 1 {
+		t.Fatalf("expected expired metric increment, got %d", metrics.expired)
+	}
+	if metrics.decisions["expired"] != 1 {
+		t.Fatalf("expected expired decision increment, got %d", metrics.decisions["expired"])
+	}
+	if metrics.queueDepth["all"] != 0 {
+		t.Fatalf("expected queue depth 0 after deadline expiry, got %d", metrics.queueDepth["all"])
 	}
 }
 

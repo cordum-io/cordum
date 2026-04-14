@@ -1634,6 +1634,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := s.jobStore.SetSafetyDecision(r.Context(), jobID, safetyRecord); err != nil {
 				slog.Error("failed to persist safety decision for approval", "job_id", jobID, "error", err)
 			}
+			s.syncApprovalQueueDepth(r.Context())
 		}
 
 		w.Header().Set("X-Trace-Id", traceID)

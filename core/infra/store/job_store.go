@@ -1188,6 +1188,19 @@ func (s *RedisJobStore) ListJobsByState(ctx context.Context, state model.JobStat
 	return out, nil
 }
 
+// CountJobsByState returns the current number of jobs indexed for a state.
+func (s *RedisJobStore) CountJobsByState(ctx context.Context, state model.JobState) (int64, error) {
+	key := stateIndexKey(state)
+	if key == "" {
+		return 0, fmt.Errorf("unknown state %s", state)
+	}
+	count, err := s.client.ZCount(ctx, key, "-inf", "+inf").Result()
+	if err != nil {
+		return 0, fmt.Errorf("job store count jobs by state %s: %w", state, err)
+	}
+	return count, nil
+}
+
 func (s *RedisJobStore) Close() error {
 	return s.client.Close()
 }

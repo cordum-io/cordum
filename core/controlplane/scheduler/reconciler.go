@@ -21,6 +21,17 @@ type Reconciler struct {
 	lockTTL          time.Duration
 	mu               sync.RWMutex
 	metrics          Metrics
+	approvalMetrics  approvalMetrics
+}
+
+type approvalMetrics interface {
+	SetApprovalQueueDepth(riskTier string, depth int)
+	IncApprovalExpired()
+	IncApprovalDecision(decision string)
+}
+
+type approvalDepthCounter interface {
+	CountJobsByState(ctx context.Context, state JobState) (int64, error)
 }
 
 type approvalRepairStore interface {
@@ -43,6 +54,12 @@ func NewReconciler(store JobStore, dispatchTimeout, runningTimeout, pollInterval
 // WithMetrics attaches a Metrics implementation to the reconciler.
 func (r *Reconciler) WithMetrics(m Metrics) *Reconciler {
 	r.metrics = m
+	return r
+}
+
+// WithApprovalMetrics attaches approval workflow metrics to the reconciler.
+func (r *Reconciler) WithApprovalMetrics(m approvalMetrics) *Reconciler {
+	r.approvalMetrics = m
 	return r
 }
 
@@ -162,6 +179,9 @@ func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff 
 			}
 			_ = r.store.SetFailureReason(ctx, rec.ID, reason)
 			slog.Info("job timed out", "job_id", rec.ID, "from_state", state)
+			if state == JobStateApproval {
+				r.recordApprovalExpiry(ctx)
+			}
 			progress++
 		}
 
@@ -189,8 +209,36 @@ func (r *Reconciler) handleDeadlineExpirations(ctx context.Context, now time.Tim
 		} else {
 			_ = r.store.SetFailureReason(ctx, rec.ID, "timeout: deadline expired")
 			slog.Info("job deadline expired", "job_id", rec.ID)
+			if rec.State == JobStateApproval {
+				r.recordApprovalExpiry(ctx)
+			}
 		}
 	}
+}
+
+func (r *Reconciler) recordApprovalExpiry(ctx context.Context) {
+	if r == nil || r.approvalMetrics == nil {
+		return
+	}
+	r.approvalMetrics.IncApprovalExpired()
+	r.approvalMetrics.IncApprovalDecision("expired")
+	r.syncApprovalQueueDepth(ctx)
+}
+
+func (r *Reconciler) syncApprovalQueueDepth(ctx context.Context) {
+	if r == nil || r.approvalMetrics == nil || r.store == nil {
+		return
+	}
+	counter, ok := r.store.(approvalDepthCounter)
+	if !ok {
+		return
+	}
+	count, err := counter.CountJobsByState(ctx, JobStateApproval)
+	if err != nil {
+		slog.Warn("approval queue depth sync failed", "error", err)
+		return
+	}
+	r.approvalMetrics.SetApprovalQueueDepth("all", int(count))
 }
 
 func (r *Reconciler) handleApprovalRepairs(ctx context.Context, now time.Time) {

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -58,6 +59,14 @@ func TestNoopMetrics(t *testing.T) {
 	m.DecSagaActive()
 	m.IncJobCancelFailures()
 	m.IncValidationRejections()
+}
+
+func TestNoopApprovalMetrics(t *testing.T) {
+	var m NoopApproval
+	m.SetApprovalQueueDepth("all", 1)
+	m.ObserveApprovalLatency(0.25)
+	m.IncApprovalExpired()
+	m.IncApprovalDecision("approved")
 }
 
 func TestPromMetrics(t *testing.T) {
@@ -204,10 +213,46 @@ func TestWorkflowMetrics(t *testing.T) {
 	}
 }
 
+func TestApprovalMetrics(t *testing.T) {
+	reg := withTestRegistry(t)
+	m := NewApprovalProm("cordum")
+	m.SetApprovalQueueDepth("all", 3)
+	m.ObserveApprovalLatency(0.5)
+	m.IncApprovalExpired()
+	m.IncApprovalDecision("approved")
+	m.IncApprovalDecision("denied")
+	m.IncApprovalDecision("expired")
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	if !hasMetric(families, "cordum_approval_queue_depth", map[string]string{"risk_tier": "all"}) {
+		t.Fatalf("expected approval_queue_depth metric")
+	}
+	if !hasMetric(families, "cordum_approval_latency_seconds", nil) {
+		t.Fatalf("expected approval_latency_seconds metric")
+	}
+	if !hasMetric(families, "cordum_approval_expired_total", nil) {
+		t.Fatalf("expected approval_expired_total metric")
+	}
+	if !hasMetric(families, "cordum_approval_decisions_total", map[string]string{"decision": "approved"}) {
+		t.Fatalf("expected approval_decisions_total approved metric")
+	}
+	if !hasMetric(families, "cordum_approval_decisions_total", map[string]string{"decision": "denied"}) {
+		t.Fatalf("expected approval_decisions_total denied metric")
+	}
+	if !hasMetric(families, "cordum_approval_decisions_total", map[string]string{"decision": "expired"}) {
+		t.Fatalf("expected approval_decisions_total expired metric")
+	}
+}
+
 func TestHandler(t *testing.T) {
 	withTestRegistry(t)
 	m := NewProm("cordum")
 	m.IncJobsReceived("job.test")
+	a := NewApprovalProm("cordum")
+	a.SetApprovalQueueDepth("all", 1)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -217,6 +262,9 @@ func TestHandler(t *testing.T) {
 	}
 	if rec.Body.Len() == 0 {
 		t.Fatalf("expected metrics output")
+	}
+	if !strings.Contains(rec.Body.String(), "cordum_approval_queue_depth") {
+		t.Fatalf("expected approval metrics in handler output")
 	}
 }
 
@@ -342,6 +390,26 @@ func TestMetricsPodLabelWorkflow(t *testing.T) {
 		for _, metric := range fam.GetMetric() {
 			if !hasLabel(metric.GetLabel(), "pod", podName) {
 				t.Fatalf("workflow metric %s missing pod=%s label", fam.GetName(), podName)
+			}
+		}
+	}
+}
+
+func TestMetricsPodLabelApproval(t *testing.T) {
+	reg := withTestRegistry(t)
+	m := NewApprovalProm("cordum")
+	m.SetApprovalQueueDepth("all", 1)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+
+	podName := resolvePodName()
+	for _, fam := range families {
+		for _, metric := range fam.GetMetric() {
+			if !hasLabel(metric.GetLabel(), "pod", podName) {
+				t.Fatalf("approval metric %s missing pod=%s label", fam.GetName(), podName)
 			}
 		}
 	}

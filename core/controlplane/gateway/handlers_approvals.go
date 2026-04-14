@@ -265,6 +265,50 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func timeFromUnixHeuristic(ts int64) (time.Time, bool) {
+	if ts <= 0 {
+		return time.Time{}, false
+	}
+	switch {
+	case ts < secondsThreshold:
+		return time.Unix(ts, 0).UTC(), true
+	case ts < millisThreshold:
+		return time.UnixMilli(ts).UTC(), true
+	case ts < microsThreshold:
+		return time.UnixMicro(ts).UTC(), true
+	default:
+		return time.Unix(0, ts).UTC(), true
+	}
+}
+
+func approvalRequestedAt(_ *pb.JobRequest, safetyRecord model.SafetyDecisionRecord) (time.Time, bool) {
+	return timeFromUnixHeuristic(safetyRecord.CheckedAt)
+}
+
+func (s *server) observeApprovalResolutionMetrics(req *pb.JobRequest, safetyRecord model.SafetyDecisionRecord, resolvedAt int64, decision string) {
+	if s == nil || s.approvalMetrics == nil {
+		return
+	}
+	if requestedAt, ok := approvalRequestedAt(req, safetyRecord); ok {
+		if resolvedTime, ok := timeFromUnixHeuristic(resolvedAt); ok {
+			s.approvalMetrics.ObserveApprovalLatency(resolvedTime.Sub(requestedAt).Seconds())
+		}
+	}
+	s.approvalMetrics.IncApprovalDecision(decision)
+}
+
+func (s *server) syncApprovalQueueDepth(ctx context.Context) {
+	if s == nil || s.jobStore == nil || s.approvalMetrics == nil {
+		return
+	}
+	count, err := s.jobStore.CountJobsByState(ctx, model.JobStateApproval)
+	if err != nil {
+		slog.Warn("approval queue depth sync failed", "error", err)
+		return
+	}
+	s.approvalMetrics.SetApprovalQueueDepth("all", int(count))
+}
+
 func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.workflowEng) {
 		return
@@ -320,6 +364,7 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
 		return
 	}
+	s.syncApprovalQueueDepth(r.Context())
 	limit, cursor := parsePagination(r, 100)
 	// Overfetch slightly to account for items that will be filtered out
 	// by tenant access checks, so the client receives close to `limit` items.
@@ -1045,6 +1090,8 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusInternalServerError, "failed to persist approval resolution"}
 			return nil
 		}
+		s.observeApprovalResolutionMetrics(req, safetyRecord, resolved.ApprovalRecord.ApprovedAt, "approved")
+		s.syncApprovalQueueDepth(ctx)
 		packet := &pb.BusPacket{
 			TraceId:         resolved.TraceID,
 			SenderId:        "api-gateway",
@@ -1209,6 +1256,8 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusInternalServerError, "failed to persist approval resolution"}
 			return nil
 		}
+		s.observeApprovalResolutionMetrics(req, safetyRecord, resolved.ApprovalRecord.ApprovedAt, "denied")
+		s.syncApprovalQueueDepth(ctx)
 		errorMessage := "approval rejected"
 		if reason != "" {
 			errorMessage = reason

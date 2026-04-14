@@ -82,6 +82,14 @@ type WorkflowMetrics interface {
 	ObserveWorkflowDuration(workflow string, durationSeconds float64)
 }
 
+// ApprovalMetrics captures approval workflow observability.
+type ApprovalMetrics interface {
+	SetApprovalQueueDepth(riskTier string, depth int)
+	ObserveApprovalLatency(durationSeconds float64)
+	IncApprovalExpired()
+	IncApprovalDecision(decision string)
+}
+
 // Noop implements Metrics without emitting anything.
 type Noop struct{}
 
@@ -119,6 +127,14 @@ func (Noop) IncInputFailOpen(string)                           {}
 func (Noop) IncJobLockAbandoned()                              {}
 func (Noop) IncResultPtrWriteFailure()                         {}
 func (Noop) IncDispatchRollback(string)                        {}
+
+// NoopApproval implements ApprovalMetrics without emitting anything.
+type NoopApproval struct{}
+
+func (NoopApproval) SetApprovalQueueDepth(string, int) {}
+func (NoopApproval) ObserveApprovalLatency(float64)    {}
+func (NoopApproval) IncApprovalExpired()               {}
+func (NoopApproval) IncApprovalDecision(string)        {}
 
 // Prom implements Metrics backed by Prometheus counters.
 type Prom struct {
@@ -644,4 +660,62 @@ func (w *workflowProm) IncWorkflowCompleted(workflow, status string) {
 
 func (w *workflowProm) ObserveWorkflowDuration(workflow string, durationSeconds float64) {
 	w.duration.WithLabelValues(workflow).Observe(durationSeconds)
+}
+
+// --- Approval metrics ---
+
+type approvalProm struct {
+	queueDepth    *prometheus.GaugeVec
+	latency       prometheus.Histogram
+	expiredTotal  prometheus.Counter
+	decisionTotal *prometheus.CounterVec
+	once          sync.Once
+}
+
+func NewApprovalProm(namespace string) ApprovalMetrics {
+	a := &approvalProm{
+		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "approval_queue_depth",
+			Help:      "Pending approvals by risk tier",
+		}, []string{"risk_tier"}),
+		latency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "approval_latency_seconds",
+			Help:      "Time from approval request to resolution",
+			Buckets:   prometheus.DefBuckets,
+		}),
+		expiredTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "approval_expired_total",
+			Help:      "Approvals that timed out without resolution",
+		}),
+		decisionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "approval_decisions_total",
+			Help:      "Approval decisions by outcome",
+		}, []string{"decision"}),
+	}
+	a.once.Do(func() {
+		podRegisterer.MustRegister(a.queueDepth, a.latency, a.expiredTotal, a.decisionTotal)
+	})
+	return a
+}
+
+func (a *approvalProm) SetApprovalQueueDepth(riskTier string, depth int) {
+	a.queueDepth.WithLabelValues(riskTier).Set(float64(depth))
+}
+
+func (a *approvalProm) ObserveApprovalLatency(durationSeconds float64) {
+	if durationSeconds >= 0 {
+		a.latency.Observe(durationSeconds)
+	}
+}
+
+func (a *approvalProm) IncApprovalExpired() {
+	a.expiredTotal.Inc()
+}
+
+func (a *approvalProm) IncApprovalDecision(decision string) {
+	a.decisionTotal.WithLabelValues(decision).Inc()
 }

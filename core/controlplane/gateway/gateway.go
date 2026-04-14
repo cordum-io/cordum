@@ -110,13 +110,14 @@ type server struct {
 	eventsCh      chan wsEvent
 	wsClientBufSz int
 
-	metrics        infraMetrics.GatewayMetrics
-	tenant         string
-	started        time.Time
-	auth           AuthProvider
-	entitlements   *licensing.EntitlementResolver
-	telemetry      *telemetry.Collector
-	telemetryState *telemetry.Store
+	metrics         infraMetrics.GatewayMetrics
+	approvalMetrics infraMetrics.ApprovalMetrics
+	tenant          string
+	started         time.Time
+	auth            AuthProvider
+	entitlements    *licensing.EntitlementResolver
+	telemetry       *telemetry.Collector
+	telemetryState  *telemetry.Store
 
 	workflowStore         *wf.RedisStore
 	workflowEng           *wf.Engine
@@ -286,6 +287,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 
 	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
+	approvalMetrics := infraMetrics.NewApprovalProm("cordum")
 	var userStore UserStore
 	var keyStore KeyStore
 	var err error
@@ -544,6 +546,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		eventsCh:              make(chan wsEvent, 512),
 		wsClientBufSz:         wsClientBufferSize(),
 		metrics:               gwMetrics,
+		approvalMetrics:       approvalMetrics,
 		tenant:                tenantID,
 		auth:                  provider,
 		entitlements:          entitlementResolver,
@@ -569,6 +572,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		statusCacheObj:        newStatusCache(2 * time.Second),
 		shutdownCh:            make(chan struct{}),
 	}
+	s.syncApprovalQueueDepth(context.Background())
 	defer s.Close()
 	telemetryStore, err := telemetry.NewStore(cfg.RedisURL)
 	if err != nil {

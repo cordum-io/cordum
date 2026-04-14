@@ -295,6 +295,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
 				slog.Error("failed to persist safety decision for approval", "job_id", jobID, "error", err)
 			}
+			s.syncApprovalQueueDepth(ctx)
 		}
 		return &pb.SubmitJobResponse{
 			JobId:   jobID,
