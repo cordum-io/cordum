@@ -208,10 +208,10 @@ func (s *server) handlePolicyAnalytics(w http.ResponseWriter, r *http.Request) {
 				checkedAt := int64(0)
 				approvedAt := int64(0)
 				if raw := meta["safety_checked_at"]; raw != "" {
-					fmt.Sscanf(raw, "%d", &checkedAt)
+					_, _ = fmt.Sscanf(raw, "%d", &checkedAt)
 				}
 				if raw := meta["approval_at"]; raw != "" {
-					fmt.Sscanf(raw, "%d", &approvedAt)
+					_, _ = fmt.Sscanf(raw, "%d", &approvedAt)
 				}
 				if checkedAt > 0 && approvedAt > 0 && approvedAt > checkedAt {
 					latencyMs := (approvedAt - checkedAt) / 1000 // micros to ms

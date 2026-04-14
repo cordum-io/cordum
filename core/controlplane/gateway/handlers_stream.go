@@ -808,6 +808,10 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	connStart := time.Now()
+	// Capture ping/pong values once to avoid data races if globals are
+	// overwritten by tests after the handler goroutines have started.
+	pingInterval := wsPingInterval
+	pongTimeout := wsPongTimeout
 	connID := newWSConnectionID()
 	remoteIP := clientIP(r)
 	disconnectState := &wsDisconnectState{}
@@ -832,10 +836,10 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	wsClientsActive.Inc()
 	s.statusCacheObj.Invalidate()
 	s.startWSConnectionSummaryLogger()
-	_ = ws.SetReadDeadline(time.Now().Add(wsPingInterval + wsPongTimeout))
+	_ = ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
 	ws.SetPongHandler(func(string) error {
 		wsPongsReceived.Inc()
-		return ws.SetReadDeadline(time.Now().Add(wsPingInterval + wsPongTimeout))
+		return ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
 	})
 	wsCtx, wsCancel := context.WithCancel(r.Context())
 	defer wsCancel()
@@ -884,7 +888,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	revalidate := time.NewTicker(wsRevalidateInterval)
 	defer revalidate.Stop()
-	pingTicker := time.NewTicker(wsPingInterval)
+	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
 
 	for {
@@ -1005,10 +1009,12 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	wsClientsActive.Inc()
 	s.statusCacheObj.Invalidate()
 	s.startWSConnectionSummaryLogger()
-	_ = ws.SetReadDeadline(time.Now().Add(wsPingInterval + wsPongTimeout))
+	pingInterval := wsPingInterval
+	pongTimeout := wsPongTimeout
+	_ = ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
 	ws.SetPongHandler(func(string) error {
 		wsPongsReceived.Inc()
-		return ws.SetReadDeadline(time.Now().Add(wsPingInterval + wsPongTimeout))
+		return ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
 	})
 	wsCtx, wsCancel := context.WithCancel(r.Context())
 	defer wsCancel()
@@ -1058,7 +1064,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 
 	revalidate := time.NewTicker(wsRevalidateInterval)
 	defer revalidate.Stop()
-	pingTicker := time.NewTicker(wsPingInterval)
+	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
 
 	for {

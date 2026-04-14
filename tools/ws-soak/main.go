@@ -77,7 +77,7 @@ func runClient(ctx context.Context, id int, wg *sync.WaitGroup) {
 	clientsConnected.Add(1)
 	defer func() {
 		clientsConnected.Add(-1)
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	if *flagVerbose {
@@ -88,10 +88,10 @@ func runClient(ctx context.Context, id int, wg *sync.WaitGroup) {
 	lastPong := time.Now()
 	conn.SetPongHandler(func(string) error {
 		lastPong = time.Now()
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 	// Read pump goroutine.
 	readCtx, readCancel := context.WithCancel(ctx)
@@ -127,7 +127,7 @@ func runClient(ctx context.Context, id int, wg *sync.WaitGroup) {
 				if *flagVerbose {
 					log.Printf("[client-%d] graceful disconnect after %s", id, duration)
 				}
-				conn.WriteMessage(websocket.CloseMessage,
+				_ = conn.WriteMessage(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "soak test complete"))
 				return
 			}
@@ -161,17 +161,17 @@ func runClient(ctx context.Context, id int, wg *sync.WaitGroup) {
 				log.Printf("[client-%d] reconnect failed: %v", id, reconErr)
 				continue
 			}
-			conn.Close()
+			_ = conn.Close()
 			conn = newConn
 			totalReconnects.Add(1)
 			connectStart = time.Now()
 			lastPong = time.Now()
 			conn.SetPongHandler(func(string) error {
 				lastPong = time.Now()
-				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+				_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 				return nil
 			})
-			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 			// Restart read pump.
 			readCtx, readCancel = context.WithCancel(ctx)
@@ -194,7 +194,7 @@ func runClient(ctx context.Context, id int, wg *sync.WaitGroup) {
 			}
 
 		case <-pingTicker.C:
-			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if pingErr := conn.WriteMessage(websocket.PingMessage, nil); pingErr != nil {
 				if *flagVerbose {
 					log.Printf("[client-%d] ping write failed: %v", id, pingErr)
@@ -206,7 +206,7 @@ func runClient(ctx context.Context, id int, wg *sync.WaitGroup) {
 			if *flagVerbose {
 				log.Printf("[client-%d] shutting down after %s", id, duration)
 			}
-			conn.WriteMessage(websocket.CloseMessage,
+			_ = conn.WriteMessage(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "soak test complete"))
 			return
 		}
@@ -247,7 +247,7 @@ func runStatusChecker(ctx context.Context, wg *sync.WaitGroup, expectedClients i
 				continue
 			}
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			var status struct {
 				ActiveWSClients int `json:"active_ws_clients"`

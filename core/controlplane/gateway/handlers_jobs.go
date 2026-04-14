@@ -137,15 +137,13 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		natsURL = nb.ConnectedURL()
 	}
 
-	redisStatus := "unavailable"
 	redisOK := false
 	redisErr := ""
 	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
-	if status, err := s.redisHealthStatus(ctx); err != nil {
-		redisStatus = status
+	redisStatus, err := s.redisHealthStatus(ctx)
+	if err != nil {
 		redisErr = err.Error()
 	} else {
-		redisStatus = status
 		redisOK = true
 	}
 	cancel()
