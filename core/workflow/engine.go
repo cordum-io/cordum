@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -140,6 +141,13 @@ func (lm *lockManager) acquire(runID string) (func(), bool) {
 				renewDone = make(chan struct{})
 				go func() {
 					defer close(renewDone)
+					defer func() {
+						if p := recover(); p != nil {
+							slog.Error("panic in lock renewal goroutine",
+								"run_id", runID, "panic", p, "stack", string(debug.Stack()))
+							renewCancel()
+						}
+					}()
 					ticker := time.NewTicker(runLockTTL / 3)
 					defer ticker.Stop()
 					for {

@@ -15,9 +15,16 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
-const defaultDialTimeout = 5 * time.Second
+const (
+	defaultDialTimeout                = 5 * time.Second
+	envGRPCClientKeepaliveTime        = "CORDUM_GRPC_CLIENT_KEEPALIVE_TIME"
+	envGRPCClientKeepaliveTimeout     = "CORDUM_GRPC_CLIENT_KEEPALIVE_TIMEOUT"
+	defaultGRPCClientKeepaliveTime    = 30 * time.Second
+	defaultGRPCClientKeepaliveTimeout = 10 * time.Second
+)
 
 // NewClient dials the context engine and returns a client plus a closer.
 func NewClient(ctx context.Context, addr string) (pb.ContextEngineClient, func(), error) {
@@ -36,7 +43,11 @@ func NewClient(ctx context.Context, addr string) (pb.ContextEngineClient, func()
 	if err != nil {
 		return nil, nil, err
 	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithKeepaliveParams(clientKeepaliveParams()),
+	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial context engine: %w", err)
 	}
@@ -98,4 +109,12 @@ func contextEngineTransportCredentials() (credentials.TransportCredentials, erro
 		cfg.MinVersion = tls.VersionTLS13
 	}
 	return credentials.NewTLS(cfg), nil
+}
+
+func clientKeepaliveParams() keepalive.ClientParameters {
+	return keepalive.ClientParameters{
+		Time:                env.DurationOr(envGRPCClientKeepaliveTime, defaultGRPCClientKeepaliveTime),
+		Timeout:             env.DurationOr(envGRPCClientKeepaliveTimeout, defaultGRPCClientKeepaliveTimeout),
+		PermitWithoutStream: true,
+	}
 }

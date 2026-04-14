@@ -2544,12 +2544,15 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 - Upgrade: websocket
 - API key via `X-API-Key` or websocket subprotocol (`cordum-api-key, <base64url(key)>`)
 - Streams bus events (`sys.job.*`, `sys.audit.*`) filtered by tenant permissions.
+- Server sends ping frames every 30 seconds by default (`GATEWAY_WS_PING_INTERVAL`) and expects pong handling to keep the socket alive.
+- Credentials are revalidated every 120 seconds; definitive revocation closes the socket with a policy-violation close frame.
 
 ### GET `/api/v1/jobs/{id}/stream`
 
 - Auth: required + tenant access to that job
 - Upgrade: websocket
 - Streams only events for the specified job id.
+- Uses the same ping/pong keepalive and credential revalidation behavior as the global stream.
 
 ---
 

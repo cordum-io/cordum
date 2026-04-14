@@ -342,6 +342,14 @@
         },
         "traceId": {
           "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is set when the job requires further action before execution.\nEmpty or \"submitted\" means the job was accepted and enqueued normally.\n\"approval_required\" means the job is held pending human approval."
+        },
+        "reason": {
+          "type": "string",
+          "description": "reason is set alongside status to explain why the job was held."
         }
       }
     },

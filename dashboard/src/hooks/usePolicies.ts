@@ -11,6 +11,10 @@ import type {
   PolicySnapshotSummary,
   PolicySnapshot,
   SafetyDecisionType,
+  PolicyReplayRequest,
+  PolicyReplayResponse,
+  PolicyAnalyticsRequest,
+  PolicyAnalyticsResponse,
 } from "../api/types";
 
 export type { PolicySnapshot, PolicySnapshotSummary };
@@ -867,6 +871,82 @@ export function usePolicyApprovals() {
 }
 
 /** @internal exported for unit tests */
+// ---------------------------------------------------------------------------
+// Policy Replay
+// ---------------------------------------------------------------------------
+
+export function useReplayPolicy() {
+  return useMutation<PolicyReplayResponse, Error, PolicyReplayRequest>({
+    mutationFn: (input) => {
+      logger.info("policies", "Running policy replay", {
+        from: input.from,
+        to: input.to,
+        useCurrentPolicy: input.use_current_policy,
+        maxJobs: input.max_jobs,
+      });
+      return post<PolicyReplayResponse>("/policy/replay", input);
+    },
+    onSuccess: (data) => {
+      logger.info("policies", "Policy replay completed", {
+        replayId: data.replay_id,
+        totalJobs: data.summary.total_jobs,
+        escalated: data.summary.escalated,
+        relaxed: data.summary.relaxed,
+      });
+      useToastStore.getState().addToast({
+        type: "success",
+        title: "Replay completed",
+        description: `${data.summary.total_jobs} jobs replayed — ${data.summary.escalated} escalated, ${data.summary.relaxed} relaxed`,
+      });
+    },
+    onError: (err) => {
+      logger.error("policies", "Policy replay failed", { error: err.message });
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Replay failed",
+        description: err.message,
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Policy Analytics
+// ---------------------------------------------------------------------------
+
+export function usePolicyAnalytics() {
+  return useMutation<PolicyAnalyticsResponse, Error, PolicyAnalyticsRequest>({
+    mutationFn: (input) => {
+      logger.info("policies", "Running policy analytics", {
+        from: input.from,
+        to: input.to,
+        ruleFilter: input.rule_filter,
+      });
+      return post<PolicyAnalyticsResponse>("/policy/analytics", input);
+    },
+    onSuccess: (data) => {
+      logger.info("policies", "Policy analytics completed", {
+        totalRules: data.summary.total_rules,
+        totalHits: data.summary.total_hits,
+        totalOverrides: data.summary.total_overrides,
+      });
+      useToastStore.getState().addToast({
+        type: "success",
+        title: "Analysis completed",
+        description: `${data.summary.total_rules} rules analyzed — ${data.summary.total_overrides} overrides found`,
+      });
+    },
+    onError: (err) => {
+      logger.error("policies", "Policy analytics failed", { error: err.message });
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "Analysis failed",
+        description: err.message,
+      });
+    },
+  });
+}
+
 export const __policiesInternal = {
   readPolicyBundleContent,
   policyBundlePath,

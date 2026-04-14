@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 type submitJobRequest struct {
@@ -408,11 +409,23 @@ func dialSafetyKernel(addr string) (*grpc.ClientConn, pb.SafetyKernelClient, err
 	if err != nil {
 		return nil, nil, err
 	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithKeepaliveParams(gatewayGRPCClientKeepaliveParams()),
+	)
 	if err != nil {
 		return nil, nil, err
 	}
 	return conn, pb.NewSafetyKernelClient(conn), nil
+}
+
+func gatewayGRPCClientKeepaliveParams() keepalive.ClientParameters {
+	return keepalive.ClientParameters{
+		Time:                env.DurationOr("CORDUM_GRPC_CLIENT_KEEPALIVE_TIME", 30*time.Second),
+		Timeout:             env.DurationOr("CORDUM_GRPC_CLIENT_KEEPALIVE_TIMEOUT", 10*time.Second),
+		PermitWithoutStream: true,
+	}
 }
 
 func safetyTransportCredentials() (credentials.TransportCredentials, error) {

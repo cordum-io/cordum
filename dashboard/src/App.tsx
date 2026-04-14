@@ -34,6 +34,7 @@ const JobDetailPage = lazy(() => import("./pages/JobDetailPage"));
 const AgentsPage = lazy(() => import("./pages/AgentsPage"));
 const AgentDetailPage = lazy(() => import("./pages/AgentDetailPage"));
 const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
+const ApprovalDetailPage = lazy(() => import("./pages/approvals/ApprovalDetailPage"));
 const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
 const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudioPage"));
 const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
@@ -63,6 +64,8 @@ const GovernTenantsPage = lazy(() => import("./pages/govern/TenantsPage"));
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
+const GovernReplayPage = lazy(() => import("./pages/govern/ReplayPage"));
+const GovernPolicyAnalyticsPage = lazy(() => import("./pages/govern/PolicyAnalyticsPage"));
 
 // Policy Studio tab redirects — old standalone page routes → tabbed Policy Studio
 function PolicyTabRedirect({ tab }: { tab: string }) {
@@ -145,6 +148,7 @@ function ProtectedRoutes() {
           <Route path="/workflows/:id/edit" element={<WorkflowEditRedirect />} />
           <Route path="/workflows/:id" element={<WorkflowViewRedirect />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
+          <Route path="/approvals/:jobId" element={<ApprovalDetailPage />} />
 
           {/* GOVERN */}
           <Route path="/govern/overview" element={<GovernPolicyOverviewPage />} />
@@ -157,6 +161,8 @@ function ProtectedRoutes() {
           <Route path="/govern/bundles" element={<PolicyTabRedirect tab="bundles" />} />
           <Route path="/govern/simulator" element={<PolicyTabRedirect tab="simulator" />} />
           <Route path="/govern/quarantine" element={<GovernQuarantinePage />} />
+          <Route path="/govern/replay" element={<GovernReplayPage />} />
+          <Route path="/govern/analytics" element={<GovernPolicyAnalyticsPage />} />
           <Route path="/policies" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.root} replace />} />
           <Route path="/policies/input" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.input} replace />} />
           <Route path="/policies/rules" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.rules} replace />} />

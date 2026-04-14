@@ -44,12 +44,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 
 	wf "github.com/cordum/cordum/core/workflow"
 )
-
-var defaultMaxJobPayloadBytes = int64(env.IntOr("GATEWAY_MAX_JOB_PAYLOAD_BYTES", 2<<20))
 
 const (
 	defaultGrpcAddr             = ":8080"
@@ -76,16 +75,29 @@ var validTopicRegex = regexp.MustCompile(`^job\.[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA
 
 // #nosec G101 -- environment variable names are identifiers, not credential material.
 const (
-	envGatewayGrpcAddr      = "GATEWAY_GRPC_ADDR"
-	envGatewayHTTPAddr      = "GATEWAY_HTTP_ADDR"
-	envGatewayMetricsAddr   = "GATEWAY_METRICS_ADDR"
-	envGatewayMetricsPublic = "GATEWAY_METRICS_PUBLIC"
-	envGatewayHTTPTLSCert   = "GATEWAY_HTTP_TLS_CERT"
-	envGatewayHTTPTLSKey    = "GATEWAY_HTTP_TLS_KEY"
-	envArtifactMaxBytes     = "ARTIFACT_MAX_BYTES"
-	envHTTPReadTimeout      = "GATEWAY_HTTP_READ_TIMEOUT"
-	envHTTPWriteTimeout     = "GATEWAY_HTTP_WRITE_TIMEOUT"
-	envHTTPIdleTimeout      = "GATEWAY_HTTP_IDLE_TIMEOUT"
+	envGatewayGrpcAddr              = "GATEWAY_GRPC_ADDR"
+	envGatewayHTTPAddr              = "GATEWAY_HTTP_ADDR"
+	envGatewayMetricsAddr           = "GATEWAY_METRICS_ADDR"
+	envGatewayMetricsPublic         = "GATEWAY_METRICS_PUBLIC"
+	envGatewayHTTPTLSCert           = "GATEWAY_HTTP_TLS_CERT"
+	envGatewayHTTPTLSKey            = "GATEWAY_HTTP_TLS_KEY"
+	envArtifactMaxBytes             = "ARTIFACT_MAX_BYTES"
+	envHTTPReadTimeout              = "GATEWAY_HTTP_READ_TIMEOUT"
+	envHTTPWriteTimeout             = "GATEWAY_HTTP_WRITE_TIMEOUT"
+	envHTTPIdleTimeout              = "GATEWAY_HTTP_IDLE_TIMEOUT"
+	envGatewayWSPingInterval        = "GATEWAY_WS_PING_INTERVAL"
+	envGatewayWSPongTimeout         = "GATEWAY_WS_PONG_TIMEOUT"
+	envGRPCServerKeepaliveTime      = "CORDUM_GRPC_SERVER_KEEPALIVE_TIME"
+	envGRPCServerKeepaliveTimeout   = "CORDUM_GRPC_SERVER_KEEPALIVE_TIMEOUT"
+	envGRPCServerMaxConnectionAge   = "CORDUM_GRPC_SERVER_MAX_CONNECTION_AGE"
+	envGRPCServerMaxConnectionGrace = "CORDUM_GRPC_SERVER_MAX_CONNECTION_AGE_GRACE"
+	envGRPCServerEnforcementMinTime = "CORDUM_GRPC_SERVER_ENFORCEMENT_MIN_TIME"
+)
+
+var (
+	defaultMaxJobPayloadBytes = int64(env.IntOr("GATEWAY_MAX_JOB_PAYLOAD_BYTES", 2<<20))
+	wsPingInterval            = durationFromEnv(envGatewayWSPingInterval, 30*time.Second)
+	wsPongTimeout             = durationFromEnv(envGatewayWSPongTimeout, 10*time.Second)
 )
 
 const (
@@ -105,10 +117,12 @@ type server struct {
 	workerSeen map[string]time.Time
 	workerMu   sync.RWMutex
 
-	clients       map[*websocket.Conn]*wsClient
-	clientsMu     sync.RWMutex
-	eventsCh      chan wsEvent
-	wsClientBufSz int
+	clients             map[*websocket.Conn]*wsClient
+	clientsMu           sync.RWMutex
+	eventsCh            chan wsEvent
+	wsClientBufSz       int
+	recentWSDisconnects sync.Map
+	wsSummaryOnce       sync.Once
 
 	metrics        infraMetrics.GatewayMetrics
 	tenant         string
@@ -679,6 +693,16 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(grpcCreds),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      durationFromEnv(envGRPCServerMaxConnectionAge, 2*time.Hour),
+			MaxConnectionAgeGrace: durationFromEnv(envGRPCServerMaxConnectionGrace, 30*time.Second),
+			Time:                  durationFromEnv(envGRPCServerKeepaliveTime, 30*time.Second),
+			Timeout:               durationFromEnv(envGRPCServerKeepaliveTimeout, 10*time.Second),
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             durationFromEnv(envGRPCServerEnforcementMinTime, 15*time.Second),
+			PermitWithoutStream: true,
+		}),
 		grpc.ChainUnaryInterceptor(
 			apiKeyUnaryInterceptor(s.auth),
 			rateLimitUnaryInterceptor(s.auth, s.apiRL, s.publicRL),
@@ -704,6 +728,84 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}()
 
 	return startHTTPServer(s, httpAddr, metricsAddr, grpcServer)
+}
+
+type busStatusReporter interface {
+	IsConnected() bool
+	Status() string
+}
+
+func (s *server) natsHealthStatus() (string, bool) {
+	reporter, ok := s.bus.(busStatusReporter)
+	if !ok || reporter == nil {
+		return "unavailable", false
+	}
+	connected := reporter.IsConnected()
+	status := strings.ToLower(strings.TrimSpace(reporter.Status()))
+	if status == "" {
+		if connected {
+			status = "connected"
+		} else {
+			status = "disconnected"
+		}
+	}
+	return status, connected
+}
+
+func (s *server) redisClient() redis.UniversalClient {
+	if s == nil || s.jobStore == nil {
+		return nil
+	}
+	return s.jobStore.Client()
+}
+
+func (s *server) redisHealthStatus(ctx context.Context) (string, error) {
+	client := s.redisClient()
+	if client == nil {
+		return "unavailable", fmt.Errorf("redis client unavailable")
+	}
+	if err := client.Ping(ctx).Err(); err != nil {
+		return "error", err
+	}
+	return "ok", nil
+}
+
+func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	natsStatus, natsConnected := s.natsHealthStatus()
+	redisStatus, redisErr := s.redisHealthStatus(ctx)
+	payload := map[string]any{
+		"status": "healthy",
+		"nats":   natsStatus,
+		"redis":  redisStatus,
+	}
+
+	var healthErrors []string
+	if !natsConnected {
+		payload["status"] = "unhealthy"
+		healthErrors = append(healthErrors, fmt.Sprintf("nats status=%s", natsStatus))
+	}
+	if redisErr != nil {
+		payload["status"] = "unhealthy"
+		healthErrors = append(healthErrors, fmt.Sprintf("redis ping failed: %v", redisErr))
+	}
+	if len(healthErrors) > 0 {
+		payload["error"] = strings.Join(healthErrors, "; ")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if err := json.NewEncoder(w).Encode(payload); err != nil {
+			slog.Error("encode health response failed", "error", err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		slog.Error("encode health response failed", "error", err)
+	}
 }
 
 func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.Server) error {
@@ -732,12 +834,8 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	}()
 
 	// 1. Health (root path for k8s probes + /api/v1 alias for dashboard)
-	healthHandler := func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	}
-	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc("GET /api/v1/health", s.instrumented("/api/v1/health", healthHandler))
+	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /api/v1/health", s.instrumented("/api/v1/health", s.handleHealth))
 
 	// 1.5 Auth config (public)
 	mux.HandleFunc("GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
@@ -888,6 +986,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/approve", s.instrumented("/api/v1/approvals/{job_id}/approve", s.handleApproveJob))
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/reject", s.instrumented("/api/v1/approvals/{job_id}/reject", s.handleRejectJob))
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/repair", s.instrumented("/api/v1/approvals/{job_id}/repair", s.handleRepairApproval))
+	mux.HandleFunc("GET /api/v1/approvals/{job_id}/context", s.instrumented("/api/v1/approvals/{job_id}/context", s.handleApprovalContext))
 
 	// 12. Policy endpoints
 	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
@@ -915,6 +1014,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/policy/rollback", s.instrumented("/api/v1/policy/rollback", s.handleRollbackPolicyBundles))
 	mux.HandleFunc("GET /api/v1/policy/audit", s.instrumented("/api/v1/policy/audit", s.handleListPolicyAudit))
 	mux.HandleFunc("POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
+	mux.HandleFunc("POST /api/v1/policy/analytics", s.instrumented("/api/v1/policy/analytics", s.handlePolicyAnalytics))
 
 	// 12.5 MCP (HTTP/SSE) routes
 	if err := s.registerMCPRoutes(mux); err != nil {
@@ -955,7 +1055,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		ReadTimeout:       durationFromEnv(envHTTPReadTimeout, 15*time.Second),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      durationFromEnv(envHTTPWriteTimeout, 30*time.Second),
-		IdleTimeout:       durationFromEnv(envHTTPIdleTimeout, 60*time.Second),
+		IdleTimeout:       durationFromEnv(envHTTPIdleTimeout, 120*time.Second),
 		MaxHeaderBytes:    defaultMaxHeaderBytes,
 	}
 	var httpReloader *tlsreload.CertReloader

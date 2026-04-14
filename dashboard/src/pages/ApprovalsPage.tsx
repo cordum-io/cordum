@@ -826,11 +826,11 @@ export default function ApprovalsPage() {
                   role="button"
                   tabIndex={0}
                   aria-label={`Open approval detail for ${title}`}
-                  onClick={() => setSelectedApproval(approval)}
+                  onClick={() => navigate(`/approvals/${approval.jobId}`)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      setSelectedApproval(approval);
+                      navigate(`/approvals/${approval.jobId}`);
                     }
                   }}
                 >

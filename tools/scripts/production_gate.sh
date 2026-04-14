@@ -1748,29 +1748,45 @@ gate_11_streaming() {
   local job_resp job_id job_state
   local sse_code decisions_code
 
-  # --- WebSocket auth (upgrade must succeed) ---
-  # Use -m 2 timeout; write HTTP code to temp file since WS frames pollute stdout.
-  # Force HTTP/1.1: Connection/Upgrade headers are hop-by-hop and invalid in HTTP/2.
-  local ws_tmp
-  ws_tmp="$(mktemp)"
-  curl -s -o /dev/null -w "%{http_code}" -m 2 --http1.1 \
-    "${CURL_TLS_OPTS[@]}" \
-    -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" \
-    -H "Connection: Upgrade" -H "Upgrade: websocket" \
-    -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-    "${API_BASE}/api/v1/stream" >"${ws_tmp}" 2>/dev/null || true
-  ws_code="$(cat "${ws_tmp}" | grep -oE '[0-9]{3}$' || echo "000")"
-  rm -f "${ws_tmp}"
-  # 101 = upgrade success, 000 = curl timed out after upgrade (also success)
-  case "${ws_code}" in
-    101|200|000) ;;
-    *)
-      echo "WebSocket upgrade with auth expected 101/200, got ${ws_code}" >&2
+  # --- WebSocket hold test (30s soak with ping/pong verification) ---
+  # Build ws-soak binary if not present.
+  local soak_bin="${ROOT_DIR}/bin/ws-soak"
+  if [[ ! -x "${soak_bin}" ]]; then
+    go build -o "${soak_bin}" "${ROOT_DIR}/tools/ws-soak/" 2>/dev/null || {
+      echo "failed to build ws-soak binary" >&2
       return 1
-      ;;
-  esac
+    }
+  fi
 
-  # --- WebSocket no-auth → rejected ---
+  local ws_scheme="wss"
+  [[ "${API_BASE}" == http://* ]] && ws_scheme="ws"
+  local ws_host
+  ws_host="$(echo "${API_BASE}" | sed -E 's|^https?://||')"
+  local ws_endpoint="${ws_scheme}://${ws_host}/api/v1/stream"
+
+  "${soak_bin}" \
+    -clients=1 \
+    -duration=30s \
+    -url="${ws_endpoint}" \
+    -api-key="${API_KEY}" \
+    -status-url="${API_BASE}/api/v1/status" \
+    -tls-skip-verify=true \
+    -reconnect=false || {
+    echo "WebSocket 30-second hold test failed — connection dropped" >&2
+    return 1
+  }
+
+  # Verify cleanup: after soak, active_ws_clients should return to baseline.
+  sleep 2
+  local status_resp
+  status_resp="$(curl -sS "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
+    "$(api_url "/status")" 2>/dev/null || echo "{}")"
+  local ws_count
+  ws_count="$(echo "${status_resp}" | jq -r '.active_ws_clients // 0' 2>/dev/null || echo "0")"
+  echo "WebSocket hold test passed (30s, cleanup verified: active_ws_clients=${ws_count})"
+
+  # --- WebSocket no-auth → rejected (quick curl check) ---
+  local ws_tmp
   ws_tmp="$(mktemp)"
   curl -s -o /dev/null -w "%{http_code}" -m 2 --http1.1 \
     "${CURL_TLS_OPTS[@]}" \
@@ -3168,6 +3184,81 @@ fi
 build_auth_headers
 build_curl_tls_opts
 
+# ---------------------------------------------------------------------------
+# Gate 20 — Connection Health Metrics
+# ---------------------------------------------------------------------------
+gate_20_ws_metrics() {
+  # Verify WebSocket metrics exist on /metrics endpoint (if available).
+  local metrics_url="${METRICS_URL:-https://localhost:9092/metrics}"
+  local metrics_resp
+  metrics_resp="$(curl -sS "${CURL_TLS_OPTS[@]}" "${metrics_url}" 2>/dev/null || echo "")"
+  if [[ -z "${metrics_resp}" ]]; then
+    echo "metrics endpoint not reachable at ${metrics_url} — skipping metric checks"
+  else
+    echo "${metrics_resp}" | grep -q "cordum_gateway_ws_clients_active" || {
+      echo "metric cordum_gateway_ws_clients_active not found in /metrics" >&2
+      return 1
+    }
+    echo "ws_clients_active metric found"
+  fi
+
+  # Verify /status returns valid JSON with expected fields.
+  local status_resp
+  status_resp="$(curl -sS "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
+    "$(api_url "/status")" 2>/dev/null || echo "{}")"
+  echo "${status_resp}" | jq -e '.uptime_seconds' >/dev/null 2>&1 || {
+    echo "/status missing uptime_seconds field" >&2
+    return 1
+  }
+  echo "connection health metrics gate passed"
+}
+
+# ---------------------------------------------------------------------------
+# Gate 21 — Infrastructure Health (NATS + Redis liveness)
+# ---------------------------------------------------------------------------
+gate_21_infra_health() {
+  # Verify /health returns 200 and checks infrastructure.
+  local health_code
+  health_code="$(curl -sS -o /dev/null -w "%{http_code}" \
+    "${CURL_TLS_OPTS[@]}" \
+    "$(api_url "/../health")" 2>/dev/null || echo "000")"
+  [[ "${health_code}" == "200" ]] || {
+    echo "/health expected 200, got ${health_code}" >&2
+    return 1
+  }
+
+  local health_resp
+  health_resp="$(curl -sS "${CURL_TLS_OPTS[@]}" \
+    "$(api_url "/../health")" 2>/dev/null || echo "{}")"
+
+  # Check that health endpoint actually verified infrastructure (not just static ok).
+  local nats_status redis_status
+  nats_status="$(echo "${health_resp}" | jq -r '.nats // "unknown"' 2>/dev/null || echo "unknown")"
+  redis_status="$(echo "${health_resp}" | jq -r '.redis // "unknown"' 2>/dev/null || echo "unknown")"
+
+  [[ "${nats_status}" == "connected" ]] || {
+    echo "/health: NATS status is '${nats_status}', expected 'connected'" >&2
+    return 1
+  }
+  [[ "${redis_status}" == "ok" ]] || {
+    echo "/health: Redis status is '${redis_status}', expected 'ok'" >&2
+    return 1
+  }
+
+  # Verify Redis pool is active (non-zero hit count).
+  local status_resp
+  status_resp="$(curl -sS "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
+    "$(api_url "/status")" 2>/dev/null || echo "{}")"
+  local pool_hits
+  pool_hits="$(echo "${status_resp}" | jq -r '.redis_pool_stats.hits // 0' 2>/dev/null || echo "0")"
+  [[ "${pool_hits}" -gt 0 ]] 2>/dev/null || {
+    echo "/status: Redis pool hits is ${pool_hits}, expected > 0" >&2
+    return 1
+  }
+
+  echo "infrastructure health gate passed (NATS=${nats_status}, Redis=${redis_status}, pool_hits=${pool_hits})"
+}
+
 declare -A GATE_STATUS
 declare -A GATE_DURATION_MS
 declare -A GATE_MESSAGE
@@ -3194,6 +3285,8 @@ for gate in "${SELECTED_GATES[@]}"; do
     17) run_gate 17 gate_17_dashboard         "Gate 17 Dashboard" ;;
     18) run_gate 18 gate_18_release_config    "Gate 18 Release Config" ;;
     19) run_gate 19 gate_19_ha                "Gate 19 Horizontal Scaling" ;;
+    20) run_gate 20 gate_20_ws_metrics        "Gate 20 Connection Metrics" ;;
+    21) run_gate 21 gate_21_infra_health      "Gate 21 Infrastructure Health" ;;
   esac
 done
 

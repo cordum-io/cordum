@@ -510,6 +510,17 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			item["decision_summary"] = buildApprovalDecisionSummary(req, record.Reason, payload, contextStatus)
+
+			// Enriched approval context fields for decision-grade UX.
+			// blast_radius, rollback_hint, and policy_snapshot_summary are
+			// cheap to compute per item. prior_approvals is expensive (Redis
+			// query) so it's only available via GET /approvals/{id}/context.
+			item["blast_radius"] = buildBlastRadius(req, req.GetLabels())
+
+			rollbackHint := strings.TrimSpace(req.GetLabels()["rollback_hint"])
+			item["rollback_hint"] = rollbackHint
+
+			item["policy_snapshot_summary"] = buildPolicySnapshotSummary(record)
 		}
 		items = append(items, item)
 	}
@@ -1278,6 +1289,202 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result.body)
 }
 
+// handleApprovalContext returns enriched approval context for a single job,
+// combining blast radius, prior approvals, rollback hints, policy snapshot
+// summary, time remaining, and parsed constraints in one response.
+func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
+	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
+		return
+	}
+	jobID, ok := requirePathParam(w, r, "job_id")
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify job exists.
+	state, err := s.jobStore.GetState(ctx, jobID)
+	if err != nil {
+		slog.Debug("approval context: job not found", "job_id", jobID, "error", err)
+		writeErrorJSON(w, http.StatusNotFound, "job not found")
+		return
+	}
+
+	// Tenant access check — fail closed on Redis error to prevent cross-tenant leakage.
+	tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID)
+	if tenantErr != nil {
+		slog.Error("approval context: tenant lookup failed, denying access",
+			"job_id", jobID, "error", tenantErr)
+		writeErrorJSON(w, http.StatusServiceUnavailable, "tenant lookup unavailable")
+		return
+	}
+	if tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+			return
+		}
+	}
+
+	// Load safety decision.
+	safetyRecord, err := s.jobStore.GetSafetyDecision(ctx, jobID)
+	if err != nil {
+		slog.Error("approval context: safety decision unavailable",
+			"job_id", jobID, "error", err)
+		writeInternalError(w, r, "get safety decision", err)
+		return
+	}
+
+	// Load approval record for resolution info.
+	approvalRecord, approvalErr := s.jobStore.GetApprovalRecord(ctx, jobID)
+	approvalRecord = store.NormalizeApprovalRecord(state, safetyRecord, approvalRecord)
+
+	// Build the approval item (same shape as list endpoint).
+	approvalItem := map[string]any{
+		"job_id":              jobID,
+		"state":               string(state),
+		"decision":            safetyRecord.Decision,
+		"policy_snapshot":     safetyRecord.PolicySnapshot,
+		"policy_rule_id":      safetyRecord.RuleID,
+		"policy_reason":       safetyRecord.Reason,
+		"constraints":         safetyRecord.Constraints,
+		"approval_required":   safetyRecord.ApprovalRequired,
+		"approval_ref":        safetyRecord.ApprovalRef,
+		"approval_status":     approvalRecord.Status,
+		"approval_actionability": approvalRecord.Actionability,
+		"approval_decision":   approvalRecord.Decision,
+	}
+	if approvalErr == nil && approvalRecord.ApprovedBy != "" {
+		approvalItem["resolved_by"] = approvalRecord.ApprovedBy
+		approvalItem["resolved_comment"] = approvalRecord.Note
+		approvalItem["resolution"] = approvalRecord.Reason
+		if approvalRecord.ApprovedAt > 0 {
+			approvalItem["resolved_at"] = approvalRecord.ApprovedAt
+		}
+	}
+
+	// Load job request for labels, topic, tenant, and decision summary.
+	var (
+		decisionSummary *approvalDecisionSummary
+		blastRadius     map[string]any
+		rollbackHint    string
+		jobTopic        string
+		jobTenant       string
+	)
+	if req, reqErr := s.jobStore.GetJobRequest(ctx, jobID); reqErr == nil && req != nil {
+		labels := req.GetLabels()
+		jobTopic = strings.TrimSpace(req.GetTopic())
+		jobTenant = strings.TrimSpace(req.GetTenantId())
+		if jobTenant == "" && labels != nil {
+			jobTenant = strings.TrimSpace(labels["tenant_id"])
+		}
+		blastRadius = buildBlastRadius(req, labels)
+		rollbackHint = strings.TrimSpace(labels["rollback_hint"])
+
+		// Build decision summary with context pointer resolution.
+		var (
+			payload       map[string]any
+			contextStatus = "absent"
+		)
+		if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" {
+			contextStatus = "unavailable"
+			if s.memStore != nil {
+				if key, keyErr := store.KeyFromPointer(ptr); keyErr == nil {
+					if raw, getErr := s.memStore.GetContext(ctx, key); getErr == nil {
+						if len(raw) == 0 {
+							contextStatus = "missing"
+						} else if jsonErr := json.Unmarshal(raw, &payload); jsonErr == nil {
+							contextStatus = "available"
+							approvalItem["job_input"] = payload
+						} else {
+							contextStatus = "malformed"
+						}
+					}
+				}
+			}
+		}
+		summary := buildApprovalDecisionSummary(req, safetyRecord.Reason, payload, contextStatus)
+		decisionSummary = &summary
+
+		// Add workflow metadata.
+		if labels != nil {
+			if v := labels["workflow_id"]; v != "" {
+				approvalItem["workflow_id"] = v
+			}
+			if v := labels["run_id"]; v != "" {
+				approvalItem["workflow_run_id"] = v
+			}
+			if v := labels["step_id"]; v != "" {
+				approvalItem["workflow_step_id"] = v
+				approvalItem["step_name"] = v
+			}
+			if v := labels["gate_type"]; v != "" {
+				approvalItem["gate_type"] = v
+			}
+		}
+	} else {
+		slog.Warn("approval context: job request unavailable",
+			"job_id", jobID, "error", reqErr)
+		blastRadius = map[string]any{
+			"systems": []string{}, "namespaces": []string{},
+			"resources": []string{}, "scope_description": "",
+		}
+	}
+	if decisionSummary != nil {
+		approvalItem["decision_summary"] = *decisionSummary
+	}
+
+	// Compute time remaining from deadline.
+	var timeRemainingMs *int64
+	metas, metaErr := s.jobStore.GetJobMetas(ctx, []string{jobID})
+	if metaErr != nil {
+		slog.Warn("approval context: job meta lookup failed", "job_id", jobID, "error", metaErr)
+	}
+	if metaErr == nil {
+		if meta, exists := metas[jobID]; exists {
+			if raw := meta["deadline_unix"]; raw != "" {
+				if deadlineMicros, parseErr := parseIntSafe(raw); parseErr == nil && deadlineMicros > 0 {
+					remaining := (deadlineMicros - time.Now().UnixMicro()) / 1000
+					if remaining < 0 {
+						remaining = 0
+					}
+					timeRemainingMs = &remaining
+				}
+			}
+		}
+	}
+
+	// Parse constraints into a structured object.
+	var constraintsParsed any
+	if safetyRecord.Constraints != nil {
+		constraintsParsed = safetyRecord.Constraints
+	}
+
+	response := map[string]any{
+		"approval":                 approvalItem,
+		"blast_radius":             blastRadius,
+		"prior_approvals":          s.queryPriorApprovals(ctx, jobTopic, jobTenant, 10),
+		"rollback_hint":            rollbackHint,
+		"policy_snapshot_summary":  buildPolicySnapshotSummary(safetyRecord),
+		"time_remaining_ms":        timeRemainingMs,
+		"constraints":              constraintsParsed,
+	}
+
+	priorCount := len(response["prior_approvals"].([]map[string]any))
+	slog.Debug("approval context served",
+		"job_id", jobID,
+		"state", string(state),
+		"topic", jobTopic,
+		"tenant", jobTenant,
+		"prior_approvals", priorCount,
+		"has_rollback_hint", rollbackHint != "",
+		"has_deadline", timeRemainingMs != nil,
+		"actor", policyActorID(r))
+
+	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, response)
+}
+
 // snapshotBase returns the base policy hash from a combined snapshot string.
 // Combined snapshots have the form "base|cfg:hash"; this extracts just "base"
 // so that config-overlay changes don't invalidate existing approvals.
@@ -1286,4 +1493,212 @@ func snapshotBase(snap string) string {
 		return snap[:i]
 	}
 	return snap
+}
+
+// buildBlastRadius extracts blast radius information from job request labels
+// and metadata. Packs populate labels with prefixed keys like "system:X",
+// "namespace:Y", "resource:Z" to describe what a job affects.
+func buildBlastRadius(req *pb.JobRequest, meta map[string]string) map[string]any {
+	systems := []string{}
+	namespaces := []string{}
+	resources := []string{}
+
+	labels := req.GetLabels()
+	for key, val := range labels {
+		val = strings.TrimSpace(val)
+		if val == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(key, "system:"):
+			systems = append(systems, val)
+		case strings.HasPrefix(key, "namespace:"):
+			namespaces = append(namespaces, val)
+		case strings.HasPrefix(key, "resource:"):
+			resources = append(resources, val)
+		}
+	}
+	// Also check top-level label values that packs may set directly.
+	if v := strings.TrimSpace(labels["target_system"]); v != "" && !containsStr(systems, v) {
+		systems = append(systems, v)
+	}
+	if v := strings.TrimSpace(labels["target_namespace"]); v != "" && !containsStr(namespaces, v) {
+		namespaces = append(namespaces, v)
+	}
+	if v := strings.TrimSpace(labels["target_resource"]); v != "" && !containsStr(resources, v) {
+		resources = append(resources, v)
+	}
+
+	// Build scope description from available data.
+	scope := ""
+	topic := strings.TrimSpace(req.GetTopic())
+	tenant := strings.TrimSpace(meta["tenant_id"])
+	if tenant == "" {
+		tenant = strings.TrimSpace(req.GetTenantId())
+	}
+	switch {
+	case len(systems) > 0 && tenant != "":
+		scope = fmt.Sprintf("Affects %d system(s) in tenant %s", len(systems), tenant)
+	case len(resources) > 0:
+		scope = fmt.Sprintf("Affects %d resource(s)", len(resources))
+	case topic != "":
+		scope = fmt.Sprintf("Topic: %s", topic)
+	}
+
+	return map[string]any{
+		"systems":           systems,
+		"namespaces":        namespaces,
+		"resources":         resources,
+		"scope_description": scope,
+	}
+}
+
+func containsStr(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// queryPriorApprovals finds recently resolved approvals with the same
+// topic+tenant combination. Returns at most maxResults items.
+func (s *server) queryPriorApprovals(ctx context.Context, topic, tenant string, maxResults int) []map[string]any {
+	// Require both topic and tenant for tenant-safe queries. If either is empty,
+	// return empty to prevent cross-tenant data leakage.
+	if s.jobStore == nil || topic == "" || tenant == "" {
+		return []map[string]any{}
+	}
+	now := time.Now()
+	from := now.Add(-30 * 24 * time.Hour).UnixMicro()
+	to := now.UnixMicro()
+
+	jobIDs, err := s.jobStore.ListRecentJobsByTimeRange(ctx, from, to, 0, 200)
+	if err != nil {
+		slog.Warn("query prior approvals: list recent jobs failed", "error", err)
+		return []map[string]any{}
+	}
+	if len(jobIDs) == 0 {
+		return []map[string]any{}
+	}
+
+	metas, err := s.jobStore.GetJobMetas(ctx, jobIDs)
+	if err != nil {
+		slog.Warn("query prior approvals: get job metas failed", "error", err)
+		return []map[string]any{}
+	}
+
+	results := make([]map[string]any, 0, maxResults)
+	for _, id := range jobIDs {
+		if len(results) >= maxResults {
+			break
+		}
+		meta, ok := metas[id]
+		if !ok {
+			continue
+		}
+		// Must have been an approval that was resolved.
+		if meta["safety_decision"] != string(model.SafetyRequireApproval) {
+			continue
+		}
+		if meta["approval_by"] == "" {
+			continue
+		}
+		// Match topic+tenant (both always required — never skip tenant filter).
+		jobTopic := strings.TrimSpace(meta["topic"])
+		jobTenant := strings.TrimSpace(meta["tenant"])
+		if jobTopic != topic {
+			continue
+		}
+		if jobTenant != tenant {
+			continue
+		}
+
+		wasApproved := meta["approval_decision"] == string(model.ApprovalDecisionApprove)
+		if meta["approval_decision"] == "" {
+			// Legacy: infer from state.
+			wasApproved = meta["state"] != string(model.JobStateDenied)
+		}
+		approvedAt := int64(0)
+		if raw := meta["approval_at"]; raw != "" {
+			if parsed, parseErr := parseIntSafe(raw); parseErr == nil {
+				approvedAt = parsed
+			}
+		}
+
+		results = append(results, map[string]any{
+			"job_id":      id,
+			"topic":       jobTopic,
+			"tenant":      jobTenant,
+			"decision":    meta["approval_decision"],
+			"resolved_by": meta["approval_by"],
+			"resolved_at": approvedAt,
+			"was_approved": wasApproved,
+		})
+	}
+	return results
+}
+
+func parseIntSafe(s string) (int64, error) {
+	var n int64
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
+}
+
+// buildPolicySnapshotSummary parses the safety snapshot and rule information
+// into a human-readable summary object.
+func buildPolicySnapshotSummary(record model.SafetyDecisionRecord) map[string]any {
+	ruleCount := 0
+	policyVersion := ""
+	snapshot := strings.TrimSpace(record.PolicySnapshot)
+
+	if snapshot != "" {
+		policyVersion = snapshotBase(snapshot)
+		// Count is not stored directly; report 1 if a rule was matched.
+		if record.RuleID != "" {
+			ruleCount = 1
+		}
+	}
+
+	matchedRule := map[string]any{
+		"id":                  record.RuleID,
+		"description":         record.Reason,
+		"decision":            string(record.Decision),
+		"constraints_summary": formatConstraintsSummary(record),
+	}
+
+	return map[string]any{
+		"rule_count":     ruleCount,
+		"matched_rule":   matchedRule,
+		"policy_version": policyVersion,
+	}
+}
+
+func formatConstraintsSummary(record model.SafetyDecisionRecord) string {
+	if record.Constraints == nil {
+		return ""
+	}
+	parts := []string{}
+	if budgets := record.Constraints.GetBudgets(); budgets != nil {
+		if budgets.GetMaxRetries() > 0 {
+			parts = append(parts, fmt.Sprintf("max_retries=%d", budgets.GetMaxRetries()))
+		}
+		if budgets.GetMaxRuntimeMs() > 0 {
+			parts = append(parts, fmt.Sprintf("timeout=%dms", budgets.GetMaxRuntimeMs()))
+		}
+		if budgets.GetMaxConcurrentJobs() > 0 {
+			parts = append(parts, fmt.Sprintf("max_concurrent=%d", budgets.GetMaxConcurrentJobs()))
+		}
+	}
+	if sandbox := record.Constraints.GetSandbox(); sandbox != nil {
+		parts = append(parts, "sandboxed")
+	}
+	if record.Constraints.GetRedactionLevel() != "" {
+		parts = append(parts, fmt.Sprintf("redaction=%s", record.Constraints.GetRedactionLevel()))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
 }

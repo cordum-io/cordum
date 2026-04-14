@@ -174,7 +174,17 @@ Server-side filtering:
 
 ## 6. Reconnection Strategy
 
-The gateway does not implement ping/pong keepalive frames. Clients should implement reconnection with exponential backoff.
+The gateway now sends WebSocket ping frames every 30 seconds by default and expects the client to process control frames and reply with pong frames. Clients should still implement reconnection with exponential backoff for process restarts, network partitions, credential revocation, and any transport that remains unavailable after keepalive retries.
+
+### Server Keepalive and Revalidation
+
+- The gateway sends a ping every `30s` by default (`GATEWAY_WS_PING_INTERVAL`)
+- The server extends the read deadline when it receives a pong and treats missing pongs as a dead connection (`GATEWAY_WS_PONG_TIMEOUT`)
+- Long-lived WebSocket credentials are revalidated every `120s`
+- Transient auth backend failures (for example network timeouts) are retried before the connection is dropped
+- The HTTP server idle timeout defaults to `120s` (`GATEWAY_HTTP_IDLE_TIMEOUT`) so quiet upgraded connections are not closed before the keepalive loop runs
+
+**Client requirement:** keep a read loop running. In Gorilla WebSocket and most browser runtimes, ping/pong handlers only run while the connection is being read.
 
 ### Recommended Parameters
 

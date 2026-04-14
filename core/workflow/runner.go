@@ -160,7 +160,9 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	slog.Info("shutting down gracefully", "timeout", defaultShutdownTimeout.String())
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("http server shutdown failed", "error", err)
+	}
 
 	slog.Info("stopped")
 	return nil

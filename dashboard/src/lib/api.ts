@@ -1,5 +1,5 @@
 import { get, post, put, del, patch } from "../api/client";
-import type { User, Approval, DLQEntry } from "../api/types";
+import type { User, Approval, DLQEntry, ApprovalContext, PolicyReplayRequest, PolicyReplayResponse, PolicyAnalyticsRequest, PolicyAnalyticsResponse } from "../api/types";
 import { mapDLQEntry, mapApprovalItem, type BackendDLQEntry, type BackendApprovalItem } from "../api/transform";
 import type {
   PolicyBundlesResponse,
@@ -234,6 +234,14 @@ export const api = {
     return post<PolicyCheckResponse>("/policy/evaluate", body);
   },
 
+  policyReplay(body: PolicyReplayRequest): Promise<PolicyReplayResponse> {
+    return post<PolicyReplayResponse>("/policy/replay", body);
+  },
+
+  policyAnalytics(body: PolicyAnalyticsRequest): Promise<PolicyAnalyticsResponse> {
+    return post<PolicyAnalyticsResponse>("/policy/analytics", body);
+  },
+
   // ---------------------------------------------------------------------------
   // Job / Approval methods
   // ---------------------------------------------------------------------------
@@ -244,6 +252,10 @@ export const api = {
 
   rejectJob(id: string, body?: ApprovalActionBody): Promise<void> {
     return post<void>(`/approvals/${id}/reject`, body);
+  },
+
+  getApprovalContext(jobId: string): Promise<ApprovalContext> {
+    return get<ApprovalContext>(`/approvals/${jobId}/context`);
   },
 
   listJobs(params?: QueryParams): Promise<JobsResponse> {

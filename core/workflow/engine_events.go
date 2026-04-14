@@ -422,5 +422,8 @@ func (e *Engine) appendTimeline(ctx context.Context, run *WorkflowRun, eventType
 		Message:    message,
 		Data:       data,
 	}
-	_ = e.store.AppendTimelineEvent(ctx, run.ID, evt)
+	if err := e.store.AppendTimelineEvent(ctx, run.ID, evt); err != nil {
+		slog.Error("timeline event append failed", "run_id", run.ID, "event_type", evt.Type, "error", err)
+		slog.Info("timeline event fallback", "run_id", run.ID, "step_id", evt.StepID, "type", evt.Type, "message", evt.Message)
+	}
 }

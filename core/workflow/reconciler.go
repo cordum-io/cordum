@@ -94,7 +94,11 @@ func (r *reconciler) HandleJobResult(ctx context.Context, jr *pb.JobResult) erro
 		if token == "" {
 			return bus.RetryAfter(fmt.Errorf("run lock busy"), 500*time.Millisecond)
 		}
-		defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
+		defer func() {
+			if rlErr := r.jobStore.ReleaseLock(context.Background(), lockKey, token); rlErr != nil {
+				slog.Warn("lock release failed", "lock_key", lockKey, "error", rlErr)
+			}
+		}()
 	}
 	if r.engine != nil {
 		if err := r.engine.HandleJobResult(ctx, jr); err != nil {
@@ -148,7 +152,11 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 	if token == "" {
 		return
 	}
-	defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
+	defer func() {
+		if rlErr := r.jobStore.ReleaseLock(context.Background(), lockKey, token); rlErr != nil {
+			slog.Warn("lock release failed", "lock_key", lockKey, "error", rlErr)
+		}
+	}()
 
 	run, err := r.workflowStore.GetRun(ctx, runID)
 	if err != nil || run == nil {
@@ -246,7 +254,11 @@ func (r *reconciler) reconcileOrphanedJobs(ctx context.Context, runID string) {
 	if token == "" {
 		return
 	}
-	defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
+	defer func() {
+		if rlErr := r.jobStore.ReleaseLock(context.Background(), lockKey, token); rlErr != nil {
+			slog.Warn("lock release failed", "lock_key", lockKey, "error", rlErr)
+		}
+	}()
 
 	reason := "orphaned after workflow " + string(run.Status)
 	for _, jobID := range orphaned {

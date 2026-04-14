@@ -242,6 +242,9 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 	run.Status = RunStatusCancelled
 	run.CompletedAt = &now
 	run.UpdatedAt = now
+	slog.Info("workflow run state changed",
+		"run_id", run.ID, "workflow_id", run.WorkflowID,
+		"new_status", string(RunStatusCancelled), "trigger", "cancel")
 	if err := e.store.UpdateRun(ctx, run); err != nil {
 		return fmt.Errorf("workflow cancel run update run %s: %w", runID, err)
 	}
@@ -326,6 +329,9 @@ func (e *Engine) timeoutRun(ctx context.Context, wfDef *Workflow, run *WorkflowR
 	run.Status = RunStatusTimedOut
 	run.CompletedAt = &now
 	run.UpdatedAt = now
+	slog.Info("workflow run state changed",
+		"run_id", run.ID, "workflow_id", run.WorkflowID,
+		"new_status", string(RunStatusTimedOut), "trigger", "timeout")
 	if run.Error == nil {
 		run.Error = map[string]any{}
 	}
@@ -616,6 +622,14 @@ func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 	if run == nil || wfDef == nil {
 		return
 	}
+	prevStatus := run.Status
+	defer func() {
+		if run.Status != prevStatus {
+			slog.Info("workflow run state changed",
+				"run_id", run.ID, "workflow_id", run.WorkflowID,
+				"from_status", string(prevStatus), "new_status", string(run.Status))
+		}
+	}()
 	if run.Status == RunStatusCancelled || run.Status == RunStatusTimedOut {
 		return
 	}

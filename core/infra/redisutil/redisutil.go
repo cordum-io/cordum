@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/redis/go-redis/v9"
@@ -22,12 +23,70 @@ const (
 	envRedisClusterAddrs  = "REDIS_CLUSTER_ADDRESSES"
 	envRedisPoolSize      = "REDIS_POOL_SIZE"
 	envRedisMinIdleConns  = "REDIS_MIN_IDLE_CONNS"
+	envRedisDialTimeout   = "REDIS_DIAL_TIMEOUT"
+	envRedisReadTimeout   = "REDIS_READ_TIMEOUT"
+	envRedisWriteTimeout  = "REDIS_WRITE_TIMEOUT"
+	envRedisIdleTimeout   = "REDIS_IDLE_TIMEOUT"
+	envRedisConnMaxLife   = "REDIS_CONN_MAX_LIFETIME"
+	envRedisPoolStatsLog  = "REDIS_POOL_STATS_LOG"
 	defaultPoolSize       = 20
 	defaultMinIdleConns   = 5
+	defaultDialTimeout    = 5 * time.Second
+	defaultReadTimeout    = 3 * time.Second
+	defaultWriteTimeout   = 3 * time.Second
+	defaultIdleTimeout    = 5 * time.Minute
+	defaultConnMaxLife    = 30 * time.Minute
 )
+
+var redisPoolStatsLogInterval = 60 * time.Second
 
 // NewClient creates a Redis universal client with optional TLS and clustering support.
 func NewClient(url string) (redis.UniversalClient, error) {
+	uopts, err := newUniversalOptions(url)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("redis pool configured",
+		"pool_size", uopts.PoolSize,
+		"min_idle", uopts.MinIdleConns,
+		"addrs", len(uopts.Addrs),
+		"dial_timeout", uopts.DialTimeout,
+		"read_timeout", uopts.ReadTimeout,
+		"write_timeout", uopts.WriteTimeout,
+		"conn_max_idle_time", uopts.ConnMaxIdleTime,
+		"conn_max_lifetime", uopts.ConnMaxLifetime)
+	client := redis.NewUniversalClient(uopts)
+	if parseBoolEnv(envRedisPoolStatsLog) {
+		startPoolStatsLogger(client)
+	}
+	return client, nil
+}
+
+func startPoolStatsLogger(client redis.UniversalClient) {
+	if client == nil {
+		return
+	}
+	interval := redisPoolStatsLogInterval
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			stats := client.PoolStats()
+			slog.Debug("redis pool stats",
+				"hits", stats.Hits,
+				"misses", stats.Misses,
+				"timeouts", stats.Timeouts,
+				"total_conns", stats.TotalConns,
+				"idle_conns", stats.IdleConns,
+				"stale_conns", stats.StaleConns)
+		}
+	}()
+}
+
+func newUniversalOptions(url string) (*redis.UniversalOptions, error) {
 	opts, err := ParseOptions(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis options: %w", err)
@@ -38,17 +97,20 @@ func NewClient(url string) (redis.UniversalClient, error) {
 	}
 	poolSize := getEnvIntAtLeast(envRedisPoolSize, defaultPoolSize, 1)
 	minIdle := getEnvIntAtLeast(envRedisMinIdleConns, defaultMinIdleConns, 0)
-	uopts := &redis.UniversalOptions{
-		Addrs:        addrs,
-		Username:     opts.Username,
-		Password:     opts.Password,
-		DB:           opts.DB,
-		TLSConfig:    opts.TLSConfig,
-		PoolSize:     poolSize,
-		MinIdleConns: minIdle,
-	}
-	slog.Info("redis pool configured", "pool_size", poolSize, "min_idle", minIdle, "addrs", len(addrs))
-	return redis.NewUniversalClient(uopts), nil
+	return &redis.UniversalOptions{
+		Addrs:           addrs,
+		Username:        opts.Username,
+		Password:        opts.Password,
+		DB:              opts.DB,
+		TLSConfig:       opts.TLSConfig,
+		PoolSize:        poolSize,
+		MinIdleConns:    minIdle,
+		DialTimeout:     durationFromEnv(envRedisDialTimeout, defaultDialTimeout),
+		ReadTimeout:     durationFromEnv(envRedisReadTimeout, defaultReadTimeout),
+		WriteTimeout:    durationFromEnv(envRedisWriteTimeout, defaultWriteTimeout),
+		ConnMaxIdleTime: durationFromEnv(envRedisIdleTimeout, defaultIdleTimeout),
+		ConnMaxLifetime: durationFromEnv(envRedisConnMaxLife, defaultConnMaxLife),
+	}, nil
 }
 
 // ParseOptions parses a Redis URL and applies TLS settings from the environment.
@@ -162,6 +224,15 @@ func parseBoolEnv(key string) bool {
 	default:
 		return false
 	}
+}
+
+func durationFromEnv(key string, fallback time.Duration) time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
 }
 
 func parseAddrListEnv(key string) []string {

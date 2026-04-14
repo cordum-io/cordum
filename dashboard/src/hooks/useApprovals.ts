@@ -5,11 +5,13 @@ import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
 import type {
   Approval,
+  ApprovalContext,
   ApprovalConflictCode,
   ApprovalConflictPayload,
   ApprovalHistoryEntry,
   ApiResponse,
 } from "../api/types";
+import { api } from "../lib/api";
 import { mapApprovalItem, type BackendApprovalItem, type BackendPolicyAuditEntry } from "../api/transform";
 
 type ApprovalsSnapshot = { previous: [QueryKey, ApiResponse<Approval[]> | undefined][] };
@@ -77,6 +79,15 @@ export function useApproval(id: string) {
       }
       return undefined;
     },
+  });
+}
+
+export function useApprovalContext(jobId: string) {
+  return useQuery<ApprovalContext>({
+    queryKey: queryKeys.approvals.context(jobId),
+    queryFn: () => api.getApprovalContext(jobId),
+    enabled: !!jobId,
+    staleTime: 10_000,
   });
 }
 

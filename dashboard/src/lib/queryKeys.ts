@@ -39,6 +39,7 @@ export const queryKeys = {
     detail: (id: string) => ["approval", id] as const,
     history: (filters: ApprovalHistoryFilters) => ["approvals", "history", filters] as const,
     nav: () => ["approvals", "nav"] as const,
+    context: (jobId: string) => ["approvals", "context", jobId] as const,
   },
 
   // ── DLQ ───────────────────────────────────────────────────────────
