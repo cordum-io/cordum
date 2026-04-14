@@ -34,7 +34,10 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Marketplace endpoints for pack discovery/installs (gateway seeds `cfg:system:pack_catalogs` with the official catalog; override via env or config).
   - gRPC service (`CordumApi`) for job submit/status.
   - Submit-time policy evaluation: both HTTP and gRPC submit paths call the Safety Kernel before persisting state or publishing to the bus. Policy deny returns 403/PermissionDenied, throttle returns 429/ResourceExhausted, and require_human creates the job in APPROVAL state without publishing. When the Safety Kernel is unavailable, `POLICY_CHECK_FAIL_MODE` controls behavior: `closed` (default) rejects the job, `open` allows it.
-  - Streams `BusPacket` events over `/api/v1/stream` (protojson).
+  - Streams `BusPacket` events over `/api/v1/stream` (protojson). WebSocket connections use ping/pong keepalive (30s interval), credential revalidation (120s), unique `conn_id` tracking, and structured lifecycle logging with disconnect reasons.
+  - Live `/health` endpoint checks NATS connectivity and Redis pool health, returning JSON `{status, nats, redis}`.
+  - Policy governance: `/api/v1/policy/replay` (what-if replay) and `/api/v1/policy/analytics` (rule hit analytics, override rates).
+  - Approval context: `/api/v1/approvals/{job_id}/context` returns enriched decision briefing with blast radius, prior approvals, rollback hints, and time-remaining.
   - Enforces API key + tenant headers and CORS allowlist if configured (HTTP `X-API-Key` + `X-Tenant-ID`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` + `?tenant_id=<tenant>`).
   - OSS auth uses an API key allowlist (`CORDUM_API_KEYS`, `CORDUM_API_KEY`, or `CORDUM_API_KEYS_PATH`) with optional role/tenant metadata and a single-tenant default (`TENANT_ID`, default `default`). HTTP requests must supply `X-Tenant-ID`.
   - Multi-tenant API keys and RBAC enforcement are provided by the enterprise auth provider (enterprise repo).
@@ -43,6 +46,10 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 - Dashboard (`dashboard/`)
   - React UI served via Nginx; connects to `/api/v1` and `/api/v1/stream`.
   - Runtime config via `/config.json` (API base URL, API key, tenant, optional principal for enterprise auth).
+  - Governance pages:
+    - `/govern/replay` — policy replay (what-if analysis: replay historical jobs against candidate policies).
+    - `/govern/analytics` — policy rule analytics (hit counts, override rates, approval latency histograms).
+    - `/approvals/:jobId` — approval detail with 6 context sections: what, why blocked, blast radius, risk, prior history, rollback guidance.
 
 - Scheduler (`core/controlplane/scheduler`, `cmd/cordum-scheduler`; binary `cordum-scheduler`)
   - Subscribes to `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.heartbeat`.

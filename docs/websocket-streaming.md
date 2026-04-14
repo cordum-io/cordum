@@ -204,6 +204,50 @@ connect() → onopen    → receiving messages...
                          backoff *= 2 (capped at max)
 ```
 
+### Connection Identification
+
+Every WebSocket connection is assigned a unique `conn_id` — a 16-character hex string generated from `crypto/rand`. This ID appears in all lifecycle log entries and allows operators to trace a single connection across connect, revalidation, and disconnect events.
+
+### Lifecycle Logging
+
+The gateway emits structured `slog.Info` logs at connection boundaries:
+
+**Connect:**
+```
+level=INFO msg="ws connected" conn_id=a1b2c3d4e5f67890 remote=10.0.1.5:52340 tenant=default user_agent=Go-http-client/1.1
+```
+
+**Disconnect:**
+```
+level=INFO msg="ws disconnected" conn_id=a1b2c3d4e5f67890 remote=10.0.1.5:52340 tenant=default duration=482s reason=client_close
+```
+
+Disconnect reasons:
+
+| Reason | Meaning |
+|--------|---------|
+| `client_close` | Client closed the connection normally |
+| `ping_timeout` | Client failed to respond to ping within the pong timeout |
+| `revalidation_revoked` | Credential revalidation determined the API key is no longer valid |
+| `slow_client` | Client send buffer was full (100 events queued) |
+| `shutdown` | Gateway is shutting down |
+
+### Prometheus Metrics
+
+The gateway exports 9 WebSocket metrics on the `/metrics` endpoint (default port 9092):
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `cordum_gateway_ws_clients_active` | Gauge | — | Current active WebSocket connections |
+| `cordum_gateway_ws_connection_duration_seconds` | Histogram | — | Connection lifetime (buckets: 1s to 4h) |
+| `cordum_gateway_ws_pings_sent_total` | Counter | — | Ping frames sent to clients |
+| `cordum_gateway_ws_pongs_received_total` | Counter | — | Pong frames received from clients |
+| `cordum_gateway_ws_pong_timeouts_total` | Counter | — | Connections closed after missing pong |
+| `cordum_gateway_ws_packets_dropped_total` | Counter | — | Bus packets dropped due to marshal failure |
+| `cordum_gateway_ws_slow_client_evictions_total` | CounterVec | `reason` | Clients evicted (buffer full) |
+| `cordum_gateway_ws_revalidation_total` | CounterVec | `outcome` | Credential revalidation outcomes (`ok`, `revoked`, `error`) |
+| `cordum_gateway_ws_reconnections_total` | Counter | — | Client reconnections within the reconnect window |
+
 ### Slow Client Eviction
 
 The server buffers up to 100 events per client (`make(chan wsEvent, 100)`). If a client falls behind and the buffer is full, the server closes the connection. The client should reconnect.
