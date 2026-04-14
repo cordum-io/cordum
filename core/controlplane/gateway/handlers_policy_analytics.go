@@ -180,7 +180,7 @@ func (s *server) handlePolicyAnalytics(w http.ResponseWriter, r *http.Request) {
 		// Compute which day bucket this job falls into.
 		updatedAt := int64(0)
 		if raw := meta["updated_at"]; raw != "" {
-			fmt.Sscanf(raw, "%d", &updatedAt)
+			_, _ = fmt.Sscanf(raw, "%d", &updatedAt)
 		}
 		if updatedAt > 0 {
 			jobTime := time.UnixMicro(updatedAt)

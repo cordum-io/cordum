@@ -1086,12 +1086,6 @@ func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
 	wsPongTimeout = 20 * time.Millisecond
 	wsRevalidateInterval = 30 * time.Millisecond
 	wsRevalidateRetryDelay = 5 * time.Millisecond
-	t.Cleanup(func() {
-		wsPingInterval = prevPingInterval
-		wsPongTimeout = prevPongTimeout
-		wsRevalidateInterval = prevRevalidateInterval
-		wsRevalidateRetryDelay = prevRetryDelay
-	})
 
 	var authCalls atomic.Int32
 	provider := &mockAuthProvider{
@@ -1103,13 +1097,24 @@ func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
 		},
 	}
 
+	shutdownCh := make(chan struct{})
 	s := &server{
 		clients:       make(map[*websocket.Conn]*wsClient),
 		eventsCh:      make(chan wsEvent, 8),
-		shutdownCh:    make(chan struct{}),
+		shutdownCh:    shutdownCh,
 		wsClientBufSz: 8,
 		auth:          provider,
 	}
+	// Signal shutdown before restoring globals so in-flight goroutines
+	// exit before the package-level vars are changed back.
+	t.Cleanup(func() {
+		close(shutdownCh)
+		time.Sleep(20 * time.Millisecond)
+		wsPingInterval = prevPingInterval
+		wsPongTimeout = prevPongTimeout
+		wsRevalidateInterval = prevRevalidateInterval
+		wsRevalidateRetryDelay = prevRetryDelay
+	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
@@ -1375,7 +1380,7 @@ func TestWSMetrics_RevalidationOutcome(t *testing.T) {
 
 func TestWSConnectionLifecycleLogging(t *testing.T) {
 	prevLogger := slog.Default()
-	var logBuf bytes.Buffer
+	var logBuf syncBuffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	t.Cleanup(func() { slog.SetDefault(prevLogger) })
 
@@ -1552,6 +1557,24 @@ func startTestWSReadPump(conn *websocket.Conn) <-chan error {
 		}
 	}()
 	return errCh
+}
+
+// syncBuffer is a thread-safe bytes.Buffer for capturing log output in tests.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (sb *syncBuffer) Write(p []byte) (int, error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.Write(p)
+}
+
+func (sb *syncBuffer) String() string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.String()
 }
 
 func waitForCondition(timeout, interval time.Duration, fn func() bool) bool {

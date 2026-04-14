@@ -332,7 +332,9 @@ func TestRedisCircuitBreaker_Convergence(t *testing.T) {
 
 	// Restart Redis (simulates recovery). The failure key expired
 	// during downtime, so the circuit should be closed.
-	srv.Start()
+	if err := srv.Start(); err != nil {
+		t.Fatalf("restart miniredis: %v", err)
+	}
 
 	// Clear the failure key to simulate TTL expiry during downtime.
 	if err := rdb.Del(ctx, "cordum:cb:converge:failures").Err(); err != nil {

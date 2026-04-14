@@ -206,7 +206,7 @@ func TestPinnedDialer_UsesPinnedIPNotDNS(t *testing.T) {
 	// attempts the pinned IP by checking it doesn't connect to 127.0.0.1.
 	conn, err := dial(context.Background(), "tcp", "rebind.evil.com:443")
 	if conn != nil {
-		conn.Close()
+		_ = conn.Close()
 	}
 	// Connection will likely fail (no server at 93.184.216.34:443 in test),
 	// but the key assertion is that DNS was NOT re-resolved (callCount stays 1).
@@ -224,7 +224,7 @@ func TestPinnedDialer_EmptyIPs_FallsBackToDefault(t *testing.T) {
 	// Just verify it doesn't panic with nil IPs
 	conn, err := dial(context.Background(), "tcp", "localhost:0")
 	if conn != nil {
-		conn.Close()
+		_ = conn.Close()
 	}
 	_ = err // Connection failure expected (port 0)
 }
