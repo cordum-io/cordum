@@ -1119,11 +1119,12 @@ func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
 	}
 	// Cleanup order: close WS, close server, signal shutdown, wait for
 	// goroutines to drain, THEN restore package-level vars.
+	// Use longer drain to avoid data race under -race with CI load.
 	t.Cleanup(func() {
 		_ = conn.Close()
 		srv.Close()
 		close(shutdownCh)
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		wsPingInterval = prevPingInterval
 		wsPongTimeout = prevPongTimeout
 		wsRevalidateInterval = prevRevalidateInterval
@@ -1234,7 +1235,7 @@ func TestWSRevalidation_RetrySucceeds(t *testing.T) {
 	}
 
 	s := &server{auth: provider}
-	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-test"); err != nil {
+	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-test", wsRevalidateRetryDelay); err != nil {
 		t.Fatalf("expected retry to succeed, got %v", err)
 	}
 	if authCalls.Load() != 2 {
@@ -1369,7 +1370,7 @@ func TestWSMetrics_RevalidationOutcome(t *testing.T) {
 	}
 
 	s := &server{auth: provider}
-	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-metrics"); err != nil {
+	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-metrics", wsRevalidateRetryDelay); err != nil {
 		t.Fatalf("expected successful revalidation, got %v", err)
 	}
 
