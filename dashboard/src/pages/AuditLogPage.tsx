@@ -16,6 +16,7 @@ import {
   FileText,
   Download,
   Calendar,
+  Bot,
   X,
 } from "lucide-react";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -84,11 +85,30 @@ function actionColor(action: string) {
   return "text-cordum bg-cordum/10 border-cordum/20";
 }
 
+interface AgentOption {
+  id: string;
+  name: string;
+}
+
 export default function AuditLogPage() {
   const [search, setSearch] = useState("");
   const [actionFilter, setActionFilter] = useState("");
+  const [agentFilter, setAgentFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+
+  useEffect(() => {
+    get<{ items?: Array<{ id: string; name: string }> }>("/agents")
+      .then((res) => {
+        if (res.items) {
+          setAgents(res.items.map((a) => ({ id: a.id, name: a.name })));
+        }
+      })
+      .catch(() => {
+        /* agent list not available — filter hidden */
+      });
+  }, []);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const observerStateRef = useRef<AuditObserverState>({
     hasNextPage: false,
@@ -107,13 +127,14 @@ export default function AuditLogPage() {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["audit", actionFilter, dateFrom, dateTo, search],
+    queryKey: ["audit", actionFilter, agentFilter, dateFrom, dateTo, search],
     queryFn: async ({ pageParam = 0 }) => {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
         offset: String(pageParam),
       });
       if (actionFilter) params.set("action", actionFilter);
+      if (agentFilter) params.set("agent_id", agentFilter);
       if (dateFrom) params.set("after", new Date(dateFrom).toISOString());
       if (dateTo)
         params.set("before", new Date(dateTo + "T23:59:59").toISOString());
@@ -165,8 +186,8 @@ export default function AuditLogPage() {
     return () => observer.disconnect();
   }, []);
 
-  const filtersActive = !!actionFilter || !!dateFrom || !!dateTo || !!search;
-  const activeFilterCount = [actionFilter, dateFrom, dateTo, search].filter(
+  const filtersActive = !!actionFilter || !!agentFilter || !!dateFrom || !!dateTo || !!search;
+  const activeFilterCount = [actionFilter, agentFilter, dateFrom, dateTo, search].filter(
     Boolean,
   ).length;
 
@@ -265,6 +286,24 @@ export default function AuditLogPage() {
           <option value="policy.updated">Policy Updated</option>
           <option value="worker.registered">Worker Registered</option>
         </select>
+        {agents.length > 0 && (
+          <div className="relative flex items-center gap-1.5">
+            <Bot className="w-3.5 h-3.5 text-muted-foreground" />
+            <select
+              value={agentFilter}
+              onChange={(e) => setAgentFilter(e.target.value)}
+              className="h-8 px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              aria-label="Filter by agent"
+            >
+              <option value="">All Agents</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="flex items-center gap-1.5">
           <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
           <input
@@ -292,6 +331,7 @@ export default function AuditLogPage() {
           onClick={() => {
             setSearch("");
             setActionFilter("");
+            setAgentFilter("");
             setDateFrom("");
             setDateTo("");
           }}

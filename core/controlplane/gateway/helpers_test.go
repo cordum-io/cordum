@@ -252,6 +252,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		configSvc:             configSvc,
 		topicRegistry:         topicregistry.NewService(configSvc),
 		workerCredentialStore: workercredentials.NewService(configSvc),
+		agentIdentityStore:   store.NewAgentIdentityStoreFromClient(jobStore.Client()),
 		dlqStore:              dlqStore,
 		artifactStore:         artifactStore,
 		lockStore:             lockStore,
@@ -343,4 +344,46 @@ func (c *failingSafetyClient) Simulate(ctx context.Context, req *pb.PolicyCheckR
 
 func (c *failingSafetyClient) ListSnapshots(ctx context.Context, req *pb.ListSnapshotsRequest, _ ...grpc.CallOption) (*pb.ListSnapshotsResponse, error) {
 	return nil, errors.New("safety kernel unavailable")
+}
+
+func TestStripReservedLabels(t *testing.T) {
+	// Client-supplied labels with "_" prefix must be stripped to prevent
+	// spoofing of system labels like _internal and _content.*.
+	input := map[string]string{
+		"_internal":             "true",  // spoofed — must be stripped
+		"_content.prompt":       "hack",  // spoofed — must be stripped
+		"_content.payload_json": "{}",    // spoofed — must be stripped
+		"team":                  "alpha", // legitimate — keep
+		"env":                   "prod",  // legitimate — keep
+	}
+	clean := stripReservedLabels(input)
+	if _, ok := clean["_internal"]; ok {
+		t.Fatal("_internal label was not stripped — spoofing vulnerability")
+	}
+	if _, ok := clean["_content.prompt"]; ok {
+		t.Fatal("_content.prompt label was not stripped")
+	}
+	if clean["team"] != "alpha" || clean["env"] != "prod" {
+		t.Fatalf("legitimate labels were lost: %v", clean)
+	}
+	if len(clean) != 2 {
+		t.Fatalf("expected 2 labels after stripping, got %d: %v", len(clean), clean)
+	}
+
+	// Nil/empty labels pass through.
+	if got := stripReservedLabels(nil); got != nil {
+		t.Fatalf("expected nil for nil input, got %v", got)
+	}
+}
+
+func TestMaxConcurrentRuns_DefaultFallback(t *testing.T) {
+	// Without config service, maxConcurrentRuns should return the default (25).
+	srv := &server{}
+	limit := srv.maxConcurrentRuns(context.Background(), "default", "")
+	if limit != defaultMaxConcurrentRuns {
+		t.Fatalf("expected default %d, got %d", defaultMaxConcurrentRuns, limit)
+	}
+	if limit == 0 {
+		t.Fatal("limit must never be 0 — this was the red-team bypass")
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -60,6 +61,7 @@ func NewSafetyClient(addr string) (*SafetyClient, error) {
 		addr,
 		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(grpcClientKeepaliveParams()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dial safety kernel: %w", err)
@@ -178,6 +180,18 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 			checkReq.InputSizeBytes = originalSize
 			if ct := req.GetLabels()["content_type"]; ct != "" {
 				checkReq.InputContentType = ct
+			}
+			// Inject _content.payload_json label so the tag deriver can
+			// extract payload fields (e.g., amount) for risk tag derivation.
+			// The gateway HTTP path does this via injectContentLabels(); the
+			// scheduler path must do the same for consistency.
+			if len(content) <= 64*1024 {
+				if checkReq.Labels == nil {
+					checkReq.Labels = make(map[string]string)
+				}
+				if _, ok := checkReq.Labels["_content.payload_json"]; !ok {
+					checkReq.Labels["_content.payload_json"] = string(content)
+				}
 			}
 		}
 	}

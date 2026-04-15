@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: cordum
+data:
+  otel-collector.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 200
+        spike_limit_mib: 50
+
+    exporters:
+      # Default: OTLP gRPC to a configured backend (Datadog, Splunk, etc.)
+      # Override OTEL_BACKEND_ENDPOINT to point to your collector/backend.
+      otlp:
+        endpoint: "${OTEL_BACKEND_ENDPOINT}"
+        tls:
+          insecure: ${OTEL_BACKEND_INSECURE:-true}
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp]

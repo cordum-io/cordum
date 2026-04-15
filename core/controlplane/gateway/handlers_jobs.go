@@ -30,6 +30,8 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -588,6 +590,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		"safety_job_hash":     safetyRecord.JobHash,
 		"approval_required":   safetyRecord.ApprovalRequired,
 		"approval_ref":        safetyRecord.ApprovalRef,
+		"agent_id":            meta["agent_id"],
+		"agent_name":          meta["agent_name"],
+		"agent_risk_tier":     meta["agent_risk_tier"],
 		"labels":              labels,
 		"workflow_id":         workflowID,
 		"run_id":              runID,
@@ -1457,6 +1462,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
 
+	// Strip reserved labels (underscore prefix) from client input. These are
+	// system-controlled labels used by the gateway and safety kernel (e.g.,
+	// _internal, _content.prompt). Without this, clients can spoof privileged
+	// labels to bypass policy rules that match on them.
+	req.Labels = stripReservedLabels(req.Labels)
+
 	// --- Secrets & memory validation (needed for policy check metadata) ---
 	secretsPresent := secrets.ContainsSecretRefs(req.Prompt) || secrets.ContainsSecretRefs(req.Context)
 	if secretsPresent {
@@ -1508,6 +1519,33 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels = req.Labels
 	}
 
+	// Inject agent_id from linked worker credential if not already set.
+	if req.Labels["agent_id"] == "" && s.agentIdentityStore != nil {
+		if agent, err := s.agentIdentityStore.GetByWorkerID(r.Context(), principalID); err == nil && agent != nil {
+			if req.Labels == nil {
+				req.Labels = map[string]string{}
+			}
+			req.Labels["agent_id"] = agent.ID
+			if meta.Labels == nil {
+				meta.Labels = map[string]string{}
+			}
+			meta.Labels["agent_id"] = agent.ID
+		}
+	}
+
+	// Inject job content into labels so the safety kernel's tag deriver can
+	// inspect the payload for server-side risk tag derivation.
+	req.Labels = injectContentLabels(req.Labels, req.Prompt, req.Context)
+	if meta.Labels == nil {
+		meta.Labels = make(map[string]string)
+	}
+	if v, ok := req.Labels["_content.prompt"]; ok {
+		meta.Labels["_content.prompt"] = v
+	}
+	if v, ok := req.Labels["_content.payload_json"]; ok {
+		meta.Labels["_content.payload_json"] = v
+	}
+
 	// --- Submit-time policy check (before any state persistence) ---
 	policyResult := s.evaluateSubmitPolicy(r.Context(), jobID, req.Topic, orgID, principalID, req.Priority, meta, req.Labels, &pb.Budget{
 		MaxInputTokens:  int64(req.MaxInputTokens),
@@ -1515,12 +1553,26 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		MaxTotalTokens:  req.MaxTotalTokens,
 		DeadlineMs:      req.DeadlineMs,
 	}, memoryID)
+	// Resolve agent context for audit events and tracing.
+	submitAgentID, submitAgentName, submitAgentRiskTier := s.resolveAgentForAudit(r.Context(), req.Labels["agent_id"])
+
+	// Write authoritative agent identity onto the request span (not from
+	// client-controlled headers). This satisfies the epic rail requiring
+	// agent identity attributes on spans.
+	if span := oteltrace.SpanFromContext(r.Context()); span.IsRecording() && submitAgentID != "" {
+		span.SetAttributes(
+			attribute.String("cordum.agent_id", submitAgentID),
+			attribute.String("cordum.agent_name", submitAgentName),
+			attribute.String("cordum.agent_risk_tier", submitAgentRiskTier),
+		)
+	}
+
 	if policyResult.Denied {
 		reason := "policy denied"
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason)
+		s.appendAuditEntryWithAgent(r.Context(), "submit_denied", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason, submitAgentID, submitAgentName, submitAgentRiskTier)
 		writeErrorJSON(w, http.StatusForbidden, reason)
 		return
 	}
@@ -1529,7 +1581,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendAuditEntryNamed(r.Context(), "submit_throttled", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy throttled: "+reason)
+		s.appendAuditEntryWithAgent(r.Context(), "submit_throttled", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy throttled: "+reason, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Retry-After", "30")
 		writeErrorJSON(w, http.StatusTooManyRequests, reason)
 		return
@@ -1542,7 +1594,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	if policyResult.ApprovalRequired {
 		slog.Info("submit-time policy requires approval",
 			"job_id", jobID, "topic", req.Topic, "reason", policyResult.Reason)
-		s.appendAuditEntryNamed(r.Context(), "submit_approval_required", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy requires approval: "+policyResult.Reason)
+		s.appendAuditEntryWithAgent(r.Context(), "submit_approval_required", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy requires approval: "+policyResult.Reason, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		// Reserve idempotency key to prevent duplicate approval jobs.
 		if key != "" && s.jobStore != nil {
@@ -1636,6 +1688,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.jobStore.SetJobRequest(r.Context(), jobReq); err != nil {
 				slog.Error("failed to persist approval job request", "job_id", jobID, "error", err)
+			}
+			if identity := submitterIdentity(r); identity != "" {
+				if err := s.jobStore.SetSubmittedBy(r.Context(), jobID, identity); err != nil {
+					slog.Error("failed to persist submitter identity for approval", "job_id", jobID, "error", err)
+				}
 			}
 
 			// Persist safety decision record so the approval endpoint can
@@ -1791,6 +1848,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Error("failed to persist job request", "job_id", jobID, "error", err)
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist job metadata")
 			return
+		}
+		if identity := submitterIdentity(r); identity != "" {
+			if err := s.jobStore.SetSubmittedBy(r.Context(), jobID, identity); err != nil {
+				slog.Error("failed to persist submitter identity", "job_id", jobID, "error", err)
+			}
 		}
 	}
 

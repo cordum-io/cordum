@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/metadata"
 )
@@ -756,14 +755,8 @@ func newMockOIDCServerWithCounter(t *testing.T) *mockOIDCServerWithCounter {
 
 func TestJWKSRedisCacheHit(t *testing.T) {
 	// Populate Redis cache, then refresh — should NOT hit the IdP.
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	defer srv.Close()
-
-	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = rdb.Close() }()
+	srv := newTestMiniredis(t)
+	rdb := newTestRedisClient(t, srv.Addr())
 
 	m := newMockOIDCServerWithCounter(t)
 	defer m.Close()
@@ -815,14 +808,8 @@ func TestJWKSRedisCacheHit(t *testing.T) {
 
 func TestJWKSRedisCacheMiss(t *testing.T) {
 	// Empty Redis cache — should fetch from IdP and write to Redis.
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	defer srv.Close()
-
-	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = rdb.Close() }()
+	srv := newTestMiniredis(t)
+	rdb := newTestRedisClient(t, srv.Addr())
 
 	m := newMockOIDCServerWithCounter(t)
 	defer m.Close()

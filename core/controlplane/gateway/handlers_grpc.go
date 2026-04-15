@@ -128,6 +128,9 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	// Strip reserved labels from client input (same as HTTP path).
+	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
+
 	secretsPresent := secrets.ContainsSecretRefs(payloadReq.Prompt)
 	if secretsPresent {
 		payloadReq.RiskTags = appendUniqueTag(payloadReq.RiskTags, "secrets")
@@ -161,14 +164,45 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		meta.Labels = payloadReq.Labels
 	}
 
+	// Inject agent_id from linked worker credential if not already set.
+	if payloadReq.Labels["agent_id"] == "" && s.agentIdentityStore != nil {
+		if agent, err := s.agentIdentityStore.GetByWorkerID(ctx, principalID); err == nil && agent != nil {
+			if payloadReq.Labels == nil {
+				payloadReq.Labels = map[string]string{}
+			}
+			payloadReq.Labels["agent_id"] = agent.ID
+			if meta.Labels == nil {
+				meta.Labels = map[string]string{}
+			}
+			meta.Labels["agent_id"] = agent.ID
+		}
+	}
+
 	maxInput := int64(8000)
 	maxOutput := int64(1024)
+
+	// Inject job content into labels for server-side risk tag derivation.
+	// gRPC SubmitJobRequest has no Context field — use the prompt as the
+	// content source. This is correct fail-closed behavior: if no structured
+	// payload is available, extractAmount returns false and the deriver
+	// assigns the highest-risk tag.
+	payloadReq.Labels = injectContentLabels(payloadReq.Labels, payloadReq.Prompt, payloadReq.Context)
+	if meta.Labels == nil {
+		meta.Labels = make(map[string]string)
+	}
+	if v, ok := payloadReq.Labels["_content.prompt"]; ok {
+		meta.Labels["_content.prompt"] = v
+	}
 
 	// --- Submit-time policy check (before any state persistence) ---
 	policyResult := s.evaluateSubmitPolicy(ctx, jobID, payloadReq.Topic, orgID, principalID, payloadReq.Priority, meta, payloadReq.Labels, &pb.Budget{
 		MaxInputTokens:  maxInput,
 		MaxOutputTokens: maxOutput,
 	}, memoryID)
+
+	// Resolve agent context for audit events (same as HTTP path).
+	grpcAgentID, grpcAgentName, grpcAgentRiskTier := s.resolveAgentForAudit(ctx, payloadReq.Labels["agent_id"])
+
 	if policyResult.Denied {
 		reason := "policy denied"
 		if policyResult.Reason != "" {
@@ -178,7 +212,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if ac := authFromContext(ctx); ac != nil {
 			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
 		}
-		s.appendAuditEntryNamed(ctx, "submit_denied", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy denied: "+reason)
+		s.appendAuditEntryWithAgent(ctx, "submit_denied", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy denied: "+reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.PermissionDenied, reason)
 	}
 	if policyResult.Throttled {
@@ -195,7 +229,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if ac := authFromContext(ctx); ac != nil {
 			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
 		}
-		s.appendAuditEntryNamed(ctx, "submit_approval_required", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy requires approval: "+policyResult.Reason)
+		s.appendAuditEntryWithAgent(ctx, "submit_approval_required", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy requires approval: "+policyResult.Reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 
 		// Reserve idempotency key to prevent duplicate approval jobs.
 		if key != "" && s.jobStore != nil {
@@ -277,6 +311,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			}
 			if err := s.jobStore.SetJobRequest(ctx, jobReq); err != nil {
 				slog.Error("failed to persist approval job request", "job_id", jobID, "error", err)
+			}
+			if identity := submitterIdentityFromContext(ctx); identity != "" {
+				if err := s.jobStore.SetSubmittedBy(ctx, jobID, identity); err != nil {
+					slog.Error("failed to persist submitter identity for approval", "job_id", jobID, "error", err)
+				}
 			}
 
 			jobHash, _ := scheduler.HashJobRequest(jobReq)
@@ -412,6 +451,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if err := s.jobStore.SetJobRequest(ctx, jobReq); err != nil {
 			slog.Error("failed to persist job request", "job_id", jobID, "error", err)
 			return nil, status.Error(codes.Unavailable, "failed to persist job metadata")
+		}
+		if identity := submitterIdentityFromContext(ctx); identity != "" {
+			if err := s.jobStore.SetSubmittedBy(ctx, jobID, identity); err != nil {
+				slog.Error("failed to persist submitter identity", "job_id", jobID, "error", err)
+			}
 		}
 		if err := s.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
 			slog.Error("failed to add job to trace", "job_id", jobID, "trace_id", traceID, "error", err)

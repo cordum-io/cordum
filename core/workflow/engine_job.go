@@ -9,10 +9,20 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// publishWithTrace publishes a BusPacket, propagating trace context through
+// NATS headers when the bus supports it (ContextPublisher interface).
+func (e *Engine) publishWithTrace(ctx context.Context, subject string, packet *pb.BusPacket) error {
+	if cp, ok := e.bus.(model.ContextPublisher); ok {
+		return cp.PublishWithContext(ctx, subject, packet)
+	}
+	return e.bus.Publish(subject, packet)
+}
 
 func makeJobPacket(traceID string, req *pb.JobRequest) *pb.BusPacket {
 	return &pb.BusPacket{

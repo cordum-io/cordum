@@ -14,10 +14,12 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
 import {
-  Cpu, Search, RefreshCw, Zap, Shield,
+  Cpu, Search, RefreshCw, Zap, Shield, Fingerprint,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { useAgentIdentities } from "@/hooks/useAgentIdentities";
+import type { AgentIdentity } from "@/api/types";
 import { TierLimitBar } from "@/components/TierLimitBar";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
 import { useLicenseUsage } from "@/hooks/useLicense";
@@ -39,7 +41,7 @@ function workerStatusVariant(status: string) {
 export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [tab, setTab] = useState<"fleet" | "registry" | "pools">("fleet");
+  const [tab, setTab] = useState<"fleet" | "registry" | "pools" | "identity">("fleet");
   const [drawerWorkerId, setDrawerWorkerId] = useState<string | null>(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -173,6 +175,16 @@ export default function AgentsPage() {
           )}
         >
           Pool Topology
+        </button>
+        <button type="button"
+          onClick={() => setTab("identity")}
+          className={cn(
+            "pb-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5",
+            tab === "identity" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Fingerprint className="w-3.5 h-3.5" />
+          Identity Directory
         </button>
       </div>
 
@@ -360,11 +372,105 @@ export default function AgentsPage() {
         />
       )}
 
+      {tab === "identity" && <AgentIdentityTab />}
+
       <WorkerDetailDrawer
         workerId={drawerWorkerId}
         onClose={() => setDrawerWorkerId(null)}
       />
     </div>
+  );
+}
+
+/* --- Risk Tier Badge --- */
+const riskTierConfig: Record<string, { color: string; bg: string }> = {
+  low:      { color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  medium:   { color: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/20" },
+  high:     { color: "text-orange-400",  bg: "bg-orange-500/10 border-orange-500/20" },
+  critical: { color: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
+};
+
+function RiskTierBadge({ tier }: { tier: string }) {
+  const c = riskTierConfig[tier] ?? { color: "text-muted-foreground", bg: "bg-surface-2" };
+  return (
+    <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-mono font-semibold uppercase tracking-wider", c.color, c.bg)}>
+      <Shield className="w-3 h-3" />
+      {tier}
+    </span>
+  );
+}
+
+/* --- Agent Identity Tab --- */
+function AgentIdentityTab() {
+  const navigate = useNavigate();
+  const { data, isLoading } = useAgentIdentities({ limit: 50 });
+  const identities = data?.items ?? [];
+
+  if (isLoading) {
+    return <SkeletonTable rows={5} />;
+  }
+
+  if (identities.length === 0) {
+    return (
+      <EmptyState
+        icon={<Fingerprint className="w-12 h-12 text-muted-foreground/40" />}
+        title="No agent identities registered"
+        description="Create agent identities via the API to assign risk tiers, permissions, and audit trails to your workers."
+      />
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+    >
+      <div className="instrument-card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Name</th>
+                <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Owner</th>
+                <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Team</th>
+                <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Risk Tier</th>
+                <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Status</th>
+                <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {identities.map((agent: AgentIdentity) => (
+                <tr
+                  key={agent.id}
+                  {...clickableRowProps(() => navigate(`/agents/identity/${agent.id}`))}
+                  className="border-b border-border/50 hover:bg-surface-2 transition-colors cursor-pointer"
+                >
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-2">
+                      <Fingerprint className="w-4 h-4 text-cordum/60" />
+                      <span className="text-sm font-medium text-foreground">{agent.name}</span>
+                    </div>
+                    {agent.description && (
+                      <p className="text-xs text-muted-foreground mt-0.5 ml-6 truncate max-w-[240px]">{agent.description}</p>
+                    )}
+                  </td>
+                  <td className="px-5 py-3 text-sm text-muted-foreground">{agent.owner}</td>
+                  <td className="px-5 py-3 text-sm text-muted-foreground">{agent.team || "—"}</td>
+                  <td className="px-5 py-3"><RiskTierBadge tier={agent.risk_tier} /></td>
+                  <td className="px-5 py-3">
+                    <StatusBadge variant={agent.status === "active" ? "healthy" : agent.status === "suspended" ? "warning" : "danger"} dot>
+                      {agent.status}
+                    </StatusBadge>
+                  </td>
+                  <td className="px-5 py-3 text-sm text-muted-foreground">{formatRelativeTime(agent.updated_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </motion.div>
   );
 }
 

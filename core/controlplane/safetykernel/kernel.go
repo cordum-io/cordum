@@ -31,8 +31,13 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	infraHealth "github.com/cordum/cordum/core/infra/health"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -68,6 +73,17 @@ type server struct {
 	cacheMaxSize      int
 	entitlements      *licensing.EntitlementResolver
 	customBundleCount int
+
+	// Agent identity store for enriching policy evaluation with agent context.
+	agentStore        *store.AgentIdentityStore
+	agentCacheMu      sync.Mutex
+	agentCache        map[string]agentCacheEntry
+	agentCacheTTL     time.Duration
+
+	// Server-side risk tag derivation registry. When a deriver is registered
+	// for a topic, it replaces client-supplied risk_tags with authoritative
+	// tags derived from the job content. Prevents risk tag spoofing.
+	tagDeriverRegistry *TagDeriverRegistry
 }
 
 const (
@@ -93,6 +109,13 @@ type cacheEntry struct {
 	expires       time.Time
 	policyVersion uint64
 }
+
+type agentCacheEntry struct {
+	identity *store.AgentIdentity
+	expires  time.Time
+}
+
+const defaultAgentCacheTTL = 30 * time.Second
 
 // policyLookupIP allows tests to override DNS resolution for policy URL validation.
 var policyLookupIP = net.LookupIP
@@ -184,6 +207,15 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		cfg = config.Load()
 	}
 
+	if _, err := cordumotel.InitTracer("cordum-safety-kernel"); err != nil {
+		slog.Error("otel tracer init failed", "error", err)
+	}
+	defer func() {
+		if err := cordumotel.Shutdown(context.Background()); err != nil {
+			slog.Error("otel tracer shutdown failed", "error", err)
+		}
+	}()
+
 	policySource := policySourceFromEnv(cfg.SafetyPolicyPath)
 	loader := newPolicyLoader(cfg, policySource, resolver)
 	defer loader.Close()
@@ -243,14 +275,33 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	if err != nil {
 		slog.Warn("safety-kernel: output result redis client disabled", "err", err)
 	}
+	var agentStore *store.AgentIdentityStore
+	if resultClient != nil {
+		agentStore = store.NewAgentIdentityStoreFromClient(resultClient)
+	}
+	tagRegistry := NewTagDeriverRegistry()
+	registerBuiltinTagDerivers(tagRegistry)
+	// Load deriver registrations from topic registry (pack-installed derivers).
+	// These take precedence over built-in registrations.
+	if loader.configSvc != nil {
+		if entries, err := loadTopicDeriverEntries(context.Background(), loader.configSvc); err != nil {
+			slog.Warn("safety-kernel: failed to load tag derivers from topic registry", "err", err)
+		} else if n := loadTagDeriversFromTopics(tagRegistry, entries); n > 0 {
+			slog.Info("safety-kernel: loaded tag derivers from topic registry", "count", n)
+		}
+	}
+
 	srv := &server{
-		cacheTTL:        parseDurationEnv(envDecisionCacheTTL),
-		cache:           map[string]cacheEntry{},
-		cacheMaxSize:    cacheMax,
-		scanners:        loadOutputScanners(),
-		resultClient:    resultClient,
-		velocityChecker: newVelocityChecker(resultClient),
-		entitlements:    resolver,
+		cacheTTL:           parseDurationEnv(envDecisionCacheTTL),
+		cache:              map[string]cacheEntry{},
+		cacheMaxSize:       cacheMax,
+		scanners:           loadOutputScanners(),
+		resultClient:       resultClient,
+		velocityChecker:    newVelocityChecker(resultClient),
+		entitlements:       resolver,
+		agentStore:         agentStore,
+		agentCacheTTL:      defaultAgentCacheTTL,
+		tagDeriverRegistry: tagRegistry,
 	}
 	srv.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 
@@ -269,6 +320,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 
 	grpcServer := grpc.NewServer(
 		serverCreds,
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
 			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
@@ -520,7 +572,48 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		Meta:   policyMetaFromRequest(req),
 		MCP:    extractMCPRequest(req.GetLabels()),
 	}
+
+	// Server-side risk tag derivation: when a deriver is registered for this
+	// topic, replace client-supplied risk tags with authoritative tags derived
+	// from the job content. This prevents risk tag spoofing attacks where a
+	// client submits high-risk content with low-risk tags to bypass policy.
+	if s.tagDeriverRegistry != nil {
+		if derivedTags, ok := s.tagDeriverRegistry.Derive(topic, req.GetLabels(), req.GetInputContent()); ok {
+			clientTags := input.Meta.RiskTags
+			input.Meta.RiskTags = derivedTags
+			// Also override the protobuf meta so input rule evaluation
+			// (which reads from meta.GetRiskTags()) uses derived tags.
+			if meta != nil {
+				meta.RiskTags = derivedTags
+			}
+			if !tagsEqual(clientTags, derivedTags) {
+				slog.Warn("risk tags overridden by server-side deriver",
+					"component", "safety",
+					"topic", topic,
+					"job_id", req.GetJobId(),
+					"client_tags", clientTags,
+					"derived_tags", derivedTags,
+				)
+			}
+		}
+	}
+
 	input.SecretsPresent = secretsPresent(input.Meta, req.GetLabels())
+	s.enrichAgentContext(ctx, req.GetLabels(), &input)
+
+	evalTracer := cordumotel.Tracer("cordum-safety-kernel")
+	_, evalSpan := evalTracer.Start(ctx, "safety.evaluate",
+		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
+	)
+	defer evalSpan.End()
+	evalSpan.SetAttributes(
+		attribute.String("cordum.topic", topic),
+		attribute.String("cordum.tenant", tenant),
+		attribute.String("cordum.job_id", req.GetJobId()),
+	)
+	if input.Meta.AgentID != "" {
+		evalSpan.SetAttributes(attribute.String("cordum.agent_id", input.Meta.AgentID))
+	}
 
 	slog.Debug("policy evaluation starting", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId())
 	var policyDecision config.PolicyDecision
@@ -551,6 +644,12 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		}
 	}()
 	slog.Debug("policy evaluation complete", "component", "safety", "tenant", tenant, "topic", topic, "decision", policyDecision.Decision, "ruleId", policyDecision.RuleID, "duration", time.Since(evalStart).String())
+	evalSpan.SetAttributes(
+		attribute.String("cordum.safety_decision", policyDecision.Decision),
+		attribute.String("cordum.safety_rule_id", policyDecision.RuleID),
+		attribute.String("cordum.safety_rule_name", policyDecision.RuleID),
+		attribute.String("cordum.safety_reason", policyDecision.Reason),
+	)
 	if strings.HasPrefix(policyDecision.Reason, "no matching rule") {
 		defaultDecisionTotal.WithLabelValues(policyDecision.Decision).Inc()
 	}
@@ -603,11 +702,19 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	ruleID := policyDecision.RuleID
 	if len(inputRules) > 0 {
 		if decision == pb.DecisionType_DECISION_TYPE_ALLOW || decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
+			inputContent := req.GetInputContent()
+			// Fall back to _content.prompt label when InputContent is not set.
+			// The gateway injects this label for submit-time policy checks.
+			if len(inputContent) == 0 {
+				if prompt, ok := req.GetLabels()["_content.prompt"]; ok && prompt != "" {
+					inputContent = []byte(prompt)
+				}
+			}
 			evalReq := inputEvaluateRequest{
 				tenant:      tenant,
 				topic:       topic,
 				contentType: req.GetInputContentType(),
-				content:     req.GetInputContent(),
+				content:     inputContent,
 				inputSize:   req.GetInputSizeBytes(),
 			}
 			if meta != nil {
@@ -799,6 +906,69 @@ func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRe
 	return out
 }
 
+// enrichAgentContext looks up agent identity from labels and populates
+// policy meta with agent context for policy evaluation. Uses a TTL cache
+// to avoid per-evaluation Redis lookups.
+func (s *server) enrichAgentContext(ctx context.Context, labels map[string]string, input *config.PolicyInput) {
+	if s.agentStore == nil || len(labels) == 0 {
+		return
+	}
+	agentID := strings.TrimSpace(labels["agent_id"])
+	if agentID == "" {
+		return
+	}
+	input.Meta.AgentID = agentID
+
+	identity := s.getAgentFromCache(agentID)
+	if identity == nil {
+		var err error
+		identity, err = s.agentStore.Get(ctx, agentID)
+		if err != nil {
+			slog.Warn("safety-kernel: agent identity lookup failed", "agent_id", agentID, "error", err)
+			return
+		}
+		if identity == nil {
+			return
+		}
+		s.putAgentInCache(agentID, identity)
+	}
+
+	input.Meta.AgentRiskTier = identity.RiskTier
+	input.Meta.AgentDataClassifications = identity.DataClassifications
+	input.Meta.AgentName = identity.Name
+	input.Meta.AgentTeam = identity.Team
+}
+
+func (s *server) getAgentFromCache(agentID string) *store.AgentIdentity {
+	s.agentCacheMu.Lock()
+	defer s.agentCacheMu.Unlock()
+	if s.agentCache == nil {
+		return nil
+	}
+	entry, ok := s.agentCache[agentID]
+	if !ok || time.Now().After(entry.expires) {
+		delete(s.agentCache, agentID)
+		return nil
+	}
+	return entry.identity
+}
+
+func (s *server) putAgentInCache(agentID string, identity *store.AgentIdentity) {
+	s.agentCacheMu.Lock()
+	defer s.agentCacheMu.Unlock()
+	if s.agentCache == nil {
+		s.agentCache = make(map[string]agentCacheEntry)
+	}
+	ttl := s.agentCacheTTL
+	if ttl == 0 {
+		ttl = defaultAgentCacheTTL
+	}
+	s.agentCache[agentID] = agentCacheEntry{
+		identity: identity,
+		expires:  time.Now().Add(ttl),
+	}
+}
+
 func policyMetaFromRequest(req *pb.PolicyCheckRequest) config.PolicyMeta {
 	meta := req.GetMeta()
 	out := config.PolicyMeta{}
@@ -819,6 +989,18 @@ func policyMetaFromRequest(req *pb.PolicyCheckRequest) config.PolicyMeta {
 		out.ActorID = req.GetPrincipalId()
 	}
 	return out
+}
+
+func tagsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func actorTypeString(val pb.ActorType) string {
@@ -963,6 +1145,17 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 		if snapshot != "" && snapshot != current {
 			s.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 			slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
+		}
+
+		// Reload tag derivers from topic registry. Pack installs update the
+		// topic registry and publish a config change notification, so this
+		// picks up newly installed pack derivers without a kernel restart.
+		if loader.configSvc != nil && s.tagDeriverRegistry != nil {
+			if entries, err := loadTopicDeriverEntries(ctx, loader.configSvc); err != nil {
+				slog.Warn("safety-kernel: tag deriver reload failed", "err", err, "trigger", trigger)
+			} else if n := loadTagDeriversFromTopics(s.tagDeriverRegistry, entries); n > 0 {
+				slog.Info("safety-kernel: tag derivers reloaded from topic registry", "count", n, "trigger", trigger)
+			}
 		}
 	}
 

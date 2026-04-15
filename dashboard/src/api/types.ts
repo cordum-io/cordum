@@ -688,6 +688,33 @@ export interface PolicyAnalyticsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Agent Identities
+// ---------------------------------------------------------------------------
+
+export interface AgentIdentity {
+  id: string;
+  name: string;
+  description?: string;
+  owner: string;
+  team?: string;
+  risk_tier: "low" | "medium" | "high" | "critical";
+  allowed_topics?: string[];
+  allowed_pools?: string[];
+  allowed_tools?: string[];
+  data_classifications?: string[];
+  status: "active" | "suspended" | "revoked";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentStats {
+  agent_id: string;
+  total_jobs_7d: number;
+  denied_7d: number;
+  last_active: number;
+}
+
+// ---------------------------------------------------------------------------
 // Workers
 // ---------------------------------------------------------------------------
 

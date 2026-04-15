@@ -17,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/health"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
 	"log/slog"
 
@@ -46,6 +47,15 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	if cfg == nil {
 		cfg = config.Load()
 	}
+
+	if _, err := cordumotel.InitTracer("cordum-workflow-engine"); err != nil {
+		slog.Error("otel tracer init failed", "error", err)
+	}
+	defer func() {
+		if err := cordumotel.Shutdown(context.Background()); err != nil {
+			slog.Error("otel tracer shutdown failed", "error", err)
+		}
+	}()
 
 	httpAddr := os.Getenv("WORKFLOW_ENGINE_HTTP_ADDR")
 	if httpAddr == "" {
@@ -142,9 +152,10 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	rec := newReconciler(workflowStore, engine, jobStore, scanInterval, runScanLimit)
 	go rec.Start(ctx)
 
-	if err := natsBus.Subscribe(capsdk.SubjectResult, workflowEngineQueue, func(p *pb.BusPacket) error {
+	// Use context-aware subscription for trace propagation from NATS headers.
+	if err := natsBus.SubscribeWithContext(capsdk.SubjectResult, workflowEngineQueue, func(traceCtx context.Context, p *pb.BusPacket) error {
 		if jr := p.GetJobResult(); jr != nil {
-			handlerCtx, handlerCancel := context.WithTimeout(ctx, 30*time.Second)
+			handlerCtx, handlerCancel := context.WithTimeout(traceCtx, 30*time.Second)
 			defer handlerCancel()
 			return rec.HandleJobResult(handlerCtx, jr)
 		}

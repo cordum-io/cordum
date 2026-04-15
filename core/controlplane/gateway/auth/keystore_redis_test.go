@@ -63,19 +63,9 @@ func (h conflictHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.
 
 func newTestKeyStore(t *testing.T) (*RedisKeyStore, *miniredis.Miniredis) {
 	t.Helper()
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Skipf("miniredis unavailable: %v", err)
-	}
-	store, err := NewRedisKeyStore("redis://" + srv.Addr())
-	if err != nil {
-		srv.Close()
-		t.Fatalf("new redis key store: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = store.Close()
-		srv.Close()
-	})
+	srv := newTestMiniredis(t)
+	client := newTestRedisClient(t, srv.Addr())
+	store := NewRedisKeyStoreFromClient(client)
 	return store, srv
 }
 
@@ -222,8 +212,7 @@ func TestRevoke_KeyModifiedDuringRevoke(t *testing.T) {
 	ctx := context.Background()
 	seedManagedKey(ctx, t, store, "tenant-a", "id-1")
 
-	otherClient := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = otherClient.Close() }()
+	otherClient := newTestRedisClient(t, srv.Addr())
 	var triggered atomic.Bool
 	store.client.AddHook(conflictHook{
 		key:     keyRecordKey("id-1"),
@@ -244,8 +233,7 @@ func TestRevoke_MaxRetries(t *testing.T) {
 	ctx := context.Background()
 	seedManagedKey(ctx, t, store, "tenant-a", "id-1")
 
-	otherClient := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = otherClient.Close() }()
+	otherClient := newTestRedisClient(t, srv.Addr())
 	store.client.AddHook(conflictHook{
 		key:    keyRecordKey("id-1"),
 		client: otherClient,

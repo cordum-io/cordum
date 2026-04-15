@@ -403,3 +403,107 @@ func TestMatchRuleEmptyMatchMatchesEverything(t *testing.T) {
 		t.Fatalf("expected empty match to match any input")
 	}
 }
+
+func TestMatchRuleLabels_InternalLabel(t *testing.T) {
+	// Rule requires _internal=true label.
+	match := PolicyMatch{
+		Topics: []string{"job.default"},
+		Labels: map[string]string{"_internal": "true"},
+	}
+
+	// With label → match.
+	withLabel := PolicyInput{
+		Topic:  "job.default",
+		Labels: map[string]string{"_internal": "true"},
+	}
+	if !matchRule(match, withLabel) {
+		t.Fatal("expected match when _internal label present")
+	}
+
+	// Without label → no match.
+	withoutLabel := PolicyInput{
+		Topic:  "job.default",
+		Labels: map[string]string{},
+	}
+	if matchRule(match, withoutLabel) {
+		t.Fatal("expected no match when _internal label missing")
+	}
+
+	// Wrong value → no match.
+	wrongValue := PolicyInput{
+		Topic:  "job.default",
+		Labels: map[string]string{"_internal": "false"},
+	}
+	if matchRule(match, wrongValue) {
+		t.Fatal("expected no match when _internal label has wrong value")
+	}
+
+	// Nil labels → no match.
+	nilLabels := PolicyInput{Topic: "job.default"}
+	if matchRule(match, nilLabels) {
+		t.Fatal("expected no match when labels are nil")
+	}
+}
+
+func TestEvaluate_DefaultTopicRestriction(t *testing.T) {
+	// Red-team scenario #2: job.default with internal label → allow,
+	// without label → require_approval.
+	policy := &SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []PolicyRule{
+			{
+				ID:       "default-topic-internal-allow",
+				Decision: "allow",
+				Reason:   "Internal probe on default topic.",
+				Match: PolicyMatch{
+					Topics: []string{"job.default"},
+					Labels: map[string]string{"_internal": "true"},
+				},
+			},
+			{
+				ID:       "default-topic-external-review",
+				Decision: "require_approval",
+				Reason:   "External use of job.default requires approval.",
+				Match: PolicyMatch{
+					Topics: []string{"job.default"},
+				},
+			},
+		},
+	}
+
+	// Internal probe with label → allow.
+	internal := policy.Evaluate(PolicyInput{
+		Tenant: "default",
+		Topic:  "job.default",
+		Labels: map[string]string{"_internal": "true"},
+	})
+	if internal.Decision != "allow" {
+		t.Fatalf("internal probe: expected allow, got %q", internal.Decision)
+	}
+	if internal.RuleID != "default-topic-internal-allow" {
+		t.Fatalf("expected rule default-topic-internal-allow, got %q", internal.RuleID)
+	}
+
+	// External caller without label → require_approval.
+	external := policy.Evaluate(PolicyInput{
+		Tenant: "default",
+		Topic:  "job.default",
+	})
+	if external.Decision != "require_approval" {
+		t.Fatalf("RED-TEAM BYPASS: external job.default without label: expected require_approval, got %q",
+			external.Decision)
+	}
+	if external.RuleID != "default-topic-external-review" {
+		t.Fatalf("expected rule default-topic-external-review, got %q", external.RuleID)
+	}
+
+	// External caller with wrong label → require_approval (NOT allow).
+	wrongLabel := policy.Evaluate(PolicyInput{
+		Tenant: "default",
+		Topic:  "job.default",
+		Labels: map[string]string{"_internal": "false"},
+	})
+	if wrongLabel.Decision != "require_approval" {
+		t.Fatalf("wrong label value: expected require_approval, got %q", wrongLabel.Decision)
+	}
+}

@@ -5,6 +5,9 @@ package gateway
 // constants, and pure functions moved to the policybundles/ sub-package.
 
 import (
+	"context"
+	"strings"
+
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
@@ -85,3 +88,21 @@ var (
 	policyActorID    = policybundles.PolicyActorID
 	policyRole       = policybundles.PolicyRole
 )
+
+// resolveAgentForAudit looks up agent identity from the agent store by ID.
+// Returns (agentID, agentName, agentRiskTier). For unlinked or missing agents,
+// returns ("unlinked", "unlinked", "").
+func (s *server) resolveAgentForAudit(ctx context.Context, agentID string) (string, string, string) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return "unlinked", "unlinked", ""
+	}
+	if s.agentIdentityStore == nil {
+		return agentID, agentID, ""
+	}
+	agent, err := s.agentIdentityStore.Get(ctx, agentID)
+	if err != nil || agent == nil {
+		return agentID, agentID, ""
+	}
+	return agent.ID, agent.Name, agent.RiskTier
+}

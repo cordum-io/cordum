@@ -455,7 +455,7 @@ gate_2_auth() {
     --arg prompt "production gate tenant isolation check" \
     --arg topic "job.default" \
     --arg org_id "${tenant_a}" \
-    '{prompt: $prompt, topic: $topic, org_id: $org_id}'
+    '{prompt: $prompt, topic: $topic, org_id: $org_id, labels: {_internal: "true"}}'
   )"
   create_resp="$(api_call POST /jobs "${create_body}")"
   job_id="$(echo "${create_resp}" | jq -r '.job_id // .id // empty' 2>/dev/null || true)"

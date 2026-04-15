@@ -16,6 +16,7 @@ type createWorkerCredentialRequest struct {
 	WorkerID      string   `json:"worker_id"`
 	AllowedPools  []string `json:"allowed_pools"`
 	AllowedTopics []string `json:"allowed_topics"`
+	AgentID       string   `json:"agent_id,omitempty"`
 }
 
 type workerCredentialResponse struct {
@@ -23,6 +24,7 @@ type workerCredentialResponse struct {
 	AllowedPools  []string `json:"allowed_pools,omitempty"`
 	AllowedTopics []string `json:"allowed_topics,omitempty"`
 	PackID        string   `json:"pack_id,omitempty"`
+	AgentID       string   `json:"agent_id,omitempty"`
 	CreatedBy     string   `json:"created_by"`
 	CreatedAt     string   `json:"created_at"`
 	RevokedAt     string   `json:"revoked_at,omitempty"`
@@ -92,6 +94,18 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	req.AgentID = strings.TrimSpace(req.AgentID)
+	if req.AgentID != "" && s.agentIdentityStore != nil {
+		agent, err := s.agentIdentityStore.Get(r.Context(), req.AgentID)
+		if err != nil {
+			writeInternalError(w, r, "validate agent identity", err)
+			return
+		}
+		if agent == nil {
+			writeErrorJSON(w, http.StatusBadRequest, "agent_id references nonexistent agent identity")
+			return
+		}
+	}
 	if err := s.validateWorkerCredentialAccess(r, req.AllowedPools, req.AllowedTopics); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ErrPoolNotFound) || errors.Is(err, ErrTopicNotFound) {
@@ -130,11 +144,36 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		WorkerID:      req.WorkerID,
 		AllowedPools:  req.AllowedPools,
 		AllowedTopics: req.AllowedTopics,
+		AgentID:       req.AgentID,
 		CreatedBy:     createdBy,
 	})
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	if s.agentIdentityStore != nil {
+		if req.AgentID != "" {
+			if linkErr := s.agentIdentityStore.LinkWorker(r.Context(), req.AgentID, req.WorkerID); linkErr != nil {
+				slog.Error("link worker to agent identity failed",
+					"worker_id", req.WorkerID,
+					"agent_id", req.AgentID,
+					"error", linkErr,
+				)
+				writeInternalError(w, r, "link worker to agent identity", linkErr)
+				return
+			}
+		} else {
+			// Clear stale reverse-lookup when credential is rotated without agent_id.
+			if unlinkErr := s.agentIdentityStore.UnlinkWorker(r.Context(), req.WorkerID); unlinkErr != nil {
+				slog.Error("unlink worker from agent identity failed",
+					"worker_id", req.WorkerID,
+					"error", unlinkErr,
+				)
+				writeInternalError(w, r, "unlink worker from agent identity", unlinkErr)
+				return
+			}
+		}
 	}
 
 	s.publishConfigChanged("system", "workers")
@@ -201,6 +240,18 @@ func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Clear agent reverse-lookup so revoked credentials don't inject stale agent_id.
+	if s.agentIdentityStore != nil {
+		if unlinkErr := s.agentIdentityStore.UnlinkWorker(r.Context(), workerID); unlinkErr != nil {
+			slog.Error("unlink worker from agent identity on revoke failed",
+				"worker_id", workerID,
+				"error", unlinkErr,
+			)
+			writeInternalError(w, r, "unlink worker from agent identity on revoke", unlinkErr)
+			return
+		}
+	}
+
 	s.publishConfigChanged("system", "workers")
 	slog.Warn("worker credential revoked",
 		"worker_id", workerID,
@@ -257,6 +308,7 @@ func workerCredentialResponseFromRecord(record workercredentials.Credential) wor
 		AllowedPools:  record.AllowedPools,
 		AllowedTopics: record.AllowedTopics,
 		PackID:        record.PackID,
+		AgentID:       record.AgentID,
 		CreatedBy:     record.CreatedBy,
 		CreatedAt:     record.CreatedAt,
 		RevokedAt:     record.RevokedAt,

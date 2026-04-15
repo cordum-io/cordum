@@ -139,3 +139,56 @@ func TestRedisRateLimiterNilReceiver(t *testing.T) {
 		t.Fatal("expected allow with nil receiver")
 	}
 }
+
+// TestRedisRateLimiter_RedTeam14_BurstExceeded verifies the red-team finding #14:
+// 60 rapid requests with a burst limit of 50 must trigger a rate limit rejection.
+func TestRedisRateLimiter_RedTeam14_BurstExceeded(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	defer func() { _ = client.Close() }()
+
+	// Simulate dev .env: RPS=50, burst=100.
+	rl := newRedisRateLimiter(client, 50, 100)
+
+	allowed := 0
+	rejected := 0
+	for i := 0; i < 120; i++ {
+		if rl.Allow("dev-tenant") {
+			allowed++
+		} else {
+			rejected++
+		}
+	}
+
+	if rejected == 0 {
+		t.Fatalf("expected some requests rejected after burst, but all %d were allowed", allowed)
+	}
+	if allowed > 100 {
+		t.Fatalf("expected at most 100 allowed (burst limit), got %d", allowed)
+	}
+	t.Logf("burst test: %d allowed, %d rejected (burst=100)", allowed, rejected)
+}
+
+// TestKeyedRateLimiter_BurstEnforced validates the in-memory limiter rejects after burst.
+func TestKeyedRateLimiter_BurstEnforced(t *testing.T) {
+	rl := newKeyedRateLimiter(5, 10)
+
+	allowed := 0
+	for i := 0; i < 20; i++ {
+		if rl.Allow("key") {
+			allowed++
+		}
+	}
+
+	if allowed > 10 {
+		t.Fatalf("expected at most 10 allowed (burst), got %d", allowed)
+	}
+	if allowed < 5 {
+		t.Fatalf("expected at least 5 allowed (rps), got %d", allowed)
+	}
+}

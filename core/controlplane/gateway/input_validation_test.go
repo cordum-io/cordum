@@ -323,6 +323,69 @@ func TestSubmitJobValidation_PromptTooLong(t *testing.T) {
 	assert.Contains(t, err.Error(), "prompt too long")
 }
 
+// TestSubmitJobValidation_200KBPromptRejected verifies the red-team finding #9:
+// a 200KB (200K char) prompt must be rejected by size validation, not by safety policy.
+func TestSubmitJobValidation_200KBPromptRejected(t *testing.T) {
+	longPrompt := strings.Repeat("a", 200_000) // 200K chars = ~200KB
+	req := submitJobRequest{
+		Prompt: longPrompt,
+		Topic:  "job.default",
+	}
+	req.applyDefaults("tenant")
+	err := req.validate("tenant") // default limit = 50K
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "prompt too long")
+	assert.Contains(t, err.Error(), "200000 chars")
+}
+
+func TestSubmitJobValidation_PromptJustUnderLimit(t *testing.T) {
+	prompt := strings.Repeat("x", maxPromptChars-1)
+	req := submitJobRequest{
+		Prompt: prompt,
+		Topic:  "job.default",
+	}
+	req.applyDefaults("tenant")
+	err := req.validate("tenant")
+	assert.NoError(t, err)
+}
+
+func TestSubmitJobValidation_PromptExactlyAtLimit(t *testing.T) {
+	prompt := strings.Repeat("x", maxPromptChars)
+	req := submitJobRequest{
+		Prompt: prompt,
+		Topic:  "job.default",
+	}
+	req.applyDefaults("tenant")
+	err := req.validate("tenant")
+	assert.NoError(t, err) // exactly at limit should pass
+}
+
+func TestSubmitJobValidation_PromptWithEntitlementLimit(t *testing.T) {
+	// Simulate an entitlement-lowered limit of 1000 chars.
+	prompt := strings.Repeat("z", 1001)
+	req := submitJobRequest{
+		Prompt: prompt,
+		Topic:  "job.default",
+	}
+	req.applyDefaults("tenant")
+	err := req.validate("tenant", 1000) // pass entitlement limit
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "prompt too long")
+}
+
+func TestSubmitJobValidation_PromptMultibyteUTF8(t *testing.T) {
+	// Each character is 3 bytes in UTF-8 but should count as 1 char.
+	prompt := strings.Repeat("ñ", maxPromptChars+1)
+	req := submitJobRequest{
+		Prompt: prompt,
+		Topic:  "job.default",
+	}
+	req.applyDefaults("tenant")
+	err := req.validate("tenant")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "prompt too long")
+}
+
 func TestSubmitJobValidation_TopicTooLong(t *testing.T) {
 	req := submitJobRequest{
 		Prompt: "test",

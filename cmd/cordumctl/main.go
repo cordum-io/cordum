@@ -355,7 +355,7 @@ func usage() {
 	fmt.Print(`cordumctl - Cordum platform CLI
 
 Usage:
-  cordumctl init <dir> [--force]
+  cordumctl init <dir> [--force] [--framework langchain|crewai|autogen]
   cordumctl generate-certs [--dir ./certs] [--force] [--days 365]
   cordumctl dev [--file docker-compose.yml] [--build] [--detach]
   cordumctl up [--file docker-compose.yml] [--build] [--detach]

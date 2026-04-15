@@ -18,8 +18,12 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/env"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
@@ -749,4 +753,55 @@ func generateRequestID() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return fmt.Sprintf("%x", b[:])
+}
+
+// tracingMiddleware creates an OTEL span per HTTP request. When OTEL is
+// disabled the middleware is a no-op passthrough with zero overhead.
+// Slots into the middleware chain AFTER requestLoggingMiddleware so that
+// request ID and logger are already available in the context.
+func tracingMiddleware(next http.Handler) http.Handler {
+	if !cordumotel.Enabled() {
+		return next
+	}
+	return tracingMiddlewareWithProvider(cordumotel.Provider(), next)
+}
+
+// tracingMiddlewareWithProvider creates tracing middleware using the given provider.
+// Exposed for testing with in-memory span exporters.
+func tracingMiddlewareWithProvider(tp oteltrace.TracerProvider, next http.Handler) http.Handler {
+	tracer := tp.Tracer("cordum-gateway")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spanName := r.Method + " " + r.URL.Path
+		ctx, span := tracer.Start(r.Context(), spanName,
+			oteltrace.WithSpanKind(oteltrace.SpanKindServer),
+		)
+		defer span.End()
+
+		span.SetAttributes(
+			attribute.String("http.method", r.Method),
+			attribute.String("http.url", r.URL.String()),
+			attribute.String("http.user_agent", r.UserAgent()),
+		)
+
+		if reqID := requestIdFromContext(ctx); reqID != "" {
+			span.SetAttributes(attribute.String("cordum.request_id", reqID))
+		}
+		if tenant := strings.TrimSpace(r.Header.Get("X-Tenant-ID")); tenant != "" {
+			span.SetAttributes(attribute.String("cordum.tenant", tenant))
+		}
+		if ac := authFromRequest(r); ac != nil && ac.PrincipalID != "" {
+			span.SetAttributes(attribute.String("cordum.principal_id", ac.PrincipalID))
+		}
+		// Agent identity is resolved authoritatively at the handler level
+		// (via resolveAgentForAudit) and written onto the span there.
+		// Do NOT read X-Agent-ID header here — it is client-controlled and spoofable.
+
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r.WithContext(ctx))
+
+		span.SetAttributes(attribute.Int("http.status_code", rec.status))
+		if rec.status >= 500 {
+			span.SetStatus(otelcodes.Error, http.StatusText(rec.status))
+		}
+	})
 }

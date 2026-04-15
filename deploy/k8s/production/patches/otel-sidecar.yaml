@@ -1,0 +1,199 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-api-gateway
+spec:
+  template:
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.0
+          args: ["--config=/etc/otel/otel-collector.yaml"]
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          env:
+            - name: OTEL_BACKEND_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: otel-collector-config
+                  key: otel-backend-endpoint
+                  optional: true
+            - name: OTEL_BACKEND_INSECURE
+              value: "true"
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel
+              readOnly: true
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-scheduler
+spec:
+  template:
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.0
+          args: ["--config=/etc/otel/otel-collector.yaml"]
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          env:
+            - name: OTEL_BACKEND_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: otel-collector-config
+                  key: otel-backend-endpoint
+                  optional: true
+            - name: OTEL_BACKEND_INSECURE
+              value: "true"
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel
+              readOnly: true
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-safety-kernel
+spec:
+  template:
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.0
+          args: ["--config=/etc/otel/otel-collector.yaml"]
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          env:
+            - name: OTEL_BACKEND_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: otel-collector-config
+                  key: otel-backend-endpoint
+                  optional: true
+            - name: OTEL_BACKEND_INSECURE
+              value: "true"
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel
+              readOnly: true
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-workflow-engine
+spec:
+  template:
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.0
+          args: ["--config=/etc/otel/otel-collector.yaml"]
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          env:
+            - name: OTEL_BACKEND_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: otel-collector-config
+                  key: otel-backend-endpoint
+                  optional: true
+            - name: OTEL_BACKEND_INSECURE
+              value: "true"
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel
+              readOnly: true
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-context-engine
+spec:
+  template:
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.0
+          args: ["--config=/etc/otel/otel-collector.yaml"]
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          env:
+            - name: OTEL_BACKEND_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: otel-collector-config
+                  key: otel-backend-endpoint
+                  optional: true
+            - name: OTEL_BACKEND_INSECURE
+              value: "true"
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel
+              readOnly: true
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config

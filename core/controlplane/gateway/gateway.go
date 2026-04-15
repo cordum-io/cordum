@@ -27,6 +27,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/locks"
@@ -56,9 +57,9 @@ const (
 	defaultHttpAddr             = ":8081"
 	defaultMetricsAddr          = ":9092"
 	defaultArtifactMaxBytes     = 10 << 20 // 10 MiB default artifact size limit
-	maxPromptChars              = 100000
-	defaultRateLimitRPS         = 2000
-	defaultRateLimitBurst       = 4000
+	maxPromptChars              = 50000
+	defaultRateLimitRPS         = 100
+	defaultRateLimitBurst       = 200
 	defaultPublicRateLimitRPS   = 20
 	defaultPublicRateLimitBurst = 40
 	defaultMaxHeaderBytes       = 1 << 20
@@ -139,6 +140,7 @@ type server struct {
 	configSvc             *configsvc.Service
 	topicRegistry         *topicregistry.Service
 	workerCredentialStore *workercredentials.Service
+	agentIdentityStore   *store.AgentIdentityStore
 	dlqStore              *store.DLQStore
 	artifactStore         artifacts.Store
 	lockStore             locks.Store
@@ -293,6 +295,22 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		cfg = config.Load()
 	}
 	entitlementResolver := resolveEntitlementResolver(entitlementResolvers...)
+
+	if _, err := cordumotel.InitTracer("cordum-api-gateway"); err != nil {
+		slog.Error("otel tracer init failed", "error", err)
+	}
+	if err := cordumotel.InitMetrics("cordum-api-gateway"); err != nil {
+		slog.Error("otel metrics init failed", "error", err)
+	}
+	defer func() {
+		if err := cordumotel.Shutdown(context.Background()); err != nil {
+			slog.Error("otel tracer shutdown failed", "error", err)
+		}
+		if err := cordumotel.ShutdownMetrics(); err != nil {
+			slog.Error("otel metrics shutdown failed", "error", err)
+		}
+	}()
+
 	grpcAddr := addrFromEnv(envGatewayGrpcAddr, defaultGrpcAddr)
 	httpAddr := addrFromEnv(envGatewayHTTPAddr, defaultHttpAddr)
 	metricsAddr := addrFromEnv(envGatewayMetricsAddr, defaultMetricsAddr)
@@ -572,6 +590,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		configSvc:             configSvc,
 		topicRegistry:         topicregistry.NewService(configSvc),
 		workerCredentialStore: workercredentials.NewService(configSvc),
+		agentIdentityStore:   store.NewAgentIdentityStoreFromClient(jobStore.Client()),
 		dlqStore:              dlqStore,
 		artifactStore:         artifactStore,
 		lockStore:             lockStore,
@@ -890,6 +909,15 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleListWorkerCredentials))
 	mux.HandleFunc("POST /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleCreateWorkerCredential))
 	mux.HandleFunc("DELETE /api/v1/workers/credentials/{worker_id}", s.instrumented("/api/v1/workers/credentials/{worker_id}", s.handleDeleteWorkerCredential))
+
+	// 2.1 Agent Identities (admin only)
+	mux.HandleFunc("GET /api/v1/agents", s.instrumented("/api/v1/agents", s.handleListAgents))
+	mux.HandleFunc("POST /api/v1/agents", s.instrumented("/api/v1/agents", s.handleCreateAgent))
+	mux.HandleFunc("GET /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleGetAgent))
+	mux.HandleFunc("PUT /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleUpdateAgent))
+	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleDeleteAgent))
+	mux.HandleFunc("GET /api/v1/agents/{id}/stats", s.instrumented("/api/v1/agents/{id}/stats", s.handleAgentStats))
+
 	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
 	mux.HandleFunc("GET /api/v1/topics", s.instrumented("/api/v1/topics", s.handleListTopics))
@@ -1054,7 +1082,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// absent, rateLimitKey falls back to IP-based keying automatically.
 	readAuditRate := parseFloatEnv("CORDUM_AUDIT_READ_SAMPLE_RATE", 0.0)
 	inner := auditReadMiddleware(s.auditExporter, readAuditRate, tenantMiddleware(s.auth, maxBodyMiddleware(mux, s.entitlements)))
-	handler := requestLoggingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter))))
+	handler := requestLoggingMiddleware(tracingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter)))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))

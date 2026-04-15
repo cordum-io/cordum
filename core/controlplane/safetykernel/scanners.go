@@ -176,11 +176,12 @@ func (s *piiScanner) Scan(content []byte) []outputFinding {
 
 func defaultOutputScanners() map[string]OutputScanner {
 	return map[string]OutputScanner{
-		"secret_leak":    newSecretScanner(),
-		"secret":         newSecretScanner(),
-		"pii":            newPIIScanner(),
-		"code_injection": newInjectionScanner(),
-		"injection":      newInjectionScanner(),
+		"secret_leak":      newSecretScanner(),
+		"secret":           newSecretScanner(),
+		"pii":              newPIIScanner(),
+		"code_injection":   newInjectionScanner(),
+		"injection":        newInjectionScanner(),
+		"prompt_injection": newPromptInjectionScanner(),
 	}
 }
 
@@ -246,6 +247,60 @@ func newInjectionScanner() *regexScanner {
 			Pattern:    `(?i)(ignore\\s+previous\\s+instructions|reveal\\s+system\\s+prompt|jailbreak)`,
 			Expression: regexp.MustCompile(`(?i)(ignore\s+previous\s+instructions|reveal\s+system\s+prompt|jailbreak)`),
 			Confidence: 0.8,
+		},
+	})
+}
+
+func newPromptInjectionScanner() *regexScanner {
+	return newRegexScanner("prompt_injection", "prompt_injection", []regexPattern{
+		{
+			Label:      "system override directive",
+			Severity:   "high",
+			Pattern:    `(?i)system\s+override\s*:`,
+			Expression: regexp.MustCompile(`(?i)system\s+override\s*:`),
+			Confidence: 0.9,
+		},
+		{
+			Label:      "ignore rules/instructions directive",
+			Severity:   "high",
+			Pattern:    `(?i)ignore\s+(all\s+)?((safety|security|policy)\s+)?(rules|checks|controls|instructions)`,
+			Expression: regexp.MustCompile(`(?i)ignore\s+(all\s+)?((safety|security|policy)\s+)?(rules|checks|controls|instructions)`),
+			Confidence: 0.9,
+		},
+		{
+			Label:      "ignore previous instructions",
+			Severity:   "high",
+			Pattern:    `(?i)ignore\s+(all\s+)?previous\s+instructions`,
+			Expression: regexp.MustCompile(`(?i)ignore\s+(all\s+)?previous\s+instructions`),
+			Confidence: 0.9,
+		},
+		{
+			Label:      "jailbreak/unrestricted mode directive",
+			Severity:   "high",
+			Pattern:    `(?i)you\s+are\s+now\s+(unrestricted|unfiltered|jailbroken)`,
+			Expression: regexp.MustCompile(`(?i)you\s+are\s+now\s+(unrestricted|unfiltered|jailbroken)`),
+			Confidence: 0.9,
+		},
+		{
+			Label:      "bypass restrictions directive",
+			Severity:   "high",
+			Pattern:    `(?i)bypass\s+(all\s+)?(restrictions|safety|governance)`,
+			Expression: regexp.MustCompile(`(?i)bypass\s+(all\s+)?(restrictions|safety|governance)`),
+			Confidence: 0.9,
+		},
+		{
+			Label:      "act without rules/restrictions directive",
+			Severity:   "high",
+			Pattern:    `(?i)act\s+as\s+(if|though)\s+(you\s+have\s+)?no\s+(rules|restrictions|limits)`,
+			Expression: regexp.MustCompile(`(?i)act\s+as\s+(if|though)\s+(you\s+have\s+)?no\s+(rules|restrictions|limits)`),
+			Confidence: 0.9,
+		},
+		{
+			Label:      "disregard/forget rules directive",
+			Severity:   "high",
+			Pattern:    `(?i)(disregard|forget)\s+(all\s+)?(your\s+)?(rules|instructions|guidelines|restrictions)`,
+			Expression: regexp.MustCompile(`(?i)(disregard|forget)\s+(all\s+)?(your\s+)?(rules|instructions|guidelines|restrictions)`),
+			Confidence: 0.9,
 		},
 	})
 }

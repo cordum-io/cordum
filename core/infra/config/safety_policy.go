@@ -207,19 +207,21 @@ type OutputPolicyMatch struct {
 }
 
 type PolicyMatch struct {
-	Tenants        []string                `yaml:"tenants"`
-	Topics         []string                `yaml:"topics"`
-	Capabilities   []string                `yaml:"capabilities"`
-	RiskTags       []string                `yaml:"risk_tags"`
-	Requires       []string                `yaml:"requires"`
-	PackIDs        []string                `yaml:"pack_ids"`
-	ActorIDs       []string                `yaml:"actor_ids"`
-	ActorTypes     []string                `yaml:"actor_types"`
-	Labels         map[string]string       `yaml:"labels"`
-	LabelAllowlist map[string][]string     `yaml:"label_allowlist,omitempty"` // deny when label value NOT in list
-	LabelThreshold map[string]float64      `yaml:"label_threshold,omitempty"` // deny when label value > threshold
-	SecretsPresent *bool                   `yaml:"secrets_present,omitempty"`
-	MCP            MCPPolicy               `yaml:"mcp"`
+	Tenants                  []string            `yaml:"tenants"`
+	Topics                   []string            `yaml:"topics"`
+	Capabilities             []string            `yaml:"capabilities"`
+	RiskTags                 []string            `yaml:"risk_tags"`
+	Requires                 []string            `yaml:"requires"`
+	PackIDs                  []string            `yaml:"pack_ids"`
+	ActorIDs                 []string            `yaml:"actor_ids"`
+	ActorTypes               []string            `yaml:"actor_types"`
+	AgentRiskTiers           []string            `yaml:"agent_risk_tiers"`
+	AgentDataClassifications []string            `yaml:"agent_data_classifications"`
+	Labels                   map[string]string   `yaml:"labels"`
+	LabelAllowlist           map[string][]string `yaml:"label_allowlist,omitempty"` // deny when label value NOT in list
+	LabelThreshold           map[string]float64  `yaml:"label_threshold,omitempty"` // deny when label value > threshold
+	SecretsPresent           *bool               `yaml:"secrets_present,omitempty"`
+	MCP                      MCPPolicy           `yaml:"mcp"`
 }
 
 type PolicyConstraints struct {
@@ -307,6 +309,12 @@ type PolicyMeta struct {
 	RiskTags       []string
 	Requires       []string
 	PackID         string
+	// Agent identity fields — populated from label-based lookup when agent_id is present.
+	AgentID                  string
+	AgentRiskTier            string
+	AgentDataClassifications []string
+	AgentName                string
+	AgentTeam                string
 }
 
 // PolicyDecision is the result of policy evaluation.
@@ -506,6 +514,12 @@ func matchRule(match PolicyMatch, input PolicyInput) bool {
 		return false
 	}
 	if len(match.ActorTypes) > 0 && !containsString(match.ActorTypes, input.Meta.ActorType) {
+		return false
+	}
+	if len(match.AgentRiskTiers) > 0 && !containsString(match.AgentRiskTiers, input.Meta.AgentRiskTier) {
+		return false
+	}
+	if len(match.AgentDataClassifications) > 0 && !containsAny(match.AgentDataClassifications, input.Meta.AgentDataClassifications) {
 		return false
 	}
 	if match.SecretsPresent != nil && input.SecretsPresent != *match.SecretsPresent {

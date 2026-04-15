@@ -53,6 +53,8 @@ tags:
     description: Pack installation and management (admin only)
   - name: Marketplace
     description: Pack marketplace catalog (admin only)
+  - name: AgentIdentities
+    description: Agent identity CRUD — first-class agent identity resources with risk tiers, data classifications, and worker credential linking (admin only)
   - name: Health
     description: Health checks and system status
   - name: Memory
@@ -2320,6 +2322,160 @@ paths:
           $ref: "#/components/responses/InternalServerError"
 
   # =========================================================================
+  # Agent Identities
+  # =========================================================================
+  /api/v1/agents:
+    get:
+      operationId: listAgentIdentities
+      summary: List agent identities with optional filtering
+      tags: [AgentIdentities]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended, revoked]
+        - name: risk_tier
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+        - name: team
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paginated list of agent identities
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AgentIdentity"
+                  cursor:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    post:
+      operationId: createAgentIdentity
+      summary: Create a new agent identity
+      tags: [AgentIdentities]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAgentIdentityRequest"
+      responses:
+        "201":
+          description: Agent identity created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentIdentity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Agent identity store unavailable
+
+  /api/v1/agents/{id}:
+    get:
+      operationId: getAgentIdentity
+      summary: Get agent identity by ID
+      tags: [AgentIdentities]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentIdentity"
+        "404":
+          description: Agent identity not found
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: updateAgentIdentity
+      summary: Partial update of an agent identity
+      tags: [AgentIdentities]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgentIdentityRequest"
+      responses:
+        "200":
+          description: Updated agent identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentIdentity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Agent identity not found
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      operationId: deleteAgentIdentity
+      summary: Soft-delete an agent identity (sets status to revoked)
+      tags: [AgentIdentities]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Agent identity revoked
+        "404":
+          description: Agent identity not found
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # =========================================================================
   # Memory and Artifacts
   # =========================================================================
   /api/v1/memory:
@@ -2643,6 +2799,116 @@ components:
   # Schemas
   # =========================================================================
   schemas:
+    # --- Agent Identities -------------------------------------------------
+    AgentIdentity:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        owner:
+          type: string
+        team:
+          type: string
+        risk_tier:
+          type: string
+          enum: [low, medium, high, critical]
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+        allowed_tools:
+          type: array
+          items:
+            type: string
+        data_classifications:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, suspended, revoked]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, name, owner, risk_tier, status, created_at, updated_at]
+
+    CreateAgentIdentityRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        owner:
+          type: string
+        team:
+          type: string
+        risk_tier:
+          type: string
+          enum: [low, medium, high, critical]
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+        allowed_tools:
+          type: array
+          items:
+            type: string
+        data_classifications:
+          type: array
+          items:
+            type: string
+      required: [name, owner, risk_tier]
+
+    UpdateAgentIdentityRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        owner:
+          type: string
+        team:
+          type: string
+        risk_tier:
+          type: string
+          enum: [low, medium, high, critical]
+        status:
+          type: string
+          enum: [active, suspended, revoked]
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+        allowed_tools:
+          type: array
+          items:
+            type: string
+        data_classifications:
+          type: array
+          items:
+            type: string
+
     # --- Common -----------------------------------------------------------
     Error:
       type: object

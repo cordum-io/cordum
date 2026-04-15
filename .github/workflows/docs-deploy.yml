@@ -1,0 +1,125 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "deploy-docs"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        working-directory: docs-site
+        run: npm ci
+
+      - name: Build docs
+        working-directory: docs-site
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site-build
+          path: docs-site/build/
+          retention-days: 1
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://docs.cordum.io
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-site-build
+          path: docs-site/build
+
+      - name: Configure SSH
+        env:
+          DOCS_DEPLOY_KEY: ${{ secrets.DOCS_DEPLOY_KEY }}
+          DOCS_DEPLOY_HOST: ${{ secrets.DOCS_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCS_DEPLOY_KEY:-}" ]; then
+            echo "::error::DOCS_DEPLOY_KEY secret is required"
+            exit 1
+          fi
+
+          DEPLOY_HOST="${DOCS_DEPLOY_HOST:-92.205.108.155}"
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DOCS_DEPLOY_KEY" > ~/.ssh/cordum_docs_deploy
+          chmod 600 ~/.ssh/cordum_docs_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Prepare remote directory
+        env:
+          DOCS_DEPLOY_HOST: ${{ secrets.DOCS_DEPLOY_HOST }}
+          DOCS_DEPLOY_USER: ${{ secrets.DOCS_DEPLOY_USER }}
+          DOCS_DEPLOY_PATH: ${{ secrets.DOCS_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          DEPLOY_HOST="${DOCS_DEPLOY_HOST:-92.205.108.155}"
+          DEPLOY_USER="${DOCS_DEPLOY_USER:-sysadmin}"
+          DEPLOY_PATH="${DOCS_DEPLOY_PATH:-/var/www/docs.cordum.io}"
+          SSH_KEY=~/.ssh/cordum_docs_deploy
+          SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=accept-new"
+
+          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo mkdir -p '$DEPLOY_PATH' && sudo chown -R '$DEPLOY_USER':'$DEPLOY_USER' '$DEPLOY_PATH'"
+
+      - name: Deploy docs to server
+        env:
+          DOCS_DEPLOY_HOST: ${{ secrets.DOCS_DEPLOY_HOST }}
+          DOCS_DEPLOY_USER: ${{ secrets.DOCS_DEPLOY_USER }}
+          DOCS_DEPLOY_PATH: ${{ secrets.DOCS_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          DEPLOY_HOST="${DOCS_DEPLOY_HOST:-92.205.108.155}"
+          DEPLOY_USER="${DOCS_DEPLOY_USER:-sysadmin}"
+          DEPLOY_PATH="${DOCS_DEPLOY_PATH:-/var/www/docs.cordum.io}"
+          SSH_KEY=~/.ssh/cordum_docs_deploy
+          SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=accept-new"
+
+          echo "Syncing docs build to $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH"
+          rsync -az --delete \
+            -e "ssh $SSH_OPTS" \
+            docs-site/build/ \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: Remote smoke test
+        env:
+          DOCS_DEPLOY_HOST: ${{ secrets.DOCS_DEPLOY_HOST }}
+          DOCS_DEPLOY_USER: ${{ secrets.DOCS_DEPLOY_USER }}
+          DOCS_DEPLOY_PATH: ${{ secrets.DOCS_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          DEPLOY_HOST="${DOCS_DEPLOY_HOST:-92.205.108.155}"
+          DEPLOY_USER="${DOCS_DEPLOY_USER:-sysadmin}"
+          DEPLOY_PATH="${DOCS_DEPLOY_PATH:-/var/www/docs.cordum.io}"
+          SSH_KEY=~/.ssh/cordum_docs_deploy
+          SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=accept-new"
+
+          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" \
+            "test -f '$DEPLOY_PATH/index.html' && test -f '$DEPLOY_PATH/tutorials/index.html'"

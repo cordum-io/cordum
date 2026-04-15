@@ -24,6 +24,7 @@ type TierDefaultSpec struct {
 	MaxWorkers         int64
 	MaxConcurrentJobs  int64
 	RequestsPerSecond  int64
+	MaxPromptChars     int64
 	AuditRetentionDays int64
 	ApprovalMode       ApprovalMode
 	Audit              bool
@@ -44,6 +45,7 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxWorkers:         3,
 		MaxConcurrentJobs:  3,
 		RequestsPerSecond:  500,
+		MaxPromptChars:     50_000,
 		AuditRetentionDays: 7,
 		ApprovalMode:       ApprovalModeSingle,
 		Audit:              true,
@@ -53,6 +55,7 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxWorkers:         25,
 		MaxConcurrentJobs:  25,
 		RequestsPerSecond:  2000,
+		MaxPromptChars:     100_000,
 		AuditRetentionDays: 90,
 		ApprovalMode:       ApprovalModeMulti,
 		Audit:              true,
@@ -66,6 +69,7 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxWorkers:         Unlimited,
 		MaxConcurrentJobs:  Unlimited,
 		RequestsPerSecond:  10000,
+		MaxPromptChars:     200_000,
 		AuditRetentionDays: Unlimited,
 		ApprovalMode:       ApprovalModeCustom,
 		Audit:              true,
@@ -144,6 +148,7 @@ func applyTierDefaultSpec(target *Entitlements, spec TierDefaultSpec) {
 	setNamedIntField(target, spec.MaxWorkers, "MaxWorkers")
 	setNamedIntField(target, spec.MaxConcurrentJobs, "MaxConcurrentJobs")
 	setNamedIntField(target, spec.RequestsPerSecond, "RequestsPerSecond", "RateLimitRPS", "MaxRequestsPerSecond", "RPS")
+	setNamedIntField(target, spec.MaxPromptChars, "MaxPromptChars")
 	setNamedIntField(target, spec.AuditRetentionDays, "AuditRetentionDays")
 	setNamedStringField(target, string(spec.ApprovalMode), "ApprovalMode")
 	setNamedBoolField(target, spec.Audit, "Audit")

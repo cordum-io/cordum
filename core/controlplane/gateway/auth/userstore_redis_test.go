@@ -16,12 +16,10 @@ import (
 
 func newTestUserStore(t *testing.T) (*RedisUserStore, *miniredis.Miniredis) {
 	t.Helper()
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	t.Cleanup(srv.Close)
-
+	srv := newTestMiniredis(t)
+	// Use URL-based constructor: TestLoginThrottleRecoveryFromRedisOutage
+	// restarts the miniredis server mid-test and needs full pool/retry for
+	// automatic reconnection. Constrained pools fail to recover.
 	store, err := NewRedisUserStore("redis://" + srv.Addr())
 	if err != nil {
 		t.Fatalf("NewRedisUserStore: %v", err)

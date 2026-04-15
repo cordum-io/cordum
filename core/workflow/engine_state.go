@@ -9,8 +9,11 @@ import (
 	"strings"
 	"time"
 
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -19,6 +22,16 @@ import (
 
 // StartRun loads the workflow/run and dispatches any ready steps.
 func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
+	tracer := cordumotel.Tracer("cordum-workflow-engine")
+	ctx, span := tracer.Start(ctx, "workflow.execute_run",
+		oteltrace.WithSpanKind(oteltrace.SpanKindInternal),
+	)
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("cordum.workflow_id", workflowID),
+		attribute.String("cordum.run_id", runID),
+	)
+
 	unlock, ok := e.lockRun(runID)
 	if !ok {
 		return nil // Another replica owns this run.
@@ -461,7 +474,7 @@ func (e *Engine) publishJobCancel(jobID, reason string) error {
 	backoff := [3]time.Duration{100 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		lastErr = e.bus.Publish(capsdk.SubjectCancel, packet)
+		lastErr = e.publishWithTrace(context.Background(), capsdk.SubjectCancel, packet)
 		if lastErr == nil {
 			return nil
 		}

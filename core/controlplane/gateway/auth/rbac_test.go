@@ -13,18 +13,11 @@ import (
 
 func newTestRBACStore(t *testing.T) (*RBACStore, *miniredis.Miniredis) {
 	t.Helper()
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Skipf("miniredis unavailable: %v", err)
-	}
-	store, err := NewRBACStore("redis://" + srv.Addr())
-	if err != nil {
-		srv.Close()
-		t.Fatalf("new rbac store: %v", err)
-	}
+	srv := newTestMiniredis(t)
+	client := newTestRedisClient(t, srv.Addr())
+	store := NewRBACStoreFromClient(client)
 	t.Cleanup(func() {
 		_ = store.Close()
-		srv.Close()
 	})
 	return store, srv
 }

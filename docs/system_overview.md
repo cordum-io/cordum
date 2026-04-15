@@ -66,6 +66,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Applies effective config embedded in job env.
   - Returns optional remediations; gateway can apply them to create a new job with safer topic/capability/labels.
   - Optional decision cache (`SAFETY_DECISION_CACHE_TTL`) keeps latency low for repeated checks.
+  - Server-side risk tag derivation: packs can declare a `riskTagDeriver` on topics. When registered, the kernel derives authoritative risk tags from job content (`_content.payload_json` label) instead of trusting client-supplied tags. Prevents risk tag spoofing. Built-in derivers: `amount-threshold` (parses `amount` from JSON payload, used by mock-bank).
 
 - Workflow Engine (`core/workflow`, `cmd/cordum-workflow-engine`; binary `cordum-workflow-engine`)
   - Stores workflow definitions and runs in Redis; maintains run timeline.

@@ -456,7 +456,14 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 					s.workflowStore.DeleteRunIdempotencyKey,
 				)
 			}
-			writeErrorJSON(w, http.StatusTooManyRequests, "max concurrent runs reached")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			writeJSON(w, map[string]any{
+				"error":   "max concurrent workflow runs exceeded",
+				"status":  http.StatusTooManyRequests,
+				"current": count,
+				"limit":   configLimit,
+			})
 			return
 		}
 		if limitErr := licensing.CheckActiveWorkflows(int64(count+1), s.currentEntitlements()); limitErr != nil {
@@ -608,7 +615,14 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if configLimit > 0 && count >= configLimit {
-			writeErrorJSON(w, http.StatusTooManyRequests, "max concurrent runs reached")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			writeJSON(w, map[string]any{
+				"error":   "max concurrent workflow runs exceeded",
+				"status":  http.StatusTooManyRequests,
+				"current": count,
+				"limit":   configLimit,
+			})
 			return
 		}
 		if limitErr := licensing.CheckActiveWorkflows(int64(count+1), s.currentEntitlements()); limitErr != nil {

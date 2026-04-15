@@ -11,6 +11,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 )
 
@@ -259,5 +260,106 @@ func TestRevokeNonexistentCredential(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRotateCredentialClearsAgentLink(t *testing.T) {
+	// Regression test: rotating a credential from agent_id=X to agent_id=""
+	// must clear the reverse-lookup so GetByWorkerID no longer returns the agent.
+	s, _, _ := newTestGateway(t)
+	seedWorkerCredentialAccessConfig(t, s)
+	ctx := context.Background()
+
+	// Create an agent identity.
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		Name: "test-agent", Owner: "admin", RiskTier: "low", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	// Create credential linked to agent.
+	body := bytes.NewBufferString(`{"worker_id":"link-worker","allowed_pools":["default"],"allowed_topics":["job.external"],"agent_id":"` + agent.ID + `"}`)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleCreateWorkerCredential(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify agent is linked.
+	linked, err := s.agentIdentityStore.GetByWorkerID(ctx, "link-worker")
+	if err != nil || linked == nil {
+		t.Fatalf("expected agent linked after create, got err=%v agent=%v", err, linked)
+	}
+
+	// Rotate credential WITHOUT agent_id → should clear the link.
+	body2 := bytes.NewBufferString(`{"worker_id":"link-worker","allowed_pools":["default"],"allowed_topics":["job.external"]}`)
+	req2 := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body2), &AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin",
+	})
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	s.handleCreateWorkerCredential(rec2, req2)
+	if rec2.Code != http.StatusOK && rec2.Code != http.StatusCreated {
+		t.Fatalf("rotate: expected 200/201, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	// Verify agent link is cleared — GetByWorkerID should return nil.
+	stale, err := s.agentIdentityStore.GetByWorkerID(ctx, "link-worker")
+	if err != nil {
+		t.Fatalf("GetByWorkerID after rotate: %v", err)
+	}
+	if stale != nil {
+		t.Fatalf("STALE LINKAGE: GetByWorkerID returned agent %q after rotate-to-empty — should be nil", stale.ID)
+	}
+}
+
+func TestRevokeCredentialClearsAgentLink(t *testing.T) {
+	// Regression test: revoking a credential must clear the reverse-lookup.
+	s, _, _ := newTestGateway(t)
+	seedWorkerCredentialAccessConfig(t, s)
+	ctx := context.Background()
+
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		Name: "revoke-agent", Owner: "admin", RiskTier: "low", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	// Create credential linked to agent.
+	body := bytes.NewBufferString(`{"worker_id":"revoke-worker","allowed_pools":["default"],"allowed_topics":["job.external"],"agent_id":"` + agent.ID + `"}`)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleCreateWorkerCredential(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Revoke the credential.
+	revokeReq := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/revoke-worker", nil), &AuthContext{
+		Tenant: "default", Role: "admin",
+	})
+	revokeReq.SetPathValue("worker_id", "revoke-worker")
+	revokeRec := httptest.NewRecorder()
+	s.handleDeleteWorkerCredential(revokeRec, revokeReq)
+	if revokeRec.Code != http.StatusNoContent {
+		t.Fatalf("revoke: expected 204, got %d: %s", revokeRec.Code, revokeRec.Body.String())
+	}
+
+	// Verify agent link is cleared.
+	stale, err := s.agentIdentityStore.GetByWorkerID(ctx, "revoke-worker")
+	if err != nil {
+		t.Fatalf("GetByWorkerID after revoke: %v", err)
+	}
+	if stale != nil {
+		t.Fatalf("STALE LINKAGE: GetByWorkerID returned agent %q after revoke — should be nil", stale.ID)
 	}
 }

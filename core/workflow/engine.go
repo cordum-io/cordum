@@ -12,11 +12,14 @@ import (
 
 	"log/slog"
 
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	schemas "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -658,6 +661,18 @@ func (e *Engine) activateOnErrorHandler(ctx context.Context, run *WorkflowRun, w
 }
 
 func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *WorkflowRun) error {
+	tracer := cordumotel.Tracer("cordum-workflow-engine")
+	ctx, span := tracer.Start(ctx, "workflow.dispatch_steps",
+		oteltrace.WithSpanKind(oteltrace.SpanKindInternal),
+	)
+	defer span.End()
+	if run != nil {
+		span.SetAttributes(attribute.String("cordum.run_id", run.ID))
+	}
+	if wfDef != nil {
+		span.SetAttributes(attribute.String("cordum.workflow_id", wfDef.ID))
+	}
+
 	if wfDef == nil || run == nil {
 		return fmt.Errorf("workflow/run required")
 	}
@@ -878,7 +893,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					}
 
 					packet := makeJobPacket(run.ID, req)
-					if err := e.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("approval gate dispatch failed", "run_id", run.ID, "step_id", stepID, "error", err)
 						parentSR.Status = StepStatusPending
 						parentSR.JobID = ""
@@ -978,7 +993,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						ProtocolVersion: capsdk.DefaultProtocolVersion,
 						Payload:         &pb.BusPacket_Alert{Alert: alert},
 					}
-					if err := e.bus.Publish(capsdk.SubjectWorkflowEvent, packet); err != nil {
+					if err := e.publishWithTrace(ctx, capsdk.SubjectWorkflowEvent, packet); err != nil {
 						parentSR.Status = StepStatusFailed
 						parentSR.Error = map[string]any{"message": err.Error()}
 						parentSR.CompletedAt = &now
@@ -1717,7 +1732,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						req.ContextPtr = ptr
 					}
 					packet := makeJobPacket(run.ID, req)
-					if err := e.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("publish loop step", "run_id", run.ID, "step_id", childID, "error", err)
 						child.Status = StepStatusFailed
 						child.Error = map[string]any{"message": err.Error()}
@@ -1933,7 +1948,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						req.ContextPtr = ptr
 					}
 					packet := makeJobPacket(run.ID, req)
-					if err := e.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("publish parallel child step", "run_id", run.ID, "step_id", childStepID, "error", err)
 						child.Status = StepStatusFailed
 						child.Error = map[string]any{"message": err.Error()}
@@ -2089,7 +2104,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						req.ContextPtr = ptr
 					}
 					packet := makeJobPacket(run.ID, req)
-					if err := e.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("publish foreach step", "run_id", run.ID, "step_id", childID, "error", err)
 						child.Status = StepStatusFailed
 						child.Error = map[string]any{"message": err.Error()}
@@ -2333,7 +2348,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 			// Dispatch to NATS — state is already persisted so a crash here is safe.
 			slog.Debug("step dispatching", "component", "workflow", "runId", run.ID, "traceId", run.ID, "stepId", stepID, "jobId", jobID, "stepType", string(step.Type))
 			packet := makeJobPacket(run.ID, req)
-			if err := e.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+			if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 				slog.Error("publish step", "run_id", run.ID, "step_id", stepID, "error", err)
 				// Revert to pending for retry on next scheduleReady; idempotency key
 				// prevents duplicate execution if the message was actually delivered.

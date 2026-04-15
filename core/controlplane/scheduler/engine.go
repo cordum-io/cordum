@@ -22,8 +22,13 @@ import (
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -75,6 +80,7 @@ type Engine struct {
 	config                  ConfigProvider
 	topicRegistry           *topicregistry.Service
 	workerCredentialCache   *WorkerCredentialCache
+	agentResolver           *AgentResolver
 	workerAttestation       WorkerAttestationMode
 	workerReadinessRequired bool
 	schemaRegistry          *infraSchema.Registry
@@ -90,6 +96,8 @@ type Engine struct {
 	wg                      sync.WaitGroup
 	ctx                     context.Context
 	cancel                  context.CancelFunc
+	traceCtxMu              sync.Mutex
+	lastTraceCtx            context.Context
 }
 
 func jobLockKey(jobID string) string {
@@ -273,6 +281,11 @@ func (e *Engine) WithSchemaRegistry(registry *infraSchema.Registry) *Engine {
 
 func (e *Engine) WithWorkerCredentialCache(cache *WorkerCredentialCache) *Engine {
 	e.workerCredentialCache = cache
+	return e
+}
+
+func (e *Engine) WithAgentResolver(resolver *AgentResolver) *Engine {
+	e.agentResolver = resolver
 	return e
 }
 
@@ -464,14 +477,28 @@ func (e *Engine) Start() error {
 	if err := e.bus.Subscribe(capsdk.SubjectHeartbeat, "", e.HandlePacket); err != nil {
 		return fmt.Errorf("subscribe heartbeat: %w", err)
 	}
-	if err := e.bus.Subscribe(capsdk.SubjectSubmit, schedulerQueue, e.HandlePacket); err != nil {
-		return fmt.Errorf("subscribe submit: %w", err)
-	}
-	if err := e.bus.Subscribe(capsdk.SubjectResult, schedulerQueue, e.HandlePacket); err != nil {
-		return fmt.Errorf("subscribe result: %w", err)
-	}
-	if err := e.bus.Subscribe(capsdk.SubjectCancel, schedulerQueue, e.HandlePacket); err != nil {
-		return fmt.Errorf("subscribe cancel: %w", err)
+	// Use context-aware subscriptions for job submit/result/cancel to propagate
+	// W3C trace context from NATS headers into scheduler spans.
+	if cs, ok := e.bus.(model.ContextSubscriber); ok {
+		if err := cs.SubscribeWithContext(capsdk.SubjectSubmit, schedulerQueue, e.HandlePacketWithContext); err != nil {
+			return fmt.Errorf("subscribe submit: %w", err)
+		}
+		if err := cs.SubscribeWithContext(capsdk.SubjectResult, schedulerQueue, e.HandlePacketWithContext); err != nil {
+			return fmt.Errorf("subscribe result: %w", err)
+		}
+		if err := cs.SubscribeWithContext(capsdk.SubjectCancel, schedulerQueue, e.HandlePacketWithContext); err != nil {
+			return fmt.Errorf("subscribe cancel: %w", err)
+		}
+	} else {
+		if err := e.bus.Subscribe(capsdk.SubjectSubmit, schedulerQueue, e.HandlePacket); err != nil {
+			return fmt.Errorf("subscribe submit: %w", err)
+		}
+		if err := e.bus.Subscribe(capsdk.SubjectResult, schedulerQueue, e.HandlePacket); err != nil {
+			return fmt.Errorf("subscribe result: %w", err)
+		}
+		if err := e.bus.Subscribe(capsdk.SubjectCancel, schedulerQueue, e.HandlePacket); err != nil {
+			return fmt.Errorf("subscribe cancel: %w", err)
+		}
 	}
 	// Handshakes broadcast to all replicas (like heartbeats).
 	if err := e.bus.Subscribe(capsdk.SubjectHandshake, "", e.HandlePacket); err != nil {
@@ -516,6 +543,21 @@ func (e *Engine) Start() error {
 	}
 
 	return nil
+}
+
+// HandlePacketWithContext is the context-aware version of HandlePacket.
+// It receives trace context extracted from NATS headers and threads it
+// through to processJob for distributed tracing continuity.
+func (e *Engine) HandlePacketWithContext(ctx context.Context, p *pb.BusPacket) error {
+	// Store the trace context so processJob can pick it up.
+	// We merge the incoming trace context with the engine's lifecycle context.
+	if ctx != nil && ctx != context.Background() {
+		// Use the trace span from the incoming context if present.
+		e.traceCtxMu.Lock()
+		e.lastTraceCtx = ctx
+		e.traceCtxMu.Unlock()
+	}
+	return e.HandlePacket(p)
 }
 
 func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
@@ -996,6 +1038,38 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 }
 
 func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID string) error {
+	tracer := cordumotel.Tracer("cordum-scheduler")
+	// Use upstream trace context (from NATS headers) as parent if available,
+	// so scheduler spans become children of the gateway/submitter trace.
+	e.traceCtxMu.Lock()
+	parentCtx := e.lastTraceCtx
+	e.lastTraceCtx = nil
+	e.traceCtxMu.Unlock()
+	if parentCtx != nil {
+		lockCtx = oteltrace.ContextWithSpanContext(lockCtx, oteltrace.SpanContextFromContext(parentCtx))
+	}
+	lockCtx, span := tracer.Start(lockCtx, "scheduler.dispatch",
+		oteltrace.WithSpanKind(oteltrace.SpanKindInternal),
+	)
+	defer span.End()
+	if traceID != "" {
+		span.SetAttributes(attribute.String("cordum.packet_trace_id", traceID))
+	}
+	if req != nil {
+		span.SetAttributes(
+			attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)),
+			attribute.String("cordum.topic", strings.TrimSpace(req.Topic)),
+		)
+		if req.TenantId != "" {
+			span.SetAttributes(attribute.String("cordum.tenant", req.TenantId))
+		}
+		if req.Labels != nil {
+			if agentID := strings.TrimSpace(req.Labels["agent_id"]); agentID != "" {
+				span.SetAttributes(attribute.String("cordum.agent_id", agentID))
+			}
+		}
+	}
+
 	if req == nil || strings.TrimSpace(req.JobId) == "" || strings.TrimSpace(req.Topic) == "" {
 		slog.Error("invalid job request",
 			"trace_id", traceID,
@@ -1067,7 +1141,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	e.attachEffectiveConfig(req)
 
-	record, err := e.checkSafetyDecision(req)
+	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
 	if err != nil {
 		slog.Error("safety check failed", "job_id", jobID, "error", err)
 		record.Decision = SafetyUnavailable
@@ -1365,7 +1439,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		},
 	}
 
-	if err := e.bus.Publish(subject, packet); err != nil {
+	publishErr := e.publishWithTrace(lockCtx, subject, packet)
+	if err := publishErr; err != nil {
 		slog.Error("failed to publish job, rolling back to SCHEDULED",
 			"job_id", jobID,
 			"subject", subject,
@@ -1561,6 +1636,30 @@ func (e *Engine) failSchemaValidation(req *pb.JobRequest, traceID, schemaID, rea
 		return false, RetryAfter(err, retryDelayPublish)
 	}
 	return true, nil
+}
+
+func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+	tracer := cordumotel.Tracer("cordum-scheduler")
+	_, safetySpan := tracer.Start(ctx, "scheduler.safety_check",
+		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
+	)
+	defer safetySpan.End()
+
+	if req != nil {
+		safetySpan.SetAttributes(attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)))
+	}
+
+	record, err := e.checkSafetyDecision(req)
+	if err != nil {
+		safetySpan.SetStatus(otelcodes.Error, err.Error())
+		safetySpan.RecordError(err)
+	} else {
+		safetySpan.SetAttributes(
+			attribute.String("cordum.safety_decision", string(record.Decision)),
+			attribute.String("cordum.safety_rule_id", record.RuleID),
+		)
+	}
+	return record, err
 }
 
 func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, error) {
@@ -1820,6 +1919,7 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			}
 		}
 		e.setWorkerID(jobID, strings.TrimSpace(res.GetWorkerId()))
+		e.setAgentInfoFromWorker(jobID, strings.TrimSpace(res.GetWorkerId()))
 		if err := e.setJobState(jobID, state); err != nil {
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -2185,6 +2285,25 @@ func (e *Engine) setWorkerID(jobID, workerID string) {
 	}
 }
 
+// setAgentInfoFromWorker resolves the worker's agent identity and persists it
+// in job metadata for audit events. Uses the cached AgentResolver to avoid
+// per-job Redis lookups.
+func (e *Engine) setAgentInfoFromWorker(jobID, workerID string) {
+	if e.agentResolver == nil || e.jobStore == nil || jobID == "" || workerID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	defer cancel()
+	info := e.agentResolver.Resolve(ctx, workerID)
+	if store, ok := e.jobStore.(interface {
+		SetAgentInfo(context.Context, string, string, string, string) error
+	}); ok {
+		if err := store.SetAgentInfo(ctx, jobID, info.AgentID, info.Name, info.RiskTier); err != nil {
+			slog.Warn("agent_info write failed", "job_id", jobID, "agent_id", info.AgentID, "error", err)
+		}
+	}
+}
+
 // attachEffectiveConfig resolves and injects the effective config into the job request env.
 func (e *Engine) attachEffectiveConfig(req *pb.JobRequest) {
 	if e.config == nil || req == nil {
@@ -2312,6 +2431,15 @@ func (e *Engine) incJobsReceived(topic string) {
 	if e.metrics != nil {
 		e.metrics.IncJobsReceived(topic)
 	}
+}
+
+// publishWithTrace publishes a BusPacket, propagating trace context through
+// NATS headers when the bus supports it (ContextPublisher interface).
+func (e *Engine) publishWithTrace(ctx context.Context, subject string, packet *pb.BusPacket) error {
+	if cp, ok := e.bus.(model.ContextPublisher); ok {
+		return cp.PublishWithContext(ctx, subject, packet)
+	}
+	return e.bus.Publish(subject, packet)
 }
 
 func (e *Engine) incJobsDispatched(topic string) {

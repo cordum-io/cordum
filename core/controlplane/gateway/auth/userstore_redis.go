@@ -124,6 +124,11 @@ func NewRedisUserStore(redisURL string) (*RedisUserStore, error) {
 	return store, nil
 }
 
+// NewRedisUserStoreFromClient creates a RedisUserStore using an existing Redis client.
+func NewRedisUserStoreFromClient(client *redis.Client) *RedisUserStore {
+	return &RedisUserStore{client: client}
+}
+
 // userKey returns the Redis key for a user record.
 func userKey(tenant, username string) string {
 	return userKeyPrefix + tenant + ":" + strings.ToLower(username)

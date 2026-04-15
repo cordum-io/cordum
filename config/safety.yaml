@@ -2,13 +2,24 @@
 default_decision: deny
 
 rules:
-  # Default topic — used by integration test probes and production gates
-  - id: default-topic-allow
+  # Default topic — restricted to internal callers only.
+  # Probes and integration tests must include the _internal label.
+  # External callers without the label require human approval.
+  - id: default-topic-internal-allow
     match:
       topics:
         - job.default
+      labels:
+        _internal: "true"
     decision: allow
-    reason: "Default topic for gate probes and integration tests."
+    reason: "Internal probe/test on default topic."
+
+  - id: default-topic-external-review
+    match:
+      topics:
+        - job.default
+    decision: require_approval
+    reason: "External use of job.default requires human approval."
 
   # Fraud detection jobs require human approval before execution
   - id: fraud-review-required
@@ -64,6 +75,20 @@ rules:
   # (demo/mock-bank/pack/overlays/policy.fragment.yaml) and should NOT
   # be duplicated here. The pack rules have finer granularity (blocked,
   # review, low risk levels).
+  #
+  # SECURITY: risk_tags for pack topics with a registered tag deriver are
+  # server-derived from job content. Client-supplied risk_tags are overridden
+  # when the safety kernel has a deriver for the topic. For mock-bank, the
+  # deriver parses "amount" from _content.payload_json and derives:
+  #   amount < 100  → "low"
+  #   100 <= amount < 300 → "review"
+  #   amount >= 300 → "blocked"
+  # This prevents risk tag spoofing where a client submits high-value
+  # transfers with low-risk tags to bypass policy rules.
+  #
+  # Content label convention:
+  #   _content.prompt       — job prompt text (set by gateway, max 64KB)
+  #   _content.payload_json — serialized job context/payload (max 64KB)
 
   # TX4: B2B Multi-Agent Onboarding — allow all B2B topics.
   - id: b2b-orchestrate-allow
@@ -248,6 +273,23 @@ input_policy:
   fail_mode: closed  # "closed" = requeue when kernel down, "open" = allow through
 
 input_rules:
+  # =========================================================================
+  # Global prompt injection detection — applies to ALL job topics.
+  # Catches LLM prompt injection attempts (system override, ignore rules,
+  # jailbreak directives). Escalates to human review rather than outright
+  # deny to reduce false-positive impact on legitimate prompts.
+  # =========================================================================
+  - id: global-prompt-injection-scan
+    description: "Detect LLM prompt injection patterns in job input content."
+    severity: high
+    match:
+      topics:
+        - "job.*"
+      scanners:
+        - "prompt_injection"
+    decision: require_approval
+    reason: "Prompt injection pattern detected in job input — requires human review."
+
   # =========================================================================
   # Native TX2 scope enforcement on the REAL workflow topic.
   # Evaluated by the scheduler before dispatching the governance worker.
@@ -458,3 +500,27 @@ tenants:
       deny_resources: []
       allow_actions: []
       deny_actions: []
+
+  # --- Agent Identity-Scoped Rules (examples) ---
+  # Uncomment to enable per-agent policy enforcement.
+  # Requires agent identities to be created via POST /api/v1/agents
+  # and linked to worker credentials via the agent_id field.
+  #
+  # - id: critical-agent-requires-approval
+  #   match:
+  #     topics:
+  #       - "job.*"
+  #     agent_risk_tiers:
+  #       - critical
+  #       - high
+  #   decision: require_approval
+  #   reason: "High/critical risk agents require human approval before execution."
+  #
+  # - id: pii-agent-deny-public
+  #   match:
+  #     topics:
+  #       - "job.public.*"
+  #     agent_data_classifications:
+  #       - pii
+  #   decision: deny
+  #   reason: "Agents with PII data access are denied from public-facing topics."

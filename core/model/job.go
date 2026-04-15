@@ -36,6 +36,9 @@ type JobRecord struct {
 	Requires       []string `json:"requires,omitempty"`
 	PackID         string   `json:"pack_id,omitempty"`
 	Attempts       int      `json:"attempts,omitempty"`
+	AgentID        string   `json:"agent_id,omitempty"`
+	AgentName      string   `json:"agent_name,omitempty"`
+	AgentRiskTier  string   `json:"agent_risk_tier,omitempty"`
 	SafetyDecision string   `json:"safety_decision,omitempty"`
 	SafetyReason   string   `json:"safety_reason,omitempty"`
 	SafetyRuleID   string   `json:"safety_rule_id,omitempty"`

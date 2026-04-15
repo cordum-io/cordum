@@ -466,6 +466,9 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		if approvalRecord.Decision != "" {
 			item["approval_decision"] = approvalRecord.Decision
 		}
+		if submittedBy, sbErr := s.jobStore.GetSubmittedBy(r.Context(), job.ID); sbErr == nil && submittedBy != "" {
+			item["submitted_by"] = submittedBy
+		}
 		// Merge approval resolution fields when an approval record exists.
 		if hasResolvedApproval {
 			item["resolved_by"] = approvalRecord.ApprovedBy
@@ -988,6 +991,32 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
+		// Self-approval prevention: reject if the approver is the same entity
+		// that submitted the job. Enforces separation of duties.
+		// Blocks both exact identity match AND same-API-key match (even with
+		// different principal headers) to prevent header-spoofing bypass.
+		approverIdentity := submitterIdentity(r)
+		if approverIdentity != "" {
+			submittedBy, sbErr := s.jobStore.GetSubmittedBy(ctx, jobID)
+			if sbErr != nil {
+				slog.Error("self-approval check: failed to read submitter", "job_id", jobID, "error", sbErr)
+			}
+			if submittedBy != "" && identitiesOverlap(submittedBy, approverIdentity) {
+				slog.Warn("self-approval denied",
+					"job_id", jobID,
+					"identity", approverIdentity,
+					"actor", policyActorID(r),
+				)
+				s.appendAuditEntryNamed(ctx, "self_approval_denied", "job", jobID, "", policyActorID(r), policyRole(r), "self-approval attempt blocked")
+				result = handlerResult{http.StatusForbidden, map[string]any{
+					"error":  "self-approval not permitted",
+					"code":   "self_approval_denied",
+					"status": http.StatusForbidden,
+				}}
+				return nil
+			}
+		}
+
 		// Check if workflow run is terminal (under lock to prevent TOCTOU).
 		if req.Labels != nil {
 			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
@@ -1127,7 +1156,12 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			"job_id", jobID, "trace_id", resolved.TraceID,
 			"topic", resolved.Request.GetTopic(), "actor", policyActorID(r),
 			"role", policyRole(r))
-		s.appendAuditEntryNamed(ctx, "approve", "job", jobID, resolved.Request.GetTopic(), policyActorID(r), policyRole(r), "approve job "+jobID)
+		// Include the submitted job's agent context in the approval audit event.
+		approveAgentID, approveAgentName, approveAgentRiskTier := "", "", ""
+		if resolved.Request != nil && resolved.Request.Labels != nil {
+			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
+		}
+		s.appendAuditEntryWithAgent(ctx, "approve", "job", jobID, resolved.Request.GetTopic(), policyActorID(r), policyRole(r), "approve job "+jobID, approveAgentID, approveAgentName, approveAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID, "trace_id": resolved.TraceID}}
 		return nil
 	})
@@ -1223,6 +1257,32 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
 			return nil
 		}
+
+		// Self-rejection prevention: the submitter cannot resolve their own
+		// approval request (neither approve nor reject). Enforces separation
+		// of duties and protects audit trail integrity.
+		rejecterIdentity := submitterIdentity(r)
+		if rejecterIdentity != "" {
+			submittedBy, sbErr := s.jobStore.GetSubmittedBy(ctx, jobID)
+			if sbErr != nil {
+				slog.Error("self-rejection check: failed to read submitter", "job_id", jobID, "error", sbErr)
+			}
+			if submittedBy != "" && identitiesOverlap(submittedBy, rejecterIdentity) {
+				slog.Warn("self-rejection denied",
+					"job_id", jobID,
+					"identity", rejecterIdentity,
+					"actor", policyActorID(r),
+				)
+				s.appendAuditEntryNamed(ctx, "self_rejection_denied", "job", jobID, "", policyActorID(r), policyRole(r), "self-rejection attempt blocked")
+				result = handlerResult{http.StatusForbidden, map[string]any{
+					"error":  "self-rejection not permitted",
+					"code":   "self_approval_denied",
+					"status": http.StatusForbidden,
+				}}
+				return nil
+			}
+		}
+
 		if req.Labels != nil {
 			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
 				if run, runErr := s.workflowStore.GetRun(ctx, runID); runErr == nil && run != nil {
@@ -1314,7 +1374,11 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			"job_id", jobID, "topic", rejectTopic,
 			"actor", policyActorID(r), "role", policyRole(r),
 			"reason", reason)
-		s.appendAuditEntryNamed(ctx, "reject", "job", jobID, rejectTopic, policyActorID(r), policyRole(r), "reject job "+jobID)
+		rejectAgentID, rejectAgentName, rejectAgentRiskTier := "", "", ""
+		if resolved.Request != nil && resolved.Request.Labels != nil {
+			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
+		}
+		s.appendAuditEntryWithAgent(ctx, "reject", "job", jobID, rejectTopic, policyActorID(r), policyRole(r), "reject job "+jobID, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID}}
 		return nil
 	})

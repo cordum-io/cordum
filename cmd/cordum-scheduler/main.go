@@ -27,6 +27,7 @@ import (
 	"github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/logging"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/schema"
@@ -383,7 +384,8 @@ func main() {
 		WithSchemaRegistry(schemaRegistry).
 		WithEntitlements(entitlementResolver).
 		WithContextClient(jobStore.Client()).
-		WithSaga(sagaManager)
+		WithSaga(sagaManager).
+		WithAgentResolver(scheduler.NewAgentResolver(workerCredentialCache, store.NewAgentIdentityStoreFromClient(sagaRedis)))
 	if dlqStore != nil {
 		engine.WithDLQSink(&redisDLQSink{
 			store:    dlqStore,
@@ -404,6 +406,15 @@ func main() {
 		resolver := scheduler.NewFailModeResolver(configSvc, 30*time.Second)
 		engine.WithFailModeResolver(resolver)
 	}
+
+	if _, err := cordumotel.InitTracer("cordum-scheduler"); err != nil {
+		slog.Error("otel tracer init failed", "error", err)
+	}
+	defer func() {
+		if err := cordumotel.Shutdown(context.Background()); err != nil {
+			slog.Error("otel tracer shutdown failed", "error", err)
+		}
+	}()
 
 	if err := engine.Start(); err != nil {
 		slog.Error("failed to start scheduler engine", "error", err)

@@ -768,6 +768,7 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := strings.TrimSpace(r.URL.Query().Get("action"))
+	agentIDFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
 	after := strings.TrimSpace(r.URL.Query().Get("after"))
 	before := strings.TrimSpace(r.URL.Query().Get("before"))
 	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("search")))
@@ -792,6 +793,9 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if action != "" && !strings.EqualFold(strings.TrimSpace(entry.Action), action) {
+			continue
+		}
+		if agentIDFilter != "" && !strings.EqualFold(strings.TrimSpace(entry.AgentID), agentIDFilter) {
 			continue
 		}
 		if after != "" && entry.CreatedAt < after {
@@ -1221,5 +1225,22 @@ func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType
 		ActorID:      actorID,
 		Role:         role,
 		Message:      message,
+	})
+}
+
+// appendAuditEntryWithAgent is like appendAuditEntryNamed but includes agent
+// identity fields in the audit event for SIEM export.
+func (s *server) appendAuditEntryWithAgent(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message, agentID, agentName, agentRiskTier string) {
+	_ = s.appendPolicyAudit(ctx, policyAuditEntry{
+		Action:        action,
+		ResourceType:  resourceType,
+		ResourceID:    resourceID,
+		ResourceName:  resourceName,
+		ActorID:       actorID,
+		Role:          role,
+		Message:       message,
+		AgentID:       agentID,
+		AgentName:     agentName,
+		AgentRiskTier: agentRiskTier,
 	})
 }

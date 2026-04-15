@@ -53,6 +53,11 @@ func NewRedisKeyStore(redisURL string) (*RedisKeyStore, error) {
 	return &RedisKeyStore{client: client}, nil
 }
 
+// NewRedisKeyStoreFromClient creates a RedisKeyStore using an existing Redis client.
+func NewRedisKeyStoreFromClient(client *redis.Client) *RedisKeyStore {
+	return &RedisKeyStore{client: client}
+}
+
 // Close closes the Redis connection.
 func (s *RedisKeyStore) Close() error {
 	return s.client.Close()

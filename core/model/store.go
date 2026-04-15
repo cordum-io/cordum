@@ -9,6 +9,7 @@ import (
 
 // ApprovalRecord captures approval audit metadata plus explicit lifecycle state.
 type ApprovalRecord struct {
+	SubmittedBy    string                `json:"submitted_by,omitempty"`
 	ApprovedBy     string                `json:"approved_by,omitempty"`
 	ApprovedRole   string                `json:"approved_role,omitempty"`
 	ApprovedAt     int64                 `json:"approved_at,omitempty"`

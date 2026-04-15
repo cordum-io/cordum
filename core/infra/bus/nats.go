@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/env"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
@@ -332,6 +333,47 @@ func DirectSubject(workerID string) string {
 	return fmt.Sprintf("worker.%s.jobs", workerID)
 }
 
+// PublishWithContext sends a protobuf-encoded BusPacket on the given subject,
+// injecting W3C trace context from ctx into NATS message headers for
+// distributed tracing propagation.
+func (b *NatsBus) PublishWithContext(ctx context.Context, subject string, packet *pb.BusPacket) error {
+	if b == nil || b.nc == nil {
+		return errNilBus
+	}
+	if subject == "" {
+		return errEmptyTopic
+	}
+	if packet == nil {
+		return errNilPacket
+	}
+	data, err := proto.Marshal(packet)
+	if err != nil {
+		return fmt.Errorf("marshal bus packet: %w", err)
+	}
+
+	msg := &nats.Msg{
+		Subject: subject,
+		Data:    data,
+		Header:  nats.Header{},
+	}
+	cordumotel.InjectTraceContext(ctx, &msg.Header)
+
+	if b.jsEnabled && isDurableSubject(subject) {
+		msgID := computeMsgID(subject, packet)
+		opts := []nats.PubOpt{}
+		if msgID != "" {
+			opts = append(opts, nats.MsgId(msgID))
+		}
+		_, err = b.js.PublishMsg(msg, opts...)
+	} else {
+		err = b.nc.PublishMsg(msg)
+	}
+	if err != nil {
+		return fmt.Errorf("publish %s: %w", subject, err)
+	}
+	return nil
+}
+
 // Publish sends a protobuf-encoded BusPacket on the given subject.
 func (b *NatsBus) Publish(subject string, packet *pb.BusPacket) error {
 	if b == nil || b.nc == nil {
@@ -370,6 +412,188 @@ func (b *NatsBus) Publish(subject string, packet *pb.BusPacket) error {
 func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
 	_, err := b.subscribe(subject, queue, handler)
 	return err
+}
+
+// SubscribeWithContext attaches a context-aware subscription that extracts W3C
+// trace context from NATS message headers and passes it to the handler via
+// context.Context. This enables downstream handlers to join upstream traces.
+func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(context.Context, *pb.BusPacket) error) error {
+	// Wrap the context-aware handler into the standard handler signature.
+	// The key difference from Subscribe: we intercept at the NATS callback
+	// level to extract trace context from msg.Header before decoding.
+	wrapped := func(packet *pb.BusPacket) error {
+		// Fallback for the standard processBusMsg path — trace context
+		// is injected by the msgHeaderHook below.
+		return handler(context.Background(), packet)
+	}
+
+	// Set a per-subscription hook that captures msg.Header and injects
+	// trace context into a goroutine-local before processBusMsg runs.
+	// We achieve this by wrapping the handler with header awareness.
+	ctxWrapped := func(msg *nats.Msg) (msgAction, time.Duration) {
+		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
+		return processBusMsgCtx(ctx, msg.Data, handler, 0)
+	}
+
+	if b == nil || b.nc == nil {
+		return errNilBus
+	}
+	if subject == "" {
+		return errEmptyTopic
+	}
+
+	// For JetStream durable subjects, use the full ack/nak path with trace extraction.
+	if b.jsEnabled && isDurableSubject(subject) {
+		cb := b.jsCallbackCtx(subject, handler)
+		opts := []nats.SubOpt{
+			nats.ManualAck(),
+			nats.AckExplicit(),
+			nats.AckWait(b.ackWait),
+			nats.MaxAckPending(natsMaxAckPending()),
+			nats.MaxDeliver(maxJSRedeliveries),
+		}
+		if durable := durableName(subject, queue); durable != "" {
+			opts = append(opts, nats.Durable(durable))
+		}
+		var sub *nats.Subscription
+		var err error
+		if queue == "" {
+			sub, err = b.js.Subscribe(subject, cb, opts...)
+		} else {
+			sub, err = b.js.QueueSubscribe(subject, queue, cb, opts...)
+		}
+		if err != nil {
+			return fmt.Errorf("subscribe (ctx) %s: %w", subject, err)
+		}
+		b.trackSub(sub)
+		return nil
+	}
+
+	// Plain NATS path.
+	cb := func(msg *nats.Msg) {
+		_, _ = ctxWrapped(msg)
+	}
+	var sub *nats.Subscription
+	var err error
+	if queue != "" {
+		sub, err = b.nc.QueueSubscribe(subject, queue, cb)
+	} else {
+		sub, err = b.nc.Subscribe(subject, cb)
+	}
+	if err != nil {
+		return fmt.Errorf("subscribe (ctx) %s: %w", subject, err)
+	}
+	b.trackSub(sub)
+	_ = wrapped // suppress unused
+	return nil
+}
+
+// jsCallbackCtx builds a JetStream message callback that extracts trace
+// context from NATS headers before decoding and invoking the handler.
+func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *pb.BusPacket) error) func(*nats.Msg) {
+	return func(msg *nats.Msg) {
+		var numDelivered uint64
+		var streamName string
+		var streamSeq uint64
+		if meta, metaErr := msg.Metadata(); metaErr == nil {
+			numDelivered = meta.NumDelivered
+			streamName = meta.Stream
+			streamSeq = meta.Sequence.Stream
+			if numDelivered >= uint64(maxJSRedeliveries) {
+				slog.Warn("bus: terminating poison message (ctx)", "subject", subject, "deliveries", numDelivered)
+				if b.OnMessageTerminated != nil {
+					if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
+						_ = msg.NakWithDelay(5 * time.Second)
+						return
+					}
+				}
+				if termErr := msg.Term(); termErr != nil {
+					slog.Error("bus: term failed (ctx)", "subject", subject, "err", termErr)
+				}
+				return
+			}
+		}
+
+		// Idempotency guard (same as standard subscribe path).
+		if b.redis != nil && streamSeq > 0 {
+			pKey := processedKey(streamName, streamSeq)
+			rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			exists, err := b.redis.Exists(rCtx, pKey).Result()
+			rCancel()
+			if err != nil {
+				_ = msg.NakWithDelay(2 * time.Second)
+				return
+			} else if exists > 0 {
+				_ = msg.Ack()
+				return
+			}
+		}
+		if b.redis != nil && streamSeq > 0 {
+			iKey := inflightKey(streamName, streamSeq)
+			rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = b.redis.Set(rCtx, iKey, "1", inflightKeyTTL).Err()
+			rCancel()
+		}
+
+		// Extract trace context from NATS headers.
+		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
+		action, delay := processBusMsgCtx(ctx, msg.Data, handler, numDelivered)
+
+		if b.redis != nil && streamSeq > 0 {
+			iKey := inflightKey(streamName, streamSeq)
+			rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = b.redis.Del(rCtx, iKey).Err()
+			rCancel()
+		}
+
+		switch action {
+		case msgActionTerm:
+			if b.OnMessageTerminated != nil {
+				if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
+					_ = msg.NakWithDelay(5 * time.Second)
+					break
+				}
+			}
+			if termErr := msg.Term(); termErr != nil {
+				slog.Error("bus: term failed (ctx)", "subject", subject, "err", termErr)
+			}
+		case msgActionNak:
+			_ = msg.Nak()
+		case msgActionNakDelay:
+			_ = msg.NakWithDelay(delay)
+		default:
+			if b.redis != nil && streamSeq > 0 {
+				pKey := processedKey(streamName, streamSeq)
+				rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = b.redis.Set(rCtx, pKey, "1", processedKeyTTL).Err()
+				rCancel()
+			}
+			if ackErr := msg.Ack(); ackErr != nil {
+				slog.Error("bus: ack failed (ctx)", "subject", subject, "err", ackErr)
+			}
+		}
+	}
+}
+
+// processBusMsgCtx is like processBusMsg but passes a context to the handler.
+func processBusMsgCtx(ctx context.Context, data []byte, handler func(context.Context, *pb.BusPacket) error, numDelivered uint64) (msgAction, time.Duration) {
+	var packet pb.BusPacket
+	if err := proto.Unmarshal(data, &packet); err != nil {
+		if numDelivered > poisonUnmarshalThreshold {
+			return msgActionTerm, 0
+		}
+		return msgActionNakDelay, 5 * time.Second
+	}
+	if err := handler(ctx, &packet); err != nil {
+		if delay, ok := RetryDelay(err); ok {
+			if delay > 0 {
+				return msgActionNakDelay, delay
+			}
+			return msgActionNak, 0
+		}
+		return msgActionAck, 0
+	}
+	return msgActionAck, 0
 }
 
 // ReplaceSubscription unsubscribes the previous subscription (when valid) and

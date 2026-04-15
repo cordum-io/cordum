@@ -465,6 +465,7 @@ func (s *server) packTopicRegistrations(ctx context.Context, manifest *packManif
 			Requires:       topic.Requires,
 			RiskTags:       topic.RiskTags,
 			Status:         status,
+			RiskTagDeriver: strings.TrimSpace(topic.RiskTagDeriver),
 		})
 	}
 	return out, nil

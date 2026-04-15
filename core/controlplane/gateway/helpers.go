@@ -2,8 +2,10 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -126,13 +129,14 @@ func (r *submitJobRequest) validate(defaultTenant string, promptLimits ...int) e
 			break
 		}
 	}
-	if len(r.Prompt) > promptLimit {
+	promptLen := utf8.RuneCountInString(r.Prompt)
+	if promptLen > promptLimit {
 		return fmt.Errorf(
-			"prompt too long (>%d chars): %w",
-			promptLimit,
+			"prompt too long (%d chars, max %d): %w",
+			promptLen, promptLimit,
 			&licensing.TierLimitError{
 				Limit:      "max_prompt_chars",
-				Current:    int64(len(r.Prompt)),
+				Current:    int64(promptLen),
 				Allowed:    int64(promptLimit),
 				UpgradeURL: licensing.DefaultUpgradeURL,
 			},
@@ -328,6 +332,49 @@ func policyMetaFromJobMetadata(m *pb.JobMetadata) *policyMetaRequest {
 func isPolicyFailOpen() bool {
 	mode := strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE"))
 	return strings.EqualFold(mode, "open")
+}
+
+// stripReservedLabels removes labels with an underscore prefix from client
+// input. Labels starting with "_" are reserved for system use (e.g., _internal,
+// _content.prompt). The gateway re-adds the system labels it needs after this
+// sanitization step.
+func stripReservedLabels(labels map[string]string) map[string]string {
+	if len(labels) == 0 {
+		return labels
+	}
+	clean := make(map[string]string, len(labels))
+	for k, v := range labels {
+		if strings.HasPrefix(k, "_") {
+			continue
+		}
+		clean[k] = v
+	}
+	return clean
+}
+
+// maxContentLabelBytes is the maximum payload size to include in policy check
+// labels. Payloads larger than this are not forwarded to the safety kernel to
+// avoid excessive memory use in the gRPC request.
+const maxContentLabelBytes = 64 * 1024
+
+// injectContentLabels adds _content.prompt and _content.payload_json to the
+// labels map so the safety kernel's tag deriver can inspect job content for
+// server-side risk tag derivation. Only included when the serialized payload
+// is under maxContentLabelBytes.
+func injectContentLabels(labels map[string]string, prompt string, payload any) map[string]string {
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	if prompt != "" && len(prompt) <= maxContentLabelBytes {
+		labels["_content.prompt"] = prompt
+	}
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err == nil && len(data) <= maxContentLabelBytes {
+			labels["_content.payload_json"] = string(data)
+		}
+	}
+	return labels
 }
 
 func buildPolicyCheckRequest(ctx context.Context, req *policyCheckRequest, cfgSvc *configsvc.Service, defaultTenant string) (*pb.PolicyCheckRequest, error) {
@@ -644,21 +691,24 @@ func (s *server) tenantForJobID(ctx context.Context, jobID string) (string, bool
 	return tenant, true
 }
 
+// defaultMaxConcurrentRuns is the fallback limit when no config or entitlement
+// sets max_concurrent_runs. Prevents unbounded workflow run creation (red-team
+// finding #15) while being high enough for normal development use.
+const defaultMaxConcurrentRuns = 10
+
 func (s *server) maxConcurrentRuns(ctx context.Context, orgID, teamID string) int {
-	if s.configSvc == nil {
-		return 0
+	if s.configSvc != nil {
+		cfg, err := s.configSvc.Effective(ctx, orgID, teamID, "", "")
+		if err == nil && cfg != nil {
+			if limit := lookupIntPath(cfg, "limits", "max_concurrent_runs"); limit > 0 {
+				return limit
+			}
+			if limit := lookupIntPath(cfg, "rate_limits", "concurrent_workflows"); limit > 0 {
+				return limit
+			}
+		}
 	}
-	cfg, err := s.configSvc.Effective(ctx, orgID, teamID, "", "")
-	if err != nil || cfg == nil {
-		return 0
-	}
-	if limit := lookupIntPath(cfg, "limits", "max_concurrent_runs"); limit > 0 {
-		return limit
-	}
-	if limit := lookupIntPath(cfg, "rate_limits", "concurrent_workflows"); limit > 0 {
-		return limit
-	}
-	return 0
+	return defaultMaxConcurrentRuns
 }
 
 type jobBackpressureError struct {
@@ -1176,4 +1226,63 @@ func requirePathParam(w http.ResponseWriter, r *http.Request, name string) (stri
 		return "", false
 	}
 	return val, true
+}
+
+// submitterIdentity builds a composite identity string from the HTTP request's
+// auth context. Used for self-approval prevention: the submitter identity is
+// stored on the job and compared against the approver identity.
+// Format: "apikey:<sha256-prefix-8>|principal:<principal_id>"
+func submitterIdentity(r *http.Request) string {
+	ac := authFromRequest(r)
+	if ac == nil {
+		return ""
+	}
+	var parts []string
+	if ac.APIKey != "" {
+		h := sha256.Sum256([]byte(ac.APIKey))
+		parts = append(parts, "apikey:"+hex.EncodeToString(h[:4]))
+	}
+	if ac.PrincipalID != "" {
+		parts = append(parts, "principal:"+ac.PrincipalID)
+	}
+	return strings.Join(parts, "|")
+}
+
+// identitiesOverlap returns true if two composite identity strings share the
+// same API key hash OR are an exact match. This blocks the bypass where the
+// same API key submits under principal X and approves under principal Y.
+func identitiesOverlap(a, b string) bool {
+	if a == b {
+		return true
+	}
+	aKey := extractIdentityPart(a, "apikey:")
+	bKey := extractIdentityPart(b, "apikey:")
+	return aKey != "" && aKey == bKey
+}
+
+func extractIdentityPart(identity, prefix string) string {
+	for _, part := range strings.Split(identity, "|") {
+		if strings.HasPrefix(part, prefix) {
+			return part
+		}
+	}
+	return ""
+}
+
+// submitterIdentityFromContext builds the same composite identity from a
+// context (for gRPC handlers).
+func submitterIdentityFromContext(ctx context.Context) string {
+	ac := authFromContext(ctx)
+	if ac == nil {
+		return ""
+	}
+	var parts []string
+	if ac.APIKey != "" {
+		h := sha256.Sum256([]byte(ac.APIKey))
+		parts = append(parts, "apikey:"+hex.EncodeToString(h[:4]))
+	}
+	if ac.PrincipalID != "" {
+		parts = append(parts, "principal:"+ac.PrincipalID)
+	}
+	return strings.Join(parts, "|")
 }

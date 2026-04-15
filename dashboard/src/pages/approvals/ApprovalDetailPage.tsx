@@ -288,57 +288,58 @@ function WhyBlockedSection({
 // ---------------------------------------------------------------------------
 
 function BlastRadiusSection({ blastRadius }: { blastRadius: BlastRadius }) {
-  const empty =
-    blastRadius.systems.length === 0 &&
-    blastRadius.namespaces.length === 0 &&
-    blastRadius.resources.length === 0;
-
   const groups = [
     { label: "Systems", icon: Server, items: blastRadius.systems },
     { label: "Namespaces", icon: Layers, items: blastRadius.namespaces },
     { label: "Resources", icon: Box, items: blastRadius.resources },
   ].filter((g) => g.items.length > 0);
 
+  const hasGroups = groups.length > 0;
+  const hasScope = !!blastRadius.scopeDescription;
+  const empty = !hasGroups && !hasScope;
+
   return (
     <Section
       icon={Target}
       title="Blast radius"
       badge={
-        empty
-          ? undefined
-          : `${blastRadius.systems.length + blastRadius.namespaces.length + blastRadius.resources.length} affected`
+        hasGroups
+          ? `${blastRadius.systems.length + blastRadius.namespaces.length + blastRadius.resources.length} affected`
+          : undefined
       }
-      badgeVariant={empty ? "muted" : "destructive"}
+      badgeVariant={hasGroups ? "destructive" : "muted"}
     >
       {empty ? (
         <SectionEmpty message="No blast radius data available from pack." />
       ) : (
         <div className="space-y-3">
-          {blastRadius.scopeDescription && (
+          {hasScope && (
             <p className="text-sm text-muted-foreground">
               {blastRadius.scopeDescription}
             </p>
           )}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {groups.map((group) => (
-              <div key={group.label} className="space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  <group.icon className="h-3 w-3" />
-                  {group.label}
+          {hasGroups && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {groups.map((group) => (
+                <div key={group.label} className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    <group.icon className="h-3 w-3" />
+                    {group.label}
+                  </div>
+                  <ul className="space-y-0.5">
+                    {group.items.map((item, i) => (
+                      <li
+                        key={i}
+                        className="text-sm font-mono text-foreground/90 pl-4 border-l-2 border-border/60"
+                      >
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="space-y-0.5">
-                  {group.items.map((item, i) => (
-                    <li
-                      key={i}
-                      className="text-sm font-mono text-foreground/90 pl-4 border-l-2 border-border/60"
-                    >
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </Section>
@@ -409,7 +410,9 @@ function RiskSection({ context }: { context: ApprovalContext }) {
           </div>
         ) : (
           !isTimeLimited && (
-            <SectionEmpty message="No additional risk constraints." />
+            <p className="text-sm text-muted-foreground">
+              No time limit or additional constraints on this approval.
+            </p>
           )
         )}
       </div>
@@ -589,6 +592,10 @@ export default function ApprovalDetailPage() {
   const [rejectReason, setRejectReason] = useState("");
 
   const isPending = approval?.status === "pending";
+  const isActionable =
+    isPending &&
+    (!approval?.actionability || approval.actionability === "actionable");
+  const isStale = isPending && approval?.actionability === "invalidated";
 
   // Screen reader live region announcements.
   const [srAnnouncement, setSrAnnouncement] = useState("");
@@ -607,7 +614,7 @@ export default function ApprovalDetailPage() {
         return;
       }
 
-      if (!isPending) return;
+      if (!isActionable) return;
 
       if (e.key === "a" || e.key === "A") {
         e.preventDefault();
@@ -636,8 +643,16 @@ export default function ApprovalDetailPage() {
           setApproveDialogOpen(false);
         },
         onError: (err) => {
-          const friendly = friendlyError(err, "approve job");
-          toast.error(friendly.title, { description: friendly.description });
+          const errBody = (err as any)?.body ?? (err as any)?.data;
+          if (errBody?.code === "self_approval_denied") {
+            toast.error("Self-approval not permitted", {
+              description:
+                "You cannot approve a job you submitted. A different administrator must approve this request.",
+            });
+          } else {
+            const friendly = friendlyError(err, "approve job");
+            toast.error(friendly.title, { description: friendly.description });
+          }
         },
       },
     );
@@ -809,47 +824,57 @@ export default function ApprovalDetailPage() {
           aria-label="Approval actions"
         >
           <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
-            <p className="text-xs text-muted-foreground hidden sm:block">
-              Keyboard:{" "}
-              <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono border border-border">
-                A
-              </kbd>{" "}
-              approve{" "}
-              <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono border border-border">
-                R
-              </kbd>{" "}
-              reject
-            </p>
-            <div className="flex items-center gap-3 ml-auto">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setRejectDialogOpen(true)}
-                disabled={rejectMutation.isPending}
-                className="border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10"
-                aria-label="Reject this approval"
-              >
-                <XCircle className="h-4 w-4 mr-1.5" />
-                Reject
-                <span className="ml-2 px-1 py-0.5 rounded bg-muted text-[10px] font-mono border border-border text-muted-foreground">
-                  R
-                </span>
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => setApproveDialogOpen(true)}
-                disabled={approveMutation.isPending}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                aria-label="Approve this approval"
-              >
-                <CheckCircle2 className="h-4 w-4 mr-1.5" />
-                Approve
-                <span className="ml-2 px-1 py-0.5 rounded bg-emerald-700/50 text-[10px] font-mono border border-emerald-500/30">
-                  A
-                </span>
-              </Button>
-            </div>
+            {isStale ? (
+              <p className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                The governing policy changed since this approval was created. This
+                approval is no longer actionable.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground hidden sm:block">
+                  Keyboard:{" "}
+                  <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono border border-border">
+                    A
+                  </kbd>{" "}
+                  approve{" "}
+                  <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono border border-border">
+                    R
+                  </kbd>{" "}
+                  reject
+                </p>
+                <div className="flex items-center gap-3 ml-auto">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setRejectDialogOpen(true)}
+                    disabled={!isActionable || rejectMutation.isPending}
+                    className="border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10"
+                    aria-label="Reject this approval"
+                  >
+                    <XCircle className="h-4 w-4 mr-1.5" />
+                    Reject
+                    <span className="ml-2 px-1 py-0.5 rounded bg-muted text-[10px] font-mono border border-border text-muted-foreground">
+                      R
+                    </span>
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => setApproveDialogOpen(true)}
+                    disabled={!isActionable || approveMutation.isPending}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    aria-label="Approve this approval"
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-1.5" />
+                    Approve
+                    <span className="ml-2 px-1 py-0.5 rounded bg-emerald-700/50 text-[10px] font-mono border border-emerald-500/30">
+                      A
+                    </span>
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

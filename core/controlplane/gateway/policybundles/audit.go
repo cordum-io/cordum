@@ -16,13 +16,16 @@ func AuditEntryToSIEM(entry PolicyAuditEntry, tenantID string) audit.SIEMEvent {
 		ts = time.Now().UTC()
 	}
 	return audit.SIEMEvent{
-		Timestamp: ts,
-		EventType: ClassifyAuditAction(entry.Action),
-		Severity:  ClassifyAuditSeverity(entry.Action),
-		TenantID:  tenantID,
-		Action:    entry.Action,
-		Identity:  entry.ActorID,
-		Reason:    entry.Message,
+		Timestamp:     ts,
+		EventType:     ClassifyAuditAction(entry.Action),
+		Severity:      ClassifyAuditSeverity(entry.Action),
+		TenantID:      tenantID,
+		AgentID:       entry.AgentID,
+		AgentName:     entry.AgentName,
+		AgentRiskTier: entry.AgentRiskTier,
+		Action:        entry.Action,
+		Identity:      entry.ActorID,
+		Reason:        entry.Message,
 		Extra: map[string]string{
 			"resource_type": entry.ResourceType,
 			"resource_id":   entry.ResourceID,

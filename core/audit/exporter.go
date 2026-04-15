@@ -40,6 +40,8 @@ type SIEMEvent struct {
 	Severity      string            `json:"severity"`
 	TenantID      string            `json:"tenant_id"`
 	AgentID       string            `json:"agent_id,omitempty"`
+	AgentName     string            `json:"agent_name,omitempty"`
+	AgentRiskTier string            `json:"agent_risk_tier,omitempty"`
 	JobID         string            `json:"job_id,omitempty"`
 	Action        string            `json:"action"`
 	Decision      string            `json:"decision,omitempty"`

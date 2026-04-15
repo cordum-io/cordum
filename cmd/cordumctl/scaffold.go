@@ -34,3 +34,17 @@ func writeFile(path, content string, force bool) error {
 	}
 	return os.WriteFile(path, []byte(content), scaffoldFilePerm)
 }
+
+// readFileRaw reads a file and returns its contents.
+func readFileRaw(path string) ([]byte, error) {
+	// #nosec G304 -- CLI explicitly reads local files.
+	return os.ReadFile(path)
+}
+
+// writeFileOverwrite overwrites a file regardless of existence.
+func writeFileOverwrite(path, content string) error {
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), scaffoldFilePerm)
+}

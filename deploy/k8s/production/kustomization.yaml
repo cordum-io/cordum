@@ -10,6 +10,7 @@ resources:
   - monitoring.yaml
   - networkpolicy.yaml
   - backup.yaml
+  - otel-collector-config.yaml
 
 patches:
   - path: patches/delete-nats-deployment.yaml
@@ -20,6 +21,7 @@ patches:
   - path: patches/service-labels.yaml
   - path: patches/pod-anti-affinity.yaml
   - path: patches/gateway-session-affinity.yaml
+  - path: patches/otel-sidecar.yaml
 
 images:
   - name: cordum-context-engine

@@ -49,6 +49,10 @@ const (
 	metaFieldPackID                = "pack_id"
 	metaFieldAttempts              = "attempts"
 	metaFieldDeadline              = "deadline_unix"
+	metaFieldAgentID               = "agent_id"
+	metaFieldAgentName             = "agent_name"
+	metaFieldAgentRiskTier         = "agent_risk_tier"
+	metaFieldSubmittedBy           = "submitted_by"
 	metaFieldSafetyDecision        = "safety_decision"
 	metaFieldSafetyReason          = "safety_reason"
 	metaFieldSafetyRuleID          = "safety_rule_id"
@@ -875,6 +879,9 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 			Requires:       requires,
 			PackID:         packID,
 			Attempts:       attempts,
+			AgentID:        meta[metaFieldAgentID],
+			AgentName:      meta[metaFieldAgentName],
+			AgentRiskTier:  meta[metaFieldAgentRiskTier],
 			SafetyDecision: safetyDecision,
 			SafetyReason:   safetyReason,
 			SafetyRuleID:   safetyRuleID,
@@ -1016,6 +1023,31 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 		_ = s.SetIdempotencyKeyScoped(ctx, tenantID, idempotencyKey, req.GetJobId())
 	}
 	return nil
+}
+
+// SetSubmittedBy stores the submitter identity on the job metadata hash.
+// The identity string is an opaque composite (e.g. "apikey:abc12345|principal:admin-user")
+// used for self-approval prevention.
+func (s *RedisJobStore) SetSubmittedBy(ctx context.Context, jobID, identity string) error {
+	if jobID == "" || identity == "" {
+		return nil
+	}
+	return s.client.HSet(ctx, jobMetaKey(jobID), metaFieldSubmittedBy, identity).Err()
+}
+
+// GetSubmittedBy returns the stored submitter identity for a job, or empty string if not set.
+func (s *RedisJobStore) GetSubmittedBy(ctx context.Context, jobID string) (string, error) {
+	if jobID == "" {
+		return "", nil
+	}
+	val, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldSubmittedBy).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return "", nil
+		}
+		return "", fmt.Errorf("get submitted_by for %s: %w", jobID, err)
+	}
+	return val, nil
 }
 
 // SetJobRequest stores a serialized snapshot of the job request for replay/approval flows.
@@ -1410,6 +1442,23 @@ func (s *RedisJobStore) IncrAttempts(ctx context.Context, jobID string) error {
 		return fmt.Errorf("jobID required")
 	}
 	return s.client.HIncrBy(ctx, jobMetaKey(jobID), metaFieldAttempts, 1).Err()
+}
+
+// SetAgentInfo persists the resolved agent identity for a job.
+func (s *RedisJobStore) SetAgentInfo(ctx context.Context, jobID, agentID, agentName, agentRiskTier string) error {
+	if jobID == "" || agentID == "" {
+		return nil
+	}
+	fields := map[string]interface{}{
+		metaFieldAgentID: agentID,
+	}
+	if agentName != "" {
+		fields[metaFieldAgentName] = agentName
+	}
+	if agentRiskTier != "" {
+		fields[metaFieldAgentRiskTier] = agentRiskTier
+	}
+	return s.client.HSet(ctx, jobMetaKey(jobID), fields).Err()
 }
 
 // SetWorkerID persists the worker that processed a job and maintains a

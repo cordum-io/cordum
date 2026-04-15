@@ -35,6 +35,8 @@ import type {
   MarketplaceCatalog,
   PolicyRule,
   PolicyRuleMatch,
+  ApprovalContext,
+  ApprovalPolicySnapshot,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -1082,6 +1084,53 @@ function mapApprovalDecisionSummary(
           (value): value is string => typeof value === "string" && value.length > 0,
         )
       : undefined,
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapPolicySnapshotSummaryFromRaw(raw?: any): ApprovalPolicySnapshot | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  return {
+    ruleCount: raw.rule_count ?? 0,
+    matchedRule: {
+      id: raw.matched_rule?.id ?? "",
+      description: raw.matched_rule?.description ?? "",
+      decision: raw.matched_rule?.decision ?? "",
+      constraintsSummary: raw.matched_rule?.constraints_summary ?? "",
+    },
+    policyVersion: raw.policy_version ?? "",
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function mapApprovalContext(raw: any): ApprovalContext {
+  return {
+    approval: raw.approval ?? {},
+    blastRadius: raw.blast_radius
+      ? {
+          systems: raw.blast_radius.systems ?? [],
+          namespaces: raw.blast_radius.namespaces ?? [],
+          resources: raw.blast_radius.resources ?? [],
+          scopeDescription: raw.blast_radius.scope_description ?? "",
+        }
+      : { systems: [], namespaces: [], resources: [], scopeDescription: "" },
+    priorApprovals: (raw.prior_approvals ?? []).map((pa: any) => ({
+      jobId: pa.job_id ?? "",
+      topic: pa.topic ?? "",
+      tenant: pa.tenant ?? "",
+      decision: pa.decision ?? "",
+      resolvedBy: pa.resolved_by ?? "",
+      resolvedAt: pa.resolved_at ?? 0,
+      wasApproved: pa.was_approved ?? false,
+    })),
+    rollbackHint: raw.rollback_hint ?? "",
+    policySnapshotSummary: mapPolicySnapshotSummaryFromRaw(raw.policy_snapshot_summary) ?? {
+      ruleCount: 0,
+      matchedRule: { id: "", description: "", decision: "", constraintsSummary: "" },
+      policyVersion: "",
+    },
+    timeRemainingMs: raw.time_remaining_ms ?? null,
+    constraints: raw.constraints ?? null,
   };
 }
 

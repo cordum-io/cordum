@@ -115,8 +115,8 @@ const (
       - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
       - CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
       - TENANT_ID=default
-      - API_RATE_LIMIT_RPS=2000
-      - API_RATE_LIMIT_BURST=4000
+      - API_RATE_LIMIT_RPS=${API_RATE_LIMIT_RPS:-50}
+      - API_RATE_LIMIT_BURST=${API_RATE_LIMIT_BURST:-100}
       - REDIS_DATA_TTL=24h
       - JOB_META_TTL=168h
     ports:
@@ -234,6 +234,7 @@ tenants:
 func runInitCmd(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite existing files")
+	framework := fs.String("framework", "", "generate framework scaffold: langchain, crewai, or autogen")
 	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		fail(err.Error())
 	}
@@ -241,8 +242,21 @@ func runInitCmd(args []string) {
 		fail("project directory required")
 	}
 	target := fs.Arg(0)
+
+	if err := validateFramework(*framework); err != nil {
+		fail(err.Error())
+	}
+
 	if err := scaffoldInit(target, *force); err != nil {
 		fail(err.Error())
+	}
+
+	// Generate framework-specific files if requested.
+	if *framework != "" {
+		if err := scaffoldFramework(target, *framework, *force); err != nil {
+			fail(err.Error())
+		}
+		fmt.Printf("Framework scaffold generated: %s\n", *framework)
 	}
 
 	// Generate TLS certificates (warn-only on failure — don't abort init).

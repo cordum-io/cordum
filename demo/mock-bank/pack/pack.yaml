@@ -17,6 +17,7 @@ topics:
     riskTags:
       - finance
       - transfer
+    riskTagDeriver: amount-threshold
 
 resources:
   workflows:
