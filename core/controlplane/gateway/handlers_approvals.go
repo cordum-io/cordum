@@ -1075,10 +1075,19 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			if snapResp != nil && len(snapResp.Snapshots) > 0 {
 				currentSnapshot = strings.TrimSpace(snapResp.Snapshots[0])
 			}
-			if currentSnapshot == "" || snapshotBase(currentSnapshot) != snapshotBase(policySnapshot) {
-				s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "policy snapshot changed")
-				result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleSnapshot, "policy snapshot changed; re-evaluate before approving")}
+			if currentSnapshot == "" {
+				s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "safety kernel snapshot unavailable")
+				result = handlerResult{http.StatusBadGateway, "safety kernel snapshot unavailable"}
 				return nil
+			}
+			if snapshotBase(currentSnapshot) != snapshotBase(policySnapshot) {
+				// Policy changed since the approval was created. The human is
+				// explicitly choosing to approve after reviewing the request —
+				// refresh the snapshot and proceed. Audit trail records the
+				// discrepancy for compliance.
+				s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policyActorID(r), policyRole(r),
+					fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s)", snapshotBase(policySnapshot), snapshotBase(currentSnapshot)))
+				policySnapshot = currentSnapshot
 			}
 		}
 		reason := strings.TrimSpace(body.Reason)

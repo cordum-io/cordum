@@ -363,7 +363,7 @@ func TestApproveJobUsesAuthContextForApprover(t *testing.T) {
 	}
 }
 
-func TestApproveJobRejectsOnSnapshotMismatch(t *testing.T) {
+func TestApproveJobRefreshesStaleSnapshot(t *testing.T) {
 	s, _, safety := newTestGateway(t)
 	safety.setSnapshots([]string{"snap-2"})
 
@@ -401,15 +401,57 @@ func TestApproveJobRejectsOnSnapshotMismatch(t *testing.T) {
 	rr := httptest.NewRecorder()
 	s.handleApproveJob(rr, httpReq)
 
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("expected 409 got %d body=%s", rr.Code, rr.Body.String())
+	// Stale snapshot should be refreshed — approval proceeds (200 OK).
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
+	state, _ := s.jobStore.GetState(context.Background(), jobID)
+	if state == model.JobStateApproval {
+		t.Fatalf("expected state to move past approval, got %s", state)
 	}
-	if resp["code"] != string(model.ApprovalConflictStaleSnapshot) {
-		t.Fatalf("expected stale snapshot code, got %#v", resp["code"])
+}
+
+func TestApproveJobRejectsWhenSnapshotUnavailable(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots(nil) // safety kernel returns no snapshots
+
+	jobID := "job-no-snap"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+	}
+	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	hash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	if err := s.jobStore.SetSafetyDecision(context.Background(), jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", nil)
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	httpReq.SetPathValue("job_id", jobID)
+	rr := httptest.NewRecorder()
+	s.handleApproveJob(rr, httpReq)
+
+	// Safety kernel unreachable — should return 502.
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 got %d body=%s", rr.Code, rr.Body.String())
 	}
 	state, _ := s.jobStore.GetState(context.Background(), jobID)
 	if state != model.JobStateApproval {

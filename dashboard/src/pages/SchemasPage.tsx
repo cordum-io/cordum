@@ -69,7 +69,7 @@ export default function SchemasPage() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: i * 0.03 }}
-                  onClick={() => navigate(`/schemas/${schema.id}`)}
+                  onClick={() => navigate(`/schemas/${encodeURIComponent(schema.id)}`)}
                   className="border-b border-border last:border-0 hover:bg-surface-1 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-3">

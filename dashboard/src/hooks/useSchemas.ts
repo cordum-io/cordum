@@ -28,7 +28,7 @@ export function useSchema(id: string) {
   return useQuery<Schema>({
     queryKey: ["schema", id],
     queryFn: async () => {
-      const res = await get<{ id: string; schema: Record<string, unknown> }>(`/schemas/${id}`);
+      const res = await get<{ id: string; schema: Record<string, unknown> }>(`/schemas/${encodeURIComponent(id)}`);
       return {
         id: res.id,
         name: res.id,
@@ -74,7 +74,7 @@ export function useDeleteSchema() {
   return useMutation<void, Error, string>({
     mutationFn: (id) => {
       logger.info("schemas", "Deleting schema", { id });
-      return del(`/schemas/${id}`);
+      return del(`/schemas/${encodeURIComponent(id)}`);
     },
     onSuccess: (_, id) => {
       logger.info("schemas", "Schema deleted", { id });

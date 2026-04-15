@@ -121,7 +121,7 @@ export function SchemaCreateForm() {
     };
 
     registerSchema.mutate({ id: data.id, schema }, {
-      onSuccess: () => navigate(`/schemas/${data.id}`),
+      onSuccess: () => navigate(`/schemas/${encodeURIComponent(data.id)}`),
     });
   }
 
@@ -237,8 +237,24 @@ export default function SchemaDetailPage() {
   const { data: schema, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["schema", id],
     queryFn: async () => {
-      const res = await get<{ data?: { id: string; name: string; type: string; versions: SchemaVersion[]; currentVersion: string } }>(`/schemas/${id}`);
-      return res.data;
+      const res = await get<{ id: string; schema: Record<string, unknown> }>(`/schemas/${encodeURIComponent(id!)}`);
+      const raw = res.schema ?? {};
+      const properties = (raw.properties ?? {}) as Record<string, Record<string, unknown>>;
+      const requiredSet = new Set<string>(Array.isArray(raw.required) ? raw.required as string[] : []);
+      const fields: SchemaField[] = Object.entries(properties).map(([name, def]) => ({
+        name,
+        type: typeof def?.type === "string" ? def.type : Array.isArray(def?.type) ? def.type.join(" | ") : "unknown",
+        required: requiredSet.has(name),
+        description: typeof def?.description === "string" ? def.description : undefined,
+      }));
+      return {
+        id: res.id,
+        name: res.id,
+        type: typeof raw.type === "string" ? raw.type : "object",
+        currentVersion: "1",
+        versions: [{ version: "1", createdAt: new Date().toISOString(), fields }] as SchemaVersion[],
+        schema: raw,
+      };
     },
     enabled: !isCreateMode,
   });
@@ -359,8 +375,8 @@ export default function SchemaDetailPage() {
       )}
 
       {/* JSON Tab */}
-      {activeTab === "json" && currentVersion && (
-        <CodeBlock title={schema?.name ?? "JSON Schema"} language="json" copyable maxHeight={384}>{JSON.stringify(currentVersion, null, 2)}</CodeBlock>
+      {activeTab === "json" && schema?.schema && (
+        <CodeBlock title={schema?.name ?? "JSON Schema"} language="json" copyable maxHeight={384}>{JSON.stringify(schema.schema, null, 2)}</CodeBlock>
       )}
     </motion.div>
   );

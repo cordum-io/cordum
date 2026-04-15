@@ -410,11 +410,16 @@ func main() {
 	if _, err := cordumotel.InitTracer("cordum-scheduler"); err != nil {
 		slog.Error("otel tracer init failed", "error", err)
 	}
+	if err := cordumotel.InitMetrics("cordum-scheduler"); err != nil {
+		slog.Error("otel metrics init failed", "error", err)
+	}
 	defer func() {
+		_ = cordumotel.ShutdownMetrics()
 		if err := cordumotel.Shutdown(context.Background()); err != nil {
 			slog.Error("otel tracer shutdown failed", "error", err)
 		}
 	}()
+	engine.WithOTELMetrics(cordumotel.NewSchedulerMetricsBridge())
 
 	if err := engine.Start(); err != nil {
 		slog.Error("failed to start scheduler engine", "error", err)
@@ -499,7 +504,8 @@ func main() {
 
 	dispatchTimeout, runningTimeout, scanInterval := reconcilerTimeouts(snapshot.Timeouts)
 	reconciler := scheduler.NewReconciler(jobStore, dispatchTimeout, runningTimeout, scanInterval).
-		WithApprovalMetrics(approvalMetrics)
+		WithApprovalMetrics(approvalMetrics).
+		WithSnapshotProvider(safetyClient)
 	go reconciler.Start(ctx)
 	pendingReplayer := scheduler.NewPendingReplayer(engine, jobStore, dispatchTimeout, scanInterval)
 	go pendingReplayer.Start(ctx)

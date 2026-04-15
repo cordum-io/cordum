@@ -129,6 +129,22 @@ func (c *SafetyClient) loadInputContent(ctx context.Context, contextPtr string) 
 	return raw, originalSize, nil
 }
 
+// CurrentPolicySnapshot returns the latest policy snapshot hash from the
+// safety kernel. Returns empty string on error or if the kernel is unreachable.
+// Implements SnapshotProvider for the reconciler's stale-approval detection.
+func (c *SafetyClient) CurrentPolicySnapshot(ctx context.Context) string {
+	if c.cb.IsOpen(ctx) {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, safetyTimeout)
+	defer cancel()
+	resp, err := c.client.ListSnapshots(ctx, &pb.ListSnapshotsRequest{})
+	if err != nil || resp == nil || len(resp.Snapshots) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(resp.Snapshots[0])
+}
+
 // Close releases the underlying connection.
 func (c *SafetyClient) Close() error {
 	if c.contextClient != nil {
