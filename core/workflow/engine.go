@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,24 @@ func init() {
 	prometheus.MustRegister(lockFallbackTotal)
 }
 
+// UpdateRun error handling convention:
+//
+// All UpdateRun call sites MUST follow one of these patterns:
+//
+//  1. Propagate: return the error so the bus NACKs and redelivers.
+//     Used for: HandleJobResult final persist, scheduleReady final persist.
+//
+//  2. Revert-and-continue: revert in-memory state to Pending, continue to
+//     next step. The final UpdateRun at the end of scheduleReady persists
+//     all reverted states. If the final UpdateRun fails, that IS propagated.
+//     Used for: pre-dispatch persists (individual step failures).
+//
+//  3. Log-only (revert operations): when a revert persist fails, log it.
+//     The final scheduleReady UpdateRun will persist the in-memory state.
+//     Used for: dispatch-failure reverts (step already reverted in memory).
+//
+// No UpdateRun failure should be silently discarded without at least a log.
+
 // Engine coordinates workflow runs, dispatching steps as jobs and updating run state.
 type Engine struct {
 	store           *RedisStore
@@ -52,8 +71,9 @@ type Engine struct {
 
 	// timerMu guards pendingTimers. pendingTimers tracks cancellable delay
 	// timers so they can be stopped on engine shutdown without leaking goroutines.
+	// Keyed by timer pointer for O(1) insert/delete without index-based removal.
 	timerMu       sync.Mutex
-	pendingTimers []*time.Timer
+	pendingTimers map[*time.Timer]struct{}
 	stopped       chan struct{} // closed by Stop(); nil until first use
 }
 
@@ -140,6 +160,13 @@ func (lm *lockManager) acquire(runID string) (func(), bool) {
 				renewDone = make(chan struct{})
 				go func() {
 					defer close(renewDone)
+					defer func() {
+						if p := recover(); p != nil {
+							slog.Error("panic in lock renewal goroutine",
+								"run_id", runID, "panic", p, "stack", string(debug.Stack()))
+							renewCancel()
+						}
+					}()
 					ticker := time.NewTicker(runLockTTL / 3)
 					defer ticker.Stop()
 					for {
@@ -432,6 +459,8 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 				child.CompletedAt = &now
 				child.Error = map[string]any{"message": err.Error()}
 				e.appendTimeline(ctx, run, "step_output_invalid", stepID, res.JobId, string(child.Status), res.ResultPtr, err.Error(), nil)
+				// Preserve ResultPtr for quarantined output inspection.
+				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, false)
 			}
 		}
 		if !retry && (child.Status == StepStatusSucceeded || child.Status == StepStatusFailed || child.Status == StepStatusDenied || child.Status == StepStatusCancelled || child.Status == StepStatusTimedOut) {
@@ -492,6 +521,8 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 				stepRun.CompletedAt = &now
 				stepRun.Error = map[string]any{"message": err.Error()}
 				e.appendTimeline(ctx, run, "step_output_invalid", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, err.Error(), nil)
+				// Preserve ResultPtr for quarantined output inspection.
+				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, true)
 			}
 		}
 		if !retry && (stepRun.Status == StepStatusSucceeded || stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusDenied || stepRun.Status == StepStatusCancelled || stepRun.Status == StepStatusTimedOut) {
@@ -521,9 +552,25 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 		e.appendTimeline(ctx, run, "run_status", "", "", string(run.Status), "", "", nil)
 	}
 
-	if err := e.store.UpdateRun(ctx, run); err != nil {
-		slog.Error("update run", "run_id", run.ID, "error", err)
-		return nil
+	// Retry UpdateRun once after a brief pause to absorb transient Redis
+	// blips before falling through to a NATS-level NACK/redeliver.
+	var updateErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		if updateErr = e.store.UpdateRun(ctx, run); updateErr == nil {
+			break
+		}
+		slog.Warn("update run transient failure",
+			"component", "workflow", "run_id", run.ID, "attempt", attempt, "error", updateErr)
+		if attempt < 2 {
+			select {
+			case <-time.After(500 * time.Millisecond):
+			case <-ctx.Done():
+				return fmt.Errorf("update run after job result: %w", updateErr)
+			}
+		}
+	}
+	if updateErr != nil {
+		return fmt.Errorf("update run after job result: %w", updateErr)
 	}
 	if isTerminalRunStatus(run.Status) {
 		e.markRunTerminal(run.ID)
@@ -631,6 +678,11 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 	}
 	parallelChildOwners := collectParallelChildOwners(wfDef)
 	loopBodyOwners := collectLoopBodyOwners(wfDef)
+
+	// dispatchedThisTick prevents for_each children from being dispatched twice
+	// when the multi-pass loop re-enters a parent whose status reverted during
+	// inline step evaluation in the same tick.
+	dispatchedThisTick := make(map[string]bool)
 
 	// Multi-pass: inline-completing steps (condition, switch, transform, etc.)
 	// may unblock dependents already iterated in the same pass (Go map order
@@ -1854,6 +1906,9 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					if child.Status != "" && child.Status != StepStatusPending {
 						continue
 					}
+					if dispatchedThisTick[childStepID] {
+						continue
+					}
 					if child.NextAttemptAt != nil && child.NextAttemptAt.After(now) {
 						continue
 					}
@@ -1889,6 +1944,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						child.JobID = jobID
 						child.Input = payload
 						runningCount++
+						dispatchedThisTick[childStepID] = true
 						var data map[string]any
 						if req.ContextPtr != "" {
 							data = map[string]any{"context_ptr": req.ContextPtr}
@@ -1998,6 +2054,9 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					if child.Status != "" && child.Status != StepStatusPending {
 						continue
 					}
+					if dispatchedThisTick[childID] {
+						continue
+					}
 					if child.NextAttemptAt != nil && child.NextAttemptAt.After(now) {
 						continue
 					}
@@ -2042,6 +2101,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						child.Input = payload
 						child.Item = item
 						runningChildren++
+						dispatchedThisTick[childID] = true
 						data := map[string]any{"foreach_index": idx}
 						if req.ContextPtr != "" {
 							data["context_ptr"] = req.ContextPtr

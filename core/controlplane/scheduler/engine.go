@@ -86,6 +86,7 @@ type Engine struct {
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
 	activeHandlers          atomic.Int64
+	activeRenewals          atomic.Int64
 	wg                      sync.WaitGroup
 	ctx                     context.Context
 	cancel                  context.CancelFunc
@@ -156,6 +157,8 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 	renewDone := make(chan struct{})
 	go func() {
 		defer close(renewDone)
+		e.activeRenewals.Add(1)
+		defer e.activeRenewals.Add(-1)
 		ticker := time.NewTicker(ttl / 3)
 		defer ticker.Stop()
 		consecutiveFailures := 0
@@ -489,6 +492,12 @@ func (e *Engine) Start() error {
 	}
 	if statter, ok := e.registry.(registryStatter); ok {
 		go func() {
+			defer func() {
+				if p := recover(); p != nil {
+					slog.Error("panic in registry stats logger",
+						"panic", p, "stack", string(debug.Stack()))
+				}
+			}()
 			ticker := time.NewTicker(60 * time.Second)
 			defer ticker.Stop()
 			for {
@@ -874,6 +883,11 @@ func (e *Engine) Stop() {
 	}
 }
 
+// ActiveRenewals returns the current number of active lock renewal goroutines.
+func (e *Engine) ActiveRenewals() int64 {
+	return e.activeRenewals.Load()
+}
+
 func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 	if req == nil {
 		return nil
@@ -920,7 +934,9 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 						if state == JobStateDenied {
 							dlqStatus = pb.JobStatus_JOB_STATUS_DENIED
 						}
-						_ = e.emitDLQWithRetry(jobID, topic, dlqStatus, "terminal state redelivery", "redelivery_dlq_retry")
+						if dlqErr := e.emitDLQWithRetry(jobID, topic, dlqStatus, "terminal state redelivery", "redelivery_dlq_retry"); dlqErr != nil {
+								slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
+							}
 					}
 					return nil
 				}
@@ -965,9 +981,14 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 		}
 
 		if err := e.processJob(lockCtx, req, traceID); err != nil {
+			// Retryable scheduling errors (no workers available) are ACKed — the
+			// job is already persisted above and the reconciler will pick it up.
 			if isRetryableSchedulingError(err) {
 				return nil
 			}
+			// Other errors propagate to the bus: RetryAfter → NAK for retry,
+			// plain error → ACK (non-retryable). Job metadata is already stored
+			// at this point, so ACK on non-retryable error is safe.
 			return err
 		}
 		return nil
@@ -1300,7 +1321,9 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 				IncrAttempts(context.Context, string) error
 			}); ok {
 				ctx2, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-				_ = inc.IncrAttempts(ctx2, jobID)
+				if incrErr := inc.IncrAttempts(ctx2, jobID); incrErr != nil {
+					slog.Warn("attempt counter increment failed", "job_id", jobID, "error", incrErr)
+				}
 				cancel()
 			}
 			return RetryAfter(err, backoffDelay(attempts, backoffBase, backoffMax))
@@ -1660,7 +1683,11 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 		if e.jobStore != nil {
 			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
 			defer cancel()
-			topic, _ = e.jobStore.GetTopic(ctx, jobID)
+			var topicErr error
+			topic, topicErr = e.jobStore.GetTopic(ctx, jobID)
+			if topicErr != nil {
+				slog.Warn("topic lookup failed", "job_id", jobID, "error", topicErr)
+			}
 		}
 		if topic == "" {
 			topic = "unknown"
@@ -1682,7 +1709,12 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			}); ok {
 				ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
 				defer cancel()
-				jobReq, _ = store.GetJobRequest(ctx, jobID)
+				var reqErr error
+				jobReq, reqErr = store.GetJobRequest(ctx, jobID)
+				if reqErr != nil {
+					slog.Error("job request lookup failed, saga/output safety may be skipped",
+						"job_id", jobID, "error", reqErr)
+				}
 			}
 		}
 		if status == pb.JobStatus_JOB_STATUS_SUCCEEDED && e.saga != nil && jobReq != nil {
@@ -1897,6 +1929,39 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("panic in async output safety check — failing closed: quarantining output",
+					"job_id", jobID, "topic", topic, "panic", p,
+					"stack", string(debug.Stack()))
+				// Fail closed: persist a quarantine record so the output is
+				// not silently allowed through unchecked.
+				qRecord := OutputSafetyRecord{
+					Decision:    OutputQuarantine,
+					Reason:      fmt.Sprintf("async output check panic — fail-closed: %v", p),
+					Phase:       "async",
+					CheckedAt:   time.Now().UTC().UnixNano() / int64(time.Microsecond),
+					OriginalPtr: strings.TrimSpace(resCopy.GetResultPtr()),
+				}
+				e.persistOutputSafety(jobID, qRecord)
+				e.incOutputPolicyQuarantined(topic)
+				e.incOutputDenials(topic)
+				// Best-effort quarantine state transition.
+				if qErr := e.withJobLock(jobID, jobLockTTL, func(lockCtx context.Context) error {
+					if e.jobStore != nil {
+						return e.jobStore.SetState(lockCtx, jobID, JobStateQuarantined)
+					}
+					return nil
+				}); qErr != nil {
+					slog.Error("panic recovery quarantine state transition failed",
+						"job_id", jobID, "error", qErr)
+					if dlqErr := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED,
+						fmt.Sprintf("quarantine_panic_failed: %v", p), "quarantine_panic_failed"); dlqErr != nil {
+						slog.Error("panic recovery DLQ emit also failed", "job_id", jobID, "error", dlqErr)
+					}
+				}
+			}
+		}()
 		ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
 		defer cancel()
 
@@ -2001,8 +2066,10 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 			slog.Error("CRITICAL: quarantine transition exhausted all retries — job remains in succeeded state",
 				"job_id", jobID, "topic", topic, "error", lastErr,
 				"output_decision", string(record.Decision), "reason", reason)
-			_ = e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED,
-				fmt.Sprintf("quarantine_state_failed: %v", lastErr), "quarantine_failed")
+			if dlqErr := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED,
+				fmt.Sprintf("quarantine_state_failed: %v", lastErr), "quarantine_failed"); dlqErr != nil {
+				slog.Error("dlq emit failed during quarantine recovery", "job_id", jobID, "topic", topic, "error", dlqErr)
+			}
 		}
 	}()
 }
@@ -2090,6 +2157,7 @@ func (e *Engine) setJobState(jobID string, state JobState) error {
 		slog.Error("failed to set job state", "job_id", jobID, "state", state, "error", err)
 		return fmt.Errorf("set job state: %w", err)
 	}
+	slog.Info("job state changed", "job_id", jobID, "new_state", string(state))
 	return nil
 }
 
@@ -2341,7 +2409,9 @@ func (e *Engine) publishCancel(jobID, reason string) {
 		ProtocolVersion: protocolVersionV1,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
-	_ = e.bus.Publish(capsdk.SubjectCancel, packet)
+	if err := e.bus.Publish(capsdk.SubjectCancel, packet); err != nil {
+		slog.Error("job cancel publish failed", "job_id", jobID, "error", err)
+	}
 }
 
 func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, approval ApprovalRecord) error {

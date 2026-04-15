@@ -799,3 +799,359 @@ func TestListApprovalsExcludesNonApprovalTimeoutJobs(t *testing.T) {
 	items := resp["items"].([]any)
 	assert.Len(t, items, 0, "non-approval timeout job should NOT appear")
 }
+
+// --- Enriched approval context tests ---
+
+func TestListApprovalsEnrichedFields(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	jobID := "job-enriched-1"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "deploy.staging",
+		TenantId: "acme-corp",
+		Labels: map[string]string{
+			"tenant_id":        "acme-corp",
+			"system:api":       "api-gateway",
+			"system:db":        "postgres-primary",
+			"namespace:staging": "staging-ns",
+			"resource:pod":     "api-pod-1",
+			"rollback_hint":    "Run: kubectl rollout undo deployment/api -n staging",
+		},
+	}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))
+	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-enriched",
+		RuleID:           "rule-deploy-limit",
+		Reason:           "deployment exceeds size threshold",
+		JobHash:          "hash-enriched",
+	}))
+
+	httpReq := httptest.NewRequest("GET", "/api/v1/approvals?include_resolved=false", nil)
+	rr := httptest.NewRecorder()
+	s.handleListApprovals(rr, httpReq)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	items := resp["items"].([]any)
+	require.Len(t, items, 1)
+
+	item := items[0].(map[string]any)
+
+	// blast_radius
+	br, ok := item["blast_radius"].(map[string]any)
+	require.True(t, ok, "expected blast_radius map")
+	systems := br["systems"].([]any)
+	assert.Len(t, systems, 2, "should have 2 systems")
+	namespaces := br["namespaces"].([]any)
+	assert.Len(t, namespaces, 1, "should have 1 namespace")
+	resources := br["resources"].([]any)
+	assert.Len(t, resources, 1, "should have 1 resource")
+	assert.NotEmpty(t, br["scope_description"])
+
+	// rollback_hint
+	assert.Equal(t, "Run: kubectl rollout undo deployment/api -n staging", item["rollback_hint"])
+
+	// policy_snapshot_summary
+	pss, ok := item["policy_snapshot_summary"].(map[string]any)
+	require.True(t, ok, "expected policy_snapshot_summary map")
+	assert.Equal(t, float64(1), pss["rule_count"])
+	assert.Equal(t, "snap-enriched", pss["policy_version"])
+	matchedRule := pss["matched_rule"].(map[string]any)
+	assert.Equal(t, "rule-deploy-limit", matchedRule["id"])
+	assert.Equal(t, "deployment exceeds size threshold", matchedRule["description"])
+
+	// prior_approvals not included in list endpoint (N+1 prevention).
+	// Available via GET /approvals/{job_id}/context.
+	assert.Nil(t, item["prior_approvals"], "prior_approvals should not be in list response")
+}
+
+func TestApprovalContextEndpointFull(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	jobID := "job-ctx-full"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "infra.change",
+		TenantId: "tenant-a",
+		Labels: map[string]string{
+			"tenant_id":     "tenant-a",
+			"system:k8s":    "production-cluster",
+			"rollback_hint": "Revert PR #42",
+		},
+	}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))
+	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-ctx",
+		RuleID:           "rule-infra",
+		Reason:           "infra changes require approval",
+		JobHash:          "hash-ctx",
+	}))
+
+	httpReq := httptest.NewRequest("GET", "/api/v1/approvals/"+jobID+"/context", nil)
+	httpReq.SetPathValue("job_id", jobID)
+	rr := httptest.NewRecorder()
+	s.handleApprovalContext(rr, httpReq)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+
+	// Top-level fields present
+	assert.NotNil(t, resp["approval"])
+	assert.NotNil(t, resp["blast_radius"])
+	assert.NotNil(t, resp["prior_approvals"])
+	assert.NotNil(t, resp["policy_snapshot_summary"])
+	assert.Equal(t, "Revert PR #42", resp["rollback_hint"])
+
+	// Approval details
+	approval := resp["approval"].(map[string]any)
+	assert.Equal(t, jobID, approval["job_id"])
+	assert.Equal(t, string(model.JobStateApproval), approval["state"])
+
+	// Blast radius
+	br := resp["blast_radius"].(map[string]any)
+	systems := br["systems"].([]any)
+	assert.Len(t, systems, 1)
+	assert.Equal(t, "production-cluster", systems[0])
+
+	// Policy snapshot summary
+	pss := resp["policy_snapshot_summary"].(map[string]any)
+	assert.Equal(t, "snap-ctx", pss["policy_version"])
+	matchedRule := pss["matched_rule"].(map[string]any)
+	assert.Equal(t, "rule-infra", matchedRule["id"])
+
+	// time_remaining_ms should be nil (no deadline set)
+	assert.Nil(t, resp["time_remaining_ms"])
+}
+
+func TestApprovalContextPriorApprovalsFiltering(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	// Create a resolved prior approval for topic=deploy.prod, tenant=acme.
+	priorJobID := "job-prior-1"
+	priorReq := &pb.JobRequest{
+		JobId:    priorJobID,
+		Topic:    "deploy.prod",
+		TenantId: "acme",
+		Labels:   map[string]string{"tenant_id": "acme"},
+	}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, priorReq))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, priorReq))
+	require.NoError(t, s.jobStore.SetState(ctx, priorJobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, priorJobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-prior",
+		JobHash:          "hash-prior",
+	}))
+	// Resolve it (simulate approval).
+	require.NoError(t, s.jobStore.SetState(ctx, priorJobID, model.JobStatePending))
+	require.NoError(t, s.jobStore.SetApprovalRecord(ctx, priorJobID, store.ApprovalRecord{
+		ApprovedBy: "admin@acme.com",
+		ApprovedAt: 1700000000,
+		Decision:   model.ApprovalDecisionApprove,
+		Status:     model.ApprovalStatusApproved,
+	}))
+
+	// Create an unrelated resolved job (different topic).
+	unrelatedJobID := "job-unrelated"
+	unrelatedReq := &pb.JobRequest{
+		JobId:    unrelatedJobID,
+		Topic:    "billing.charge",
+		TenantId: "acme",
+		Labels:   map[string]string{"tenant_id": "acme"},
+	}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, unrelatedReq))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, unrelatedReq))
+	require.NoError(t, s.jobStore.SetState(ctx, unrelatedJobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, unrelatedJobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-unrelated",
+		JobHash:          "hash-unrelated",
+	}))
+	require.NoError(t, s.jobStore.SetState(ctx, unrelatedJobID, model.JobStatePending))
+	require.NoError(t, s.jobStore.SetApprovalRecord(ctx, unrelatedJobID, store.ApprovalRecord{
+		ApprovedBy: "admin@acme.com",
+		ApprovedAt: 1700000000,
+		Decision:   model.ApprovalDecisionApprove,
+		Status:     model.ApprovalStatusApproved,
+	}))
+
+	// Now create the current job needing approval.
+	jobID := "job-current"
+	currentReq := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "deploy.prod",
+		TenantId: "acme",
+		Labels:   map[string]string{"tenant_id": "acme"},
+	}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, currentReq))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, currentReq))
+	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-current",
+		JobHash:          "hash-current",
+	}))
+
+	httpReq := httptest.NewRequest("GET", "/api/v1/approvals/"+jobID+"/context", nil)
+	httpReq.SetPathValue("job_id", jobID)
+	rr := httptest.NewRecorder()
+	s.handleApprovalContext(rr, httpReq)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+
+	priorApprovals := resp["prior_approvals"].([]any)
+	// Should include prior-1 (same topic+tenant) but NOT unrelated (different topic).
+	matchedTopics := map[string]bool{}
+	for _, pa := range priorApprovals {
+		p := pa.(map[string]any)
+		matchedTopics[p["topic"].(string)] = true
+	}
+	assert.True(t, matchedTopics["deploy.prod"], "prior approval with matching topic should be included")
+	assert.False(t, matchedTopics["billing.charge"], "unrelated topic should be excluded")
+}
+
+func TestApprovalContextNotFound(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	httpReq := httptest.NewRequest("GET", "/api/v1/approvals/nonexistent-job/context", nil)
+	httpReq.SetPathValue("job_id", "nonexistent-job")
+	rr := httptest.NewRecorder()
+	s.handleApprovalContext(rr, httpReq)
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestApprovalContextBlastRadiusParsesLabels(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	jobID := "job-blast-labels"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "deploy.staging",
+		TenantId: "org-1",
+		Labels: map[string]string{
+			"tenant_id":          "org-1",
+			"system:web":         "web-frontend",
+			"system:api":         "api-backend",
+			"system:worker":      "background-worker",
+			"namespace:staging":  "staging",
+			"namespace:preview":  "preview-env",
+			"resource:deploy/web": "web-deploy",
+			"resource:svc/api":   "api-service",
+			"target_system":      "monitoring", // Also picked up
+		},
+	}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))
+	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-blast",
+		JobHash:          "hash-blast",
+	}))
+
+	httpReq := httptest.NewRequest("GET", "/api/v1/approvals/"+jobID+"/context", nil)
+	httpReq.SetPathValue("job_id", jobID)
+	rr := httptest.NewRecorder()
+	s.handleApprovalContext(rr, httpReq)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	br := resp["blast_radius"].(map[string]any)
+
+	systems := br["systems"].([]any)
+	// 3 system: prefixed + 1 target_system = 4
+	assert.GreaterOrEqual(t, len(systems), 4, "should have all system labels including target_system")
+	namespaces := br["namespaces"].([]any)
+	assert.Len(t, namespaces, 2, "should have 2 namespace labels")
+	resources := br["resources"].([]any)
+	assert.Len(t, resources, 2, "should have 2 resource labels")
+	assert.NotEmpty(t, br["scope_description"])
+}
+
+func TestApprovalContextRollbackHintEmpty(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	jobID := "job-no-rollback"
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "test.topic",
+		Labels:   map[string]string{},
+	}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))
+	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-no-rb",
+		JobHash:          "hash-no-rb",
+	}))
+
+	httpReq := httptest.NewRequest("GET", "/api/v1/approvals/"+jobID+"/context", nil)
+	httpReq.SetPathValue("job_id", jobID)
+	rr := httptest.NewRecorder()
+	s.handleApprovalContext(rr, httpReq)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Equal(t, "", resp["rollback_hint"], "rollback_hint should be empty string when not set")
+}
+
+func TestApprovalContextPolicySnapshotSummaryNoRule(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	jobID := "job-no-rule"
+	req := &pb.JobRequest{
+		JobId:  jobID,
+		Topic:  "test.topic",
+		Labels: map[string]string{},
+	}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))
+	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-norule",
+		JobHash:          "hash-norule",
+	}))
+
+	httpReq := httptest.NewRequest("GET", "/api/v1/approvals/"+jobID+"/context", nil)
+	httpReq.SetPathValue("job_id", jobID)
+	rr := httptest.NewRecorder()
+	s.handleApprovalContext(rr, httpReq)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	pss := resp["policy_snapshot_summary"].(map[string]any)
+	assert.Equal(t, float64(0), pss["rule_count"], "rule_count should be 0 when no rule matched")
+	assert.Equal(t, "snap-norule", pss["policy_version"])
+	matchedRule := pss["matched_rule"].(map[string]any)
+	assert.Equal(t, "", matchedRule["id"], "matched rule id should be empty")
+}

@@ -60,26 +60,10 @@ rules:
     decision: allow
     reason: "Read-only validation and notification jobs are auto-approved."
 
-  # Mock-bank transfers: deny blocked risk level, allow everything else.
-  # Order matters — first-match wins. The deny rule must come before the
-  # fallback allow so that high-value transfers are correctly blocked.
-  # Review-level approval is handled by the workflow's own approval steps,
-  # not by the safety policy.
-  - id: bank-transfer-blocked
-    match:
-      topics:
-        - job.demo-mock-bank.transfer
-      risk_tags:
-        - blocked
-    decision: deny
-    reason: "High-value bank transfers are blocked by policy."
-
-  - id: bank-transfer-allow
-    match:
-      topics:
-        - job.demo-mock-bank.transfer
-    decision: allow
-    reason: "Bank transfer jobs are auto-approved unless explicitly blocked."
+  # Mock-bank transfer rules are defined in the pack overlay
+  # (demo/mock-bank/pack/overlays/policy.fragment.yaml) and should NOT
+  # be duplicated here. The pack rules have finer granularity (blocked,
+  # review, low risk levels).
 
   # TX4: B2B Multi-Agent Onboarding — allow all B2B topics.
   - id: b2b-orchestrate-allow
@@ -156,6 +140,109 @@ rules:
         - job.cordum.approval-gate
     decision: require_approval
     reason: "Workflow approval gates require explicit human authorization."
+
+  # =========================================================================
+  # CordClaw — pre-dispatch governance for OpenClaw agents
+  # =========================================================================
+  - id: cordclaw-deny-destructive
+    match:
+      topics: ["job.cordclaw.exec"]
+      risk_tags: ["destructive"]
+    decision: deny
+    reason: "Destructive commands (rm -rf, mkfs, dd) are blocked by policy."
+
+  - id: cordclaw-deny-secrets-access
+    match:
+      topics: ["job.cordclaw.file-read", "job.cordclaw.file-write"]
+      risk_tags: ["secrets"]
+    decision: deny
+    reason: "Access to credential and key files is blocked by policy."
+
+  - id: cordclaw-deny-cloud-infra
+    match:
+      topics: ["job.cordclaw.exec"]
+      risk_tags: ["cloud", "infrastructure"]
+    decision: deny
+    reason: "Cloud infrastructure commands require explicit policy override."
+
+  - id: cordclaw-deny-remote-access
+    match:
+      topics: ["job.cordclaw.exec"]
+      risk_tags: ["remote-access"]
+    decision: deny
+    reason: "Remote access commands (ssh/scp) are blocked by policy."
+
+  - id: cordclaw-approve-outbound-messages
+    match:
+      topics: ["job.cordclaw.message-send"]
+      risk_tags: ["external"]
+    decision: require_approval
+    reason: "Outbound messages to external channels require human approval."
+
+  - id: cordclaw-approve-package-install
+    match:
+      topics: ["job.cordclaw.exec"]
+      risk_tags: ["package-install"]
+    decision: require_approval
+    reason: "Package installation requires human approval."
+
+  - id: cordclaw-approve-cron
+    match:
+      topics: ["job.cordclaw.cron-create"]
+    decision: require_approval
+    reason: "Creating autonomous scheduled tasks requires human approval."
+
+  - id: cordclaw-approve-code-deploy
+    match:
+      topics: ["job.cordclaw.exec"]
+      risk_tags: ["code-deploy"]
+    decision: require_approval
+    reason: "Code deployment operations (for example git push) require review."
+
+  - id: cordclaw-constrain-exec
+    match:
+      topics: ["job.cordclaw.exec"]
+      risk_tags: ["exec"]
+    decision: allow_with_constraints
+    constraints:
+      sandbox:
+        isolated: true
+      budgets:
+        max_runtime_ms: 30000
+    reason: "Shell execution allowed in a sandboxed environment with 30s timeout."
+
+  - id: cordclaw-constrain-browser
+    match:
+      topics: ["job.cordclaw.browser", "job.cordclaw.browser-action"]
+    decision: allow_with_constraints
+    constraints:
+      budgets:
+        max_runtime_ms: 60000
+    reason: "Browser actions are allowed with a 60s timeout."
+
+  - id: cordclaw-allow-read
+    match:
+      topics: ["job.cordclaw.file-read"]
+    decision: allow
+    reason: "File reads are allowed by default."
+
+  - id: cordclaw-allow-write
+    match:
+      topics: ["job.cordclaw.file-write"]
+    decision: allow
+    reason: "Workspace file writes are allowed by default."
+
+  - id: cordclaw-allow-search
+    match:
+      topics: ["job.cordclaw.web-search", "job.cordclaw.web-fetch"]
+    decision: allow
+    reason: "Web search and fetch actions are allowed by default."
+
+  - id: cordclaw-allow-memory
+    match:
+      topics: ["job.cordclaw.memory-write"]
+    decision: allow
+    reason: "Memory writes are allowed by default."
 
 input_policy:
   fail_mode: closed  # "closed" = requeue when kernel down, "open" = allow through

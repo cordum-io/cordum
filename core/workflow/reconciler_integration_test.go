@@ -515,3 +515,266 @@ func TestReconcilerHandleJobResultDeletedRunReturnsNil(t *testing.T) {
 		t.Fatalf("expected nil for deleted run result, got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Stuck approval step recovery tests
+// ---------------------------------------------------------------------------
+
+// TestReconciler_StuckApprovalStep_Redispatches verifies that the reconciler
+// detects an approval step stuck in Waiting (no corresponding job in the store)
+// and resets it to Pending so scheduleReady can re-dispatch the approval job.
+func TestReconciler_StuckApprovalStep_Redispatches(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	redisURL := "redis://" + srv.Addr()
+	workflowStore, err := NewRedisWorkflowStore(redisURL)
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	defer func() { _ = workflowStore.Close() }()
+
+	jobStore, err := store.NewRedisJobStore(redisURL)
+	if err != nil {
+		t.Fatalf("job store: %v", err)
+	}
+	defer func() { _ = jobStore.Close() }()
+
+	bus := &stubBus{}
+	engine := NewEngine(workflowStore, bus)
+
+	wfDef := &Workflow{
+		ID:    "wf-stuck-approval",
+		OrgID: "org",
+		Steps: map[string]*Step{
+			"approve": {ID: "approve", Type: StepTypeApproval, Topic: "job.approval"},
+		},
+	}
+	if err := workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	// Simulate the crash gap: step is Waiting, but the approval job was never
+	// published (no job in the store). StartedAt is >30s ago (past grace period).
+	staleStart := time.Now().UTC().Add(-2 * time.Minute)
+	run := &WorkflowRun{
+		ID:         "run-stuck-approval",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org",
+		Status:     RunStatusWaiting,
+		Steps: map[string]*StepRun{
+			"approve": {
+				StepID:    "approve",
+				Status:    StepStatusWaiting,
+				JobID:     "run-stuck-approval:approve@1",
+				Attempts:  1,
+				StartedAt: &staleStart,
+			},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// No job set in jobStore — simulates crash before Publish.
+	rec := newReconciler(workflowStore, engine, jobStore, time.Millisecond, 10)
+
+	// Call reconcileStuckWaitingSteps directly to isolate the detection logic
+	// from the full scheduleReady re-dispatch (which needs a memory store).
+	freshRun, err := workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	rec.reconcileStuckWaitingSteps(context.Background(), freshRun)
+
+	updated, err := workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	stepRun := updated.Steps["approve"]
+	if stepRun.Status != StepStatusPending {
+		t.Fatalf("expected stuck approval step reset to Pending, got %s", stepRun.Status)
+	}
+	if stepRun.JobID != "" {
+		t.Fatalf("expected JobID cleared after reset, got %s", stepRun.JobID)
+	}
+	if stepRun.StartedAt != nil {
+		t.Fatalf("expected StartedAt cleared after reset, got %v", stepRun.StartedAt)
+	}
+	retries := reconcileRetryCount(stepRun)
+	if retries != 1 {
+		t.Fatalf("expected reconcile retry count 1, got %d", retries)
+	}
+}
+
+// TestReconciler_StuckApprovalStep_MaxRetries verifies that after 3 reconciler
+// retries, the stuck approval step is marked Failed instead of retried again.
+func TestReconciler_StuckApprovalStep_MaxRetries(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	redisURL := "redis://" + srv.Addr()
+	workflowStore, err := NewRedisWorkflowStore(redisURL)
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	defer func() { _ = workflowStore.Close() }()
+
+	jobStore, err := store.NewRedisJobStore(redisURL)
+	if err != nil {
+		t.Fatalf("job store: %v", err)
+	}
+	defer func() { _ = jobStore.Close() }()
+
+	bus := &stubBus{}
+	engine := NewEngine(workflowStore, bus)
+
+	wfDef := &Workflow{
+		ID:    "wf-max-retries",
+		OrgID: "org",
+		Steps: map[string]*Step{
+			"approve": {ID: "approve", Type: StepTypeApproval, Topic: "job.approval"},
+		},
+	}
+	if err := workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	// Step already at retry count 3 — should be failed, not retried.
+	staleStart := time.Now().UTC().Add(-5 * time.Minute)
+	run := &WorkflowRun{
+		ID:         "run-max-retries",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org",
+		Status:     RunStatusWaiting,
+		Steps: map[string]*StepRun{
+			"approve": {
+				StepID:    "approve",
+				Status:    StepStatusWaiting,
+				JobID:     "run-max-retries:approve@1",
+				Attempts:  1,
+				StartedAt: &staleStart,
+				Error:     map[string]any{"_reconcile_retries": float64(3)},
+			},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	rec := newReconciler(workflowStore, engine, jobStore, time.Millisecond, 10)
+
+	freshRun, err := workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	rec.reconcileStuckWaitingSteps(context.Background(), freshRun)
+
+	updated, err := workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	stepRun := updated.Steps["approve"]
+	if stepRun.Status != StepStatusFailed {
+		t.Fatalf("expected stuck approval step to be Failed after max retries, got %s", stepRun.Status)
+	}
+	if stepRun.Error == nil || stepRun.Error["message"] == nil {
+		t.Fatal("expected error message on failed step")
+	}
+}
+
+// TestReconciler_ApprovalStep_NotStuck verifies that a Waiting approval step
+// with a valid approval job in the store is NOT reset by the reconciler.
+func TestReconciler_ApprovalStep_NotStuck(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	redisURL := "redis://" + srv.Addr()
+	workflowStore, err := NewRedisWorkflowStore(redisURL)
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	defer func() { _ = workflowStore.Close() }()
+
+	jobStore, err := store.NewRedisJobStore(redisURL)
+	if err != nil {
+		t.Fatalf("job store: %v", err)
+	}
+	defer func() { _ = jobStore.Close() }()
+
+	bus := &stubBus{}
+	engine := NewEngine(workflowStore, bus)
+
+	wfDef := &Workflow{
+		ID:    "wf-not-stuck",
+		OrgID: "org",
+		Steps: map[string]*Step{
+			"approve": {ID: "approve", Type: StepTypeApproval, Topic: "job.approval"},
+		},
+	}
+	if err := workflowStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	staleStart := time.Now().UTC().Add(-2 * time.Minute)
+	jobID := "run-not-stuck:approve@1"
+	run := &WorkflowRun{
+		ID:         "run-not-stuck",
+		WorkflowID: wfDef.ID,
+		OrgID:      "org",
+		Status:     RunStatusWaiting,
+		Steps: map[string]*StepRun{
+			"approve": {
+				StepID:    "approve",
+				Status:    StepStatusWaiting,
+				JobID:     jobID,
+				Attempts:  1,
+				StartedAt: &staleStart,
+			},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Job EXISTS in the store — step is properly waiting for approval.
+	if err := jobStore.SetState(context.Background(), jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set job state: %v", err)
+	}
+
+	rec := newReconciler(workflowStore, engine, jobStore, time.Millisecond, 10)
+
+	freshRun, err := workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	rec.reconcileStuckWaitingSteps(context.Background(), freshRun)
+
+	updated, err := workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	stepRun := updated.Steps["approve"]
+	// Step should still be Waiting — reconciler should NOT have reset it.
+	if stepRun.Status != StepStatusWaiting {
+		t.Fatalf("expected step to remain Waiting (job exists), got %s", stepRun.Status)
+	}
+	if stepRun.JobID != jobID {
+		t.Fatalf("expected JobID preserved, got %s", stepRun.JobID)
+	}
+}

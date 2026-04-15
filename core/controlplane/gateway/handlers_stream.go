@@ -2,10 +2,14 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -15,36 +19,76 @@ import (
 
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
-	wf "github.com/cordum/cordum/core/workflow"
-	"github.com/prometheus/client_golang/prometheus"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-var wsPacketsDroppedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+var wsPacketsDroppedTotal = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "cordum_gateway_ws_packets_dropped_total",
 	Help: "Total WebSocket bus packets dropped due to marshal failure",
 })
 
-var wsSlowClientEvictions = prometheus.NewCounterVec(prometheus.CounterOpts{
+var wsSlowClientEvictions = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "cordum_gateway_ws_slow_client_evictions_total",
 	Help: "Total WebSocket clients evicted because their send buffer was full",
 }, []string{"reason"})
 
-func init() {
-	prometheus.MustRegister(wsPacketsDroppedTotal)
-	prometheus.MustRegister(wsSlowClientEvictions)
-}
+var wsClientsActive = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "cordum_gateway_ws_clients_active",
+	Help: "Current active WebSocket connections",
+})
+
+var wsConnectionDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+	Name:    "cordum_gateway_ws_connection_duration_seconds",
+	Help:    "WebSocket connection lifetime in seconds",
+	Buckets: []float64{1, 10, 60, 300, 900, 1800, 3600, 7200, 14400},
+})
+
+var wsPingsSent = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "cordum_gateway_ws_pings_sent_total",
+	Help: "Total WebSocket ping frames sent",
+})
+
+var wsPongsReceived = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "cordum_gateway_ws_pongs_received_total",
+	Help: "Total WebSocket pong frames received",
+})
+
+var wsPongTimeouts = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "cordum_gateway_ws_pong_timeouts_total",
+	Help: "Total WebSocket connections closed after missing pong deadlines",
+})
+
+var wsRevalidation = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "cordum_gateway_ws_revalidation_total",
+	Help: "Total WebSocket credential revalidation outcomes",
+}, []string{"outcome"})
+
+var wsReconnections = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "cordum_gateway_ws_reconnections_total",
+	Help: "Total WebSocket client reconnections within the recent reconnect window",
+})
 
 const (
 	defaultWSClientBufSize = 256
 	minWSClientBufSize     = 1
 	maxWSClientBufSize     = 10000
+	wsReconnectWindow      = 60 * time.Second
+	disconnectClientClose  = "client_close"
+	disconnectPingTimeout  = "ping_timeout"
+	disconnectRevalidation = "revalidation_revoked"
+	disconnectContextDone  = "context_cancelled"
+	disconnectWriteError   = "write_error"
+	disconnectServerDown   = "server_shutdown"
+	disconnectBufferFull   = "buffer_full"
 )
 
 // wsClientBufferSize reads CORDUM_WS_CLIENT_BUFFER_SIZE and clamps to [1, 10000].
@@ -81,7 +125,10 @@ func (s *server) stopBusTaps() {
 // wsRevalidateInterval controls how often long-lived WebSocket connections
 // re-check the caller's API key. If the key has been revoked or rotated the
 // connection is closed within this window.
-const wsRevalidateInterval = 60 * time.Second
+var (
+	wsRevalidateInterval   = 120 * time.Second
+	wsRevalidateRetryDelay = 500 * time.Millisecond
+)
 
 type wsClient struct {
 	ch               chan wsEvent
@@ -102,6 +149,70 @@ type wsEvent struct {
 	data   []byte
 	tenant string
 	jobID  string
+}
+
+type wsDisconnectState struct {
+	mu     sync.Mutex
+	reason string
+	err    error
+}
+
+func (s *wsDisconnectState) Set(reason string, err error) {
+	if s == nil || strings.TrimSpace(reason) == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reason = reason
+	if err != nil {
+		s.err = err
+	}
+}
+
+func (s *wsDisconnectState) SetIfOneOf(reason string, err error, replaceable ...string) {
+	if s == nil || strings.TrimSpace(reason) == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reason != "" {
+		allowed := false
+		for _, candidate := range replaceable {
+			if s.reason == candidate {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return
+		}
+	}
+	s.reason = reason
+	if err != nil {
+		s.err = err
+	}
+}
+
+func (s *wsDisconnectState) Snapshot(defaultReason string) (string, error) {
+	if s == nil {
+		return defaultReason, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(s.reason) == "" {
+		return defaultReason, s.err
+	}
+	return s.reason, s.err
+}
+
+func newWSConnectionID() string {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		fallback := fmt.Sprintf("%016x", time.Now().UnixNano())
+		slog.Warn("ws connection id generation fell back to timestamp", "error", err)
+		return fallback
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 var upgrader = websocket.Upgrader{
@@ -696,8 +807,17 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		slog.Error("ws upgrade failed", "error", err)
 		return
 	}
+	connStart := time.Now()
+	// Capture timing values once to avoid data races if globals are
+	// overwritten by tests after the handler goroutines have started.
+	pingInterval := wsPingInterval
+	pongTimeout := wsPongTimeout
+	revalidateInterval := wsRevalidateInterval
+	revalidateRetryDelay := wsRevalidateRetryDelay
+	connID := newWSConnectionID()
+	remoteIP := clientIP(r)
+	disconnectState := &wsDisconnectState{}
 	defer func() { _ = ws.Close() }()
-	slog.Info("ws connected", "remote", r.RemoteAddr)
 
 	authCtx := authFromRequest(r)
 	client := &wsClient{ch: make(chan wsEvent, s.wsClientBufSz)}
@@ -706,9 +826,61 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		client.allowCrossTenant = authCtx.AllowCrossTenant
 		client.apiKey = authCtx.APIKey
 	}
+	slog.Info("ws connected",
+		"conn_id", connID,
+		"remote", r.RemoteAddr,
+		"tenant", client.tenant,
+		"user_agent", r.UserAgent())
 	s.clientsMu.Lock()
 	s.clients[ws] = client
 	s.clientsMu.Unlock()
+	s.observeWSReconnect(remoteIP, connStart)
+	wsClientsActive.Inc()
+	s.statusCacheObj.Invalidate()
+	s.startWSConnectionSummaryLogger()
+	_ = ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
+	ws.SetPongHandler(func(string) error {
+		wsPongsReceived.Inc()
+		return ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
+	})
+	wsCtx, wsCancel := context.WithCancel(r.Context())
+	defer wsCancel()
+	go func() {
+		defer wsCancel()
+		for {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				if isWSReadTimeout(err) {
+					wsPongTimeouts.Inc()
+					disconnectState.SetIfOneOf(disconnectPingTimeout, err, "", disconnectClientClose, disconnectContextDone)
+					return
+				}
+				if isShutdownSignaled(s.shutdownCh) {
+					disconnectState.SetIfOneOf(disconnectServerDown, err, "", disconnectClientClose, disconnectContextDone)
+					return
+				}
+				disconnectState.SetIfOneOf(disconnectClientClose, err, "", disconnectContextDone)
+				return
+			}
+		}
+	}()
+	defer func() {
+		s.rememberWSDisconnect(remoteIP, time.Now().UTC())
+		wsClientsActive.Dec()
+		wsConnectionDuration.Observe(time.Since(connStart).Seconds())
+		s.statusCacheObj.Invalidate()
+		reason, disconnectErr := disconnectState.Snapshot(disconnectContextDone)
+		logArgs := []any{
+			"conn_id", connID,
+			"remote", r.RemoteAddr,
+			"tenant", client.tenant,
+			"duration", time.Since(connStart).Round(time.Millisecond),
+			"reason", reason,
+		}
+		if disconnectErr != nil {
+			logArgs = append(logArgs, "error", disconnectErr)
+		}
+		slog.Info("ws disconnected", logArgs...)
+	}()
 	defer func() {
 		s.clientsMu.Lock()
 		delete(s.clients, ws)
@@ -716,31 +888,68 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		client.closeChannel()
 	}()
 
-	revalidate := time.NewTicker(wsRevalidateInterval)
+	revalidate := time.NewTicker(revalidateInterval)
 	defer revalidate.Stop()
+	pingTicker := time.NewTicker(pingInterval)
+	defer pingTicker.Stop()
 
 	for {
 		select {
 		case msg, ok := <-client.ch:
 			if !ok {
+				disconnectState.SetIfOneOf(disconnectBufferFull, nil, "", disconnectClientClose, disconnectContextDone)
 				return
 			}
-			_ = ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			if err := ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+				disconnectState.SetIfOneOf(resolveWSWriteFailureReason(s.shutdownCh), err, "", disconnectClientClose, disconnectContextDone)
+				return
+			}
 			if err := ws.WriteMessage(websocket.TextMessage, msg.data); err != nil {
+				disconnectState.SetIfOneOf(resolveWSWriteFailureReason(s.shutdownCh), err, "", disconnectClientClose, disconnectContextDone)
 				return
 			}
 		case <-revalidate.C:
 			if s.auth != nil && client.apiKey != "" {
-				if err := s.revalidateWSAuth(client.apiKey); err != nil {
+				if err := s.revalidateWSAuthWithRetry(wsCtx, client.apiKey, connID, revalidateRetryDelay); err != nil {
+					disconnectState.Set(disconnectRevalidation, err)
 					slog.Info("ws credential revoked, closing",
-						"tenant", client.tenant, "remote", r.RemoteAddr)
-					_ = ws.WriteControl(websocket.CloseMessage,
+						"conn_id", connID,
+						"tenant", client.tenant,
+						"remote", r.RemoteAddr)
+					if closeErr := ws.WriteControl(websocket.CloseMessage,
 						websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "credential revoked"),
-						time.Now().Add(2*time.Second))
+						time.Now().Add(2*time.Second)); closeErr != nil {
+						slog.Warn("ws close control failed",
+							"conn_id", connID,
+							"tenant", client.tenant,
+							"remote", r.RemoteAddr,
+							"error", closeErr)
+					}
 					return
 				}
 			}
-		case <-r.Context().Done():
+		case <-pingTicker.C:
+			if err := ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+				disconnectState.SetIfOneOf(resolveWSWriteFailureReason(s.shutdownCh), err, "", disconnectClientClose, disconnectContextDone)
+				return
+			}
+			if err := ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+				disconnectState.SetIfOneOf(resolveWSWriteFailureReason(s.shutdownCh), err, "", disconnectClientClose, disconnectContextDone)
+				return
+			}
+			wsPingsSent.Inc()
+		case <-s.shutdownCh:
+			disconnectState.Set(disconnectServerDown, nil)
+			return
+		case <-wsCtx.Done():
+			switch {
+			case isShutdownSignaled(s.shutdownCh):
+				disconnectState.SetIfOneOf(disconnectServerDown, wsCtx.Err(), "")
+			case r.Context().Err() != nil:
+				disconnectState.SetIfOneOf(disconnectClientClose, wsCtx.Err(), "")
+			default:
+				disconnectState.SetIfOneOf(disconnectContextDone, wsCtx.Err(), "")
+			}
 			return
 		}
 	}
@@ -778,17 +987,78 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 		slog.Error("job ws upgrade failed", "job_id", jobID, "error", err)
 		return
 	}
+	connStart := time.Now()
+	connID := newWSConnectionID()
+	remoteIP := clientIP(r)
+	disconnectState := &wsDisconnectState{}
 	defer func() { _ = ws.Close() }()
-	slog.Info("job ws connected", "job_id", jobID, "remote", r.RemoteAddr)
 
 	authCtx := authFromRequest(r)
 	client := &wsClient{ch: make(chan wsEvent, s.wsClientBufSz), tenant: strings.TrimSpace(tenant), jobID: jobID}
 	if authCtx != nil {
 		client.apiKey = authCtx.APIKey
 	}
+	slog.Info("job ws connected",
+		"conn_id", connID,
+		"job_id", jobID,
+		"remote", r.RemoteAddr,
+		"tenant", client.tenant,
+		"user_agent", r.UserAgent())
 	s.clientsMu.Lock()
 	s.clients[ws] = client
 	s.clientsMu.Unlock()
+	s.observeWSReconnect(remoteIP, connStart)
+	wsClientsActive.Inc()
+	s.statusCacheObj.Invalidate()
+	s.startWSConnectionSummaryLogger()
+	pingInterval := wsPingInterval
+	pongTimeout := wsPongTimeout
+	revalidateInterval := wsRevalidateInterval
+	revalidateRetryDelay := wsRevalidateRetryDelay
+	_ = ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
+	ws.SetPongHandler(func(string) error {
+		wsPongsReceived.Inc()
+		return ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
+	})
+	wsCtx, wsCancel := context.WithCancel(r.Context())
+	defer wsCancel()
+	go func() {
+		defer wsCancel()
+		for {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				if isWSReadTimeout(err) {
+					wsPongTimeouts.Inc()
+					disconnectState.SetIfOneOf(disconnectPingTimeout, err, "", disconnectClientClose, disconnectContextDone)
+					return
+				}
+				if isShutdownSignaled(s.shutdownCh) {
+					disconnectState.SetIfOneOf(disconnectServerDown, err, "", disconnectClientClose, disconnectContextDone)
+					return
+				}
+				disconnectState.SetIfOneOf(disconnectClientClose, err, "", disconnectContextDone)
+				return
+			}
+		}
+	}()
+	defer func() {
+		s.rememberWSDisconnect(remoteIP, time.Now().UTC())
+		wsClientsActive.Dec()
+		wsConnectionDuration.Observe(time.Since(connStart).Seconds())
+		s.statusCacheObj.Invalidate()
+		reason, disconnectErr := disconnectState.Snapshot(disconnectContextDone)
+		logArgs := []any{
+			"conn_id", connID,
+			"job_id", jobID,
+			"remote", r.RemoteAddr,
+			"tenant", client.tenant,
+			"duration", time.Since(connStart).Round(time.Millisecond),
+			"reason", reason,
+		}
+		if disconnectErr != nil {
+			logArgs = append(logArgs, "error", disconnectErr)
+		}
+		slog.Info("job ws disconnected", logArgs...)
+	}()
 	defer func() {
 		s.clientsMu.Lock()
 		delete(s.clients, ws)
@@ -796,31 +1066,70 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 		client.closeChannel()
 	}()
 
-	revalidate := time.NewTicker(wsRevalidateInterval)
+	revalidate := time.NewTicker(revalidateInterval)
 	defer revalidate.Stop()
+	pingTicker := time.NewTicker(pingInterval)
+	defer pingTicker.Stop()
 
 	for {
 		select {
 		case msg, ok := <-client.ch:
 			if !ok {
+				disconnectState.SetIfOneOf(disconnectBufferFull, nil, "", disconnectClientClose, disconnectContextDone)
 				return
 			}
-			_ = ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			if err := ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+				disconnectState.SetIfOneOf(resolveWSWriteFailureReason(s.shutdownCh), err, "", disconnectClientClose, disconnectContextDone)
+				return
+			}
 			if err := ws.WriteMessage(websocket.TextMessage, msg.data); err != nil {
+				disconnectState.SetIfOneOf(resolveWSWriteFailureReason(s.shutdownCh), err, "", disconnectClientClose, disconnectContextDone)
 				return
 			}
 		case <-revalidate.C:
 			if s.auth != nil && client.apiKey != "" {
-				if err := s.revalidateWSAuth(client.apiKey); err != nil {
+				if err := s.revalidateWSAuthWithRetry(wsCtx, client.apiKey, connID, revalidateRetryDelay); err != nil {
+					disconnectState.Set(disconnectRevalidation, err)
 					slog.Info("job ws credential revoked, closing",
-						"job_id", jobID, "tenant", client.tenant, "remote", r.RemoteAddr)
-					_ = ws.WriteControl(websocket.CloseMessage,
+						"conn_id", connID,
+						"job_id", jobID,
+						"tenant", client.tenant,
+						"remote", r.RemoteAddr)
+					if closeErr := ws.WriteControl(websocket.CloseMessage,
 						websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "credential revoked"),
-						time.Now().Add(2*time.Second))
+						time.Now().Add(2*time.Second)); closeErr != nil {
+						slog.Warn("job ws close control failed",
+							"conn_id", connID,
+							"job_id", jobID,
+							"tenant", client.tenant,
+							"remote", r.RemoteAddr,
+							"error", closeErr)
+					}
 					return
 				}
 			}
-		case <-r.Context().Done():
+		case <-pingTicker.C:
+			if err := ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+				disconnectState.SetIfOneOf(resolveWSWriteFailureReason(s.shutdownCh), err, "", disconnectClientClose, disconnectContextDone)
+				return
+			}
+			if err := ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+				disconnectState.SetIfOneOf(resolveWSWriteFailureReason(s.shutdownCh), err, "", disconnectClientClose, disconnectContextDone)
+				return
+			}
+			wsPingsSent.Inc()
+		case <-s.shutdownCh:
+			disconnectState.Set(disconnectServerDown, nil)
+			return
+		case <-wsCtx.Done():
+			switch {
+			case isShutdownSignaled(s.shutdownCh):
+				disconnectState.SetIfOneOf(disconnectServerDown, wsCtx.Err(), "")
+			case r.Context().Err() != nil:
+				disconnectState.SetIfOneOf(disconnectClientClose, wsCtx.Err(), "")
+			default:
+				disconnectState.SetIfOneOf(disconnectContextDone, wsCtx.Err(), "")
+			}
 			return
 		}
 	}
@@ -834,4 +1143,144 @@ func (s *server) revalidateWSAuth(apiKey string) error {
 	req.Header.Set("X-API-Key", apiKey)
 	_, err := s.auth.AuthenticateHTTP(req)
 	return err
+}
+
+func (s *server) revalidateWSAuthWithRetry(ctx context.Context, apiKey, connID string, retryDelay time.Duration) error {
+	for attempt := 1; attempt <= 3; attempt++ {
+		err := s.revalidateWSAuth(apiKey)
+		if err == nil {
+			wsRevalidation.WithLabelValues("ok").Inc()
+			return nil
+		}
+		if !isTransientError(err) {
+			wsRevalidation.WithLabelValues("revoked").Inc()
+			return err
+		}
+		wsRevalidation.WithLabelValues("transient_error").Inc()
+		if attempt == 3 {
+			slog.Warn("ws auth revalidation transient failure exhausted retries; keeping connection alive",
+				"conn_id", connID,
+				"attempts", attempt,
+				"retry_delay", retryDelay,
+				"error", err)
+			return nil
+		}
+		slog.Warn("ws auth revalidation transient failure; retrying",
+			"conn_id", connID,
+			"attempt", attempt,
+			"max_attempts", 3,
+			"retry_delay", retryDelay,
+			"error", err)
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil
+		case <-timer.C:
+		}
+	}
+	return nil
+}
+
+func (s *server) observeWSReconnect(remoteIP string, now time.Time) {
+	if s == nil || strings.TrimSpace(remoteIP) == "" {
+		return
+	}
+	cutoff := now.Add(-wsReconnectWindow)
+	s.recentWSDisconnects.Range(func(key, value any) bool {
+		recordedAt, ok := value.(time.Time)
+		if !ok || recordedAt.Before(cutoff) {
+			s.recentWSDisconnects.Delete(key)
+		}
+		return true
+	})
+
+	if lastDisconnected, ok := s.recentWSDisconnects.LoadAndDelete(remoteIP); ok {
+		if disconnectedAt, ok := lastDisconnected.(time.Time); ok && !disconnectedAt.Before(cutoff) {
+			wsReconnections.Inc()
+		}
+	}
+}
+
+func (s *server) rememberWSDisconnect(remoteIP string, disconnectedAt time.Time) {
+	if s == nil || strings.TrimSpace(remoteIP) == "" {
+		return
+	}
+	if disconnectedAt.IsZero() {
+		disconnectedAt = time.Now().UTC()
+	}
+	s.recentWSDisconnects.Store(remoteIP, disconnectedAt)
+}
+
+func (s *server) activeWSClientCount() int {
+	if s == nil {
+		return 0
+	}
+	s.clientsMu.RLock()
+	defer s.clientsMu.RUnlock()
+	return len(s.clients)
+}
+
+func (s *server) startWSConnectionSummaryLogger() {
+	if s == nil || s.shutdownCh == nil {
+		return
+	}
+	s.wsSummaryOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					slog.Debug("ws connection summary", "active_ws_clients", s.activeWSClientCount())
+				case <-s.shutdownCh:
+					return
+				}
+			}
+		}()
+	})
+}
+
+func isShutdownSignaled(shutdownCh <-chan struct{}) bool {
+	if shutdownCh == nil {
+		return false
+	}
+	select {
+	case <-shutdownCh:
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveWSWriteFailureReason(shutdownCh <-chan struct{}) string {
+	if isShutdownSignaled(shutdownCh) {
+		return disconnectServerDown
+	}
+	return disconnectWriteError
+}
+
+func isWSReadTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, redis.ErrClosed) ||
+		errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }

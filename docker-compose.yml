@@ -81,11 +81,11 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 50070"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9094/readyz"]
       interval: 10s
       timeout: 3s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   safety-kernel:
     restart: unless-stopped
@@ -130,7 +130,7 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 50051"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9095/readyz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -187,7 +187,7 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/readyz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -196,6 +196,9 @@ services:
   api-gateway:
     restart: unless-stopped
     read_only: true
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     tmpfs:
       - /tmp
     build:
@@ -286,7 +289,7 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://127.0.0.1:8081/health"]
+      test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://127.0.0.1:8081/readyz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -337,7 +340,7 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9093/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9093/readyz"]
       interval: 10s
       timeout: 3s
       retries: 3

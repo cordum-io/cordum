@@ -1,6 +1,8 @@
 package redisutil
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -8,9 +10,32 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	miniredis "github.com/alicebob/miniredis/v2"
+	"log/slog"
 )
+
+// syncBuffer is a thread-safe bytes.Buffer for capturing log output in tests.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (sb *syncBuffer) Write(p []byte) (int, error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.Write(p)
+}
+
+func (sb *syncBuffer) String() string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.String()
+}
 
 func TestParseOptionsNoTLS(t *testing.T) {
 	opts, err := ParseOptions("redis://localhost:6379")
@@ -73,6 +98,94 @@ func TestParseOptionsMissingKey(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for missing key")
 	}
+}
+
+func TestNewClient_DefaultTimeouts(t *testing.T) {
+	opts, err := newUniversalOptions("redis://localhost:6379")
+	if err != nil {
+		t.Fatalf("newUniversalOptions error: %v", err)
+	}
+	if opts.DialTimeout != defaultDialTimeout {
+		t.Fatalf("expected dial timeout %v, got %v", defaultDialTimeout, opts.DialTimeout)
+	}
+	if opts.ReadTimeout != defaultReadTimeout {
+		t.Fatalf("expected read timeout %v, got %v", defaultReadTimeout, opts.ReadTimeout)
+	}
+	if opts.WriteTimeout != defaultWriteTimeout {
+		t.Fatalf("expected write timeout %v, got %v", defaultWriteTimeout, opts.WriteTimeout)
+	}
+	if opts.ConnMaxIdleTime != defaultIdleTimeout {
+		t.Fatalf("expected idle timeout %v, got %v", defaultIdleTimeout, opts.ConnMaxIdleTime)
+	}
+	if opts.ConnMaxLifetime != defaultConnMaxLife {
+		t.Fatalf("expected max lifetime %v, got %v", defaultConnMaxLife, opts.ConnMaxLifetime)
+	}
+}
+
+func TestNewClient_EnvOverrides(t *testing.T) {
+	t.Setenv(envRedisDialTimeout, "7s")
+	t.Setenv(envRedisReadTimeout, "4s")
+	t.Setenv(envRedisWriteTimeout, "9s")
+	t.Setenv(envRedisIdleTimeout, "2m")
+	t.Setenv(envRedisConnMaxLife, "45m")
+
+	opts, err := newUniversalOptions("redis://localhost:6379")
+	if err != nil {
+		t.Fatalf("newUniversalOptions error: %v", err)
+	}
+	if opts.DialTimeout != 7*time.Second {
+		t.Fatalf("expected dial timeout 7s, got %v", opts.DialTimeout)
+	}
+	if opts.ReadTimeout != 4*time.Second {
+		t.Fatalf("expected read timeout 4s, got %v", opts.ReadTimeout)
+	}
+	if opts.WriteTimeout != 9*time.Second {
+		t.Fatalf("expected write timeout 9s, got %v", opts.WriteTimeout)
+	}
+	if opts.ConnMaxIdleTime != 2*time.Minute {
+		t.Fatalf("expected idle timeout 2m, got %v", opts.ConnMaxIdleTime)
+	}
+	if opts.ConnMaxLifetime != 45*time.Minute {
+		t.Fatalf("expected max lifetime 45m, got %v", opts.ConnMaxLifetime)
+	}
+}
+
+func TestPoolStatsLogging(t *testing.T) {
+	prevLogger := slog.Default()
+	var logBuf syncBuffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	prevInterval := redisPoolStatsLogInterval
+	redisPoolStatsLogInterval = 10 * time.Millisecond
+	t.Cleanup(func() { redisPoolStatsLogInterval = prevInterval })
+
+	t.Setenv(envRedisPoolStatsLog, "true")
+
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer srv.Close()
+
+	client, err := NewClient("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("NewClient error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		t.Fatalf("ping redis: %v", err)
+	}
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if strings.Contains(logBuf.String(), "redis pool stats") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected redis pool stats log entry, got %q", logBuf.String())
 }
 
 func writeTempCert(t *testing.T, dir string) (string, string) {

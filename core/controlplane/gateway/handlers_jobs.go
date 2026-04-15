@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -130,29 +131,23 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		workersCount = len(s.activeWorkersSnapshot(now))
 	}
 
-	natsConnected := false
-	natsStatus := "UNKNOWN"
+	natsStatus, natsConnected := s.natsHealthStatus()
 	natsURL := ""
 	if nb, ok := s.bus.(*bus.NatsBus); ok {
-		natsConnected = nb.IsConnected()
-		natsStatus = nb.Status()
 		natsURL = nb.ConnectedURL()
 	}
 
 	redisOK := false
 	redisErr := ""
-	if s.jobStore == nil {
-		redisErr = "job store unavailable"
+	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+	redisStatus, err := s.redisHealthStatus(ctx)
+	if err != nil {
+		redisErr = err.Error()
 	} else {
-		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
-		err := s.jobStore.Ping(ctx)
-		cancel()
-		if err != nil {
-			redisErr = err.Error()
-		} else {
-			redisOK = true
-		}
+		redisOK = true
 	}
+	cancel()
+	redisPoolStats := redisPoolStatsResponse(s.redisClient())
 
 	isAdmin := s.requireRole(r, "admin") == nil
 
@@ -165,7 +160,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	redisInfo := map[string]any{
-		"ok": redisOK,
+		"ok":     redisOK,
+		"status": redisStatus,
 	}
 	if isAdmin && redisErr != "" {
 		redisInfo["error"] = redisErr
@@ -177,8 +173,12 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"time":           now.Format(time.RFC3339),
-		"uptime_seconds": uptimeSeconds,
+		"time":              now.Format(time.RFC3339),
+		"uptime_seconds":    uptimeSeconds,
+		"goroutine_count":   runtime.NumGoroutine(),
+		"active_ws_clients": s.activeWSClientCount(),
+		"nats_status":       natsStatus,
+		"redis_pool_stats":  redisPoolStats,
 		"build": map[string]any{
 			"version": buildinfo.Version,
 			"commit":  buildinfo.Commit,
@@ -245,6 +245,28 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", "MISS")
 	writeJSON(w, resp)
+}
+
+func redisPoolStatsResponse(client redis.UniversalClient) map[string]any {
+	resp := map[string]any{
+		"hits":        uint32(0),
+		"misses":      uint32(0),
+		"timeouts":    uint32(0),
+		"total_conns": uint32(0),
+		"idle_conns":  uint32(0),
+		"stale_conns": uint32(0),
+	}
+	if client == nil {
+		return resp
+	}
+	stats := client.PoolStats()
+	resp["hits"] = stats.Hits
+	resp["misses"] = stats.Misses
+	resp["timeouts"] = stats.Timeouts
+	resp["total_conns"] = stats.TotalConns
+	resp["idle_conns"] = stats.IdleConns
+	resp["stale_conns"] = stats.StaleConns
+	return resp
 }
 
 func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string]any {

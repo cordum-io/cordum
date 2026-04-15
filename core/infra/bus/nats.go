@@ -64,9 +64,11 @@ const (
 	envNATSPassword      = "NATS_PASSWORD"
 	envNATSNKey          = "NATS_NKEY"
 	envNATSToken         = "NATS_TOKEN"
+	envNATSPingInterval  = "NATS_PING_INTERVAL"
 
-	defaultAckWait = 10 * time.Minute
-	defaultMaxAge  = 7 * 24 * time.Hour
+	defaultAckWait          = 10 * time.Minute
+	defaultMaxAge           = 7 * 24 * time.Hour
+	defaultNATSPingInterval = 30 * time.Second
 
 	streamSys  = "CORDUM_SYS"
 	streamJobs = "CORDUM_JOBS"
@@ -128,6 +130,7 @@ func NewNatsBus(url string) (*NatsBus, error) {
 		nats.Name("cordum-bus"),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2 * time.Second),
+		nats.PingInterval(natsPingIntervalFromEnv()),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			slog.Info("bus: disconnected from nats", "err", err)
 			b.runDisconnectHandlers(nc, err)
@@ -699,6 +702,15 @@ func parseBoolEnv(key string) bool {
 	default:
 		return false
 	}
+}
+
+func natsPingIntervalFromEnv() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(envNATSPingInterval)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultNATSPingInterval
 }
 
 func (b *NatsBus) initJetStreamFromEnv() {

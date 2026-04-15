@@ -301,7 +301,7 @@ func TestSchedulerRejectsUnknownTopicFromBus(t *testing.T) {
 	defer func() { _ = configSvc.Close() }()
 
 	regSvc := topicregistry.NewService(configSvc)
-	if err := regSvc.Set(context.Background(), topicregistry.Registration{
+	if err := regSvc.Set(testCtx(t), topicregistry.Registration{
 		Name:   "job.allowed",
 		Pool:   "default",
 		Status: topicregistry.StatusActive,
@@ -323,7 +323,7 @@ func TestSchedulerRejectsUnknownTopicFromBus(t *testing.T) {
 		t.Fatalf("HandlePacket returned error: %v", err)
 	}
 
-	state, err := store.GetState(context.Background(), req.JobId)
+	state, err := store.GetState(testCtx(t), req.JobId)
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
@@ -348,10 +348,10 @@ func TestSchedulerSchemaEnforceRejects(t *testing.T) {
 	defer cleanup()
 
 	ctxKey := infraStore.MakeContextKey("job-schema-enforce")
-	if err := jobStore.Client().Set(context.Background(), ctxKey, []byte(`{"context":{"message":123}}`), 0).Err(); err != nil {
+	if err := jobStore.Client().Set(testCtx(t), ctxKey, []byte(`{"context":{"message":123}}`), 0).Err(); err != nil {
 		t.Fatalf("seed context: %v", err)
 	}
-	if err := schemaRegistry.Register(context.Background(), "demo/input", []byte(`{
+	if err := schemaRegistry.Register(testCtx(t), "demo/input", []byte(`{
 		"type": "object",
 		"properties": {
 			"message": {"type": "string"}
@@ -360,7 +360,7 @@ func TestSchedulerSchemaEnforceRejects(t *testing.T) {
 	}`)); err != nil {
 		t.Fatalf("register schema: %v", err)
 	}
-	if err := regSvc.Set(context.Background(), topicregistry.Registration{
+	if err := regSvc.Set(testCtx(t), topicregistry.Registration{
 		Name:          "job.structured",
 		Pool:          "default",
 		InputSchemaID: "demo/input",
@@ -391,7 +391,7 @@ func TestSchedulerSchemaEnforceRejects(t *testing.T) {
 		t.Fatalf("HandlePacket returned error: %v", err)
 	}
 
-	state, err := jobStore.GetState(context.Background(), req.JobId)
+	state, err := jobStore.GetState(testCtx(t), req.JobId)
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
@@ -416,10 +416,10 @@ func TestSchedulerSchemaWarnAllows(t *testing.T) {
 	defer cleanup()
 
 	ctxKey := infraStore.MakeContextKey("job-schema-warn")
-	if err := jobStore.Client().Set(context.Background(), ctxKey, []byte(`{"context":{"message":123}}`), 0).Err(); err != nil {
+	if err := jobStore.Client().Set(testCtx(t), ctxKey, []byte(`{"context":{"message":123}}`), 0).Err(); err != nil {
 		t.Fatalf("seed context: %v", err)
 	}
-	if err := schemaRegistry.Register(context.Background(), "demo/input", []byte(`{
+	if err := schemaRegistry.Register(testCtx(t), "demo/input", []byte(`{
 		"type": "object",
 		"properties": {
 			"message": {"type": "string"}
@@ -428,7 +428,7 @@ func TestSchedulerSchemaWarnAllows(t *testing.T) {
 	}`)); err != nil {
 		t.Fatalf("register schema: %v", err)
 	}
-	if err := regSvc.Set(context.Background(), topicregistry.Registration{
+	if err := regSvc.Set(testCtx(t), topicregistry.Registration{
 		Name:          "job.structured",
 		Pool:          "default",
 		InputSchemaID: "demo/input",
@@ -464,7 +464,7 @@ func TestSchedulerSchemaWarnAllows(t *testing.T) {
 		t.Fatalf("HandlePacket returned error: %v", err)
 	}
 
-	state, err := jobStore.GetState(context.Background(), req.JobId)
+	state, err := jobStore.GetState(testCtx(t), req.JobId)
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
@@ -746,7 +746,7 @@ func TestAttestedWorkerAccepted(t *testing.T) {
 	service, cache, cleanup := newWorkerAttestationTestDeps(t)
 	defer cleanup()
 
-	issued, err := service.Create(context.Background(), workercredentials.IssueInput{
+	issued, err := service.Create(testCtx(t), workercredentials.IssueInput{
 		WorkerID:     "worker-attested",
 		AllowedPools: []string{"default"},
 		CreatedBy:    "test",
@@ -754,7 +754,7 @@ func TestAttestedWorkerAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := cache.Refresh(context.Background()); err != nil {
+	if err := cache.Refresh(testCtx(t)); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 
@@ -780,14 +780,14 @@ func TestUnattestedWorkerWarnMode(t *testing.T) {
 	service, cache, cleanup := newWorkerAttestationTestDeps(t)
 	defer cleanup()
 
-	if _, err := service.Create(context.Background(), workercredentials.IssueInput{
+	if _, err := service.Create(testCtx(t), workercredentials.IssueInput{
 		WorkerID:     "worker-warn",
 		AllowedPools: []string{"default"},
 		CreatedBy:    "test",
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := cache.Refresh(context.Background()); err != nil {
+	if err := cache.Refresh(testCtx(t)); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 
@@ -819,14 +819,14 @@ func TestUnattestedWorkerEnforceMode(t *testing.T) {
 	service, cache, cleanup := newWorkerAttestationTestDeps(t)
 	defer cleanup()
 
-	if _, err := service.Create(context.Background(), workercredentials.IssueInput{
+	if _, err := service.Create(testCtx(t), workercredentials.IssueInput{
 		WorkerID:     "worker-enforce",
 		AllowedPools: []string{"default"},
 		CreatedBy:    "test",
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := cache.Refresh(context.Background()); err != nil {
+	if err := cache.Refresh(testCtx(t)); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 
@@ -991,7 +991,7 @@ func TestProcessJobReadinessRequiredFiltersUnreadyWorkers(t *testing.T) {
 		t.Fatalf("handle heartbeat: %v", err)
 	}
 
-	err := engine.processJob(context.Background(), &pb.JobRequest{JobId: "job-unready", Topic: "job.default"}, "trace-unready")
+	err := engine.processJob(testCtx(t), &pb.JobRequest{JobId: "job-unready", Topic: "job.default"}, "trace-unready")
 	if err == nil {
 		t.Fatal("expected retryable error when readiness is required but missing")
 	}
@@ -1006,7 +1006,7 @@ func TestProcessJobReadinessRequiredFiltersUnreadyWorkers(t *testing.T) {
 	if err := engine.HandlePacket(newHandshakePacket("worker-ready", "job.default")); err != nil {
 		t.Fatalf("handle handshake: %v", err)
 	}
-	if err := engine.processJob(context.Background(), &pb.JobRequest{JobId: "job-ready", Topic: "job.default"}, "trace-ready"); err != nil {
+	if err := engine.processJob(testCtx(t), &pb.JobRequest{JobId: "job-ready", Topic: "job.default"}, "trace-ready"); err != nil {
 		t.Fatalf("process job after readiness: %v", err)
 	}
 
@@ -1096,7 +1096,7 @@ func TestWorkerCredentialCacheRefreshMergesRecordsAndKeepsExistingOnFailure(t *t
 		}, nil
 	}
 
-	if err := cache.Refresh(context.Background()); err != nil {
+	if err := cache.Refresh(testCtx(t)); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 
@@ -1114,7 +1114,7 @@ func TestWorkerCredentialCacheRefreshMergesRecordsAndKeepsExistingOnFailure(t *t
 	cache.list = func(context.Context) ([]workercredentials.Credential, error) {
 		return nil, errors.New("boom")
 	}
-	if err := cache.Refresh(context.Background()); err != nil {
+	if err := cache.Refresh(testCtx(t)); err != nil {
 		t.Fatalf("Refresh after error: %v", err)
 	}
 
@@ -1132,7 +1132,7 @@ func TestProcessJobRetriesWhenTopicRegistryUnavailableAndSchemaEnforced(t *testi
 	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
 		WithSchemaEnforcement(infraSchema.EnforcementEnforce)
 
-	err := engine.processJob(context.Background(), &pb.JobRequest{JobId: "job-registry-down", Topic: "job.default"}, "trace-registry-down")
+	err := engine.processJob(testCtx(t), &pb.JobRequest{JobId: "job-registry-down", Topic: "job.default"}, "trace-registry-down")
 	if err == nil {
 		t.Fatal("expected retryable error when topic registry is unavailable in enforce mode")
 	}
@@ -1157,7 +1157,7 @@ func TestProcessJobPublishesToSubject(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-123"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-123"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -1190,7 +1190,7 @@ func TestProcessJobApprovalGateFirstVisitStoresSyntheticDecision(t *testing.T) {
 		Topic: capsdk.SubjectApprovalGate,
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-gate-1"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-gate-1"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 	if got := jobStore.states["job-gate-1"]; got != JobStateApproval {
@@ -1239,7 +1239,7 @@ func TestProcessJobApprovalGateApprovedAutoCompletes(t *testing.T) {
 		JobHash:          jobHash,
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-gate-2"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-gate-2"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -1275,7 +1275,7 @@ func TestProcessJobApprovalGateStoreFailureReturnsRetryableError(t *testing.T) {
 		JobId: "job-gate-3",
 		Topic: capsdk.SubjectApprovalGate,
 	}
-	err := engine.processJob(context.Background(), req, "trace-gate-3")
+	err := engine.processJob(testCtx(t), req, "trace-gate-3")
 	retryErr, ok := err.(*retryableError)
 	if !ok {
 		t.Fatalf("expected retryable error, got %v", err)
@@ -1314,7 +1314,7 @@ func TestProcessJobApprovalGatePublishFailureReturnsRetryableError(t *testing.T)
 		JobHash:          jobHash,
 	}
 
-	err = engine.processJob(context.Background(), req, "trace-gate-4")
+	err = engine.processJob(testCtx(t), req, "trace-gate-4")
 	retryErr, ok := err.(*retryableError)
 	if !ok {
 		t.Fatalf("expected retryable error, got %v", err)
@@ -1365,7 +1365,7 @@ func TestApprovedWorkerJobNotAutoCompleted(t *testing.T) {
 		JobHash:          jobHash,
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-worker-approved"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-worker-approved"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -1417,7 +1417,7 @@ func TestApprovalGateTopicStillAutoCompletes(t *testing.T) {
 		bus.published = nil
 		jobStore.states = map[string]JobState{}
 
-		if err := engine.processJob(context.Background(), req, "trace-"+jobID); err != nil {
+		if err := engine.processJob(testCtx(t), req, "trace-"+jobID); err != nil {
 			t.Fatalf("process job %s: %v", topic, err)
 		}
 		if got := jobStore.states[jobID]; got != JobStateSucceeded {
@@ -1461,7 +1461,7 @@ func TestCancelJobPublishesOnlyCancelSubject(t *testing.T) {
 
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), jobStore, nil)
 
-	if err := engine.CancelJob(context.Background(), "job-1"); err != nil {
+	if err := engine.CancelJob(testCtx(t), "job-1"); err != nil {
 		t.Fatalf("cancel job: %v", err)
 	}
 
@@ -1512,7 +1512,7 @@ func TestProcessJobInjectsEffectiveConfig(t *testing.T) {
 		},
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-ec"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-ec"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -1547,7 +1547,7 @@ func TestProcessJobBlockedBySafety(t *testing.T) {
 		Topic: "sys.destroy",
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-block"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-block"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -1581,7 +1581,7 @@ func TestProcessJob_SetStateDeniedFailure_ReturnsRetryable(t *testing.T) {
 		Topic: "sys.destroy",
 	}
 
-	err := engine.processJob(context.Background(), req, "trace-retry-denied")
+	err := engine.processJob(testCtx(t), req, "trace-retry-denied")
 	if err == nil {
 		t.Fatal("expected retryable error when setJobState(DENIED) fails, got nil — job would be lost")
 	}
@@ -1622,7 +1622,7 @@ func TestProcessJob_SetStateFailedFailure_ReturnsRetryable(t *testing.T) {
 		Topic: "job.nonexistent",
 	}
 
-	err := engine.processJob(context.Background(), req, "trace-retry-failed")
+	err := engine.processJob(testCtx(t), req, "trace-retry-failed")
 	if err == nil {
 		t.Fatal("expected retryable error when setJobState(FAILED) fails, got nil — job would be stuck")
 	}
@@ -1647,7 +1647,7 @@ func TestProcessJob_DLQEmitFailure_ReturnsRetryable(t *testing.T) {
 		Topic: "sys.destroy", // blocked by SafetyBasic → DENIED path → DLQ emit
 	}
 
-	err := engine.processJob(context.Background(), req, "trace-dlq-retry")
+	err := engine.processJob(testCtx(t), req, "trace-dlq-retry")
 	if err == nil {
 		t.Fatal("expected retryable error when DLQ emit fails, got nil — denied job silently lost from audit trail")
 	}
@@ -1667,7 +1667,7 @@ func TestProcessJob_DLQEmitFailure_ReturnsRetryable(t *testing.T) {
 	bus.published = nil
 	bus.mu.Unlock()
 
-	err = engine.processJob(context.Background(), req, "trace-dlq-retry-2")
+	err = engine.processJob(testCtx(t), req, "trace-dlq-retry-2")
 	if err != nil {
 		t.Fatalf("second attempt should succeed, got: %v", err)
 	}
@@ -1724,7 +1724,7 @@ func TestProcessJobSkipsInvalidRequest(t *testing.T) {
 		Topic: "",
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-invalid"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-invalid"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -1801,7 +1801,7 @@ func TestHandleJobResultFatalTriggersRollback(t *testing.T) {
 			Topic: "job.undo",
 		},
 	}
-	if err := saga.RecordCompensation(context.Background(), seedReq); err != nil {
+	if err := saga.RecordCompensation(testCtx(t), seedReq); err != nil {
 		t.Fatalf("record compensation: %v", err)
 	}
 
@@ -1820,7 +1820,7 @@ func TestHandleJobResultFatalTriggersRollback(t *testing.T) {
 		t.Fatalf("handle job result: %v", err)
 	}
 
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	waitCtx, waitCancel := context.WithTimeout(testCtx(t), 2*time.Second)
 	defer waitCancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -1877,7 +1877,7 @@ func TestProcessJobSafetyUnavailableRetries(t *testing.T) {
 		Topic: "sys.unavailable",
 	}
 
-	err := engine.processJob(context.Background(), req, "trace-unavail")
+	err := engine.processJob(testCtx(t), req, "trace-unavail")
 	if err == nil {
 		t.Fatal("expected retryable error for SafetyUnavailable, got nil")
 	}
@@ -1992,7 +1992,7 @@ func TestProcessJobMaxSchedulingRetriesFailsToDLQ(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-stuck"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-stuck"); err != nil {
 		t.Fatalf("expected nil (job failed to DLQ), got: %v", err)
 	}
 
@@ -2028,7 +2028,7 @@ func TestProcessJobBelowMaxRetriesStillRetries(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	err := engine.processJob(context.Background(), req, "trace-retry")
+	err := engine.processJob(testCtx(t), req, "trace-retry")
 	if err == nil {
 		t.Fatal("expected retryable error, got nil")
 	}
@@ -2059,7 +2059,7 @@ func TestProcessJobIncrAttemptsNotCalledOnSuccess(t *testing.T) {
 		Topic: "job.default",
 	}
 
-	if err := engine.processJob(context.Background(), req, "trace-ok"); err != nil {
+	if err := engine.processJob(testCtx(t), req, "trace-ok"); err != nil {
 		t.Fatalf("process job: %v", err)
 	}
 
@@ -2413,7 +2413,7 @@ func TestSetJobStateFailureReturnsRetryNotNil(t *testing.T) {
 			registry := newTestRegistry(t)
 			engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
 
-			err := engine.processJob(context.Background(), tc.req, "trace-fail")
+			err := engine.processJob(testCtx(t), tc.req, "trace-fail")
 			if err == nil {
 				t.Fatal("expected retryable error when setJobState fails, got nil — job would be lost")
 			}
@@ -2455,7 +2455,7 @@ func TestSetJobStateFailureApprovalReturnsRetry(t *testing.T) {
 		Topic: "job.test",
 	}
 
-	err := engine.processJob(context.Background(), req, "trace-approval-fail")
+	err := engine.processJob(testCtx(t), req, "trace-approval-fail")
 	if err == nil {
 		t.Fatal("expected retryable error when setJobState(APPROVAL) fails, got nil — job stuck forever")
 	}
@@ -2520,7 +2520,7 @@ func TestTenantMismatchRejectsJob(t *testing.T) {
 	}
 
 	// Job should not have been processed — state should be empty (never set).
-	state, _ := store.GetState(context.Background(), "job-tenant-mismatch")
+	state, _ := store.GetState(testCtx(t), "job-tenant-mismatch")
 	if state != "" {
 		t.Fatalf("expected empty state for rejected job, got %q", state)
 	}
@@ -2556,7 +2556,7 @@ func TestTenantMatchAcceptsJob(t *testing.T) {
 	}
 
 	// Job should have been processed — state set.
-	state, getErr := store.GetState(context.Background(), "job-tenant-match")
+	state, getErr := store.GetState(testCtx(t), "job-tenant-match")
 	if getErr != nil {
 		t.Fatalf("expected job state to exist after processing, got err: %v", getErr)
 	}
@@ -2586,5 +2586,5 @@ func TestProcessJobTenantMatchProceeds(t *testing.T) {
 	// It should proceed past the tenant check into safety/dispatch logic.
 	// With no workers registered, it returns a retryable scheduling error — that's fine,
 	// it proves the job passed the tenant check.
-	_ = engine.processJob(context.Background(), req, "trace-tenant-ok")
+	_ = engine.processJob(testCtx(t), req, "trace-tenant-ok")
 }

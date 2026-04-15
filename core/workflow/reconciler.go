@@ -10,6 +10,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -94,7 +95,11 @@ func (r *reconciler) HandleJobResult(ctx context.Context, jr *pb.JobResult) erro
 		if token == "" {
 			return bus.RetryAfter(fmt.Errorf("run lock busy"), 500*time.Millisecond)
 		}
-		defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
+		defer func() {
+			if rlErr := r.jobStore.ReleaseLock(context.Background(), lockKey, token); rlErr != nil {
+				slog.Warn("lock release failed", "lock_key", lockKey, "error", rlErr)
+			}
+		}()
 	}
 	if r.engine != nil {
 		if err := r.engine.HandleJobResult(ctx, jr); err != nil {
@@ -148,7 +153,13 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 	if token == "" {
 		return
 	}
-	defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer releaseCancel()
+		if rlErr := r.jobStore.ReleaseLock(releaseCtx, lockKey, token); rlErr != nil {
+			slog.Warn("lock release failed, TTL will expire", "lock_key", lockKey, "error", rlErr)
+		}
+	}()
 
 	run, err := r.workflowStore.GetRun(ctx, runID)
 	if err != nil || run == nil {
@@ -208,6 +219,11 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 		_ = r.engine.HandleJobResult(ctx, jr)
 	}
 
+	// Detect approval steps stuck in Waiting with no corresponding job in the
+	// scheduler. This handles the crash gap between UpdateRun (step=Waiting)
+	// and Publish (approval job dispatch) in scheduleReady.
+	r.reconcileStuckWaitingSteps(ctx, run)
+
 	if err := r.engine.StartRun(ctx, run.WorkflowID, run.ID); err != nil {
 		slog.Error("reconciler: StartRun failed, will retry next tick",
 			"run_id", run.ID, "workflow_id", run.WorkflowID, "error", err)
@@ -246,7 +262,13 @@ func (r *reconciler) reconcileOrphanedJobs(ctx context.Context, runID string) {
 	if token == "" {
 		return
 	}
-	defer func() { _ = r.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer releaseCancel()
+		if rlErr := r.jobStore.ReleaseLock(releaseCtx, lockKey, token); rlErr != nil {
+			slog.Warn("lock release failed, TTL will expire", "lock_key", lockKey, "error", rlErr)
+		}
+	}()
 
 	reason := "orphaned after workflow " + string(run.Status)
 	for _, jobID := range orphaned {
@@ -312,6 +334,100 @@ func jobStatusFromState(state model.JobState) pb.JobStatus {
 		return pb.JobStatus_JOB_STATUS_CANCELLED
 	default:
 		return pb.JobStatus_JOB_STATUS_UNSPECIFIED
+	}
+}
+
+// reconcileStuckWaitingSteps detects approval steps stuck in Waiting state
+// because a crash occurred after UpdateRun persisted the Waiting status but
+// before the approval job was published to the bus. Resets stuck steps to
+// Pending so scheduleReady re-dispatches the approval job on the next tick.
+func (r *reconciler) reconcileStuckWaitingSteps(ctx context.Context, run *WorkflowRun) {
+	if run == nil || r.jobStore == nil {
+		return
+	}
+	const (
+		gracePeriod = 30 * time.Second
+		maxRetries  = 3
+	)
+
+	now := time.Now().UTC()
+	modified := false
+
+	for stepID, sr := range run.Steps {
+		if sr == nil || sr.Status != StepStatusWaiting || sr.JobID == "" {
+			continue
+		}
+		// Grace period: skip steps that just entered Waiting — the publish
+		// may still be in flight on another goroutine.
+		if sr.StartedAt != nil && now.Sub(*sr.StartedAt) < gracePeriod {
+			continue
+		}
+		// Check if the approval job exists in the scheduler.
+		state, err := r.jobStore.GetState(ctx, sr.JobID)
+		if err != nil && !errors.Is(err, redis.Nil) {
+			slog.Error("reconciler: GetState for waiting step failed",
+				"run_id", run.ID, "job_id", sr.JobID, "step_id", stepID, "error", err)
+			continue
+		}
+		// Job exists (any state including PENDING, APPROVAL_REQUIRED, etc.) — not stuck.
+		if err == nil && state != "" {
+			continue
+		}
+		// Job not found — approval job was never dispatched (crash gap).
+		retries := reconcileRetryCount(sr)
+		if retries >= maxRetries {
+			slog.Error("reconciler: stuck approval step exceeded max retries, marking failed",
+				"run_id", run.ID, "step_id", stepID, "job_id", sr.JobID, "retries", retries)
+			sr.Status = StepStatusFailed
+			sr.CompletedAt = &now
+			sr.Error = map[string]any{
+				"message":             "approval dispatch failed after reconciler recovery attempts",
+				"_reconcile_retries": retries,
+			}
+			run.Steps[stepID] = sr
+			modified = true
+			continue
+		}
+		// Reset to Pending for re-dispatch by scheduleReady.
+		slog.Warn("reconciler: resetting stuck approval step to Pending for re-dispatch",
+			"run_id", run.ID, "step_id", stepID, "job_id", sr.JobID, "retry", retries+1)
+		sr.Status = StepStatusPending
+		sr.JobID = ""
+		sr.Attempts = 0
+		sr.StartedAt = nil
+		if sr.Error == nil {
+			sr.Error = make(map[string]any)
+		}
+		sr.Error["_reconcile_retries"] = float64(retries + 1)
+		run.Steps[stepID] = sr
+		modified = true
+	}
+
+	if modified {
+		if err := r.workflowStore.UpdateRun(ctx, run); err != nil {
+			slog.Error("reconciler: failed to persist stuck approval step recovery",
+				"run_id", run.ID, "error", err)
+		}
+	}
+}
+
+// reconcileRetryCount extracts the reconciler retry count from a step's Error map.
+func reconcileRetryCount(sr *StepRun) int {
+	if sr == nil || sr.Error == nil {
+		return 0
+	}
+	rc, ok := sr.Error["_reconcile_retries"]
+	if !ok {
+		return 0
+	}
+	// JSON round-trips numbers as float64.
+	switch v := rc.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		return 0
 	}
 }
 

@@ -584,3 +584,74 @@ func TestWithJobLock_ConcurrentAbandonedFlagSafe(t *testing.T) {
 		t.Fatalf("expected %d abandoned jobs, got %d", concurrency, got)
 	}
 }
+
+func TestLockRenewalGoroutine_StopsOnEngineShutdown(t *testing.T) {
+	store := &renewCountStore{fakeJobStore: newFakeJobStore()}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	ttl := 90 * time.Millisecond // renewal at ttl/3 = 30ms
+
+	// Start a lock that takes a while (simulating work in progress).
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- engine.withJobLock("job-shutdown-test", ttl, func(ctx context.Context) error {
+			close(started)
+			// Wait for context cancellation (engine shutdown) or timeout.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+				return errors.New("timeout — engine shutdown didn't cancel context")
+			}
+		})
+	}()
+
+	// Wait for the lock to be acquired and renewal goroutine to start.
+	<-started
+	time.Sleep(50 * time.Millisecond) // let at least one renewal fire
+	if engine.ActiveRenewals() < 1 {
+		t.Fatal("expected at least 1 active renewal goroutine")
+	}
+
+	// Shutdown the engine — should cancel e.ctx and stop renewal goroutines.
+	engine.Stop()
+
+	// Verify renewal goroutine exited.
+	time.Sleep(100 * time.Millisecond)
+	if got := engine.ActiveRenewals(); got != 0 {
+		t.Fatalf("expected 0 active renewals after shutdown, got %d", got)
+	}
+
+	// Collect the lock result (should be context cancellation or lock-abandoned).
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errLockAbandoned) {
+		t.Logf("lock function returned (expected on shutdown): %v", err)
+	}
+}
+
+func TestActiveRenewals_ReturnsToZeroAfterLock(t *testing.T) {
+	store := newFakeJobStore()
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	if got := engine.ActiveRenewals(); got != 0 {
+		t.Fatalf("expected 0 active renewals initially, got %d", got)
+	}
+
+	// withJobLock starts a renewal goroutine, which should exit after fn returns.
+	err := engine.withJobLock("job-counter-test", 90*time.Millisecond, func(context.Context) error {
+		// Give the goroutine scheduler time to start the renewal goroutine.
+		time.Sleep(10 * time.Millisecond)
+		if engine.ActiveRenewals() < 1 {
+			t.Fatal("expected active renewal during lock hold")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withJobLock: %v", err)
+	}
+
+	// After withJobLock returns, the renewal goroutine should have exited.
+	if got := engine.ActiveRenewals(); got != 0 {
+		t.Fatalf("expected 0 active renewals after lock release, got %d", got)
+	}
+}

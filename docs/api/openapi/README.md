@@ -1,15 +1,16 @@
 # OpenAPI Specs
 
-This directory contains two OpenAPI specifications for the Cordum platform:
+This directory contains the canonical HTTP OpenAPI specification plus the generated protobuf swagger subset:
 
 | File | Source | Description |
 |------|--------|-------------|
-| `cordum-rest.yaml` | Hand-maintained | OpenAPI 3.0.3 spec for all REST/HTTP endpoints |
-| `cordum.swagger.json` | Generated from protobufs | gRPC gateway swagger spec |
+| `cordum-api.yaml` | Hand-maintained | Canonical OpenAPI 3.0.3 spec for the full gateway HTTP surface |
+| `cordum.swagger.json` | Generated from protobufs | Legacy gRPC gateway swagger subset |
+| `cordum-rest.yaml` | Hand-maintained (legacy) | Earlier REST spec retained for reference while downstream tooling migrates |
 
 ## Viewing the specs
 
-Open `index.html` in a browser. A dropdown at the top lets you switch between the REST spec and the gRPC gateway spec.
+Open `index.html` in a browser. A dropdown at the top lets you switch between the canonical HTTP spec and the protobuf-generated swagger subset.
 
 To serve locally:
 
@@ -19,9 +20,10 @@ python -m http.server 8000
 # Open http://localhost:8000
 ```
 
-## Note on run chat endpoints
+## Spec roles
 
-The run chat endpoints (`POST /workflows/runs/:id/chat`, `GET /workflows/runs/:id/chat`) are REST-only and not included in the generated gRPC swagger spec. See `docs/api.md` for their documentation.
+- `cordum-api.yaml` is the source of truth for the gateway HTTP API.
+- `cordum.swagger.json` is still generated from protobuf definitions for the gRPC-transcoded subset and should be treated as a secondary artifact, not the full contract.
 
 ## Generating the gRPC spec
 
@@ -29,27 +31,27 @@ The run chat endpoints (`POST /workflows/runs/:id/chat`, `GET /workflows/runs/:i
 make openapi
 ```
 
-This runs `protoc` with the `openapiv2` plugin and emits `cordum.swagger.json`.
+This runs `protoc` with the `openapiv2` plugin, emits `cordum.swagger.json`, and validates `cordum-api.yaml` with Redocly.
 
-## Maintaining the REST spec
+## Maintaining the canonical HTTP spec
 
-`cordum-rest.yaml` is manually maintained. When gateway routes change:
+`cordum-api.yaml` is manually maintained. When gateway routes change:
 
-1. Check `core/controlplane/gateway/gateway_core.go` for route registrations
-2. Check handler files (`gateway_jobs.go`, `gateway_mcp.go`, etc.) for request/response shapes
-3. Update the relevant path and schema entries in `cordum-rest.yaml`
+1. Check `core/controlplane/gateway/gateway.go` for route registrations
+2. Check handler files in `core/controlplane/gateway/` for request/response shapes
+3. Update the relevant path and schema entries in `cordum-api.yaml`
 4. Validate:
    ```bash
-   python -c "import yaml; yaml.safe_load(open('docs/api/openapi/cordum-rest.yaml'))"
+   npx --yes @redocly/cli@latest lint docs/api/openapi/cordum-api.yaml
    ```
 
-### Structure of cordum-rest.yaml
+### Structure of cordum-api.yaml
 
 - **info** — title, version, description
-- **tags** — 18 logical groups (Auth, Jobs, Workflows, Policy, etc.)
-- **paths** — 75 endpoint definitions with operationId, parameters, requestBody, responses
+- **tags** — logical gateway domains (Auth, Jobs, Workflows, Policy, Workers, MCP, etc.)
+- **paths** — full gateway route inventory, including versioned and legacy MCP aliases
 - **components/securitySchemes** — `apiKey` (X-API-Key header) and `bearerAuth` (JWT)
-- **components/schemas** — 57 reusable schema definitions
+- **components/schemas** — reusable request/response schema definitions
 
 ### Adding a new endpoint
 
@@ -57,4 +59,4 @@ This runs `protoc` with the `openapiv2` plugin and emits `cordum.swagger.json`.
 2. Use an existing schema or define a new one under `components/schemas`
 3. Tag it with the correct group
 4. Set `operationId` to a unique camelCase identifier
-5. Run the YAML validation command above
+5. Run the validation command above

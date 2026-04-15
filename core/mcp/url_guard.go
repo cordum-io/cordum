@@ -99,40 +99,78 @@ func normalizeAllowedHosts(raw []string) []string {
 }
 
 func validateOutboundTargetURL(ctx context.Context, target *url.URL, allowedHosts []string, allowPrivateHosts bool) error {
+	_, err := validateAndResolveOutboundURL(ctx, target, allowedHosts, allowPrivateHosts)
+	return err
+}
+
+// validateAndResolveOutboundURL validates the target URL and returns the resolved
+// IPs. Callers should use pinnedDialer with the returned IPs to prevent DNS
+// rebinding (TOCTOU: domain resolves to a public IP during validation, then to
+// a private IP at connection time).
+func validateAndResolveOutboundURL(ctx context.Context, target *url.URL, allowedHosts []string, allowPrivateHosts bool) ([]net.IP, error) {
 	if target == nil {
-		return errors.New("target URL required")
+		return nil, errors.New("target URL required")
 	}
 	switch strings.ToLower(strings.TrimSpace(target.Scheme)) {
 	case "http", "https":
 		// allowed
 	default:
-		return fmt.Errorf("unsupported URL scheme %q", target.Scheme)
+		return nil, fmt.Errorf("unsupported URL scheme %q", target.Scheme)
 	}
 
 	host := strings.ToLower(strings.TrimSpace(target.Hostname()))
 	if host == "" {
-		return errors.New("target URL missing host")
+		return nil, errors.New("target URL missing host")
 	}
 	if len(allowedHosts) > 0 && !allowedHost(host, allowedHosts) {
-		return fmt.Errorf("target host not allowed: %s", host)
+		return nil, fmt.Errorf("target host not allowed: %s", host)
 	}
 	if allowPrivateHosts {
-		return nil
+		return nil, nil
 	}
 	if outboundPrivateHostnames[host] {
-		return fmt.Errorf("target host resolves to private address: %s", host)
+		return nil, fmt.Errorf("target host resolves to private address: %s", host)
 	}
 
 	ips, err := resolveHostIPs(ctx, host)
 	if err != nil {
-		return fmt.Errorf("target host resolution failed: %w", err)
+		return nil, fmt.Errorf("target host resolution failed: %w", err)
 	}
 	for _, ip := range ips {
 		if isPrivateOutboundIP(ip) {
-			return fmt.Errorf("target host resolves to private address: %s", host)
+			return nil, fmt.Errorf("target host resolves to private address: %s", host)
 		}
 	}
-	return nil
+	return ips, nil
+}
+
+// pinnedDialer returns a DialContext function that connects to one of the
+// pre-resolved IPs instead of re-resolving DNS. This prevents DNS rebinding
+// attacks where a domain resolves to a safe IP during validation but to a
+// private IP (e.g., 127.0.0.1) at connection time.
+func pinnedDialer(pinnedIPs []net.IP) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if len(pinnedIPs) == 0 {
+			// No pinned IPs (e.g., allowPrivateHosts=true) — use default resolution.
+			return dialer.DialContext(ctx, network, addr)
+		}
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+		}
+		// Try each pinned IP in order.
+		var lastErr error
+		for _, ip := range pinnedIPs {
+			pinnedAddr := net.JoinHostPort(ip.String(), port)
+			conn, err := dialer.DialContext(ctx, network, pinnedAddr)
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, fmt.Errorf("all pinned IPs failed: %w", lastErr)
+	}
 }
 
 func allowedHost(host string, allowlist []string) bool {

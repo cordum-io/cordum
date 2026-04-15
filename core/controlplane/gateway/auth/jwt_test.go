@@ -280,16 +280,18 @@ func TestAuthFromClaims_CrossTenantUntrustedIssuer(t *testing.T) {
 	}
 }
 
-func TestAuthFromClaims_CrossTenantNoIssuerConfigured(t *testing.T) {
+func TestAuthFromClaims_CrossTenantWrongIssuer(t *testing.T) {
 	t.Setenv("CORDUM_JWT_HMAC_SECRET", "secret")
-	// No CORDUM_JWT_ISSUER set — cross-tenant should be denied
+	t.Setenv("CORDUM_JWT_ISSUER", "trusted-platform")
 	validator, _, err := newJWTValidatorFromEnv()
 	if err != nil {
 		t.Fatalf("new validator: %v", err)
 	}
 
+	// Token with matching issuer — cross-tenant honored.
 	payload := map[string]any{
 		"sub":                "alice",
+		"iss":                "trusted-platform",
 		"allow_cross_tenant": true,
 		"exp":                time.Now().Add(1 * time.Hour).Unix(),
 	}
@@ -298,31 +300,61 @@ func TestAuthFromClaims_CrossTenantNoIssuerConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if ctx.AllowCrossTenant {
-		t.Fatal("expected AllowCrossTenant=false when no trusted issuer configured")
+	if !ctx.AllowCrossTenant {
+		t.Fatal("expected AllowCrossTenant=true when issuer matches trusted issuer")
+	}
+
+	// Token with wrong issuer — rejected at validation level.
+	payloadBad := map[string]any{
+		"sub":                "alice",
+		"iss":                "untrusted-external",
+		"allow_cross_tenant": true,
+		"exp":                time.Now().Add(1 * time.Hour).Unix(),
+	}
+	badToken := signHS256(t, "secret", payloadBad)
+	_, err = validator.Validate(badToken)
+	if err == nil {
+		t.Fatal("expected validation failure for wrong issuer")
 	}
 }
 
-func TestValidateClaims_MissingIssuerProd(t *testing.T) {
+func TestValidateClaims_DefaultIssuerProd(t *testing.T) {
 	t.Setenv("CORDUM_JWT_HMAC_SECRET", "secret")
+	t.Setenv("CORDUM_JWT_ISSUER", "cordum")
+	t.Setenv("CORDUM_JWT_AUDIENCE", "cordum-api")
 	t.Setenv("CORDUM_PRODUCTION", "true")
-	// No CORDUM_JWT_ISSUER or CORDUM_JWT_AUDIENCE in production mode
+	// Production defaults issuer to "cordum" — dev tokens must be rejected.
 	validator, _, err := newJWTValidatorFromEnv()
 	if err != nil {
 		t.Fatalf("new validator: %v", err)
 	}
 
+	// Token with dev issuer — rejected in production.
 	payload := map[string]any{
 		"sub": "alice",
+		"iss": "cordum-dev",
 		"exp": time.Now().Add(1 * time.Hour).Unix(),
 	}
 	token := signHS256(t, "secret", payload)
 	_, err = validator.Validate(token)
 	if err == nil {
-		t.Fatal("expected error in production mode without issuer configured")
+		t.Fatal("expected error: dev-issued token should be rejected in production")
 	}
-	if !strings.Contains(err.Error(), "issuer validation required") {
-		t.Fatalf("expected 'issuer validation required' in error, got: %v", err)
+	if !strings.Contains(err.Error(), "issuer mismatch") {
+		t.Fatalf("expected 'issuer mismatch' in error, got: %v", err)
+	}
+
+	// Token with correct production issuer — accepted.
+	payloadOK := map[string]any{
+		"sub": "alice",
+		"iss": "cordum",
+		"aud": "cordum-api",
+		"exp": time.Now().Add(1 * time.Hour).Unix(),
+	}
+	goodToken := signHS256(t, "secret", payloadOK)
+	_, err = validator.Validate(goodToken)
+	if err != nil {
+		t.Fatalf("expected production token with matching issuer to pass, got: %v", err)
 	}
 }
 
@@ -437,5 +469,85 @@ func TestReloadableJWTValidator_NilWhenNoConfig(t *testing.T) {
 	}
 	if rv != nil {
 		t.Fatal("expected nil when no JWT config")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// JWT issuer validation — always enforced
+// ---------------------------------------------------------------------------
+
+// TestJWTIssuer_MissingIssuer_Rejected verifies that a token without an iss
+// claim is rejected even in non-production mode.
+func TestJWTIssuer_MissingIssuer_Rejected(t *testing.T) {
+	t.Setenv("CORDUM_JWT_HMAC_SECRET", "secret")
+	// No CORDUM_JWT_ISSUER — defaults to "cordum-dev" in non-production.
+	validator, _, err := newJWTValidatorFromEnv()
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+
+	payload := map[string]any{
+		"sub": "alice",
+		"exp": time.Now().Add(1 * time.Hour).Unix(),
+		// No "iss" claim.
+	}
+	token := signHS256(t, "secret", payload)
+	_, err = validator.Validate(token)
+	if err == nil {
+		t.Fatal("expected error: token without iss should be rejected")
+	}
+	if !strings.Contains(err.Error(), "issuer mismatch") {
+		t.Fatalf("expected 'issuer mismatch' error, got: %v", err)
+	}
+}
+
+// TestJWTIssuer_DefaultDevIssuer_Accepted verifies that a token with the
+// default dev issuer ("cordum-dev") is accepted when no CORDUM_JWT_ISSUER is set.
+func TestJWTIssuer_DefaultDevIssuer_Accepted(t *testing.T) {
+	t.Setenv("CORDUM_JWT_HMAC_SECRET", "secret")
+	// No CORDUM_JWT_ISSUER — defaults to "cordum-dev".
+	validator, _, err := newJWTValidatorFromEnv()
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+
+	payload := map[string]any{
+		"sub": "alice",
+		"iss": "cordum-dev",
+		"exp": time.Now().Add(1 * time.Hour).Unix(),
+	}
+	token := signHS256(t, "secret", payload)
+	ctx, err := validator.Validate(token)
+	if err != nil {
+		t.Fatalf("expected token with default dev issuer to pass, got: %v", err)
+	}
+	if ctx.PrincipalID != "alice" {
+		t.Fatalf("expected principal alice, got %s", ctx.PrincipalID)
+	}
+}
+
+// TestJWTIssuer_DevToken_RejectedInProd verifies that a token with iss="cordum-dev"
+// is rejected when the configured issuer is "cordum" (production default).
+func TestJWTIssuer_DevToken_RejectedInProd(t *testing.T) {
+	t.Setenv("CORDUM_JWT_HMAC_SECRET", "secret")
+	t.Setenv("CORDUM_JWT_ISSUER", "cordum")
+
+	validator, _, err := newJWTValidatorFromEnv()
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+
+	payload := map[string]any{
+		"sub": "alice",
+		"iss": "cordum-dev",
+		"exp": time.Now().Add(1 * time.Hour).Unix(),
+	}
+	token := signHS256(t, "secret", payload)
+	_, err = validator.Validate(token)
+	if err == nil {
+		t.Fatal("expected error: dev-issued token must be rejected by production issuer")
+	}
+	if !strings.Contains(err.Error(), "issuer mismatch") {
+		t.Fatalf("expected 'issuer mismatch' error, got: %v", err)
 	}
 }

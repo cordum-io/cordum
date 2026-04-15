@@ -16,6 +16,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/licensing"
 	"log/slog"
 
@@ -152,7 +153,19 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectResult, err)
 	}
 
-	srv := startHealthServer(httpAddr)
+	wfProbes := health.New()
+	wfProbes.RegisterReadiness("redis", func(ctx context.Context) error {
+		return jobStore.Ping(ctx)
+	})
+	wfProbes.RegisterReadiness("nats", func(ctx context.Context) error {
+		if !natsBus.IsConnected() {
+			return fmt.Errorf("disconnected")
+		}
+		return nil
+	})
+	wfProbes.SetStartupComplete()
+
+	srv := startHealthServer(httpAddr, wfProbes)
 	slog.Info("started", "http", httpAddr, "scan_interval", scanInterval.String(), "run_scan_limit", runScanLimit)
 
 	<-ctx.Done()
@@ -160,18 +173,23 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	slog.Info("shutting down gracefully", "timeout", defaultShutdownTimeout.String())
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("http server shutdown failed", "error", err)
+	}
 
 	slog.Info("stopped")
 	return nil
 }
 
-func startHealthServer(addr string) *http.Server {
+func startHealthServer(addr string, probes *health.ProbeServer) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	if probes != nil {
+		probes.Register(mux)
+	}
 
 	srv := &http.Server{
 		Addr:         addr,

@@ -44,20 +44,27 @@ spec:
           value: /etc/cordum/tls/server/tls.crt
         - name: GATEWAY_HTTP_TLS_KEY
           value: /etc/cordum/tls/server/tls.key
-        livenessProbe:
+        startupProbe:
           httpGet:
-            path: /health
+            path: /livez
             port: 8081
             scheme: HTTPS
-          initialDelaySeconds: 5
+          failureThreshold: 30
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+            scheme: HTTPS
+          initialDelaySeconds: 10
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
+            path: /readyz
             port: 8081
             scheme: HTTPS
           initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
         volumeMounts:
         - name: cordum-client-tls
           mountPath: /etc/cordum/tls/client

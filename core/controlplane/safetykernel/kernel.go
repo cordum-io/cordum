@@ -30,6 +30,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	infraHealth "github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
@@ -43,6 +44,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/protobuf/proto"
 )
@@ -69,16 +71,21 @@ type server struct {
 }
 
 const (
-	defaultPolicyConfigID       = "policy"
-	defaultPolicyConfigKey      = "bundles"
-	envDecisionCacheTTL         = "SAFETY_DECISION_CACHE_TTL"
-	envDecisionCacheMaxSize     = "SAFETY_DECISION_CACHE_MAX_SIZE"
-	envPolicyMaxBytes           = "SAFETY_POLICY_MAX_BYTES"
-	defaultPolicyMaxBytes       = 2 * 1024 * 1024
-	defaultDecisionCacheMaxSize = 10000
-	snapshotHistoryKey          = "cordum:safety:snapshots"
-	snapshotHistoryMax          = 10
-	customPolicyBundlePrefix    = "secops/"
+	defaultPolicyConfigID           = "policy"
+	defaultPolicyConfigKey          = "bundles"
+	envDecisionCacheTTL             = "SAFETY_DECISION_CACHE_TTL"
+	envDecisionCacheMaxSize         = "SAFETY_DECISION_CACHE_MAX_SIZE"
+	envPolicyMaxBytes               = "SAFETY_POLICY_MAX_BYTES"
+	defaultPolicyMaxBytes           = 2 * 1024 * 1024
+	defaultDecisionCacheMaxSize     = 10000
+	snapshotHistoryKey              = "cordum:safety:snapshots"
+	snapshotHistoryMax              = 10
+	customPolicyBundlePrefix        = "secops/"
+	envGRPCServerKeepaliveTime      = "CORDUM_GRPC_SERVER_KEEPALIVE_TIME"
+	envGRPCServerKeepaliveTimeout   = "CORDUM_GRPC_SERVER_KEEPALIVE_TIMEOUT"
+	envGRPCServerMaxConnectionAge   = "CORDUM_GRPC_SERVER_MAX_CONNECTION_AGE"
+	envGRPCServerMaxConnectionGrace = "CORDUM_GRPC_SERVER_MAX_CONNECTION_AGE_GRACE"
+	envGRPCServerEnforcementMinTime = "CORDUM_GRPC_SERVER_ENFORCEMENT_MIN_TIME"
 )
 
 type cacheEntry struct {
@@ -260,7 +267,19 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		}()
 	}
 
-	grpcServer := grpc.NewServer(serverCreds)
+	grpcServer := grpc.NewServer(
+		serverCreds,
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
+			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
+			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
+			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
+			PermitWithoutStream: true,
+		}),
+	)
 	pb.RegisterSafetyKernelServer(grpcServer, srv)
 	pb.RegisterOutputPolicyServiceServer(grpcServer, srv)
 	healthSrv := health.NewServer()
@@ -269,6 +288,42 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	if env.Bool(env.EnvGRPCReflection) {
 		reflection.Register(grpcServer)
 	}
+
+	// Admin HTTP server for health probes (Docker/K8s).
+	adminAddr := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_ADMIN_ADDR"))
+	if adminAddr == "" {
+		adminAddr = ":9095"
+	}
+	skProbes := infraHealth.New()
+	skProbes.RegisterReadiness("redis", func(ctx context.Context) error {
+		if srv.resultClient == nil {
+			return fmt.Errorf("not initialized")
+		}
+		return srv.resultClient.Ping(ctx).Err()
+	})
+	adminMux := http.NewServeMux()
+	skProbes.Register(adminMux)
+	adminMux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	adminSrv := &http.Server{
+		Addr:              adminAddr,
+		Handler:           adminMux,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	go func() {
+		slog.Info("safety-kernel: admin server started", "addr", adminAddr)
+		if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("safety-kernel: admin server error", "error", err)
+		}
+	}()
+	skProbes.SetStartupComplete()
 
 	slog.Info("safety-kernel: listening", "addr", cfg.SafetyKernelAddr)
 
@@ -626,7 +681,6 @@ func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 }
 
 func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
-	currentVersion := s.policyVersion.Load()
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if s.cache == nil {
@@ -636,7 +690,10 @@ func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
 	if !ok {
 		return nil
 	}
-	if entry.policyVersion != currentVersion {
+	// Read version inside cacheMu to prevent TOCTOU: setPolicyWithBundleCount
+	// bumps the atomic version before clearing cache under this same lock, so
+	// any read here always reflects the latest version.
+	if entry.policyVersion != s.policyVersion.Load() {
 		delete(s.cache, key)
 		return nil
 	}

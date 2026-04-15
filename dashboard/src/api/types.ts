@@ -593,6 +593,101 @@ export interface PolicyRollbackRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Policy Replay
+// ---------------------------------------------------------------------------
+
+export interface PolicyReplayFilter {
+  tenant?: string;
+  topic_pattern?: string;
+  original_decision?: string;
+}
+
+export interface PolicyReplayRequest {
+  from: string;
+  to: string;
+  filters?: PolicyReplayFilter;
+  candidate_bundle_id?: string;
+  candidate_content?: string;
+  use_current_policy?: boolean;
+  max_jobs?: number;
+}
+
+export interface PolicyReplaySummary {
+  total_jobs: number;
+  evaluated: number;
+  escalated: number;
+  relaxed: number;
+  unchanged: number;
+  errored: number;
+}
+
+export interface PolicyReplayRuleHit {
+  rule_id: string;
+  decision: string;
+  count: number;
+}
+
+export interface PolicyReplayChange {
+  job_id: string;
+  topic: string;
+  tenant: string;
+  original_decision: string;
+  new_decision: string;
+  new_rule_id?: string;
+  new_reason?: string;
+  direction: "escalated" | "relaxed" | "unchanged";
+}
+
+export interface PolicyReplayTimeRange {
+  from: string;
+  to: string;
+}
+
+export interface PolicyReplayResponse {
+  replay_id: string;
+  policy_snapshot: string;
+  time_range: PolicyReplayTimeRange;
+  summary: PolicyReplaySummary;
+  rule_hits: PolicyReplayRuleHit[];
+  changes: PolicyReplayChange[];
+  warnings: string[];
+  errors: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Policy Analytics
+// ---------------------------------------------------------------------------
+
+export interface PolicyAnalyticsRequest {
+  from: string;
+  to: string;
+  rule_filter?: string;
+}
+
+export interface RuleAnalytics {
+  rule_id: string;
+  hit_count: number;
+  approval_count: number;
+  override_count: number;
+  override_rate: number;
+  avg_approval_latency_ms: number;
+  daily_hits: number[];
+}
+
+export interface PolicyAnalyticsSummary {
+  total_rules: number;
+  total_hits: number;
+  total_overrides: number;
+  highest_override_rule_id: string;
+}
+
+export interface PolicyAnalyticsResponse {
+  time_range: { from: string; to: string };
+  rules: RuleAnalytics[];
+  summary: PolicyAnalyticsSummary;
+}
+
+// ---------------------------------------------------------------------------
 // Workers
 // ---------------------------------------------------------------------------
 
@@ -840,6 +935,50 @@ export interface Approval {
   approval_actionability?: ApprovalActionability;
   approval_revision?: number;
   approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  // Enriched context fields (mapped from backend).
+  blastRadius?: BlastRadius;
+  priorApprovals?: PriorApproval[];
+  rollbackHint?: string;
+  policySnapshotSummary?: ApprovalPolicySnapshot;
+}
+
+// Enriched approval context types for decision-grade UX.
+export interface BlastRadius {
+  systems: string[];
+  namespaces: string[];
+  resources: string[];
+  scopeDescription: string;
+}
+
+export interface PriorApproval {
+  jobId: string;
+  topic: string;
+  tenant: string;
+  decision: string;
+  resolvedBy: string;
+  resolvedAt: number;
+  wasApproved: boolean;
+}
+
+export interface ApprovalPolicySnapshot {
+  ruleCount: number;
+  matchedRule: {
+    id: string;
+    description: string;
+    decision: string;
+    constraintsSummary: string;
+  };
+  policyVersion: string;
+}
+
+export interface ApprovalContext {
+  approval: Record<string, unknown>;
+  blastRadius: BlastRadius;
+  priorApprovals: PriorApproval[];
+  rollbackHint: string;
+  policySnapshotSummary: ApprovalPolicySnapshot;
+  timeRemainingMs: number | null;
+  constraints: Record<string, unknown> | null;
 }
 
 export interface ApprovalHistoryEntry {

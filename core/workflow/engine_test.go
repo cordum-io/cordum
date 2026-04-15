@@ -99,7 +99,7 @@ func TestEngineForEachFanoutAndAggregateSuccess(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -114,31 +114,31 @@ func TestEngineForEachFanoutAndAggregateSuccess(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 2 {
 		t.Fatalf("expected 2 fan-out publishes, got %d", bus.Count())
 	}
 
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-foreach:fan[0]@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-foreach:fan[1]@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded, got %s", final.Status)
 	}
@@ -166,7 +166,7 @@ func TestEngineForEachFanoutLimitExceeded(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -181,18 +181,18 @@ func TestEngineForEachFanoutLimitExceeded(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 0 {
 		t.Fatalf("expected no fan-out publishes, got %d", bus.Count())
 	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusFailed {
 		t.Fatalf("expected run failed, got %s", final.Status)
 	}
@@ -203,7 +203,7 @@ func TestEngineForEachFanoutLimitExceeded(t *testing.T) {
 		t.Fatalf("expected error message on step")
 	}
 
-	events, err := store.ListTimelineEvents(context.Background(), run.ID, 20)
+	events, err := store.ListTimelineEvents(testCtx(t), run.ID, 20)
 	if err != nil {
 		t.Fatalf("list timeline: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -245,18 +245,18 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 		Steps:      map[string]*StepRun{},
 		Status:     RunStatusPending,
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 1 {
 		t.Fatalf("expected 1 publish, got %d", bus.Count())
 	}
 
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-retry:step@1",
 		Status: pb.JobStatus_JOB_STATUS_FAILED,
 	}); err != nil {
@@ -275,13 +275,13 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 		t.Fatalf("expected retry publish, got %d", bus.Count())
 	}
 
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-retry:step@2",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded after retry, got %s", final.Status)
 	}
@@ -315,7 +315,7 @@ func TestEngineStepMetadataPropagates(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -326,11 +326,11 @@ func TestEngineStepMetadataPropagates(t *testing.T) {
 		Steps:      map[string]*StepRun{},
 		Status:     RunStatusPending,
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 1 {
@@ -390,7 +390,7 @@ func TestEngineDelayStepCompletes(t *testing.T) {
 			"wait": {ID: "wait", Type: StepTypeDelay, DelaySec: 1},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -400,11 +400,11 @@ func TestEngineDelayStepCompletes(t *testing.T) {
 		Steps:      map[string]*StepRun{},
 		Status:     RunStatusPending,
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 0 {
@@ -415,7 +415,7 @@ func TestEngineDelayStepCompletes(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var final *WorkflowRun
 	for time.Now().Before(deadline) {
-		final, _ = store.GetRun(context.Background(), run.ID)
+		final, _ = store.GetRun(testCtx(t), run.ID)
 		if final.Status == RunStatusSucceeded {
 			break
 		}
@@ -448,7 +448,7 @@ func TestEngineNotifyStepEmitsEvent(t *testing.T) {
 			"notify": {ID: "notify", Type: StepTypeNotify, Input: map[string]any{"message": "hello"}},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -458,11 +458,11 @@ func TestEngineNotifyStepEmitsEvent(t *testing.T) {
 		Steps:      map[string]*StepRun{},
 		Status:     RunStatusPending,
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 1 {
@@ -475,7 +475,7 @@ func TestEngineNotifyStepEmitsEvent(t *testing.T) {
 	if alert := msgs[0].packet.GetAlert(); alert == nil || alert.GetMessage() != "hello" {
 		t.Fatalf("expected alert message 'hello'")
 	}
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded after notify, got %s", final.Status)
 	}
@@ -495,7 +495,7 @@ func TestEngineConditionStepEvaluates(t *testing.T) {
 			"cond": {ID: "cond", Type: StepTypeCondition, Condition: "input.allow", OutputPath: "decision.allowed"},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -506,15 +506,15 @@ func TestEngineConditionStepEvaluates(t *testing.T) {
 		Steps:      map[string]*StepRun{},
 		Status:     RunStatusPending,
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded, got %s", final.Status)
 	}
@@ -555,7 +555,7 @@ func TestEngineConditionEvalErrorFailsRun(t *testing.T) {
 			"step": {ID: "step", Type: StepTypeWorker, Topic: "job.default", Condition: "!"},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -565,18 +565,18 @@ func TestEngineConditionEvalErrorFailsRun(t *testing.T) {
 		Steps:      map[string]*StepRun{},
 		Status:     RunStatusPending,
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 0 {
 		t.Fatalf("expected no dispatches on condition eval error, got %d", bus.Count())
 	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusFailed {
 		t.Fatalf("expected run failed, got %s", final.Status)
 	}
@@ -587,7 +587,7 @@ func TestEngineConditionEvalErrorFailsRun(t *testing.T) {
 		t.Fatalf("expected error message on step")
 	}
 
-	events, err := store.ListTimelineEvents(context.Background(), run.ID, 20)
+	events, err := store.ListTimelineEvents(testCtx(t), run.ID, 20)
 	if err != nil {
 		t.Fatalf("list timeline: %v", err)
 	}
@@ -610,7 +610,7 @@ func TestEngineForEachEvalErrorFailsRun(t *testing.T) {
 			"fan": {ID: "fan", Type: StepTypeWorker, Topic: "job.default", ForEach: "input.value"},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -621,18 +621,18 @@ func TestEngineForEachEvalErrorFailsRun(t *testing.T) {
 		Steps:      map[string]*StepRun{},
 		Status:     RunStatusPending,
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 0 {
 		t.Fatalf("expected no dispatches on for_each eval error, got %d", bus.Count())
 	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusFailed {
 		t.Fatalf("expected run failed, got %s", final.Status)
 	}
@@ -640,7 +640,7 @@ func TestEngineForEachEvalErrorFailsRun(t *testing.T) {
 		t.Fatalf("expected step failed, got %#v", final.Steps["fan"])
 	}
 
-	events, err := store.ListTimelineEvents(context.Background(), run.ID, 20)
+	events, err := store.ListTimelineEvents(testCtx(t), run.ID, 20)
 	if err != nil {
 		t.Fatalf("list timeline: %v", err)
 	}
@@ -680,7 +680,7 @@ func TestScheduleAfterFiresTimer(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -692,7 +692,7 @@ func TestScheduleAfterFiresTimer(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
@@ -728,7 +728,7 @@ func TestScheduleAfterMultipleTimers(t *testing.T) {
 		OrgID: "org-1",
 		Steps: map[string]*Step{},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -744,7 +744,7 @@ func TestScheduleAfterMultipleTimers(t *testing.T) {
 			CreatedAt:  time.Now().UTC(),
 			UpdatedAt:  time.Now().UTC(),
 		}
-		if err := store.CreateRun(context.Background(), run); err != nil {
+		if err := store.CreateRun(testCtx(t), run); err != nil {
 			t.Fatalf("create run: %v", err)
 		}
 		engine.scheduleAfter(50*time.Millisecond, wf.ID, runID)
@@ -779,7 +779,7 @@ func TestStopCancelsPendingTimers(t *testing.T) {
 		OrgID: "org-1",
 		Steps: map[string]*Step{},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -795,7 +795,7 @@ func TestStopCancelsPendingTimers(t *testing.T) {
 			CreatedAt:  time.Now().UTC(),
 			UpdatedAt:  time.Now().UTC(),
 		}
-		if err := store.CreateRun(context.Background(), run); err != nil {
+		if err := store.CreateRun(testCtx(t), run); err != nil {
 			t.Fatalf("create run: %v", err)
 		}
 		engine.scheduleAfter(10*time.Second, wf.ID, runID)
@@ -873,7 +873,7 @@ func TestOnError_RedirectsToHandlerOnFailure(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -886,16 +886,16 @@ func TestOnError_RedirectsToHandlerOnFailure(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
 	// Fail the main step.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:        "run-onerr:main@1",
 		Status:       pb.JobStatus_JOB_STATUS_FAILED,
 		ErrorMessage: "something broke",
@@ -904,7 +904,7 @@ func TestOnError_RedirectsToHandlerOnFailure(t *testing.T) {
 	}
 
 	// Run should NOT be failed yet — on_error handler should be dispatched.
-	mid, _ := store.GetRun(context.Background(), run.ID)
+	mid, _ := store.GetRun(testCtx(t), run.ID)
 	if mid.Status == RunStatusFailed {
 		t.Fatal("run should not be FAILED while on_error handler is active")
 	}
@@ -921,20 +921,20 @@ func TestOnError_RedirectsToHandlerOnFailure(t *testing.T) {
 	}
 
 	// Check timeline for redirect event.
-	events, _ := store.ListTimelineEvents(context.Background(), run.ID, 50)
+	events, _ := store.ListTimelineEvents(testCtx(t), run.ID, 50)
 	if !hasTimelineEvent(events, "step_error_redirect") {
 		t.Fatal("expected step_error_redirect timeline event")
 	}
 
 	// Let the handler succeed.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-onerr:handler@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run SUCCEEDED after on_error handler, got %s", final.Status)
 	}
@@ -964,7 +964,7 @@ func TestOnError_NotTriggeredOnSuccess(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -977,27 +977,27 @@ func TestOnError_NotTriggeredOnSuccess(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
 	// Main step succeeds — handler should NOT be activated.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-onerr-ok:main@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	// Handler should not have been activated — run should still resolve.
 	// Since handler has no deps and main succeeded, handler might get dispatched normally.
 	// But the key test: no step_error_redirect event.
-	events, _ := store.ListTimelineEvents(context.Background(), run.ID, 50)
+	events, _ := store.ListTimelineEvents(testCtx(t), run.ID, 50)
 	if hasTimelineEvent(events, "step_error_redirect") {
 		t.Fatal("step_error_redirect should NOT fire when main step succeeds")
 	}
@@ -1028,7 +1028,7 @@ func TestOnError_HandlerFailsCausesRunFailure(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1041,16 +1041,16 @@ func TestOnError_HandlerFailsCausesRunFailure(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
 	// Fail the main step.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:        "run-onerr-fail:main@1",
 		Status:       pb.JobStatus_JOB_STATUS_FAILED,
 		ErrorMessage: "main broke",
@@ -1059,7 +1059,7 @@ func TestOnError_HandlerFailsCausesRunFailure(t *testing.T) {
 	}
 
 	// Now fail the handler too.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:        "run-onerr-fail:handler@1",
 		Status:       pb.JobStatus_JOB_STATUS_FAILED,
 		ErrorMessage: "handler also broke",
@@ -1067,7 +1067,7 @@ func TestOnError_HandlerFailsCausesRunFailure(t *testing.T) {
 		t.Fatalf("handle job result: %v", err)
 	}
 
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusFailed {
 		t.Fatalf("expected run FAILED when on_error handler itself fails, got %s", final.Status)
 	}
@@ -1103,7 +1103,7 @@ func TestCrashRecovery_DispatchFailRevertsStepToPending(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1116,15 +1116,15 @@ func TestCrashRecovery_DispatchFailRevertsStepToPending(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
 	// StartRun calls scheduleReady which will try to publish and fail.
-	_ = engine.StartRun(context.Background(), wfDef.ID, run.ID)
+	_ = engine.StartRun(testCtx(t), wfDef.ID, run.ID)
 
 	// Step should be reverted to PENDING (not stuck as RUNNING or FAILED).
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	sr := final.Steps["step1"]
 	if sr != nil && sr.Status == StepStatusRunning {
 		t.Fatal("step should NOT be stuck as RUNNING after dispatch failure")
@@ -1153,7 +1153,7 @@ func TestCrashRecovery_SuccessfulDispatchPersistsRunningState(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1166,16 +1166,16 @@ func TestCrashRecovery_SuccessfulDispatchPersistsRunningState(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
 	// Step should be persisted as RUNNING with a JobID.
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	sr := final.Steps["step1"]
 	if sr == nil {
 		t.Fatal("expected step1 to be present in run")
@@ -1246,7 +1246,7 @@ func TestWorkflowApprovalStepPersistsStructuredContext(t *testing.T) {
 			},
 		},
 	}
-	if err := wfStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := wfStore.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1283,18 +1283,18 @@ func TestWorkflowApprovalStepPersistsStructuredContext(t *testing.T) {
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
-	if err := wfStore.CreateRun(context.Background(), run); err != nil {
+	if err := wfStore.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 1 {
 		t.Fatalf("expected one approval dispatch, got %d", bus.Count())
 	}
 
-	final, err := wfStore.GetRun(context.Background(), run.ID)
+	final, err := wfStore.GetRun(testCtx(t), run.ID)
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}
@@ -1327,7 +1327,7 @@ func TestWorkflowApprovalStepPersistsStructuredContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse context ptr: %v", err)
 	}
-	raw, err := memStore.GetContext(context.Background(), key)
+	raw, err := memStore.GetContext(testCtx(t), key)
 	if err != nil {
 		t.Fatalf("fetch approval context: %v", err)
 	}
@@ -1391,7 +1391,7 @@ func TestWorkflowApprovalStepSupportsLegacyMetadataOnlyPayload(t *testing.T) {
 			"approve": {ID: "approve", Type: StepTypeApproval},
 		},
 	}
-	if err := wfStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := wfStore.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1404,11 +1404,11 @@ func TestWorkflowApprovalStepSupportsLegacyMetadataOnlyPayload(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := wfStore.CreateRun(context.Background(), run); err != nil {
+	if err := wfStore.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
@@ -1420,7 +1420,7 @@ func TestWorkflowApprovalStepSupportsLegacyMetadataOnlyPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse context ptr: %v", err)
 	}
-	raw, err := memStore.GetContext(context.Background(), key)
+	raw, err := memStore.GetContext(testCtx(t), key)
 	if err != nil {
 		t.Fatalf("fetch approval context: %v", err)
 	}
@@ -1470,7 +1470,7 @@ func TestWorkflowApprovalStepFailsWhenRequiredDecisionFieldMissing(t *testing.T)
 			},
 		},
 	}
-	if err := wfStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := wfStore.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1486,18 +1486,18 @@ func TestWorkflowApprovalStepFailsWhenRequiredDecisionFieldMissing(t *testing.T)
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
-	if err := wfStore.CreateRun(context.Background(), run); err != nil {
+	if err := wfStore.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 0 {
 		t.Fatalf("expected no approval dispatch on validation failure, got %d", bus.Count())
 	}
 
-	final, err := wfStore.GetRun(context.Background(), run.ID)
+	final, err := wfStore.GetRun(testCtx(t), run.ID)
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}
@@ -1541,7 +1541,7 @@ func TestWorkflowApprovalStepFailsWhenContextStoreUnavailable(t *testing.T) {
 			},
 		},
 	}
-	if err := wfStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := wfStore.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1555,18 +1555,18 @@ func TestWorkflowApprovalStepFailsWhenContextStoreUnavailable(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := wfStore.CreateRun(context.Background(), run); err != nil {
+	if err := wfStore.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 0 {
 		t.Fatalf("expected no approval dispatch when context store fails, got %d", bus.Count())
 	}
 
-	final, err := wfStore.GetRun(context.Background(), run.ID)
+	final, err := wfStore.GetRun(testCtx(t), run.ID)
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}
@@ -1626,7 +1626,7 @@ func TestWorkflowApprovalStepApproveResultAdvancesRunAndPreservesContext(t *test
 			},
 		},
 	}
-	if err := wfStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := wfStore.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1648,11 +1648,11 @@ func TestWorkflowApprovalStepApproveResultAdvancesRunAndPreservesContext(t *test
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
-	if err := wfStore.CreateRun(context.Background(), run); err != nil {
+	if err := wfStore.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 1 {
@@ -1667,7 +1667,7 @@ func TestWorkflowApprovalStepApproveResultAdvancesRunAndPreservesContext(t *test
 	if err != nil {
 		t.Fatalf("parse context ptr: %v", err)
 	}
-	raw, err := memStore.GetContext(context.Background(), key)
+	raw, err := memStore.GetContext(testCtx(t), key)
 	if err != nil {
 		t.Fatalf("fetch approval context: %v", err)
 	}
@@ -1676,7 +1676,7 @@ func TestWorkflowApprovalStepApproveResultAdvancesRunAndPreservesContext(t *test
 		t.Fatalf("decode approval payload: %v", err)
 	}
 
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  req.JobId,
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
@@ -1686,7 +1686,7 @@ func TestWorkflowApprovalStepApproveResultAdvancesRunAndPreservesContext(t *test
 		t.Fatalf("expected downstream dispatch after approval, got %d", bus.Count())
 	}
 
-	afterApprove, err := wfStore.GetRun(context.Background(), run.ID)
+	afterApprove, err := wfStore.GetRun(testCtx(t), run.ID)
 	if err != nil {
 		t.Fatalf("get run after approve: %v", err)
 	}
@@ -1708,14 +1708,14 @@ func TestWorkflowApprovalStepApproveResultAdvancesRunAndPreservesContext(t *test
 		t.Fatal("expected settle step job id after approval")
 	}
 
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  settleSR.JobID,
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
 		t.Fatalf("handle settle result: %v", err)
 	}
 
-	final, err := wfStore.GetRun(context.Background(), run.ID)
+	final, err := wfStore.GetRun(testCtx(t), run.ID)
 	if err != nil {
 		t.Fatalf("get final run: %v", err)
 	}
@@ -1767,7 +1767,7 @@ func TestWorkflowApprovalStepDeniedResultStopsRunAndPreservesContext(t *testing.
 			},
 		},
 	}
-	if err := wfStore.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := wfStore.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1788,11 +1788,11 @@ func TestWorkflowApprovalStepDeniedResultStopsRunAndPreservesContext(t *testing.
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
-	if err := wfStore.CreateRun(context.Background(), run); err != nil {
+	if err := wfStore.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 1 {
@@ -1807,7 +1807,7 @@ func TestWorkflowApprovalStepDeniedResultStopsRunAndPreservesContext(t *testing.
 	if err != nil {
 		t.Fatalf("parse context ptr: %v", err)
 	}
-	raw, err := memStore.GetContext(context.Background(), key)
+	raw, err := memStore.GetContext(testCtx(t), key)
 	if err != nil {
 		t.Fatalf("fetch approval context: %v", err)
 	}
@@ -1816,7 +1816,7 @@ func TestWorkflowApprovalStepDeniedResultStopsRunAndPreservesContext(t *testing.
 		t.Fatalf("decode approval payload: %v", err)
 	}
 
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:        req.JobId,
 		Status:       pb.JobStatus_JOB_STATUS_DENIED,
 		ErrorMessage: "manager rejected vendor risk",
@@ -1827,7 +1827,7 @@ func TestWorkflowApprovalStepDeniedResultStopsRunAndPreservesContext(t *testing.
 		t.Fatalf("expected no downstream dispatch after denial, got %d", bus.Count())
 	}
 
-	final, err := wfStore.GetRun(context.Background(), run.ID)
+	final, err := wfStore.GetRun(testCtx(t), run.ID)
 	if err != nil {
 		t.Fatalf("get final run: %v", err)
 	}
@@ -1944,7 +1944,7 @@ func TestForEach_ExpressionEvaluatedOnce(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -1959,11 +1959,11 @@ func TestForEach_ExpressionEvaluatedOnce(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	// MaxParallel=1 → only 1 dispatched.
@@ -1972,7 +1972,7 @@ func TestForEach_ExpressionEvaluatedOnce(t *testing.T) {
 	}
 
 	// Verify ResolvedItems is stored.
-	afterStart, _ := store.GetRun(context.Background(), run.ID)
+	afterStart, _ := store.GetRun(testCtx(t), run.ID)
 	fanSR := afterStart.Steps["fan"]
 	if fanSR == nil {
 		t.Fatal("fan step run missing")
@@ -1982,7 +1982,7 @@ func TestForEach_ExpressionEvaluatedOnce(t *testing.T) {
 	}
 
 	// Complete first child → triggers second dispatch via HandleJobResult.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-foreach-once:fan[0]@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
@@ -1990,7 +1990,7 @@ func TestForEach_ExpressionEvaluatedOnce(t *testing.T) {
 	}
 
 	// The second scheduleReady should use stored items, not re-evaluate.
-	afterSecond, _ := store.GetRun(context.Background(), run.ID)
+	afterSecond, _ := store.GetRun(testCtx(t), run.ID)
 	fanSR2 := afterSecond.Steps["fan"]
 	if len(fanSR2.ResolvedItems) != 3 {
 		t.Fatalf("resolved items should persist, got %d", len(fanSR2.ResolvedItems))
@@ -2025,7 +2025,7 @@ func TestForEach_EmptyList_EmitsEvents(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -2040,11 +2040,11 @@ func TestForEach_EmptyList_EmitsEvents(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
@@ -2054,7 +2054,7 @@ func TestForEach_EmptyList_EmitsEvents(t *testing.T) {
 	}
 
 	// Step should auto-succeed.
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	fanSR := final.Steps["fan"]
 	if fanSR == nil || fanSR.Status != StepStatusSucceeded {
 		t.Fatalf("expected fan step succeeded, got %v", fanSR)
@@ -2103,7 +2103,7 @@ func TestCondition_FalsePath_EmitsEvents(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -2118,11 +2118,11 @@ func TestCondition_FalsePath_EmitsEvents(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
@@ -2132,7 +2132,7 @@ func TestCondition_FalsePath_EmitsEvents(t *testing.T) {
 	}
 
 	// Step should auto-succeed.
-	final, _ := store.GetRun(context.Background(), run.ID)
+	final, _ := store.GetRun(testCtx(t), run.ID)
 	gateSR := final.Steps["gate"]
 	if gateSR == nil || gateSR.Status != StepStatusSucceeded {
 		t.Fatalf("expected gate step succeeded, got %v", gateSR)
@@ -2183,7 +2183,7 @@ func TestHandleJobResultDeletedRunReturnsErrRunNotFound(t *testing.T) {
 			"step": {ID: "step", Type: StepTypeWorker, Topic: "job.default"},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -2191,20 +2191,20 @@ func TestHandleJobResultDeletedRunReturnsErrRunNotFound(t *testing.T) {
 		Steps: map[string]*StepRun{}, Status: RunStatusPending,
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
 	// Delete the run.
-	if err := store.DeleteRun(context.Background(), run.ID); err != nil {
+	if err := store.DeleteRun(testCtx(t), run.ID); err != nil {
 		t.Fatalf("delete run: %v", err)
 	}
 
 	// Now send a job result for the deleted run — should return ErrRunNotFound.
-	resultErr := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	resultErr := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-deleted:step@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	})
@@ -2238,7 +2238,7 @@ func TestHandleJobResultExistingRunReturnsNil(t *testing.T) {
 			"step": {ID: "step", Type: StepTypeWorker, Topic: "job.default"},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -2246,15 +2246,15 @@ func TestHandleJobResultExistingRunReturnsNil(t *testing.T) {
 		Steps: map[string]*StepRun{}, Status: RunStatusPending,
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
 	// Job result for existing run — should return nil (success).
-	resultErr := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	resultErr := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-exists:step@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	})
@@ -2286,7 +2286,7 @@ func TestHandleJobResultTransientRedisErrorIsNotErrRunNotFound(t *testing.T) {
 			"step": {ID: "step", Type: StepTypeWorker, Topic: "job.default"},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wfDef); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 	run := &WorkflowRun{
@@ -2294,10 +2294,10 @@ func TestHandleJobResultTransientRedisErrorIsNotErrRunNotFound(t *testing.T) {
 		Steps: map[string]*StepRun{}, Status: RunStatusPending,
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if err := engine.StartRun(context.Background(), wfDef.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wfDef.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
@@ -2305,7 +2305,7 @@ func TestHandleJobResultTransientRedisErrorIsNotErrRunNotFound(t *testing.T) {
 	srv.Close()
 
 	// HandleJobResult should return an error that is NOT ErrRunNotFound.
-	resultErr := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	resultErr := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-transient:step@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	})
@@ -2325,11 +2325,11 @@ func TestActivateOnErrorHandlerNilRun(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Calling with nil run should not panic.
-	engine.activateOnErrorHandler(context.Background(), nil, &Workflow{}, "step-1", &StepRun{}, now)
+	engine.activateOnErrorHandler(testCtx(t), nil, &Workflow{}, "step-1", &StepRun{}, now)
 	// Calling with nil wfDef should not panic.
-	engine.activateOnErrorHandler(context.Background(), &WorkflowRun{}, nil, "step-1", &StepRun{}, now)
+	engine.activateOnErrorHandler(testCtx(t), &WorkflowRun{}, nil, "step-1", &StepRun{}, now)
 	// Calling with nil stepRun should not panic.
-	engine.activateOnErrorHandler(context.Background(), &WorkflowRun{}, &Workflow{}, "step-1", nil, now)
+	engine.activateOnErrorHandler(testCtx(t), &WorkflowRun{}, &Workflow{}, "step-1", nil, now)
 }
 
 func TestSetContextPathErrorLogged(t *testing.T) {
@@ -2375,7 +2375,7 @@ func TestEngineDeniedJobResult_ProducesRunDenied(t *testing.T) {
 			},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -2388,11 +2388,11 @@ func TestEngineDeniedJobResult_ProducesRunDenied(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 1 {
@@ -2400,7 +2400,7 @@ func TestEngineDeniedJobResult_ProducesRunDenied(t *testing.T) {
 	}
 
 	// Deliver a DENIED result for the step job.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:        "run-denied-e2e:step@1",
 		Status:       pb.JobStatus_JOB_STATUS_DENIED,
 		ErrorMessage: "denied by safety policy",
@@ -2408,7 +2408,7 @@ func TestEngineDeniedJobResult_ProducesRunDenied(t *testing.T) {
 		t.Fatalf("handle job result: %v", err)
 	}
 
-	final, err := store.GetRun(context.Background(), run.ID)
+	final, err := store.GetRun(testCtx(t), run.ID)
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}
@@ -2439,7 +2439,7 @@ func TestEngineDeniedJobResult_WithOnError_Recovers(t *testing.T) {
 			"fallback": {ID: "fallback", Type: StepTypeWorker, Topic: "job.fallback"},
 		},
 	}
-	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
 
@@ -2452,11 +2452,11 @@ func TestEngineDeniedJobResult_WithOnError_Recovers(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if err := store.CreateRun(context.Background(), run); err != nil {
+	if err := store.CreateRun(testCtx(t), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 	if bus.Count() != 1 {
@@ -2464,7 +2464,7 @@ func TestEngineDeniedJobResult_WithOnError_Recovers(t *testing.T) {
 	}
 
 	// Deliver DENIED for the main step.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:        "run-denied-recover-e2e:main@1",
 		Status:       pb.JobStatus_JOB_STATUS_DENIED,
 		ErrorMessage: "denied by policy",
@@ -2486,19 +2486,490 @@ func TestEngineDeniedJobResult_WithOnError_Recovers(t *testing.T) {
 	}
 
 	// Let the fallback handler succeed.
-	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
 		JobId:  "run-denied-recover-e2e:fallback@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	}); err != nil {
 		t.Fatalf("handle fallback result: %v", err)
 	}
 
-	final, err := store.GetRun(context.Background(), run.ID)
+	final, err := store.GetRun(testCtx(t), run.ID)
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}
 	// The on_error handler recovered — run should succeed.
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run status succeeded after on_error recovery, got %s", final.Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// HandleJobResult — UpdateRun failure propagation tests
+// ---------------------------------------------------------------------------
+//
+// These tests verify that HandleJobResult returns an error (not nil) when
+// the final UpdateRun call fails, so the NATS bus NACKs the message for
+// redelivery instead of silently losing the state change.
+
+// TestHandleJobResult_UpdateRunFailure_ReturnsError verifies that a persistent
+// UpdateRun failure causes HandleJobResult to return an error.
+func TestHandleJobResult_UpdateRunFailure_ReturnsError(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	defer engine.Stop()
+
+	ctx := testCtx(t)
+
+	wf := &Workflow{
+		ID:    "wf-update-fail",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step1": {ID: "step1", Type: StepTypeWorker, Topic: "job.default"},
+		},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-update-fail",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step1": {StepID: "step1", Status: StepStatusRunning, JobID: "run-update-fail:step1@1"},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Inject Redis error after step processing completes but before UpdateRun.
+	engine.OnStepFinished = func(runID, stepID string, status StepStatus) {
+		srv.SetError("INJECTED: persistent store failure")
+	}
+
+	hjrErr := engine.HandleJobResult(ctx, &pb.JobResult{
+		JobId:  "run-update-fail:step1@1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	})
+
+	srv.SetError("") // clear for cleanup
+
+	if hjrErr == nil {
+		t.Fatal("expected error from HandleJobResult when UpdateRun fails, got nil")
+	}
+	if !strings.Contains(hjrErr.Error(), "update run after job result") {
+		t.Fatalf("expected wrapped UpdateRun error, got: %v", hjrErr)
+	}
+}
+
+// TestHandleJobResult_UpdateRunFailure_Idempotent verifies that when UpdateRun
+// fails (state not persisted), redelivering the same job result processes it
+// correctly on the second attempt without double-processing.
+func TestHandleJobResult_UpdateRunFailure_Idempotent(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	defer engine.Stop()
+
+	ctx := testCtx(t)
+
+	wf := &Workflow{
+		ID:    "wf-idempotent",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step1": {ID: "step1", Type: StepTypeWorker, Topic: "job.default"},
+		},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-idempotent",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step1": {StepID: "step1", Status: StepStatusRunning, JobID: "run-idempotent:step1@1"},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	jobResult := &pb.JobResult{
+		JobId:  "run-idempotent:step1@1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	}
+
+	// First attempt: inject failure so UpdateRun doesn't persist.
+	failOnce := true
+	engine.OnStepFinished = func(runID, stepID string, status StepStatus) {
+		if failOnce {
+			srv.SetError("INJECTED: transient store failure")
+			failOnce = false
+		}
+	}
+
+	err := engine.HandleJobResult(ctx, jobResult)
+	srv.SetError("") // clear error for second attempt
+
+	if err == nil {
+		t.Fatal("first call should have returned error")
+	}
+
+	// Verify the run was NOT updated in the store (still Running, step still Running).
+	preRun, getErr := store.GetRun(ctx, run.ID)
+	if getErr != nil {
+		t.Fatalf("get run after failed update: %v", getErr)
+	}
+	if preRun.Steps["step1"].Status != StepStatusRunning {
+		t.Fatalf("step should still be Running after failed UpdateRun, got %s", preRun.Steps["step1"].Status)
+	}
+
+	// Second attempt: same job result, store now healthy.
+	// OnStepFinished won't inject error this time (failOnce is false).
+	err = engine.HandleJobResult(ctx, jobResult)
+	if err != nil {
+		t.Fatalf("second call should succeed, got: %v", err)
+	}
+
+	// Verify state was persisted on second attempt.
+	finalRun, getErr := store.GetRun(ctx, run.ID)
+	if getErr != nil {
+		t.Fatalf("get run after successful update: %v", getErr)
+	}
+	if finalRun.Steps["step1"].Status != StepStatusSucceeded {
+		t.Fatalf("step should be Succeeded after redelivery, got %s", finalRun.Steps["step1"].Status)
+	}
+	if finalRun.Status != RunStatusSucceeded {
+		t.Fatalf("run should be Succeeded after single-step workflow completes, got %s", finalRun.Status)
+	}
+}
+
+// TestHandleJobResult_UpdateRunRetry_Succeeds verifies the built-in retry:
+// if UpdateRun fails transiently on the first attempt but recovers on the
+// second, HandleJobResult returns nil (success) and the state is persisted.
+func TestHandleJobResult_UpdateRunRetry_Succeeds(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	defer engine.Stop()
+
+	ctx := testCtx(t)
+
+	wf := &Workflow{
+		ID:    "wf-retry-ok",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step1": {ID: "step1", Type: StepTypeWorker, Topic: "job.default"},
+		},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-retry-ok",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step1": {StepID: "step1", Status: StepStatusRunning, JobID: "run-retry-ok:step1@1"},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Inject a transient error that clears itself before the retry attempt.
+	engine.OnStepFinished = func(runID, stepID string, status StepStatus) {
+		srv.SetError("INJECTED: transient blip")
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			srv.SetError("")
+		}()
+	}
+
+	err := engine.HandleJobResult(ctx, &pb.JobResult{
+		JobId:  "run-retry-ok:step1@1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	})
+	if err != nil {
+		t.Fatalf("expected HandleJobResult to succeed after retry, got: %v", err)
+	}
+
+	// Verify state was persisted.
+	finalRun, getErr := store.GetRun(ctx, run.ID)
+	if getErr != nil {
+		t.Fatalf("get run: %v", getErr)
+	}
+	if finalRun.Steps["step1"].Status != StepStatusSucceeded {
+		t.Fatalf("step should be Succeeded after retry, got %s", finalRun.Steps["step1"].Status)
+	}
+	if finalRun.Status != RunStatusSucceeded {
+		t.Fatalf("run should be Succeeded, got %s", finalRun.Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timer concurrent fire stress test
+// ---------------------------------------------------------------------------
+
+// TestTimerConcurrentFireAndRemove launches 100 goroutines that each schedule
+// a 1ms timer, verifying no panics or deadlocks from concurrent map access.
+// The timers fire almost immediately and remove themselves from pendingTimers.
+func TestTimerConcurrentFireAndRemove(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	engine := NewEngine(store, nil)
+	defer engine.Stop()
+
+	const n = 100
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			// Schedule a very short timer — it will fire almost immediately.
+			// StartRun will fail (workflow doesn't exist) but that's fine;
+			// the timer callback still removes itself from the map.
+			engine.scheduleAfter(
+				time.Millisecond,
+				fmt.Sprintf("wf-stress-%d", idx),
+				fmt.Sprintf("run-stress-%d", idx),
+			)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Give all timers time to fire and clean up.
+	// Each timer has 1ms delay + StartRun attempt (~instant failure).
+	time.Sleep(200 * time.Millisecond)
+
+	pending := engine.PendingTimers()
+	if pending != 0 {
+		t.Fatalf("expected 0 pending timers after all fired, got %d", pending)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Output validation — ResultPtr preserved on failure
+// ---------------------------------------------------------------------------
+
+// TestOutputValidationFailure_PreservesResultPtr verifies that when output
+// validation fails, the step record still has the ResultPtr (via Output field)
+// and the result is recorded for quarantine inspection.
+func TestOutputValidationFailure_PreservesResultPtr(t *testing.T) {
+	store, srv := newTestStoreWithServer(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	defer engine.Stop()
+
+	// Use a nil memory store — fetchResultPayload will fail,
+	// triggering "output schema validation failed" (fail-closed).
+
+	ctx := testCtx(t)
+
+	wf := &Workflow{
+		ID:    "wf-output-val",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step1": {
+				ID:             "step1",
+				Type:           StepTypeWorker,
+				Topic:          "job.default",
+				OutputSchemaID: "schema-must-validate",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-output-val",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step1": {StepID: "step1", Status: StepStatusRunning, JobID: "run-output-val:step1@1"},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Succeed the job with a result pointer — validation will fail
+	// because no memory store is configured to fetch the payload.
+	err := engine.HandleJobResult(ctx, &pb.JobResult{
+		JobId:     "run-output-val:step1@1",
+		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
+		ResultPtr: "mem://result-quarantined",
+	})
+	if err != nil {
+		t.Fatalf("handle job result: %v", err)
+	}
+
+	finalRun, err := store.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	step := finalRun.Steps["step1"]
+	if step.Status != StepStatusFailed {
+		t.Fatalf("expected step Failed (output validation), got %s", step.Status)
+	}
+	// The Output field should still contain the ResultPtr for inspection.
+	if step.Output != "mem://result-quarantined" {
+		t.Fatalf("expected Output to preserve ResultPtr, got %v", step.Output)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// for_each double dispatch prevention
+// ---------------------------------------------------------------------------
+
+// TestForEach_ExactlyNDispatches verifies that a for_each with 10 items
+// dispatches exactly 10 child jobs, not more.
+func TestForEach_ExactlyNDispatches(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer func() { _ = store.Close() }()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-exact-10",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"fan": {
+				ID:      "fan",
+				Type:    StepTypeWorker,
+				Topic:   "job.default",
+				ForEach: "input.items",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	items := make([]any, 10)
+	for i := range items {
+		items[i] = fmt.Sprintf("item-%d", i)
+	}
+	run := &WorkflowRun{
+		ID:         "run-exact-10",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Input:      map[string]any{"items": items},
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(testCtx(t), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	dispatched := countPublishedSubject(bus, "sys.job.submit")
+	if dispatched != 10 {
+		t.Fatalf("expected exactly 10 dispatches, got %d", dispatched)
+	}
+}
+
+// TestForEach_NoDoubleDispatchOnMultiPass verifies that the multi-pass loop
+// in scheduleReady does not re-dispatch for_each children that were already
+// dispatched in an earlier pass.
+func TestForEach_NoDoubleDispatchOnMultiPass(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer func() { _ = store.Close() }()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	// Two steps: a condition (inline-completes) that depends on nothing,
+	// and a for_each that also depends on nothing. Both can dispatch in pass 1.
+	// The condition inline-completion triggers pass 2 — for_each must not re-dispatch.
+	wf := &Workflow{
+		ID:    "wf-multipass-foreach",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"cond": {
+				ID:        "cond",
+				Type:      StepTypeCondition,
+				Condition: "true",
+			},
+			"fan": {
+				ID:      "fan",
+				Type:    StepTypeWorker,
+				Topic:   "job.default",
+				ForEach: "input.items",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-multipass-foreach",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		TeamID:     "team-1",
+		Input:      map[string]any{"items": []any{"a", "b", "c"}},
+		Status:     RunStatusPending,
+		Steps:      map[string]*StepRun{},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(testCtx(t), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// Exactly 3 for_each children should be dispatched, not 6 (double on pass 2).
+	dispatched := countPublishedSubject(bus, "sys.job.submit")
+	if dispatched != 3 {
+		t.Fatalf("expected exactly 3 dispatches (not doubled), got %d", dispatched)
 	}
 }

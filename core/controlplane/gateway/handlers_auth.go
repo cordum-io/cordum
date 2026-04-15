@@ -292,6 +292,9 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 				}
+				// Set httpOnly cookie so browser auth doesn't require localStorage
+				ttl := sessionTTL()
+				setSessionCookie(w, r, resp.Token, time.Now().Add(ttl))
 				w.Header().Set("Content-Type", "application/json")
 				writeJSON(w, resp)
 				return
@@ -339,6 +342,9 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Build response
 	resp := buildLoginResponse(authCtx, apiKey)
 
+	// Set httpOnly cookie so browser auth doesn't require localStorage
+	ttl := sessionTTL()
+	setSessionCookie(w, r, apiKey, time.Now().Add(ttl))
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, resp)
 }
@@ -376,16 +382,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			_ = redisStore.DeleteSession(r.Context(), key)
 		}
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-	})
+	clearSessionCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 

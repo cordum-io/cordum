@@ -307,3 +307,43 @@ func TestRedisCircuitBreaker_DifferentPrefixes(t *testing.T) {
 		t.Fatal("expected output circuit to be closed (different prefix)")
 	}
 }
+
+func TestRedisCircuitBreaker_Convergence(t *testing.T) {
+	srv, rdb := newTestRedis(t)
+
+	cb := NewRedisCircuitBreaker(rdb, "cordum:cb:converge", CircuitBreakerOpts{
+		FailThreshold: 2,
+		OpenDuration:  30 * time.Second,
+	})
+	ctx := context.Background()
+
+	// Trip the circuit with Redis available.
+	cb.RecordFailure(ctx)
+	cb.RecordFailure(ctx)
+	if !cb.IsOpen(ctx) {
+		t.Fatal("expected circuit to be open after 2 failures")
+	}
+
+	// Take Redis down — local fallback remains open.
+	srv.Close()
+	if !cb.IsOpen(ctx) {
+		t.Fatal("expected local fallback to stay open")
+	}
+
+	// Restart Redis (simulates recovery). The failure key expired
+	// during downtime, so the circuit should be closed.
+	if err := srv.Start(); err != nil {
+		t.Fatalf("restart miniredis: %v", err)
+	}
+
+	// Clear the failure key to simulate TTL expiry during downtime.
+	if err := rdb.Del(ctx, "cordum:cb:converge:failures").Err(); err != nil {
+		t.Fatalf("clear failure key: %v", err)
+	}
+
+	// After Redis recovery with no failure key, IsOpen reads from Redis
+	// (redis.Nil → not open) — circuit should converge to closed.
+	if cb.IsOpen(ctx) {
+		t.Fatal("expected circuit to converge to closed after Redis recovery with expired failures")
+	}
+}

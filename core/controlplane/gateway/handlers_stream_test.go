@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -18,6 +21,9 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
@@ -966,11 +972,7 @@ func TestStopWorkerExpirySafeWithoutStart(t *testing.T) {
 // Leak and lifecycle regression tests
 // ---------------------------------------------------------------------------
 
-// TestStaleClientAccumulatesWithoutReadPump demonstrates that a disconnected
-// WebSocket client remains in s.clients until a write failure or slow-client
-// eviction occurs. Without a read goroutine, the server cannot detect client
-// disconnect promptly (only on next WriteMessage error).
-func TestStaleClientAccumulatesWithoutReadPump(t *testing.T) {
+func TestClosedClientRemovedPromptlyWithReadPump(t *testing.T) {
 	s := &server{
 		clients:    make(map[*websocket.Conn]*wsClient),
 		eventsCh:   make(chan wsEvent, 64),
@@ -990,20 +992,601 @@ func TestStaleClientAccumulatesWithoutReadPump(t *testing.T) {
 		t.Fatalf("websocket dial failed: %v", err)
 	}
 	_ = conn.Close()
+	if !waitForCondition(500*time.Millisecond, 10*time.Millisecond, func() bool {
+		s.clientsMu.RLock()
+		defer s.clientsMu.RUnlock()
+		return len(s.clients) == 0
+	}) {
+		s.clientsMu.RLock()
+		count := len(s.clients)
+		s.clientsMu.RUnlock()
+		t.Fatalf("expected client to be removed promptly after close, still have %d registered client(s)", count)
+	}
+}
 
-	// Give the server a moment to process.
-	time.Sleep(50 * time.Millisecond)
+func TestWSPingKeepsConnectionAlive(t *testing.T) {
+	prevPingInterval := wsPingInterval
+	prevPongTimeout := wsPongTimeout
+	wsPingInterval = 20 * time.Millisecond
+	wsPongTimeout = 20 * time.Millisecond
+	t.Cleanup(func() {
+		wsPingInterval = prevPingInterval
+		wsPongTimeout = prevPongTimeout
+	})
 
-	// Without a read pump, the server has no immediate way to detect the
-	// client closed. The entry may still be in s.clients until a write fails.
-	// This test documents the behavior — a future fix should add a read pump
-	// so disconnected clients are cleaned up promptly.
+	s := &server{
+		clients:       make(map[*websocket.Conn]*wsClient),
+		eventsCh:      make(chan wsEvent, 8),
+		shutdownCh:    make(chan struct{}),
+		wsClientBufSz: 8,
+	}
+	t.Cleanup(func() { close(s.shutdownCh) })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	pings := make(chan struct{}, 8)
+	conn.SetPingHandler(func(appData string) error {
+		select {
+		case pings <- struct{}{}:
+		default:
+		}
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(100*time.Millisecond))
+	})
+
+	readErr := make(chan error, 1)
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				readErr <- err
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-pings:
+	case err := <-readErr:
+		t.Fatalf("connection closed before ping could be processed: %v", err)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected server ping within timeout")
+	}
+
+	time.Sleep((2 * wsPingInterval) + wsPongTimeout)
+
+	select {
+	case err := <-readErr:
+		t.Fatalf("connection closed unexpectedly after responding to ping: %v", err)
+	default:
+	}
+
 	s.clientsMu.RLock()
 	count := len(s.clients)
 	s.clientsMu.RUnlock()
-	// We log the count; the stale entry is eventually cleaned by write failure
-	// or slow-client eviction, but the window exists.
-	t.Logf("clients after close: %d (stale entries expected without read pump)", count)
+	if count != 1 {
+		t.Fatalf("expected connection to remain registered after ping/pong, got %d clients", count)
+	}
+}
+
+func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
+	prevPingInterval := wsPingInterval
+	prevPongTimeout := wsPongTimeout
+	prevRevalidateInterval := wsRevalidateInterval
+	prevRetryDelay := wsRevalidateRetryDelay
+	wsPingInterval = 20 * time.Millisecond
+	wsPongTimeout = 20 * time.Millisecond
+	wsRevalidateInterval = 30 * time.Millisecond
+	wsRevalidateRetryDelay = 5 * time.Millisecond
+
+	var authCalls atomic.Int32
+	provider := &mockAuthProvider{
+		authHTTP: func(*http.Request) (*AuthContext, error) {
+			if authCalls.Add(1) == 1 {
+				return &AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
+			}
+			return nil, transientNetError{}
+		},
+	}
+
+	shutdownCh := make(chan struct{})
+	s := &server{
+		clients:       make(map[*websocket.Conn]*wsClient),
+		eventsCh:      make(chan wsEvent, 8),
+		shutdownCh:    shutdownCh,
+		wsClientBufSz: 8,
+		auth:          provider,
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, apiKeyMiddleware(provider, mux))
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	token := base64.RawURLEncoding.EncodeToString([]byte("live-key"))
+	dialer := websocket.Dialer{Subprotocols: []string{wsAuthSubprotocol, token}}
+	conn, _, err := dialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	// Cleanup order: close WS, close server, signal shutdown, wait for
+	// goroutines to drain, THEN restore package-level vars.
+	// Use longer drain to avoid data race under -race with CI load.
+	t.Cleanup(func() {
+		_ = conn.Close()
+		srv.Close()
+		close(shutdownCh)
+		time.Sleep(200 * time.Millisecond)
+		wsPingInterval = prevPingInterval
+		wsPongTimeout = prevPongTimeout
+		wsRevalidateInterval = prevRevalidateInterval
+		wsRevalidateRetryDelay = prevRetryDelay
+	})
+
+	readErr := startTestWSReadPump(conn)
+	time.Sleep(4 * wsRevalidateInterval)
+
+	select {
+	case err := <-readErr:
+		t.Fatalf("expected transient revalidation errors to keep connection alive, got %v", err)
+	default:
+	}
+	if authCalls.Load() < 2 {
+		t.Fatalf("expected revalidation auth calls, got %d", authCalls.Load())
+	}
+
+	s.clientsMu.RLock()
+	count := len(s.clients)
+	s.clientsMu.RUnlock()
+	if count != 1 {
+		t.Fatalf("expected connection to remain registered, got %d clients", count)
+	}
+}
+
+func TestWSRevalidation_Revocation_ClosesConnection(t *testing.T) {
+	prevPingInterval := wsPingInterval
+	prevPongTimeout := wsPongTimeout
+	prevRevalidateInterval := wsRevalidateInterval
+	prevRetryDelay := wsRevalidateRetryDelay
+	wsPingInterval = 100 * time.Millisecond
+	wsPongTimeout = 20 * time.Millisecond
+	wsRevalidateInterval = 25 * time.Millisecond
+	wsRevalidateRetryDelay = 5 * time.Millisecond
+	t.Cleanup(func() {
+		wsPingInterval = prevPingInterval
+		wsPongTimeout = prevPongTimeout
+		wsRevalidateInterval = prevRevalidateInterval
+		wsRevalidateRetryDelay = prevRetryDelay
+	})
+
+	var authCalls atomic.Int32
+	provider := &mockAuthProvider{
+		authHTTP: func(*http.Request) (*AuthContext, error) {
+			if authCalls.Add(1) == 1 {
+				return &AuthContext{APIKey: "revoked-key", Tenant: "default", Role: "admin"}, nil
+			}
+			return nil, errors.New("invalid api key")
+		},
+	}
+
+	s := &server{
+		clients:       make(map[*websocket.Conn]*wsClient),
+		eventsCh:      make(chan wsEvent, 8),
+		shutdownCh:    make(chan struct{}),
+		wsClientBufSz: 8,
+		auth:          provider,
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, apiKeyMiddleware(provider, mux))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	token := base64.RawURLEncoding.EncodeToString([]byte("revoked-key"))
+	dialer := websocket.Dialer{Subprotocols: []string{wsAuthSubprotocol, token}}
+	conn, _, err := dialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	readErr := startTestWSReadPump(conn)
+
+	select {
+	case err := <-readErr:
+		if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
+			t.Fatalf("expected policy violation close, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected revoked credentials to close the websocket")
+	}
+
+	if !waitForCondition(500*time.Millisecond, 10*time.Millisecond, func() bool {
+		s.clientsMu.RLock()
+		defer s.clientsMu.RUnlock()
+		return len(s.clients) == 0
+	}) {
+		t.Fatal("expected revoked websocket client to be removed from registry")
+	}
+}
+
+func TestWSRevalidation_RetrySucceeds(t *testing.T) {
+	prevRetryDelay := wsRevalidateRetryDelay
+	wsRevalidateRetryDelay = 5 * time.Millisecond
+	t.Cleanup(func() { wsRevalidateRetryDelay = prevRetryDelay })
+
+	var authCalls atomic.Int32
+	provider := &mockAuthProvider{
+		authHTTP: func(*http.Request) (*AuthContext, error) {
+			if authCalls.Add(1) == 1 {
+				return nil, transientNetError{}
+			}
+			return &AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
+		},
+	}
+
+	s := &server{auth: provider}
+	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-test", wsRevalidateRetryDelay); err != nil {
+		t.Fatalf("expected retry to succeed, got %v", err)
+	}
+	if authCalls.Load() != 2 {
+		t.Fatalf("expected 2 auth attempts, got %d", authCalls.Load())
+	}
+}
+
+func TestWSMetrics_ClientsActiveIncDec(t *testing.T) {
+	initial := testutil.ToFloat64(wsClientsActive)
+
+	s := &server{
+		clients:       make(map[*websocket.Conn]*wsClient),
+		eventsCh:      make(chan wsEvent, 8),
+		shutdownCh:    make(chan struct{}),
+		wsClientBufSz: 8,
+	}
+	t.Cleanup(func() { close(s.shutdownCh) })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if !waitForCondition(500*time.Millisecond, 10*time.Millisecond, func() bool {
+		return testutil.ToFloat64(wsClientsActive) == initial+1
+	}) {
+		t.Fatalf("expected active ws gauge to increment from %.0f to %.0f, got %.0f", initial, initial+1, testutil.ToFloat64(wsClientsActive))
+	}
+
+	_ = conn.Close()
+	if !waitForCondition(500*time.Millisecond, 10*time.Millisecond, func() bool {
+		return testutil.ToFloat64(wsClientsActive) == initial
+	}) {
+		t.Fatalf("expected active ws gauge to return to %.0f, got %.0f", initial, testutil.ToFloat64(wsClientsActive))
+	}
+}
+
+func TestWSMetrics_ConnectionDuration(t *testing.T) {
+	initialCount, initialSum := histogramSnapshot(t, wsConnectionDuration)
+
+	s := &server{
+		clients:       make(map[*websocket.Conn]*wsClient),
+		eventsCh:      make(chan wsEvent, 8),
+		shutdownCh:    make(chan struct{}),
+		wsClientBufSz: 8,
+	}
+	t.Cleanup(func() { close(s.shutdownCh) })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	_ = conn.Close()
+
+	if !waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		count, sum := histogramSnapshot(t, wsConnectionDuration)
+		return count == initialCount+1 && sum >= initialSum+1
+	}) {
+		count, sum := histogramSnapshot(t, wsConnectionDuration)
+		t.Fatalf("expected histogram observation count=%d sum>=%.2f, got count=%d sum=%.2f", initialCount+1, initialSum+1, count, sum)
+	}
+}
+
+func TestWSMetrics_PingSentCounter(t *testing.T) {
+	prevPingInterval := wsPingInterval
+	prevPongTimeout := wsPongTimeout
+	wsPingInterval = 20 * time.Millisecond
+	wsPongTimeout = 40 * time.Millisecond
+	t.Cleanup(func() {
+		wsPingInterval = prevPingInterval
+		wsPongTimeout = prevPongTimeout
+	})
+
+	initial := testutil.ToFloat64(wsPingsSent)
+
+	s := &server{
+		clients:       make(map[*websocket.Conn]*wsClient),
+		eventsCh:      make(chan wsEvent, 8),
+		shutdownCh:    make(chan struct{}),
+		wsClientBufSz: 8,
+	}
+	t.Cleanup(func() { close(s.shutdownCh) })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	readErr := startTestWSReadPump(conn)
+	defer func() { _ = conn.Close() }()
+
+	if !waitForCondition(500*time.Millisecond, 10*time.Millisecond, func() bool {
+		return testutil.ToFloat64(wsPingsSent) >= initial+1
+	}) {
+		t.Fatalf("expected ping counter to increment from %.0f, got %.0f", initial, testutil.ToFloat64(wsPingsSent))
+	}
+
+	select {
+	case err := <-readErr:
+		t.Fatalf("expected websocket to remain alive while answering pings, got %v", err)
+	default:
+	}
+}
+
+func TestWSMetrics_RevalidationOutcome(t *testing.T) {
+	initial := testutil.ToFloat64(wsRevalidation.WithLabelValues("ok"))
+
+	provider := &mockAuthProvider{
+		authHTTP: func(*http.Request) (*AuthContext, error) {
+			return &AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
+		},
+	}
+
+	s := &server{auth: provider}
+	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-metrics", wsRevalidateRetryDelay); err != nil {
+		t.Fatalf("expected successful revalidation, got %v", err)
+	}
+
+	if got := testutil.ToFloat64(wsRevalidation.WithLabelValues("ok")); got != initial+1 {
+		t.Fatalf("expected ok revalidation counter to increment from %.0f to %.0f, got %.0f", initial, initial+1, got)
+	}
+}
+
+func TestWSConnectionLifecycleLogging(t *testing.T) {
+	prevLogger := slog.Default()
+	var logBuf syncBuffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	s := &server{
+		clients:       make(map[*websocket.Conn]*wsClient),
+		eventsCh:      make(chan wsEvent, 8),
+		shutdownCh:    make(chan struct{}),
+		wsClientBufSz: 8,
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+	srv := newIPv4Server(t, mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/stream"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	_ = conn.Close()
+
+	if !waitForCondition(500*time.Millisecond, 10*time.Millisecond, func() bool {
+		out := logBuf.String()
+		return strings.Contains(out, "ws connected") &&
+			strings.Contains(out, "ws disconnected") &&
+			strings.Contains(out, "conn_id=") &&
+			strings.Contains(out, "duration=") &&
+			strings.Contains(out, "reason=client_close")
+	}) {
+		t.Fatalf("expected lifecycle logs, got %q", logBuf.String())
+	}
+}
+
+func TestHealthEndpoint_Healthy(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	s.handleHealth(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 health response, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode health: %v", err)
+	}
+	if resp["status"] != "healthy" {
+		t.Fatalf("expected healthy status, got %#v", resp["status"])
+	}
+	if resp["nats"] != "connected" {
+		t.Fatalf("expected connected nats status, got %#v", resp["nats"])
+	}
+	if resp["redis"] != "ok" {
+		t.Fatalf("expected redis ok status, got %#v", resp["redis"])
+	}
+}
+
+func TestHealthEndpoint_NATSDown(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.bus = &healthBusStub{connected: false, status: "DISCONNECTED"}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	s.handleHealth(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 health response, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode health: %v", err)
+	}
+	if resp["status"] != "unhealthy" {
+		t.Fatalf("expected unhealthy status, got %#v", resp["status"])
+	}
+	if resp["nats"] != "disconnected" {
+		t.Fatalf("expected disconnected nats status, got %#v", resp["nats"])
+	}
+	if !strings.Contains(anyString(resp["error"]), "nats status=disconnected") {
+		t.Fatalf("expected nats error detail, got %#v", resp["error"])
+	}
+}
+
+func TestStatusEndpoint_ReturnsConnectionStats(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.clientsMu.Lock()
+	s.clients[&websocket.Conn{}] = &wsClient{}
+	s.clientsMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 status response, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if got, ok := resp["active_ws_clients"].(float64); !ok || got != 1 {
+		t.Fatalf("expected active_ws_clients=1, got %#v", resp["active_ws_clients"])
+	}
+	if _, ok := resp["uptime_seconds"].(float64); !ok {
+		t.Fatalf("expected uptime_seconds in status response, got %#v", resp["uptime_seconds"])
+	}
+	if _, ok := resp["goroutine_count"].(float64); !ok {
+		t.Fatalf("expected goroutine_count in status response, got %#v", resp["goroutine_count"])
+	}
+	if _, ok := resp["nats_status"].(string); !ok {
+		t.Fatalf("expected nats_status in status response, got %#v", resp["nats_status"])
+	}
+	poolStats, ok := resp["redis_pool_stats"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected redis_pool_stats map, got %#v", resp["redis_pool_stats"])
+	}
+	for _, field := range []string{"hits", "misses", "timeouts", "total_conns", "idle_conns", "stale_conns"} {
+		if _, ok := poolStats[field]; !ok {
+			t.Fatalf("expected redis_pool_stats.%s, got %#v", field, poolStats)
+		}
+	}
+}
+
+type transientNetError struct{}
+
+type healthBusStub struct {
+	connected bool
+	status    string
+}
+
+func (b *healthBusStub) Publish(string, *pb.BusPacket) error { return nil }
+
+func (b *healthBusStub) Subscribe(string, string, func(*pb.BusPacket) error) error { return nil }
+
+func (b *healthBusStub) IsConnected() bool { return b.connected }
+
+func (b *healthBusStub) Status() string { return b.status }
+
+func (transientNetError) Error() string   { return "transient network error" }
+func (transientNetError) Timeout() bool   { return true }
+func (transientNetError) Temporary() bool { return true }
+
+func histogramSnapshot(t *testing.T, collector prometheus.Collector) (uint64, float64) {
+	t.Helper()
+	metricCh := make(chan prometheus.Metric, 1)
+	collector.Collect(metricCh)
+	metric := <-metricCh
+
+	var pbMetric dto.Metric
+	if err := metric.Write(&pbMetric); err != nil {
+		t.Fatalf("write metric: %v", err)
+	}
+	hist := pbMetric.GetHistogram()
+	if hist == nil {
+		t.Fatal("expected histogram metric")
+	}
+	return hist.GetSampleCount(), hist.GetSampleSum()
+}
+
+func startTestWSReadPump(conn *websocket.Conn) <-chan error {
+	errCh := make(chan error, 1)
+	conn.SetPingHandler(func(appData string) error {
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(100*time.Millisecond))
+	})
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+	return errCh
+}
+
+// syncBuffer is a thread-safe bytes.Buffer for capturing log output in tests.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (sb *syncBuffer) Write(p []byte) (int, error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.Write(p)
+}
+
+func (sb *syncBuffer) String() string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.String()
+}
+
+func waitForCondition(timeout, interval time.Duration, fn func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	return fn()
 }
 
 // TestEnqueueWSEventDropsSilently verifies that when the event channel is full,

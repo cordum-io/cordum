@@ -1,11 +1,26 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
+
+// testCtx returns a context with a deadline derived from the test timeout.
+// Falls back to 30s if no deadline is set. Prevents tests from hanging forever.
+func testCtx(t *testing.T) context.Context {
+	t.Helper()
+	deadline, ok := t.Deadline()
+	if !ok {
+		deadline = time.Now().Add(30 * time.Second)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	t.Cleanup(cancel)
+	return ctx
+}
 
 func TestIsRetryableSchedulingError(t *testing.T) {
 	if !isRetryableSchedulingError(ErrNoWorkers) {

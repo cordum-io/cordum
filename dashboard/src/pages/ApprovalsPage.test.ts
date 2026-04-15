@@ -334,16 +334,11 @@ describe("ApprovalsPage drawer a11y", () => {
         card?.focus();
       });
 
-      click(card);
-
-      const closeButton = container.querySelector(
-        'button[aria-label="Close approval detail"]',
-      ) as HTMLButtonElement | null;
-      expect(closeButton).not.toBeNull();
-      expect(document.activeElement).toBe(closeButton);
-
-      click(closeButton);
-      expect(document.activeElement).toBe(card);
+      // Card click now navigates to /approvals/:jobId detail page.
+      // Verify the card has the correct role and is interactive.
+      expect(card?.getAttribute("role")).toBe("button");
+      expect(card?.getAttribute("tabindex")).toBe("0");
+      expect(card?.getAttribute("aria-label")).toContain("Open approval detail");
     } finally {
       cleanup();
     }
@@ -422,29 +417,16 @@ describe("ApprovalsPage decision-first rendering", () => {
     const { container, cleanup } = renderPage();
     try {
       const card = container.querySelector('article[role="button"]');
-      keydown(card, "Enter");
+      expect(card).not.toBeNull();
 
-      const drawer = container.querySelector(
-        '[role="dialog"][aria-labelledby="approval-drawer-title"]',
-      ) as HTMLElement | null;
-      const drawerText = drawer?.textContent ?? "";
-      const disclosures = Array.from(
-        drawer?.querySelectorAll("details") ?? [],
-      ) as HTMLDetailsElement[];
+      // Card content shows workflow approval details inline.
+      const cardText = card?.textContent ?? "";
+      expect(cardText).toContain("Approve 1,250 USD request with Acme Travel");
+      expect(cardText).toContain("Budget threshold exceeded");
 
-      expect(drawer).not.toBeNull();
-      expect(drawerText).toContain("Decision summary");
-      expect(drawerText).toContain("Workflow & context");
-      expect(drawerText).toContain("Audit & debug detail");
-      expect(drawerText).toContain("Expense Approval");
-      expect(drawerText).toContain("Step 2 of 3");
-      expect(drawerText.indexOf("Decision summary")).toBeLessThan(
-        drawerText.indexOf("Audit & debug detail"),
-      );
-      expect(disclosures).toHaveLength(2);
-      disclosures.forEach((disclosure) => {
-        expect(disclosure.open).toBe(false);
-      });
+      // Card click now navigates to detail page instead of opening drawer.
+      expect(card?.getAttribute("role")).toBe("button");
+      expect(card?.getAttribute("tabindex")).toBe("0");
     } finally {
       cleanup();
     }
@@ -470,17 +452,9 @@ describe("ApprovalsPage decision-first rendering", () => {
       expect(card?.textContent).toContain("Requires manual review");
       expect(card?.textContent).toContain("Safety Policy");
 
-      click(card);
-      const drawer = container.querySelector(
-        '[role="dialog"][aria-labelledby="approval-drawer-title"]',
-      ) as HTMLElement | null;
-      const drawerText = drawer?.textContent ?? "";
-
-      expect(drawerText).toContain(
-        "This approval is not attached to a workflow run. Review the decision summary and audit details below.",
-      );
-      expect(drawerText).toContain("policy-v4");
-      expect(drawer?.querySelectorAll("details")).toHaveLength(0);
+      // Card click navigates to detail page. Verify card is interactive.
+      expect(card?.getAttribute("role")).toBe("button");
+      expect(card?.getAttribute("tabindex")).toBe("0");
     } finally {
       cleanup();
     }
@@ -513,16 +487,13 @@ describe("ApprovalsPage decision-first rendering", () => {
         "Approval context is missing — missing approval_context, business_context.",
       );
 
-      click(card);
-      const drawer = container.querySelector(
-        '[role="dialog"][aria-labelledby="approval-drawer-title"]',
-      ) as HTMLElement | null;
-      const drawerText = drawer?.textContent ?? "";
-
-      expect(drawerText).toContain(
+      // Card click navigates to detail page. Verify card is interactive.
+      expect(card?.getAttribute("role")).toBe("button");
+      expect(card?.getAttribute("tabindex")).toBe("0");
+      // Degraded approvals show context warnings inline on the card.
+      expect(card?.textContent).toContain(
         "Approval context is missing — missing approval_context, business_context.",
       );
-      expect(drawer?.querySelectorAll("details")).toHaveLength(0);
     } finally {
       cleanup();
     }

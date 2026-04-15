@@ -85,12 +85,27 @@ help:
 	@echo "  make test-integration   Run integration tests (requires Docker)"
 	@echo "  make coverage           Full coverage report"
 	@echo "  make coverage-core      Core coverage check (80% minimum)"
-	@echo "  make openapi            Regenerate OpenAPI spec"
+	@echo "  make openapi            Regenerate protobuf swagger + validate cordum-api.yaml"
 	@echo "  make docker SERVICE=X   Build Docker image for a service"
 	@echo "  make smoke              Run platform smoke tests"
 	@echo "  make dev-up             Start all services via docker compose"
 	@echo "  make dev-down           Stop all services"
 	@echo "  make dev-logs           Tail docker compose logs"
+	@echo "  make soak-ws            10-minute WebSocket soak test"
+	@echo "  make soak-ws-quick      2-minute quick WebSocket soak test"
+	@echo "  make soak-ws-full       2-hour full WebSocket soak test"
 	@echo ""
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke dev-up dev-down dev-logs
+soak-ws:
+	@echo "Running 10-minute WebSocket soak test..."
+	./tools/scripts/ws_soak_test.sh default
+
+soak-ws-quick:
+	@echo "Running 2-minute quick WebSocket soak test..."
+	./tools/scripts/ws_soak_test.sh quick
+
+soak-ws-full:
+	@echo "Running 2-hour full WebSocket soak test..."
+	./tools/scripts/ws_soak_test.sh full
+
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full

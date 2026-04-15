@@ -70,6 +70,14 @@ func (b *stubBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	return nil
 }
 
+func (b *stubBus) IsConnected() bool {
+	return true
+}
+
+func (b *stubBus) Status() string {
+	return "CONNECTED"
+}
+
 func (b *stubBus) emit(subject string, packet *pb.BusPacket) {
 	b.mu.Lock()
 	var handlers []func(*pb.BusPacket) error

@@ -34,7 +34,6 @@ type jwtValidator struct {
 	clockSkew   time.Duration
 	defaultRole string
 
-	warnIssuerOnce   sync.Once
 	warnAudienceOnce sync.Once
 }
 
@@ -55,8 +54,18 @@ func newJWTValidatorFromEnv() (*jwtValidator, bool, error) {
 		return nil, false, nil
 	}
 
+	issuer := strings.TrimSpace(os.Getenv("CORDUM_JWT_ISSUER"))
+	if issuer == "" {
+		if env.IsProduction() {
+			issuer = "cordum"
+		} else {
+			issuer = "cordum-dev"
+		}
+		slog.Info("jwt: using default issuer", "issuer", issuer, "production", env.IsProduction())
+	}
+
 	v := &jwtValidator{
-		issuer:      strings.TrimSpace(os.Getenv("CORDUM_JWT_ISSUER")),
+		issuer:      issuer,
 		audience:    strings.TrimSpace(os.Getenv("CORDUM_JWT_AUDIENCE")),
 		defaultRole: strings.TrimSpace(os.Getenv("CORDUM_JWT_DEFAULT_ROLE")),
 	}
@@ -224,17 +233,8 @@ func (v *jwtValidator) validateClaims(claims map[string]any) error {
 			return errors.New("jwt not active yet")
 		}
 	}
-	if v.issuer != "" {
-		if iss, _ := claims["iss"].(string); iss != v.issuer {
-			return errors.New("jwt issuer mismatch")
-		}
-	} else {
-		if env.IsProduction() {
-			return errors.New("jwt: issuer validation required in production — set CORDUM_JWT_ISSUER")
-		}
-		v.warnIssuerOnce.Do(func() {
-			slog.Warn("jwt: issuer validation disabled — CORDUM_JWT_ISSUER not configured")
-		})
+	if iss, _ := claims["iss"].(string); iss != v.issuer {
+		return fmt.Errorf("jwt issuer mismatch: got %q, want %q", iss, v.issuer)
 	}
 	if v.audience != "" {
 		if !audienceMatches(claims["aud"], v.audience) {

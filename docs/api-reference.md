@@ -1361,7 +1361,65 @@ Notes:
 - Repair requests also use `approval_retryable_lock` when another decision or
   repair currently holds the approval lock.
 
-Note: There are no `GET /api/v1/approvals/{id}` or `PUT /api/v1/approvals/{id}` routes in current gateway route registration.
+### GET `/api/v1/approvals/{job_id}/context`
+
+- Auth: required + admin + tenant access
+- Path params: `job_id` (required)
+- Response schema:
+
+```json
+{
+  "approval": {
+    "source": "workflow_payload",
+    "completeness": "rich",
+    "context_status": "available",
+    "title": "Review Acme Travel spending request",
+    "subject": "procurement-order-7823",
+    "why": "manager threshold exceeded",
+    "next_effect": "Approve to continue Manager Approval.",
+    "amount": 1250,
+    "currency": "USD",
+    "vendor": "Acme Travel",
+    "item_count": 3,
+    "items_preview": ["Flights", "Hotel", "Car rental"],
+    "escalation_reason": "spend > $500"
+  },
+  "blast_radius": {
+    "namespaces": ["production"],
+    "resources": ["payments", "vendor-contracts"],
+    "downstream_steps": ["payment-processor", "vendor-email"]
+  },
+  "prior_approvals": [
+    {
+      "job_id": "job-prev-1",
+      "topic": "job.b2b.procurement-pay",
+      "decision": "approved",
+      "resolved_at": 1709000002000000
+    }
+  ],
+  "rollback_hint": "Cancel the workflow run to revert pending state.",
+  "policy_snapshot_summary": {
+    "snapshot": "cfg:policy:bundle:default:v3",
+    "rule_id": "finance-approval-required",
+    "decision": "REQUIRE_APPROVAL"
+  },
+  "time_remaining_ms": 86400000,
+  "constraints": {
+    "sandbox": true,
+    "timeout": 30
+  }
+}
+```
+
+- Notes:
+  - `approval` is the decision briefing — what is being approved, why, and what happens next.
+  - `blast_radius` shows affected systems, namespaces, and downstream workflow steps.
+  - `prior_approvals` lists up to 10 recent related approvals for the same tenant/topic.
+  - `rollback_hint` is operator guidance for reverting the action.
+  - `time_remaining_ms` is milliseconds until the approval deadline expires (null if no deadline).
+  - `constraints` are the safety constraints from the policy decision.
+  - Fields may be absent when context data is unavailable (`context_status` indicates the reason).
+- Errors: `400`, `403`, `404`
 
 ---
 
@@ -1764,6 +1822,118 @@ curl -sS -X POST http://localhost:8081/api/v1/policy/evaluate \
   -H 'Content-Type: application/json' \
   -d '{"topic":"job.default","tenant":"default"}'
 ```
+
+### Policy governance endpoints
+
+### POST `/api/v1/policy/replay`
+
+- Auth: required + admin
+- Description: What-if analysis — replays historical jobs against a candidate policy to preview decision changes before deployment.
+- Request:
+
+```json
+{
+  "from": "2026-04-07T00:00:00Z",
+  "to": "2026-04-14T00:00:00Z",
+  "filters": {
+    "tenant": "default",
+    "topic_pattern": "job\\.cordclaw\\..*",
+    "original_decision": "DENY"
+  },
+  "candidate_content": "version: \"1\"\nrules:\n  ...",
+  "use_current_policy": false,
+  "max_jobs": 500
+}
+```
+
+- Response:
+
+```json
+{
+  "replay_id": "replay-abc123",
+  "policy_snapshot": "candidate-inline-sha256:...",
+  "time_range": { "from": "2026-04-07T00:00:00Z", "to": "2026-04-14T00:00:00Z" },
+  "summary": {
+    "total_jobs": 312,
+    "evaluated": 310,
+    "escalated": 4,
+    "relaxed": 12,
+    "unchanged": 294,
+    "errored": 2
+  },
+  "rule_hits": [
+    { "rule_id": "cordclaw-deny-destructive", "decision": "DENY", "count": 8 }
+  ],
+  "changes": [
+    {
+      "job_id": "job-xyz",
+      "topic": "job.cordclaw.exec",
+      "tenant": "default",
+      "original_decision": "DENY",
+      "new_decision": "ALLOW",
+      "new_rule_id": "cordclaw-allow-safe-exec",
+      "new_reason": "Safe exec in sandbox",
+      "direction": "relaxed"
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}
+```
+
+- Notes:
+  - Provide `candidate_content` (inline YAML) or `candidate_bundle_id` (existing bundle) or `use_current_policy=true`.
+  - `direction` is `escalated` (stricter), `relaxed` (looser), or `unchanged`.
+  - Time range maximum: 7 days. Default `max_jobs`: 500 (absolute max: 1000).
+  - `filters` is optional; omit to replay all jobs in the time range.
+- Errors: `400` (invalid time range/policy), `403`, `500`
+
+### POST `/api/v1/policy/analytics`
+
+- Auth: required + admin
+- Description: Rule-level analytics — hit counts, override rates, approval latency, and daily histograms for policy rules over a time window.
+- Request:
+
+```json
+{
+  "from": "2026-04-07T00:00:00Z",
+  "to": "2026-04-14T00:00:00Z",
+  "rule_filter": ""
+}
+```
+
+- Response:
+
+```json
+{
+  "time_range": { "from": "2026-04-07T00:00:00Z", "to": "2026-04-14T00:00:00Z" },
+  "rules": [
+    {
+      "rule_id": "cordclaw-approve-package-install",
+      "hit_count": 47,
+      "approval_count": 47,
+      "override_count": 38,
+      "override_rate": 0.809,
+      "avg_approval_latency_ms": 12400,
+      "daily_hits": [8, 5, 12, 3, 7, 6, 6]
+    }
+  ],
+  "summary": {
+    "total_rules": 14,
+    "total_hits": 312,
+    "total_overrides": 52,
+    "highest_override_rule": "cordclaw-approve-package-install"
+  }
+}
+```
+
+- Notes:
+  - Time range maximum: 7 days. Jobs scanned: up to 1000.
+  - `rule_filter` optionally restricts results to a single rule ID.
+  - `override_rate` is `override_count / approval_count` (3 decimal places). Rules with zero approvals have rate 0.
+  - `daily_hits` is a per-day histogram aligned to the `from` date (max 7 entries).
+  - `highest_override_rule` highlights the rule most frequently overridden by operators — a signal for policy tuning.
+- Errors: `400` (invalid time range), `403`, `500`
 
 ---
 
@@ -2544,12 +2714,15 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 - Upgrade: websocket
 - API key via `X-API-Key` or websocket subprotocol (`cordum-api-key, <base64url(key)>`)
 - Streams bus events (`sys.job.*`, `sys.audit.*`) filtered by tenant permissions.
+- Server sends ping frames every 30 seconds by default (`GATEWAY_WS_PING_INTERVAL`) and expects pong handling to keep the socket alive.
+- Credentials are revalidated every 120 seconds; definitive revocation closes the socket with a policy-violation close frame.
 
 ### GET `/api/v1/jobs/{id}/stream`
 
 - Auth: required + tenant access to that job
 - Upgrade: websocket
 - Streams only events for the specified job id.
+- Uses the same ping/pong keepalive and credential revalidation behavior as the global stream.
 
 ---
 

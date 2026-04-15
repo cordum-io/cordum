@@ -177,8 +177,10 @@ func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff 
 			if len(timeout) > 0 {
 				reason = fmt.Sprintf("timeout: %s >%s", state, timeout[0])
 			}
-			_ = r.store.SetFailureReason(ctx, rec.ID, reason)
-			slog.Info("job timed out", "job_id", rec.ID, "from_state", state)
+			if frErr := r.store.SetFailureReason(ctx, rec.ID, reason); frErr != nil {
+				slog.Warn("failed to set failure reason", "job_id", rec.ID, "reason", reason, "error", frErr)
+			}
+			slog.Warn("job timed out", "job_id", rec.ID, "from_state", state)
 			if state == JobStateApproval {
 				r.recordApprovalExpiry(ctx)
 			}
@@ -207,8 +209,10 @@ func (r *Reconciler) handleDeadlineExpirations(ctx context.Context, now time.Tim
 		if err := r.store.SetState(ctx, rec.ID, JobStateTimeout); err != nil {
 			slog.Error("mark deadline timeout", "job_id", rec.ID, "error", err)
 		} else {
-			_ = r.store.SetFailureReason(ctx, rec.ID, "timeout: deadline expired")
-			slog.Info("job deadline expired", "job_id", rec.ID)
+			if frErr := r.store.SetFailureReason(ctx, rec.ID, "timeout: deadline expired"); frErr != nil {
+				slog.Warn("failed to set failure reason", "job_id", rec.ID, "reason", "timeout: deadline expired", "error", frErr)
+			}
+			slog.Warn("job deadline expired", "job_id", rec.ID)
 			if rec.State == JobStateApproval {
 				r.recordApprovalExpiry(ctx)
 			}
@@ -289,6 +293,9 @@ func (r *Reconciler) handleApprovalRepairs(ctx context.Context, now time.Time) {
 			progress++
 		}
 
+		if progress > 0 {
+			r.syncApprovalQueueDepth(ctx)
+		}
 		if progress == 0 {
 			return
 		}

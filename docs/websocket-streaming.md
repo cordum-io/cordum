@@ -174,7 +174,17 @@ Server-side filtering:
 
 ## 6. Reconnection Strategy
 
-The gateway does not implement ping/pong keepalive frames. Clients should implement reconnection with exponential backoff.
+The gateway now sends WebSocket ping frames every 30 seconds by default and expects the client to process control frames and reply with pong frames. Clients should still implement reconnection with exponential backoff for process restarts, network partitions, credential revocation, and any transport that remains unavailable after keepalive retries.
+
+### Server Keepalive and Revalidation
+
+- The gateway sends a ping every `30s` by default (`GATEWAY_WS_PING_INTERVAL`)
+- The server extends the read deadline when it receives a pong and treats missing pongs as a dead connection (`GATEWAY_WS_PONG_TIMEOUT`)
+- Long-lived WebSocket credentials are revalidated every `120s`
+- Transient auth backend failures (for example network timeouts) are retried before the connection is dropped
+- The HTTP server idle timeout defaults to `120s` (`GATEWAY_HTTP_IDLE_TIMEOUT`) so quiet upgraded connections are not closed before the keepalive loop runs
+
+**Client requirement:** keep a read loop running. In Gorilla WebSocket and most browser runtimes, ping/pong handlers only run while the connection is being read.
 
 ### Recommended Parameters
 
@@ -193,6 +203,50 @@ connect() → onopen    → receiving messages...
            onclose   → wait(backoff) → connect()
                          backoff *= 2 (capped at max)
 ```
+
+### Connection Identification
+
+Every WebSocket connection is assigned a unique `conn_id` — a 16-character hex string generated from `crypto/rand`. This ID appears in all lifecycle log entries and allows operators to trace a single connection across connect, revalidation, and disconnect events.
+
+### Lifecycle Logging
+
+The gateway emits structured `slog.Info` logs at connection boundaries:
+
+**Connect:**
+```
+level=INFO msg="ws connected" conn_id=a1b2c3d4e5f67890 remote=10.0.1.5:52340 tenant=default user_agent=Go-http-client/1.1
+```
+
+**Disconnect:**
+```
+level=INFO msg="ws disconnected" conn_id=a1b2c3d4e5f67890 remote=10.0.1.5:52340 tenant=default duration=482s reason=client_close
+```
+
+Disconnect reasons:
+
+| Reason | Meaning |
+|--------|---------|
+| `client_close` | Client closed the connection normally |
+| `ping_timeout` | Client failed to respond to ping within the pong timeout |
+| `revalidation_revoked` | Credential revalidation determined the API key is no longer valid |
+| `slow_client` | Client send buffer was full (100 events queued) |
+| `shutdown` | Gateway is shutting down |
+
+### Prometheus Metrics
+
+The gateway exports 9 WebSocket metrics on the `/metrics` endpoint (default port 9092):
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `cordum_gateway_ws_clients_active` | Gauge | — | Current active WebSocket connections |
+| `cordum_gateway_ws_connection_duration_seconds` | Histogram | — | Connection lifetime (buckets: 1s to 4h) |
+| `cordum_gateway_ws_pings_sent_total` | Counter | — | Ping frames sent to clients |
+| `cordum_gateway_ws_pongs_received_total` | Counter | — | Pong frames received from clients |
+| `cordum_gateway_ws_pong_timeouts_total` | Counter | — | Connections closed after missing pong |
+| `cordum_gateway_ws_packets_dropped_total` | Counter | — | Bus packets dropped due to marshal failure |
+| `cordum_gateway_ws_slow_client_evictions_total` | CounterVec | `reason` | Clients evicted (buffer full) |
+| `cordum_gateway_ws_revalidation_total` | CounterVec | `outcome` | Credential revalidation outcomes (`ok`, `revoked`, `error`) |
+| `cordum_gateway_ws_reconnections_total` | Counter | — | Client reconnections within the reconnect window |
 
 ### Slow Client Eviction
 

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 // SafetyClient implements SafetyChecker by calling the SafetyKernel gRPC service.
@@ -28,13 +29,17 @@ type SafetyClient struct {
 }
 
 const (
-	safetyTimeout            = 2 * time.Second
-	inputContentMaxBytes     = 2 * 1024 * 1024 // 2 MiB, same as output
-	inputPointerPrefix       = "redis://"
-	safetyCircuitOpenFor     = 30 * time.Second
-	safetyCircuitFailBudget  = 3
-	safetyCircuitHalfOpenMax = 3
-	safetyCircuitCloseAfter  = 2
+	safetyTimeout                     = 2 * time.Second
+	inputContentMaxBytes              = 2 * 1024 * 1024 // 2 MiB, same as output
+	inputPointerPrefix                = "redis://"
+	safetyCircuitOpenFor              = 30 * time.Second
+	safetyCircuitFailBudget           = 3
+	safetyCircuitHalfOpenMax          = 3
+	safetyCircuitCloseAfter           = 2
+	envGRPCClientKeepaliveTime        = "CORDUM_GRPC_CLIENT_KEEPALIVE_TIME"
+	envGRPCClientKeepaliveTimeout     = "CORDUM_GRPC_CLIENT_KEEPALIVE_TIMEOUT"
+	grpcClientKeepaliveTimeDefault    = 30 * time.Second
+	grpcClientKeepaliveTimeoutDefault = 10 * time.Second
 )
 
 type circuitState int
@@ -51,7 +56,11 @@ func NewSafetyClient(addr string) (*SafetyClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithKeepaliveParams(grpcClientKeepaliveParams()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("dial safety kernel: %w", err)
 	}
@@ -65,6 +74,14 @@ func NewSafetyClient(addr string) (*SafetyClient, error) {
 			CloseAfter:    safetyCircuitCloseAfter,
 		}),
 	}, nil
+}
+
+func grpcClientKeepaliveParams() keepalive.ClientParameters {
+	return keepalive.ClientParameters{
+		Time:                env.DurationOr(envGRPCClientKeepaliveTime, grpcClientKeepaliveTimeDefault),
+		Timeout:             env.DurationOr(envGRPCClientKeepaliveTimeout, grpcClientKeepaliveTimeoutDefault),
+		PermitWithoutStream: true,
+	}
 }
 
 // WithRedis enables the distributed circuit breaker backed by Redis.

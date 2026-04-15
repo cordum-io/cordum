@@ -99,6 +99,8 @@ var (
 	normalizeRole          = auth.NormalizeRole
 	parseAPIKeys           = auth.ParseAPIKeys
 	sessionTokenFromCookie = auth.SessionTokenFromCookie
+	setSessionCookie       = auth.SetSessionCookie
+	clearSessionCookie     = auth.ClearSessionCookie
 )
 
 // ─── Error re-exports ───────────────────────────────────────────────────────

@@ -54,7 +54,11 @@ func NewOutputSafetyClientWithRedis(addr, redisURL string) (*OutputSafetyClient,
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithKeepaliveParams(grpcClientKeepaliveParams()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("dial output policy service: %w", err)
 	}

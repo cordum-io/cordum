@@ -2,6 +2,7 @@ package env
 
 import (
 	"crypto/tls"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -75,6 +76,33 @@ func IntOr(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// requiredProductionVars lists environment variables that must be set in
+// production mode. Missing any of these causes a startup failure to prevent
+// silently connecting to localhost defaults.
+var requiredProductionVars = []string{
+	"NATS_URL",
+	"REDIS_URL",
+}
+
+// ValidateProductionConfig checks that all required environment variables are
+// set when running in production mode. Returns nil in non-production mode or
+// when all required vars are present.
+func ValidateProductionConfig() error {
+	if !IsProduction() {
+		return nil
+	}
+	var missing []string
+	for _, key := range requiredProductionVars {
+		if strings.TrimSpace(os.Getenv(key)) == "" {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("production mode requires these environment variables: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // Int64Or reads an int64 from an environment variable, falling back to the

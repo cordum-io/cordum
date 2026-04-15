@@ -163,7 +163,7 @@ func (e *Engine) Stop() {
 		e.stopped = make(chan struct{})
 		close(e.stopped)
 	}
-	for _, t := range e.pendingTimers {
+	for t := range e.pendingTimers {
 		t.Stop()
 	}
 	e.pendingTimers = nil
@@ -216,14 +216,8 @@ func (e *Engine) scheduleAfter(delay time.Duration, workflowID, runID string) {
 			return
 		default:
 		}
-		// Remove ourselves from the pending list while holding the lock.
-		for i, pt := range e.pendingTimers {
-			if pt == t {
-				e.pendingTimers[i] = e.pendingTimers[len(e.pendingTimers)-1]
-				e.pendingTimers = e.pendingTimers[:len(e.pendingTimers)-1]
-				break
-			}
-		}
+		// Remove ourselves from the pending map while holding the lock.
+		delete(e.pendingTimers, t)
 		e.timerMu.Unlock()
 
 		// Resume the run first, then remove the durable timer only on success.
@@ -247,7 +241,10 @@ func (e *Engine) scheduleAfter(delay time.Duration, workflowID, runID string) {
 			rCancel()
 		}
 	})
-	e.pendingTimers = append(e.pendingTimers, t)
+	if e.pendingTimers == nil {
+		e.pendingTimers = make(map[*time.Timer]struct{})
+	}
+	e.pendingTimers[t] = struct{}{}
 	e.timerMu.Unlock()
 }
 
@@ -422,5 +419,8 @@ func (e *Engine) appendTimeline(ctx context.Context, run *WorkflowRun, eventType
 		Message:    message,
 		Data:       data,
 	}
-	_ = e.store.AppendTimelineEvent(ctx, run.ID, evt)
+	if err := e.store.AppendTimelineEvent(ctx, run.ID, evt); err != nil {
+		slog.Error("timeline event append failed", "run_id", run.ID, "event_type", evt.Type, "error", err)
+		slog.Info("timeline event fallback", "run_id", run.ID, "step_id", evt.StepID, "type", evt.Type, "message", evt.Message)
+	}
 }

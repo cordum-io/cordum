@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -125,8 +126,8 @@ func (vc *velocityChecker) CheckAndRecord(ctx context.Context, ruleID, keyValue,
 	if err != nil {
 		velocityCheckTotal.WithLabelValues(ruleID, "error").Inc()
 		slog.Error("velocity redis eval failed",
-			"rule", ruleID, "key", keyValue, "redis_key", key,
-			"error", err, "latency_ms", elapsed.Milliseconds())
+			"component", "safety", "error", err,
+			"latency_ms", elapsed.Milliseconds())
 		return false, 0, fmt.Errorf("velocity redis eval: %w", err)
 	}
 
@@ -171,7 +172,7 @@ func (vc *velocityChecker) CheckOnly(ctx context.Context, ruleID, keyValue strin
 	if err != nil {
 		velocityCheckTotal.WithLabelValues(ruleID, "error").Inc()
 		slog.Error("velocity redis eval failed (check-only)",
-			"rule", ruleID, "key", keyValue, "error", err,
+			"component", "safety", "error", err,
 			"latency_ms", elapsed.Milliseconds())
 		return false, 0, fmt.Errorf("velocity redis eval: %w", err)
 	}
@@ -275,12 +276,19 @@ func (s *server) evaluateRulesWithVelocity(ctx context.Context, policy *config.S
 				exceeded, count, err = s.velocityChecker.CheckAndRecord(ctx, rule.ID, keyValue, member, rule.Velocity)
 			}
 			if err != nil {
-				slog.Warn("velocity check failed (fail-open)",
-					"component", "safety", "rule", rule.ID,
-					"skip_reason", "redis_error",
-					"bucket_key", bucketKey,
-					"error", err, "job_id", jobID)
-				continue
+				failMode := strings.ToLower(strings.TrimSpace(os.Getenv("VELOCITY_FAIL_MODE")))
+				if failMode == "open" {
+					slog.Error("velocity check failed (fail-open override)",
+						"component", "safety", "error", err, "job_id", jobID)
+					continue
+				}
+				slog.Error("velocity check failed (fail-closed)",
+					"component", "safety", "error", err, "job_id", jobID)
+				return config.PolicyDecision{
+					Decision:         "require_approval",
+					Reason:           "velocity check unavailable",
+					ApprovalRequired: true,
+				}
 			}
 			slog.Info("velocity evaluation",
 				"component", "safety",

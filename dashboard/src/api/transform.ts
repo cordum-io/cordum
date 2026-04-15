@@ -263,6 +263,33 @@ export interface BackendApprovalItem {
   step_index?: number;
   step_name?: string;
   total_steps?: number;
+  // Enriched context fields for decision-grade UX.
+  blast_radius?: {
+    systems?: string[];
+    namespaces?: string[];
+    resources?: string[];
+    scope_description?: string;
+  };
+  prior_approvals?: Array<{
+    job_id?: string;
+    topic?: string;
+    tenant?: string;
+    decision?: string;
+    resolved_by?: string;
+    resolved_at?: number;
+    was_approved?: boolean;
+  }>;
+  rollback_hint?: string;
+  policy_snapshot_summary?: {
+    rule_count?: number;
+    matched_rule?: {
+      id?: string;
+      description?: string;
+      decision?: string;
+      constraints_summary?: string;
+    };
+    policy_version?: string;
+  };
 }
 
 export interface BackendDLQEntry {
@@ -976,6 +1003,40 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     approval_actionability: item.approval_actionability ?? actionability,
     approval_revision: item.approval_revision,
     approval_decision: item.approval_decision,
+    blastRadius: item.blast_radius
+      ? {
+          systems: item.blast_radius.systems ?? [],
+          namespaces: item.blast_radius.namespaces ?? [],
+          resources: item.blast_radius.resources ?? [],
+          scopeDescription: item.blast_radius.scope_description ?? "",
+        }
+      : undefined,
+    priorApprovals: (item.prior_approvals ?? []).map((pa) => ({
+      jobId: pa.job_id ?? "",
+      topic: pa.topic ?? "",
+      tenant: pa.tenant ?? "",
+      decision: pa.decision ?? "",
+      resolvedBy: pa.resolved_by ?? "",
+      resolvedAt: pa.resolved_at ?? 0,
+      wasApproved: pa.was_approved ?? false,
+    })),
+    rollbackHint: item.rollback_hint ?? "",
+    policySnapshotSummary: item.policy_snapshot_summary
+      ? {
+          ruleCount: item.policy_snapshot_summary.rule_count ?? 0,
+          matchedRule: {
+            id: item.policy_snapshot_summary.matched_rule?.id ?? "",
+            description:
+              item.policy_snapshot_summary.matched_rule?.description ?? "",
+            decision:
+              item.policy_snapshot_summary.matched_rule?.decision ?? "",
+            constraintsSummary:
+              item.policy_snapshot_summary.matched_rule?.constraints_summary ??
+              "",
+          },
+          policyVersion: item.policy_snapshot_summary.policy_version ?? "",
+        }
+      : undefined,
   };
 }
 
