@@ -64,6 +64,14 @@ const (
 	outputPolicyAudit    = "sys.audit.output_policy"
 )
 
+// otelMetricsBridge is an optional interface for OTEL metrics dual-emission.
+// Implemented by cordumotel.SchedulerMetricsBridge.
+type otelMetricsBridge interface {
+	RecordJobReceived(ctx context.Context, topic string)
+	RecordJobCompleted(ctx context.Context, topic, status string)
+	RecordSafetyDenied(ctx context.Context, topic string)
+}
+
 // Engine wires together bus interactions, safety checks, and scheduling decisions.
 type Engine struct {
 	bus                     Bus
@@ -89,6 +97,7 @@ type Engine struct {
 	entitlements            *licensing.EntitlementResolver
 	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
 	failModeResolver        *FailModeResolver
+	otelMetrics             otelMetricsBridge     // optional OTEL dual-emission bridge
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
 	activeHandlers          atomic.Int64
@@ -428,6 +437,14 @@ func (e *Engine) WithInputFailMode(mode string) *Engine {
 
 func (e *Engine) isInputFailOpen() bool {
 	return e.inputFailOpen.Load()
+}
+
+// WithOTELMetrics wires an optional OTEL metrics bridge for dual-emission
+// alongside Prometheus. When set, key scheduler events (job received, completed,
+// safety denied) are recorded via both Prometheus and OTEL instruments.
+func (e *Engine) WithOTELMetrics(bridge otelMetricsBridge) *Engine {
+	e.otelMetrics = bridge
+	return e
 }
 
 // WithFailModeResolver wires a per-tenant fail mode resolver. When set, the
@@ -1068,6 +1085,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 				span.SetAttributes(attribute.String("cordum.agent_id", agentID))
 			}
 		}
+	}
+
+	// Dual-emit: record job received in OTEL alongside Prometheus.
+	if e.otelMetrics != nil && req != nil {
+		e.otelMetrics.RecordJobReceived(lockCtx, strings.TrimSpace(req.Topic))
 	}
 
 	if req == nil || strings.TrimSpace(req.JobId) == "" || strings.TrimSpace(req.Topic) == "" {
@@ -1931,6 +1953,9 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			completionStatus = string(JobStateQuarantined)
 		}
 		e.incJobsCompleted(topic, completionStatus)
+		if e.otelMetrics != nil {
+			e.otelMetrics.RecordJobCompleted(context.Background(), topic, completionStatus)
+		}
 		if state == JobStateQuarantined {
 			reason := strings.TrimSpace(outputRecord.Reason)
 			if reason == "" {
@@ -2463,6 +2488,9 @@ func (e *Engine) incJobsCompleted(topic, status string) {
 func (e *Engine) incSafetyDenied(topic string) {
 	if e.metrics != nil {
 		e.metrics.IncSafetyDenied(topic)
+	}
+	if e.otelMetrics != nil {
+		e.otelMetrics.RecordSafetyDenied(context.Background(), topic)
 	}
 }
 
