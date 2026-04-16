@@ -109,6 +109,24 @@ func (r *EntitlementResolver) Rights() *Rights {
 	return &cloned
 }
 
+// ForceState bypasses the license-loading and merge logic, directly setting the
+// resolver's plan and entitlements. Intended for tests that need precise control
+// over entitlement values (the normal merge path only increases limits).
+func (r *EntitlementResolver) ForceState(plan Plan, entitlements Entitlements, rights *Rights) {
+	if r == nil {
+		return
+	}
+	r.state.Store(buildResolverSnapshot(plan, entitlements, nil, "active"))
+	// Patch rights into the snapshot since buildResolverSnapshot only copies from
+	// the license argument (which is nil here).
+	if rights != nil {
+		snap := r.state.Load().(resolverSnapshot)
+		cloned := *rights
+		snap.Rights = &cloned
+		r.state.Store(snap)
+	}
+}
+
 func (r *EntitlementResolver) snapshot() resolverSnapshot {
 	if r == nil {
 		return buildResolverSnapshot(PlanCommunity, DefaultEntitlements(PlanCommunity), nil, "active")
