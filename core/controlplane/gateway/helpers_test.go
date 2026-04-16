@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -193,16 +192,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	t.Helper()
 
 	// Constrain Redis pool size to prevent socket exhaustion under -count=3 on Windows.
-	// Use os.Setenv instead of t.Setenv because some callers use t.Parallel().
-	prev := os.Getenv("REDIS_POOL_SIZE")
-	os.Setenv("REDIS_POOL_SIZE", "3")
-	t.Cleanup(func() {
-		if prev == "" {
-			os.Unsetenv("REDIS_POOL_SIZE")
-		} else {
-			os.Setenv("REDIS_POOL_SIZE", prev)
-		}
-	})
+	t.Setenv("REDIS_POOL_SIZE", "3")
 
 	// Allow loopback in tests (httptest.NewServer binds to 127.0.0.1).
 	prevSkip := skipPrivateIPCheck.Load()
