@@ -224,6 +224,7 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 			"workflow_id": wfDef.ID,
 			"run_id":      run.ID,
 			"step_id":     stepID,
+			"_source":     "workflow",
 		},
 		TenantId: run.OrgID,
 	}

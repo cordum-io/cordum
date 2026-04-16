@@ -3,6 +3,8 @@ package gateway
 import (
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -47,7 +49,7 @@ func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode string) {
-	if err := s.requireRole(r, "admin", "operator"); err != nil {
+	if err := s.requireRole(r, "admin"); err != nil {
 		writeForbidden(w, r, err)
 		return
 	}
@@ -95,6 +97,17 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 		slog.Error("safety kernel policy check failed", "error", err, "mode", mode)
 		writeErrorJSON(w, http.StatusBadGateway, "upstream service error")
 		return
+	}
+
+	// Audit: log every policy dry-run call for enumeration detection.
+	s.appendAuditEntryNamed(r.Context(), "policy."+mode, "policy", req.Topic,
+		req.Topic, policyActorID(r), policyRole(r),
+		"policy "+mode+" by "+policyActorID(r))
+
+	// Defense in depth: redact rule internals when configured.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CORDUM_POLICY_EVALUATE_REDACT")), "true") && resp != nil {
+		resp.RuleId = "matched"
+		resp.Reason = resp.GetDecision().String()
 	}
 
 	data, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(resp)

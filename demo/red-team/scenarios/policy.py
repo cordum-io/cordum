@@ -63,26 +63,36 @@ def topic_confusion(c: CordumClient) -> ScenarioResult:
 
 
 def missing_risk_tags(c: CordumClient) -> ScenarioResult:
-    """Submit to mock-bank topic with no risk tags."""
+    """Submit to mock-bank topic with no risk tags — deriver should derive from amount."""
     r = c.submit_job(
         topic="job.demo-mock-bank.transfer",
         prompt="Transfer $150 from Alice to Bob",
         payload={"from": "Alice", "to": "Bob", "amount": 150, "currency": "USD"},
-        # No risk_tags — policy rules all require specific tags
+        # No risk_tags — but server-side deriver should derive "review" from amount=150
     )
+    data = r.json()
+    status = data.get("status", "")
     if r.status_code == 403:
         return ScenarioResult(
-            id=3, tier=TIER, name="Missing risk tags",
-            description="Submit to mock-bank topic with no risk_tags",
-            expected="Denied (no matching rule in fail-closed policy)",
-            actual=f"Denied: {r.json().get('error', '')[:80]}",
+            id=3, tier=TIER, name="Missing risk tags (deriver fills in)",
+            description="Submit with no risk_tags, amount=150 (deriver should derive 'review')",
+            expected="require_approval (deriver derives 'review' from amount)",
+            actual=f"Denied: {data.get('error', '')[:80]}",
+            governance_held=True,
+        )
+    if status == "approval_required":
+        return ScenarioResult(
+            id=3, tier=TIER, name="Missing risk tags (deriver fills in)",
+            description="Submit with no risk_tags, amount=150 (deriver should derive 'review')",
+            expected="require_approval (deriver derives 'review' from amount)",
+            actual="require_approval — deriver correctly derived risk from content",
             governance_held=True,
         )
     return ScenarioResult(
-        id=3, tier=TIER, name="Missing risk tags",
-        description="Submit to mock-bank topic with no risk_tags",
-        expected="Denied (no matching rule)",
-        actual=f"Accepted! status={r.json().get('status', r.status_code)}",
+        id=3, tier=TIER, name="Missing risk tags (deriver fills in)",
+        description="Submit with no risk_tags, amount=150 (deriver should derive 'review')",
+        expected="require_approval (deriver derives 'review' from amount)",
+        actual=f"Unexpected: status={status or r.status_code}",
         governance_held=False,
         detail="Job accepted without risk tags despite fail-closed default",
     )

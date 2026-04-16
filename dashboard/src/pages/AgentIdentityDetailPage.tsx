@@ -50,7 +50,7 @@ export default function AgentIdentityDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: agent, isLoading, isError, error } = useAgentIdentity(id);
-  const { data: stats } = useAgentStats(id);
+  const { data: stats, isLoading: statsLoading, isError: statsError } = useAgentStats(id);
 
   if (isError) {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load agent identity"} />;
@@ -127,25 +127,35 @@ export default function AgentIdentityDetailPage() {
             <Activity className="w-4 h-4 text-cordum" />
             <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">7-Day Activity</span>
           </div>
-          <div className="space-y-4">
-            <div>
-              <span className="text-3xl font-mono font-bold text-foreground">{stats?.total_jobs_7d ?? 0}</span>
-              <span className="text-sm text-muted-foreground ml-2">jobs</span>
+          {statsLoading ? (
+            <div className="space-y-3">
+              <div className="h-8 w-24 bg-surface-2 rounded animate-pulse" />
+              <div className="h-4 w-32 bg-surface-2 rounded animate-pulse" />
+              <div className="h-4 w-40 bg-surface-2 rounded animate-pulse" />
             </div>
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
-              <span className="text-sm">
-                <span className="font-mono font-semibold text-foreground">{stats?.denied_7d ?? 0}</span>
-                <span className="text-muted-foreground ml-1">denied</span>
-              </span>
+          ) : statsError ? (
+            <div className="text-xs text-destructive">Failed to load activity stats</div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <span className="text-3xl font-mono font-bold text-foreground">{stats?.total_jobs_7d ?? 0}</span>
+                <span className="text-sm text-muted-foreground ml-2">jobs</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
+                <span className="text-sm">
+                  <span className="font-mono font-semibold text-foreground">{stats?.denied_7d ?? 0}</span>
+                  <span className="text-muted-foreground ml-1">denied</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">
+                  Last active: {stats?.last_active ? formatRelativeTime(new Date(stats.last_active / 1000).toISOString()) : "Never"}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                Last active: {stats?.last_active ? formatRelativeTime(new Date(stats.last_active / 1000).toISOString()) : "Never"}
-              </span>
-            </div>
-          </div>
+          )}
         </motion.div>
 
         {/* Permissions */}
@@ -179,6 +189,65 @@ export default function AgentIdentityDetailPage() {
           </div>
         </motion.div>
       </div>
+
+      {/* Activity Timeline */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+        className="instrument-card"
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <Activity className="w-4 h-4 text-cordum" />
+          <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Activity Timeline</span>
+        </div>
+        {statsLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-6 bg-surface-2 rounded animate-pulse" />
+            ))}
+          </div>
+        ) : statsError ? (
+          <div className="text-xs text-destructive">Failed to load activity timeline</div>
+        ) : (
+          <div className="space-y-3 relative before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-border">
+            <div className="flex items-start gap-3 pl-0">
+              <div className="w-[15px] h-[15px] rounded-full bg-cordum/20 border-2 border-cordum flex-shrink-0 mt-0.5 relative z-10" />
+              <div>
+                <p className="text-sm font-medium text-foreground">{stats?.total_jobs_7d ?? 0} jobs processed</p>
+                <p className="text-xs text-muted-foreground">Last 7 days</p>
+              </div>
+            </div>
+            {(stats?.denied_7d ?? 0) > 0 && (
+              <div className="flex items-start gap-3 pl-0">
+                <div className="w-[15px] h-[15px] rounded-full bg-destructive/20 border-2 border-destructive flex-shrink-0 mt-0.5 relative z-10" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">{stats?.denied_7d} jobs denied by policy</p>
+                  <p className="text-xs text-muted-foreground">Safety kernel enforcement</p>
+                </div>
+              </div>
+            )}
+            <div className="flex items-start gap-3 pl-0">
+              <div className="w-[15px] h-[15px] rounded-full bg-muted border-2 border-muted-foreground/30 flex-shrink-0 mt-0.5 relative z-10" />
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  {stats?.last_active
+                    ? `Last active ${formatRelativeTime(new Date(stats.last_active / 1000).toISOString())}`
+                    : "No recent activity"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 pl-0">
+              <div className="w-[15px] h-[15px] rounded-full bg-muted border-2 border-muted-foreground/30 flex-shrink-0 mt-0.5 relative z-10" />
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  Identity created {formatRelativeTime(agent.created_at)}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </motion.div>
 
       {/* Metadata */}
       <motion.div

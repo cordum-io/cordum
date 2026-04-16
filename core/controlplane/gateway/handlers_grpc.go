@@ -131,6 +131,16 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// Strip reserved labels from client input (same as HTTP path).
 	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
 
+	// Inject request source for policy rules.
+	if payloadReq.Labels == nil {
+		payloadReq.Labels = map[string]string{}
+	}
+	if payloadReq.PackId != "" {
+		payloadReq.Labels["_source"] = "pack"
+	} else {
+		payloadReq.Labels["_source"] = "api"
+	}
+
 	secretsPresent := secrets.ContainsSecretRefs(payloadReq.Prompt)
 	if secretsPresent {
 		payloadReq.RiskTags = appendUniqueTag(payloadReq.RiskTags, "secrets")
@@ -220,6 +230,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
+		actorForAudit, roleForAudit := "anonymous", "none"
+		if ac := authFromContext(ctx); ac != nil {
+			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
+		}
+		s.appendAuditEntryWithAgent(ctx, "submit_throttled", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy throttled: "+reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.ResourceExhausted, reason)
 	}
 	if policyResult.ApprovalRequired {

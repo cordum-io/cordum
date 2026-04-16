@@ -12,10 +12,10 @@ TIER = "Tier 5: Rate & Resource Limits"
 
 
 def rapid_fire_submission(c: CordumClient) -> ScenarioResult:
-    """Submit 60 jobs as fast as possible to test rate limiting."""
+    """Submit 120 jobs as fast as possible to exceed burst limit (100)."""
     results: list[int] = []
     rejected = 0
-    total = 60
+    total = 120
 
     for i in range(total):
         r = c.submit_job(

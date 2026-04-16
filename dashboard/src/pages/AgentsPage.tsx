@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { EntitlementGate } from "@/components/EntitlementGate";
 import { useAgentIdentities } from "@/hooks/useAgentIdentities";
 import type { AgentIdentity } from "@/api/types";
 import { TierLimitBar } from "@/components/TierLimitBar";
@@ -372,7 +373,11 @@ export default function AgentsPage() {
         />
       )}
 
-      {tab === "identity" && <AgentIdentityTab />}
+      {tab === "identity" && (
+        <EntitlementGate entitlement="agentIdentity" label="Agent Identity Directory" description="Agent identity management requires an Enterprise license.">
+          <AgentIdentityTab />
+        </EntitlementGate>
+      )}
 
       <WorkerDetailDrawer
         workerId={drawerWorkerId}
@@ -403,11 +408,23 @@ function RiskTierBadge({ tier }: { tier: string }) {
 /* --- Agent Identity Tab --- */
 function AgentIdentityTab() {
   const navigate = useNavigate();
-  const { data, isLoading } = useAgentIdentities({ limit: 50 });
+  const [cursor, setCursor] = useState("");
+  const { data, isLoading, isError, error } = useAgentIdentities({ limit: 25, cursor });
   const identities = data?.items ?? [];
+  const nextCursor = data?.cursor ?? "";
 
   if (isLoading) {
     return <SkeletonTable rows={5} />;
+  }
+
+  if (isError) {
+    return (
+      <EmptyState
+        icon={<Fingerprint className="w-12 h-12 text-destructive/40" />}
+        title="Failed to load agent identities"
+        description={error instanceof Error ? error.message : "An error occurred."}
+      />
+    );
   }
 
   if (identities.length === 0) {
@@ -436,7 +453,7 @@ function AgentIdentityTab() {
                 <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Team</th>
                 <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Risk Tier</th>
                 <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Status</th>
-                <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Updated</th>
+                <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Last Active</th>
               </tr>
             </thead>
             <tbody>
@@ -463,7 +480,11 @@ function AgentIdentityTab() {
                       {agent.status}
                     </StatusBadge>
                   </td>
-                  <td className="px-5 py-3 text-sm text-muted-foreground">{formatRelativeTime(agent.updated_at)}</td>
+                  <td className="px-5 py-3 text-sm text-muted-foreground">
+                    {agent.last_active
+                      ? formatRelativeTime(new Date(agent.last_active / 1000).toISOString())
+                      : "Never"}
+                  </td>
                 </tr>
               ))}
             </tbody>

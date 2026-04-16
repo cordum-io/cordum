@@ -58,8 +58,8 @@ const (
 	defaultMetricsAddr          = ":9092"
 	defaultArtifactMaxBytes     = 10 << 20 // 10 MiB default artifact size limit
 	maxPromptChars              = 50000
-	defaultRateLimitRPS         = 100
-	defaultRateLimitBurst       = 200
+	defaultRateLimitRPS         = 30
+	defaultRateLimitBurst       = 50
 	defaultPublicRateLimitRPS   = 20
 	defaultPublicRateLimitBurst = 40
 	defaultMaxHeaderBytes       = 1 << 20
@@ -127,6 +127,7 @@ type server struct {
 	wsSummaryOnce       sync.Once
 
 	metrics         infraMetrics.GatewayMetrics
+	otelMetrics     *cordumotel.GatewayMetricsBridge
 	approvalMetrics infraMetrics.ApprovalMetrics
 	tenant          string
 	started         time.Time
@@ -321,6 +322,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 
 	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
+	otelGwMetrics := cordumotel.NewGatewayMetricsBridge()
 	approvalMetrics := infraMetrics.NewApprovalProm("cordum")
 	var userStore UserStore
 	var keyStore KeyStore
@@ -580,6 +582,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		eventsCh:              make(chan wsEvent, 512),
 		wsClientBufSz:         wsClientBufferSize(),
 		metrics:               gwMetrics,
+		otelMetrics:           otelGwMetrics,
 		approvalMetrics:       approvalMetrics,
 		tenant:                tenantID,
 		auth:                  provider,
@@ -1212,8 +1215,12 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 		fn(rec, r)
 		duration := time.Since(start)
 		logger.Debug("handler exit", "route", route, "status", rec.status, "duration", duration.String())
+		statusStr := fmt.Sprintf("%d", rec.status)
 		if s.metrics != nil {
-			s.metrics.ObserveRequest(r.Method, route, fmt.Sprintf("%d", rec.status), duration.Seconds())
+			s.metrics.ObserveRequest(r.Method, route, statusStr, duration.Seconds())
+		}
+		if s.otelMetrics != nil {
+			s.otelMetrics.RecordRequest(r.Context(), r.Method, route, statusStr, duration.Seconds())
 		}
 		if exporter, ok := s.auth.(AuditExporter); ok {
 			authCtx := authFromRequest(r)

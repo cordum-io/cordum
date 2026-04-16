@@ -77,13 +77,12 @@ rules:
     match:
       topics: ["job.default"]
     decision: allow
-
+input_rules:
   # Block requests containing PII patterns
   - id: deny-pii-queries
-    match:
-      topics: ["job.default"]
-      content_patterns: ["\\b\\d{3}-\\d{2}-\\d{4}\\b", "\\b\\d{16}\\b"]
+    scanners: ["pii"]
     decision: deny
+    severity: high
     reason: "Query contains PII (SSN or credit card number)"
 ```
 

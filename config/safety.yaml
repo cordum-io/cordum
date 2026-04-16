@@ -61,15 +61,38 @@ rules:
     decision: require_approval
     reason: "Underwriting decisions require human review before commitment."
 
-  # Low-risk topics are auto-allowed
-  - id: validators-auto-allow
+  # Low-risk topics — auto-allowed for workflow/pack sources only.
+  # Direct API callers require approval to prevent abuse.
+  - id: validators-internal-allow
     match:
       topics:
         - job.bank-validators.process
         - job.notification-service.process
         - job.valuation-agents.process
+      labels:
+        _source: "workflow"
     decision: allow
-    reason: "Read-only validation and notification jobs are auto-approved."
+    reason: "Read-only validation and notification jobs are auto-approved for workflow sources."
+
+  - id: validators-pack-allow
+    match:
+      topics:
+        - job.bank-validators.process
+        - job.notification-service.process
+        - job.valuation-agents.process
+      labels:
+        _source: "pack"
+    decision: allow
+    reason: "Read-only validation and notification jobs are auto-approved for pack sources."
+
+  - id: validators-api-review
+    match:
+      topics:
+        - job.bank-validators.process
+        - job.notification-service.process
+        - job.valuation-agents.process
+    decision: require_approval
+    reason: "Direct API access to validator/notification topics requires human approval."
 
   # Mock-bank transfer rules are defined in the pack overlay
   # (demo/mock-bank/pack/overlays/policy.fragment.yaml) and should NOT
@@ -90,34 +113,42 @@ rules:
   #   _content.prompt       — job prompt text (set by gateway, max 64KB)
   #   _content.payload_json — serialized job context/payload (max 64KB)
 
-  # TX4: B2B Multi-Agent Onboarding — allow all B2B topics.
-  - id: b2b-orchestrate-allow
+  # TX4: B2B Multi-Agent Onboarding — restricted to workflow/pack sources.
+  # Direct API callers require approval to prevent path traversal and
+  # payload injection attacks (red-team findings #17/#18).
+  - id: b2b-internal-allow
     match:
       topics:
         - job.b2b.orchestrate
-    decision: allow
-    reason: "B2B orchestrator dispatches onboarding sub-tasks."
-
-  - id: b2b-hr-setup-allow
-    match:
-      topics:
         - job.b2b.hr-setup
-    decision: allow
-    reason: "HR agent provisions employee records."
-
-  - id: b2b-it-inventory-allow
-    match:
-      topics:
         - job.b2b.it-inventory
+        - job.b2b.procurement-source
+      labels:
+        _source: "workflow"
     decision: allow
-    reason: "IT inventory agent checks equipment availability."
+    reason: "B2B topics auto-approved for workflow-dispatched jobs."
 
-  - id: b2b-procurement-source-allow
+  - id: b2b-pack-allow
     match:
       topics:
+        - job.b2b.orchestrate
+        - job.b2b.hr-setup
+        - job.b2b.it-inventory
         - job.b2b.procurement-source
+      labels:
+        _source: "pack"
     decision: allow
-    reason: "Procurement agent sources vendor quotes."
+    reason: "B2B topics auto-approved for pack workers."
+
+  - id: b2b-api-review
+    match:
+      topics:
+        - job.b2b.orchestrate
+        - job.b2b.hr-setup
+        - job.b2b.it-inventory
+        - job.b2b.procurement-source
+    decision: require_approval
+    reason: "Direct API access to B2B topics requires human approval."
 
   - id: b2b-governance-evaluate-allow
     match:
@@ -289,6 +320,36 @@ input_rules:
         - "prompt_injection"
     decision: require_approval
     reason: "Prompt injection pattern detected in job input — requires human review."
+
+  # =========================================================================
+  # Path traversal and dangerous payload detection (red-team #17/#18).
+  # Catches ../../../ traversal in tenant/org fields and execute=true overrides.
+  # =========================================================================
+  - id: global-path-traversal-scan
+    description: "Detect path traversal patterns in job input content."
+    severity: high
+    match:
+      topics:
+        - "job.*"
+      content_patterns:
+        - "\\.\\./\\.\\."
+        - "\\.\\.\\\\"
+    decision: require_approval
+    reason: "Path traversal pattern detected in job input — requires human review."
+
+  - id: global-dangerous-override-scan
+    description: "Detect dangerous boolean overrides in job input."
+    severity: high
+    match:
+      topics:
+        - "job.*"
+      keywords:
+        - "execute=true"
+        - "validate=false"
+        - "bypass=true"
+        - "override=true"
+    decision: require_approval
+    reason: "Dangerous override pattern detected in job input — requires human review."
 
   # =========================================================================
   # Native TX2 scope enforcement on the REAL workflow topic.

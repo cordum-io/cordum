@@ -1468,6 +1468,18 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// labels to bypass policy rules that match on them.
 	req.Labels = stripReservedLabels(req.Labels)
 
+	// Inject request source for policy rules that restrict by provenance.
+	// Direct API callers get _source=api; pack workers and workflow steps
+	// inject their own source via trusted labels.
+	if req.Labels == nil {
+		req.Labels = map[string]string{}
+	}
+	if req.PackId != "" {
+		req.Labels["_source"] = "pack"
+	} else {
+		req.Labels["_source"] = "api"
+	}
+
 	// --- Secrets & memory validation (needed for policy check metadata) ---
 	secretsPresent := secrets.ContainsSecretRefs(req.Prompt) || secrets.ContainsSecretRefs(req.Context)
 	if secretsPresent {

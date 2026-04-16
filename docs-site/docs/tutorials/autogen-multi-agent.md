@@ -46,17 +46,6 @@ rules:
       topics: ["job.default"]
     decision: allow
 
-  # Block prompt injection patterns between agents
-  - id: deny-injection
-    match:
-      topics: ["job.default"]
-      content_patterns:
-        - "ignore previous instructions"
-        - "system prompt:"
-        - "you are now"
-    decision: deny
-    reason: "Input contains prompt injection pattern"
-
   # Rate limit: max 10 jobs per minute per worker
   - id: rate-limit-agents
     match:
@@ -65,6 +54,13 @@ rules:
       max_requests: 10
       window_seconds: 60
     decision: allow
+input_rules:
+  # Block prompt injection patterns between agents
+  - id: deny-injection
+    scanners: ["prompt_injection"]
+    decision: deny
+    severity: high
+    reason: "Input contains prompt injection pattern"
 ```
 
 Three governance mechanisms:
@@ -227,7 +223,7 @@ The Safety Kernel evaluates rules in order. Content scanning runs first (highest
 ## Next steps
 
 - **Tighten rate limits** — adjust `max_requests` and `window_seconds` based on your agent workload
-- **Add custom injection patterns** — extend `content_patterns` with patterns specific to your domain
+- **Add custom injection patterns** — add `keywords` to `input_rules` with patterns specific to your domain
 - **Per-agent rate limits** — assign [Agent Identities](/api-reference/full-reference#101-agent-identities) with different risk tiers and set per-identity velocity rules
 - **Monitor in real-time** — the dashboard's Jobs page updates via WebSocket for live monitoring
 - **Deploy to production** — see the [Deployment Guide](/operations/deployment) for Kubernetes setup

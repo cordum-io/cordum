@@ -291,16 +291,16 @@ tenants:
       allow_actions: []
       deny_actions: []
 rules:
-  # Allow research queries
   - id: allow-research
     match:
       topics: ["job.default"]
     decision: allow
-  # Block requests containing PII patterns
+input_rules:
   - id: deny-pii-queries
+    severity: high
     match:
       topics: ["job.default"]
-      content_patterns: ["\\b\\d{3}-\\d{2}-\\d{4}\\b", "\\b\\d{16}\\b"]
+      scanners: ["pii"]
     decision: deny
     reason: "Query contains PII (SSN or credit card number)"
 `
@@ -448,23 +448,23 @@ tenants:
       allow_actions: []
       deny_actions: []
 rules:
-  # Allow standard crew tasks
   - id: allow-crew-tasks
     match:
       topics: ["job.default"]
     decision: allow
-  # Block tasks containing PII (SSN, credit card)
+input_rules:
   - id: deny-pii-input
+    severity: high
     match:
       topics: ["job.default"]
-      content_patterns: ["\\b\\d{3}-\\d{2}-\\d{4}\\b", "\\b\\d{16}\\b"]
+      scanners: ["pii"]
     decision: deny
     reason: "Input contains PII — redact before submitting"
-  # Require approval for tasks mentioning sensitive operations
   - id: require-approval-sensitive
+    severity: high
     match:
       topics: ["job.default"]
-      content_patterns: ["delete.*production", "drop.*table", "admin.*access"]
+      keywords: ["delete production", "drop table", "admin access"]
     decision: require_approval
     reason: "Task involves sensitive operations — human approval required"
 `
@@ -603,27 +603,23 @@ tenants:
       allow_actions: []
       deny_actions: []
 rules:
-  # Allow standard agent tasks
   - id: allow-agent-tasks
     match:
       topics: ["job.default"]
     decision: allow
-  # Block prompt injection patterns between agents
-  - id: deny-injection
-    match:
-      topics: ["job.default"]
-      content_patterns:
-        - "ignore previous instructions"
-        - "system prompt:"
-        - "you are now"
-    decision: deny
-    reason: "Input contains prompt injection pattern"
-  # Rate limit: max 10 jobs per minute per worker
   - id: rate-limit-agents
     match:
       topics: ["job.default"]
+    decision: allow
     velocity:
       max_requests: 10
       window_seconds: 60
-    decision: allow
+input_rules:
+  - id: deny-injection
+    severity: high
+    match:
+      topics: ["job.default"]
+      scanners: ["prompt_injection"]
+    decision: deny
+    reason: "Input contains prompt injection pattern"
 `

@@ -705,6 +705,7 @@ export interface AgentIdentity {
   status: "active" | "suspended" | "revoked";
   created_at: string;
   updated_at: string;
+  last_active?: number;
 }
 
 export interface AgentStats {
@@ -1198,6 +1199,7 @@ export interface LicenseEntitlements {
   legalHold?: boolean;
   velocityRules?: boolean;
   breakGlassAdmin?: boolean;
+  agentIdentity?: boolean;
   features?: Record<string, boolean>;
   limits?: Record<string, number>;
 }

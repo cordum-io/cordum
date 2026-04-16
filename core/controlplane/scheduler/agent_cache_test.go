@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"testing"
+	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
@@ -148,5 +149,43 @@ func TestAgentResolver_CacheHit(t *testing.T) {
 	}
 	if info2.Name != info1.Name {
 		t.Errorf("cached name mismatch: %q != %q", info2.Name, info1.Name)
+	}
+}
+
+func TestAgentResolver_CacheTTLExpiry(t *testing.T) {
+	resolver, agentStore := newTestAgentResolver(t)
+	ctx := context.Background()
+
+	agent, err := agentStore.Create(ctx, store.AgentIdentity{
+		Name: "ttl-agent", Owner: "admin", RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	resolver.credCache.mu.Lock()
+	resolver.credCache.records["worker-ttl"] = workercredentials.Credential{
+		WorkerID: "worker-ttl", AgentID: agent.ID,
+	}
+	resolver.credCache.mu.Unlock()
+
+	// Populate cache.
+	info := resolver.Resolve(ctx, "worker-ttl")
+	if info.AgentID != agent.ID {
+		t.Fatalf("initial resolve: AgentID = %q, want %q", info.AgentID, agent.ID)
+	}
+
+	// Manually expire the cache entry by setting ExpiresAt in the past.
+	resolver.mu.Lock()
+	if entry, ok := resolver.cache["worker-ttl"]; ok {
+		entry.ExpiresAt = time.Now().Add(-1 * time.Second)
+		resolver.cache["worker-ttl"] = entry
+	}
+	resolver.mu.Unlock()
+
+	// Next resolve should miss cache (expired) and re-fetch from store.
+	info2 := resolver.Resolve(ctx, "worker-ttl")
+	if info2.AgentID != agent.ID {
+		t.Fatalf("post-expiry resolve: AgentID = %q, want %q", info2.AgentID, agent.ID)
 	}
 }

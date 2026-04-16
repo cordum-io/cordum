@@ -115,8 +115,8 @@ const (
       - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
       - CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
       - TENANT_ID=default
-      - API_RATE_LIMIT_RPS=${API_RATE_LIMIT_RPS:-50}
-      - API_RATE_LIMIT_BURST=${API_RATE_LIMIT_BURST:-100}
+      - API_RATE_LIMIT_RPS=${API_RATE_LIMIT_RPS:-30}
+      - API_RATE_LIMIT_BURST=${API_RATE_LIMIT_BURST:-50}
       - REDIS_DATA_TTL=24h
       - JOB_META_TTL=168h
     ports:

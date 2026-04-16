@@ -2,10 +2,17 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
+	redis "github.com/redis/go-redis/v9"
 )
 
 func TestCreateAgent(t *testing.T) {
@@ -335,5 +342,155 @@ func TestUpdateAgent(t *testing.T) {
 	}
 	if updated.Team != "eng" {
 		t.Fatalf("expected team preserved, got %q", updated.Team)
+	}
+}
+
+func TestAgentStatsHighVolume(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	// Create an agent identity.
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		Name: "high-vol-agent", Owner: "admin", RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	// Seed 1200 jobs in Redis, spread across the last 7 days.
+	// 800 belong to our agent (50 denied), 400 belong to another agent.
+	now := time.Now()
+	rc := s.jobStore.Client()
+	totalOurs := 0
+	totalDenied := 0
+	var latestTs int64
+
+	for i := 0; i < 1200; i++ {
+		jobID := fmt.Sprintf("hvjob-%04d", i)
+		ts := now.Add(-time.Duration(i) * 5 * time.Minute).UnixMicro()
+
+		// Add to job:recent sorted set.
+		rc.ZAdd(ctx, "job:recent", redis.Z{Score: float64(ts), Member: jobID})
+
+		// Determine ownership and state.
+		ownerID := "other-agent"
+		state := model.JobStateSucceeded
+		if i%3 != 0 {
+			// 800 of 1200 belong to our agent (indices where i%3 != 0).
+			ownerID = agent.ID
+			totalOurs++
+			if ts > latestTs {
+				latestTs = ts
+			}
+			if i%16 == 1 {
+				state = model.JobStateDenied
+				totalDenied++
+			}
+		}
+
+		labels := fmt.Sprintf(`{"agent_id":"%s"}`, ownerID)
+		rc.HSet(ctx, "job:meta:"+jobID, "labels", labels, "state", string(state))
+		rc.Set(ctx, "job:state:"+jobID, string(state), 0)
+	}
+
+	// Verify: our agent should have > 500 jobs (tests the batch boundary).
+	if totalOurs < 500 {
+		t.Fatalf("test setup: expected > 500 jobs for our agent, got %d", totalOurs)
+	}
+
+	// Call the stats endpoint.
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agent.ID+"/stats", nil), &AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	req.SetPathValue("id", agent.ID)
+	rr := httptest.NewRecorder()
+	s.handleAgentStats(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var stats struct {
+		AgentID    string `json:"agent_id"`
+		TotalJobs  int    `json:"total_jobs_7d"`
+		Denied     int    `json:"denied_7d"`
+		LastActive int64  `json:"last_active"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode stats: %v", err)
+	}
+
+	if stats.TotalJobs != totalOurs {
+		t.Fatalf("expected total_jobs_7d=%d (>1000 job pool, agent owns %d), got %d", totalOurs, totalOurs, stats.TotalJobs)
+	}
+	if stats.Denied != totalDenied {
+		t.Fatalf("expected denied_7d=%d, got %d", totalDenied, stats.Denied)
+	}
+	if stats.LastActive != latestTs {
+		t.Fatalf("expected last_active=%d, got %d", latestTs, stats.LastActive)
+	}
+}
+
+func TestListAgentsIncludesLastActive(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	// Create two agents.
+	agentA, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		Name: "active-agent", Owner: "admin", RiskTier: "low",
+	})
+	if err != nil {
+		t.Fatalf("create agent A: %v", err)
+	}
+	agentB, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		Name: "quiet-agent", Owner: "admin", RiskTier: "low",
+	})
+	if err != nil {
+		t.Fatalf("create agent B: %v", err)
+	}
+
+	// Seed a job for agent A only.
+	rc := s.jobStore.Client()
+	ts := time.Now().Add(-1 * time.Hour).UnixMicro()
+	rc.ZAdd(ctx, "job:recent", redis.Z{Score: float64(ts), Member: "la-job-1"})
+	rc.HSet(ctx, "job:meta:la-job-1",
+		"labels", fmt.Sprintf(`{"agent_id":"%s"}`, agentA.ID),
+		"state", string(model.JobStateSucceeded),
+	)
+	rc.Set(ctx, "job:state:la-job-1", string(model.JobStateSucceeded), 0)
+
+	// List agents — both should appear, only A should have last_active.
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	rr := httptest.NewRecorder()
+	s.handleListAgents(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var listResp struct {
+		Items []agentResponse `json:"items"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(listResp.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(listResp.Items))
+	}
+
+	found := map[string]int64{}
+	for _, item := range listResp.Items {
+		found[item.ID] = item.LastActive
+	}
+
+	if found[agentA.ID] != ts {
+		t.Fatalf("agent A: expected last_active=%d, got %d", ts, found[agentA.ID])
+	}
+	if found[agentB.ID] != 0 {
+		t.Fatalf("agent B: expected last_active=0 (no jobs), got %d", found[agentB.ID])
 	}
 }

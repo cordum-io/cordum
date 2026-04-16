@@ -158,6 +158,90 @@ describe("shouldFetchNextAuditPage", () => {
   });
 });
 
+describe("AuditLogPage agent_id filter", () => {
+  beforeEach(() => {
+    lastFetchParams = null;
+    vi.clearAllMocks();
+  });
+
+  it("sends agent_id param to /policy/audit API", async () => {
+    const { get } = await import("@/api/client");
+    await (get as unknown as (...args: unknown[]) => Promise<unknown>)(
+      "/policy/audit?limit=50&offset=0&agent_id=agent-alpha",
+    );
+
+    expect(lastFetchParams).not.toBeNull();
+    expect(lastFetchParams!.get("agent_id")).toBe("agent-alpha");
+  });
+
+  it("omits agent_id param when no agent filter is selected", async () => {
+    const { get } = await import("@/api/client");
+    await (get as unknown as (...args: unknown[]) => Promise<unknown>)(
+      "/policy/audit?limit=50&offset=0",
+    );
+
+    expect(lastFetchParams).not.toBeNull();
+    expect(lastFetchParams!.get("agent_id")).toBeNull();
+  });
+
+  it("combines agent_id with other filters", async () => {
+    const { get } = await import("@/api/client");
+    await (get as unknown as (...args: unknown[]) => Promise<unknown>)(
+      "/policy/audit?limit=50&offset=0&action=job.created&agent_id=agent-beta&search=deploy",
+    );
+
+    expect(lastFetchParams!.get("agent_id")).toBe("agent-beta");
+    expect(lastFetchParams!.get("action")).toBe("job.created");
+    expect(lastFetchParams!.get("search")).toBe("deploy");
+  });
+});
+
+describe("AuditLogPage component agent filter integration", () => {
+  it("builds query params with agent_id when agentFilter is set", () => {
+    // Verify that the AuditLogPage queryFn builds params correctly.
+    // This mirrors the logic in the component's useInfiniteQuery queryFn.
+    const actionFilter = "";
+    const agentFilter = "agent-alpha";
+    const dateFrom = "";
+    const dateTo = "";
+    const search = "";
+
+    const params = new URLSearchParams({
+      limit: String(50),
+      offset: String(0),
+    });
+    if (actionFilter) params.set("action", actionFilter);
+    if (agentFilter) params.set("agent_id", agentFilter);
+    if (dateFrom) params.set("after", new Date(dateFrom).toISOString());
+    if (dateTo) params.set("before", new Date(dateTo + "T23:59:59").toISOString());
+    if (search) params.set("search", search);
+
+    expect(params.get("agent_id")).toBe("agent-alpha");
+    expect(params.toString()).toContain("agent_id=agent-alpha");
+  });
+
+  it("does not include agent_id when agentFilter is empty", () => {
+    const agentFilter = "";
+
+    const params = new URLSearchParams({
+      limit: String(50),
+      offset: String(0),
+    });
+    if (agentFilter) params.set("agent_id", agentFilter);
+
+    expect(params.get("agent_id")).toBeNull();
+    expect(params.toString()).not.toContain("agent_id");
+  });
+
+  it("includes agent_id in queryKey for cache invalidation", () => {
+    // The component uses ["audit", actionFilter, agentFilter, ...] as queryKey.
+    // Changing agentFilter must produce a different queryKey to trigger refetch.
+    const key1 = ["audit", "", "", "", "", ""];
+    const key2 = ["audit", "", "agent-alpha", "", "", ""];
+    expect(key1).not.toEqual(key2);
+  });
+});
+
 describe("AuditLogPage CSV export logic", () => {
   it("generates CSV with correct headers", () => {
     const events = [

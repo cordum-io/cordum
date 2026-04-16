@@ -111,6 +111,43 @@ func TestWebhookExporter_HMACSignature(t *testing.T) {
 	}
 }
 
+func TestWebhookExporter_AgentFieldsSerialized(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	exp := NewWebhookExporter(srv.URL)
+	events := []SIEMEvent{{
+		Timestamp:     time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC),
+		EventType:     EventSafetyDecision,
+		Severity:      SeverityInfo,
+		TenantID:      "default",
+		AgentID:       "agent-abc123",
+		AgentName:     "research-bot",
+		AgentRiskTier: "high",
+		Action:        "submit",
+		Decision:      "allow",
+	}}
+
+	if err := exp.Export(t.Context(), events); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	body := string(captured)
+	if !strings.Contains(body, `"agent_id":"agent-abc123"`) {
+		t.Errorf("webhook payload missing agent_id: %s", body)
+	}
+	if !strings.Contains(body, `"agent_name":"research-bot"`) {
+		t.Errorf("webhook payload missing agent_name: %s", body)
+	}
+	if !strings.Contains(body, `"agent_risk_tier":"high"`) {
+		t.Errorf("webhook payload missing agent_risk_tier: %s", body)
+	}
+}
+
 func TestWebhookExporter_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

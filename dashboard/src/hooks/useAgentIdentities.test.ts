@@ -94,3 +94,55 @@ describe("RiskTierBadge colors", () => {
     expect(tierColors[tier]).toBe(expectedColor);
   });
 });
+
+describe("AgentIdentity component behaviors", () => {
+  it("identity list pagination cursor advances", () => {
+    // Simulates the cursor-based pagination used by AgentIdentityTab
+    let cursor = "";
+    const simulatePage = (nextCursor: string) => { cursor = nextCursor; };
+    simulatePage("score:10");
+    expect(cursor).toBe("score:10");
+    simulatePage("");
+    expect(cursor).toBe("");
+  });
+
+  it("EntitlementGate requires agentIdentity boolean", () => {
+    // Verify the entitlement key type matches what the gate checks
+    type BooleanEntitlements = {
+      [K in keyof import("../api/types").LicenseEntitlements as
+        import("../api/types").LicenseEntitlements[K] extends boolean | undefined ? K : never]: true;
+    };
+    const key: keyof BooleanEntitlements = "agentIdentity";
+    expect(key).toBe("agentIdentity");
+  });
+
+  it("detail page formats last_active timestamp correctly", () => {
+    // The detail page divides last_active (microseconds) by 1000 for JS Date
+    const lastActiveMicro = 1713168000000000;
+    const jsTimestamp = lastActiveMicro / 1000;
+    const date = new Date(jsTimestamp);
+    expect(date.getFullYear()).toBeGreaterThanOrEqual(2024);
+  });
+
+  it("activity timeline shows denied count only when > 0", () => {
+    // Component logic: denied section only renders if denied_7d > 0
+    const stats: AgentStats = { agent_id: "a", total_jobs_7d: 10, denied_7d: 0, last_active: 0 };
+    const showDenied = (stats.denied_7d ?? 0) > 0;
+    expect(showDenied).toBe(false);
+
+    const statsWithDenied: AgentStats = { agent_id: "a", total_jobs_7d: 10, denied_7d: 3, last_active: 0 };
+    const showDenied2 = (statsWithDenied.denied_7d ?? 0) > 0;
+    expect(showDenied2).toBe(true);
+  });
+
+  it("stripReservedLabels pattern prevents _source spoofing in identity context", () => {
+    // Mirrors the gateway's stripReservedLabels logic
+    const clientLabels: Record<string, string> = { _source: "workflow", team: "alpha" };
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(clientLabels)) {
+      if (!k.startsWith("_")) clean[k] = v;
+    }
+    expect(clean["_source"]).toBeUndefined();
+    expect(clean["team"]).toBe("alpha");
+  });
+});

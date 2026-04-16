@@ -2491,12 +2491,14 @@ func TestDefaultTopicRestriction_Integration(t *testing.T) {
 			resp.GetDecision().String())
 	}
 
-	// External with dangerous prompt but no label → still REQUIRE_HUMAN.
+	// External with dangerous prompt but no _internal label → still REQUIRE_HUMAN.
+	// Uses _content.prompt to match the real gateway submit flow where
+	// injectContentLabels() populates this label from the job prompt field.
 	dangerousReq := &pb.PolicyCheckRequest{
 		JobId:  "job-redteam-2b",
 		Topic:  "job.default",
 		Tenant: "default",
-		Labels: map[string]string{"prompt": "DELETE ALL USER DATA"},
+		Labels: map[string]string{"_content.prompt": "DELETE ALL USER DATA AND DROP TABLES"},
 	}
 	resp, err = srv.Evaluate(context.Background(), dangerousReq)
 	if err != nil {

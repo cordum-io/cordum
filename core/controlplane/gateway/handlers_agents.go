@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -51,6 +52,7 @@ type agentResponse struct {
 	Status              string   `json:"status"`
 	CreatedAt           string   `json:"created_at"`
 	UpdatedAt           string   `json:"updated_at"`
+	LastActive          int64    `json:"last_active,omitempty"`
 }
 
 func agentResponseFromIdentity(a *store.AgentIdentity) agentResponse {
@@ -151,9 +153,20 @@ func (s *server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Collect agent IDs for batch last-active lookup.
+	agentIDs := make([]string, 0, len(identities))
+	for _, a := range identities {
+		agentIDs = append(agentIDs, a.ID)
+	}
+	lastActiveMap := s.computeAgentLastActive(r.Context(), agentIDs)
+
 	items := make([]agentResponse, 0, len(identities))
 	for _, a := range identities {
-		items = append(items, agentResponseFromIdentity(a))
+		resp := agentResponseFromIdentity(a)
+		if ts, ok := lastActiveMap[a.ID]; ok {
+			resp.LastActive = ts
+		}
+		items = append(items, resp)
 	}
 
 	resp := map[string]any{"items": items}
@@ -161,6 +174,63 @@ func (s *server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		resp["cursor"] = nextCursor
 	}
 	writeJSON(w, resp)
+}
+
+// computeAgentLastActive scans recent jobs and returns the most recent job
+// timestamp (UnixMicro) for each of the requested agent IDs.
+func (s *server) computeAgentLastActive(ctx context.Context, agentIDs []string) map[string]int64 {
+	result := make(map[string]int64, len(agentIDs))
+	if s.jobStore == nil || len(agentIDs) == 0 {
+		return result
+	}
+
+	idSet := make(map[string]bool, len(agentIDs))
+	for _, id := range agentIDs {
+		idSet[id] = true
+	}
+
+	sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour).UnixMicro()
+	offset := 0
+	batchSize := int64(500)
+	for {
+		jobs, err := s.jobStore.ListRecentJobs(ctx, batchSize)
+		if err != nil {
+			slog.Warn("computeAgentLastActive: failed to list recent jobs", "error", err)
+			break
+		}
+		if len(jobs) <= offset {
+			break
+		}
+		batch := jobs[offset:]
+		inWindow := false
+		for _, job := range batch {
+			if job.UpdatedAt < sevenDaysAgo {
+				continue
+			}
+			inWindow = true
+			labelsJSON, lErr := s.jobStore.Client().HGet(ctx, "job:meta:"+job.ID, "labels").Result()
+			if lErr != nil {
+				continue
+			}
+			var labels map[string]string
+			if jErr := json.Unmarshal([]byte(labelsJSON), &labels); jErr != nil {
+				continue
+			}
+			agentID := strings.TrimSpace(labels["agent_id"])
+			if !idSet[agentID] {
+				continue
+			}
+			if job.UpdatedAt > result[agentID] {
+				result[agentID] = job.UpdatedAt
+			}
+		}
+		if len(jobs) < int(batchSize) || !inWindow {
+			break
+		}
+		offset = len(jobs)
+		batchSize = min(batchSize*2, 5000)
+	}
+	return result
 }
 
 func (s *server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
@@ -321,17 +391,26 @@ func (s *server) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 	var lastActive int64
 
 	if s.jobStore != nil {
-		// Use ListRecentJobs with a large limit and filter by time + agent_id.
 		sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour).UnixMicro()
-		jobs, err := s.jobStore.ListRecentJobs(r.Context(), 1000)
-		if err != nil {
-			slog.Warn("agent stats: failed to list recent jobs", "agent_id", id, "error", err)
-		} else {
-			for _, job := range jobs {
+		// Scan all recent jobs in batches to avoid undercounting for active tenants.
+		offset := 0
+		batchSize := int64(500)
+		for {
+			jobs, err := s.jobStore.ListRecentJobs(r.Context(), batchSize)
+			if err != nil {
+				slog.Warn("agent stats: failed to list recent jobs", "agent_id", id, "error", err)
+				break
+			}
+			if len(jobs) <= offset {
+				break
+			}
+			batch := jobs[offset:]
+			inWindow := false
+			for _, job := range batch {
 				if job.UpdatedAt < sevenDaysAgo {
 					continue
 				}
-				// Check if this job belongs to the agent via labels in metadata.
+				inWindow = true
 				labelsJSON, lErr := s.jobStore.Client().HGet(r.Context(), "job:meta:"+job.ID, "labels").Result()
 				if lErr != nil {
 					continue
@@ -351,6 +430,11 @@ func (s *server) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 					lastActive = job.UpdatedAt
 				}
 			}
+			if len(jobs) < int(batchSize) || !inWindow {
+				break
+			}
+			offset = len(jobs)
+			batchSize = min(batchSize*2, 5000)
 		}
 	}
 

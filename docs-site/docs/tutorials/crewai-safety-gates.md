@@ -46,21 +46,19 @@ rules:
     match:
       topics: ["job.default"]
     decision: allow
-
+input_rules:
   # Block tasks containing PII (SSN, credit card)
   - id: deny-pii-input
-    match:
-      topics: ["job.default"]
-      content_patterns: ["\\b\\d{3}-\\d{2}-\\d{4}\\b", "\\b\\d{16}\\b"]
+    scanners: ["pii"]
     decision: deny
+    severity: high
     reason: "Input contains PII — redact before submitting"
 
   # Require approval for tasks mentioning sensitive operations
   - id: require-approval-sensitive
-    match:
-      topics: ["job.default"]
-      content_patterns: ["delete.*production", "drop.*table", "admin.*access"]
+    keywords: ["delete.*production", "drop.*table", "admin.*access"]
     decision: require_approval
+    severity: high
     reason: "Task involves sensitive operations — human approval required"
 ```
 

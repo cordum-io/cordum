@@ -46,17 +46,6 @@ rules:
       topics: ["job.default"]
     decision: allow
 
-  # Block prompt injection patterns between agents
-  - name: deny-injection
-    match:
-      topics: ["job.default"]
-      content_patterns:
-        - "ignore previous instructions"
-        - "system prompt:"
-        - "you are now"
-    decision: deny
-    reason: "Input contains prompt injection pattern"
-
   # Rate limit: max 10 jobs per minute per worker
   - name: rate-limit-agents
     match:
@@ -65,6 +54,14 @@ rules:
       max_requests: 10
       window_seconds: 60
     decision: allow
+input_rules:
+  - id: deny-injection
+    severity: high
+    match:
+      topics: ["job.default"]
+      scanners: ["prompt_injection"]
+    decision: deny
+    reason: "Input contains prompt injection pattern"
 ```
 
 Three governance mechanisms:

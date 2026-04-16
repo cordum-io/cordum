@@ -1019,3 +1019,167 @@ func TestDeletePolicyBundle_MissingID(t *testing.T) {
 		t.Fatalf("delete empty id: expected 400, got %d %s", delRec.Code, delRec.Body.String())
 	}
 }
+
+func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	// Seed audit entries with different agent IDs.
+	entries := []policyAuditEntry{
+		{
+			Action:    "safety.decision",
+			AgentID:   "agent-alpha",
+			AgentName: "Alpha Bot",
+			ActorID:   "worker-1",
+			Message:   "Job allowed for agent-alpha",
+			CreatedAt: time.Now().UTC().Add(-3 * time.Second).Format(time.RFC3339),
+		},
+		{
+			Action:    "safety.decision",
+			AgentID:   "agent-beta",
+			AgentName: "Beta Bot",
+			ActorID:   "worker-2",
+			Message:   "Job denied for agent-beta",
+			CreatedAt: time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339),
+		},
+		{
+			Action:    "safety.decision",
+			AgentID:   "agent-alpha",
+			AgentName: "Alpha Bot",
+			ActorID:   "worker-1",
+			Message:   "Second job for agent-alpha",
+			CreatedAt: time.Now().UTC().Add(-1 * time.Second).Format(time.RFC3339),
+		},
+		{
+			Action:    "safety.decision",
+			AgentID:   "unlinked",
+			AgentName: "unlinked",
+			ActorID:   "worker-3",
+			Message:   "Legacy worker without agent identity",
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+	for _, e := range entries {
+		if err := s.appendPolicyAudit(ctx, e); err != nil {
+			t.Fatalf("seed audit entry: %v", err)
+		}
+	}
+
+	// Subtest: filter by agent-alpha returns only matching entries.
+	t.Run("filter_agent_alpha", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit?agent_id=agent-alpha", nil)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set("X-Principal-Role", "admin")
+		rec := httptest.NewRecorder()
+		s.handleListPolicyAudit(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+		}
+		var result struct {
+			Items []policyAuditEntry `json:"items"`
+			Total int64              `json:"total"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if result.Total != 2 {
+			t.Fatalf("expected 2 entries for agent-alpha, got %d", result.Total)
+		}
+		for _, item := range result.Items {
+			if item.AgentID != "agent-alpha" {
+				t.Fatalf("expected agent_id=agent-alpha, got %q", item.AgentID)
+			}
+		}
+	})
+
+	// Subtest: filter by agent-beta returns exactly one entry.
+	t.Run("filter_agent_beta", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit?agent_id=agent-beta", nil)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set("X-Principal-Role", "admin")
+		rec := httptest.NewRecorder()
+		s.handleListPolicyAudit(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+		}
+		var result struct {
+			Items []policyAuditEntry `json:"items"`
+			Total int64              `json:"total"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if result.Total != 1 {
+			t.Fatalf("expected 1 entry for agent-beta, got %d", result.Total)
+		}
+		if result.Items[0].AgentID != "agent-beta" {
+			t.Fatalf("expected agent_id=agent-beta, got %q", result.Items[0].AgentID)
+		}
+	})
+
+	// Subtest: filter by unlinked returns legacy workers.
+	t.Run("filter_unlinked", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit?agent_id=unlinked", nil)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set("X-Principal-Role", "admin")
+		rec := httptest.NewRecorder()
+		s.handleListPolicyAudit(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+		}
+		var result struct {
+			Items []policyAuditEntry `json:"items"`
+			Total int64              `json:"total"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if result.Total != 1 {
+			t.Fatalf("expected 1 entry for unlinked, got %d", result.Total)
+		}
+	})
+
+	// Subtest: filter by nonexistent agent returns empty results.
+	t.Run("filter_nonexistent_agent", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit?agent_id=agent-nonexistent", nil)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set("X-Principal-Role", "admin")
+		rec := httptest.NewRecorder()
+		s.handleListPolicyAudit(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+		}
+		var result struct {
+			Items []policyAuditEntry `json:"items"`
+			Total int64              `json:"total"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if result.Total != 0 {
+			t.Fatalf("expected 0 entries for nonexistent agent, got %d", result.Total)
+		}
+	})
+
+	// Subtest: no agent_id filter returns all entries.
+	t.Run("no_filter_returns_all", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit", nil)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set("X-Principal-Role", "admin")
+		rec := httptest.NewRecorder()
+		s.handleListPolicyAudit(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+		}
+		var result struct {
+			Items []policyAuditEntry `json:"items"`
+			Total int64              `json:"total"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if result.Total != 4 {
+			t.Fatalf("expected 4 total entries without filter, got %d", result.Total)
+		}
+	})
+}

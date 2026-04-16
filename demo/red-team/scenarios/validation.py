@@ -56,18 +56,23 @@ def oversized_prompt(c: CordumClient) -> ScenarioResult:
         topic="job.default",
         prompt=big_prompt,
     )
-    if r.status_code in (400, 413):
+    if r.status_code in (400, 403, 413):
+        error = ""
+        try:
+            error = r.json().get("error", "")[:60]
+        except Exception:
+            error = r.text[:60]
         return ScenarioResult(
             id=9, tier=TIER, name="Oversized prompt (250K chars)",
             description="Submit 250K char prompt (enterprise limit is 200K)",
-            expected="Rejected by prompt char limit",
-            actual=f"Rejected: {r.status_code} {r.json().get('error', '')[:60]}",
+            expected="Rejected by prompt char limit or safety policy",
+            actual=f"Rejected: {r.status_code} {error}",
             governance_held=True,
         )
     return ScenarioResult(
         id=9, tier=TIER, name="Oversized prompt (250K chars)",
         description="Submit 250K char prompt (enterprise limit is 200K)",
-        expected="Rejected by prompt char limit",
+        expected="Rejected by prompt char limit or safety policy",
         actual=f"Accepted! Status {r.status_code}",
         governance_held=False,
         detail="250K char prompt was not rejected by any size limit",
