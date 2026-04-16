@@ -2703,18 +2703,6 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
 - Response: current usage vs entitlement limits (workers, jobs, workflows, schemas, policies, rate limits).
 - Errors: auth errors.
 
-### GET `/api/v1/topics`
-
-- Auth: required
-- Response: `{"items": [{"name": "job.my-pack.process", "pool": "my-pack", "status": "active", "pack_id": "my-pack", "input_schema_id": "", "output_schema_id": "", "requires": [], "risk_tags": []}]}`
-- Notes: Returns all registered topics from the topic registry. Topics are registered automatically when packs are installed.
-
-### DELETE `/api/v1/topics/{name}`
-
-- Auth: required + admin
-- Removes a topic registration.
-- Errors: `404` (not found), auth errors.
-
 ### GET `/api/v1/workers`
 
 - Auth: required + admin

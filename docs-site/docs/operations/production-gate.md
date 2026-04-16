@@ -2,6 +2,7 @@
 sidebar_position: 10
 title: "Production Gate"
 slug: /operations/production-gate
+unlisted: true
 ---
 
 # Production Gate

@@ -2,6 +2,7 @@
 sidebar_position: 5
 title: "Local E2E Testing"
 slug: /getting-started/local-e2e
+unlisted: true
 ---
 
 # Local E2E (platform-only)

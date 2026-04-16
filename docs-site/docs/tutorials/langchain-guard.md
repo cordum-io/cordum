@@ -104,7 +104,7 @@ rules:
 Load the policy into Cordum:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/policies \
+curl -X POST http://localhost:8081/api/v1/policy/bundles \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" \
   -H "Content-Type: application/json" \
