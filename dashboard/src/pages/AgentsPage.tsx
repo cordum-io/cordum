@@ -408,10 +408,9 @@ function RiskTierBadge({ tier }: { tier: string }) {
 /* --- Agent Identity Tab --- */
 function AgentIdentityTab() {
   const navigate = useNavigate();
-  const [cursor, setCursor] = useState("");
+  const [cursor] = useState("");
   const { data, isLoading, isError, error } = useAgentIdentities({ limit: 25, cursor });
   const identities = data?.items ?? [];
-  const nextCursor = data?.cursor ?? "";
 
   if (isLoading) {
     return <SkeletonTable rows={5} />;
