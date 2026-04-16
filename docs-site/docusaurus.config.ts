@@ -15,8 +15,8 @@ const config: Config = {
     format: 'detect',
   },
 
-  url: 'https://docs.cordum.io',
-  baseUrl: '/',
+  url: 'https://cordum-io.github.io',
+  baseUrl: '/cordum/',
 
   organizationName: 'cordum-io',
   projectName: 'cordum',
