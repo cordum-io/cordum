@@ -2,14 +2,13 @@ package otel
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func TestInitTracer_Disabled(t *testing.T) {
-	os.Unsetenv(envOTELEnabled)
+	t.Setenv(envOTELEnabled, "")
 
 	tp, err := InitTracer("test-service")
 	if err != nil {
@@ -56,7 +55,7 @@ func TestEnabled_EnvValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.value, func(t *testing.T) {
 			if tt.value == "" {
-				os.Unsetenv(envOTELEnabled)
+				t.Setenv(envOTELEnabled, "")
 			} else {
 				t.Setenv(envOTELEnabled, tt.value)
 			}
@@ -68,7 +67,7 @@ func TestEnabled_EnvValues(t *testing.T) {
 }
 
 func TestTracer_ReturnsNoopWhenDisabled(t *testing.T) {
-	os.Unsetenv(envOTELEnabled)
+	t.Setenv(envOTELEnabled, "")
 
 	tracer := Tracer("test-component")
 	_, span := tracer.Start(context.Background(), "test-op")

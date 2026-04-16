@@ -262,9 +262,8 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 			// Still in the same score bucket — advance offset within it.
 			scanOffset += int64(len(members))
 		} else {
-			// Crossed into a new score — reset offset, advance min.
+			// Crossed into a new score — advance min and count items at the new score.
 			scanMin = strconv.FormatFloat(lastMember.Score, 'f', -1, 64)
-			scanOffset = 0
 			// Re-count items at the new score from this batch.
 			var countAtNew int64
 			for i := len(members) - 1; i >= 0; i-- {
