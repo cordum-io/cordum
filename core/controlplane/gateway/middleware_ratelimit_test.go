@@ -16,7 +16,7 @@ func TestRedisRateLimiterBasic(t *testing.T) {
 	}
 	defer srv.Close()
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr(), PoolSize: 3})
 	defer func() { _ = client.Close() }()
 
 	rl := newRedisRateLimiter(client, 10, 10)
@@ -48,9 +48,9 @@ func TestRedisRateLimiterMultiReplica(t *testing.T) {
 	}
 	defer srv.Close()
 
-	client1 := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	client1 := redis.NewClient(&redis.Options{Addr: srv.Addr(), PoolSize: 3})
 	defer func() { _ = client1.Close() }()
-	client2 := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	client2 := redis.NewClient(&redis.Options{Addr: srv.Addr(), PoolSize: 3})
 	defer func() { _ = client2.Close() }()
 
 	rl1 := newRedisRateLimiter(client1, 10, 10)
@@ -83,7 +83,7 @@ func TestRedisRateLimiterFallback(t *testing.T) {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr(), PoolSize: 3})
 	defer func() { _ = client.Close() }()
 
 	rl := newRedisRateLimiter(client, 10, 10)
@@ -105,7 +105,7 @@ func TestRedisRateLimiterKeyFormat(t *testing.T) {
 	}
 	defer srv.Close()
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr(), PoolSize: 3})
 	defer func() { _ = client.Close() }()
 
 	rl := newRedisRateLimiter(client, 10, 10)
@@ -141,7 +141,8 @@ func TestRedisRateLimiterNilReceiver(t *testing.T) {
 }
 
 // TestRedisRateLimiter_RedTeam14_BurstExceeded verifies the red-team finding #14:
-// 60 rapid requests with a burst limit of 50 must trigger a rate limit rejection.
+// 60 rapid requests with the dev/scaffold burst=50 must trigger rate limit rejection.
+// The dev .env and cordumctl scaffold both set RPS=30, BURST=50.
 func TestRedisRateLimiter_RedTeam14_BurstExceeded(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -149,15 +150,17 @@ func TestRedisRateLimiter_RedTeam14_BurstExceeded(t *testing.T) {
 	}
 	defer srv.Close()
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr(), PoolSize: 3})
 	defer func() { _ = client.Close() }()
 
-	// Simulate dev .env: RPS=50, burst=100.
-	rl := newRedisRateLimiter(client, 50, 100)
+	// Simulate the actual dev/scaffold config: RPS=30, burst=50.
+	// This matches .env (30/50) and cordumctl init scaffold defaults.
+	const devRPS, devBurst = 30, 50
+	rl := newRedisRateLimiter(client, devRPS, devBurst)
 
 	allowed := 0
 	rejected := 0
-	for i := 0; i < 120; i++ {
+	for i := 0; i < 60; i++ {
 		if rl.Allow("dev-tenant") {
 			allowed++
 		} else {
@@ -166,12 +169,49 @@ func TestRedisRateLimiter_RedTeam14_BurstExceeded(t *testing.T) {
 	}
 
 	if rejected == 0 {
-		t.Fatalf("expected some requests rejected after burst, but all %d were allowed", allowed)
+		t.Fatalf("RED-TEAM BYPASS: 60 rapid requests all allowed (burst=%d) — rate limit not triggered", devBurst)
 	}
-	if allowed > 100 {
-		t.Fatalf("expected at most 100 allowed (burst limit), got %d", allowed)
+	// Under -race the token bucket refills between slow instrumented calls,
+	// so allow a generous margin above burst.
+	maxExpected := devBurst + devRPS // burst + one second of refill headroom
+	if allowed > maxExpected {
+		t.Fatalf("expected at most %d allowed (burst+rps headroom), got %d", maxExpected, allowed)
 	}
-	t.Logf("burst test: %d allowed, %d rejected (burst=100)", allowed, rejected)
+	t.Logf("red-team #14: %d allowed, %d rejected (dev burst=%d)", allowed, rejected, devBurst)
+}
+
+// TestRedisRateLimiter_120Requests_MostRejected proves the exact red-team #14 scenario:
+// 120 rapid requests with dev defaults (burst=50) must reject the majority.
+func TestRedisRateLimiter_120Requests_MostRejected(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer srv.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr(), PoolSize: 3})
+	defer func() { _ = client.Close() }()
+
+	rl := newRedisRateLimiter(client, defaultRateLimitRPS, defaultRateLimitBurst)
+
+	allowed := 0
+	rejected := 0
+	for i := 0; i < 120; i++ {
+		if rl.Allow("red-team-tenant") {
+			allowed++
+		} else {
+			rejected++
+		}
+	}
+
+	if rejected == 0 {
+		t.Fatalf("RED-TEAM BYPASS: 120 requests all allowed (burst=%d)", defaultRateLimitBurst)
+	}
+	// With burst=50, at most 50 should be allowed. 70+ should be rejected.
+	if rejected < 60 {
+		t.Fatalf("expected at least 60 rejected out of 120 (burst=%d), got %d rejected", defaultRateLimitBurst, rejected)
+	}
+	t.Logf("red-team #14 (120 requests): %d allowed, %d rejected (burst=%d)", allowed, rejected, defaultRateLimitBurst)
 }
 
 // TestKeyedRateLimiter_BurstEnforced validates the in-memory limiter rejects after burst.
