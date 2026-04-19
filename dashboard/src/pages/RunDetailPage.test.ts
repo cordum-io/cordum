@@ -183,3 +183,68 @@ describe("mapStepStatus — approval-waiting preservation", () => {
     expect(mapStepStatus("")).toBe("pending");
   });
 });
+
+// Regression tests for issue #168: chat send error handling.
+import { resolveChatSendErrorMessage } from "./RunDetailPage";
+
+describe("resolveChatSendErrorMessage", () => {
+  it("maps 401/403 to a credential-specific message", () => {
+    expect(resolveChatSendErrorMessage({ status: 401 })).toMatch(
+      /API key|permissions/i,
+    );
+    expect(resolveChatSendErrorMessage({ status: 403 })).toMatch(
+      /API key|permissions/i,
+    );
+  });
+
+  it("maps 404 to endpoint-not-available", () => {
+    expect(resolveChatSendErrorMessage({ status: 404 })).toMatch(
+      /endpoint not available/i,
+    );
+  });
+
+  it("maps 413 to payload-too-large", () => {
+    expect(resolveChatSendErrorMessage({ status: 413 })).toMatch(/too large/i);
+  });
+
+  it("maps 429 to rate-limit phrasing", () => {
+    expect(resolveChatSendErrorMessage({ status: 429 })).toMatch(
+      /too many requests|slow down/i,
+    );
+  });
+
+  it("maps any 5xx to service-unavailable", () => {
+    expect(resolveChatSendErrorMessage({ status: 500 })).toMatch(
+      /service is unavailable/i,
+    );
+    expect(resolveChatSendErrorMessage({ status: 502 })).toMatch(
+      /service is unavailable/i,
+    );
+    expect(resolveChatSendErrorMessage({ status: 503 })).toMatch(
+      /service is unavailable/i,
+    );
+  });
+
+  it("falls back to a generic message for non-numeric or missing status", () => {
+    expect(resolveChatSendErrorMessage(new Error("network down"))).toBe(
+      "Unable to send chat message",
+    );
+    expect(resolveChatSendErrorMessage(null)).toBe(
+      "Unable to send chat message",
+    );
+    expect(resolveChatSendErrorMessage({ status: "boom" })).toBe(
+      "Unable to send chat message",
+    );
+    expect(resolveChatSendErrorMessage({ status: 418 })).toBe(
+      "Unable to send chat message",
+    );
+  });
+
+  it("every mapped status message starts with 'Send failed'", () => {
+    // Keeps the toast visually distinct from the load banner messages so users
+    // can tell whether the send or the load failed.
+    for (const status of [401, 403, 404, 413, 429, 500, 503]) {
+      expect(resolveChatSendErrorMessage({ status })).toMatch(/^Send failed/);
+    }
+  });
+});

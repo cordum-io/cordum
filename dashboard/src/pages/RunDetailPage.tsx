@@ -177,6 +177,36 @@ export function resolveRunChatBanner(
   return null;
 }
 
+// Maps a failed chat-send error to a status-specific toast message. Mirrors
+// resolveRunChatBanner's status-aware phrasing so the send and load paths give
+// users consistent feedback.
+export function resolveChatSendErrorMessage(error: unknown): string {
+  const status =
+    typeof error === "object" &&
+    error != null &&
+    "status" in error &&
+    typeof (error as { status?: unknown }).status === "number"
+      ? (error as { status: number }).status
+      : undefined;
+
+  if (status === 401 || status === 403) {
+    return "Send failed — check your API key or permissions";
+  }
+  if (status === 404) {
+    return "Send failed — chat endpoint not available for this run";
+  }
+  if (status === 413) {
+    return "Send failed — message is too large";
+  }
+  if (status === 429) {
+    return "Send failed — too many requests, please slow down";
+  }
+  if (typeof status === "number" && status >= 500) {
+    return "Send failed — chat service is unavailable";
+  }
+  return "Unable to send chat message";
+}
+
 export default function WorkflowRunDetailPage() {
   const { workflowId, runId } = useParams();
   const navigate = useNavigate();
@@ -211,8 +241,15 @@ export default function WorkflowRunDetailPage() {
       if (!runId) throw new Error("run id required");
       return post<ChatMessage>(`/workflow-runs/${runId}/chat`, { content });
     },
-    onSuccess: () => {
+    onSuccess: (_data, content) => {
+      // Clear the input only on a successful send so that a transient failure
+      // (403/500/network) leaves the drafted message in place for the user to
+      // retry, per the behavior spec in #168.
+      setChatInput((current) => (current === content ? "" : current));
       queryClient.invalidateQueries({ queryKey: ["run-chat", runId] });
+    },
+    onError: (error) => {
+      toast.error(resolveChatSendErrorMessage(error));
     },
   });
 
@@ -329,9 +366,11 @@ export default function WorkflowRunDetailPage() {
   }, [messages]);
 
   const sendMessage = useCallback(() => {
-    if (!chatInput.trim()) return;
-    chatMutation.mutate(chatInput.trim());
-    setChatInput("");
+    const trimmed = chatInput.trim();
+    if (!trimmed) return;
+    // Leave the input populated until onSuccess clears it; onError in the
+    // mutation surfaces a toast and the user can retry without re-typing.
+    chatMutation.mutate(trimmed);
   }, [chatInput, chatMutation]);
 
   const handleCopyRunId = useCallback(async () => {
