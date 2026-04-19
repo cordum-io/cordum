@@ -216,7 +216,7 @@ func TestSafetyCheckDefenseTimeout(t *testing.T) {
 		JobId:    "job-timeout",
 		Topic:    "job.test",
 		TenantId: "default",
-	})
+	}, "")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -257,7 +257,7 @@ func TestSafetyCheck_TimeoutCancelsContext(t *testing.T) {
 		JobId:    "job-ctx-cancel",
 		Topic:    "job.test",
 		TenantId: "default",
-	})
+	}, "")
 	elapsed := time.Since(start)
 
 	if record.Decision != SafetyUnavailable {

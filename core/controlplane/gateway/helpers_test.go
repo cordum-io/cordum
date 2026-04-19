@@ -22,6 +22,7 @@ import (
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/policyshadow"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/gorilla/websocket"
@@ -268,6 +269,8 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		topicRegistry:         topicregistry.NewService(configSvc),
 		workerCredentialStore: workercredentials.NewService(configSvc),
 		agentIdentityStore:   store.NewAgentIdentityStoreFromClient(jobStore.Client()),
+		mcpDenyRing:          newDenyEventRing(500),
+		policyShadowStore:    policyshadow.NewStore(configSvc),
 		dlqStore:              dlqStore,
 		artifactStore:         artifactStore,
 		lockStore:             lockStore,

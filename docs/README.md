@@ -70,6 +70,7 @@ variables from your shell.
 | [k8s-deployment.md](k8s-deployment.md) | Detailed Kubernetes deployment guide — base manifests, production overlay, TLS, clustering, monitoring, scaling, backups |
 | [troubleshooting.md](troubleshooting.md) | Troubleshooting guide — common issues, error diagnosis, debug commands |
 | [SCHEDULER_POOL_SPEC.md](SCHEDULER_POOL_SPEC.md) | Pool routing specification |
+| [compliance/soc2_mapping.md](compliance/soc2_mapping.md) | SOC2 control mapping + `GET /api/v1/audit/export` operator guide (NDJSON + CSV, chain verification, incident playbook) |
 
 ## Architecture
 

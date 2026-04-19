@@ -434,6 +434,16 @@ export interface BackendHeartbeat {
   last_memo?: string;
   last_heartbeat?: string;
   status?: string;
+  // Heartbeat demotion — session authority fields emitted by the
+  // /api/v1/workers handler when the gateway has a trust resolver
+  // wired. Absent on older gateways; consumers must tolerate.
+  online?: boolean;
+  session_valid?: boolean;
+  session_exp_ms?: number;
+  session_revoked?: boolean;
+  session_state?: string;
+  last_heartbeat_at?: string;
+  heartbeat_age_seconds?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,6 +1198,39 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
   };
 }
 
+// readPolicyBundleSignature extracts the `_signature` map that
+// handlers_policy_bundles_signing.go attaches to each bundle. Returns
+// `undefined` (rather than throwing) when the raw value is missing,
+// malformed, or belongs to an unsigned bundle. The UI uses this to
+// decide between the three SignatureBadge states (signed / unsigned
+// / unknown).
+export function readPolicyBundleSignature(
+  raw: unknown,
+): import("./types").PolicyBundleSignature | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const src = raw as Record<string, unknown>;
+  const signatureRaw = src["_signature"] ?? src["signature"];
+  if (!signatureRaw || typeof signatureRaw !== "object") return undefined;
+  const m = signatureRaw as Record<string, unknown>;
+  const algorithm = typeof m.algorithm === "string" ? m.algorithm : "";
+  const value = typeof m.value === "string" ? m.value : "";
+  if (!algorithm && !value) return undefined;
+  const signedBytesRaw = m.signed_bytes;
+  const signed_bytes =
+    typeof signedBytesRaw === "number"
+      ? signedBytesRaw
+      : typeof signedBytesRaw === "string"
+        ? Number.parseInt(signedBytesRaw, 10) || 0
+        : 0;
+  return {
+    algorithm,
+    key_id: typeof m.key_id === "string" ? m.key_id : "",
+    value,
+    hash: typeof m.hash === "string" ? m.hash : "",
+    signed_bytes,
+  };
+}
+
 export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, content?: string): PolicyBundle {
   const versionNum = Number.parseInt(summary.version ?? "", 10);
   let rules: PolicyRule[] = [];
@@ -1497,13 +1540,44 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
     activeJobs,
     // capacity fallback: if backend reports 0 max_parallel_jobs, use at least 1
     capacity: capacity > 0 ? capacity : Math.max(1, activeJobs),
-    lastHeartbeat: hb.last_heartbeat,
+    lastHeartbeat: hb.last_heartbeat_at ?? hb.last_heartbeat,
     region: hb.region,
     type: hb.type,
     cpuLoad: hb.cpu_load,
     gpuUtilization: hb.gpu_utilization,
     memoryLoad: hb.memory_load,
+    online: typeof hb.online === "boolean" ? hb.online : undefined,
+    sessionValid:
+      typeof hb.session_valid === "boolean" ? hb.session_valid : undefined,
+    sessionExpMs:
+      typeof hb.session_exp_ms === "number" && Number.isFinite(hb.session_exp_ms)
+        ? hb.session_exp_ms
+        : undefined,
+    sessionRevoked:
+      typeof hb.session_revoked === "boolean" ? hb.session_revoked : undefined,
+    sessionState: normalizeWorkerSessionState(hb.session_state),
+    lastHeartbeatAt: hb.last_heartbeat_at ?? hb.last_heartbeat,
+    heartbeatAgeSeconds:
+      typeof hb.heartbeat_age_seconds === "number" &&
+      Number.isFinite(hb.heartbeat_age_seconds)
+        ? hb.heartbeat_age_seconds
+        : undefined,
   };
+}
+
+function normalizeWorkerSessionState(
+  raw: string | undefined,
+): import("./types").WorkerSessionState | undefined {
+  switch (raw) {
+    case "valid":
+    case "no_session":
+    case "session_expired":
+    case "session_revoked":
+    case "trust_store_unready":
+      return raw;
+    default:
+      return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -84,6 +84,29 @@ type server struct {
 	// for a topic, it replaces client-supplied risk_tags with authoritative
 	// tags derived from the job content. Prevents risk tag spoofing.
 	tagDeriverRegistry *TagDeriverRegistry
+
+	// shadowEvaluator runs Phase-2 dual-evaluation asynchronously after
+	// the active decision is finalised. Nil when the shadow feature is
+	// disabled (CORDUM_SHADOW_EVAL_DISABLED=true or no shadow store
+	// wired). Submit is non-blocking so the active path is unaffected.
+	shadowEvaluator *ShadowEvaluator
+}
+
+// SetShadowEvaluator wires a ShadowEvaluator into the kernel server.
+// Called from the bootstrap path (cmd/cordum-safety-kernel/main.go)
+// after NewShadowLoader + NewShadowEvaluator have been constructed.
+// Passing nil is a no-op — useful for tests that want to disable dual-
+// evaluation without reinitialising the whole server.
+//
+// Safe to call at any point: Submit reads the field via the
+// policyDecision-finalised path without locking because assignment of
+// a pointer is atomic on all supported platforms and readers observe
+// a consistent snapshot of the pointer value.
+func (s *server) SetShadowEvaluator(se *ShadowEvaluator) {
+	if s == nil {
+		return
+	}
+	s.shadowEvaluator = se
 }
 
 const (
@@ -304,6 +327,21 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		tagDeriverRegistry: tagRegistry,
 	}
 	srv.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
+
+	// Phase-2 shadow dual-evaluation wiring. Constructs the loader +
+	// evaluator from the already-initialised dependencies (configsvc
+	// for the shadow store, NATS bus for the audit publisher) and
+	// attaches them to srv. Disabled via CORDUM_SHADOW_EVAL_DISABLED=true
+	// so operators can kill dual-eval without a redeploy if a shadow
+	// rule is poisoning a kernel worker. Loader + evaluator Close() are
+	// deferred so the daemon drains cleanly on SIGTERM.
+	shadowLoader, shadowEvaluator := setupShadowEvaluation(srv, loader, natsBus)
+	if shadowLoader != nil {
+		defer shadowLoader.Close()
+	}
+	if shadowEvaluator != nil {
+		defer shadowEvaluator.Close()
+	}
 
 	// Lifecycle context for background goroutines — cancelled when Run returns.
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
@@ -643,6 +681,19 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 			}
 		}
 	}()
+
+	// Phase-2 shadow dual-evaluation. Fires EVEN when the active
+	// evaluation was a panic-recovered deny — observing that the shadow
+	// policy would have made a different call is still valuable signal
+	// (arguably more so, since it's the case an on-call engineer would
+	// want to diff). Submit is non-blocking; its bounded queue drops
+	// under overload rather than delaying the active response. input
+	// is a config.PolicyInput by-value struct; Submit copies it again
+	// internally so we don't leak a pointer the caller can later mutate.
+	if s.shadowEvaluator != nil {
+		s.shadowEvaluator.Submit(policyDecision, input, tenant, req.GetJobId())
+	}
+
 	slog.Debug("policy evaluation complete", "component", "safety", "tenant", tenant, "topic", topic, "decision", policyDecision.Decision, "ruleId", policyDecision.RuleID, "duration", time.Since(evalStart).String())
 	evalSpan.SetAttributes(
 		attribute.String("cordum.safety_decision", policyDecision.Decision),
@@ -1337,10 +1388,22 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 	var skippedCount int
 	customBundleCount := 0
 	bundleLimit := l.policyBundleLimit()
+	// Snapshot the signing mode + trust store once per reload so every
+	// bundle is evaluated with consistent config. verifier is non-nil
+	// even in off mode — its Verify() short-circuits cleanly.
+	verifier := newBundleVerifier()
 	for _, key := range keys {
 		content, ok := extractPolicyFragment(rawBundles[key])
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
+		}
+		// Signature verification BEFORE parse/merge. In enforce mode
+		// a failure returns the error all the way out of loadFragments
+		// so the caller's reload path keeps the previous known-good
+		// policy active. In warn mode Verify logs + returns nil. In
+		// off mode SkipsVerification short-circuits.
+		if err := verifyBundleSignature(key, []byte(content), fragmentSignature(rawBundles[key]), verifier.mode, verifier.store); err != nil {
+			return nil, "", customBundleCount, err
 		}
 		isCustomBundle := strings.HasPrefix(key, customPolicyBundlePrefix)
 		if isCustomBundle && bundleLimit != licensing.Unlimited {
@@ -1607,7 +1670,13 @@ func loadPolicyBundle(source string) (*config.SafetyPolicy, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if err := verifyPolicySignature(data, source); err != nil {
+	// verifyFilePolicySignature understands both the legacy raw-bytes
+	// .sig format AND the new JSON structured format, and honours
+	// CORDUM_POLICY_STRICT (off/warn/enforce). It also respects the
+	// legacy SAFETY_POLICY_SIGNATURE_REQUIRED flag and production
+	// default-to-enforce, so this swap is a strict superset of the
+	// previous verifyPolicySignature behaviour.
+	if err := verifyFilePolicySignature(data, source); err != nil {
 		return nil, "", err
 	}
 	policy, err := config.ParseSafetyPolicy(data)

@@ -46,7 +46,7 @@ describe("AppShell systemStatus derivation", () => {
 });
 
 describe("AppShell GOVERN navigation", () => {
-  it("exposes six GOVERN entries (Policy Studio, Velocity Rules, Policy Replay, Rule Analytics, Tenants, Quarantine)", () => {
+  it("exposes the full govern roster (Policy Studio, Velocity Rules, Policy Replay, Rule Analytics, Tenants, Verification, Quarantine, MCP)", () => {
     const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(govern).toBeDefined();
 
@@ -57,18 +57,28 @@ describe("AppShell GOVERN navigation", () => {
       "Policy Replay",
       "Rule Analytics",
       "Tenants",
+      "Verification",
       "Quarantine",
+      "MCP",
     ]);
   });
 
-  it("points GOVERN entries at /govern routes and keeps quarantine badge behavior", () => {
+  it("keeps govern-owned routes under /govern/ (MCP is a sibling) and preserves the quarantine badge", () => {
     const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(govern).toBeDefined();
-    expect(govern?.items.every((item) => item.path.startsWith("/govern/"))).toBe(true);
+    const governOwned = govern?.items.filter((item) => item.label !== "MCP") ?? [];
+    expect(governOwned.every((item) => item.path.startsWith("/govern/"))).toBe(true);
 
     const quarantine = govern?.items.find((item) => item.label === "Quarantine");
     expect(quarantine?.path).toBe("/govern/quarantine");
     expect(quarantine?.badge).toBe("quarantine");
+  });
+
+  it("exposes the admin-only Verification entry under /govern/verification", () => {
+    const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
+    const verification = govern?.items.find((item) => item.label === "Verification");
+    expect(verification?.path).toBe("/govern/verification");
+    expect(verification?.requiresAdmin).toBe(true);
   });
 
   it("updates g+key navigation to GOVERN policy routes", () => {

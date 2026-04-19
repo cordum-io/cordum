@@ -74,7 +74,7 @@ services:
     volumes:
       - ./certs:/etc/cordum/tls:ro
     ports:
-      - "50400:50070"
+      - "50070:50070"
     deploy:
       resources:
         limits:
@@ -244,6 +244,14 @@ services:
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - CORDUM_TELEMETRY_MODE=off
+      # Audit chain + export: engage the Merkle per-tenant audit chain so
+      # /api/v1/audit/verify and audit/export produce real tamper-evidence.
+      # "null" destination drops batches but keeps the chain populated.
+      # Override CORDUM_AUDIT_EXPORT_TYPE to webhook|syslog|datadog|cloudwatch
+      # with the associated backend env vars to stream to a real SIEM.
+      - CORDUM_AUDIT_EXPORT_TYPE=${CORDUM_AUDIT_EXPORT_TYPE:-null}
+      - AUDIT_TRANSPORT=${AUDIT_TRANSPORT:-nats}
+      - CORDUM_AUDIT_CHAIN_FAIL=${CORDUM_AUDIT_CHAIN_FAIL:-permissive}
       - API_RATE_LIMIT_RPS=${API_RATE_LIMIT_RPS:-50}
       - API_RATE_LIMIT_BURST=${API_RATE_LIMIT_BURST:-100}
       - REDIS_DATA_TTL=24h

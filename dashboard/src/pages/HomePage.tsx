@@ -43,6 +43,7 @@ import {
   Radio,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
+import { GovernanceHealthIndicator } from "@/components/home/GovernanceHealthIndicator";
 import { useStatus } from "@/hooks/useStatus";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
@@ -52,9 +53,12 @@ import { MetricValue } from "@/components/ui/MetricValue";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { safeLocalStorage } from "@/lib/storage";
+import { AuditChainCard } from "@/components/AuditChainCard";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function HomePage() {
   const navigate = useNavigate();
+  const { tenantId } = useAuth();
   const [showOnboarding, setShowOnboarding] = useState(
     () => !safeLocalStorage.getItem("onboarding-dismissed"),
   );
@@ -419,6 +423,13 @@ export default function HomePage() {
           </>
         )}
       </motion.div>
+
+      {/* Governance health score — composite 0-100 aggregate of denial
+          rate, approval latency p95, policy coverage, chain integrity.
+          Admin-only; widget renders nothing for non-admin callers and
+          lazy-fetches independently of the KPI strip so it never blocks
+          first paint. See core/governance/health.go for the scoring. */}
+      <GovernanceHealthIndicator />
 
       {/* Onboarding checklist — shown for new users with zero data */}
       {showOnboarding &&
@@ -888,6 +899,9 @@ export default function HomePage() {
           )}
         </div>
       </CollapsibleSection>
+
+      {/* Audit chain tamper evidence — governance health at a glance. */}
+      <AuditChainCard tenant={tenantId ?? ""} />
 
       {/* Approval Queue — compact banner linking to ApprovalsPage */}
       {pendingApprovals.length > 0 && (

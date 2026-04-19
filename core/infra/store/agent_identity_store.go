@@ -48,9 +48,17 @@ type AgentIdentity struct {
 	AllowedPools        []string `json:"allowed_pools,omitempty"`
 	AllowedTools        []string `json:"allowed_tools,omitempty"`
 	DataClassifications []string `json:"data_classifications,omitempty"`
-	Status              string   `json:"status"`
-	CreatedAt           string   `json:"created_at"`
-	UpdatedAt           string   `json:"updated_at"`
+	// PreapprovedMutatingTools lists mutating MCP tool names this
+	// identity may call WITHOUT the default human approval. Designed
+	// for CI-CD / release bot identities that need to self-service
+	// platform provisioning on a fast path. Every call is still
+	// audited — the SIEMEvent carries approval_source=preapproved so
+	// forensics can tell preapproved bypasses from human approvals.
+	// Writes to this field are admin-only; see handlers_agents.go.
+	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
+	Status                   string   `json:"status"`
+	CreatedAt                string   `json:"created_at"`
+	UpdatedAt                string   `json:"updated_at"`
 }
 
 // AgentIdentityFilter controls list filtering.
@@ -344,6 +352,9 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 	if updates.AllowedTools != nil {
 		existing.AllowedTools = updates.AllowedTools
 	}
+	if updates.PreapprovedMutatingTools != nil {
+		existing.PreapprovedMutatingTools = updates.PreapprovedMutatingTools
+	}
 	if updates.DataClassifications != nil {
 		existing.DataClassifications = updates.DataClassifications
 	}
@@ -482,6 +493,7 @@ func normalizeAgentIdentity(a AgentIdentity) AgentIdentity {
 	a.AllowedTopics = normalizeStringSlice(a.AllowedTopics)
 	a.AllowedPools = normalizeStringSlice(a.AllowedPools)
 	a.AllowedTools = normalizeStringSlice(a.AllowedTools)
+	a.PreapprovedMutatingTools = normalizeStringSlice(a.PreapprovedMutatingTools)
 	a.DataClassifications = normalizeStringSlice(a.DataClassifications)
 	return a
 }

@@ -14,62 +14,66 @@ import (
 )
 
 type createAgentRequest struct {
-	Name                string   `json:"name"`
-	Description         string   `json:"description,omitempty"`
-	Owner               string   `json:"owner"`
-	Team                string   `json:"team,omitempty"`
-	RiskTier            string   `json:"risk_tier"`
-	AllowedTopics       []string `json:"allowed_topics,omitempty"`
-	AllowedPools        []string `json:"allowed_pools,omitempty"`
-	AllowedTools        []string `json:"allowed_tools,omitempty"`
-	DataClassifications []string `json:"data_classifications,omitempty"`
+	Name                     string   `json:"name"`
+	Description              string   `json:"description,omitempty"`
+	Owner                    string   `json:"owner"`
+	Team                     string   `json:"team,omitempty"`
+	RiskTier                 string   `json:"risk_tier"`
+	AllowedTopics            []string `json:"allowed_topics,omitempty"`
+	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	DataClassifications      []string `json:"data_classifications,omitempty"`
+	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 }
 
 type updateAgentRequest struct {
-	Name                string   `json:"name,omitempty"`
-	Description         string   `json:"description,omitempty"`
-	Owner               string   `json:"owner,omitempty"`
-	Team                string   `json:"team,omitempty"`
-	RiskTier            string   `json:"risk_tier,omitempty"`
-	Status              string   `json:"status,omitempty"`
-	AllowedTopics       []string `json:"allowed_topics,omitempty"`
-	AllowedPools        []string `json:"allowed_pools,omitempty"`
-	AllowedTools        []string `json:"allowed_tools,omitempty"`
-	DataClassifications []string `json:"data_classifications,omitempty"`
+	Name                     string   `json:"name,omitempty"`
+	Description              string   `json:"description,omitempty"`
+	Owner                    string   `json:"owner,omitempty"`
+	Team                     string   `json:"team,omitempty"`
+	RiskTier                 string   `json:"risk_tier,omitempty"`
+	Status                   string   `json:"status,omitempty"`
+	AllowedTopics            []string `json:"allowed_topics,omitempty"`
+	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	DataClassifications      []string `json:"data_classifications,omitempty"`
+	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 }
 
 type agentResponse struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Description         string   `json:"description,omitempty"`
-	Owner               string   `json:"owner"`
-	Team                string   `json:"team,omitempty"`
-	RiskTier            string   `json:"risk_tier"`
-	AllowedTopics       []string `json:"allowed_topics,omitempty"`
-	AllowedPools        []string `json:"allowed_pools,omitempty"`
-	AllowedTools        []string `json:"allowed_tools,omitempty"`
-	DataClassifications []string `json:"data_classifications,omitempty"`
-	Status              string   `json:"status"`
-	CreatedAt           string   `json:"created_at"`
-	UpdatedAt           string   `json:"updated_at"`
-	LastActive          int64    `json:"last_active,omitempty"`
+	ID                       string   `json:"id"`
+	Name                     string   `json:"name"`
+	Description              string   `json:"description,omitempty"`
+	Owner                    string   `json:"owner"`
+	Team                     string   `json:"team,omitempty"`
+	RiskTier                 string   `json:"risk_tier"`
+	AllowedTopics            []string `json:"allowed_topics,omitempty"`
+	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	DataClassifications      []string `json:"data_classifications,omitempty"`
+	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
+	Status                   string   `json:"status"`
+	CreatedAt                string   `json:"created_at"`
+	UpdatedAt                string   `json:"updated_at"`
+	LastActive               int64    `json:"last_active,omitempty"`
 }
 
 func agentResponseFromIdentity(a *store.AgentIdentity) agentResponse {
 	return agentResponse{
-		ID:                  a.ID,
-		Name:                a.Name,
-		Description:         a.Description,
-		Owner:               a.Owner,
-		Team:                a.Team,
-		RiskTier:            a.RiskTier,
-		AllowedTopics:       a.AllowedTopics,
-		AllowedPools:        a.AllowedPools,
-		AllowedTools:        a.AllowedTools,
-		DataClassifications: a.DataClassifications,
-		Status:              a.Status,
-		CreatedAt:           a.CreatedAt,
-		UpdatedAt:           a.UpdatedAt,
+		ID:                       a.ID,
+		Name:                     a.Name,
+		Description:              a.Description,
+		Owner:                    a.Owner,
+		Team:                     a.Team,
+		RiskTier:                 a.RiskTier,
+		AllowedTopics:            a.AllowedTopics,
+		AllowedPools:             a.AllowedPools,
+		AllowedTools:             a.AllowedTools,
+		DataClassifications:      a.DataClassifications,
+		PreapprovedMutatingTools: a.PreapprovedMutatingTools,
+		Status:                   a.Status,
+		CreatedAt:                a.CreatedAt,
+		UpdatedAt:                a.UpdatedAt,
 	}
 }
 
@@ -90,15 +94,16 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identity := store.AgentIdentity{
-		Name:                strings.TrimSpace(req.Name),
-		Description:         strings.TrimSpace(req.Description),
-		Owner:               strings.TrimSpace(req.Owner),
-		Team:                strings.TrimSpace(req.Team),
-		RiskTier:            strings.TrimSpace(req.RiskTier),
-		AllowedTopics:       req.AllowedTopics,
-		AllowedPools:        req.AllowedPools,
-		AllowedTools:        req.AllowedTools,
-		DataClassifications: req.DataClassifications,
+		Name:                     strings.TrimSpace(req.Name),
+		Description:              strings.TrimSpace(req.Description),
+		Owner:                    strings.TrimSpace(req.Owner),
+		Team:                     strings.TrimSpace(req.Team),
+		RiskTier:                 strings.TrimSpace(req.RiskTier),
+		AllowedTopics:            req.AllowedTopics,
+		AllowedPools:             req.AllowedPools,
+		AllowedTools:             req.AllowedTools,
+		DataClassifications:      req.DataClassifications,
+		PreapprovedMutatingTools: req.PreapprovedMutatingTools,
 	}
 
 	created, err := s.agentIdentityStore.Create(r.Context(), identity)
@@ -285,16 +290,17 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updates := store.AgentIdentity{
-		Name:                strings.TrimSpace(req.Name),
-		Description:         strings.TrimSpace(req.Description),
-		Owner:               strings.TrimSpace(req.Owner),
-		Team:                strings.TrimSpace(req.Team),
-		RiskTier:            strings.TrimSpace(req.RiskTier),
-		Status:              strings.TrimSpace(req.Status),
-		AllowedTopics:       req.AllowedTopics,
-		AllowedPools:        req.AllowedPools,
-		AllowedTools:        req.AllowedTools,
-		DataClassifications: req.DataClassifications,
+		Name:                     strings.TrimSpace(req.Name),
+		Description:              strings.TrimSpace(req.Description),
+		Owner:                    strings.TrimSpace(req.Owner),
+		Team:                     strings.TrimSpace(req.Team),
+		RiskTier:                 strings.TrimSpace(req.RiskTier),
+		Status:                   strings.TrimSpace(req.Status),
+		AllowedTopics:            req.AllowedTopics,
+		AllowedPools:             req.AllowedPools,
+		AllowedTools:             req.AllowedTools,
+		DataClassifications:      req.DataClassifications,
+		PreapprovedMutatingTools: req.PreapprovedMutatingTools,
 	}
 
 	updated, err := s.agentIdentityStore.Update(r.Context(), id, updates)

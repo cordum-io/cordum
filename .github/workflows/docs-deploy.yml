@@ -5,6 +5,17 @@ on:
     branches: ["main"]
     paths:
       - "docs-site/**"
+      - "docs/**"
+      - "tools/scripts/verify_mcp_snippets.sh"
+      - "tools/scripts/mcp_snippet_fixtures/**"
+      - ".github/workflows/docs-deploy.yml"
+      - ".lycheeignore"
+  pull_request:
+    paths:
+      - "docs-site/**"
+      - "docs/**"
+      - ".lycheeignore"
+      - ".github/workflows/docs-deploy.yml"
   workflow_dispatch: {}
 
 permissions:
@@ -17,7 +28,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  link-check:
+    # Lychee runs first so a broken-link PR fails fast before the
+    # Docusaurus build burns CI minutes. Internal link failures
+    # (relative paths under docs/ and docs-site/) fail the job;
+    # external URLs use a short timeout + retries and are tolerated
+    # to keep unrelated cross-site outages from blocking docs merges.
+    name: Lychee link check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --verbose
+            --no-progress
+            --accept 200,203,204,206,301,302,308,401,403,429
+            --max-retries 2
+            --retry-wait-time 5
+            --timeout 20
+            --exclude-all-private
+            --offline
+            './docs/**/*.md'
+            './docs-site/docs/**/*.md'
+          fail: true
+          format: markdown
+          output: ./lychee-report.md
+
+      - name: Upload link-check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lychee-report
+          path: ./lychee-report.md
+          if-no-files-found: ignore
+
   build:
+    needs: link-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -29,6 +80,12 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: docs-site/package-lock.json
+
+      - name: Verify MCP onboarding snippets
+        # Guards docs/mcp/quickstart-*.md against JSON drift — every MCP
+        # config snippet must keep matching the gateway + cordumctl
+        # contract encoded in tools/scripts/mcp_snippet_fixtures/.
+        run: bash tools/scripts/verify_mcp_snippets.sh
 
       - name: Install dependencies
         working-directory: docs-site
@@ -46,7 +103,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

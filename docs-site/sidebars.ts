@@ -6,6 +6,26 @@ const sidebars: SidebarsConfig = {
     'getting-started/installation',
     'getting-started/getting-started',
     'getting-started/docker',
+    {
+      type: 'category',
+      label: 'Drive Cordum with MCP',
+      items: [
+        'mcp/tools',
+        'mcp/resources',
+        'mcp/prompts',
+        'mcp/mutating-tools',
+        'mcp/scope-preapproval',
+        {
+          type: 'category',
+          label: 'MCP clients',
+          items: [
+            'mcp/quickstart-claude-code',
+            'mcp/quickstart-cursor',
+            'mcp/quickstart-vscode',
+          ],
+        },
+      ],
+    },
   ],
   concepts: [
     'concepts/architecture',

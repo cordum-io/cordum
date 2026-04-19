@@ -15,6 +15,14 @@ type mockServiceBridge struct {
 	approveJob      func(ctx context.Context, jobID string, note string) error
 	rejectJob       func(ctx context.Context, jobID string, reason string) error
 	simulatePolicy  func(ctx context.Context, req PolicySimInput) (*PolicySimOutput, error)
+
+	// Read-only overrides (optional). When nil the stub methods return
+	// a 501 BridgeError so tests that don't care about read paths stay
+	// unaffected.
+	getJob func(ctx context.Context, id string) (*ResourceItem, error)
+
+	// Mutating overrides — optional; default returns 501.
+	createWorkflow func(ctx context.Context, req CreateWorkflowInput) (*CreateWorkflowOutput, error)
 }
 
 func (m *mockServiceBridge) SubmitJob(ctx context.Context, req SubmitJobInput) (*SubmitJobOutput, error) {
@@ -57,6 +65,82 @@ func (m *mockServiceBridge) SimulatePolicy(ctx context.Context, req PolicySimInp
 		return nil, ErrBridgeUnavailable
 	}
 	return m.simulatePolicy(ctx, req)
+}
+
+// Read-only surface stubs for task-466b6a6a. The existing handler
+// tests don't exercise any of these; each returns a deterministic
+// "unimplemented" BridgeError so the interface is satisfied.
+func (m *mockServiceBridge) ListJobs(context.Context, ListInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "ListJobs", nil)
+}
+func (m *mockServiceBridge) GetJob(ctx context.Context, id string) (*ResourceItem, error) {
+	if m.getJob != nil {
+		return m.getJob(ctx, id)
+	}
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "GetJob", nil)
+}
+func (m *mockServiceBridge) ListRuns(context.Context, ListInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "ListRuns", nil)
+}
+func (m *mockServiceBridge) GetRun(context.Context, string) (*ResourceItem, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "GetRun", nil)
+}
+func (m *mockServiceBridge) GetRunTimeline(context.Context, string) (*ResourceItem, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "GetRunTimeline", nil)
+}
+func (m *mockServiceBridge) ListWorkflows(context.Context, ListInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "ListWorkflows", nil)
+}
+func (m *mockServiceBridge) ListPacks(context.Context, ListInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "ListPacks", nil)
+}
+func (m *mockServiceBridge) ListTopics(context.Context, ListInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "ListTopics", nil)
+}
+func (m *mockServiceBridge) ListWorkers(context.Context, ListInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "ListWorkers", nil)
+}
+func (m *mockServiceBridge) ListAgents(context.Context, ListInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "ListAgents", nil)
+}
+func (m *mockServiceBridge) ListPendingApprovals(context.Context, ListInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "ListPendingApprovals", nil)
+}
+func (m *mockServiceBridge) QueryAudit(context.Context, AuditQueryInput) (*ListPage, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "QueryAudit", nil)
+}
+func (m *mockServiceBridge) VerifyAudit(context.Context, string) (*ResourceItem, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "VerifyAudit", nil)
+}
+func (m *mockServiceBridge) GetStatus(context.Context) (*ResourceItem, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "GetStatus", nil)
+}
+
+// Mutating surface — mocks default to NotImplemented; tests that need
+// specific behaviour override these on their bridge instance.
+func (m *mockServiceBridge) CreateWorkflow(context.Context, CreateWorkflowInput) (*CreateWorkflowOutput, error) {
+	if m.createWorkflow != nil {
+		return m.createWorkflow(context.Background(), CreateWorkflowInput{})
+	}
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "CreateWorkflow", nil)
+}
+func (m *mockServiceBridge) InstallPack(context.Context, InstallPackInput) (*InstallPackOutput, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "InstallPack", nil)
+}
+func (m *mockServiceBridge) UninstallPack(context.Context, UninstallPackInput) error {
+	return NewBridgeError(http.StatusNotImplemented, "not_impl", "UninstallPack", nil)
+}
+func (m *mockServiceBridge) RegisterAgent(context.Context, RegisterAgentInput) (*RegisterAgentOutput, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "RegisterAgent", nil)
+}
+func (m *mockServiceBridge) UpdatePolicyBundle(context.Context, UpdatePolicyBundleInput) (*UpdatePolicyBundleOutput, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "UpdatePolicyBundle", nil)
+}
+func (m *mockServiceBridge) RevokeWorkerSession(context.Context, RevokeWorkerSessionInput) error {
+	return NewBridgeError(http.StatusNotImplemented, "not_impl", "RevokeWorkerSession", nil)
+}
+func (m *mockServiceBridge) SetAgentScope(context.Context, SetAgentScopeInput) (*SetAgentScopeOutput, error) {
+	return nil, NewBridgeError(http.StatusNotImplemented, "not_impl", "SetAgentScope", nil)
 }
 
 func TestSubmitJobTool(t *testing.T) {

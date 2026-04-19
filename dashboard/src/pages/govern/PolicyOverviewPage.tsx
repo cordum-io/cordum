@@ -27,6 +27,9 @@ import {
   type PolicyStudioTab,
 } from "@/components/policy/tabs";
 import type { PolicyBundle } from "@/api/types";
+import { ChainIntegrityWidget } from "@/components/ChainIntegrityWidget";
+import { GapAlertBanner } from "@/components/GapAlertBanner";
+import { useAuth } from "@/hooks/useAuth";
 
 // Lazy-loaded tab content — each page accepts { hideHeader?: boolean }
 const LazyInputRulesTab = lazy(() => import("@/pages/govern/InputRulesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
@@ -166,6 +169,7 @@ function OverviewTabContent() {
   return (
     <div className="space-y-6">
       <PostureSummary bundles={bundles} allRules={allRules} />
+      <ChainIntegrityWidgetForOverview />
       <PolicyFilterBar
         searchText={searchText}
         onSearchChange={setSearchText}
@@ -230,6 +234,20 @@ function OverviewTabContent() {
   );
 }
 
+// ChainIntegrityWidgetForOverview keeps the overview tab a function
+// component while still letting the auth hook live in the right scope.
+function ChainIntegrityWidgetForOverview() {
+  const { tenantId } = useAuth();
+  return <ChainIntegrityWidget tenant={tenantId ?? ""} />;
+}
+
+// GapAlertBannerForPage mounts at the top of PolicyOverviewPage to call
+// out compromised-chain status before the user drills into bundles.
+function GapAlertBannerForPage() {
+  const { tenantId } = useAuth();
+  return <GapAlertBanner tenant={tenantId ?? ""} />;
+}
+
 // ---------------------------------------------------------------------------
 // Tab fallback
 // ---------------------------------------------------------------------------
@@ -282,6 +300,10 @@ export default function PolicyOverviewPage() {
 
   return (
     <div className="space-y-6 animate-rise">
+      {/* Compromised-chain alert — session-dismissible, mounts above
+          the page header so compliance reviewers see it first. */}
+      <GapAlertBannerForPage />
+
       {/* Page Header */}
       <PageHeader
         label={`Govern \u00b7 Policy Studio`}

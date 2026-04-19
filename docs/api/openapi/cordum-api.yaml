@@ -1,9 +1,27 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-04-13'
-  description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface, including all REST routes in gateway.go plus
+  version: '2026-04-18e'
+  description: |
+    Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface, including all REST routes in gateway.go plus
     legacy and prefixed MCP HTTP endpoints.
+
+    ## Cross-cutting responses
+
+    The gateway middleware chain (`CORS → apiKey → rateLimit → tenant → maxBody → router`) can return the following
+    statuses on **any** documented endpoint, even when an individual operation does not list them in its `responses`
+    block:
+
+    - **413 Payload Too Large** — the `maxBody` middleware rejects request bodies above the configured limit before
+      the handler runs.
+    - **429 Too Many Requests** — the `rateLimit` middleware throttles per-tenant traffic; the response carries a
+      `Retry-After` header.
+    - **503 Service Unavailable** — emitted whenever a handler discovers a required backing store is unconfigured
+      (`if s.xStore == nil { writeErrorJSON(w, 503, ...) }`). Affects every endpoint whose handler depends on a Redis
+      / configsvc / scheduler client; treat as a transient operational error.
+
+    All three return the standard `Error` envelope (`{error, status}`) so clients can handle them uniformly without
+    needing per-op coverage. See `docs/api/openapi/ERROR_CODE_AUDIT.md` for the per-endpoint distribution.
   contact:
     name: Cordum Team
   license:
@@ -66,6 +84,9 @@ tags:
   description: Cryptographic audit log export configuration and health checks (admin only)
 - name: LegalHold
   description: Legal hold management for audit retention compliance (admin only)
+- name: Agents
+  description: Agent identity catalogue — create, list, update, and revoke the
+    non-human actors that drive the platform (admin only).
 security:
 - apiKey: []
 - bearerAuth: []
@@ -87,6 +108,12 @@ paths:
                 $ref: '#/components/schemas/AuthConfig'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/auth/login:
     post:
       operationId: login
@@ -115,6 +142,10 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/auth/session:
     get:
       operationId: getSession
@@ -135,6 +166,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/auth/logout:
     post:
       operationId: logout
@@ -148,6 +185,10 @@ paths:
           description: Logged out
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/auth/password:
     post:
       operationId: changeOwnPassword
@@ -171,6 +212,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/users:
     post:
       operationId: createUser
@@ -202,6 +249,12 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     get:
       operationId: listUsers
       summary: List all users
@@ -229,6 +282,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/users/{id}:
     parameters:
     - $ref: '#/components/parameters/UserID'
@@ -261,6 +320,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: deleteUser
       summary: Delete a user
@@ -277,6 +342,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/users/{id}/password:
     post:
       operationId: resetUserPassword
@@ -311,6 +382,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/auth/keys:
     get:
       operationId: listAPIKeys
@@ -339,6 +416,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     post:
       operationId: createAPIKey
       summary: Create an API key
@@ -372,6 +455,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/auth/keys/{id}:
     delete:
       operationId: deleteAPIKey
@@ -396,6 +485,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/jobs:
     post:
       operationId: submitJob
@@ -428,6 +523,8 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
     get:
       operationId: listJobs
       summary: List jobs
@@ -474,6 +571,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/jobs/{id}:
     get:
       operationId: getJob
@@ -496,6 +599,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/jobs/{id}/decisions:
     get:
       operationId: getJobDecisions
@@ -520,6 +629,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/jobs/{id}/cancel:
     post:
       operationId: cancelJob
@@ -550,6 +665,12 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/jobs/{id}/remediate:
     post:
       operationId: remediateJob
@@ -585,6 +706,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/jobs/{id}/stream:
     get:
       operationId: streamJob
@@ -607,6 +734,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/traces/{id}:
     get:
       operationId: getTrace
@@ -636,6 +767,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/dlq:
     get:
       operationId: listDLQ
@@ -664,6 +801,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/dlq/page:
     get:
       operationId: listDLQPaginated
@@ -701,6 +844,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/dlq/{job_id}:
     delete:
       operationId: deleteDLQEntry
@@ -725,6 +874,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/dlq/{job_id}/retry:
     post:
       operationId: retryDLQEntry
@@ -756,6 +911,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflows:
     get:
       operationId: listWorkflows
@@ -777,6 +938,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     post:
       operationId: createWorkflow
       summary: Create or update a workflow definition
@@ -806,6 +973,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflows/{id}:
     parameters:
     - $ref: '#/components/parameters/WorkflowID'
@@ -828,6 +1001,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: deleteWorkflow
       summary: Delete a workflow definition
@@ -842,6 +1021,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflows/{id}/runs:
     parameters:
     - $ref: '#/components/parameters/WorkflowID'
@@ -877,6 +1062,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     get:
       operationId: listWorkflowRuns
       summary: List runs for a workflow
@@ -897,6 +1088,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflows/{id}/dry-run:
     post:
       operationId: dryRunWorkflow
@@ -934,6 +1131,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflow-runs:
     get:
       operationId: listAllWorkflowRuns
@@ -977,6 +1180,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflow-runs/{id}:
     parameters:
     - $ref: '#/components/parameters/RunID'
@@ -999,6 +1208,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: deleteWorkflowRun
       summary: Delete a workflow run
@@ -1013,6 +1228,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflow-runs/{id}/timeline:
     get:
       operationId: getRunTimeline
@@ -1037,6 +1258,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflow-runs/{id}/chat:
     parameters:
     - $ref: '#/components/parameters/RunID'
@@ -1066,6 +1293,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     post:
       operationId: postRunChat
       summary: Post a chat message to a run
@@ -1092,6 +1325,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflow-runs/{id}/rerun:
     post:
       operationId: rerunWorkflow
@@ -1131,6 +1370,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workflows/{id}/runs/{run_id}/cancel:
     post:
       operationId: cancelWorkflowRun
@@ -1156,6 +1401,12 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/approvals:
     get:
       operationId: listApprovals
@@ -1193,6 +1444,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/approvals/{job_id}/approve:
     post:
       operationId: approveJob
@@ -1229,6 +1486,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/approvals/{job_id}/reject:
     post:
       operationId: rejectJob
@@ -1268,6 +1531,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/approvals/{job_id}/context:
     get:
       operationId: getApprovalContext
@@ -1371,6 +1640,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/evaluate:
     post:
       operationId: evaluatePolicy
@@ -1398,6 +1673,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/simulate:
     post:
       operationId: simulatePolicy
@@ -1425,6 +1706,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/explain:
     post:
       operationId: explainPolicy
@@ -1452,6 +1739,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/snapshots:
     get:
       operationId: listPolicySnapshots
@@ -1473,6 +1766,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/rules:
     get:
       operationId: listPolicyRules
@@ -1506,6 +1805,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/output/rules:
     get:
       operationId: listOutputRules
@@ -1527,6 +1832,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/output/rules/{id}:
     put:
       operationId: upsertOutputRule
@@ -1559,6 +1870,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/bundles:
     get:
       operationId: listPolicyBundles
@@ -1590,6 +1907,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/bundles/{id}:
     parameters:
     - name: id
@@ -1616,6 +1939,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     put:
       operationId: updatePolicyBundle
       summary: Update a policy bundle
@@ -1642,6 +1971,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: deletePolicyBundle
       summary: Delete a policy bundle
@@ -1658,6 +1993,435 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/policy/bundles/{id}/shadow:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    post:
+      deprecated: true
+      operationId: activatePolicyShadowDeprecated
+      summary: DEPRECATED — use POST /api/v1/policy/shadows/{id}
+      description: |
+        **Deprecated path.** Use `POST /api/v1/policy/shadows/{id}` instead.
+        This entry is retained so OpenAPI-generated SDKs stay stable for
+        callers that bound to the old operationId, but the route was moved
+        in early 2026 to avoid a Go 1.22 mux pattern collision with
+        `/api/v1/policy/bundles/snapshots/{id}`. Calls to this path return
+        404 at the gateway.
+      tags:
+      - Policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - content
+              properties:
+                content:
+                  type: string
+                  description: Candidate policy YAML content
+                metadata:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        '200':
+          description: Shadow policy activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Concurrent write conflict — retry
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    get:
+      deprecated: true
+      operationId: getPolicyShadowDeprecated
+      summary: DEPRECATED — use GET /api/v1/policy/shadows/{id}
+      description: |
+        **Deprecated path.** Use `GET /api/v1/policy/shadows/{id}` instead.
+      tags:
+      - Policy
+      responses:
+        '200':
+          description: Shadow policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    delete:
+      deprecated: true
+      operationId: deactivatePolicyShadowDeprecated
+      summary: DEPRECATED — use DELETE /api/v1/policy/shadows/{id}
+      description: |
+        **Deprecated path.** Use `DELETE /api/v1/policy/shadows/{id}` instead.
+      tags:
+      - Policy
+      responses:
+        '204':
+          description: Shadow policy deactivated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Concurrent write conflict — retry
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/policy/shadows/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Bundle id the shadow is associated with.
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    post:
+      operationId: activatePolicyShadow
+      summary: Activate or replace the shadow policy for a bundle
+      description: |
+        Store a candidate ("shadow") policy alongside the active bundle so
+        the safety kernel can evaluate it against live traffic without
+        enforcement. Only one shadow per bundle; repeated POSTs replace the
+        existing entry. Path `{id}` is the bundle id the shadow is attached
+        to. Relocated from `/api/v1/policy/bundles/{id}/shadow` to avoid a
+        Go 1.22 mux pattern collision with
+        `/api/v1/policy/bundles/snapshots/{id}`.
+      tags:
+      - Policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - content
+              properties:
+                content:
+                  type: string
+                  description: Candidate policy YAML content
+                metadata:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        '200':
+          description: Shadow policy activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Concurrent write conflict — retry
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    get:
+      operationId: getPolicyShadow
+      summary: Get the active shadow policy for a bundle
+      tags:
+      - Policy
+      responses:
+        '200':
+          description: Shadow policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    delete:
+      operationId: deactivatePolicyShadow
+      summary: Remove the shadow policy for a bundle
+      tags:
+      - Policy
+      responses:
+        '204':
+          description: Shadow policy deactivated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Concurrent write conflict — retry
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/policy/shadows/{id}/results/summary:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Bundle id the shadow is evaluated against.
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: getShadowResultsSummary
+      summary: Aggregated shadow evaluation counts for a bundle
+      description: |
+        Returns total_evaluated plus per-diff counts (escalated, relaxed,
+        approval_differ, unchanged) over the requested [from, to] window.
+        Memoised for 60 seconds per (tenant, bundle, window) so dashboard
+        polling doesn't re-scan the audit stream. Admin-only; tenant-scoped.
+      tags:
+      - Policy
+      parameters:
+      - name: from
+        in: query
+        required: true
+        description: Inclusive window start (unix ms).
+        schema:
+          type: integer
+          format: int64
+      - name: to
+        in: query
+        required: true
+        description: Inclusive window end (unix ms). Window must be ≤ 30 days.
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: Summary counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowResultsSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/policy/shadows/{id}/results/comparisons:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Bundle id the shadow is evaluated against.
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: listShadowResultComparisons
+      summary: Paginated individual shadow-vs-active comparisons
+      description: |
+        Returns one row per shadow_eval event, each carrying active_verdict,
+        shadow_verdict, diff, and rule IDs. Uses Redis-stream-id cursor
+        pagination: pass the prior response's `next_cursor` as `?cursor=` to
+        fetch the next page. Optional `diff` filter narrows the page to a
+        single diff class. Admin-only; tenant-scoped; not cached.
+      tags:
+      - Policy
+      parameters:
+      - name: from
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: to
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: diff
+        in: query
+        required: false
+        description: Filter by diff class.
+        schema:
+          type: string
+          enum: [escalated, relaxed, approval_differ, unchanged, all]
+      - name: cursor
+        in: query
+        required: false
+        description: Redis Stream ID to resume from.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Page size (default 50, max 500).
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+      responses:
+        '200':
+          description: Comparison rows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowComparisonsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/policy/shadows/{id}/results/timeseries:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Bundle id the shadow is evaluated against.
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: getShadowResultsTimeseries
+      summary: Bucketed shadow evaluation counts for charting
+      description: |
+        Returns zero-filled diff-class counts bucketed by the requested
+        granularity. Total response size capped at 2000 buckets — callers
+        that exceed the cap receive a 400 and should widen the bucket.
+        Admin-only; tenant-scoped; not cached.
+      tags:
+      - Policy
+      parameters:
+      - name: from
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: to
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: bucket
+        in: query
+        required: true
+        description: Bucket width.
+        schema:
+          type: string
+          enum: [1m, 5m, 15m, 1h, 1d]
+      responses:
+        '200':
+          description: Bucketed series
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowTimeseriesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/bundles/{id}/simulate:
     post:
       operationId: simulatePolicyBundle
@@ -1698,6 +2462,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/bundles/snapshots:
     get:
       operationId: listBundleSnapshots
@@ -1722,6 +2492,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     post:
       operationId: createBundleSnapshot
       summary: Create a policy bundle snapshot
@@ -1749,6 +2525,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/bundles/snapshots/{id}:
     get:
       operationId: getBundleSnapshot
@@ -1775,6 +2557,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/publish:
     post:
       operationId: publishPolicy
@@ -1802,6 +2590,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/rollback:
     post:
       operationId: rollbackPolicy
@@ -1831,6 +2625,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/audit:
     get:
       operationId: getPolicyAudit
@@ -1852,6 +2652,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/config:
     get:
       operationId: getConfig
@@ -1891,6 +2697,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     post:
       operationId: setConfig
       summary: Set configuration
@@ -1915,6 +2727,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     put:
       operationId: replaceConfig
       summary: Replace configuration
@@ -1939,6 +2757,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/config/effective:
     get:
       operationId: getEffectiveConfig
@@ -1979,6 +2803,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/schemas:
     post:
       operationId: createSchema
@@ -2002,6 +2832,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     get:
       operationId: listSchemas
       summary: List registered schemas
@@ -2027,6 +2863,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/schemas/{id}:
     parameters:
     - name: id
@@ -2053,6 +2895,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: deleteSchema
       summary: Delete a schema
@@ -2067,6 +2915,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/locks:
     get:
       operationId: getLock
@@ -2093,6 +2947,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/locks/acquire:
     post:
       operationId: acquireLock
@@ -2120,6 +2980,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/locks/release:
     post:
       operationId: releaseLock
@@ -2152,6 +3018,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/locks/renew:
     post:
       operationId: renewLock
@@ -2179,6 +3051,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/packs:
     get:
       operationId: listPacks
@@ -2207,6 +3085,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/packs/{id}:
     get:
       operationId: getPack
@@ -2235,6 +3119,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/packs/install:
     post:
       operationId: installPack
@@ -2273,6 +3163,10 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /api/v1/packs/{id}/uninstall:
     post:
       operationId: uninstallPack
@@ -2311,6 +3205,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/packs/{id}/verify:
     post:
       operationId: verifyPack
@@ -2339,6 +3239,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/marketplace/packs:
     get:
       operationId: listMarketplacePacks
@@ -2362,6 +3268,12 @@ paths:
           $ref: '#/components/responses/BadGateway'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/marketplace/install:
     post:
       operationId: installMarketplacePack
@@ -2393,6 +3305,12 @@ paths:
           $ref: '#/components/responses/BadGateway'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /health:
     get:
       operationId: healthCheck
@@ -2408,6 +3326,10 @@ paths:
               schema:
                 type: string
                 example: ok
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/status:
     get:
       operationId: getStatus
@@ -2427,6 +3349,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workers:
     get:
       operationId: listWorkers
@@ -2455,6 +3383,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/memory:
     get:
       operationId: getMemory
@@ -2487,6 +3421,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/artifacts:
     post:
       operationId: createArtifact
@@ -2516,6 +3456,10 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /api/v1/artifacts/{ptr}:
     get:
       operationId: getArtifact
@@ -2543,6 +3487,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /mcp/sse:
     get:
       operationId: mcpSSE
@@ -2570,6 +3520,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /mcp/message:
@@ -2602,6 +3556,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /mcp/status:
@@ -2624,28 +3582,54 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /api/v1/stream:
+    # The gateway registers this path with mux.HandleFunc("/api/v1/stream", ...)
+    # — i.e. without a method prefix, so every HTTP verb forwards to the
+    # WebSocket upgrader. x-any-method: true tells the openapi-audit tool not
+    # to flag the route as uncovered just because the GET stanza below is the
+    # only one that renders nicely in redocly.
+    x-any-method: true
+    x-websocket: true
+    x-websocket-message-schema:
+      $ref: '#/components/schemas/StreamEvent'
     get:
       operationId: streamEvents
       summary: WebSocket event bus stream
-      description: 'Upgrades to a WebSocket connection. Authenticates via the
+      description: |
+        Upgrades to a WebSocket connection and streams real-time bus packets
+        (job state changes, heartbeats, DLQ alerts, workflow progress). The
+        HTTP method is ignored; the gateway handler upgrades the connection
+        regardless of the verb used.
 
-        `cordum-api-key.<base64>` subprotocol. Streams real-time bus events
-
-        (job state changes, heartbeats, policy updates, etc.).
-
-
-
-        Authentication: provide `X-Tenant-ID` and authenticate via `Sec-WebSocket-Protocol: cordum-api-key, <base64url(api_key)>`.'
+        Authentication: the caller supplies an `X-Tenant-ID` header (optional
+        for superadmin tokens) plus a
+        `Sec-WebSocket-Protocol: cordum-api-key, <base64url(api_key)>`
+        subprotocol header. Sessions are re-validated on credential rotation.
+        Each frame is a JSON-encoded `StreamEvent` — see the schema for the
+        enumerated `type` values.
       tags:
       - Streaming
       responses:
         '101':
-          description: WebSocket upgrade
+          description: WebSocket upgrade accepted
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/health:
     get:
       operationId: healthCheckV1
@@ -2666,6 +3650,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/auth/roles:
     get:
       operationId: listRoles
@@ -2687,6 +3675,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/auth/roles/{name}:
     parameters:
     - $ref: '#/components/parameters/RoleName'
@@ -2713,6 +3705,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     put:
       operationId: putRole
       summary: Create or update an RBAC role
@@ -2744,6 +3740,10 @@ paths:
           $ref: '#/components/responses/TierLimit'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: deleteRole
       summary: Delete a custom RBAC role
@@ -2773,6 +3773,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workers/{id}:
     parameters:
     - $ref: '#/components/parameters/WorkerID'
@@ -2797,6 +3801,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workers/{id}/jobs:
     parameters:
     - $ref: '#/components/parameters/WorkerID'
@@ -2831,6 +3839,55 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/workers/{id}/revoke-session:
+    parameters:
+    - $ref: '#/components/parameters/WorkerID'
+    - $ref: '#/components/parameters/TenantID'
+    post:
+      operationId: revokeWorkerSession
+      summary: Revoke the active session token for a worker (admin)
+      description: |
+        Admin-only endpoint that invalidates the worker's active
+        Phase-2 session token immediately. Subsequent packets
+        carrying that token are rejected by the scheduler's
+        session-token middleware. Idempotent — revoking a worker
+        with no active session returns 200 with revoked=true.
+      tags:
+      - Workers
+      responses:
+        '200':
+          description: Session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  worker_id:
+                    type: string
+                  tenant:
+                    type: string
+                  revoked:
+                    type: boolean
+                required:
+                - worker_id
+                - tenant
+                - revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/workers/credentials:
     get:
       operationId: listWorkerCredentials
@@ -2859,6 +3916,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     post:
       operationId: createWorkerCredential
       summary: Create or rotate a worker credential
@@ -2908,6 +3969,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/workers/credentials/{worker_id}:
     parameters:
     - $ref: '#/components/parameters/WorkerCredentialID'
@@ -2930,6 +3995,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/pools:
     get:
       operationId: listPools
@@ -2956,6 +4025,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/pools/{name}:
     parameters:
     - $ref: '#/components/parameters/PoolName'
@@ -2980,6 +4053,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     put:
       operationId: createPool
       summary: Create a worker pool
@@ -3013,6 +4090,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     patch:
       operationId: updatePool
       summary: Update a worker pool
@@ -3050,6 +4131,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: deletePool
       summary: Delete a worker pool
@@ -3072,6 +4157,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/pools/{name}/drain:
     parameters:
     - $ref: '#/components/parameters/PoolName'
@@ -3108,6 +4197,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/pools/{name}/topics/{topic}:
     parameters:
     - $ref: '#/components/parameters/PoolName'
@@ -3131,6 +4224,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: removeTopicFromPool
       summary: Remove a topic mapping from a pool
@@ -3149,6 +4246,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/topics:
     get:
       operationId: listTopics
@@ -3179,6 +4280,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     post:
       operationId: createTopic
       summary: Create or replace a topic registration
@@ -3238,6 +4343,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/topics/{name}:
     parameters:
     - $ref: '#/components/parameters/TopicName'
@@ -3260,6 +4369,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/license:
     get:
       operationId: getLicense
@@ -3294,6 +4407,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/license/usage:
     get:
       operationId: getLicenseUsage
@@ -3315,6 +4432,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/license/reload:
     post:
       operationId: reloadLicense
@@ -3346,6 +4469,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/telemetry/status:
     get:
       operationId: getTelemetryStatus
@@ -3380,6 +4507,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/telemetry/inspect:
     get:
       operationId: inspectTelemetryPayload
@@ -3401,6 +4534,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/telemetry/export:
     get:
       operationId: exportTelemetryPayload
@@ -3422,6 +4561,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/telemetry/usage:
     get:
       operationId: getTelemetryUsage
@@ -3443,6 +4588,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/telemetry/consent:
     post:
       operationId: setTelemetryConsent
@@ -3491,6 +4642,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/admin/locks:
     get:
       operationId: listAdminLocks
@@ -3519,6 +4674,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/audit/export/health:
     get:
       operationId: getAuditExportHealth
@@ -3538,6 +4697,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/TierLimit'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/audit/export/config:
     get:
       operationId: getAuditExportConfig
@@ -3557,6 +4720,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/audit/export/test:
     post:
       operationId: testAuditExport
@@ -3580,6 +4747,127 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/audit/export:
+    get:
+      operationId: exportAudit
+      summary: Stream a compliance audit export with chain verification and SOC2 tags
+      description: |
+        Streams every SIEMEvent recorded on the tenant's audit chain between `from` and `to`,
+        annotated with SOC2 2017 Trust Services Criteria control IDs and a manifest containing
+        chain-integrity status + signed policy-bundle snapshots active during the range.
+
+        Format `json` emits NDJSON: the first line is a `type=manifest` record (chain
+        verification status, retention boundary, policy snapshots, SOC2 legend), followed
+        by one `type=event` record per audit entry, followed by a `type=footer` record.
+        Format `csv` emits an RFC 4180 CSV preceded by a `# cordum-manifest: {...}`
+        comment line containing the same manifest JSON. When `excel=true` the CSV is
+        prefixed with a UTF-8 BOM so Microsoft Excel treats the payload as UTF-8.
+
+        Tenant is always resolved from the caller's auth context. Admin role required.
+        Requires either the `siem_export` or `audit_export` entitlement.
+      tags:
+      - AuditExport
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [json, csv]
+          default: json
+      - name: from
+        in: query
+        required: true
+        description: RFC 3339 lower bound (inclusive)
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: RFC 3339 upper bound (inclusive)
+        schema:
+          type: string
+          format: date-time
+      - name: excel
+        in: query
+        required: false
+        description: Prepend a UTF-8 BOM to CSV output so Excel honours UTF-8.
+        schema:
+          type: boolean
+          default: false
+      - name: limit
+        in: query
+        required: false
+        description: Cap events emitted; defaults to 1,000,000 for Enterprise / 10,000 for Team.
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: Streamed audit export.
+          headers:
+            X-Cordum-Export-Format:
+              schema:
+                type: string
+                enum: [json, csv]
+            X-Cordum-Tenant:
+              schema:
+                type: string
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="cordum-audit-default-20260101-20260417.ndjson"'
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: |
+                  One JSON object per line. First object has `type: manifest`; each event
+                  has `type: event` plus `soc2_controls` array; trailing object has
+                  `type: footer` with `event_count` and `truncated`.
+              example: |
+                {"type":"manifest","generated_at":"2026-04-18T09:00:00Z","tenant_id":"default","from":"2026-04-01T00:00:00Z","to":"2026-04-17T23:59:59Z","format":"json","chain_verification":{"status":"ok","total_events":42,"verified_events":42,"gaps":[]},"policy_snapshots":[{"bundle_id":"secops/baseline","version":"v3","ed25519_signature":"...","public_key_id":"primary-2026"}],"soc2_legend":{"CC7.2":"Monitoring of controls"},"event_count":0,"truncated_at_max":false}
+                {"type":"event","timestamp":"2026-04-01T00:01:00Z","event_type":"safety.decision","severity":"INFO","tenant_id":"default","action":"db.read","decision":"allow","seq":1,"event_hash":"a1b2...","prev_hash":"","soc2_controls":["CC7.2"]}
+                {"type":"footer","event_count":42,"truncated":false,"max_events_cap":1000000,"generated_at":"2026-04-18T09:00:00Z"}
+            text/csv:
+              schema:
+                type: string
+                description: |
+                  RFC 4180 CSV preceded by a `# cordum-manifest: {...}` comment line.
+                  21 columns (timestamp, event_type, severity, tenant_id, agent_id,
+                  agent_name, agent_risk_tier, job_id, action, decision, matched_rule,
+                  reason, risk_tags, capabilities, policy_version, identity, seq,
+                  event_hash, prev_hash, soc2_controls, extra_json).
+              example: |
+                # cordum-manifest: {"type":"manifest","tenant_id":"default","format":"csv","chain_verification":{"status":"ok"}}
+                timestamp,event_type,severity,tenant_id,agent_id,agent_name,agent_risk_tier,job_id,action,decision,matched_rule,reason,risk_tags,capabilities,policy_version,identity,seq,event_hash,prev_hash,soc2_controls,extra_json
+                2026-04-01T00:01:00Z,safety.decision,INFO,default,,,,,"db.read",allow,,,,,,,1,a1b2...,,CC7.2,
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/TierLimit'
+        '503':
+          description: Audit stream unavailable (Redis not configured).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/audit/legal-hold:
     post:
       operationId: createLegalHold
@@ -3618,6 +4906,10 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/audit/legal-holds:
     get:
       operationId: listLegalHolds
@@ -3640,6 +4932,10 @@ paths:
           $ref: '#/components/responses/TierLimit'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/audit/legal-hold/{id}:
     parameters:
     - $ref: '#/components/parameters/HoldID'
@@ -3668,6 +4964,10 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/approvals/{job_id}/repair:
     post:
       operationId: repairApproval
@@ -3715,6 +5015,12 @@ paths:
                 $ref: '#/components/schemas/GenericObject'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/output/stats:
     get:
       operationId: getOutputPolicyStats
@@ -3755,6 +5061,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/velocity-rules:
     get:
       operationId: listVelocityRules
@@ -3799,6 +5111,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     post:
       operationId: createVelocityRule
       summary: Create a velocity rule
@@ -3829,6 +5147,12 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/velocity-rules/stats:
     get:
       operationId: getVelocityRuleStats
@@ -3870,6 +5194,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/velocity-rules/{id}:
     parameters:
     - name: id
@@ -3906,6 +5236,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
     delete:
       operationId: deleteVelocityRule
       summary: Delete a velocity rule
@@ -3924,6 +5260,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/analytics:
     post:
       operationId: policyAnalytics
@@ -4017,6 +5359,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/policy/replay:
     post:
       operationId: replayPolicyDecisions
@@ -4048,6 +5396,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
   /api/v1/mcp/sse:
     get:
       operationId: mcpSSEV1
@@ -4075,6 +5427,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /api/v1/mcp/message:
@@ -4107,6 +5463,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /api/v1/mcp/status:
@@ -4129,8 +5489,877 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
       parameters:
       - $ref: '#/components/parameters/TenantID'
+  /api/v1/governance/health:
+    get:
+      summary: Governance health score
+      description: |
+        Composite governance health metric for the Command Center. Weighted
+        aggregate of four factors — denial rate (25%), approval latency p95
+        (25%), policy coverage (25%), chain integrity (25%). Scored 0-100
+        and mapped to a letter grade (A/B/C/D/F). A compromised audit chain
+        caps the overall score at 55 (F) regardless of other factors.
+        Single-factor failures do not 500; the factor's Score stays at the
+        neutral default with an explanatory `notes` field.
+      operationId: getGovernanceHealth
+      tags: [Governance]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Governance health score
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GovernanceHealth'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      summary: List agent identities
+      description: |
+        Returns a page of agent identities filtered by optional status,
+        risk tier, and team query parameters. `cursor` and `limit` drive
+        pagination; the response includes `cursor` only when more items are
+        available.
+      tags: [Agents]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - $ref: '#/components/parameters/LimitQ'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: risk_tier
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: team
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Paged agent identity list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentIdentityList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    post:
+      operationId: createAgent
+      summary: Create an agent identity
+      tags: [Agents]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentRequest'
+      responses:
+        '201':
+          description: Agent identity created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentIdentity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/agents/{id}:
+    get:
+      operationId: getAgent
+      summary: Get an agent identity
+      tags: [Agents]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Agent identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentIdentity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    put:
+      operationId: updateAgent
+      summary: Update an agent identity
+      description: Fields present on the request body replace the stored
+        values; omitted fields are left untouched.
+      tags: [Agents]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAgentRequest'
+      responses:
+        '200':
+          description: Updated agent identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentIdentity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    delete:
+      operationId: deleteAgent
+      summary: Revoke an agent identity
+      tags: [Agents]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Agent identity revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/agents/{id}/stats:
+    get:
+      operationId: getAgentStats
+      summary: Get 7-day stats for an agent identity
+      description: Returns total jobs, denied count, and last-active timestamp
+        over the trailing 7 days for the identity.
+      tags: [Agents]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Agent 7-day statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/agents/{id}/tools:
+    get:
+      operationId: getAgentToolVisibility
+      summary: List tools visible to an agent identity
+      description: |
+        Returns the subset of the MCP tool catalogue that the given identity
+        would see, after applying allowed_tools glob patterns, risk-tier
+        gating, and data-classification scopes. Returns an empty list with
+        `note: identity is revoked or suspended` when the identity cannot
+        invoke any tool.
+      tags: [Agents]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Filtered tool catalogue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentToolVisibility'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/audit/verify:
+    get:
+      operationId: verifyAuditChain
+      summary: Verify the audit chain integrity for a tenant
+      description: |
+        Walks the tenant's audit chain stream and returns an integrity
+        summary: every event's hash and prev-hash are recomputed, gaps
+        below the retention boundary are classified `retention_trimmed`,
+        gaps at or above are classified `missing` (suspected tampering).
+        Never returns raw event bodies — this is an integrity-reporting
+        endpoint, not an audit-retrieval endpoint.
+      tags: [Audit]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: tenant
+        in: query
+        required: false
+        description: Tenant to verify. Must resolve to a tenant the caller
+          is authorised for; cross-tenant admins may pass any tenant.
+        schema:
+          type: string
+      - name: since
+        in: query
+        required: false
+        description: Unix millisecond lower bound on Redis Stream IDs.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: until
+        in: query
+        required: false
+        description: Unix millisecond upper bound on Redis Stream IDs.
+          The since/until range cannot exceed 30 days.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: limit
+        in: query
+        required: false
+        description: Max events to read (default 10000, hard cap 100000).
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: Verify result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditVerifyResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          description: Audit chainer not installed; verify cannot attest
+            integrity. Check boot logs for `audit chain enabled`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/mcp/tools:
+    get:
+      operationId: listMCPTools
+      summary: List MCP tools
+      description: |
+        Returns the MCP tool catalogue. Without `agent_id`, returns the
+        unfiltered admin view. With `agent_id`, returns the subset that
+        identity would see after allowed_tools / risk_tier / data_classifications
+        gating.
+      tags: [MCP]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: agent_id
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Tool catalogue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentToolVisibility'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/mcp/usage:
+    get:
+      operationId: getMCPUsage
+      summary: MCP tool-usage heatmap
+      description: |
+        Aggregates MCP tool calls in the tenant audit chain into a
+        per-(agent_id, tool_name) heatmap. Source events are
+        `mcp.tool_invocation`, `mcp.tool_denied`, and
+        `mcp.tool_approval`. Default window is the last 7 days; the
+        request may narrow with `since`/`until` (max 30-day spread).
+      tags: [MCP]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: since
+        in: query
+        required: false
+        description: Inclusive lower bound (unix milliseconds).
+        schema:
+          type: integer
+          format: int64
+      - name: until
+        in: query
+        required: false
+        description: Inclusive upper bound (unix milliseconds).
+        schema:
+          type: integer
+          format: int64
+      - name: agent
+        in: query
+        required: false
+        description: Filter to a single agent identifier.
+        schema:
+          type: string
+      - name: tool
+        in: query
+        required: false
+        description: Filter to a single MCP tool name.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Heatmap aggregation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUsageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/mcp/outbound:
+    get:
+      operationId: getMCPOutbound
+      summary: MCP outbound call log
+      description: |
+        Paginated feed of `mcp.tool_outbound_invocation` events from
+        the tenant audit chain. Each entry carries the signed-call
+        signature status (verified / unverified / invalid) so operators
+        can spot identity-spoofing attempts. Supports cursor-based
+        pagination via the Redis Stream IDs surfaced as `next_cursor`.
+      tags: [MCP]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: since
+        in: query
+        required: false
+        description: Inclusive lower bound (unix milliseconds).
+        schema:
+          type: integer
+          format: int64
+      - name: until
+        in: query
+        required: false
+        description: Inclusive upper bound (unix milliseconds).
+        schema:
+          type: integer
+          format: int64
+      - name: agent
+        in: query
+        required: false
+        description: Filter to a single agent identifier.
+        schema:
+          type: string
+      - name: server
+        in: query
+        required: false
+        description: Filter to a single target MCP server.
+        schema:
+          type: string
+      - name: sig_status
+        in: query
+        required: false
+        description: Filter by signature verification result.
+        schema:
+          type: string
+          enum: [verified, unverified, invalid, all]
+          default: all
+      - name: cursor
+        in: query
+        required: false
+        description: Resume token returned as `next_cursor` from a previous page.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Page size, default 100, max 1000.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+      responses:
+        '200':
+          description: Outbound call log page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPOutboundResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/mcp/verify-signature:
+    post:
+      operationId: verifyMCPSignature
+      summary: Verify an outbound MCP call signature
+      description: |
+        Re-verifies an outbound MCP call signature server-side using the
+        gateway's configured trust store. Returns `ok: true` on a clean
+        verification, or `ok: false` plus a stable `sub_reason` when any
+        step of the signature check fails (missing header, expired nonce,
+        bad curve, key not trusted, etc.). Every failed verify emits a
+        `mcp.signature_invalid` SIEMEvent on the tenant audit chain.
+      tags: [MCP]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPVerifySignatureRequest'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPVerifySignatureResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          description: MCP verifier unavailable — no trusted public keys
+            configured. Set CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID> and restart.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/mcp/approvals:
+    get:
+      operationId: listMCPApprovals
+      summary: List MCP per-tool approvals
+      description: |
+        Returns the tenant-scoped queue of MCP approval records. The
+        cursor is an opaque Redis SCAN cursor; `next_cursor: "0"` is the
+        end-of-scan sentinel.
+      tags: [MCP]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        required: false
+        description: Filter by status — `pending`, `approved`, `rejected`,
+          `expired`. Case-insensitive.
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        required: false
+        description: Opaque forward cursor. Empty or absent starts at the
+          beginning of the scan.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Max records per page (hard cap 200).
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+      responses:
+        '200':
+          description: Page of MCP approval records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPApprovalList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/mcp/approvals/{id}:
+    get:
+      operationId: getMCPApproval
+      summary: Get an MCP approval record
+      tags: [MCP]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Approval record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPApprovalRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Approval not found (also returned when the caller's
+            tenant scope does not cover the record).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/mcp/approvals/{id}/approve:
+    post:
+      operationId: approveMCPApproval
+      summary: Approve an MCP per-tool approval
+      description: |
+        Resolves the approval as `approved`. The caller's composite
+        identity (API-key hash + principal) must not overlap the
+        approval's Requester — a self-approval guard rejects with 403.
+      tags: [MCP]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPApprovalDecisionBody'
+      responses:
+        '200':
+          description: Approval resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPApprovalRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Approval already resolved (terminal state)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/mcp/approvals/{id}/reject:
+    post:
+      operationId: rejectMCPApproval
+      summary: Reject an MCP per-tool approval
+      tags: [MCP]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPApprovalDecisionBody'
+      responses:
+        '200':
+          description: Approval resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPApprovalRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Approval already resolved (terminal state)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/agents/{id}/denied-events:
+    get:
+      operationId: getAgentDeniedEvents
+      summary: Recent MCP tool-deny events for an agent identity
+      description: Returns up to 50 most recent mcp.tool_denied ring-buffer
+        entries for the identity. The ring is in-memory and bounded; older
+        entries are dropped. The authoritative record is in the SIEM export.
+      tags: [Agents]
+      security:
+      - apiKey: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Recent deny events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDeniedEvents'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
 components:
   securitySchemes:
     apiKey:
@@ -4322,6 +6551,540 @@ components:
           schema:
             $ref: '#/components/schemas/GenericObject'
   schemas:
+    GovernanceHealth:
+      type: object
+      description: |
+        Composite governance health score for a tenant. Returned by
+        GET /api/v1/governance/health.
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Weighted total (0-100). 100 is cleanest. Capped at 55 when chain_integrity=compromised.
+        grade:
+          type: string
+          enum: [A, B, C, D, F]
+          description: Letter grade derived from score. 90+→A, 80+→B, 70+→C, 60+→D, else F.
+        generated_at:
+          type: string
+          format: date-time
+          description: Timestamp at which the score was computed. 60s cache TTL per-tenant.
+        factors:
+          type: object
+          description: Per-factor breakdown. Keys are one of `denial_rate`, `approval_latency_p95`, `policy_coverage`, `chain_integrity`.
+          additionalProperties:
+            $ref: '#/components/schemas/GovernanceHealthFactor'
+        truncated_at_max:
+          type: boolean
+          description: True when any underlying factor scan hit its hard cap (approximate result).
+      required: [score, grade, generated_at, factors]
+    GovernanceHealthFactor:
+      type: object
+      description: One factor's contribution to the governance health score.
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Factor's 0-100 score. 70 is the neutral default for missing/unavailable inputs.
+        weight:
+          type: number
+          format: double
+          description: Factor's weight in the aggregate (default 25 for each of the 4 factors).
+        raw:
+          description: Factor-specific raw measurement (rate, duration, ratio, status enum).
+        notes:
+          type: string
+          description: Operator-facing explanation when the factor is unavailable or neutralised.
+      required: [score, weight]
+    AgentIdentity:
+      type: object
+      description: |
+        Non-human actor registered in the platform. Wire shape is produced
+        by `agentResponseFromIdentity` in core/controlplane/gateway/handlers_agents.go.
+        The `last_active` field is only set on list responses, computed
+        from recent job labels.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        owner:
+          type: string
+        team:
+          type: string
+        risk_tier:
+          type: string
+          description: Risk tier assigned to the identity. Filters which
+            tools it may invoke via MCP.
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+        allowed_tools:
+          type: array
+          items:
+            type: string
+          description: Tool-name glob patterns admitted for this identity.
+            Empty slice means "no tools"; `*` admits every tool.
+        data_classifications:
+          type: array
+          items:
+            type: string
+          description: Sensitivities the actor is authorised to access
+            (e.g. `pii`, `phi`, `secrets`).
+        status:
+          type: string
+          description: Lifecycle status. Typical values include `active`,
+            `suspended`, `revoked`.
+        created_at:
+          type: string
+          description: RFC 3339 creation timestamp.
+        updated_at:
+          type: string
+          description: RFC 3339 last-update timestamp.
+        last_active:
+          type: integer
+          format: int64
+          description: UnixMicro timestamp of the most recent job labelled
+            with this agent in the last 7 days. Present on list responses
+            only; 0 when no recent activity.
+      required: [id, name, owner, risk_tier, status, created_at, updated_at]
+    AgentIdentityList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentIdentity'
+        cursor:
+          type: string
+          description: Opaque forward cursor. Absent when there are no more
+            pages (not returned as an empty string).
+      required: [items]
+    CreateAgentRequest:
+      type: object
+      description: Body of POST /api/v1/agents. Omitted array fields default
+        to the empty list; the server strips leading/trailing whitespace
+        from every string before validation.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        owner:
+          type: string
+        team:
+          type: string
+        risk_tier:
+          type: string
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+        allowed_tools:
+          type: array
+          items:
+            type: string
+        data_classifications:
+          type: array
+          items:
+            type: string
+      required: [name, owner, risk_tier]
+    UpdateAgentRequest:
+      type: object
+      description: Body of PUT /api/v1/agents/{id}. All fields optional;
+        fields present on the body replace the stored values, fields
+        omitted leave the stored values untouched.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        owner:
+          type: string
+        team:
+          type: string
+        risk_tier:
+          type: string
+        status:
+          type: string
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+        allowed_tools:
+          type: array
+          items:
+            type: string
+        data_classifications:
+          type: array
+          items:
+            type: string
+    AgentStats:
+      type: object
+      description: 7-day aggregate statistics for an agent identity.
+      properties:
+        agent_id:
+          type: string
+        total_jobs_7d:
+          type: integer
+          description: Jobs labelled with this agent_id over the trailing
+            7 days. Scan is bounded; the `last_active` field is computed
+            from the same scan.
+        denied_7d:
+          type: integer
+          description: Subset of `total_jobs_7d` whose state is `Denied`.
+        last_active:
+          type: integer
+          format: int64
+          description: UnixMicro timestamp of the most recent job in the
+            window. 0 when no recent activity.
+      required: [agent_id, total_jobs_7d, denied_7d, last_active]
+    AgentToolVisibility:
+      type: object
+      description: Subset of the MCP tool catalogue visible to an identity.
+      properties:
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/MCPTool'
+        agent_id:
+          type: string
+        filtered:
+          type: boolean
+          description: True when the tools list was filtered by the
+            identity's allowed_tools / risk_tier / data_classifications.
+            False when the caller requested the unfiltered admin view.
+        note:
+          type: string
+          description: Present when the identity cannot invoke any tool —
+            e.g. "identity is revoked or suspended".
+      required: [tools, agent_id, filtered]
+    AgentDeniedEvent:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        agent_id:
+          type: string
+        tool_name:
+          type: string
+        sub_reason:
+          type: string
+          description: Sub-reason from the underlying mcp.tool_denied event,
+            falling back to the top-level `reason` when no sub_reason was
+            attached.
+        severity:
+          type: string
+      required: [timestamp, agent_id, tool_name, sub_reason, severity]
+    AgentDeniedEvents:
+      type: object
+      properties:
+        agent_id:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentDeniedEvent'
+        limit:
+          type: integer
+          description: Max entries the endpoint will return (currently 50).
+      required: [agent_id, events, limit]
+    AuditVerifyResult:
+      type: object
+      description: Integrity report for /api/v1/audit/verify. Shape matches
+        `core/audit.VerifyResult`.
+      properties:
+        status:
+          type: string
+          enum: [ok, partial, compromised]
+        total_events:
+          type: integer
+        verified_events:
+          type: integer
+        gaps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditVerifyGap'
+        retention_boundary_seq:
+          type: integer
+          format: int64
+        retention_window_hours:
+          type: number
+          format: double
+        first_seq:
+          type: integer
+          format: int64
+        last_seq:
+          type: integer
+          format: int64
+      required: [status, total_events, verified_events, gaps, retention_boundary_seq]
+    AuditVerifyGap:
+      type: object
+      properties:
+        at_seq:
+          type: integer
+          format: int64
+        type:
+          type: string
+          description: Gap classification — `retention_trimmed` or `missing`.
+      required: [at_seq, type]
+    MCPVerifySignatureRequest:
+      type: object
+      description: Submit the method, params, and the 6 signed headers the
+        original Signer emitted. The server rebuilds the canonical message.
+      properties:
+        method:
+          type: string
+        params:
+          description: Raw JSON params from the original request.
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+      required: [method, headers]
+    MCPVerifySignatureResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        sub_reason:
+          type: string
+          description: Stable machine-readable reason when verification
+            failed (absent on success).
+        key_id:
+          type: string
+        tenant:
+          type: string
+        agent_id:
+          type: string
+      required: [ok]
+    MCPApprovalRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        tenant:
+          type: string
+        agent_id:
+          type: string
+        principal:
+          type: string
+        tool_name:
+          type: string
+        args_hash:
+          type: string
+        args:
+          description: Raw JSON arguments (may be redacted per policy).
+        requester:
+          type: string
+        reason:
+          type: string
+        resolution_reason:
+          type: string
+        status:
+          type: string
+          description: Approval status — pending, approved, rejected, expired.
+        created_at:
+          type: integer
+          format: int64
+          description: UnixMicro creation timestamp.
+        expires_at:
+          type: integer
+          format: int64
+        resolved_at:
+          type: integer
+          format: int64
+        resolved_by:
+          type: string
+        decision:
+          type: string
+          description: Final decision when resolved — approve, reject.
+        consumed_at:
+          type: integer
+          format: int64
+      required: [id, tenant, agent_id, tool_name, args_hash, status, created_at, expires_at]
+    MCPApprovalList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MCPApprovalRecord'
+        next_cursor:
+          type: string
+          description: Opaque scan cursor. "0" is the end-of-scan sentinel.
+      required: [items, next_cursor]
+    MCPApprovalDecisionBody:
+      type: object
+      description: Optional body for approve/reject. The `reason` field is
+        stored on the record as `resolution_reason`.
+      properties:
+        reason:
+          type: string
+    MCPUsageCell:
+      type: object
+      description: |
+        One bucket in the MCP usage heatmap, keyed by (agent_id, tool_name).
+      properties:
+        agent_id:
+          type: string
+        tool_name:
+          type: string
+        count:
+          type: integer
+          description: Total invocation events seen for this bucket.
+        allow_count:
+          type: integer
+          description: Count of events with decision == "allow".
+        deny_count:
+          type: integer
+          description: Count of events with decision == "deny" or event_type ==
+            mcp.tool_denied.
+        approval_required_count:
+          type: integer
+          description: Count of events whose Extra.approval_status was
+            "required" or "pending".
+        p50_latency_ms:
+          type: number
+          description: Median observed latency from Extra.latency_ms.
+        p99_latency_ms:
+          type: number
+          description: p99 observed latency from Extra.latency_ms.
+        last_invoked_at_ms:
+          type: integer
+          format: int64
+          description: Most recent event timestamp (unix ms).
+      required: [agent_id, tool_name, count, allow_count, deny_count, approval_required_count, p50_latency_ms, p99_latency_ms, last_invoked_at_ms]
+    MCPUsageResponse:
+      type: object
+      properties:
+        cells:
+          type: array
+          items:
+            $ref: '#/components/schemas/MCPUsageCell'
+        total_calls:
+          type: integer
+        window_ms:
+          type: integer
+          format: int64
+          description: until-since for the evaluated window.
+        truncated_at_max:
+          type: boolean
+          description: True when the per-request walk budget (100k events) was
+            hit before the source range was exhausted; counts may be partial.
+      required: [cells, total_calls, window_ms, truncated_at_max]
+    MCPSignatureStatus:
+      type: string
+      enum: [verified, unverified, invalid]
+      description: |
+        Signature verification result for an outbound MCP call. `verified`
+        means the signature checked OK against a trusted key. `invalid`
+        means the signature was present but rejected (bad signature, untrusted
+        key, expired nonce). `unverified` means no signature was emitted —
+        either the call predates the signing rollout or signing was disabled.
+    MCPOutboundEntry:
+      type: object
+      properties:
+        ts_ms:
+          type: integer
+          format: int64
+        stream_id:
+          type: string
+          description: Redis Stream ID for this entry. Use as `cursor` to
+            resume past it on the next page.
+        agent_id:
+          type: string
+        tool_name:
+          type: string
+        target_server:
+          type: string
+        signature_status:
+          $ref: '#/components/schemas/MCPSignatureStatus'
+        signature_key_id:
+          type: string
+        latency_ms:
+          type: integer
+        result_type:
+          type: string
+        event_hash:
+          type: string
+      required: [ts_ms, stream_id, agent_id, tool_name, target_server, signature_status]
+    MCPOutboundResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/MCPOutboundEntry'
+        next_cursor:
+          type: string
+          description: Pass back as `cursor=` to fetch the next page. Empty when
+            the range is exhausted.
+        truncated_at_max:
+          type: boolean
+          description: True when the per-request walk budget (50k entries) was
+            hit before the page filled.
+      required: [entries, truncated_at_max]
+    StreamEvent:
+      type: object
+      description: |
+        One WebSocket frame emitted by GET /api/v1/stream. The wire shape is
+        `protojson.Marshal(BusPacket)` — the `type` field below is a derived
+        discriminator exposed to dashboards via `busPacketType()` in
+        core/controlplane/gateway/handlers_stream.go. Frames corresponding
+        to denied job results have their result payload stripped to avoid
+        broadcasting sensitive content.
+      additionalProperties: true
+      properties:
+        type:
+          type: string
+          enum:
+          - job_request
+          - job_result
+          - heartbeat
+          - alert
+          - job_progress
+          - job_cancel
+          - unknown
+        payload:
+          description: The inner BusPacket payload variant. Shape depends on
+            `type` — see the proto definitions in core/protocol/proto/v1.
+      required: [type]
+    MCPTool:
+      type: object
+      description: MCP tool registry entry. Shape mirrors `core/mcp.Tool` —
+        additional fields may appear as the registry evolves.
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        risk_tier:
+          type: string
+        data_classifications:
+          type: array
+          items:
+            type: string
+      required: [name]
     Error:
       type: object
       properties:
@@ -5156,6 +7919,211 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/PolicyRule'
+          shadow:
+            type: object
+            nullable: true
+            description: |
+              Summary of the active shadow policy for this bundle, or null
+              when none is activated. The full shadow (including YAML content)
+              is available via GET /api/v1/policy/bundles/{id}/shadow.
+            allOf:
+            - $ref: '#/components/schemas/ShadowPolicySummary'
+    ShadowResultsSummary:
+      type: object
+      required:
+      - bundle_id
+      - from_ms
+      - to_ms
+      - total_evaluated
+      - escalated_count
+      - relaxed_count
+      - approval_differ_count
+      - unchanged_count
+      - truncated_at_max
+      properties:
+        bundle_id:
+          type: string
+          description: Bundle the summary is scoped to.
+        shadow_bundle_id:
+          type: string
+          description: Most recent shadow bundle id seen in the window.
+        from_ms:
+          type: integer
+          format: int64
+        to_ms:
+          type: integer
+          format: int64
+        total_evaluated:
+          type: integer
+          format: int64
+        escalated_count:
+          type: integer
+          format: int64
+        relaxed_count:
+          type: integer
+          format: int64
+        approval_differ_count:
+          type: integer
+          format: int64
+        unchanged_count:
+          type: integer
+          format: int64
+        truncated_at_max:
+          type: boolean
+          description: |
+            True when the scan hit the per-request event cap before reaching
+            `to`. Callers should narrow the window to see the missing tail.
+    ShadowComparisonEntry:
+      type: object
+      required:
+      - ts_ms
+      properties:
+        ts_ms:
+          type: integer
+          format: int64
+        job_id:
+          type: string
+        agent_id:
+          type: string
+        shadow_bundle_id:
+          type: string
+        active_verdict:
+          type: string
+        shadow_verdict:
+          type: string
+        diff:
+          type: string
+          enum: [escalated, relaxed, approval_differ, unchanged]
+        active_rule_id:
+          type: string
+        shadow_rule_id:
+          type: string
+        latency_ms:
+          type: string
+        seq:
+          type: integer
+          format: int64
+    ShadowComparisonsResponse:
+      type: object
+      required:
+      - entries
+      - truncated_at_max
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShadowComparisonEntry'
+        next_cursor:
+          type: string
+          description: Opaque Redis Stream ID; pass back as `cursor` for the next page.
+        truncated_at_max:
+          type: boolean
+    ShadowTimeseriesBucket:
+      type: object
+      required:
+      - ts_ms
+      - escalated
+      - relaxed
+      - approval_differ
+      - unchanged
+      - total
+      properties:
+        ts_ms:
+          type: integer
+          format: int64
+        escalated:
+          type: integer
+          format: int64
+        relaxed:
+          type: integer
+          format: int64
+        approval_differ:
+          type: integer
+          format: int64
+        unchanged:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+    ShadowTimeseriesResponse:
+      type: object
+      required:
+      - bucket
+      - from_ms
+      - to_ms
+      - buckets
+      - truncated_at_max
+      properties:
+        bucket:
+          type: string
+          enum: [1m, 5m, 15m, 1h, 1d]
+        from_ms:
+          type: integer
+          format: int64
+        to_ms:
+          type: integer
+          format: int64
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShadowTimeseriesBucket'
+        truncated_at_max:
+          type: boolean
+    ShadowPolicy:
+      type: object
+      required:
+      - shadow_bundle_id
+      - bundle_id
+      - tenant_id
+      - content
+      properties:
+        shadow_bundle_id:
+          type: string
+          description: Globally unique ID for this shadow (format shadow-<12hex>).
+        bundle_id:
+          type: string
+          description: Active bundle this shadow is tied to.
+        tenant_id:
+          type: string
+        content:
+          type: string
+          description: Candidate policy YAML.
+        created_at:
+          type: string
+          format: date-time
+          description: First time a shadow was stored for this bundle.
+        activated_at:
+          type: string
+          format: date-time
+          description: Most recent activation timestamp — bumps on replace.
+        created_by:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    ShadowPolicySummary:
+      type: object
+      required:
+      - shadow_bundle_id
+      - bundle_id
+      - tenant_id
+      properties:
+        shadow_bundle_id:
+          type: string
+        bundle_id:
+          type: string
+        tenant_id:
+          type: string
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        activated_at:
+          type: string
+          format: date-time
     UpdatePolicyBundleRequest:
       type: object
       properties:
@@ -5554,6 +8522,104 @@ components:
       type: object
       properties: {}
       additionalProperties: true
+    SignedBundleSnapshot:
+      type: object
+      description: One signed policy-bundle snapshot active during a compliance export window.
+      properties:
+        bundle_id:
+          type: string
+          example: secops/baseline
+        name:
+          type: string
+        version:
+          type: string
+          example: v3
+        activated_at:
+          type: string
+          format: date-time
+        deactivated_at:
+          type: string
+          format: date-time
+        content_sha256:
+          type: string
+          description: Hex-encoded SHA-256 of the signed content.
+        ed25519_signature:
+          type: string
+          description: Base64-encoded Ed25519 signature over the content hash.
+        public_key_id:
+          type: string
+        signed_by:
+          type: string
+        note:
+          type: string
+          description: Populated (e.g. "unsigned") when signature metadata is absent or malformed.
+      required: [bundle_id]
+    ExportManifest:
+      type: object
+      description: First NDJSON line / CSV comment-line payload for a compliance export.
+      properties:
+        type:
+          type: string
+          enum: [manifest]
+        generated_at:
+          type: string
+          format: date-time
+        tenant_id:
+          type: string
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        format:
+          type: string
+          enum: [json, csv]
+        soc2_legend:
+          type: object
+          additionalProperties:
+            type: string
+          description: Human-readable descriptions keyed by SOC2 TSC control ID.
+        chain_verification:
+          description: Result of running audit chain verify against the exported range.
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [ok, compromised, partial]
+            total_events:
+              type: integer
+            verified_events:
+              type: integer
+            gaps:
+              type: array
+              items:
+                type: object
+                properties:
+                  at_seq:
+                    type: integer
+                  type:
+                    type: string
+                    enum: [missing, out_of_order, hash_mismatch, retention_trimmed]
+            retention_boundary_seq:
+              type: integer
+            first_seq:
+              type: integer
+            last_seq:
+              type: integer
+        policy_snapshots:
+          type: array
+          items:
+            $ref: '#/components/schemas/SignedBundleSnapshot'
+        event_count:
+          type: integer
+        truncated_at_max:
+          type: boolean
+        max_events_cap:
+          type: integer
+        retention_boundary_seq:
+          type: integer
+      required: [type, generated_at, tenant_id, from, to, format, policy_snapshots, event_count]
     RoleDefinition:
       type: object
       properties:

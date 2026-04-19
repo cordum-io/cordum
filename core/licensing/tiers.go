@@ -38,6 +38,7 @@ type TierDefaultSpec struct {
 	VelocityRules      bool
 	BreakGlassAdmin    bool
 	SupportSLA         bool
+	AgentIdentity      bool
 }
 
 var TierDefaults = map[Plan]TierDefaultSpec{
@@ -83,6 +84,7 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		VelocityRules:      true,
 		BreakGlassAdmin:    true,
 		SupportSLA:         true,
+		AgentIdentity:      true,
 	},
 }
 
@@ -162,4 +164,5 @@ func applyTierDefaultSpec(target *Entitlements, spec TierDefaultSpec) {
 	setNamedBoolField(target, spec.VelocityRules, "VelocityRules")
 	setNamedBoolField(target, spec.BreakGlassAdmin, "BreakGlassAdmin")
 	setNamedBoolField(target, spec.SupportSLA, "SupportSLA")
+	setNamedBoolField(target, spec.AgentIdentity, "AgentIdentity")
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +17,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
+
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -32,7 +37,9 @@ import (
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/policysign"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -371,6 +378,62 @@ func main() {
 	entitlementResolver := licensing.NewEntitlementResolver()
 	entitlementResolver.Init()
 
+	// Heartbeat-demotion authority plumbing (epic-cb8e0d62 step-5/6/8).
+	// The TrustResolver reads WorkerTrustState from the shared Redis
+	// client the session issuer writes to (jobStore.Client()) — same
+	// connection pool the rest of the scheduler shares, so the gate
+	// inherits the pool's retry/backoff/TLS config for free.
+	// CORDUM_HEARTBEAT_MODE flips the rollout gate; log the active
+	// mode at boot so operators can grep any scheduler replica to
+	// confirm the deploy.
+	heartbeatMode := scheduler.ParseHeartbeatMode(os.Getenv(scheduler.EnvHeartbeatMode))
+	heartbeatMode.LogActiveMode(slog.Default())
+	trustResolver := scheduler.NewTrustResolver(jobStore.Client())
+	dispatchGate := scheduler.NewDispatchGate(trustResolver, heartbeatMode)
+	trustMetrics := scheduler.DefaultWorkerTrustMetrics()
+
+	// SDK handshake (epic-cb8e0d62 step-6): CORDUM_SDK_HANDSHAKE gates
+	// the rollout. Parse + log the active mode at boot so operators
+	// can grep the scheduler log to confirm the deploy.
+	handshakeMode := scheduler.ParseHandshakeMode(os.Getenv("CORDUM_SDK_HANDSHAKE"))
+	handshakeMode.LogActiveMode(slog.Default())
+	handshakeMissingTracker := scheduler.NewHandshakeMissingTracker()
+
+	// Build the shared session-token issuer from policysign env. Nil
+	// issuer in off-mode deploys is fine — the handshake subscription
+	// is also skipped below. Same helper the gateway uses so both
+	// services sign / verify with the same Ed25519 key.
+	var sessionIssuer *scheduler.SessionTokenIssuer
+	if !handshakeMode.SkipsHandshake() {
+		sessionIssuer = buildSessionTokenIssuer(jobStore.Client())
+	}
+	tokenMiddleware := scheduler.NewSessionTokenMiddleware(sessionIssuer, handshakeMode, handshakeMissingTracker)
+
+	// Real audit sender shared by dispatch-disagreement emission, handshake
+	// accept/reject/renew emission, and the heartbeat-mode-transition
+	// event fired below. Routes through audit.NewNATSAuditPublisher when
+	// AUDIT_TRANSPORT=nats so events land on the gateway's Merkle-chained
+	// audit stream; otherwise falls back to the buffered in-memory
+	// exporter so nothing is dropped silently.
+	auditSender := buildSchedulerAuditSender(natsBus, entitlementResolver)
+	var auditSink scheduler.AuditSink
+	if auditSender != nil {
+		auditSink = auditSenderSink{sender: auditSender}
+	}
+	// Emit a worker_trust_change mode-transition event at boot so SIEM
+	// timelines show the precise moment a replica joined warn/telemetry.
+	// Skipped when mode is the default authority (no transition to
+	// record) or when the audit sink isn't wired.
+	if auditSink != nil && heartbeatMode != scheduler.HeartbeatModeAuthority {
+		scheduler.EmitModeTransition(
+			context.Background(),
+			auditSink,
+			scheduler.HeartbeatModeAuthority,
+			heartbeatMode,
+			"scheduler/boot",
+		)
+	}
+
 	engine := scheduler.NewEngine(
 		natsBus,
 		safetyClient,
@@ -385,7 +448,16 @@ func main() {
 		WithEntitlements(entitlementResolver).
 		WithContextClient(jobStore.Client()).
 		WithSaga(sagaManager).
-		WithAgentResolver(scheduler.NewAgentResolver(workerCredentialCache, store.NewAgentIdentityStoreFromClient(sagaRedis)))
+		WithAgentResolver(scheduler.NewAgentResolver(workerCredentialCache, store.NewAgentIdentityStoreFromClient(sagaRedis))).
+		WithDispatchGate(dispatchGate).
+		WithTrustMetrics(trustMetrics).
+		// Warn-mode disagreement events land durably on the audit
+		// chain via buildSchedulerAuditSender — a real NATS publisher
+		// when AUDIT_TRANSPORT=nats, a buffered exporter otherwise.
+		// Nil auditSink degrades to a no-op emission so scheduler boot
+		// doesn't block on a misconfigured audit pipeline.
+		WithDispatchAuditSink(auditSink).
+		WithSessionTokenMiddleware(tokenMiddleware)
 	if dlqStore != nil {
 		engine.WithDLQSink(&redisDLQSink{
 			store:    dlqStore,
@@ -426,6 +498,39 @@ func main() {
 		os.Exit(1)
 	}
 	probes.SetStartupComplete()
+
+	// Phase-2 worker handshake subscription. Only wired when the
+	// session issuer loaded + mode permits it. The HandshakeService
+	// validates nonces, resolves agent identity, mints the session
+	// token, emits worker_handshake SIEMEvents.
+	if sessionIssuer != nil && !handshakeMode.SkipsHandshake() {
+		identityStore := store.NewAgentIdentityStoreFromClient(sagaRedis)
+		nonceStore := scheduler.NewRedisNonceStore(sagaRedis)
+		handshakeService, hsErr := scheduler.NewHandshakeService(
+			sessionIssuer,
+			identityStore,
+			nonceStore,
+			auditSink,
+			scheduler.HandshakeServiceOptions{},
+		)
+		if hsErr != nil {
+			slog.Warn("handshake service: construction failed; worker handshake disabled", "err", hsErr)
+		} else {
+			if err := natsBus.SubscribeRaw(capsdk.WorkerHandshakeSubject, "cordum-scheduler-handshake",
+				handshakeService.HandleHandshake); err != nil {
+				slog.Warn("handshake service: subscribe failed", "subject", capsdk.WorkerHandshakeSubject, "err", err)
+			}
+			if err := natsBus.SubscribeRaw(capsdk.WorkerHandshakeRenewSubject, "cordum-scheduler-handshake-renew",
+				handshakeService.HandleRenew); err != nil {
+				slog.Warn("handshake service: renew subscribe failed", "subject", capsdk.WorkerHandshakeRenewSubject, "err", err)
+			}
+			slog.Info("worker handshake enabled",
+				"subject", capsdk.WorkerHandshakeSubject,
+				"renew_subject", capsdk.WorkerHandshakeRenewSubject,
+				"mode", handshakeMode.String(),
+			)
+		}
+	}
 
 	snapshotStore, err := store.NewRedisStore(cfg.RedisURL)
 	if err != nil {
@@ -526,4 +631,88 @@ func main() {
 	}
 	engine.Stop()
 	cancel()
+}
+
+// buildSessionTokenIssuer constructs the Phase-2 session-token issuer
+// shared between the gateway and the scheduler. Returns nil when
+// policysign env vars are unset or misconfigured — the handshake
+// subscription is then a no-op and the legacy worker-credential path
+// remains the trust anchor.
+func buildSessionTokenIssuer(rdb redis.UniversalClient) *scheduler.SessionTokenIssuer {
+	priv, keyID, err := policysign.LoadPrivateKeyFromEnv()
+	if err != nil {
+		if !errors.Is(err, policysign.ErrSigningKeyNotConfigured) {
+			slog.Warn("session token issuer: signing key failed to parse; handshake disabled", "err", err)
+		}
+		return nil
+	}
+	if len(priv) == 0 {
+		return nil
+	}
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil || trust == nil {
+		if err != nil {
+			slog.Warn("session token issuer: trust store load failed; handshake disabled", "err", err)
+		}
+		return nil
+	}
+	if _, ok := trust.Lookup(keyID); !ok {
+		pub, _ := priv.Public().(ed25519.PublicKey)
+		if pub == nil {
+			slog.Warn("session token issuer: private key has no ed25519 public; handshake disabled")
+			return nil
+		}
+		if addErr := trust.Add(keyID, pub); addErr != nil {
+			slog.Warn("session token issuer: trust store add failed; handshake disabled", "err", addErr)
+			return nil
+		}
+	}
+	issuer, err := scheduler.NewSessionTokenIssuer(priv, keyID, trust, rdb, scheduler.SessionTokenIssuerOptions{})
+	if err != nil {
+		slog.Warn("session token issuer: construction failed; handshake disabled", "err", err)
+		return nil
+	}
+	slog.Info("session token issuer enabled", "component", "scheduler", "key_id", keyID)
+	return issuer
+}
+
+// buildSchedulerAuditSender constructs the scheduler's audit sender
+// using the same transport rules the gateway uses: when
+// AUDIT_TRANSPORT=nats + a bus is available, events flow through
+// audit.NewNATSAuditPublisher so the gateway-side audit chain picks
+// them up with (Seq, EventHash, PrevHash) before they reach the
+// configured SIEM exporter. Otherwise we fall back to a buffered
+// in-memory exporter. Nil return is allowed — callers that can't emit
+// just drop events with a warn log, which is preferable to hard-
+// failing scheduler boot on a misconfigured audit pipeline.
+func buildSchedulerAuditSender(natsBus *bus.NatsBus, entitlementResolver *licensing.EntitlementResolver) audit.AuditSender {
+	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(entitlementResolver)
+	if err != nil {
+		slog.Warn("audit exporter init failed; scheduler audit events disabled", "err", err)
+		return nil
+	}
+	if bufExporter == nil {
+		return nil
+	}
+	transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
+	if transport == "nats" && natsBus != nil {
+		return audit.NewNATSAuditPublisher(natsBus, bufExporter)
+	}
+	return bufExporter
+}
+
+// auditSenderSink adapts audit.AuditSender to the scheduler's
+// AuditSink interface (context-carrying Emit). The scheduler-side
+// HandshakeService + dispatch disagreement emitter target AuditSink;
+// this adapter routes them into the real audit chain the gateway
+// already operates.
+type auditSenderSink struct {
+	sender audit.AuditSender
+}
+
+func (a auditSenderSink) Emit(_ context.Context, ev audit.SIEMEvent) {
+	if a.sender == nil {
+		return
+	}
+	a.sender.Send(ev)
 }

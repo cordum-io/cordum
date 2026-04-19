@@ -57,6 +57,14 @@ func main() {
 		runWorkerCmd(args)
 	case "job":
 		runJobCmd(args)
+	case "mcp":
+		runMCPCmd(args)
+	case "audit":
+		runAuditCmd(args)
+	case "policy":
+		runPolicyCmd(args)
+	case "doctor":
+		runDoctorCmd(args)
 	default:
 		usage()
 		os.Exit(1)
@@ -395,6 +403,7 @@ Usage:
   cordumctl pack show <pack_id>
   cordumctl pack verify <pack_id>
   cordumctl pack create <pack_id> [--dir path] [--force]
+  cordumctl doctor [--gateway URL] [--cacert PATH] [--timeout 30] [--json] [--verbose] [--fix] [--strict]
 
 Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -38,6 +39,9 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
+	"crypto/ed25519"
+	"github.com/cordum/cordum/core/policyshadow"
+	"github.com/cordum/cordum/core/policysign"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/telemetry"
@@ -142,6 +146,9 @@ type server struct {
 	topicRegistry         *topicregistry.Service
 	workerCredentialStore *workercredentials.Service
 	agentIdentityStore   *store.AgentIdentityStore
+	mcpDenyRing          *denyEventRing
+	policyShadowStore    *policyshadow.Store
+	auditChainer         *audit.Chainer
 	dlqStore              *store.DLQStore
 	artifactStore         artifacts.Store
 	lockStore             locks.Store
@@ -173,6 +180,87 @@ type server struct {
 	workerExpireStop chan struct{}
 	workerExpireOnce sync.Once
 	probes           *health.ProbeServer
+
+	// trustResolver reads WorkerTrustState (session-token state) from
+	// the session-token store. When non-nil the /api/v1/workers
+	// responses surface `online` as SessionValid && !Revoked;
+	// heartbeat recency is carried as telemetry only. See
+	// docs/architecture/heartbeat-demotion.md for the rollout plan.
+	trustResolver *scheduler.TrustResolver
+	heartbeatMode scheduler.HeartbeatMode
+
+	// sessionIssuer powers the admin revoke-session endpoint. nil
+	// deploys (community / no session-token wiring yet) return 503
+	// from /api/v1/workers/{id}/revoke-session so operators see a
+	// clear "not configured" signal rather than a silent success.
+	sessionIssuer *scheduler.SessionTokenIssuer
+}
+
+// WithTrustResolver wires the session-token trust resolver onto the
+// gateway server. Nil is allowed and preserves the legacy heartbeat-
+// recency semantics on /api/v1/workers.
+func (s *server) WithTrustResolver(resolver *scheduler.TrustResolver) *server {
+	s.trustResolver = resolver
+	return s
+}
+
+// WithHeartbeatMode configures the active heartbeat-demotion mode for
+// the gateway (mirrors the scheduler-side flag). Zero value falls
+// back to HeartbeatModeAuthority.
+func (s *server) WithHeartbeatMode(mode scheduler.HeartbeatMode) *server {
+	s.heartbeatMode = mode
+	return s
+}
+
+// WithSessionIssuer wires the session-token issuer so the admin
+// revoke endpoint can invalidate a worker's active session. nil is
+// allowed and makes the endpoint return 503 with a wiring hint.
+func (s *server) WithSessionIssuer(issuer *scheduler.SessionTokenIssuer) *server {
+	s.sessionIssuer = issuer
+	return s
+}
+
+// buildSessionTokenIssuer constructs the shared Phase-2 session-token
+// issuer from the standard policysign env vars. Returns nil on any
+// misconfiguration — the issuer is optional and callers (gateway
+// revoke endpoint; scheduler handshake handler) degrade gracefully
+// when it is absent.
+func buildSessionTokenIssuer(rdb redis.UniversalClient) *scheduler.SessionTokenIssuer {
+	priv, keyID, err := policysign.LoadPrivateKeyFromEnv()
+	if err != nil {
+		if !errors.Is(err, policysign.ErrSigningKeyNotConfigured) {
+			slog.Warn("session token issuer: signing key failed to parse; revoke endpoint disabled", "err", err)
+		}
+		return nil
+	}
+	if len(priv) == 0 {
+		return nil
+	}
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil || trust == nil {
+		if err != nil {
+			slog.Warn("session token issuer: trust store load failed; revoke endpoint disabled", "err", err)
+		}
+		return nil
+	}
+	if _, ok := trust.Lookup(keyID); !ok {
+		pub, _ := priv.Public().(ed25519.PublicKey)
+		if pub == nil {
+			slog.Warn("session token issuer: private key has no ed25519 public; revoke endpoint disabled")
+			return nil
+		}
+		if addErr := trust.Add(keyID, pub); addErr != nil {
+			slog.Warn("session token issuer: trust store add failed; revoke endpoint disabled", "err", addErr)
+			return nil
+		}
+	}
+	issuer, err := scheduler.NewSessionTokenIssuer(priv, keyID, trust, rdb, scheduler.SessionTokenIssuerOptions{})
+	if err != nil {
+		slog.Warn("session token issuer: construction failed; revoke endpoint disabled", "err", err)
+		return nil
+	}
+	slog.Info("session token issuer enabled", "component", "gateway", "key_id", keyID)
+	return issuer
 }
 
 // snapshotFromRedis reads the full scheduler worker snapshot from Redis.
@@ -205,28 +293,6 @@ func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
 		return nil, err
 	}
 	return snap.Workers, nil
-}
-
-// workerSummariesToHeartbeats converts snapshot summaries to the Heartbeat
-// protobuf format used by the workers API, preserving the API contract.
-func workerSummariesToHeartbeats(workers []registry.WorkerSummary) []*pb.Heartbeat {
-	out := make([]*pb.Heartbeat, len(workers))
-	for i, w := range workers {
-		out[i] = &pb.Heartbeat{
-			WorkerId:        w.WorkerID,
-			Pool:            w.Pool,
-			ActiveJobs:      w.ActiveJobs,
-			MaxParallelJobs: w.MaxParallelJobs,
-			Capabilities:    w.Capabilities,
-			CpuLoad:         w.CpuLoad,
-			GpuUtilization:  w.GpuUtilization,
-			MemoryLoad:      w.MemoryLoad,
-			Region:          w.Region,
-			Type:            w.Type,
-			Labels:          w.Labels,
-		}
-	}
-	return out
 }
 
 // Close releases resources owned by the server, notably the user store
@@ -554,17 +620,37 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 
 	var auditSender audit.AuditSender
+	var auditChainer *audit.Chainer
 	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(entitlementResolver)
 	if err != nil {
 		return fmt.Errorf("init audit exporter: %w", err)
 	}
 	if bufExporter != nil {
+		// Install the Merkle audit chainer so every event that flows
+		// through the consumer picks up (Seq, EventHash, PrevHash)
+		// BEFORE it reaches the SIEM exporter. Without this the
+		// /api/v1/audit/verify endpoint returns total_events=0 for
+		// every tenant — a false-green integrity signal we explicitly
+		// reject (see rejectionDetails on this task's QA history).
+		auditChainer = audit.NewChainer(jobStore.Client(), "")
+		chainFailMode := audit.ParseChainFailMode(os.Getenv(audit.EnvChainFailMode))
+		slog.Info("audit chain enabled",
+			"stream_prefix", audit.ChainKeyPrefix,
+			"fail_mode", chainFailMode,
+			"tenant_isolation", "per-tenant stream audit:chain:<tenant>",
+		)
+
 		transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
 		if transport == "nats" && natsBus != nil {
 			auditSender = audit.NewNATSAuditPublisher(natsBus, bufExporter)
 			// Start consumer in the same process — queue group ensures only
 			// one replica across the cluster handles each event.
-			if _, err := audit.NewNATSAuditConsumer(natsBus, bufExporter.Backend()); err != nil {
+			if _, err := audit.NewNATSAuditConsumer(
+				natsBus,
+				bufExporter.Backend(),
+				audit.WithChainer(auditChainer),
+				audit.WithChainFailMode(chainFailMode),
+			); err != nil {
 				slog.Warn("audit NATS consumer failed to start, falling back to local buffer", "error", err)
 			}
 		} else {
@@ -594,6 +680,25 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		topicRegistry:         topicregistry.NewService(configSvc),
 		workerCredentialStore: workercredentials.NewService(configSvc),
 		agentIdentityStore:   store.NewAgentIdentityStoreFromClient(jobStore.Client()),
+		// Heartbeat-demotion: /api/v1/workers and pool responses now
+		// layer session authority over heartbeat telemetry. The
+		// resolver reads WorkerTrustState from the same Redis client
+		// the session issuer writes to, so online/session_state/
+		// session_revoked fields reflect the authoritative trust
+		// signal rather than heartbeat recency. CORDUM_HEARTBEAT_MODE
+		// gates the rollout (authority|warn|telemetry).
+		trustResolver:        scheduler.NewTrustResolver(jobStore.Client()),
+		heartbeatMode:        scheduler.ParseHeartbeatMode(os.Getenv(scheduler.EnvHeartbeatMode)),
+		// SDK handshake: session-token issuer is shared with the
+		// scheduler. Both services load the same policysign key
+		// material so admin revoke (gateway) and token mint
+		// (scheduler) agree on signatures. nil issuer makes the
+		// admin revoke endpoint return 503 with a wiring hint — see
+		// handleRevokeWorkerSession.
+		sessionIssuer: buildSessionTokenIssuer(jobStore.Client()),
+		mcpDenyRing:          newDenyEventRing(500),
+		policyShadowStore:    policyshadow.NewStore(configSvc),
+		auditChainer:         auditChainer,
 		dlqStore:              dlqStore,
 		artifactStore:         artifactStore,
 		lockStore:             lockStore,
@@ -611,6 +716,9 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		shutdownCh:            make(chan struct{}),
 	}
 	s.syncApprovalQueueDepth(context.Background())
+	// Log the active heartbeat mode at gateway boot so operators can
+	// confirm a deploy without greping through env files.
+	s.heartbeatMode.LogActiveMode(slog.Default())
 	defer s.Close()
 	telemetryStore, err := telemetry.NewStore(cfg.RedisURL)
 	if err != nil {
@@ -909,6 +1017,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
 	mux.HandleFunc("GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
 	mux.HandleFunc("GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
+	mux.HandleFunc("POST /api/v1/workers/{id}/revoke-session", s.instrumented("/api/v1/workers/{id}/revoke-session", s.handleRevokeWorkerSession))
 	mux.HandleFunc("GET /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleListWorkerCredentials))
 	mux.HandleFunc("POST /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleCreateWorkerCredential))
 	mux.HandleFunc("DELETE /api/v1/workers/credentials/{worker_id}", s.instrumented("/api/v1/workers/credentials/{worker_id}", s.handleDeleteWorkerCredential))
@@ -920,6 +1029,23 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("PUT /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleUpdateAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleDeleteAgent))
 	mux.HandleFunc("GET /api/v1/agents/{id}/stats", s.instrumented("/api/v1/agents/{id}/stats", s.handleAgentStats))
+	mux.HandleFunc("GET /api/v1/agents/{id}/tools", s.instrumented("/api/v1/agents/{id}/tools", s.handleAgentToolVisibility))
+	mux.HandleFunc("GET /api/v1/agents/{id}/denied-events", s.instrumented("/api/v1/agents/{id}/denied-events", s.handleAgentDeniedEvents))
+	mux.HandleFunc("GET /api/v1/mcp/tools", s.instrumented("/api/v1/mcp/tools", s.handleListMCPTools))
+	// Live prompt catalogue for the dashboard PromptCatalog page — reads
+	// off the same PromptRegistry the HTTP MCP server serves, so a
+	// re-registration at runtime shows up in the dashboard without a
+	// frontend rebuild.
+	mux.HandleFunc("GET /api/v1/mcp/prompts", s.instrumented("/api/v1/mcp/prompts", s.handleListMCPPrompts))
+	// Signature verification endpoint for external MCP peers
+	// (task-ba236f62 DoD #4). Admin-gated; requires trust store.
+	mux.HandleFunc("POST /api/v1/mcp/verify-signature", s.instrumented("/api/v1/mcp/verify-signature", s.handleMCPVerifySignature))
+	// MCP governance dashboard endpoints (task-134647cd):
+	// usage = agents×tools heatmap aggregation, outbound = signed
+	// outbound call log with sig-status filter. Both admin-gated +
+	// tenant-scoped via the standard handler chain.
+	mux.HandleFunc("GET /api/v1/mcp/usage", s.instrumented("/api/v1/mcp/usage", s.handleMCPUsage))
+	mux.HandleFunc("GET /api/v1/mcp/outbound", s.instrumented("/api/v1/mcp/outbound", s.handleMCPOutbound))
 
 	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
@@ -951,6 +1077,19 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/audit/export/health", s.instrumented("/api/v1/audit/export/health", s.handleAuditExportHealth))
 	mux.HandleFunc("GET /api/v1/audit/export/config", s.instrumented("/api/v1/audit/export/config", s.handleAuditExportConfig))
 	mux.HandleFunc("POST /api/v1/audit/export/test", s.instrumented("/api/v1/audit/export/test", s.handleAuditExportTest))
+
+	// 2.7.1 Audit chain tamper-evidence verification (admin only).
+	mux.HandleFunc("GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
+
+	// 2.7.2 Compliance audit export — streams chain-verified events
+	// with SOC2 control tags + signed policy snapshots. Admin only,
+	// entitlement-gated (siem_export | audit_export).
+	mux.HandleFunc("GET /api/v1/audit/export", s.instrumented("/api/v1/audit/export", s.handleAuditExport))
+
+	// 2.7.2 Governance health score (admin only). Aggregates denial
+	// rate, approval latency p95, policy coverage, chain integrity
+	// into a single 0-100 score + letter grade for the Command Center.
+	mux.HandleFunc("GET /api/v1/governance/health", s.instrumented("/api/v1/governance/health", s.handleGovernanceHealth))
 
 	// 2.8 Legal hold management (admin only, entitlement-gated)
 	mux.HandleFunc("POST /api/v1/audit/legal-hold", s.instrumented("/api/v1/audit/legal-hold", s.handleCreateLegalHold))
@@ -1038,6 +1177,20 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/repair", s.instrumented("/api/v1/approvals/{job_id}/repair", s.handleRepairApproval))
 	mux.HandleFunc("GET /api/v1/approvals/{job_id}/context", s.instrumented("/api/v1/approvals/{job_id}/context", s.handleApprovalContext))
 
+	// 11.6 MCP per-tool approvals. Lives under /api/v1/mcp/approvals/*
+	// rather than /api/v1/approvals/mcp/* because net/http's pattern
+	// matcher cannot disambiguate the latter from the existing
+	// /api/v1/approvals/{job_id}/* routes — "mcp" could be interpreted
+	// as a literal OR a {job_id} value, producing a register-time panic.
+	// Parallel to /api/v1/mcp/{status,sse,message} this reads naturally:
+	// MCP-scoped endpoints share the /api/v1/mcp prefix. Handler is
+	// resolved at request time so these routes respond with a meaningful
+	// 503 (not a 404) when MCP is disabled.
+	mux.HandleFunc("GET /api/v1/mcp/approvals", s.instrumented("/api/v1/mcp/approvals", s.handleMCPApprovalList))
+	mux.HandleFunc("GET /api/v1/mcp/approvals/{id}", s.instrumented("/api/v1/mcp/approvals/{id}", s.handleMCPApprovalGet))
+	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/approve", s.instrumented("/api/v1/mcp/approvals/{id}/approve", s.handleMCPApprovalApprove))
+	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/reject", s.instrumented("/api/v1/mcp/approvals/{id}/reject", s.handleMCPApprovalReject))
+
 	// 12. Policy endpoints
 	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
 	mux.HandleFunc("POST /api/v1/policy/simulate", s.instrumented("/api/v1/policy/simulate", s.handlePolicySimulate))
@@ -1057,6 +1210,21 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
 	mux.HandleFunc("DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
 	mux.HandleFunc("POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
+	// Shadow routes live under /api/v1/policy/shadows/{id} to avoid a
+	// Go 1.22 mux pattern collision with /api/v1/policy/bundles/snapshots/{id}:
+	// a path like /api/v1/policy/bundles/snapshots/shadow would ambiguously match
+	// both "/bundles/{id}/shadow" and "/bundles/snapshots/{id}". `{id}` is the
+	// bundle id the shadow is associated with.
+	mux.HandleFunc("POST /api/v1/policy/shadows/{id}", s.instrumented("/api/v1/policy/shadows/{id}", s.handlePutPolicyShadow))
+	mux.HandleFunc("GET /api/v1/policy/shadows/{id}", s.instrumented("/api/v1/policy/shadows/{id}", s.handleGetPolicyShadow))
+	mux.HandleFunc("DELETE /api/v1/policy/shadows/{id}", s.instrumented("/api/v1/policy/shadows/{id}", s.handleDeletePolicyShadow))
+	// Shadow evaluation results (Phase-2 dashboard feeds). Sibling path
+	// of the shadow activation endpoints above so the URL scheme stays
+	// coherent — bundle ID in {id} is the same path parameter used by
+	// the three shadow CRUD routes.
+	mux.HandleFunc("GET /api/v1/policy/shadows/{id}/results/summary", s.instrumented("/api/v1/policy/shadows/{id}/results/summary", s.handleShadowResultsSummary))
+	mux.HandleFunc("GET /api/v1/policy/shadows/{id}/results/comparisons", s.instrumented("/api/v1/policy/shadows/{id}/results/comparisons", s.handleShadowResultsComparisons))
+	mux.HandleFunc("GET /api/v1/policy/shadows/{id}/results/timeseries", s.instrumented("/api/v1/policy/shadows/{id}/results/timeseries", s.handleShadowResultsTimeseries))
 	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleListPolicyBundleSnapshots))
 	mux.HandleFunc("POST /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleCapturePolicyBundleSnapshot))
 	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots/{id}", s.instrumented("/api/v1/policy/bundles/snapshots/{id}", s.handleGetPolicyBundleSnapshot))

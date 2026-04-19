@@ -7,8 +7,8 @@ import {
 } from "./BundleDetailPage";
 
 describe("BundleDetailPage extraction contract", () => {
-  it("provides four dedicated tabs for bundle lifecycle", () => {
-    expect(BUNDLE_DETAIL_TABS).toEqual(["yaml", "preview", "diff", "history"]);
+  it("provides dedicated tabs for bundle lifecycle including shadow mode", () => {
+    expect(BUNDLE_DETAIL_TABS).toEqual(["yaml", "preview", "diff", "history", "shadow"]);
     expect(BUNDLE_DETAIL_TABS).not.toContain("simulator");
     expect(BUNDLE_DETAIL_TABS).not.toContain("rules");
   });

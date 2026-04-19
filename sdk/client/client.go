@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -723,4 +724,151 @@ func (c *Client) AddTopicToPool(ctx context.Context, pool, topic string) error {
 
 func (c *Client) RemoveTopicFromPool(ctx context.Context, pool, topic string) error {
 	return c.doJSON(ctx, "DELETE", "/pools/"+pool+"/topics/"+topic, nil, nil)
+}
+
+// MCPApproval mirrors gateway MCP approval records for cordumctl.
+type MCPApproval struct {
+	ID         string `json:"id"`
+	Tenant     string `json:"tenant,omitempty"`
+	AgentID    string `json:"agent_id,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
+	ArgsHash   string `json:"args_hash,omitempty"`
+	Requester  string `json:"requester,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	// CreatedAt is the microsecond Unix timestamp the gateway stamped
+	// on the approval record at enqueue time. Exposed so cordumctl
+	// can implement a --since filter for bulk review (task-2d989055).
+	CreatedAt  int64  `json:"created_at,omitempty"`
+	ResolvedAt int64  `json:"resolved_at,omitempty"`
+	ResolvedBy string `json:"resolved_by,omitempty"`
+	Decision   string `json:"decision,omitempty"`
+	ConsumedAt int64  `json:"consumed_at,omitempty"`
+}
+
+// ListMCPApprovals returns the pending MCP approvals for the configured tenant.
+// Endpoints live under /api/v1/mcp/approvals to avoid a routing conflict with
+// the /api/v1/approvals/{job_id}/* family used for the job approval queue.
+func (c *Client) ListMCPApprovals(ctx context.Context, status string) ([]MCPApproval, error) {
+	path := "/api/v1/mcp/approvals"
+	if status != "" {
+		path += "?status=" + url.QueryEscape(status)
+	}
+	var resp struct {
+		Items []MCPApproval `json:"items"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// ApproveMCP resolves a pending MCP approval as approved.
+func (c *Client) ApproveMCP(ctx context.Context, id, reason string) (*MCPApproval, error) {
+	return c.resolveMCP(ctx, id, "approve", reason)
+}
+
+// RejectMCP resolves a pending MCP approval as rejected.
+func (c *Client) RejectMCP(ctx context.Context, id, reason string) (*MCPApproval, error) {
+	return c.resolveMCP(ctx, id, "reject", reason)
+}
+
+func (c *Client) resolveMCP(ctx context.Context, id, verb, reason string) (*MCPApproval, error) {
+	body := map[string]any{}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	var out MCPApproval
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/mcp/approvals/"+escapePathSegment(id)+"/"+verb, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// MCPToolInfo describes a tool as returned by GET /api/v1/mcp/tools.
+type MCPToolInfo struct {
+	Name                string   `json:"name"`
+	Description         string   `json:"description,omitempty"`
+	RiskTier            string   `json:"riskTier,omitempty"`
+	Tags                []string `json:"tags,omitempty"`
+	DataClassifications []string `json:"dataClassifications,omitempty"`
+	RequiresApproval    bool     `json:"requiresApproval,omitempty"`
+}
+
+// MCPToolList is the payload wrapper returned by GET /api/v1/mcp/tools.
+type MCPToolList struct {
+	Tools    []MCPToolInfo `json:"tools"`
+	AgentID  string        `json:"agent_id"`
+	Filtered bool          `json:"filtered"`
+	Note     string        `json:"note,omitempty"`
+}
+
+// ListMCPTools returns the MCP tool catalogue. Without agentID it's the
+// unfiltered admin catalogue; with agentID it's the subset that identity sees.
+func (c *Client) ListMCPTools(ctx context.Context, agentID string) (*MCPToolList, error) {
+	path := "/api/v1/mcp/tools"
+	if id := strings.TrimSpace(agentID); id != "" {
+		path += "?agent_id=" + url.QueryEscape(id)
+	}
+	var out MCPToolList
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// AuditVerifyGap mirrors the gateway's audit.VerifyGap response field.
+// Kept as a plain struct so the SDK does not depend on core/audit.
+type AuditVerifyGap struct {
+	AtSeq int64  `json:"at_seq"`
+	Type  string `json:"type"`
+}
+
+// AuditVerifyResult mirrors the gateway's audit.VerifyResult. The SDK
+// re-declares the shape rather than importing core/audit to keep the
+// client module dependency-free for third-party consumers.
+type AuditVerifyResult struct {
+	Status               string           `json:"status"`
+	TotalEvents          int              `json:"total_events"`
+	VerifiedEvents       int              `json:"verified_events"`
+	Gaps                 []AuditVerifyGap `json:"gaps"`
+	RetentionBoundarySeq int64            `json:"retention_boundary_seq"`
+	RetentionWindowHours float64          `json:"retention_window_hours,omitempty"`
+	FirstSeq             int64            `json:"first_seq,omitempty"`
+	LastSeq              int64            `json:"last_seq,omitempty"`
+}
+
+// AuditVerifyOptions narrows a verify call. All fields are optional.
+type AuditVerifyOptions struct {
+	SinceMs int64
+	UntilMs int64
+	Limit   int64
+}
+
+// VerifyAuditChain calls GET /api/v1/audit/verify for the given tenant.
+// tenant=="" uses the client's default tenant. The gateway walks the
+// tenant's audit chain and returns an integrity report.
+func (c *Client) VerifyAuditChain(ctx context.Context, tenant string, opts AuditVerifyOptions) (*AuditVerifyResult, error) {
+	q := url.Values{}
+	if t := strings.TrimSpace(tenant); t != "" {
+		q.Set("tenant", t)
+	}
+	if opts.SinceMs > 0 {
+		q.Set("since", strconv.FormatInt(opts.SinceMs, 10))
+	}
+	if opts.UntilMs > 0 {
+		q.Set("until", strconv.FormatInt(opts.UntilMs, 10))
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.FormatInt(opts.Limit, 10))
+	}
+	path := "/api/v1/audit/verify"
+	if qs := q.Encode(); qs != "" {
+		path += "?" + qs
+	}
+	var out AuditVerifyResult
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }

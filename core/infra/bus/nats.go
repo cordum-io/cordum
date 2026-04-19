@@ -414,6 +414,61 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	return err
 }
 
+// RawConn returns the underlying *nats.Conn. Used by subsystems (the
+// Phase-2 worker-handshake handler) that speak a non-protobuf wire
+// protocol on NATS and need request/reply semantics the protobuf
+// Subscribe path doesn't expose. Returns nil when the bus isn't
+// connected yet; callers must nil-check.
+func (b *NatsBus) RawConn() *nats.Conn {
+	if b == nil {
+		return nil
+	}
+	return b.nc
+}
+
+// SubscribeRaw attaches a subscription that delivers raw message
+// bytes to the handler. Used for non-protobuf wire protocols (the
+// Phase-2 worker handshake's JSON payload). The handler returns bytes
+// that are published back on the message's reply-to subject; empty
+// bytes mean "no reply". Errors from the handler are logged; NATS
+// does not support NAK for core subscriptions so any retry semantics
+// must live in the handler itself.
+func (b *NatsBus) SubscribeRaw(subject, queue string, handler func(context.Context, []byte) ([]byte, error)) error {
+	if b == nil || b.nc == nil {
+		return errNilBus
+	}
+	if subject == "" {
+		return errEmptyTopic
+	}
+	cb := func(msg *nats.Msg) {
+		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
+		reply, err := handler(ctx, msg.Data)
+		if err != nil {
+			return
+		}
+		if msg.Reply == "" || len(reply) == 0 {
+			return
+		}
+		_ = b.nc.Publish(msg.Reply, reply)
+	}
+	var (
+		sub *nats.Subscription
+		err error
+	)
+	if queue != "" {
+		sub, err = b.nc.QueueSubscribe(subject, queue, cb)
+	} else {
+		sub, err = b.nc.Subscribe(subject, cb)
+	}
+	if err != nil {
+		return fmt.Errorf("subscribe raw %s: %w", subject, err)
+	}
+	b.subsMu.Lock()
+	b.subs = append(b.subs, sub)
+	b.subsMu.Unlock()
+	return nil
+}
+
 // SubscribeWithContext attaches a context-aware subscription that extracts W3C
 // trace context from NATS message headers and passes it to the handler via
 // context.Context. This enables downstream handlers to join upstream traces.

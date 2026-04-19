@@ -14,6 +14,7 @@ import {
 } from "@/hooks/useApprovals";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { McpApprovalsSection } from "@/components/approvals/McpApprovalsSection";
 import { WorkflowContext } from "@/components/approvals/WorkflowContext";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -609,6 +610,12 @@ export default function ApprovalsPage() {
           </Button>
         }
       />
+
+      {/* MCP tool-call approvals — surfaced above job approvals so
+          operators see the high-privilege agent-driven calls before
+          the routine job queue. Each card shows tool_name + requester
+          + args-preview (modal) + approve/reject. */}
+      <McpApprovalsSection statusFilter="pending" />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}

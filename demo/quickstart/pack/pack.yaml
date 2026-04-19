@@ -1,0 +1,37 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: demo-quickstart
+  version: 1.0.0
+  title: Cordum Quickstart Demo
+  description: Hello-world demo that exercises all three safety verdicts (ALLOW, DENY, REQUIRE_APPROVAL) in under 30 seconds.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+topics:
+  - name: job.demo.greet
+    capability: demo-quickstart.greet
+    riskTags:
+      - safe
+  - name: job.demo.delete-all
+    capability: demo-quickstart.delete-all
+    riskTags:
+      - destructive
+  - name: job.demo.admin
+    capability: demo-quickstart.admin
+    riskTags:
+      - admin
+
+resources:
+  workflows:
+    - id: demo-quickstart.hello
+      path: workflows/hello.yaml
+
+overlays:
+  policy:
+    - name: demo-quickstart
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml

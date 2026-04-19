@@ -199,6 +199,18 @@ docker compose logs -f api-gateway
 
 ### Troubleshooting
 
+**Start with `cordumctl doctor`.** One command, reads the live deploy,
+returns an actionable fix hint per failing check. Deep install dive in
+[docs/troubleshooting/install.md](docs/troubleshooting/install.md).
+
+```bash
+cordumctl doctor                 # human-readable summary
+cordumctl doctor --json          # machine-readable for CI health gates
+cordumctl doctor --fix           # interactive: prompts per fix
+```
+
+Common issues still handy to have inline:
+
 | Issue | Fix |
 |-------|-----|
 | Port already in use | `docker compose down` then retry, or check `lsof -i :8082` |
@@ -209,7 +221,51 @@ docker compose logs -f api-gateway
 | Go build fails | Requires Go 1.24+ — check with `go version` |
 | Stale config after changes | `redis-cli DEL cfg:system:default` then restart |
 
-For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
+For deeper platform issues, see
+[docs/troubleshooting.md](docs/troubleshooting.md) (runtime/operations)
+or [docs/troubleshooting/install.md](docs/troubleshooting/install.md)
+(install + first-run).
+
+## Drive Cordum with MCP
+
+Any MCP-compatible client (Claude Code, Cursor, VS Code, custom LLM
+apps) can operate Cordum through natural language. Wire the MCP server
+in 5 minutes:
+
+* [Drive Cordum with Claude Code](docs/getting-started/mcp-with-claude-code.md) — 5-minute onboarding with screenshots
+* [Drive Cordum with Cursor](docs/getting-started/mcp-with-cursor.md) — 5-minute onboarding with screenshots
+* [Drive Cordum with VS Code](docs/getting-started/mcp-with-vscode.md) — 5-minute onboarding with screenshots
+
+Need the deep reference (full stdio + HTTP + TLS + CA-trust variants)?
+See the canonical [quickstart-claude-code](docs/mcp/quickstart-claude-code.md) /
+[quickstart-cursor](docs/mcp/quickstart-cursor.md) /
+[quickstart-vscode](docs/mcp/quickstart-vscode.md) pages.
+
+After wiring you get ~20 read-only tools (list jobs, inspect runs, verify
+audit chain, simulate policy, etc.) plus 7 **mutating** administrative
+tools (create workflow, install pack, register agent, update policy
+bundle, revoke worker session, uninstall pack, set agent scope) and a
+stable `cordum://` URI scheme for deep references.
+
+> ⚠️ **Mutating actions require human approval by default.** Every mutating
+> MCP tool is gated by Cordum's per-tool approval pipeline — the LLM
+> client sees a JSON-RPC -32099 with an approval_id, the operator clicks
+> through in the dashboard, and the LLM retries to execute. No human
+> approval = no mutation. For automation identities (CI / release bots)
+> that need to skip the approval step for specific tools, see the
+> admin-gated [scope-preapproval](docs/mcp/scope-preapproval.md)
+> mechanism.
+
+See:
+* [MCP read-only tools](docs/mcp/tools.md)
+* [MCP resources (cordum://)](docs/mcp/resources.md)
+* [MCP prompts](docs/mcp/prompts.md) — 4 shipped templates
+  (`summarize_approvals`, `explain_denial`, `draft_safety_rule`,
+  `policy_migration_helper`) with arg schemas and safety disclaimers.
+* [MCP mutating tools](docs/mcp/mutating-tools.md) — approval flow,
+  per-tool catalogue, audit trail fields.
+* [MCP scope preapproval for CI bots](docs/mcp/scope-preapproval.md) —
+  when it's appropriate + full zero-human-touch pipeline recipe.
 
 ## Key Features
 
@@ -258,6 +314,16 @@ cordum/
 | [Docker Guide](docs/DOCKER.md) | Running with Compose |
 | [Agent Protocol](docs/AGENT_PROTOCOL.md) | CAP bus + pointer semantics |
 | [MCP Server](docs/mcp-server.md) | MCP stdio + HTTP/SSE integration |
+| [MCP Tools Catalogue](docs/mcp/tools.md) | 20 tools for list/get/audit/verify |
+| [MCP Resources (cordum://)](docs/mcp/resources.md) | URI scheme + stability policy |
+| [MCP Mutating Tools](docs/mcp/mutating-tools.md) | 7 admin tools behind approval gates |
+| [MCP Scope Preapproval](docs/mcp/scope-preapproval.md) | CI-bot bypass + alerting recipes |
+| [Drive Cordum with Claude Code](docs/getting-started/mcp-with-claude-code.md) | 5-min onboarding (with screenshots) |
+| [Drive Cordum with Cursor](docs/getting-started/mcp-with-cursor.md) | Settings → MCP Servers (with screenshots) |
+| [Drive Cordum with VS Code](docs/getting-started/mcp-with-vscode.md) | user settings.json (with screenshots) |
+| [MCP Quickstart — Claude Code (deep reference)](docs/mcp/quickstart-claude-code.md) | stdio + HTTP + TLS variants |
+| [MCP Quickstart — Cursor (deep reference)](docs/mcp/quickstart-cursor.md) | full config surface |
+| [MCP Quickstart — VS Code (deep reference)](docs/mcp/quickstart-vscode.md) | full config surface |
 | [Pack Format](docs/pack.md) | How to package agent capabilities |
 | [Local E2E](docs/LOCAL_E2E.md) | Full local walkthrough |
 | [Production Guide](docs/production.md) | TLS, HA, backups, incident runbooks |

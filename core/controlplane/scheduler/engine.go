@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 
 	capvalidate "github.com/cordum-io/cap/v2/sdk/go"
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
@@ -97,6 +98,10 @@ type Engine struct {
 	entitlements            *licensing.EntitlementResolver
 	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
 	failModeResolver        *FailModeResolver
+	dispatchGate            *DispatchGate         // optional session-authority filter for the heartbeat-demotion rollout
+	dispatchAudit           AuditSink             // optional audit emitter for heartbeat_disagreement + worker_trust_change
+	trustMetrics            *WorkerTrustMetrics   // optional Prometheus gauges surfacing session validity + heartbeat age
+	sessionMiddleware       *SessionTokenMiddleware // optional inbound session-token verifier (Phase-2 handshake)
 	otelMetrics             otelMetricsBridge     // optional OTEL dual-emission bridge
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
@@ -324,6 +329,203 @@ func (e *Engine) schemaValidationMode() infraSchema.EnforcementMode {
 func (e *Engine) WithSaga(saga *SagaManager) *Engine {
 	e.saga = saga
 	return e
+}
+
+// WithDispatchGate wires the session-authority gate that replaces the
+// heartbeat-TTL filter on the dispatch path. A nil gate leaves the
+// legacy authority-mode semantics in place.
+func (e *Engine) WithDispatchGate(gate *DispatchGate) *Engine {
+	e.dispatchGate = gate
+	return e
+}
+
+// WithDispatchAuditSink wires an audit.Exporter-shaped sink for the
+// heartbeat_disagreement + worker_trust_change events emitted during
+// the heartbeat-demotion rollout. Nil is allowed and drops events
+// silently (still logged via slog) — production deploys must supply
+// a real sink once CORDUM_HEARTBEAT_MODE leaves authority.
+func (e *Engine) WithDispatchAuditSink(sink AuditSink) *Engine {
+	e.dispatchAudit = sink
+	return e
+}
+
+// WithTrustMetrics wires the Prometheus gauges that surface
+// worker_session_valid + worker_heartbeat_age_seconds. A nil argument
+// disables metric emission; production deploys should pass
+// DefaultWorkerTrustMetrics() or a test-scoped instance.
+func (e *Engine) WithTrustMetrics(m *WorkerTrustMetrics) *Engine {
+	e.trustMetrics = m
+	return e
+}
+
+// WithSessionTokenMiddleware wires the inbound session-token
+// verifier onto the engine. Under warn mode, handshakeless packets
+// produce a rate-limited ERROR log and pass; under enforce mode
+// packets without a verifiable session token are dropped.
+func (e *Engine) WithSessionTokenMiddleware(mw *SessionTokenMiddleware) *Engine {
+	e.sessionMiddleware = mw
+	return e
+}
+
+// eligibleWorkers returns the registry snapshot filtered through the
+// dispatch gate when one is configured, or the raw TTL-filtered
+// snapshot otherwise. Disagreements are returned so warn-mode callers
+// can surface them via SIEMEvent (see step-6).
+func (e *Engine) eligibleWorkers(ctx context.Context) (map[string]*pb.Heartbeat, []HeartbeatDisagreement) {
+	if e == nil || e.registry == nil {
+		return map[string]*pb.Heartbeat{}, nil
+	}
+	if e.dispatchGate == nil {
+		return e.registry.Snapshot(), nil
+	}
+	return e.dispatchGate.EligibleWorkers(ctx, e.registry)
+}
+
+// verifySessionToken runs the Phase-2 inbound session-token check on
+// a worker packet. Returns true when the packet is admissible —
+// either because the middleware isn't wired (legacy deploys), the
+// verdict is Pass / WarnMissing (admit), or the packet is off-path.
+// Returns false only when the middleware produces a hard reject
+// (enforce mode + missing token, OR any mode + invalid token).
+//
+// pathName is stamped into the rejection log so operators can tell
+// which inbound path dropped a packet (heartbeat vs job_result vs
+// job_cancel).
+func (e *Engine) verifySessionToken(packet *pb.BusPacket, workerID, pathName string) bool {
+	if e == nil || e.sessionMiddleware == nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	defer cancel()
+	res := e.sessionMiddleware.Verify(ctx, workerID, packet)
+	switch res.Verdict {
+	case TokenVerdictPass:
+		return true
+	case TokenVerdictWarnMissing:
+		if res.Err != nil {
+			slog.Error("inbound worker packet has no session token (warn mode)",
+				"path", pathName,
+				"worker_id", workerID,
+				"sender_id", packet.GetSenderId(),
+				"err", res.Err,
+			)
+		}
+		return true
+	case TokenVerdictRejectMissing:
+		slog.Warn("inbound worker packet rejected — missing session token (enforce mode)",
+			"path", pathName,
+			"worker_id", workerID,
+			"sender_id", packet.GetSenderId(),
+		)
+		return false
+	case TokenVerdictRejectInvalid:
+		slog.Warn("inbound worker packet rejected — invalid session token",
+			"path", pathName,
+			"worker_id", workerID,
+			"sender_id", packet.GetSenderId(),
+			"err", res.Err,
+		)
+		return false
+	default:
+		return true
+	}
+}
+
+// observeWorkerTrust surfaces the trust state of workerID into the
+// Prometheus gauge, resolving against the current trust resolver.
+// Safe to call from hot paths — a nil gate, resolver, or metrics
+// instance makes this a no-op.
+func (e *Engine) observeWorkerTrust(ctx context.Context, workerID string) {
+	if e == nil || e.trustMetrics == nil || e.dispatchGate == nil || e.dispatchGate.resolver == nil || workerID == "" {
+		return
+	}
+	state, err := e.dispatchGate.resolver.ResolveTrust(ctx, workerID)
+	if err != nil {
+		return
+	}
+	e.trustMetrics.ObserveTrust(workerID, state)
+}
+
+// isDispatchEligible is the post-pick per-worker check. Delegates to
+// the gate when present; otherwise uses the legacy heartbeat-TTL
+// IsAlive.
+func (e *Engine) isDispatchEligible(ctx context.Context, workerID string) (bool, *HeartbeatDisagreement) {
+	if e == nil || e.registry == nil {
+		return false, nil
+	}
+	legacy := e.registry.IsAlive
+	if e.dispatchGate == nil {
+		return legacy(workerID), nil
+	}
+	return e.dispatchGate.IsWorkerEligible(ctx, workerID, legacy)
+}
+
+// recordDispatchDisagreements surfaces warn-mode disagreements. The
+// emission path is twofold so operators have both a low-friction
+// grep target (slog) and a durable audit record (SIEMEvent):
+//
+//  1. Structured ERROR log per event — greppable from scheduler logs.
+//  2. heartbeat_disagreement SIEMEvent — flows through the gateway
+//     audit chain so SOC2 tooling can reconstruct the rollout.
+//
+// The sink is optional; when nil the SIEMEvent side is a no-op but
+// the log side still fires.
+func (e *Engine) recordDispatchDisagreements(jobID, topic string, disagreements []HeartbeatDisagreement) {
+	if len(disagreements) == 0 {
+		return
+	}
+	for _, d := range disagreements {
+		slog.Error("heartbeat disagreement",
+			"job_id", jobID,
+			"topic", topic,
+			"worker_id", d.WorkerID,
+			"tenant", d.Tenant,
+			"jti", d.JTI,
+			"direction", d.Direction,
+			"session_auth_alive", d.SessionAuthAlive,
+			"heartbeat_alive", d.HeartbeatAlive,
+		)
+		e.emitHeartbeatDisagreement(jobID, topic, d)
+	}
+}
+
+// emitHeartbeatDisagreement turns a HeartbeatDisagreement into a
+// SIEMEvent on the audit chain. Severity is SeverityMedium — a
+// single disagreement is a rollout-progress signal, not an incident;
+// operators should alert on the rate, not individual events.
+func (e *Engine) emitHeartbeatDisagreement(jobID, topic string, d HeartbeatDisagreement) {
+	if e == nil || e.dispatchAudit == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	defer cancel()
+	e.dispatchAudit.Emit(ctx, audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventHeartbeatDisagreement,
+		Severity:  audit.SeverityMedium,
+		TenantID:  d.Tenant,
+		AgentID:   d.WorkerID,
+		JobID:     jobID,
+		Action:    "dispatch.disagreement",
+		Reason:    d.Direction,
+		Extra: map[string]string{
+			"worker_id":          d.WorkerID,
+			"tenant":             d.Tenant,
+			"jti":                d.JTI,
+			"direction":          d.Direction,
+			"session_auth_alive": boolString(d.SessionAuthAlive),
+			"heartbeat_alive":    boolString(d.HeartbeatAlive),
+			"job_id":             jobID,
+			"topic":              topic,
+		},
+	})
+}
+
+func boolString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // WithDLQSink wires optional durable DLQ persistence.
@@ -615,6 +817,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if hb == nil {
 			return nil
 		}
+		if !e.verifySessionToken(p, hb.GetWorkerId(), "heartbeat") {
+			return nil
+		}
 		if !e.allowWorkerHeartbeat(p, hb) {
 			return nil
 		}
@@ -627,6 +832,11 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			"pool", hb.Pool,
 		)
 		e.registry.UpdateHeartbeat(hb)
+		if e.trustMetrics != nil {
+			now := time.Now()
+			e.trustMetrics.ObserveHeartbeatAge(hb.GetWorkerId(), now, now)
+		}
+		e.observeWorkerTrust(e.ctx, hb.GetWorkerId())
 		if e.counterClient != nil {
 			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
 			e.persistWorkerCount(ctx)
@@ -680,6 +890,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if res == nil {
 			return nil
 		}
+		if !e.verifySessionToken(p, res.GetWorkerId(), "job_result") {
+			return nil
+		}
 		if err := capvalidate.ValidateJobResult(res); err != nil {
 			slog.Warn("invalid job result rejected",
 				"job_id", res.GetJobId(),
@@ -701,6 +914,12 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 	case *pb.BusPacket_JobCancel:
 		cancelReq := payload.JobCancel
 		if cancelReq == nil {
+			return nil
+		}
+		// JobCancel doesn't carry a WorkerId; pass the packet's
+		// SenderId so the middleware can look up the session token
+		// under the same key space the issuer wrote.
+		if !e.verifySessionToken(p, p.GetSenderId(), "job_cancel") {
 			return nil
 		}
 		slog.Info("job cancel received",
@@ -1161,9 +1380,17 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		return nil
 	}
 
+	// Snapshot the canonical job hash BEFORE attachEffectiveConfig /
+	// applyConstraints mutate req.Env. The reconciler recomputes the hash
+	// from the stored JobRequest (which SetJobRequest persisted earlier,
+	// also pre-mutation), so the two must match or benign approvals get
+	// flipped to DENIED with kind=invalidate_stale_request. See
+	// core/infra/store/job_store.go ClassifyApprovalRepair.
+	preMutationHash, _ := HashJobRequest(req)
+
 	e.attachEffectiveConfig(req)
 
-	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
+	record, err := e.checkSafetyDecisionTracedWithHash(lockCtx, req, preMutationHash)
 	if err != nil {
 		slog.Error("safety check failed", "job_id", jobID, "error", err)
 		record.Decision = SafetyUnavailable
@@ -1362,7 +1589,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		}
 	}
 
-	workers := e.registry.Snapshot()
+	workers, disagreements := e.eligibleWorkers(lockCtx)
+	e.recordDispatchDisagreements(jobID, topic, disagreements)
 	var readiness map[string]WorkerReadiness
 	if e.workerReadinessRequired {
 		readiness = e.registry.ReadinessSnapshot()
@@ -1376,7 +1604,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	var subject string
 	for dispatchAttempt := range maxDispatchRetries {
 		if dispatchAttempt > 0 {
-			workers = e.registry.Snapshot()
+			workers, disagreements = e.eligibleWorkers(lockCtx)
+			e.recordDispatchDisagreements(jobID, topic, disagreements)
 			if e.workerReadinessRequired {
 				readiness = e.registry.ReadinessSnapshot()
 			}
@@ -1386,7 +1615,14 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			break
 		}
 		workerID := extractWorkerFromSubject(subject)
-		if workerID == "" || e.registry.IsAlive(workerID) {
+		if workerID == "" {
+			break
+		}
+		eligible, disagreement := e.isDispatchEligible(lockCtx, workerID)
+		if disagreement != nil {
+			e.recordDispatchDisagreements(jobID, topic, []HeartbeatDisagreement{*disagreement})
+		}
+		if eligible {
 			break
 		}
 		slog.Warn("stale worker detected, retrying dispatch",
@@ -1661,6 +1897,17 @@ func (e *Engine) failSchemaValidation(req *pb.JobRequest, traceID, schemaID, rea
 }
 
 func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+	return e.checkSafetyDecisionTracedWithHash(ctx, req, "")
+}
+
+// checkSafetyDecisionTracedWithHash is the underlying safety-check path that
+// also accepts a precomputed job hash. Callers that mutate req.Env between
+// SetJobRequest and this call (e.g. attachEffectiveConfig / applyConstraints)
+// should pass the hash of the pre-mutation request so the SafetyDecisionRecord
+// persists a hash that matches what the reconciler will later recompute from
+// the stored (pre-mutation) JobRequest. Passing "" preserves legacy behavior
+// of hashing req at call time.
+func (e *Engine) checkSafetyDecisionTracedWithHash(ctx context.Context, req *pb.JobRequest, preMutationHash string) (SafetyDecisionRecord, error) {
 	tracer := cordumotel.Tracer("cordum-scheduler")
 	_, safetySpan := tracer.Start(ctx, "scheduler.safety_check",
 		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
@@ -1671,7 +1918,7 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 		safetySpan.SetAttributes(attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)))
 	}
 
-	record, err := e.checkSafetyDecision(req)
+	record, err := e.checkSafetyDecision(req, preMutationHash)
 	if err != nil {
 		safetySpan.SetStatus(otelcodes.Error, err.Error())
 		safetySpan.RecordError(err)
@@ -1684,7 +1931,7 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 	return record, err
 }
 
-func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, error) {
+func (e *Engine) checkSafetyDecision(req *pb.JobRequest, preMutationHash string) (SafetyDecisionRecord, error) {
 	record := SafetyDecisionRecord{}
 	if req == nil {
 		return record, fmt.Errorf("missing job request")
@@ -1766,10 +2013,37 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 		record.Decision = SafetyRequireApproval
 	}
 	if record.Decision == SafetyRequireApproval || record.ApprovalRequired {
-		if hash, err := HashJobRequest(req); err == nil {
-			record.JobHash = hash
-		} else {
-			slog.Error("job hash failed", "job_id", jobID, "error", err)
+		// Preference order for the JobHash persisted on the SafetyDecisionRecord:
+		//   1. existing hash on a previously-stored SafetyDecision (gateway or
+		//      earlier scheduler pass already captured it)
+		//   2. preMutationHash passed in from processJob (hashed BEFORE
+		//      attachEffectiveConfig / applyConstraints mutated req.Env)
+		//   3. fresh HashJobRequest(req) (fallback — matches legacy behavior)
+		//
+		// The reconciler later recomputes the hash from the stored JobRequest,
+		// which SetJobRequest persisted BEFORE mutation. If we stored a
+		// post-mutation hash here, the reconciler would see a mismatch and
+		// auto-invalidate the approval as stale_request.
+		existingHash := ""
+		if e.jobStore != nil {
+			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+			existing, err := e.jobStore.GetSafetyDecision(ctx, jobID)
+			cancel()
+			if err == nil && existing.JobHash != "" {
+				existingHash = existing.JobHash
+			}
+		}
+		switch {
+		case existingHash != "":
+			record.JobHash = existingHash
+		case preMutationHash != "":
+			record.JobHash = preMutationHash
+		default:
+			if hash, err := HashJobRequest(req); err == nil {
+				record.JobHash = hash
+			} else {
+				slog.Error("job hash failed", "job_id", jobID, "error", err)
+			}
 		}
 	}
 	if e.jobStore != nil {

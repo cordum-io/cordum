@@ -7,6 +7,7 @@ import { useUiStore } from "@/state/ui";
 import { useApprovals } from "@/hooks/useApprovals";
 import { useDLQ } from "@/hooks/useDLQ";
 import { useLicense } from "@/hooks/useLicense";
+import { useIsAdmin } from "@/hooks/usePermission";
 import { useQuarantinedJobs } from "@/hooks/useOutputPolicy";
 import { useStatus } from "@/hooks/useStatus";
 import { useWorkerEvents } from "@/hooks/useWorkers";
@@ -50,6 +51,8 @@ import {
   Eye,
   History,
   TrendingUp,
+  Plug,
+  Lock,
 } from "lucide-react";
 
 /*
@@ -66,6 +69,11 @@ interface NavItem {
   icon: typeof LayoutGrid;
   badge?: "approvals" | "dlq" | "quarantine";
   end?: boolean;
+  // When true, the entry is only rendered for users whose permission
+  // contract marks them as admin. Non-admins simply don't see the
+  // link; the route itself remains reachable for direct navigation
+  // and is gated by the backend.
+  requiresAdmin?: boolean;
 }
 
 interface NavSection {
@@ -97,7 +105,9 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
       { path: "/govern/replay", label: "Policy Replay", icon: History },
       { path: "/govern/analytics", label: "Rule Analytics", icon: TrendingUp },
       { path: "/govern/tenants", label: "Tenants", icon: Layers },
+      { path: "/govern/verification", label: "Verification", icon: Lock, requiresAdmin: true },
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
+      { path: "/mcp", label: "MCP", icon: Plug },
     ],
   },
   {
@@ -167,6 +177,16 @@ export function AppShell({ children }: AppShellProps) {
   const { data: quarantineData } = useQuarantinedJobs();
   const quarantineCount = quarantineData?.items?.length ?? 0;
   const { data: licenseSummary } = useLicense();
+  const isAdmin = useIsAdmin();
+
+  // requiresAdmin nav items are filtered out for non-admin users so the
+  // sidebar stays focused on what they can actually act on. Keep the
+  // route itself reachable so bookmarked links still work and the
+  // backend stays the ultimate gate.
+  const navSections = APP_SHELL_NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => !item.requiresAdmin || isAdmin),
+  }));
 
   // Accessibility: focus trap for mobile drawer + reduced motion
   const prefersReducedMotion = useReducedMotion();
@@ -285,7 +305,7 @@ export function AppShell({ children }: AppShellProps) {
               </div>
               {/* Mobile nav items */}
               <nav className="flex-1 py-3 px-2 space-y-4 overflow-y-auto scrollbar-thin">
-                {APP_SHELL_NAV_SECTIONS.map((section) => (
+                {navSections.map((section) => (
                   <div key={section.label}>
                     <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground/50">
                       {section.label}
@@ -380,7 +400,7 @@ export function AppShell({ children }: AppShellProps) {
 
         {/* Nav items */}
         <nav className="flex-1 py-3 px-2 space-y-4 overflow-y-auto scrollbar-thin">
-          {APP_SHELL_NAV_SECTIONS.map((section) => (
+          {navSections.map((section) => (
             <div key={section.label}>
               {!collapsed && (
                 <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground/50">

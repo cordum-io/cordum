@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	coreschema "github.com/cordum/cordum/core/infra/schema"
 )
@@ -32,23 +34,142 @@ type ToolRegistry struct {
 
 	cfgMu   sync.RWMutex
 	cfgData map[string]any
+
+	gateMu sync.RWMutex
+	gate   ApprovalGate
+
+	auditMu sync.RWMutex
+	audit   DenyAuditor
+
+	// auditHook is invoked once per successful tools/call (task-466b6a6a).
+	// Nil means no auditing — dev/stdio deploys usually leave it off.
+	// Wire via (*ToolRegistry).WithToolCallAudit.
+	auditHook ToolCallAuditHook
+
+	// scopeEnforce controls whether Call applies FilterForIdentity.
+	// Default false so unit tests can register tools and invoke handlers
+	// without wiring an identity into every ctx. Production callers
+	// (gateway HTTP transport, cordum-mcp stdio) flip it on via
+	// SetScopeEnforcement during setup.
+	scopeEnforce atomic.Bool
+
+	// cache memoises ListTools output by identity + config_version.
+	cache *filterCache
+}
+
+// ApprovalGate is the gateway-level contract the MCP server uses to
+// enforce RequiresApproval.
+type ApprovalGate interface {
+	Check(ctx context.Context, tool Tool, paramsJSON json.RawMessage) (*ApprovalRequired, error)
+}
+
+// ApprovalRequired is the structured payload the gate returns when a
+// tools/call must wait for human approval.
+type ApprovalRequired struct {
+	ApprovalID string `json:"approval_id"`
+	Reason     string `json:"reason,omitempty"`
+	Tool       string `json:"tool"`
+}
+
+// Error satisfies the error interface so ApprovalRequired can flow
+// through the regular ToolRegistry.Call return path.
+func (a *ApprovalRequired) Error() string {
+	if a == nil {
+		return "mcp: approval required"
+	}
+	return fmt.Sprintf("mcp: approval required for %s (approval_id=%s)", a.Tool, a.ApprovalID)
+}
+
+// SetApprovalGate wires the gate. Passing nil disables the approval check.
+func (r *ToolRegistry) SetApprovalGate(gate ApprovalGate) {
+	if r == nil {
+		return
+	}
+	r.gateMu.Lock()
+	r.gate = gate
+	r.gateMu.Unlock()
+}
+
+func (r *ToolRegistry) approvalGate() ApprovalGate {
+	if r == nil {
+		return nil
+	}
+	r.gateMu.RLock()
+	defer r.gateMu.RUnlock()
+	return r.gate
+}
+
+// DenyAuditor is invoked by the tool registry when a tools/call is
+// rejected by the scope filter. Implementations forward the event to
+// the SIEM chain.
+type DenyAuditor interface {
+	ToolDenied(ctx context.Context, event DenyEvent)
+}
+
+// DenyEvent is the structured payload the auditor receives.
+type DenyEvent struct {
+	ToolName  string
+	SubReason DenyReason
+	AgentID   string
+}
+
+// SetDenyAuditor wires the auditor. Passing nil disables the audit call.
+func (r *ToolRegistry) SetDenyAuditor(a DenyAuditor) {
+	if r == nil {
+		return
+	}
+	r.auditMu.Lock()
+	r.audit = a
+	r.auditMu.Unlock()
+}
+
+func (r *ToolRegistry) denyAuditor() DenyAuditor {
+	if r == nil {
+		return nil
+	}
+	r.auditMu.RLock()
+	defer r.auditMu.RUnlock()
+	return r.audit
+}
+
+// SetScopeEnforcement toggles Call's scope filter. Production deploys
+// MUST call this with true during setup.
+func (r *ToolRegistry) SetScopeEnforcement(on bool) {
+	if r == nil {
+		return
+	}
+	r.scopeEnforce.Store(on)
+}
+
+// ScopeEnforced reports whether Call currently applies the scope filter.
+func (r *ToolRegistry) ScopeEnforced() bool {
+	if r == nil {
+		return false
+	}
+	return r.scopeEnforce.Load()
 }
 
 // NewToolRegistry creates an empty tool registry.
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
 		tools: make(map[string]toolEntry),
+		cache: newFilterCache(),
 	}
 }
 
-// SetConfig updates config used for enable/disable lookups.
+// SetConfig updates config used for enable/disable lookups and scope
+// policy overrides. Bumping the filter cache version here makes
+// identity changes take effect immediately.
 func (r *ToolRegistry) SetConfig(cfg map[string]any) {
 	if r == nil {
 		return
 	}
 	r.cfgMu.Lock()
-	defer r.cfgMu.Unlock()
 	r.cfgData = cloneConfigMap(cfg)
+	r.cfgMu.Unlock()
+	if r.cache != nil {
+		r.cache.bumpVersion()
+	}
 }
 
 // Register adds or replaces a tool handler.
@@ -69,8 +190,15 @@ func (r *ToolRegistry) Register(tool Tool, handler ToolHandler) error {
 	return nil
 }
 
-// List returns all enabled registered tools.
+// List returns all enabled registered tools. Kept for back-compat.
+// On-the-wire callers should prefer ListTools(ctx).
 func (r *ToolRegistry) List() []Tool {
+	return r.ListToolsUnfiltered()
+}
+
+// ListToolsUnfiltered returns every enabled registered tool regardless
+// of identity. Admin/diagnostic surfaces only.
+func (r *ToolRegistry) ListToolsUnfiltered() []Tool {
 	if r == nil {
 		return nil
 	}
@@ -81,12 +209,43 @@ func (r *ToolRegistry) List() []Tool {
 		if !r.isToolEnabled(entry.tool.Name) {
 			continue
 		}
-		out = append(out, entry.tool)
+		out = append(out, r.effectiveTool(entry.tool))
 	}
 	return out
 }
 
-// Call executes a named enabled tool after optional JSON Schema validation.
+// ListTools resolves the AgentIdentity from ctx and returns the subset
+// of enabled tools the identity is allowed to see. Results are memoised
+// per (identity fingerprint, config_version) with a 60s TTL.
+func (r *ToolRegistry) ListTools(ctx context.Context) []Tool {
+	if r == nil {
+		return nil
+	}
+	id := IdentityFromContext(ctx)
+	if r.cache != nil {
+		if cached, ok := r.cache.get(id); ok {
+			return cached
+		}
+	}
+	all := r.ListToolsUnfiltered()
+	out := FilterForIdentity(all, id)
+	if r.cache != nil {
+		r.cache.put(id, out)
+	}
+	return out
+}
+
+// effectiveTool returns the tool descriptor after runtime-config
+// overrides are merged in.
+func (r *ToolRegistry) effectiveTool(tool Tool) Tool {
+	if r == nil {
+		return tool
+	}
+	return r.mergeScopePolicyForTool(tool)
+}
+
+// Call executes a named enabled tool after scope filtering, approval
+// gating, and optional JSON Schema validation.
 func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMessage) (*ToolCallResult, error) {
 	if r == nil {
 		return nil, fmt.Errorf("tool registry is nil")
@@ -104,6 +263,54 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 	if !r.isToolEnabled(name) {
 		return nil, ErrToolDisabled
 	}
+
+	// Scope filter runs FIRST — before approval gating, before schema
+	// validation — so a principal that lacks the scope for a tool sees
+	// a clean "not authorized" denial instead of leaking the approval
+	// workflow or the tool's input schema.
+	effectiveTool := r.effectiveTool(entry.tool)
+	identity := IdentityFromContext(ctx)
+	if r.scopeEnforce.Load() {
+		if deny := EvaluateForIdentity(effectiveTool, identity); deny != DenyReasonNone {
+			agentID := ""
+			if identity != nil {
+				agentID = identity.ID
+			}
+			err := &NotAuthorized{
+				Tool:      entry.tool.Name,
+				SubReason: deny,
+				AgentID:   agentID,
+			}
+			if auditor := r.denyAuditor(); auditor != nil {
+				auditor.ToolDenied(ctx, DenyEvent{
+					ToolName:  entry.tool.Name,
+					SubReason: deny,
+					AgentID:   agentID,
+				})
+			}
+			return nil, err
+		}
+	}
+
+	// Approval gating.
+	effectiveGated, effectiveScope := r.effectiveApprovalForTool(entry.tool)
+	if effectiveGated {
+		gatedTool := entry.tool
+		gatedTool.RequiresApproval = true
+		if effectiveScope != "" {
+			gatedTool.ApprovalScope = effectiveScope
+		}
+		if gate := r.approvalGate(); gate != nil {
+			gated, err := gate.Check(ctx, gatedTool, params)
+			if err != nil {
+				return nil, err
+			}
+			if gated != nil {
+				gated.Tool = entry.tool.Name
+				return nil, gated
+			}
+		}
+	}
 	if len(entry.tool.InputSchema) > 0 {
 		parsed := map[string]any{}
 		if len(params) > 0 {
@@ -115,7 +322,13 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 			return nil, fmt.Errorf("%w: %v", ErrInvalidParams, err)
 		}
 	}
-	return entry.handler(ctx, params)
+	started := time.Now()
+	result, err := entry.handler(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	r.emitToolCallAudit(ctx, entry.tool, started, result)
+	return result, nil
 }
 
 func (r *ToolRegistry) isToolEnabled(name string) bool {
@@ -125,6 +338,96 @@ func (r *ToolRegistry) isToolEnabled(name string) bool {
 		return true
 	}
 	return enabled
+}
+
+// effectiveApprovalForTool returns the RequiresApproval/ApprovalScope
+// values that should apply to a tool after merging the registered code
+// metadata with runtime config. Runtime config WINS over code.
+func (r *ToolRegistry) effectiveApprovalForTool(tool Tool) (bool, string) {
+	requires := tool.RequiresApproval
+	scope := tool.ApprovalScope
+
+	r.cfgMu.RLock()
+	cfg := r.cfgData
+	r.cfgMu.RUnlock()
+	if cfg == nil {
+		return requires, scope
+	}
+	rules, ok := cfg["tools"].([]any)
+	if !ok {
+		if root, rootOK := cfg["mcp_policy"].(map[string]any); rootOK {
+			if inner, innerOK := root["tools"].([]any); innerOK {
+				rules = inner
+				ok = true
+			}
+		}
+		if !ok {
+			return requires, scope
+		}
+	}
+	for _, raw := range rules {
+		rule, isMap := raw.(map[string]any)
+		if !isMap {
+			continue
+		}
+		pattern, _ := rule["tool_name_pattern"].(string)
+		if pattern == "" {
+			continue
+		}
+		if !globMatch(pattern, tool.Name) {
+			continue
+		}
+		if v, present := rule["requires_approval"]; present {
+			if b, okB := v.(bool); okB {
+				requires = b
+			}
+		}
+		if v, present := rule["approval_scope"]; present {
+			if s, okS := v.(string); okS {
+				scope = s
+			}
+		}
+		break
+	}
+	return requires, scope
+}
+
+// globMatch is a tiny star-glob matcher: `*` matches zero or more
+// characters, any other character is literal.
+func globMatch(pattern, s string) bool {
+	if pattern == s {
+		return true
+	}
+	if pattern == "*" {
+		return true
+	}
+	return globMatchSlice([]rune(pattern), []rune(s))
+}
+
+func globMatchSlice(pattern, s []rune) bool {
+	pi, si := 0, 0
+	starPi, starSi := -1, 0
+	for si < len(s) {
+		switch {
+		case pi < len(pattern) && pattern[pi] == '*':
+			starPi = pi
+			starSi = si
+			pi++
+		case pi < len(pattern) && pattern[pi] == s[si]:
+			pi++
+			si++
+		case starPi != -1:
+			pi = starPi + 1
+			starSi++
+			si = starSi
+		default:
+			return false
+		}
+	}
+	for pi < len(pattern) && pattern[pi] == '*' {
+		pi++
+	}
+	return pi == len(pattern)
 }
 
 type resourceEntry struct {
@@ -265,7 +568,7 @@ func (r *ResourceRegistry) ListTemplates() []ResourceTemplate {
 	return out
 }
 
-// Read resolves a URI to an exact resource or matching template and invokes its handler.
+// Read resolves a URI to an exact resource or matching template.
 func (r *ResourceRegistry) Read(ctx context.Context, uri string) (*ResourceContents, error) {
 	if r == nil {
 		return nil, fmt.Errorf("resource registry is nil")
@@ -367,7 +670,6 @@ func lookupConfigBool(cfg map[string]any, path ...string) (bool, bool) {
 }
 
 func compileURITemplate(uriTemplate string) (*regexp.Regexp, error) {
-	// Replace placeholders like {id} with a single segment matcher.
 	var b strings.Builder
 	b.WriteString("^")
 	for i := 0; i < len(uriTemplate); {

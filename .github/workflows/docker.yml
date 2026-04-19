@@ -39,6 +39,10 @@ jobs:
             service: cordum-workflow-engine
           - name: context-engine
             service: cordum-context-engine
+          - name: mcp
+            service: cordum-mcp
+          - name: cordumctl
+            service: cordumctl
     steps:
       - name: Checkout
         uses: actions/checkout@v4

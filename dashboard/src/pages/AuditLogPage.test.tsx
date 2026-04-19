@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shouldFetchNextAuditPage } from "./AuditLogPage";
+import {
+  filterEventsBySeq,
+  parseSeqParam,
+  shouldFetchNextAuditPage,
+} from "./AuditLogPage";
 
 // ---------------------------------------------------------------------------
 // Mock the API client before any imports that reference it
@@ -279,5 +283,58 @@ describe("AuditLogPage CSV export logic", () => {
     const escaped = detail.replace(/,/g, ";");
     expect(escaped).toBe("Error: invalid input; retry later");
     expect(escaped).not.toContain(",");
+  });
+});
+
+describe("parseSeqParam", () => {
+  it("returns undefined for null / empty / non-numeric", () => {
+    expect(parseSeqParam(null)).toBeUndefined();
+    expect(parseSeqParam(undefined)).toBeUndefined();
+    expect(parseSeqParam("")).toBeUndefined();
+    expect(parseSeqParam("  ")).toBeUndefined();
+    expect(parseSeqParam("abc")).toBeUndefined();
+  });
+  it("parses valid non-negative integers", () => {
+    expect(parseSeqParam("0")).toBe(0);
+    expect(parseSeqParam("42")).toBe(42);
+    expect(parseSeqParam("14300")).toBe(14300);
+    expect(parseSeqParam(" 14300 ")).toBe(14300);
+  });
+  it("rejects negative seqs (chain seq numbers are always ≥ 0)", () => {
+    expect(parseSeqParam("-1")).toBeUndefined();
+  });
+});
+
+describe("filterEventsBySeq", () => {
+  const events = [
+    { id: "a", action: "", actor: "", resource: "", timestamp: "", seq: 100 },
+    { id: "b", action: "", actor: "", resource: "", timestamp: "", seq: 150 },
+    { id: "c", action: "", actor: "", resource: "", timestamp: "", seq: 200 },
+    // No seq — this is a non-chained policy-only entry.
+    { id: "d", action: "", actor: "", resource: "", timestamp: "" },
+  ];
+
+  it("returns the original list untouched when both bounds are undefined (backward compat)", () => {
+    expect(filterEventsBySeq(events, undefined, undefined)).toBe(events);
+  });
+
+  it("filters to [from, to] inclusive", () => {
+    const out = filterEventsBySeq(events, 100, 150);
+    expect(out.map((e) => e.id)).toEqual(["a", "b"]);
+  });
+
+  it("supports open-ended from-only filter", () => {
+    const out = filterEventsBySeq(events, 150, undefined);
+    expect(out.map((e) => e.id)).toEqual(["b", "c"]);
+  });
+
+  it("supports open-ended to-only filter", () => {
+    const out = filterEventsBySeq(events, undefined, 100);
+    expect(out.map((e) => e.id)).toEqual(["a"]);
+  });
+
+  it("excludes events without a seq field while a seq filter is active", () => {
+    const out = filterEventsBySeq(events, 0, 999);
+    expect(out.map((e) => e.id)).not.toContain("d");
   });
 });

@@ -25,6 +25,27 @@ type StdioTransport struct {
 
 	inCloser  io.Closer
 	outCloser io.Closer
+
+	identityMu sync.RWMutex
+	identity   *AgentIdentity
+}
+
+// SetDefaultIdentity stamps every subsequent ReadMessage result with
+// the given agent identity. Stdio is single-session, so the identity
+// is resolved once at process boot.
+func (t *StdioTransport) SetDefaultIdentity(id *AgentIdentity) {
+	if t == nil {
+		return
+	}
+	t.identityMu.Lock()
+	t.identity = id
+	t.identityMu.Unlock()
+}
+
+func (t *StdioTransport) defaultIdentity() *AgentIdentity {
+	t.identityMu.RLock()
+	defer t.identityMu.RUnlock()
+	return t.identity
 }
 
 // NewStdioTransport creates a stdio transport bound to process stdio.
@@ -93,6 +114,9 @@ func (t *StdioTransport) ReadMessage() (*JSONRPCMessage, error) {
 		if err != nil {
 			t.logger.Warn("mcp-stdio: dropping invalid json-rpc input", "err", err)
 			return nil, err
+		}
+		if id := t.defaultIdentity(); id != nil {
+			msg.identity = id
 		}
 		return msg, nil
 	}

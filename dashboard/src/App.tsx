@@ -67,6 +67,8 @@ const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPag
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
 const GovernReplayPage = lazy(() => import("./pages/govern/ReplayPage"));
 const GovernPolicyAnalyticsPage = lazy(() => import("./pages/govern/PolicyAnalyticsPage"));
+const GovernVerificationPage = lazy(() => import("./pages/govern/GovernanceVerificationPage"));
+const MCPPage = lazy(() => import("./pages/MCPPage"));
 
 // Policy Studio tab redirects — old standalone page routes → tabbed Policy Studio
 function PolicyTabRedirect({ tab }: { tab: string }) {
@@ -165,6 +167,8 @@ function ProtectedRoutes() {
           <Route path="/govern/quarantine" element={<GovernQuarantinePage />} />
           <Route path="/govern/replay" element={<GovernReplayPage />} />
           <Route path="/govern/analytics" element={<GovernPolicyAnalyticsPage />} />
+          <Route path="/govern/verification" element={<GovernVerificationPage />} />
+          <Route path="/mcp" element={<MCPPage />} />
           <Route path="/policies" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.root} replace />} />
           <Route path="/policies/input" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.input} replace />} />
           <Route path="/policies/rules" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.rules} replace />} />

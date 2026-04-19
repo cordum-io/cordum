@@ -1,0 +1,21 @@
+rules:
+  - id: demo-quickstart-greet-allow
+    match:
+      topics:
+        - job.demo.greet
+    decision: allow
+    reason: "Greeter is a safe, read-only demo agent."
+
+  - id: demo-quickstart-delete-deny
+    match:
+      topics:
+        - job.demo.delete-all
+    decision: deny
+    reason: "Destructive operations are blocked by default policy — this is the DENY verdict."
+
+  - id: demo-quickstart-admin-approve
+    match:
+      topics:
+        - job.demo.admin
+    decision: require_approval
+    reason: "Admin operations require human sign-off — this is the APPROVE verdict."

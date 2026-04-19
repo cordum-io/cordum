@@ -2,7 +2,8 @@
  * DESIGN: "Control Surface" — Audit Log
  * Matches cordumds-gj5mw4zm.manus.space showcase patterns
  */
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { get } from "@/api/client";
@@ -33,6 +34,12 @@ interface AuditEvent {
   detail?: string;
   timestamp: string;
   ip?: string;
+  // Chain sequence number from the audit Merkle chain. Absent on
+  // policy-only audit entries that predate the chain wiring; present
+  // as a number on anything driven through audit.Chainer. Used here
+  // to scope the page to a specific incident seq range when
+  // ChainIntegrityWidget drills in.
+  seq?: number;
 }
 
 interface AuditResponse {
@@ -59,6 +66,13 @@ export function shouldFetchNextAuditPage(
 }
 
 function mapEvent(e: Record<string, unknown>): AuditEvent {
+  const rawSeq = e.seq ?? e.sequence ?? e.chain_seq;
+  const seq =
+    typeof rawSeq === "number"
+      ? rawSeq
+      : typeof rawSeq === "string"
+        ? Number.parseInt(rawSeq, 10) || undefined
+        : undefined;
   return {
     id: (e.id as string) ?? "",
     action: (e.action as string) ?? "",
@@ -72,7 +86,38 @@ function mapEvent(e: Record<string, unknown>): AuditEvent {
       (e.resource_id as string) || (e.resourceId as string) || undefined,
     detail: (e.message as string) || (e.detail as string) || undefined,
     timestamp: (e.created_at as string) || (e.timestamp as string) || "",
+    seq,
   };
+}
+
+// parseSeqParam parses a seq query-string value into a number. Returns
+// undefined for missing / empty / non-integer values so callers can
+// skip the corresponding filter cleanly.
+export function parseSeqParam(raw: string | null | undefined): number | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const n = Number.parseInt(trimmed, 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+// filterEventsBySeq scopes the rendered rows to [from, to]. Events
+// without a seq field are excluded while the filter is active — the
+// drill-down is a chain-incident view, so non-chained entries don't
+// belong. When both bounds are undefined the original list is passed
+// through unchanged for backward compat.
+export function filterEventsBySeq(
+  events: AuditEvent[],
+  from: number | undefined,
+  to: number | undefined,
+): AuditEvent[] {
+  if (from === undefined && to === undefined) return events;
+  return events.filter((e) => {
+    if (e.seq === undefined) return false;
+    if (from !== undefined && e.seq < from) return false;
+    if (to !== undefined && e.seq > to) return false;
+    return true;
+  });
 }
 
 function actionColor(action: string) {
@@ -97,6 +142,17 @@ export default function AuditLogPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const seqFrom = parseSeqParam(searchParams.get("seqFrom"));
+  const seqTo = parseSeqParam(searchParams.get("seqTo"));
+  const seqFilterActive = seqFrom !== undefined || seqTo !== undefined;
+
+  const clearSeqFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("seqFrom");
+    next.delete("seqTo");
+    setSearchParams(next, { replace: true });
+  };
 
   useEffect(() => {
     get<{ items?: Array<{ id: string; name: string }> }>("/agents")
@@ -148,8 +204,12 @@ export default function AuditLogPage() {
     initialPageParam: 0,
   });
 
-  const events: AuditEvent[] = (data?.pages ?? []).flatMap((p) =>
+  const rawEvents: AuditEvent[] = (data?.pages ?? []).flatMap((p) =>
     (p.items ?? []).map(mapEvent),
+  );
+  const events = useMemo(
+    () => filterEventsBySeq(rawEvents, seqFrom, seqTo),
+    [rawEvents, seqFrom, seqTo],
   );
   const total = data?.pages?.[0]?.total;
 
@@ -186,7 +246,8 @@ export default function AuditLogPage() {
     return () => observer.disconnect();
   }, []);
 
-  const filtersActive = !!actionFilter || !!agentFilter || !!dateFrom || !!dateTo || !!search;
+  const filtersActive =
+    !!actionFilter || !!agentFilter || !!dateFrom || !!dateTo || !!search || seqFilterActive;
   const activeFilterCount = [actionFilter, agentFilter, dateFrom, dateTo, search].filter(
     Boolean,
   ).length;
@@ -253,6 +314,42 @@ export default function AuditLogPage() {
           </div>
         }
       />
+
+      {/* Seq-range drill-down chip — only present when arriving from
+          the ChainIntegrityWidget gap link. Dismiss clears the params
+          from the URL so the page returns to its default view. */}
+      {seqFilterActive && (
+        <div
+          className="flex items-center gap-2 rounded-2xl border border-danger/30 bg-danger/10 px-4 py-2 text-xs"
+          role="status"
+          aria-live="polite"
+          data-testid="audit-seq-chip"
+        >
+          <span className="font-mono font-semibold text-danger">
+            {seqFrom !== undefined && seqTo !== undefined
+              ? `Showing seq #${seqFrom} – #${seqTo}`
+              : seqFrom !== undefined
+                ? `Showing seq ≥ #${seqFrom}`
+                : `Showing seq ≤ #${seqTo}`}
+          </span>
+          <span className="text-danger/80">
+            · Scoped to an audit-chain incident range.
+          </span>
+          <button
+            type="button"
+            onClick={clearSeqFilter}
+            aria-label="Clear seq-range filter"
+            className={cn(
+              "ml-auto inline-flex items-center gap-1 rounded-full border border-danger/30 px-2 py-0.5 text-[11px] font-medium text-danger",
+              "hover:bg-danger/15",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40",
+            )}
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div

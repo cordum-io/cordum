@@ -28,6 +28,8 @@ import { useWorkers } from "@/hooks/useWorkers";
 import { PoolGroupedView } from "@/components/agents/PoolGroupedView";
 import { WorkerDetailDrawer } from "@/components/agents/WorkerDetailDrawer";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { WorkerSessionBadge } from "@/components/agents/WorkerSessionBadge";
+import { WorkerSessionLegend } from "@/components/agents/WorkerSessionLegend";
 
 function workerStatusVariant(status: string) {
   switch (status) {
@@ -510,8 +512,9 @@ function AgentRegistryTab() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="agent-registry-tab">
       <p className="text-xs text-muted-foreground">Agents that have submitted jobs, with their safety decision breakdown and policy bindings.</p>
+      <WorkerSessionLegend />
       <div className="instrument-card overflow-hidden">
         <div className="overflow-x-auto">
         <table className="w-full min-w-[800px]">
@@ -523,7 +526,7 @@ function AgentRegistryTab() {
               <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Active Jobs</th>
               <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capacity</th>
               <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Active</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Heartbeat</th>
             </tr>
           </thead>
           <tbody>
@@ -532,6 +535,7 @@ function AgentRegistryTab() {
                 key={w.id}
                 {...clickableRowProps(() => navigate(`/agents/${w.id}`))}
                 className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
+                data-testid={`worker-row-${w.id}`}
               >
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-2">
@@ -544,7 +548,7 @@ function AgentRegistryTab() {
                 </td>
                 <td className="px-5 py-3 font-mono text-sm text-foreground">{w.pool || "—"}</td>
                 <td className="px-5 py-3">
-                  <StatusBadge variant={w.status === "busy" ? "warning" : w.status === "idle" ? "healthy" : "muted"}>{w.status}</StatusBadge>
+                  <WorkerSessionBadge worker={w} />
                 </td>
                 <td className="px-5 py-3 font-mono text-sm text-foreground">{w.activeJobs}</td>
                 <td className="px-5 py-3 font-mono text-sm text-foreground">{w.capacity}</td>
@@ -558,7 +562,7 @@ function AgentRegistryTab() {
                     )}
                   </div>
                 </td>
-                <td className="px-5 py-3 text-sm text-muted-foreground">{w.lastHeartbeat ? formatRelativeTime(w.lastHeartbeat) : "—"}</td>
+                <td className="px-5 py-3 text-sm text-muted-foreground">{w.lastHeartbeatAt ? formatRelativeTime(w.lastHeartbeatAt) : w.lastHeartbeat ? formatRelativeTime(w.lastHeartbeat) : "—"}</td>
               </tr>
             ))}
           </tbody>
