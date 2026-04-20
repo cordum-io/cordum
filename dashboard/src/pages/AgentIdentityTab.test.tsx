@@ -314,6 +314,21 @@ describe("AgentIdentityTab rendered", () => {
       cleanup();
     }
   });
+
+  it("keeps Team tenants locked unless agentIdentity is explicitly granted", () => {
+    hookState.license.data = {
+      plan: "team",
+      entitlements: {},
+    } as any;
+    const { container, cleanup } = renderPage();
+    try {
+      expect(container.textContent).toContain("Agent Identity Directory");
+      expect(container.textContent).toContain("requires an Enterprise license");
+      expect(container.textContent).toContain("team");
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 /* ------------------------------------------------------------------ */

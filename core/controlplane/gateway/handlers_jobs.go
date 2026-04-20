@@ -58,8 +58,7 @@ func safeUnmarshal(data []byte, v any, field, jobID string) bool {
 // --- Handlers ---
 
 func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
 		return
 	}
 	// Prefer Redis snapshot (consistent across all replicas).
@@ -328,6 +327,9 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
 		return
 	}
+	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
+		return
+	}
 	limit, _ := parsePagination(r, 50)
 	stateFilter := strings.ToUpper(r.URL.Query().Get("state"))
 	topicFilter := r.URL.Query().Get("topic")
@@ -413,6 +415,9 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
+		return
+	}
 	id, ok := requirePathParam(w, r, "id")
 	if !ok {
 		return
@@ -666,6 +671,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) {
 	if s.jobStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
+		return
+	}
+	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -1078,8 +1086,7 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin") {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -1169,8 +1176,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store or bus unavailable")
 		return
 	}
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin") {
 		return
 	}
 	jobID, ok := requirePathParam(w, r, "id")
@@ -1328,16 +1334,14 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
-	// RBAC: only admin and user roles may submit jobs.
-	// This matches the gRPC handler (SubmitJob) which also allows "admin"
-	// and "user" roles. Keep both in sync to avoid role asymmetry.
-	if err := s.requireRole(r, "admin", "user"); err != nil {
+	// RBAC: custom roles may submit when they hold jobs.write. When advanced
+	// RBAC is disabled, preserve the historical admin/user fallback.
+	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin", "user") {
 		actorID, role := "anonymous", "none"
 		if ac := authFromRequest(r); ac != nil {
 			actorID, role = ac.PrincipalID, ac.Role
 		}
-		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", "", "", actorID, role, "job submit denied: "+err.Error())
-		writeForbidden(w, r, err)
+		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", "", "", actorID, role, "job submit denied: permission or role check failed")
 		return
 	}
 

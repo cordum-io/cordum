@@ -6,36 +6,40 @@ func TestDefaultEntitlementsByTier(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		plan         Plan
-		maxWorkers   int64
-		rps          int64
-		auditDays    int64
-		approvalMode string
+		name          string
+		plan          Plan
+		maxWorkers    int64
+		rps           int64
+		auditDays     int64
+		approvalMode  string
+		agentIdentity bool
 	}{
 		{
-			name:         "community",
-			plan:         PlanCommunity,
-			maxWorkers:   3,
-			rps:          500,
-			auditDays:    7,
-			approvalMode: string(ApprovalModeSingle),
+			name:          "community",
+			plan:          PlanCommunity,
+			maxWorkers:    3,
+			rps:           500,
+			auditDays:     7,
+			approvalMode:  string(ApprovalModeSingle),
+			agentIdentity: false,
 		},
 		{
-			name:         "team",
-			plan:         PlanTeam,
-			maxWorkers:   25,
-			rps:          2000,
-			auditDays:    90,
-			approvalMode: string(ApprovalModeMulti),
+			name:          "team",
+			plan:          PlanTeam,
+			maxWorkers:    25,
+			rps:           2000,
+			auditDays:     90,
+			approvalMode:  string(ApprovalModeMulti),
+			agentIdentity: false,
 		},
 		{
-			name:         "enterprise",
-			plan:         PlanEnterprise,
-			maxWorkers:   Unlimited,
-			rps:          10000,
-			auditDays:    Unlimited,
-			approvalMode: string(ApprovalModeCustom),
+			name:          "enterprise",
+			plan:          PlanEnterprise,
+			maxWorkers:    Unlimited,
+			rps:           10000,
+			auditDays:     Unlimited,
+			approvalMode:  string(ApprovalModeCustom),
+			agentIdentity: true,
 		},
 	}
 
@@ -56,6 +60,9 @@ func TestDefaultEntitlementsByTier(t *testing.T) {
 			}
 			if got := readNamedStringField(entitlements, "ApprovalMode"); got != tc.approvalMode {
 				t.Fatalf("ApprovalMode = %q, want %q", got, tc.approvalMode)
+			}
+			if got := readNamedBoolField(entitlements, "AgentIdentity"); got != tc.agentIdentity {
+				t.Fatalf("AgentIdentity = %v, want %v", got, tc.agentIdentity)
 			}
 		})
 	}

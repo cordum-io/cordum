@@ -37,19 +37,12 @@ import {
   Command,
   ExternalLink,
   Shield,
-  ShieldCheck,
   ShieldAlert,
-  GitBranch,
   Package,
   Database,
   Hash,
-  Layers,
-  Zap,
   Menu,
   X,
-  Eye,
-  History,
-  TrendingUp,
 } from "lucide-react";
 
 /*
@@ -93,10 +86,6 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Govern",
     items: [
       { path: "/govern/overview", label: "Policy Studio", icon: Shield },
-      { path: "/govern/velocity-rules", label: "Velocity Rules", icon: Zap },
-      { path: "/govern/replay", label: "Policy Replay", icon: History },
-      { path: "/govern/analytics", label: "Rule Analytics", icon: TrendingUp },
-      { path: "/govern/tenants", label: "Tenants", icon: Layers },
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
     ],
   },

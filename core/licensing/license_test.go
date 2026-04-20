@@ -348,37 +348,34 @@ func TestPublicKeyFromEnvFallbacks(t *testing.T) {
 	}
 }
 
-func TestParseLicenseLegacyCompat(t *testing.T) {
-	now := time.Date(2026, 4, 9, 12, 0, 0, 0, time.UTC)
-	pub, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-
-	graceDays := 21
-	legacy := legacyClaims{
-		OrgID:     "org-compat",
-		LicenseID: "lic-compat",
-		Plan:      "team",
-		Features: map[string]bool{
+func TestParseLicenseRejectsLegacyFormat(t *testing.T) {
+	// The pre-GA migration layer that silently projected the legacy
+	// top-level `features` + `limits` envelope onto the current Claims
+	// record was removed in the legacy sweep. Operators running such a
+	// license must regenerate via cordum-tools — parseLicense must now
+	// return ErrUnsupportedLegacyLicenseFormat rather than migrating
+	// silently.
+	legacyPayload := map[string]any{
+		"org_id":     "org-compat",
+		"license_id": "lic-compat",
+		"plan":       "team",
+		"features": map[string]bool{
 			"rbac":        true,
 			"white_label": true,
 		},
-		Limits: map[string]int64{
+		"limits": map[string]int64{
 			"max_workers": 25,
 		},
-		GraceDays: &graceDays,
-		ExpiresAt: now.Add(60 * 24 * time.Hour).Format(time.RFC3339),
 	}
 
 	doc := struct {
-		KID       string       `json:"kid,omitempty"`
-		Payload   legacyClaims `json:"payload"`
-		Signature string       `json:"signature"`
+		KID       string         `json:"kid,omitempty"`
+		Payload   map[string]any `json:"payload"`
+		Signature string         `json:"signature"`
 	}{
 		KID:       "kid-legacy",
-		Payload:   legacy,
-		Signature: signPayload(t, legacy, priv),
+		Payload:   legacyPayload,
+		Signature: "aW52YWxpZA==", // base64 placeholder — parser rejects before verifying signature
 	}
 
 	raw, err := json.MarshalIndent(doc, "", "  ")
@@ -386,30 +383,8 @@ func TestParseLicenseLegacyCompat(t *testing.T) {
 		t.Fatalf("marshal legacy license: %v", err)
 	}
 
-	lic, err := parseLicense(raw)
-	if err != nil {
-		t.Fatalf("parseLicense() error = %v", err)
-	}
-	if lic.KID != "kid-legacy" {
-		t.Fatalf("parseLicense() kid = %q, want %q", lic.KID, "kid-legacy")
-	}
-	if lic.Payload.Rights == nil || !lic.Payload.Rights.WhiteLabel {
-		t.Fatalf("parseLicense() rights = %#v, want white_label=true", lic.Payload.Rights)
-	}
-	if lic.Payload.Entitlements == nil {
-		t.Fatalf("parseLicense() entitlements = nil")
-	}
-	if !lic.Payload.FeatureEnabled("rbac") {
-		t.Fatalf("FeatureEnabled(rbac) = false, want true")
-	}
-	if lic.Payload.Entitlements.MaxWorkers != 25 {
-		t.Fatalf("migrated max_workers = %d, want 25", lic.Payload.Entitlements.MaxWorkers)
-	}
-	if lic.Payload.EffectiveGraceDays() != graceDays {
-		t.Fatalf("EffectiveGraceDays() = %d, want %d", lic.Payload.EffectiveGraceDays(), graceDays)
-	}
-	if err := lic.Verify(pub, now); err != nil {
-		t.Fatalf("Verify() after legacy compat parse error = %v", err)
+	if _, err := parseLicense(raw); !errors.Is(err, ErrUnsupportedLegacyLicenseFormat) {
+		t.Fatalf("parseLicense() error = %v, want ErrUnsupportedLegacyLicenseFormat", err)
 	}
 }
 

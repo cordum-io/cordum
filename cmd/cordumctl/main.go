@@ -57,6 +57,12 @@ func main() {
 		runWorkerCmd(args)
 	case "job":
 		runJobCmd(args)
+	case "evals":
+		runEvalsCmd(args)
+	case "delegation":
+		runDelegationCmd(args)
+	case "governance":
+		runGovernanceCmd(args)
 	default:
 		usage()
 		os.Exit(1)
@@ -375,6 +381,10 @@ Usage:
   cordumctl job submit --topic job.example --prompt \"hello\" [--input input.json]
   cordumctl job status <job_id>
   cordumctl job logs <job_id>
+  cordumctl evals extract --name <dataset> [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--topic pattern] [--rule id] [--verdicts deny,require_approval] [--max-entries 1000] [--dry-run]
+  cordumctl delegation keygen [--out ./delegation-ed25519.pem] [--kid dlg-1]
+  cordumctl governance backfill-decisions [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--dry-run] [--redis-url redis://localhost:6379]
+  cordumctl governance tail [--redis-url redis://localhost:6379] [--nats-url nats://localhost:4222]
   cordumctl pool list
   cordumctl pool get <name>
   cordumctl pool create <name> [--description text] [--requires cap1,cap2]

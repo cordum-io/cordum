@@ -30,11 +30,11 @@ interface SettingsCard {
 
 const settingsCards: SettingsCard[] = [
   { icon: Settings, title: "System Config", description: "Core system configuration and feature flags", path: "/settings/config" },
-  { icon: Globe, title: "Environments", description: "Manage deployment environments", path: "/settings/environments" },
+  { icon: Globe, title: "Environments", description: "Read-only deployment environment inventory from saved config", path: "/settings/environments" },
   { icon: Activity, title: "System Health", description: "Monitor system health and diagnostics", path: "/settings/health" },
   { icon: Key, title: "API Keys", description: "Manage API keys and access tokens", path: "/settings/keys" },
   { icon: Server, title: "MCP Server", description: "Configure MCP server connections", path: "/settings/mcp" },
-  { icon: Bell, title: "Notifications", description: "Notification channels and preferences", path: "/settings/notifications" },
+  { icon: Bell, title: "Notifications", description: "Config-backed delivery channels and routing rules", path: "/settings/notifications" },
   { icon: Users, title: "Users & RBAC", description: "User management and role assignments", path: "/settings/users", entitlement: ["rbac"] },
   { icon: Building2, title: "SSO & SAML", description: "Enterprise identity provider configuration and operator handoff details", path: "/settings/sso", entitlement: ["sso", "saml"] },
   { icon: Key, title: "SCIM Provisioning", description: "Publish the SCIM endpoint, rotate provisioning tokens, and inspect synced users", path: "/settings/scim", entitlement: ["scim"] },

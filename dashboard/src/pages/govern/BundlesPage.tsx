@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
-import { GitBranch, ShieldCheck, FileEdit, Plus } from "lucide-react";
+import { GitBranch, ShieldCheck, FileEdit } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -63,9 +63,6 @@ export default function BundlesPage({ hideHeader }: { hideHeader?: boolean } = {
           subtitle="Policy bundle inventory. Select a bundle to view YAML, diff, snapshots, and manage publish lifecycle."
           actions={
             <div className="flex items-center gap-2">
-              <Button variant="primary" size="sm" disabled title="Bundle creation not yet available — use the CLI to create new bundles">
-                <Plus className="w-3 h-3 mr-1" />Create Bundle
-              </Button>
               <StatusBadge variant={policyAccess.canPublish ? "healthy" : "muted"}>
                 {policyAccess.canPublish ? "publish access" : "publish restricted"}
               </StatusBadge>

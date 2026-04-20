@@ -46,19 +46,45 @@ type RoleDefinition = auth.RoleDefinition
 // ─── Constant re-exports ────────────────────────────────────────────────────
 
 const (
-	AuthSourceAPIKey  = auth.AuthSourceAPIKey
-	AuthSourceJWT     = auth.AuthSourceJWT
-	AuthSourceOIDC    = auth.AuthSourceOIDC
-	AuthSourceSession = auth.AuthSourceSession
-	samlMetadataPath  = auth.SAMLMetadataPath
-	samlLoginPath     = auth.SAMLLoginPath
-	samlACSPath       = auth.SAMLACSPath
-	oidcLoginPath     = auth.OIDCLoginPath
-	oidcCallbackPath  = auth.OIDCCallbackPath
-	scimBasePath      = auth.SCIMBasePath
-	scimUsersPath     = auth.SCIMUsersPath
-	scimGroupsPath    = auth.SCIMGroupsPath
-	sessionCookieName = auth.SessionCookieName
+	AuthSourceAPIKey        = auth.AuthSourceAPIKey
+	AuthSourceJWT           = auth.AuthSourceJWT
+	AuthSourceOIDC          = auth.AuthSourceOIDC
+	AuthSourceSession       = auth.AuthSourceSession
+	PermAdminAll            = auth.PermAdminAll
+	PermJobsRead            = auth.PermJobsRead
+	PermJobsWrite           = auth.PermJobsWrite
+	PermJobsApprove         = auth.PermJobsApprove
+	PermAgentsRead          = auth.PermAgentsRead
+	PermAgentsWrite         = auth.PermAgentsWrite
+	PermWorkflowsRead       = auth.PermWorkflowsRead
+	PermWorkflowsWrite      = auth.PermWorkflowsWrite
+	PermWorkersRead         = auth.PermWorkersRead
+	PermConfigRead          = auth.PermConfigRead
+	PermConfigWrite         = auth.PermConfigWrite
+	PermAuditRead           = auth.PermAuditRead
+	PermPacksInstall        = auth.PermPacksInstall
+	PermPacksUninstall      = auth.PermPacksUninstall
+	PermPolicyRead          = auth.PermPolicyRead
+	PermPolicyWrite         = auth.PermPolicyWrite
+	PermGovernanceRead      = auth.PermGovernanceRead
+	PermSchemasRead         = auth.PermSchemasRead
+	PermSchemasWrite        = auth.PermSchemasWrite
+	PermUsersRead           = auth.PermUsersRead
+	PermUsersWrite          = auth.PermUsersWrite
+	PermRolesRead           = auth.PermRolesRead
+	PermRolesWrite          = auth.PermRolesWrite
+	PermEvalsDatasetsRead   = auth.PermEvalsDatasetsRead
+	PermEvalsDatasetsWrite  = auth.PermEvalsDatasetsWrite
+	PermEvalsDatasetsDelete = auth.PermEvalsDatasetsDelete
+	samlMetadataPath        = auth.SAMLMetadataPath
+	samlLoginPath           = auth.SAMLLoginPath
+	samlACSPath             = auth.SAMLACSPath
+	oidcLoginPath           = auth.OIDCLoginPath
+	oidcCallbackPath        = auth.OIDCCallbackPath
+	scimBasePath            = auth.SCIMBasePath
+	scimUsersPath           = auth.SCIMUsersPath
+	scimGroupsPath          = auth.SCIMGroupsPath
+	sessionCookieName       = auth.SessionCookieName
 )
 
 // ─── Function re-exports (var = pkg.Fn preserves the original signature) ────
@@ -79,12 +105,14 @@ var (
 	NewSCIMService           = auth.NewSCIMService
 
 	// Store constructors.
-	NewRedisUserStore    = auth.NewRedisUserStore
-	NewRedisKeyStore     = auth.NewRedisKeyStore
-	NewRBACStore         = auth.NewRBACStore
-	NewPermissionChecker = auth.NewPermissionChecker
-	seedDefaultAdminUser = auth.SeedDefaultAdminUser
-	GenerateRawKey       = auth.GenerateRawKey
+	NewRedisUserStore      = auth.NewRedisUserStore
+	NewRedisKeyStore       = auth.NewRedisKeyStore
+	NewRBACStore           = auth.NewRBACStore
+	NewRBACStoreFromClient = auth.NewRBACStoreFromClient
+	NewPermissionChecker   = auth.NewPermissionChecker
+	RBACEntitled           = auth.RBACEntitled
+	seedDefaultAdminUser   = auth.SeedDefaultAdminUser
+	GenerateRawKey         = auth.GenerateRawKey
 
 	// Validation helpers.
 	ValidatePassword  = auth.ValidatePassword

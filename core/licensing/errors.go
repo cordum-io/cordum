@@ -17,6 +17,14 @@ var (
 	ErrLicenseExpired          = errors.New("license expired")
 	ErrInvalidPublicKey        = errors.New("invalid public key")
 	ErrTierLimitExceeded       = errors.New("tier limit exceeded")
+
+	// ErrUnsupportedLegacyLicenseFormat is returned when a license
+	// envelope uses the pre-GA top-level features/limits shape. The
+	// migration layer that silently projected those onto the current
+	// Claims/Rights/Entitlements record was removed in the pre-GA
+	// legacy sweep; operators running such a license must regenerate
+	// it via the cordum-tools license-generator in the current schema.
+	ErrUnsupportedLegacyLicenseFormat = errors.New("license uses unsupported legacy features/limits envelope; regenerate with cordum-tools license-generator in the current schema")
 )
 
 // GraceError captures grace-window metadata after signature verification succeeds.

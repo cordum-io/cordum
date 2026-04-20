@@ -21,10 +21,10 @@ const ACTIONS = [
     path: "/jobs",
   },
   {
-    label: "Policies",
+    label: "Policy Studio",
     description: "Manage safety policies",
     icon: Shield,
-    path: "/policy",
+    path: "/govern/overview",
   },
   {
     label: "Approvals",

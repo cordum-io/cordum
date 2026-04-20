@@ -87,7 +87,7 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "pack dependencies unavailable")
 		return
 	}
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPacksInstall, []string{"admin"}, s.lockStore) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxPackUploadBytes)
@@ -340,7 +340,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "pack dependencies unavailable")
 		return
 	}
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPacksUninstall, []string{"admin"}, s.lockStore) {
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))

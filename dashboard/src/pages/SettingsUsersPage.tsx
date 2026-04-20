@@ -13,6 +13,13 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable, SkeletonCard } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DialogOverlay } from "@/components/ui/DialogOverlay";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Tabs } from "@/components/ui/Tabs";
+import { LabeledField } from "@/components/ui/LabeledField";
+import { StatTile } from "@/components/ui/StatTile";
+import { InstrumentCard, InstrumentCardBody } from "@/components/ui/InstrumentCard";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
 import { useLicense } from "@/hooks/useLicense";
 import { Search, UserPlus, Users, Shield, Trash2, X, Mail, Key, Plus, Check } from "lucide-react";
@@ -56,6 +63,8 @@ const ALL_PERMISSIONS = [
   { key: "jobs.read", label: "View Jobs", category: "Jobs" },
   { key: "jobs.write", label: "Create/Edit Jobs", category: "Jobs" },
   { key: "jobs.approve", label: "Approve Jobs", category: "Jobs" },
+  { key: "agents.read", label: "View Agent Identities", category: "Agents" },
+  { key: "agents.write", label: "Manage Agent Identities", category: "Agents" },
   { key: "workflows.read", label: "View Workflows", category: "Workflows" },
   { key: "workflows.write", label: "Create/Edit Workflows", category: "Workflows" },
   { key: "workers.read", label: "View Workers", category: "Workers" },
@@ -226,10 +235,14 @@ export default function SettingsUsersPage() {
     );
   }
 
-  const tabs = ["users", "roles"];
   const filtered = (users || []).filter(u =>
     !search || u.email.toLowerCase().includes(search.toLowerCase()) || u.name.toLowerCase().includes(search.toLowerCase())
   );
+  const totalUsers = users?.length ?? 0;
+  const activeUsers = users?.filter((user) => user.status === "active").length ?? 0;
+  const invitedUsers = users?.filter((user) => user.status === "invited").length ?? 0;
+  const customRoles = roles.filter((role) => !role.built_in).length;
+  const summaryLoading = isLoading || rolesLoading;
 
   if (isError) {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load users"} onRetry={() => void refetch()} />;
@@ -237,44 +250,93 @@ export default function SettingsUsersPage() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <PageHeader title="Users & RBAC" subtitle="Manage team access and role-based permissions" actions={<><Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
-          <UserPlus className="w-3 h-3 mr-1" />Create User
-        </Button></>} />
+      <PageHeader
+        title="Users & RBAC"
+        subtitle="Manage team access and role-based permissions"
+        actions={
+          activeTab === "roles" && rbacEntitled ? (
+            <Button variant="primary" size="sm" onClick={() => openRoleEditor()}>
+              <Plus className="w-3 h-3 mr-1" />
+              Custom Role
+            </Button>
+          ) : (
+            <Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
+              <UserPlus className="w-3 h-3 mr-1" />
+              Create User
+            </Button>
+          )
+        }
+      />
 
-      {/* Tabs */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-1 p-1 rounded-2xl bg-surface-1">
-          {tabs.map(tab => (
-            <button type="button"
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={cn(
-                "px-4 py-1.5 text-xs font-medium rounded-2xl transition-colors capitalize",
-                activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-        {activeTab === "users" && (
-          <div className="relative w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search users..."
-              className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {summaryLoading ? (
+          Array.from({ length: 4 }).map((_, index) => <SkeletonCard key={index} />)
+        ) : (
+          <>
+            <StatTile
+              accent="cordum"
+              label="Users"
+              value={totalUsers}
+              helperText="Total directory entries"
+              icon={<Users className="h-4 w-4" />}
             />
-          </div>
-        )}
-        {activeTab === "roles" && rbacEntitled && (
-          <Button variant="primary" size="sm" onClick={() => openRoleEditor()}>
-            <Plus className="w-3 h-3 mr-1" />Custom Role
-          </Button>
+            <StatTile
+              accent={activeUsers > 0 ? "healthy" : "muted"}
+              label="Active"
+              value={activeUsers}
+              helperText="Signed-in team members"
+              icon={<Check className="h-4 w-4" />}
+            />
+            <StatTile
+              accent={invitedUsers > 0 ? "warning" : "muted"}
+              label="Invited"
+              value={invitedUsers}
+              helperText="Awaiting first login"
+              icon={<Mail className="h-4 w-4" />}
+            />
+            <StatTile
+              accent={customRoles > 0 ? "info" : "muted"}
+              label="Custom roles"
+              value={customRoles}
+              helperText={`${roles.length} total roles`}
+              icon={<Shield className="h-4 w-4" />}
+            />
+          </>
         )}
       </div>
+
+      <InstrumentCard className="p-4">
+        <InstrumentCardBody className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <Tabs
+            ariaLabel="User and role views"
+            variant="segmented"
+            className="w-full lg:w-auto"
+            activeTab={activeTab}
+            onChange={setActiveTab}
+            tabs={[
+              { id: "users", label: "Users", count: totalUsers },
+              { id: "roles", label: "Roles", count: roles.length },
+            ]}
+          />
+          {activeTab === "users" ? (
+            <div className="w-full max-w-sm">
+              <Input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search users..."
+                aria-label="Search users"
+                icon={<Search className="h-3.5 w-3.5" />}
+                className="bg-surface-1"
+              />
+            </div>
+          ) : (
+            <p className="max-w-md text-sm text-muted-foreground">
+              Review the built-in roles, then extend them with custom enterprise RBAC roles when you need tighter permission boundaries.
+            </p>
+          )}
+        </InstrumentCardBody>
+      </InstrumentCard>
 
       {/* Users Tab */}
       {activeTab === "users" && (
@@ -307,17 +369,17 @@ export default function SettingsUsersPage() {
                       </div>
                     </td>
                     <td className="px-5 py-3">
-                      <select
+                      <Select
                         value={user.role}
                         onChange={(e) => updateRoleMutation.mutate({ id: user.id, role: e.target.value })}
                         disabled={updateRoleMutation.isPending}
-                        className="h-7 px-2 text-xs font-medium rounded-lg border border-border bg-surface-0 text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                        className="h-7 max-w-[180px] rounded-lg bg-surface-0 px-2 py-0 text-xs font-medium"
                       >
                         {BASIC_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                         {roles.filter(r => !r.built_in).map(r => (
                           <option key={r.name} value={r.name}>{r.name}</option>
                         ))}
-                      </select>
+                      </Select>
                     </td>
                     <td className="px-5 py-3">
                       <StatusBadge variant={user.status === "active" ? "healthy" : user.status === "invited" ? "warning" : "danger"}>{user.status}</StatusBadge>
@@ -459,7 +521,7 @@ export default function SettingsUsersPage() {
                               {roles.map(r => (
                                 <td key={r.name} className="text-center px-3 py-1.5">
                                   {hasPermission(r.permissions, perm.key) ? (
-                                    <Check className="w-3.5 h-3.5 text-[var(--color-success)] mx-auto" />
+                                    <Check className="mx-auto h-3.5 w-3.5 text-success" />
                                   ) : (
                                     <span className="block w-3.5 h-3.5 mx-auto text-border">—</span>
                                   )}
@@ -487,52 +549,44 @@ export default function SettingsUsersPage() {
           </button>
         </div>
         <div className="space-y-4">
-          <div>
-            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Username</label>
-            <input
+          <LabeledField label="Username">
+            <Input
               type="text"
               value={inviteUsername}
               onChange={(e) => setInviteUsername(e.target.value)}
               placeholder="jsmith"
-              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              className="bg-surface-2"
             />
-          </div>
-          <div>
-            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Email</label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="user@company.com"
-                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Password</label>
-            <div className="relative">
-              <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <input
-                type="password"
-                value={invitePassword}
-                onChange={(e) => setInvitePassword(e.target.value)}
-                placeholder="Minimum 8 characters"
-                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Role</label>
-            <select
+          </LabeledField>
+          <LabeledField label="Email">
+            <Input
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="user@company.com"
+              icon={<Mail className="h-3.5 w-3.5" />}
+              className="bg-surface-2"
+            />
+          </LabeledField>
+          <LabeledField label="Password">
+            <Input
+              type="password"
+              value={invitePassword}
+              onChange={(e) => setInvitePassword(e.target.value)}
+              placeholder="Minimum 8 characters"
+              icon={<Key className="h-3.5 w-3.5" />}
+              className="bg-surface-2"
+            />
+          </LabeledField>
+          <LabeledField label="Role">
+            <Select
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value)}
-              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              className="bg-surface-2"
             >
               {BASIC_ROLES.map(r => <option key={r.value} value={r.value}>{r.label} — {r.desc}</option>)}
-            </select>
-          </div>
+            </Select>
+          </LabeledField>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" size="sm" onClick={() => { setInviteOpen(false); resetInviteForm(); }}>Cancel</Button>
             <Button variant="primary" size="sm" onClick={() => inviteMutation.mutate()} loading={inviteMutation.isPending} disabled={!inviteUsername.trim() || !invitePassword.trim()}>
@@ -552,32 +606,32 @@ export default function SettingsUsersPage() {
         </div>
         <div className="space-y-4">
           {!editingRole && (
-            <div>
-              <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Role Name</label>
-              <input
+            <LabeledField label="Role name">
+              <Input
                 type="text"
                 value={roleName}
                 onChange={(e) => setRoleName(e.target.value)}
                 placeholder="devops_engineer"
-                className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                className="bg-surface-2"
               />
-            </div>
+            </LabeledField>
           )}
-          <div>
-            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Description</label>
-            <input
+          <LabeledField label="Description">
+            <Input
               type="text"
               value={roleDesc}
               onChange={(e) => setRoleDesc(e.target.value)}
               placeholder="What this role is for"
-              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              className="bg-surface-2"
             />
-          </div>
+          </LabeledField>
 
           {/* Inherit from */}
           {!(editingRole?.built_in) && (
-            <div>
-              <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Inherits From</label>
+            <LabeledField
+              label="Inherits from"
+              description="Start from a related role, then layer in extra permissions."
+            >
               <div className="flex flex-wrap gap-2">
                 {roles.filter(r => r.name !== editingRole?.name).map(r => (
                   <button
@@ -595,12 +649,14 @@ export default function SettingsUsersPage() {
                   </button>
                 ))}
               </div>
-            </div>
+            </LabeledField>
           )}
 
           {/* Permissions */}
-          <div>
-            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-2">Permissions</label>
+          <LabeledField
+            label="Permissions"
+            description="Select the capabilities this role grants across each product area."
+          >
             <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
               {PERMISSION_CATEGORIES.map(cat => (
                 <div key={cat}>
@@ -610,36 +666,29 @@ export default function SettingsUsersPage() {
                       const checked = rolePerms.includes(perm.key);
                       const disabled = editingRole?.built_in && perm.key === "admin.*";
                       return (
-                        <label
+                        <div
                           key={perm.key}
                           className={cn(
-                            "flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-2/50 transition-colors cursor-pointer",
-                            disabled && "opacity-50 cursor-not-allowed",
+                            "flex items-center gap-2 rounded px-2 py-1 transition-colors hover:bg-surface-2/50",
+                            disabled && "opacity-50",
                           )}
                         >
-                          <span className={cn(
-                            "flex items-center justify-center w-4 h-4 rounded border transition-colors shrink-0",
-                            checked ? "bg-cordum border-cordum" : "border-border bg-surface-2",
-                          )}>
-                            {checked && <Check className="w-2.5 h-2.5 text-white" />}
-                          </span>
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={checked}
                             onChange={() => !disabled && togglePerm(perm.key)}
                             disabled={disabled}
-                            className="sr-only"
+                            aria-label={`${perm.label} permission`}
                           />
                           <span className="text-xs text-foreground">{perm.label}</span>
                           <span className="text-[10px] font-mono text-muted-foreground ml-auto">{perm.key}</span>
-                        </label>
+                        </div>
                       );
                     })}
                   </div>
                 </div>
               ))}
             </div>
-          </div>
+          </LabeledField>
 
           <div className="flex justify-end gap-2 pt-2 border-t border-border">
             <Button variant="ghost" size="sm" onClick={closeRoleEditor}>Cancel</Button>

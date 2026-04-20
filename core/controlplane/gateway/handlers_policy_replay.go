@@ -129,8 +129,7 @@ const (
 )
 
 func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermPolicyWrite, "admin") {
 		return
 	}
 	if s.jobStore == nil {

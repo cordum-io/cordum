@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Users, ListChecks, Server, Plus } from "lucide-react";
+import { Users, ListChecks, Server } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -76,7 +76,11 @@ export function parseTenantSummaries(
   return summaries.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export default function TenantsPage() {
+export default function TenantsPage({
+  hideHeader,
+}: {
+  hideHeader?: boolean;
+} = {}) {
   const navigate = useNavigate();
   const policyAccess = usePolicyAccess();
   const canManageTenants = policyAccess.canManageTenants;
@@ -117,21 +121,28 @@ export default function TenantsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        label="Govern"
-        title="Tenants"
-        subtitle="Canonical tenant access boundary surface for topic allow/deny, MCP governance, and tenant limits."
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="primary" size="sm" disabled title="Tenants are managed through policy bundles — edit the bundle YAML to add tenants">
-              <Plus className="w-3 h-3 mr-1" />Create Tenant
-            </Button>
-            <StatusBadge variant={canManageTenants ? "healthy" : "muted"}>
-              {canManageTenants ? "editor access" : "read-only role"}
-            </StatusBadge>
-          </div>
-        }
-      />
+      {!hideHeader && (
+        <PageHeader
+          label="Govern"
+          title="Scope & rollout"
+          subtitle="Inspect tenant boundaries, MCP governance posture, and bundle-backed rollout state from one policy surface."
+          actions={
+            <div className="flex items-center gap-2">
+              <StatusBadge variant={canManageTenants ? "healthy" : "muted"}>
+                {canManageTenants ? "editor access" : "read-only role"}
+              </StatusBadge>
+            </div>
+          }
+        />
+      )}
+
+      {hideHeader && (
+        <div className="flex items-center justify-end">
+          <StatusBadge variant={canManageTenants ? "healthy" : "muted"}>
+            {canManageTenants ? "editor access" : "read-only role"}
+          </StatusBadge>
+        </div>
+      )}
 
       <InfoBanner variant="cordum">
         Tenant policies are bundle-backed. Changes apply through existing policy bundle save paths and preserve source YAML compatibility.

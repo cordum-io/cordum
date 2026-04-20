@@ -29,7 +29,7 @@ type policyBundleSimulateRequest struct {
 }
 
 func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundles, updatedAt, err := s.loadPolicyBundles(r.Context())
@@ -47,7 +47,7 @@ func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
@@ -110,7 +110,7 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
@@ -173,8 +173,7 @@ func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermPolicyRead, "admin") {
 		return
 	}
 
@@ -259,7 +258,7 @@ func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	ruleID := strings.TrimSpace(r.PathValue("id"))
@@ -368,7 +367,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -406,7 +405,7 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -493,7 +492,7 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -535,7 +534,7 @@ func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -601,7 +600,7 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	var body policyPublishRequest
@@ -681,7 +680,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	var body policyRollbackRequest
@@ -749,7 +748,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	limit := parseAuditLimit(r.URL.Query().Get("limit"))
@@ -937,7 +936,7 @@ func timestampFromMicros(value int64) string {
 }
 
 func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	snapshots, _, err := s.loadPolicySnapshots(r.Context())
@@ -959,7 +958,7 @@ func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.
 }
 
 func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	var body struct {
@@ -1006,7 +1005,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 }
 
 func (s *server) handleGetPolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	snapshotID := strings.TrimSpace(r.PathValue("id"))

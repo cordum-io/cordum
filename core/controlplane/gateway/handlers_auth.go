@@ -593,9 +593,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Require admin role
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, PermUsersWrite, "admin") {
 		return
 	}
 
@@ -673,8 +671,7 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, PermUsersRead, "admin") {
 		return
 	}
 
@@ -711,8 +708,7 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, PermUsersWrite, "admin") {
 		return
 	}
 
@@ -792,8 +788,7 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, PermUsersWrite, "admin") {
 		return
 	}
 
@@ -853,8 +848,7 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, PermUsersWrite, "admin") {
 		return
 	}
 

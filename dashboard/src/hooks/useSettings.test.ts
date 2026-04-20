@@ -12,6 +12,7 @@ import {
   useMcpResources,
   useMcpStatus,
   useMcpTools,
+  useNotificationRules,
   useSetMcpConfig,
   useNotificationChannels,
   useSetConfig,
@@ -61,29 +62,6 @@ describe("useSettings internals", () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.clearAllMocks();
-  });
-
-  it("readLocalStorage returns fallback when missing or corrupt, and parses valid JSON", () => {
-    expect(__settingsInternal.readLocalStorage("missing", { ok: true })).toEqual({ ok: true });
-
-    window.localStorage.setItem("key", JSON.stringify({ value: 123 }));
-    expect(__settingsInternal.readLocalStorage("key", { value: 0 })).toEqual({ value: 123 });
-
-    window.localStorage.setItem("bad", "{not-json");
-    expect(__settingsInternal.readLocalStorage("bad", ["fallback"])).toEqual(["fallback"]);
-  });
-
-  it("writeLocalStorage writes JSON and tolerates setItem failures", () => {
-    __settingsInternal.writeLocalStorage("w-key", { a: 1 });
-    expect(window.localStorage.getItem("w-key")).toBe("{\"a\":1}");
-
-    const setItemSpy = vi
-      .spyOn(Storage.prototype, "setItem")
-      .mockImplementation(() => {
-        throw new Error("quota exceeded");
-      });
-    expect(() => __settingsInternal.writeLocalStorage("w-key", { b: 2 })).not.toThrow();
-    setItemSpy.mockRestore();
   });
 
   it("resolveMcpConfig supports nested and flat mcp values", () => {
@@ -194,12 +172,12 @@ describe("useSettings hooks", () => {
     hook.unmount();
   });
 
-  it("useEnvironments returns default when config is absent", async () => {
+  it("useEnvironments returns an empty inventory when config is absent", async () => {
     mockFetch([{ match: "/config", method: "GET", body: null }]);
 
     const hook = renderWithQueryClient(() => useEnvironments());
     await hook.waitFor(() => {
-      expect(hook.result.current?.data).toEqual([__settingsInternal.DEFAULT_ENVIRONMENT]);
+      expect(hook.result.current?.data).toEqual([]);
     });
     hook.unmount();
   });
@@ -220,7 +198,7 @@ describe("useSettings hooks", () => {
     hook.unmount();
   });
 
-  it("useNotificationChannels prefers config channels, falls back to localStorage", async () => {
+  it("useNotificationChannels returns config channels and stays empty when config has no notifications", async () => {
     window.localStorage.setItem(
       "cordum-notification-channels",
       JSON.stringify([{ id: "ls-1", name: "Local", type: "email", config: {}, enabled: true }]),
@@ -244,11 +222,25 @@ describe("useSettings hooks", () => {
     });
     fromConfig.unmount();
 
-    const fromLocalStorage = renderWithQueryClient(() => useNotificationChannels());
-    await fromLocalStorage.waitFor(() => {
-      expect(fromLocalStorage.result.current?.data?.[0].id).toBe("ls-1");
+    const emptyConfig = renderWithQueryClient(() => useNotificationChannels());
+    await emptyConfig.waitFor(() => {
+      expect(emptyConfig.result.current?.data).toEqual([]);
     });
-    fromLocalStorage.unmount();
+    emptyConfig.unmount();
+  });
+
+  it("useNotificationRules stays empty when config has no notifications block", async () => {
+    window.localStorage.setItem(
+      "cordum-notification-rules",
+      JSON.stringify([{ id: "ls-rule-1", pattern: "approval.*", channels: ["email"], severity: "warning", enabled: true }]),
+    );
+    mockFetch([{ match: "/config", method: "GET", body: null }]);
+
+    const hook = renderWithQueryClient(() => useNotificationRules());
+    await hook.waitFor(() => {
+      expect(hook.result.current?.data).toEqual([]);
+    });
+    hook.unmount();
   });
 
   it("useSetConfig posts /config and invalidates query on success", async () => {

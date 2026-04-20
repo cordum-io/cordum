@@ -10,6 +10,9 @@
     },
     {
       "name": "ContextEngine"
+    },
+    {
+      "name": "OutputPolicyService"
     }
   ],
   "consumes": [
@@ -146,6 +149,38 @@
           "CordumApi"
         ]
       }
+    },
+    "/cordum.v1.OutputPolicyService/CheckOutput": {
+      "post": {
+        "operationId": "OutputPolicyService_CheckOutput",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1OutputCheckResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1OutputCheckRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OutputPolicyService"
+        ]
+      }
     }
   },
   "definitions": {
@@ -262,6 +297,160 @@
           "type": "string"
         },
         "content": {
+          "type": "string"
+        }
+      }
+    },
+    "v1OutputCheckRequest": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "tenant": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "resultPtr": {
+          "type": "string"
+        },
+        "artifactPtrs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "errorMessage": {
+          "type": "string"
+        },
+        "errorCode": {
+          "type": "string"
+        },
+        "workerId": {
+          "type": "string"
+        },
+        "executionMs": {
+          "type": "string",
+          "format": "int64"
+        },
+        "outputSizeBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "contentHash": {
+          "type": "string"
+        },
+        "workflowId": {
+          "type": "string"
+        },
+        "stepId": {
+          "type": "string"
+        },
+        "outputContent": {
+          "type": "string",
+          "format": "byte"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "riskTags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "principalId": {
+          "type": "string"
+        },
+        "packId": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "originalLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "v1OutputCheckResponse": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "$ref": "#/definitions/v1OutputDecision"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "ruleId": {
+          "type": "string"
+        },
+        "policySnapshot": {
+          "type": "string"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1OutputFinding"
+          }
+        },
+        "redactedPtr": {
+          "type": "string"
+        }
+      }
+    },
+    "v1OutputDecision": {
+      "type": "string",
+      "enum": [
+        "OUTPUT_DECISION_ALLOW",
+        "OUTPUT_DECISION_QUARANTINE",
+        "OUTPUT_DECISION_REDACT"
+      ],
+      "default": "OUTPUT_DECISION_ALLOW"
+    },
+    "v1OutputFinding": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "string",
+          "format": "int64"
+        },
+        "length": {
+          "type": "string",
+          "format": "int64"
+        },
+        "scanner": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "format": "float"
+        },
+        "matchedPattern": {
           "type": "string"
         }
       }

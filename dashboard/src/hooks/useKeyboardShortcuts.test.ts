@@ -58,7 +58,7 @@ describe("useKeyboardShortcuts", () => {
   });
 
   it("SHORTCUTS and NAV_MAP expose expected navigation bindings", () => {
-    expect(SHORTCUTS).toHaveLength(11);
+    expect(SHORTCUTS).toHaveLength(15);
     expect(SHORTCUTS[0]).toMatchObject({ keys: ["g", "h"], action: "/" });
     expect(SHORTCUTS.find((s) => s.label === "g j")?.action).toBe("/jobs");
     expect(__keyboardShortcutsInternal.NAV_MAP.get("o")).toBe("/");

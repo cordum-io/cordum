@@ -13,8 +13,7 @@ import (
 
 // handleGetWorker returns a single worker by ID from the Redis snapshot.
 func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
 		return
 	}
 
@@ -67,8 +66,7 @@ func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 // When the per-worker index is empty (pre-existing jobs), falls back to
 // recent jobs filtered by the worker's pool topics.
 func (s *server) handleGetWorkerJobs(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
 		return
 	}
 
@@ -178,8 +176,7 @@ func (s *server) recentJobsByPool(ctx context.Context, pool string, limit int64)
 
 // handleListPools returns all pools with utilization metrics.
 func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
 		return
 	}
 
@@ -206,8 +203,7 @@ func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
 
 // handleGetPool returns a single pool's detail with its workers and topics.
 func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
 		return
 	}
 

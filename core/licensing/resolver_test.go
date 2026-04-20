@@ -202,6 +202,34 @@ func TestEntitlementResolverConcurrentReads(t *testing.T) {
 	wg.Wait()
 }
 
+func TestEntitlementResolverBackfillsAgentIdentityFromEnterprisePlanDefaults(t *testing.T) {
+	t.Parallel()
+
+	license := buildTestLicense(t, PlanEnterprise, func(entitlements *Entitlements) {
+		entitlements.AgentIdentity = false
+	})
+
+	resolver := NewEntitlementResolver()
+	resolver.loadFromEnv = func() (*License, error) { return license, nil }
+	resolver.publicKeyFromEnv = func() (ed25519.PublicKey, error) {
+		return ed25519.PublicKey(make([]byte, ed25519.PublicKeySize)), nil
+	}
+	resolver.verify = func(*License, ed25519.PublicKey, time.Time) error { return nil }
+
+	resolver.Init()
+
+	if !resolver.Entitlements().AgentIdentity {
+		t.Fatal("AgentIdentity = false, want enterprise plan defaults to backfill true")
+	}
+	info := resolver.LicenseInfo()
+	if info == nil {
+		t.Fatal("LicenseInfo returned nil")
+	}
+	if !slices.Contains(info.Features, "agent_identity") {
+		t.Fatalf("expected agent_identity in features, got %#v", info.Features)
+	}
+}
+
 func buildTestLicense(t *testing.T, plan Plan, mutate func(*Entitlements)) *License {
 	t.Helper()
 

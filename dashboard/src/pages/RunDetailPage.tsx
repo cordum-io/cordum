@@ -11,6 +11,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Tabs } from "@/components/ui/Tabs";
 import {
   ArrowLeft,
   Send,
@@ -45,6 +46,7 @@ import {
   useRerunRun,
   type RunTimelineEvent,
 } from "@/hooks/useWorkflows";
+import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
 
 interface ChatMessage {
   id: string;
@@ -185,6 +187,7 @@ export default function WorkflowRunDetailPage() {
   const [selectedStep, setSelectedStep] = useState<RunStep | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [copiedRunId, setCopiedRunId] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Real data hooks
@@ -563,10 +566,22 @@ export default function WorkflowRunDetailPage() {
         />
       </div>
 
-      {/* Split Layout: Steps + Chat */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="border-b border-border bg-surface-0 px-5 py-3 shrink-0">
+        <Tabs
+          tabs={[
+            { id: "overview", label: "Overview" },
+            { id: "governance", label: "Governance" },
+          ]}
+          activeTab={activeTab}
+          onChange={setActiveTab}
+          ariaLabel="Workflow run sections"
+        />
+      </div>
+
+      {activeTab === "overview" && (
+        <div className="flex flex-1 overflow-hidden">
         {/* Steps Panel — Animated Graph */}
-        <div className="w-80 border-r border-border bg-surface-0 overflow-y-auto shrink-0">
+          <div className="w-80 border-r border-border bg-surface-0 overflow-y-auto shrink-0">
           <div className="p-4">
             <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-3">
               Execution Graph ({completedCount}/{totalSteps})
@@ -736,7 +751,7 @@ export default function WorkflowRunDetailPage() {
         </div>
 
         {/* Chat Panel */}
-        <div className="flex-1 flex flex-col">
+          <div className="flex-1 flex flex-col">
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border bg-surface-0">
             <MessageSquare className="w-4 h-4 text-cordum" />
             <span className="text-sm font-display font-semibold text-foreground">
@@ -839,7 +854,17 @@ export default function WorkflowRunDetailPage() {
             </p>
           </div>
         </div>
-      </div>
+        </div>
+      )}
+
+      {activeTab === "governance" && (
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <GovernanceTimeline
+            runId={run?.id ?? runId}
+            emptyHint="This workflow run has not evaluated any policy rules yet."
+          />
+        </div>
+      )}
 
       {/* Cancel Confirmation */}
       <ConfirmDialog

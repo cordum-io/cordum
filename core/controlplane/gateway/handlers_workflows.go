@@ -125,7 +125,7 @@ type createWorkflowRequest struct {
 }
 
 func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.workflowStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermWorkflowsWrite, []string{"admin"}, s.workflowStore) {
 		return
 	}
 	var req createWorkflowRequest
@@ -249,6 +249,9 @@ func (s *server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
 	}
+	if !s.requirePermissionOrRole(w, r, PermWorkflowsRead) {
+		return
+	}
 	id, ok := requirePathParam(w, r, "id")
 	if !ok {
 		return
@@ -267,7 +270,7 @@ func (s *server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.workflowStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermWorkflowsWrite, []string{"admin"}, s.workflowStore) {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -300,6 +303,9 @@ func (s *server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
 	}
+	if !s.requirePermissionOrRole(w, r, PermWorkflowsRead) {
+		return
+	}
 	orgID, err := s.resolveTenant(r, r.URL.Query().Get("org_id"))
 	if err != nil {
 		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
@@ -316,7 +322,7 @@ func (s *server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.workflowStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermWorkflowsWrite, []string{"admin"}, s.workflowStore) {
 		return
 	}
 	wfID := r.PathValue("id")
@@ -572,7 +578,7 @@ type rerunRequest struct {
 }
 
 func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.workflowEng, s.workflowStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermWorkflowsWrite, []string{"admin"}, s.workflowEng, s.workflowStore) {
 		return
 	}
 	runID := r.PathValue("id")
@@ -689,6 +695,9 @@ func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
 	}
+	if !s.requirePermissionOrRole(w, r, PermWorkflowsRead) {
+		return
+	}
 	wfID := r.PathValue("id")
 	if wfID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "missing workflow id")
@@ -716,6 +725,9 @@ func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleListAllRuns(w http.ResponseWriter, r *http.Request) {
 	if s.workflowStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
+		return
+	}
+	if !s.requirePermissionOrRole(w, r, PermWorkflowsRead) {
 		return
 	}
 	limit := int64(50)
@@ -826,6 +838,9 @@ func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
 	}
+	if !s.requirePermissionOrRole(w, r, PermWorkflowsRead) {
+		return
+	}
 	runID := r.PathValue("id")
 	if runID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "missing run id")
@@ -857,6 +872,9 @@ func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
 	}
+	if !s.requirePermissionOrRole(w, r, PermWorkflowsRead) {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "missing run id")
@@ -883,7 +901,7 @@ func (s *server) handleGetRunTimeline(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.workflowStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermWorkflowsWrite, []string{"admin"}, s.workflowStore) {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -974,7 +992,7 @@ func (s *server) handleWorkflowDryRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "workflow store unavailable")
 		return
 	}
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.safetyClient) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermWorkflowsWrite, []string{"admin"}, s.safetyClient) {
 		return
 	}
 	id := r.PathValue("id")

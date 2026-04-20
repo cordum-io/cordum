@@ -92,21 +92,6 @@ func newClient(baseURL, apiKey string, transport *http.Transport) *Client {
 	}
 }
 
-// BuildTLSTransport returns an [http.Transport] configured from the given
-// options, or nil when no TLS customization is needed.
-//
-// Deprecated: Use [BuildTLSTransportErr] which properly reports CA read/parse
-// failures. This wrapper calls [BuildTLSTransportErr] and logs errors to stderr
-// for backward compatibility.
-func BuildTLSTransport(opts TLSOptions) *http.Transport {
-	tr, err := BuildTLSTransportErr(opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "cordum sdk: tls transport: %v\n", err)
-		return nil
-	}
-	return tr
-}
-
 // BuildTLSTransportErr returns an [http.Transport] configured from the given
 // options, or (nil, nil) when no TLS customization is needed. It returns an
 // error if the CA certificate cannot be read or parsed, preventing a silent
@@ -282,6 +267,32 @@ type WorkerCredentialIssued struct {
 	Token string `json:"token"`
 }
 
+// ExtractIncidentsRequest mirrors the gateway incident-extraction payload.
+type ExtractIncidentsRequest struct {
+	Tenant      string   `json:"tenant,omitempty"`
+	Since       string   `json:"since,omitempty"`
+	Until       string   `json:"until,omitempty"`
+	Topic       string   `json:"topic,omitempty"`
+	RuleID      string   `json:"rule_id,omitempty"`
+	Verdicts    []string `json:"verdicts,omitempty"`
+	AgentID     string   `json:"agent_id,omitempty"`
+	MaxEntries  int      `json:"max_entries,omitempty"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	DryRun      bool     `json:"dry_run,omitempty"`
+}
+
+// ExtractIncidentsResponse summarizes an incident-to-dataset extraction run.
+type ExtractIncidentsResponse struct {
+	DatasetID        string   `json:"dataset_id,omitempty"`
+	Name             string   `json:"name"`
+	Version          int      `json:"version,omitempty"`
+	EntryCount       int      `json:"entry_count"`
+	DedupedCount     int      `json:"deduped_count,omitempty"`
+	ScannedDecisions int      `json:"scanned_decisions"`
+	Warnings         []string `json:"warnings,omitempty"`
+}
+
 func (c *Client) endpoint(path string) string {
 	base := strings.TrimRight(c.BaseURL, "/")
 	return base + path
@@ -369,6 +380,28 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, bod
 		return fmt.Errorf("decode json: %w", err)
 	}
 	return nil
+}
+
+// ExtractEvalDatasetFromIncidents scans decision-log incidents and optionally
+// persists the deduplicated result as an immutable eval dataset.
+func (c *Client) ExtractEvalDatasetFromIncidents(ctx context.Context, req *ExtractIncidentsRequest) (*ExtractIncidentsResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, fmt.Errorf("dataset name required")
+	}
+
+	path := "/api/v1/evals/datasets/from-incidents"
+	if req.DryRun {
+		path += "?dry_run=true"
+	}
+
+	var resp ExtractIncidentsResponse
+	if err := c.doJSON(ctx, http.MethodPost, path, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // CreateWorkflow creates or upserts a workflow and returns its ID.

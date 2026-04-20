@@ -1,6 +1,6 @@
 import { Suspense, useEffect, type ReactNode } from "react";
 import { safeLazy as lazy } from "./lib/safeLazy";
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { registerQueryClient } from "./state/config";
@@ -60,47 +60,25 @@ const SettingsAuditExportPage = lazy(() => import("./pages/settings/SettingsAudi
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
 const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
-const GovernVelocityRulesPage = lazy(() => import("./pages/govern/VelocityRulesPage"));
-const GovernTenantsPage = lazy(() => import("./pages/govern/TenantsPage"));
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
-const GovernReplayPage = lazy(() => import("./pages/govern/ReplayPage"));
-const GovernPolicyAnalyticsPage = lazy(() => import("./pages/govern/PolicyAnalyticsPage"));
 
-// Policy Studio tab redirects — old standalone page routes → tabbed Policy Studio
-function PolicyTabRedirect({ tab }: { tab: string }) {
+// Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
+// the tabbed overview with the right tab/mode pre-selected. These are not
+// legacy redirects; they are the current public shortcuts operators use
+// to deep-link into a specific Policy Studio tab.
+function PolicyTabRedirect({ tab, mode }: { tab: string; mode?: string }) {
   const [searchParams] = useSearchParams();
   const params = new URLSearchParams(searchParams);
   params.set("tab", tab);
+  if (mode) {
+    params.set("mode", mode);
+  } else {
+    params.delete("mode");
+  }
   return <Navigate to={`/govern/overview?${params.toString()}`} replace />;
 }
-
-// Legacy workflow redirects (bookmarks / external links)
-function WorkflowViewRedirect() {
-  const { id } = useParams<{ id: string }>();
-  return <Navigate to={`/workflows/${id}/studio`} replace />;
-}
-function WorkflowEditRedirect() {
-  const { id } = useParams<{ id: string }>();
-  return <Navigate to={`/workflows/${id}/studio?mode=edit`} replace />;
-}
-
-export const LEGACY_POLICY_ROUTE_REDIRECTS = {
-  root: "/govern/overview",
-  builder: "/govern/overview",
-  rules: "/govern/overview",
-  input: "/govern/overview?tab=input-rules",
-  output: "/govern/overview?tab=output-rules",
-  tenants: "/govern/tenants",
-  bundles: "/govern/overview?tab=bundles",
-  simulator: "/govern/overview?tab=simulator",
-  velocityRules: "/govern/velocity-rules",
-  history: "/govern/overview?tab=bundles",
-  analytics: "/govern/overview?tab=simulator",
-  publish: "/govern/overview?tab=bundles",
-  quarantine: "/govern/quarantine",
-} as const;
 
 function ThemeSync() {
   const resolvedTheme = useUiStore((s) => s.resolvedTheme);
@@ -145,10 +123,6 @@ function ProtectedRoutes() {
           <Route path="/workflows/studio/new" element={<WorkflowStudioPage />} />
           <Route path="/workflows/:id/studio" element={<WorkflowStudioPage />} />
           <Route path="/workflows/:id/runs/:runId" element={<RunDetailPage />} />
-          {/* Legacy workflow redirects */}
-          <Route path="/workflows/new" element={<Navigate to="/workflows/studio/new" replace />} />
-          <Route path="/workflows/:id/edit" element={<WorkflowEditRedirect />} />
-          <Route path="/workflows/:id" element={<WorkflowViewRedirect />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/approvals/:jobId" element={<ApprovalDetailPage />} />
 
@@ -156,33 +130,15 @@ function ProtectedRoutes() {
           <Route path="/govern/overview" element={<GovernPolicyOverviewPage />} />
           <Route path="/govern/input-rules" element={<PolicyTabRedirect tab="input-rules" />} />
           <Route path="/govern/output-rules" element={<PolicyTabRedirect tab="output-rules" />} />
-          <Route path="/govern/velocity-rules" element={<GovernVelocityRulesPage />} />
-          <Route path="/govern/tenants" element={<GovernTenantsPage />} />
+          <Route path="/govern/velocity-rules" element={<PolicyTabRedirect tab="velocity" />} />
+          <Route path="/govern/tenants" element={<PolicyTabRedirect tab="scope" />} />
           <Route path="/govern/tenants/:id" element={<GovernTenantDetailPage />} />
           <Route path="/govern/bundles/:id" element={<GovernBundleDetailPage />} />
           <Route path="/govern/bundles" element={<PolicyTabRedirect tab="bundles" />} />
-          <Route path="/govern/simulator" element={<PolicyTabRedirect tab="simulator" />} />
+          <Route path="/govern/simulator" element={<PolicyTabRedirect tab="evaluation" mode="simulator" />} />
           <Route path="/govern/quarantine" element={<GovernQuarantinePage />} />
-          <Route path="/govern/replay" element={<GovernReplayPage />} />
-          <Route path="/govern/analytics" element={<GovernPolicyAnalyticsPage />} />
-          <Route path="/policies" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.root} replace />} />
-          <Route path="/policies/input" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.input} replace />} />
-          <Route path="/policies/rules" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.rules} replace />} />
-          <Route path="/policies/rules/new" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.rules} replace />} />
-          <Route path="/policies/rules/:id" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.rules} replace />} />
-          <Route
-            path="/policies/builder"
-            element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.builder} replace />}
-          />
-          <Route path="/policies/output" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.output} replace />} />
-          <Route path="/policies/hierarchy" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.tenants} replace />} />
-          <Route path="/policies/bundles" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.bundles} replace />} />
-          <Route path="/policies/simulator" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.simulator} replace />} />
-          <Route path="/policies/history" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.history} replace />} />
-          <Route path="/policies/analytics" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.analytics} replace />} />
-          <Route path="/policies/publish" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.publish} replace />} />
-          <Route path="/policies/*" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.root} replace />} />
-          <Route path="/quarantine" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.quarantine} replace />} />
+          <Route path="/govern/replay" element={<PolicyTabRedirect tab="evaluation" mode="replay" />} />
+          <Route path="/govern/analytics" element={<PolicyTabRedirect tab="evaluation" mode="analytics" />} />
 
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />
@@ -209,13 +165,6 @@ function ProtectedRoutes() {
           <Route path="/settings/audit-export" element={<SettingsAuditExportPage />} />
           <Route path="/settings/license" element={<SettingsLicensePage />} />
 
-          {/* Legacy redirects */}
-          <Route path="/pools" element={<Navigate to="/agents" replace />} />
-          <Route path="/system" element={<Navigate to="/settings/health" replace />} />
-          <Route path="/security" element={<Navigate to="/" replace />} />
-          <Route path="/traces" element={<Navigate to="/jobs" replace />} />
-          <Route path="/safety/input" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.input} replace />} />
-          <Route path="/safety/output" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.output} replace />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>

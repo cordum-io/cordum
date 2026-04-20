@@ -23,8 +23,11 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DialogOverlay } from "@/components/ui/DialogOverlay";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { Input } from "@/components/ui/Input";
+import { LabeledField } from "@/components/ui/LabeledField";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Tabs } from "@/components/ui/Tabs";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
 import { useLicense } from "@/hooks/useLicense";
 import { cn } from "@/lib/utils";
@@ -128,7 +131,13 @@ export default function SettingsAuditExportPage() {
   });
 
   // --- Legal hold queries ---
-  const { data: holdsData, isLoading: holdsLoading } = useQuery<{ holds: LegalHold[] }>({
+  const {
+    data: holdsData,
+    isLoading: holdsLoading,
+    isError: holdsError,
+    error: holdsErr,
+    refetch: refetchHolds,
+  } = useQuery<{ holds: LegalHold[] }>({
     queryKey: ["audit", "legal-holds"],
     queryFn: () => get<{ holds: LegalHold[] }>("/audit/legal-holds"),
     enabled: legalHoldEntitled,
@@ -159,12 +168,16 @@ export default function SettingsAuditExportPage() {
 
   const holds = holdsData?.holds ?? [];
   const activeHolds = holds.filter(h => !h.released_at);
+  const holdsLoadError = holdsError ? friendlyError(holdsErr, "load legal holds") : null;
   const isLoading = license.isLoading || healthLoading || configLoading;
   const backendType = config?.type ?? health?.backend ?? "none";
   const backendMeta = BACKEND_INFO[backendType] || BACKEND_INFO.none;
   const BackendIcon = backendMeta.icon;
   const isActive = health?.status === "active";
-  const tabs = ["export", "legal-hold"];
+  const tabs = [
+    { id: "export", label: "Export" },
+    { id: "legal-hold", label: "Legal Hold", count: activeHolds.length },
+  ];
 
   if (healthError && siemEntitled) {
     return <ErrorBanner message={healthErr instanceof Error ? healthErr.message : "Failed to load audit export status"} onRetry={() => void refetchHealth()} />;
@@ -180,18 +193,14 @@ export default function SettingsAuditExportPage() {
 
       {/* Tabs */}
       <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-1 p-1 rounded-2xl bg-surface-1">
-          {tabs.map(tab => (
-            <button type="button" key={tab} onClick={() => setActiveTab(tab)}
-              className={cn(
-                "px-4 py-1.5 text-xs font-medium rounded-2xl transition-colors capitalize",
-                activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab === "legal-hold" ? "Legal Hold" : "Export"}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          tabs={tabs}
+          activeTab={activeTab}
+          onChange={setActiveTab}
+          variant="segmented"
+          ariaLabel="Audit compliance tabs"
+          className="w-full sm:w-auto"
+        />
         {activeTab === "legal-hold" && legalHoldEntitled && (
           <Button variant="primary" size="sm" onClick={() => setHoldDialogOpen(true)}>
             <Plus className="w-3 h-3 mr-1" />Create Hold
@@ -231,7 +240,9 @@ export default function SettingsAuditExportPage() {
                     <Send className="w-3 h-3 mr-1" />Send Test Event
                   </Button>
                   {testMutation.isSuccess && (
-                    <span className="flex items-center gap-1 text-xs text-[var(--color-success)]"><CheckCircle2 className="w-3 h-3" />Sent</span>
+                    <StatusBadge variant="healthy">
+                      <CheckCircle2 className="w-3 h-3" />Sent
+                    </StatusBadge>
                   )}
                 </div>
               </motion.div>
@@ -276,6 +287,13 @@ export default function SettingsAuditExportPage() {
           )}
           {legalHoldEntitled && (
             holdsLoading ? <SkeletonTable rows={3} /> :
+            holdsLoadError ? (
+              <ErrorBanner
+                title={holdsLoadError.title}
+                message={holdsLoadError.description}
+                onRetry={() => void refetchHolds()}
+              />
+            ) :
             activeHolds.length === 0 ? (
               <EmptyState icon={<Lock className="w-8 h-8" />} title="No active legal holds" description="Audit data follows normal retention policy. Create a hold to prevent automatic deletion." />
             ) : (
@@ -298,9 +316,17 @@ export default function SettingsAuditExportPage() {
                         <td className="px-5 py-3 text-xs text-muted-foreground">{hold.created_by}</td>
                         <td className="px-5 py-3 text-xs text-muted-foreground">{new Date(hold.created_at).toLocaleDateString()}</td>
                         <td className="px-5 py-3 text-right">
-                          <button type="button" onClick={() => setReleaseTarget(hold)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors" title="Release hold">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                            onClick={() => setReleaseTarget(hold)}
+                            title="Release hold"
+                            aria-label={`Release legal hold ${hold.id}`}
+                          >
                             <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -313,25 +339,53 @@ export default function SettingsAuditExportPage() {
       )}
 
       {/* Create Hold Dialog */}
-      <DialogOverlay open={holdDialogOpen} onClose={() => setHoldDialogOpen(false)} label="Create legal hold" className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-display font-semibold text-foreground">Create Legal Hold</h2>
-          <button type="button" onClick={() => setHoldDialogOpen(false)} className="p-1 rounded hover:bg-surface-2 transition-colors">
+      <DialogOverlay
+        open={holdDialogOpen}
+        onClose={() => setHoldDialogOpen(false)}
+        label="Create legal hold"
+        className="w-[440px] rounded-3xl border border-border bg-surface-1 p-6 shadow-2xl"
+      >
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-display font-semibold text-foreground">Create Legal Hold</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Preserve audit records beyond normal retention for investigations or legal action.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setHoldDialogOpen(false)}
+            aria-label="Close create legal hold dialog"
+          >
             <X className="w-4 h-4 text-muted-foreground" />
-          </button>
+          </Button>
         </div>
         <div className="space-y-4">
-          <div>
-            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Tenant (optional)</label>
-            <input type="text" value={holdTenant} onChange={(e) => setHoldTenant(e.target.value)} placeholder="default"
-              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
-            <p className="mt-1 text-[10px] text-muted-foreground">Leave empty for the default tenant</p>
-          </div>
-          <div>
-            <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest block mb-1.5">Reason</label>
-            <input type="text" value={holdReason} onChange={(e) => setHoldReason(e.target.value)} placeholder="Litigation pending — case #12345"
-              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
-          </div>
+          <LabeledField
+            label="Tenant (optional)"
+            description="Leave empty to place the hold on the default tenant."
+          >
+            <Input
+              type="text"
+              value={holdTenant}
+              onChange={(e) => setHoldTenant(e.target.value)}
+              placeholder="default"
+            />
+          </LabeledField>
+          <LabeledField
+            label="Reason"
+            description="Record the compliance or legal trigger for the retention hold."
+          >
+            <Input
+              type="text"
+              value={holdReason}
+              onChange={(e) => setHoldReason(e.target.value)}
+              placeholder="Litigation pending — case #12345"
+            />
+          </LabeledField>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" size="sm" onClick={() => setHoldDialogOpen(false)}>Cancel</Button>
             <Button variant="primary" size="sm" onClick={() => createHoldMutation.mutate()} loading={createHoldMutation.isPending} disabled={!holdReason.trim()}>

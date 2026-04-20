@@ -37,6 +37,17 @@ import type {
   PolicyRuleMatch,
   ApprovalContext,
   ApprovalPolicySnapshot,
+  GovernanceDecision,
+  GovernanceVerdict,
+  EvalDataset,
+  EvalEntry,
+  EvalRun,
+  EvalRunStatus,
+  EvalRunSummary,
+  EvalEntryResult,
+  EvalDriftDirection,
+  SafetyDecisionType,
+  PolicyConstraints,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -236,6 +247,23 @@ export interface BackendApprovalDecisionSummary {
   items_preview?: string[];
   escalation_reason?: string;
   missing_fields?: string[];
+}
+
+export interface BackendGovernanceDecision {
+  job_id?: string;
+  run_id?: string;
+  step_id?: string;
+  topic?: string;
+  matched_rule?: string;
+  rule_name?: string;
+  verdict?: string;
+  reason?: string;
+  constraints?: Record<string, unknown>;
+  approval_status?: ApprovalStatus;
+  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  agent_id?: string;
+  policy_version?: string;
+  timestamp?: string;
 }
 
 export interface BackendApprovalItem {
@@ -513,6 +541,68 @@ export function normalizeDecisionType(raw?: string): SafetyDecision["type"] {
     default:
       return "deny";
   }
+}
+
+export function normalizeGovernanceVerdict(raw?: string): GovernanceVerdict {
+  switch ((raw || "").trim().toUpperCase()) {
+    case "ALLOW":
+      return "allow";
+    case "CONSTRAIN":
+    case "CONSTRAINED":
+    case "ALLOW_WITH_CONSTRAINTS":
+      return "constrain";
+    case "DENY":
+      return "deny";
+    case "REQUIRE_APPROVAL":
+    case "REQUIRE_HUMAN":
+      return "require_approval";
+    case "THROTTLE":
+      return "throttle";
+    default:
+      if (raw) {
+        console.warn(
+          `[transform] Unknown governance verdict "${raw}", defaulting to deny`,
+        );
+      }
+      return "deny";
+  }
+}
+
+function normalizeIsoTimestamp(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return null;
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+export function mapGovernanceDecision(
+  decision: BackendGovernanceDecision,
+): GovernanceDecision | null {
+  const timestamp = normalizeIsoTimestamp(decision.timestamp);
+  if (!timestamp) {
+    return null;
+  }
+  const constraints =
+    decision.constraints && typeof decision.constraints === "object"
+      ? (decision.constraints as GovernanceDecision["constraints"])
+      : undefined;
+  return {
+    jobId: decision.job_id ?? "",
+    topic: decision.topic ?? "",
+    matchedRule: decision.matched_rule ?? "",
+    verdict: normalizeGovernanceVerdict(decision.verdict),
+    reason: decision.reason ?? "",
+    agentId: decision.agent_id ?? "",
+    timestamp,
+    ...(decision.run_id ? { runId: decision.run_id } : {}),
+    ...(decision.step_id ? { stepId: decision.step_id } : {}),
+    ...(decision.rule_name ? { ruleName: decision.rule_name } : {}),
+    ...(constraints ? { constraints } : {}),
+    ...(decision.approval_status ? { approvalStatus: decision.approval_status } : {}),
+    ...(decision.approval_decision ? { approvalDecision: decision.approval_decision } : {}),
+    ...(decision.policy_version ? { policyVersion: decision.policy_version } : {}),
+  };
 }
 
 export function mapSafetyDecision(
@@ -1532,3 +1622,204 @@ export function mapPoolResponse(bp: BackendPoolSummary, mapWorker = mapHeartbeat
     workers: (bp.worker_list ?? []).map(mapWorker).filter((w): w is Worker => !!w),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Evals mappers
+// ---------------------------------------------------------------------------
+
+const EVAL_RUN_STATUSES: ReadonlySet<EvalRunStatus> = new Set([
+  "pass",
+  "fail",
+  "regression",
+  "error",
+]);
+
+const EVAL_DRIFT_DIRECTIONS: ReadonlySet<EvalDriftDirection> = new Set([
+  "escalated",
+  "relaxed",
+  "unchanged",
+]);
+
+const SAFETY_DECISION_TYPES: ReadonlySet<SafetyDecisionType> = new Set([
+  "allow",
+  "deny",
+  "require_approval",
+  "allow_with_constraints",
+  "throttle",
+]);
+
+export interface BackendEvalDataset {
+  id?: string;
+  name?: string;
+  version?: number;
+  tenant?: string;
+  description?: string;
+  entry_count?: number;
+  content_hash?: string;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: string;
+}
+
+export interface BackendEvalEntry {
+  id?: string;
+  input?: Record<string, unknown>;
+  expected_decision?: string;
+  rule_id?: string;
+  metadata?: Record<string, unknown>;
+  source?: string;
+  source_ref?: string;
+  notes?: string;
+}
+
+export interface BackendEvalRunSummary {
+  total?: number;
+  passed?: number;
+  failed?: number;
+  regressions?: number;
+  errored?: number;
+  score_percent?: number | null;
+}
+
+export interface BackendEvalEntryResult {
+  entry_id?: string;
+  input?: Record<string, unknown>;
+  expected_decision?: string;
+  actual_decision?: string;
+  rule_id?: string;
+  reason?: string;
+  status?: string;
+  drift_direction?: string;
+  constraints?: Record<string, unknown>;
+}
+
+export interface BackendEvalRun {
+  run_id?: string;
+  dataset_id?: string;
+  dataset_name?: string;
+  dataset_version?: number;
+  policy_snapshot?: string;
+  started_at?: string;
+  completed_at?: string;
+  summary?: BackendEvalRunSummary;
+  entries?: BackendEvalEntryResult[];
+}
+
+function normalizeEvalRunStatus(raw: unknown): EvalRunStatus {
+  if (typeof raw === "string") {
+    const lower = raw.toLowerCase();
+    if (EVAL_RUN_STATUSES.has(lower as EvalRunStatus)) {
+      return lower as EvalRunStatus;
+    }
+  }
+  logger.warn("evals", "unknown run status, falling back to error", { raw });
+  return "error";
+}
+
+function normalizeDriftDirection(raw: unknown): EvalDriftDirection {
+  if (typeof raw === "string") {
+    const lower = raw.toLowerCase();
+    if (EVAL_DRIFT_DIRECTIONS.has(lower as EvalDriftDirection)) {
+      return lower as EvalDriftDirection;
+    }
+  }
+  return "unchanged";
+}
+
+function normalizeSafetyDecisionType(raw: unknown): SafetyDecisionType {
+  if (typeof raw === "string") {
+    const lower = raw.toLowerCase();
+    if (SAFETY_DECISION_TYPES.has(lower as SafetyDecisionType)) {
+      return lower as SafetyDecisionType;
+    }
+  }
+  return "deny";
+}
+
+function coerceScorePercent(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const num = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(num)) return null;
+  return num;
+}
+
+export function mapEvalDataset(raw: BackendEvalDataset): EvalDataset {
+  return {
+    id: raw.id ?? "",
+    name: raw.name ?? "",
+    version: typeof raw.version === "number" ? raw.version : Number(raw.version ?? 1),
+    tenant: raw.tenant ?? "",
+    description: raw.description,
+    entryCount: typeof raw.entry_count === "number" ? raw.entry_count : 0,
+    contentHash: raw.content_hash ?? "",
+    createdAt: raw.created_at ?? "",
+    updatedAt: raw.updated_at ?? raw.created_at ?? "",
+    createdBy: raw.created_by,
+  };
+}
+
+export function mapEvalEntry(raw: BackendEvalEntry): EvalEntry {
+  return {
+    id: raw.id ?? "",
+    input: raw.input ?? {},
+    expectedDecision: normalizeSafetyDecisionType(raw.expected_decision),
+    ruleId: raw.rule_id,
+    metadata: raw.metadata,
+    source: raw.source ?? "unknown",
+    sourceRef: raw.source_ref,
+    notes: raw.notes,
+  };
+}
+
+export function mapEvalEntryResult(raw: BackendEvalEntryResult): EvalEntryResult {
+  const expected = normalizeSafetyDecisionType(raw.expected_decision);
+  const actualRaw = typeof raw.actual_decision === "string" ? raw.actual_decision.toLowerCase() : "";
+  const actual: SafetyDecisionType | string = SAFETY_DECISION_TYPES.has(
+    actualRaw as SafetyDecisionType,
+  )
+    ? (actualRaw as SafetyDecisionType)
+    : actualRaw || "unknown";
+  return {
+    entryId: raw.entry_id ?? "",
+    input: raw.input ?? {},
+    expectedDecision: expected,
+    actualDecision: actual,
+    ruleId: raw.rule_id,
+    reason: raw.reason,
+    status: normalizeEvalRunStatus(raw.status),
+    driftDirection: normalizeDriftDirection(raw.drift_direction),
+    constraints: raw.constraints as PolicyConstraints | undefined,
+  };
+}
+
+function mapEvalRunSummary(raw: BackendEvalRunSummary | undefined): EvalRunSummary {
+  const summary = raw ?? {};
+  return {
+    total: typeof summary.total === "number" ? summary.total : 0,
+    passed: typeof summary.passed === "number" ? summary.passed : 0,
+    failed: typeof summary.failed === "number" ? summary.failed : 0,
+    regressions: typeof summary.regressions === "number" ? summary.regressions : 0,
+    errored: typeof summary.errored === "number" ? summary.errored : 0,
+    scorePercent: coerceScorePercent(summary.score_percent),
+  };
+}
+
+export function mapEvalRun(raw: BackendEvalRun): EvalRun {
+  return {
+    runId: raw.run_id ?? "",
+    datasetId: raw.dataset_id ?? "",
+    datasetName: raw.dataset_name ?? "",
+    datasetVersion:
+      typeof raw.dataset_version === "number" ? raw.dataset_version : Number(raw.dataset_version ?? 0),
+    policySnapshot: raw.policy_snapshot ?? "",
+    startedAt: raw.started_at ?? "",
+    completedAt: raw.completed_at,
+    summary: mapEvalRunSummary(raw.summary),
+    entries: Array.isArray(raw.entries) ? raw.entries.map(mapEvalEntryResult) : undefined,
+  };
+}
+
+export function isRegressionRun(run: Pick<EvalRun, "summary">): boolean {
+  return (run.summary?.regressions ?? 0) > 0;
+}
+

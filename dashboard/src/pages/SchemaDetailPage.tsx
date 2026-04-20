@@ -16,10 +16,17 @@ import { z } from "zod";
 import { motion } from "framer-motion";
 import { get } from "@/api/client";
 import { useRegisterSchema } from "@/hooks/useSchemas";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { InfoBanner } from "@/components/ui/InfoBanner";
+import { Input } from "@/components/ui/Input";
+import { LabeledField } from "@/components/ui/LabeledField";
+import { Select } from "@/components/ui/Select";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
-import { ArrowLeft, FileJson, Copy, Clock, Hash, Edit, Plus, Trash2 } from "lucide-react";
+import { Tabs } from "@/components/ui/Tabs";
+import { ArrowLeft, FileJson, Clock, Hash, Edit, Plus, Trash2 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { CodeBlock } from "@/components/ui/CodeBlock";
@@ -127,59 +134,71 @@ export function SchemaCreateForm() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <div className="flex items-center gap-3">
-        <button type="button" onClick={() => navigate("/schemas")} className="p-1.5 rounded-full hover:bg-surface-2 transition-colors">
-          <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-        </button>
-        <FileJson className="w-5 h-5 text-cordum" />
-        <div>
-          <h1 className="text-lg font-display font-bold text-foreground">New Schema</h1>
-          <p className="text-xs text-muted-foreground">Define a new schema for your platform</p>
-        </div>
-      </div>
+      <PageHeader
+        label="Schemas"
+        title="New Schema"
+        subtitle="Define a new schema for your platform"
+        actions={(
+          <Button variant="ghost" size="sm" onClick={() => navigate("/schemas")}>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Back
+          </Button>
+        )}
+      />
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         {errorMessages.length > 0 && (
-          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-4">
-            <p className="text-xs font-mono uppercase tracking-wide text-destructive">
-              Validation issues
-            </p>
+          <InfoBanner variant="error" title="Validation issues">
             <ul className="mt-2 space-y-1 text-sm text-destructive">
               {errorMessages.map((message) => (
                 <li key={message}>{message}</li>
               ))}
             </ul>
-          </div>
+          </InfoBanner>
         )}
 
         <div className="instrument-card p-6 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Schema ID</label>
-              <input {...register("id")} placeholder="e.g. job-input-schema" className="w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
+            <LabeledField label="Schema ID">
+              <Input
+                {...register("id")}
+                aria-label="Schema ID"
+                placeholder="e.g. job-input-schema"
+                className="bg-surface-0"
+              />
               {errors.id && <p className="mt-1 text-xs text-destructive">{errors.id.message}</p>}
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Type</label>
-              <select {...register("type")} className="w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30">
+            </LabeledField>
+            <LabeledField label="Type">
+              <Select {...register("type")} aria-label="Schema type" className="bg-surface-0">
                 {SCHEMA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
+              </Select>
               {errors.type && <p className="mt-1 text-xs text-destructive">{errors.type.message}</p>}
-            </div>
+            </LabeledField>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Description</label>
-            <input {...register("description")} placeholder="Optional description" className="w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
+          <LabeledField label="Description" description="Optional schema summary shown to operators.">
+            <Input
+              {...register("description")}
+              aria-label="Schema description"
+              placeholder="Optional description"
+              className="bg-surface-0"
+            />
             {errors.description && <p className="mt-1 text-xs text-destructive">{errors.description.message}</p>}
-          </div>
+          </LabeledField>
         </div>
 
         <div className="instrument-card p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-foreground">Fields</h2>
-            <button type="button" onClick={() => append({ name: "", type: "string", required: false, description: "" })} className="flex items-center gap-1 text-xs text-cordum hover:text-cordum/80 transition-colors">
-              <Plus className="w-3.5 h-3.5" />Add Field
-            </button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-cordum hover:bg-cordum/10 hover:text-cordum"
+              onClick={() => append({ name: "", type: "string", required: false, description: "" })}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Field
+            </Button>
           </div>
           {(errors.fields?.root || readFieldErrorMessage(errors.fields as FieldError | undefined)) && (
             <p className="text-xs text-destructive">
@@ -189,28 +208,58 @@ export function SchemaCreateForm() {
 
           <div className="space-y-3">
             {fields.map((field, index) => (
-              <div key={field.id} className="grid grid-cols-[1fr_auto_auto_1fr_auto] items-start gap-2 p-3 rounded-xl bg-surface-1">
-                <div>
-                  <input {...register(`fields.${index}.name`)} placeholder="Field name" className="w-full rounded-lg border border-border bg-surface-0 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
+              <div
+                key={field.id}
+                className="grid grid-cols-1 gap-3 rounded-2xl bg-surface-1 p-4 xl:grid-cols-[minmax(0,1.2fr)_180px_150px_minmax(0,1fr)_auto]"
+              >
+                <LabeledField label="Field name" className="space-y-1">
+                  <Input
+                    {...register(`fields.${index}.name`)}
+                    aria-label={`Field ${index + 1} name`}
+                    placeholder="Field name"
+                    className="h-9 bg-surface-0 text-xs"
+                  />
                   {errors.fields?.[index]?.name && <p className="mt-0.5 text-xs text-destructive">{errors.fields[index].name?.message}</p>}
-                </div>
-                <div>
-                  <select {...register(`fields.${index}.type`)} className="rounded-lg border border-border bg-surface-0 px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30">
+                </LabeledField>
+                <LabeledField label="Type" className="space-y-1">
+                  <Select
+                    {...register(`fields.${index}.type`)}
+                    aria-label={`Field ${index + 1} type`}
+                    className="h-9 bg-surface-0 text-xs"
+                  >
                     {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
+                  </Select>
                   {errors.fields?.[index]?.type && <p className="mt-0.5 text-xs text-destructive">{errors.fields[index].type?.message}</p>}
+                </LabeledField>
+                <div className="space-y-1">
+                  <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Required</p>
+                  <Checkbox
+                    {...register(`fields.${index}.required`)}
+                    aria-label={`Field ${index + 1} required`}
+                    label="Required"
+                    wrapperClassName="h-9 rounded-2xl border border-border bg-surface-0 px-3 py-2 hover:bg-surface-0"
+                  />
                 </div>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap py-1.5">
-                  <input type="checkbox" {...register(`fields.${index}.required`)} className="rounded border-border" />
-                  Required
-                </label>
-                <div>
-                  <input {...register(`fields.${index}.description`)} placeholder="Description" className="w-full rounded-lg border border-border bg-surface-0 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
+                <LabeledField label="Description" className="space-y-1">
+                  <Input
+                    {...register(`fields.${index}.description`)}
+                    aria-label={`Field ${index + 1} description`}
+                    placeholder="Description"
+                    className="h-9 bg-surface-0 text-xs"
+                  />
                   {errors.fields?.[index]?.description && <p className="mt-0.5 text-xs text-destructive">{errors.fields[index].description?.message}</p>}
-                </div>
-                <button type="button" onClick={() => fields.length > 1 && remove(index)} disabled={fields.length <= 1} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                </LabeledField>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove field ${index + 1}`}
+                  onClick={() => fields.length > 1 && remove(index)}
+                  disabled={fields.length <= 1}
+                  className="self-end text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
                   <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                </Button>
               </div>
             ))}
           </div>
@@ -259,7 +308,11 @@ export default function SchemaDetailPage() {
     enabled: !isCreateMode,
   });
 
-  const tabs = ["fields", "versions", "json"];
+  const tabs = [
+    { id: "fields", label: "Fields" },
+    { id: "versions", label: "Versions" },
+    { id: "json", label: "JSON" },
+  ];
   const currentVersion = schema?.versions?.find(v => v.version === schema.currentVersion) || schema?.versions?.[0];
 
   if (isCreateMode) {
@@ -287,9 +340,9 @@ export default function SchemaDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button type="button" onClick={() => navigate("/schemas")} className="p-1.5 rounded-full hover:bg-surface-2 transition-colors">
+          <Button type="button" variant="ghost" size="icon" onClick={() => navigate("/schemas")} aria-label="Back to schemas">
             <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-          </button>
+          </Button>
           <FileJson className="w-5 h-5 text-cordum" />
           <div>
             <h1 className="text-lg font-display font-bold text-foreground">{schema?.name || id}</h1>
@@ -305,20 +358,14 @@ export default function SchemaDetailPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 p-1 rounded-2xl bg-surface-1 w-fit">
-        {tabs.map(tab => (
-          <button type="button"
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={cn(
-              "px-4 py-1.5 text-xs font-medium rounded-2xl transition-colors capitalize",
-              activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {tab === "json" ? "JSON" : tab}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={tabs}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        variant="segmented"
+        ariaLabel="Schema detail tabs"
+        className="w-fit"
+      />
 
       {/* Fields Tab */}
       {activeTab === "fields" && currentVersion && (

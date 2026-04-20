@@ -13,6 +13,8 @@ interface DialogOverlayProps {
   className?: string;
   /** Whether clicking the backdrop closes the dialog (default: true) */
   backdropClose?: boolean;
+  /** Optional selector for the element that should receive initial focus */
+  initialFocusSelector?: string;
 }
 
 /**
@@ -30,8 +32,12 @@ export function DialogOverlay({
   label,
   className,
   backdropClose = true,
+  initialFocusSelector,
 }: DialogOverlayProps) {
-  const dialogRef = useDialogA11y(onClose, { enabled: open });
+  const dialogRef = useDialogA11y(onClose, {
+    enabled: open,
+    initialFocusSelector,
+  });
   const { fadeIn, scaleIn } = useMotionConfig();
 
   return (

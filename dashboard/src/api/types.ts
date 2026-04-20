@@ -129,6 +129,56 @@ export interface PolicyConstraints {
     deny_path_globs?: string[];
   };
   redaction_level?: string;
+  maxInvocations?: number;
+  allowedDomains?: string[];
+  maskedFields?: string[];
+  rateLimit?:
+    | number
+    | string
+    | {
+        limit?: number;
+        requests?: number;
+        windowSeconds?: number;
+        window_seconds?: number;
+        burst?: number;
+      };
+  requireReviewer?:
+    | boolean
+    | string
+    | {
+        role?: string;
+        approverRole?: string;
+        reason?: string;
+      };
+}
+
+export type GovernanceVerdict =
+  | "allow"
+  | "deny"
+  | "constrain"
+  | "require_approval"
+  | "throttle";
+
+export interface GovernanceDecision {
+  jobId: string;
+  runId?: string;
+  stepId?: string;
+  topic: string;
+  matchedRule: string;
+  ruleName?: string;
+  verdict: GovernanceVerdict;
+  reason: string;
+  constraints?: PolicyConstraints;
+  approvalStatus?: ApprovalStatus;
+  approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  agentId: string;
+  policyVersion?: string;
+  timestamp: string;
+}
+
+export interface GovernanceDecisionsResponse {
+  items: GovernanceDecision[];
+  nextCursor?: string;
 }
 
 export interface McpPolicyResult {
@@ -1464,4 +1514,90 @@ export interface SetupStatus {
     first_agent_registered: boolean;
     first_job_submitted: boolean;
   };
+}
+
+// ---------------------------------------------------------------------------
+// Evals
+// ---------------------------------------------------------------------------
+
+export interface EvalDataset {
+  id: string;
+  name: string;
+  version: number;
+  tenant: string;
+  description?: string;
+  entryCount: number;
+  contentHash: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+export interface EvalEntry {
+  id: string;
+  input: Record<string, unknown>;
+  expectedDecision: SafetyDecisionType;
+  ruleId?: string;
+  metadata?: Record<string, unknown>;
+  source: string;
+  sourceRef?: string;
+  notes?: string;
+}
+
+export type EvalRunStatus = "pass" | "fail" | "regression" | "error";
+
+export type EvalDriftDirection = "escalated" | "relaxed" | "unchanged";
+
+export interface EvalEntryResult {
+  entryId: string;
+  input: Record<string, unknown>;
+  expectedDecision: SafetyDecisionType;
+  actualDecision: SafetyDecisionType | string;
+  ruleId?: string;
+  reason?: string;
+  status: EvalRunStatus;
+  driftDirection: EvalDriftDirection;
+  constraints?: PolicyConstraints;
+}
+
+export interface EvalRunSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  regressions: number;
+  errored: number;
+  scorePercent: number | null;
+}
+
+export interface EvalRun {
+  runId: string;
+  datasetId: string;
+  datasetName: string;
+  datasetVersion: number;
+  policySnapshot: string;
+  startedAt: string;
+  completedAt?: string;
+  summary: EvalRunSummary;
+  entries?: EvalEntryResult[];
+}
+
+export interface ExtractIncidentsRequest {
+  since?: string;
+  until?: string;
+  topicPattern?: string;
+  ruleId?: string;
+  verdicts?: SafetyDecisionType[];
+  agentId?: string;
+  maxEntries?: number;
+  datasetName: string;
+  datasetDescription?: string;
+  dryRun?: boolean;
+}
+
+export interface ExtractIncidentsPreview {
+  scannedDecisions: number;
+  entryCount: number;
+  dedupedCount: number;
+  warnings: string[];
+  datasetId?: string;
 }

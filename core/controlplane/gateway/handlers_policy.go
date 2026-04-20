@@ -23,8 +23,7 @@ func (s *server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin", "operator"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermPolicyRead, "admin", "operator") {
 		return
 	}
 	if s.safetyClient == nil {
@@ -49,8 +48,7 @@ func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode string) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermPolicyWrite, "admin") {
 		return
 	}
 	if s.safetyClient == nil {

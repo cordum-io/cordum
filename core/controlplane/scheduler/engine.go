@@ -19,17 +19,17 @@ import (
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
-	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
@@ -83,6 +83,7 @@ type Engine struct {
 	registry                WorkerRegistry
 	strategy                SchedulingStrategy
 	jobStore                JobStore
+	decisionLog             model.DecisionLogStore
 	dlqSink                 DLQSink
 	metrics                 Metrics
 	config                  ConfigProvider
@@ -261,6 +262,7 @@ func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy 
 		registry:                registry,
 		strategy:                strategy,
 		jobStore:                jobStore,
+		decisionLog:             NoopDecisionLogStore{},
 		metrics:                 metrics,
 		contextClient:           contextClient,
 		workerAttestation:       ParseWorkerAttestationMode(os.Getenv("WORKER_ATTESTATION")),
@@ -994,8 +996,8 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 							dlqStatus = pb.JobStatus_JOB_STATUS_DENIED
 						}
 						if dlqErr := e.emitDLQWithRetry(jobID, topic, dlqStatus, "terminal state redelivery", "redelivery_dlq_retry"); dlqErr != nil {
-								slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
-							}
+							slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
+						}
 					}
 					return nil
 				}
@@ -1723,6 +1725,7 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 						if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
 							return record, err
 						}
+						e.appendDecisionLog(req, record)
 					}
 					return record, nil
 				}
@@ -1778,8 +1781,20 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 		if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
 			return record, err
 		}
+		e.appendDecisionLog(req, record)
 	}
 	return record, err
+}
+
+func (e *Engine) appendDecisionLog(req *pb.JobRequest, record SafetyDecisionRecord) {
+	if e == nil || e.decisionLog == nil || req == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	defer cancel()
+	if err := e.decisionLog.AppendDecision(ctx, buildDecisionLogRecord(req, record)); err != nil {
+		slog.Warn("decision log append failed", "job_id", strings.TrimSpace(req.GetJobId()), "error", err)
+	}
 }
 
 func (e *Engine) handleJobResult(res *pb.JobResult) error {

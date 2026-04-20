@@ -8,6 +8,8 @@ import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { Input } from "@/components/ui/Input";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Search, Plus, FileJson } from "lucide-react";
 import { useSchemas } from "@/hooks/useSchemas";
@@ -32,14 +34,13 @@ export default function SchemasPage() {
         </Button></>} />
 
       {/* Search */}
-      <div className="relative max-w-xs">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-        <input
-          type="text"
+      <div className="max-w-xs">
+        <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search schemas..."
-          className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+          icon={<Search className="w-3.5 h-3.5" />}
+          className="h-8 bg-surface-1 text-xs"
         />
       </div>
 
@@ -47,9 +48,7 @@ export default function SchemasPage() {
       {isLoading ? (
         <SkeletonTable rows={6} />
       ) : error ? (
-        <div className="instrument-card p-8 text-center">
-          <p className="text-sm text-destructive">Failed to load schemas</p>
-        </div>
+        <ErrorBanner message={error instanceof Error ? error.message : "Failed to load schemas"} />
       ) : filtered.length === 0 ? (
         <EmptyState icon={<FileJson className="w-8 h-8" />} title="No schemas found" description="Register a JSON Schema to define data contracts for job inputs and outputs" action={<Button variant="primary" size="sm" onClick={() => navigate("/schemas/new")}><Plus className="w-3 h-3 mr-1" />Register schema</Button>} />
       ) : (

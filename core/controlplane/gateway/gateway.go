@@ -27,11 +27,11 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/locks"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/schema"
@@ -112,12 +112,13 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
-	memStore   store.Store
-	jobStore   *store.RedisJobStore // Typed for ListRecentJobs
-	bus        model.Bus
-	workers    map[string]*pb.Heartbeat
-	workerSeen map[string]time.Time
-	workerMu   sync.RWMutex
+	memStore         store.Store
+	jobStore         *store.RedisJobStore // Typed for ListRecentJobs
+	decisionLogStore model.DecisionLogStore
+	bus              model.Bus
+	workers          map[string]*pb.Heartbeat
+	workerSeen       map[string]time.Time
+	workerMu         sync.RWMutex
 
 	clients             map[*websocket.Conn]*wsClient
 	clientsMu           sync.RWMutex
@@ -141,18 +142,24 @@ type server struct {
 	configSvc             *configsvc.Service
 	topicRegistry         *topicregistry.Service
 	workerCredentialStore *workercredentials.Service
-	agentIdentityStore   *store.AgentIdentityStore
-	dlqStore              *store.DLQStore
-	artifactStore         artifacts.Store
-	lockStore             locks.Store
-	schemaRegistry        *schema.Registry
-	schemaEnforcement     schema.EnforcementMode
-	safetyConn            *grpc.ClientConn
-	safetyClient          pb.SafetyKernelClient
-	userStore             UserStore
-	keyStore              KeyStore
-	rbacStore             *RBACStore
-	permChecker           *PermissionChecker
+	agentIdentityStore    *store.AgentIdentityStore
+	// evalDatasetStore holds curated, immutable policy-regression test
+	// fixtures that the sibling eval-runner task (epic-e1c4321a) will
+	// replay through the policy engine. Only the CRUD surface lives in
+	// this field — the coupling to replay is intentionally deferred so
+	// this task stays scope-clean.
+	evalDatasetStore  model.EvalDatasetStore
+	dlqStore          *store.DLQStore
+	artifactStore     artifacts.Store
+	lockStore         locks.Store
+	schemaRegistry    *schema.Registry
+	schemaEnforcement schema.EnforcementMode
+	safetyConn        *grpc.ClientConn
+	safetyClient      pb.SafetyKernelClient
+	userStore         UserStore
+	keyStore          KeyStore
+	rbacStore         *RBACStore
+	permChecker       *PermissionChecker
 
 	auditExporter  audit.AuditSender
 	legalHoldStore *audit.LegalHoldStore
@@ -466,6 +473,12 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 	defer func() { _ = jobStore.Close() }()
 
+	decisionLogStore, err := store.NewRedisDecisionLogStore(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("connect redis decision log store: %w", err)
+	}
+	defer func() { _ = decisionLogStore.Close() }()
+
 	natsBus, err := bus.NewNatsBus(cfg.NatsURL)
 	if err != nil {
 		return fmt.Errorf("connect nats: %w", err)
@@ -575,6 +588,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	s := &server{
 		memStore:              memStore,
 		jobStore:              jobStore,
+		decisionLogStore:      decisionLogStore,
 		bus:                   natsBus,
 		workers:               make(map[string]*pb.Heartbeat),
 		workerSeen:            make(map[string]time.Time),
@@ -593,7 +607,8 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		configSvc:             configSvc,
 		topicRegistry:         topicregistry.NewService(configSvc),
 		workerCredentialStore: workercredentials.NewService(configSvc),
-		agentIdentityStore:   store.NewAgentIdentityStoreFromClient(jobStore.Client()),
+		agentIdentityStore:    store.NewAgentIdentityStoreFromClient(jobStore.Client()),
+		evalDatasetStore:      store.NewEvalDatasetStoreFromClient(jobStore.Client()),
 		dlqStore:              dlqStore,
 		artifactStore:         artifactStore,
 		lockStore:             lockStore,
@@ -1037,6 +1052,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/reject", s.instrumented("/api/v1/approvals/{job_id}/reject", s.handleRejectJob))
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/repair", s.instrumented("/api/v1/approvals/{job_id}/repair", s.handleRepairApproval))
 	mux.HandleFunc("GET /api/v1/approvals/{job_id}/context", s.instrumented("/api/v1/approvals/{job_id}/context", s.handleApprovalContext))
+	mux.HandleFunc("GET /api/v1/governance/decisions", s.instrumented("/api/v1/governance/decisions", s.handleListGovernanceDecisions))
 
 	// 12. Policy endpoints
 	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
@@ -1065,6 +1081,19 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/policy/audit", s.instrumented("/api/v1/policy/audit", s.handleListPolicyAudit))
 	mux.HandleFunc("POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
 	mux.HandleFunc("POST /api/v1/policy/analytics", s.instrumented("/api/v1/policy/analytics", s.handlePolicyAnalytics))
+
+	// 12.6 Eval datasets — curated, immutable policy-regression fixtures.
+	// The sibling eval-runner task (epic-e1c4321a) will replay these
+	// through the policy engine. PUT creates a successor version; it does
+	// not mutate an existing dataset in place.
+	mux.HandleFunc("POST /api/v1/evals/datasets/from-incidents", s.instrumented("/api/v1/evals/datasets/from-incidents", s.handleCreateDatasetFromIncidents))
+	mux.HandleFunc("POST /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleCreateEvalDataset))
+	mux.HandleFunc("GET /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleListEvalDatasets))
+	mux.HandleFunc("GET /api/v1/evals/datasets/by-name/{name}", s.instrumented("/api/v1/evals/datasets/by-name/{name}", s.handleListEvalDatasetVersions))
+	mux.HandleFunc("GET /api/v1/evals/datasets/by-name/{name}/versions/{version}", s.instrumented("/api/v1/evals/datasets/by-name/{name}/versions/{version}", s.handleGetEvalDatasetByNameVersion))
+	mux.HandleFunc("GET /api/v1/evals/datasets/{id}", s.instrumented("/api/v1/evals/datasets/{id}", s.handleGetEvalDataset))
+	mux.HandleFunc("PUT /api/v1/evals/datasets/{id}", s.instrumented("/api/v1/evals/datasets/{id}", s.handleUpdateEvalDataset))
+	mux.HandleFunc("DELETE /api/v1/evals/datasets/{id}", s.instrumented("/api/v1/evals/datasets/{id}", s.handleDeleteEvalDataset))
 
 	// 12.5 MCP (HTTP/SSE) routes
 	if err := s.registerMCPRoutes(mux); err != nil {

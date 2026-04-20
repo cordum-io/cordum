@@ -17,11 +17,12 @@ import (
 
 // Event types emitted by the audit subsystem.
 const (
-	EventSafetyDecision  = "safety.decision"
-	EventSafetyApproval  = "safety.approval"
-	EventPolicyChange    = "safety.policy_change"
-	EventSafetyViolation = "safety.violation"
-	EventSystemAuth      = "system.auth"
+	EventSafetyDecision         = "safety.decision"
+	EventSafetyApproval         = "safety.approval"
+	EventPolicyChange           = "safety.policy_change"
+	EventSafetyViolation        = "safety.violation"
+	EventSystemAuth             = "system.auth"
+	EventLicenseLegacyRejected  = "license.legacy_format_rejected"
 )
 
 // Severity levels for SIEM events.

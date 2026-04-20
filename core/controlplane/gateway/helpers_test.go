@@ -5,9 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -189,6 +190,93 @@ func (c *stubSafetyClient) response() *pb.PolicyCheckResponse {
 	}
 }
 
+type testAuthProvider struct{}
+
+func (testAuthProvider) AuthenticateHTTP(*http.Request) (*AuthContext, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (testAuthProvider) AuthenticateGRPC(context.Context) (*AuthContext, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (testAuthProvider) RequireRole(r *http.Request, roles ...string) error {
+	auth := authFromRequest(r)
+	if auth == nil {
+		return errors.New("authentication required")
+	}
+	role := normalizeRole(auth.Role)
+	if role == "" {
+		return errors.New("role required")
+	}
+	for _, candidate := range roles {
+		if normalizeRole(candidate) == role {
+			return nil
+		}
+	}
+	return fmt.Errorf("role %s not permitted", role)
+}
+
+func (testAuthProvider) ResolveTenant(r *http.Request, requested, fallback string) (string, error) {
+	auth := authFromRequest(r)
+	requested = strings.TrimSpace(requested)
+	authTenant := ""
+	allowCrossTenant := false
+	if auth != nil {
+		authTenant = strings.TrimSpace(auth.Tenant)
+		allowCrossTenant = auth.AllowCrossTenant
+	}
+	switch {
+	case requested == "" && authTenant != "":
+		return authTenant, nil
+	case requested == "":
+		return strings.TrimSpace(fallback), nil
+	case authTenant != "" && requested != authTenant && !allowCrossTenant:
+		return "", errors.New("tenant access denied")
+	default:
+		return requested, nil
+	}
+}
+
+func (testAuthProvider) RequireTenantAccess(r *http.Request, tenant string) error {
+	auth := authFromRequest(r)
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		return errors.New("tenant required")
+	}
+	if auth == nil {
+		return nil
+	}
+	authTenant := strings.TrimSpace(auth.Tenant)
+	if auth.AllowCrossTenant || authTenant == "" || authTenant == tenant {
+		return nil
+	}
+	return errors.New("tenant access denied")
+}
+
+func (testAuthProvider) ResolvePrincipal(r *http.Request, requested string) (string, error) {
+	auth := authFromRequest(r)
+	requested = strings.TrimSpace(requested)
+	if auth == nil {
+		return requested, nil
+	}
+	principal := strings.TrimSpace(auth.PrincipalID)
+	switch {
+	case requested == "":
+		return principal, nil
+	case principal != "" && requested != principal:
+		return "", errors.New("principal access denied")
+	default:
+		return requested, nil
+	}
+}
+
+func enableTestAuth(s *server) {
+	if s != nil {
+		s.auth = testAuthProvider{}
+	}
+}
+
 func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	t.Helper()
 
@@ -234,6 +322,13 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	if err != nil {
 		t.Fatalf("config svc: %v", err)
 	}
+	rbacStore, err := NewRBACStore(redisURL)
+	if err != nil {
+		t.Fatalf("rbac store: %v", err)
+	}
+	if err := rbacStore.BootstrapDefaultRoles(context.Background()); err != nil {
+		t.Fatalf("rbac bootstrap: %v", err)
+	}
 	schemaRegistry, err := schema.NewRegistry(redisURL)
 	if err != nil {
 		t.Fatalf("schema registry: %v", err)
@@ -267,7 +362,10 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		configSvc:             configSvc,
 		topicRegistry:         topicregistry.NewService(configSvc),
 		workerCredentialStore: workercredentials.NewService(configSvc),
-		agentIdentityStore:   store.NewAgentIdentityStoreFromClient(jobStore.Client()),
+		agentIdentityStore:    store.NewAgentIdentityStoreFromClient(jobStore.Client()),
+		evalDatasetStore:      store.NewEvalDatasetStoreFromClient(jobStore.Client()),
+		rbacStore:             rbacStore,
+		permChecker:           NewPermissionChecker(rbacStore, func() licensing.Entitlements { return entitlements.Entitlements() }),
 		dlqStore:              dlqStore,
 		artifactStore:         artifactStore,
 		lockStore:             lockStore,
@@ -281,6 +379,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		_ = jobStore.Close()
 		_ = workflowStore.Close()
 		_ = configSvc.Close()
+		_ = rbacStore.Close()
 		_ = schemaRegistry.Close()
 		_ = dlqStore.Close()
 		_ = artifactStore.Close()

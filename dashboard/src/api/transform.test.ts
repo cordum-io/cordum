@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   computeUrgencyLevel,
   deriveApprovalActionability,
   deriveApprovalStatus,
   mapApprovalItem,
   mapDLQEntry,
+  mapGovernanceDecision,
   mapHeartbeatToWorker,
   mapJobDetail,
   mapJobRecord,
@@ -14,6 +15,7 @@ import {
   mapWorkflowRun,
   mapWorkflowRunStep,
   microsToISO,
+  normalizeGovernanceVerdict,
   normalizeDecisionType,
   normalizeJobStatus,
   normalizeOutputDecision,
@@ -394,6 +396,70 @@ rules:
     expect(worker?.status).toBe("busy");
     expect(worker?.capacity).toBe(2);
   });
+
+  it("maps governance decisions with optional fields and structured constraints", () => {
+    const decision = mapGovernanceDecision({
+      job_id: "job-gov-1",
+      run_id: "run-gov-1",
+      step_id: "step-7",
+      topic: "jobs.review",
+      matched_rule: "rule-42",
+      rule_name: "Escalate risky changes",
+      verdict: "ALLOW_WITH_CONSTRAINTS",
+      reason: "Needs domain allowlist",
+      constraints: {
+        maxInvocations: 3,
+        allowedDomains: ["cordum.io"],
+      },
+      approval_status: "pending",
+      approval_decision: "approve",
+      agent_id: "agent-4",
+      policy_version: "2026-04-20",
+      timestamp: "2026-04-20T08:30:00.000Z",
+    });
+
+    expect(decision).toEqual({
+      jobId: "job-gov-1",
+      runId: "run-gov-1",
+      stepId: "step-7",
+      topic: "jobs.review",
+      matchedRule: "rule-42",
+      ruleName: "Escalate risky changes",
+      verdict: "constrain",
+      reason: "Needs domain allowlist",
+      constraints: {
+        maxInvocations: 3,
+        allowedDomains: ["cordum.io"],
+      },
+      approvalStatus: "pending",
+      approvalDecision: "approve",
+      agentId: "agent-4",
+      policyVersion: "2026-04-20",
+      timestamp: "2026-04-20T08:30:00.000Z",
+    });
+  });
+
+  it("maps governance decisions when optional fields are absent", () => {
+    const decision = mapGovernanceDecision({
+      job_id: "job-gov-2",
+      topic: "jobs.review",
+      matched_rule: "rule-9",
+      verdict: "ALLOW",
+      reason: "Allowed",
+      agent_id: "agent-9",
+      timestamp: "2026-04-20T08:45:00.000Z",
+    });
+
+    expect(decision).toEqual({
+      jobId: "job-gov-2",
+      topic: "jobs.review",
+      matchedRule: "rule-9",
+      verdict: "allow",
+      reason: "Allowed",
+      agentId: "agent-9",
+      timestamp: "2026-04-20T08:45:00.000Z",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -554,6 +620,33 @@ describe("transform contract hardening", () => {
     });
   });
 
+  describe("governance decision hardening", () => {
+    it("falls back to deny and warns for unknown verdicts", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      expect(normalizeGovernanceVerdict("ESCALATE_LATER")).toBe("deny");
+      expect(warn).toHaveBeenCalledWith(
+        '[transform] Unknown governance verdict "ESCALATE_LATER", defaulting to deny',
+      );
+
+      warn.mockRestore();
+    });
+
+    it("skips malformed governance timestamps instead of throwing", () => {
+      expect(
+        mapGovernanceDecision({
+          job_id: "job-bad-ts",
+          topic: "jobs.review",
+          matched_rule: "rule-9",
+          verdict: "DENY",
+          reason: "invalid timestamp",
+          agent_id: "agent-9",
+          timestamp: "not-a-date",
+        }),
+      ).toBeNull();
+    });
+  });
+
   describe("mapJobRecord with missing/malformed data", () => {
     it("generates stable ID for empty ID (not undefined)", () => {
       const job = mapJobRecord({ id: "", topic: "test" });
@@ -665,5 +758,135 @@ describe("transform contract hardening", () => {
       const result = mapOutputSafetyRecord({ decision: "ALLOW", findings: [] });
       expect(result!.findings).toEqual([]);
     });
+  });
+});
+
+describe("api/transform evals mappers", () => {
+  it("maps a backend eval dataset round-trip", async () => {
+    const { mapEvalDataset } = await import("./transform");
+    const ds = mapEvalDataset({
+      id: "ds-1",
+      name: "denies-2026-04",
+      version: 3,
+      tenant: "acme",
+      description: "April denies",
+      entry_count: 42,
+      content_hash: "sha256:abc",
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-02T00:00:00Z",
+      created_by: "worker-aa42",
+    });
+    expect(ds).toEqual({
+      id: "ds-1",
+      name: "denies-2026-04",
+      version: 3,
+      tenant: "acme",
+      description: "April denies",
+      entryCount: 42,
+      contentHash: "sha256:abc",
+      createdAt: "2026-04-01T00:00:00Z",
+      updatedAt: "2026-04-02T00:00:00Z",
+      createdBy: "worker-aa42",
+    });
+  });
+
+  it("defaults missing dataset fields safely", async () => {
+    const { mapEvalDataset } = await import("./transform");
+    const ds = mapEvalDataset({});
+    expect(ds.id).toBe("");
+    expect(ds.version).toBe(1);
+    expect(ds.entryCount).toBe(0);
+    expect(ds.contentHash).toBe("");
+    expect(ds.updatedAt).toBe("");
+  });
+
+  it("maps an eval entry result with known status and drift", async () => {
+    const { mapEvalEntryResult } = await import("./transform");
+    const r = mapEvalEntryResult({
+      entry_id: "e-1",
+      input: { topic: "fs.delete" },
+      expected_decision: "deny",
+      actual_decision: "allow",
+      rule_id: "rule-relaxed",
+      reason: "policy relaxed",
+      status: "regression",
+      drift_direction: "relaxed",
+    });
+    expect(r.status).toBe("regression");
+    expect(r.driftDirection).toBe("relaxed");
+    expect(r.expectedDecision).toBe("deny");
+    expect(r.actualDecision).toBe("allow");
+  });
+
+  it("falls back to error + unchanged on unknown status and drift", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { mapEvalEntryResult } = await import("./transform");
+    const r = mapEvalEntryResult({
+      entry_id: "e-2",
+      expected_decision: "weird",
+      actual_decision: "also-weird",
+      status: "not-a-real-status",
+      drift_direction: "sideways",
+    });
+    expect(r.status).toBe("error");
+    expect(r.driftDirection).toBe("unchanged");
+    // Unknown expected decision -> defaults to "deny" (safer).
+    expect(r.expectedDecision).toBe("deny");
+    // Unknown actual decision is passed through as lowercased string.
+    expect(r.actualDecision).toBe("also-weird");
+    warnSpy.mockRestore();
+  });
+
+  it("maps an eval run with coerced scorePercent and summary defaults", async () => {
+    const { mapEvalRun, isRegressionRun } = await import("./transform");
+    const run = mapEvalRun({
+      run_id: "run-1",
+      dataset_id: "ds-1",
+      dataset_name: "denies",
+      dataset_version: 2,
+      policy_snapshot: "snap-abc",
+      started_at: "2026-04-19T12:00:00Z",
+      completed_at: "2026-04-19T12:00:05Z",
+      summary: {
+        total: 10,
+        passed: 7,
+        failed: 2,
+        regressions: 1,
+        errored: 0,
+        score_percent: 70,
+      },
+      entries: [
+        {
+          entry_id: "e-1",
+          expected_decision: "deny",
+          actual_decision: "allow",
+          status: "regression",
+          drift_direction: "relaxed",
+        },
+      ],
+    });
+    expect(run.summary.scorePercent).toBe(70);
+    expect(isRegressionRun(run)).toBe(true);
+    expect(run.entries).toHaveLength(1);
+  });
+
+  it("coerces NaN/null scorePercent to null", async () => {
+    const { mapEvalRun } = await import("./transform");
+    const nan = mapEvalRun({ summary: { score_percent: Number.NaN } });
+    expect(nan.summary.scorePercent).toBeNull();
+    const nil = mapEvalRun({ summary: { score_percent: null } });
+    expect(nil.summary.scorePercent).toBeNull();
+    const missing = mapEvalRun({});
+    expect(missing.summary.scorePercent).toBeNull();
+    expect(missing.summary.total).toBe(0);
+  });
+
+  it("isRegressionRun returns false when no regressions", async () => {
+    const { isRegressionRun } = await import("./transform");
+    expect(
+      isRegressionRun({
+        summary: { total: 5, passed: 5, failed: 0, regressions: 0, errored: 0, scorePercent: 100 },
+      }),
+    ).toBe(false);
   });
 });

@@ -23,6 +23,8 @@ const (
 	PermJobsRead       = "jobs.read"
 	PermJobsWrite      = "jobs.write"
 	PermJobsApprove    = "jobs.approve"
+	PermAgentsRead     = "agents.read"
+	PermAgentsWrite    = "agents.write"
 	PermWorkflowsRead  = "workflows.read"
 	PermWorkflowsWrite = "workflows.write"
 	PermWorkersRead    = "workers.read"
@@ -33,27 +35,39 @@ const (
 	PermPacksUninstall = "packs.uninstall"
 	PermPolicyRead     = "policy.read"
 	PermPolicyWrite    = "policy.write"
+	PermGovernanceRead = "governance.read"
 	PermSchemasRead    = "schemas.read"
 	PermSchemasWrite   = "schemas.write"
 	PermUsersRead      = "users.read"
 	PermUsersWrite     = "users.write"
 	PermRolesRead      = "roles.read"
 	PermRolesWrite     = "roles.write"
+
+	// Eval dataset permissions gate the phase-2 governance-regression
+	// pipeline. They are namespaced under `evals.datasets.*` so the
+	// broader `evals.*` area stays available for sibling work (runner,
+	// replay comparisons) without churning this constant block.
+	PermEvalsDatasetsRead   = "evals.datasets.read"
+	PermEvalsDatasetsWrite  = "evals.datasets.write"
+	PermEvalsDatasetsDelete = "evals.datasets.delete"
 )
 
 // AllPermissions is the canonical list of permissions for validation.
 var AllPermissions = []string{
 	PermAdminAll,
 	PermJobsRead, PermJobsWrite, PermJobsApprove,
+	PermAgentsRead, PermAgentsWrite,
 	PermWorkflowsRead, PermWorkflowsWrite,
 	PermWorkersRead,
 	PermConfigRead, PermConfigWrite,
 	PermAuditRead,
 	PermPacksInstall, PermPacksUninstall,
 	PermPolicyRead, PermPolicyWrite,
+	PermGovernanceRead,
 	PermSchemasRead, PermSchemasWrite,
 	PermUsersRead, PermUsersWrite,
 	PermRolesRead, PermRolesWrite,
+	PermEvalsDatasetsRead, PermEvalsDatasetsWrite, PermEvalsDatasetsDelete,
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +107,7 @@ func DefaultRoles() []*RoleDefinition {
 				PermPacksInstall, PermPacksUninstall,
 				PermSchemasRead, PermSchemasWrite,
 				PermPolicyRead,
+				PermGovernanceRead,
 				PermAuditRead,
 				PermConfigRead,
 			},
@@ -112,6 +127,7 @@ func DefaultRoles() []*RoleDefinition {
 				PermAuditRead,
 				PermSchemasRead,
 				PermPolicyRead,
+				PermGovernanceRead,
 			},
 			BuiltIn:   true,
 			CreatedAt: now,
@@ -135,6 +151,7 @@ var basicRolePermissions = map[string][]string{
 		PermPacksInstall, PermPacksUninstall,
 		PermSchemasRead, PermSchemasWrite,
 		PermPolicyRead,
+		PermGovernanceRead,
 		PermAuditRead,
 		PermConfigRead,
 	},
@@ -146,6 +163,7 @@ var basicRolePermissions = map[string][]string{
 		PermAuditRead,
 		PermSchemasRead,
 		PermPolicyRead,
+		PermGovernanceRead,
 	},
 }
 

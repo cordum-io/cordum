@@ -23,6 +23,9 @@ export function KeyboardShortcutsHelp() {
 
   if (!open) return null;
 
+  const kbdClassName =
+    "inline-flex min-w-[24px] items-center justify-center rounded bg-surface-2 px-2 py-0.5 font-mono text-xs text-ink";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
@@ -53,7 +56,7 @@ export function KeyboardShortcutsHelp() {
                   {s.keys.map((k) => (
                     <kbd
                       key={k}
-                      className="inline-flex min-w-[24px] items-center justify-center rounded bg-[var(--surface2)] px-2 py-0.5 font-mono text-xs text-ink"
+                      className={kbdClassName}
                     >
                       {k}
                     </kbd>
@@ -73,23 +76,23 @@ export function KeyboardShortcutsHelp() {
             <div className="flex items-center justify-between py-1">
               <span className="text-sm text-ink">Command palette</span>
               <span className="flex items-center gap-1">
-                <kbd className="inline-flex min-w-[24px] items-center justify-center rounded bg-[var(--surface2)] px-2 py-0.5 font-mono text-xs text-ink">
+                <kbd className={kbdClassName}>
                   Ctrl
                 </kbd>
-                <kbd className="inline-flex min-w-[24px] items-center justify-center rounded bg-[var(--surface2)] px-2 py-0.5 font-mono text-xs text-ink">
+                <kbd className={kbdClassName}>
                   K
                 </kbd>
               </span>
             </div>
             <div className="flex items-center justify-between py-1">
               <span className="text-sm text-ink">Toggle shortcuts help</span>
-              <kbd className="inline-flex min-w-[24px] items-center justify-center rounded bg-[var(--surface2)] px-2 py-0.5 font-mono text-xs text-ink">
+              <kbd className={kbdClassName}>
                 ?
               </kbd>
             </div>
             <div className="flex items-center justify-between py-1">
               <span className="text-sm text-ink">Close overlay</span>
-              <kbd className="inline-flex min-w-[24px] items-center justify-center rounded bg-[var(--surface2)] px-2 py-0.5 font-mono text-xs text-ink">
+              <kbd className={kbdClassName}>
                 Esc
               </kbd>
             </div>
@@ -98,7 +101,7 @@ export function KeyboardShortcutsHelp() {
 
         {/* Footer hint */}
         <p className="text-center text-xs text-muted-foreground">
-          Press <kbd className="rounded bg-[var(--surface2)] px-1 py-0.5 font-mono text-xs">g</kbd> then a letter within 1 second
+          Press <kbd className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">g</kbd> then a letter within 1 second
         </p>
       </div>
     </div>

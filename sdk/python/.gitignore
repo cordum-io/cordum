@@ -1,0 +1,11 @@
+.cache/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+build/
+dist/
+src/cordum_sdk/_generated/.cache/
+src/*.egg-info/
+*.egg-info/

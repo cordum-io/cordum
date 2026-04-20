@@ -9,8 +9,17 @@ import { motion } from "framer-motion";
 import { get } from "@/api/client";
 import { mapJobDetail, type BackendJobDetail } from "@/api/transform";
 import type { Job, OutputFinding } from "@/api/types";
-import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
+import {
+  StatusBadge,
+  statusToneBorderTextClasses,
+  statusToneDotClasses,
+  statusToneGradientClasses,
+  statusToneTextClasses,
+  type BadgeVariant,
+} from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { InfoBanner } from "@/components/ui/InfoBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   ArrowLeft, Copy, Check, Clock, Shield, ShieldCheck, ShieldX, ShieldAlert,
@@ -26,121 +35,108 @@ import { JobActions } from "@/components/jobs/JobActions";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { Tabs } from "@/components/ui/Tabs";
+import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
 
 // ---------------------------------------------------------------------------
 // Status configuration — colors, icons, labels for each outcome
 // ---------------------------------------------------------------------------
 
 interface StatusConfig {
-  gradient: string;
   icon: typeof CheckCircle2;
   label: string;
   badgeVariant: BadgeVariant;
-  accentClass: string;
+  tone: BadgeVariant;
 }
 
 // Using string keys so we can also handle backend aliases like "completed"/"timed_out"
 const STATUS_CONFIGS: { [key: string]: StatusConfig } = {
   succeeded: {
-    gradient: "from-[var(--color-success)]/12 to-transparent",
     icon: CheckCircle2,
     label: "Succeeded",
     badgeVariant: "cordum",
-    accentClass: "text-[var(--color-success)]",
+    tone: "healthy",
   },
   completed: {
-    gradient: "from-[var(--color-success)]/12 to-transparent",
     icon: CheckCircle2,
     label: "Succeeded",
     badgeVariant: "cordum",
-    accentClass: "text-[var(--color-success)]",
+    tone: "healthy",
   },
   denied: {
-    gradient: "from-[var(--color-governance)]/12 to-transparent",
     icon: ShieldX,
     label: "Denied",
     badgeVariant: "governance",
-    accentClass: "text-[var(--color-governance)]",
+    tone: "governance",
   },
   output_quarantined: {
-    gradient: "from-destructive/12 to-transparent",
     icon: ShieldAlert,
     label: "Output Quarantined",
     badgeVariant: "danger",
-    accentClass: "text-destructive",
+    tone: "danger",
   },
   failed: {
-    gradient: "from-destructive/12 to-transparent",
     icon: XCircle,
     label: "Failed",
     badgeVariant: "danger",
-    accentClass: "text-destructive",
+    tone: "danger",
   },
   timeout: {
-    gradient: "from-destructive/12 to-transparent",
     icon: Timer,
     label: "Timed Out",
     badgeVariant: "danger",
-    accentClass: "text-destructive",
+    tone: "danger",
   },
   timed_out: {
-    gradient: "from-destructive/12 to-transparent",
     icon: Timer,
     label: "Timed Out",
     badgeVariant: "danger",
-    accentClass: "text-destructive",
+    tone: "danger",
   },
   running: {
-    gradient: "from-[var(--color-info)]/12 to-transparent",
     icon: Zap,
     label: "Running",
     badgeVariant: "info",
-    accentClass: "text-[var(--color-info)]",
+    tone: "info",
   },
   dispatched: {
-    gradient: "from-[var(--color-info)]/8 to-transparent",
     icon: Zap,
     label: "Dispatched",
     badgeVariant: "info",
-    accentClass: "text-[var(--color-info)]",
+    tone: "info",
   },
   approval_required: {
-    gradient: "from-[var(--color-warning)]/12 to-transparent",
     icon: ShieldAlert,
     label: "Awaiting Approval",
     badgeVariant: "warning",
-    accentClass: "text-[var(--color-warning)]",
+    tone: "warning",
   },
   pending: {
-    gradient: "from-[var(--color-warning)]/8 to-transparent",
     icon: Clock,
     label: "Pending",
     badgeVariant: "warning",
-    accentClass: "text-[var(--color-warning)]",
+    tone: "warning",
   },
   scheduled: {
-    gradient: "from-[var(--color-warning)]/8 to-transparent",
     icon: Clock,
     label: "Scheduled",
     badgeVariant: "warning",
-    accentClass: "text-[var(--color-warning)]",
+    tone: "warning",
   },
   cancelled: {
-    gradient: "from-muted-foreground/8 to-transparent",
     icon: XCircle,
     label: "Cancelled",
     badgeVariant: "muted",
-    accentClass: "text-muted-foreground",
+    tone: "muted",
   },
 };
 
 function getStatusConfig(status: string): StatusConfig {
   return STATUS_CONFIGS[status] ?? {
-    gradient: "from-muted-foreground/8 to-transparent",
     icon: Clock,
     label: status,
     badgeVariant: "muted" as const,
-    accentClass: "text-muted-foreground",
+    tone: "muted",
   };
 }
 
@@ -204,12 +200,12 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className={cn(
-        "relative overflow-hidden rounded-2xl border border-border",
-        "bg-gradient-to-r",
-        config.gradient,
-        "p-6 md:p-8",
-      )}
+        className={cn(
+          "relative overflow-hidden rounded-2xl border border-border",
+          "bg-gradient-to-r",
+          statusToneGradientClasses[config.tone],
+          "p-6 md:p-8",
+        )}
     >
       <div
         className="absolute inset-0 opacity-[0.03] pointer-events-none"
@@ -222,7 +218,7 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
       <div className="relative flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-3 mb-3">
-            <div className={cn("p-2 rounded-xl bg-card border border-border", config.accentClass)}>
+            <div className={cn("p-2 rounded-xl bg-card border border-border", statusToneTextClasses[config.tone])}>
               <Icon className="w-5 h-5" />
             </div>
             <StatusBadge
@@ -235,7 +231,7 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
             </StatusBadge>
             {isActive && (
               <span className="text-xs font-mono text-muted-foreground flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-info)] animate-pulse" />
+                <span className={cn("w-1.5 h-1.5 rounded-full animate-pulse", statusToneDotClasses[config.tone])} />
                 {elapsed}
               </span>
             )}
@@ -270,14 +266,15 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
             <span className="text-[10px] font-mono text-muted-foreground/60 tracking-tight">
               {job.id.slice(0, 12)}\u2026
             </span>
-            <button
-              type="button"
+            <Button
               onClick={handleCopyJobId}
+              variant="ghost"
+              size="icon"
               aria-label="Copy job ID"
-              className="text-muted-foreground transition-colors hover:text-foreground"
+              className="h-7 w-7"
             >
               {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -630,13 +627,7 @@ function SafetyTimeline({ job }: { job: Job }) {
             <div className="flex flex-col items-center">
               <div className={cn(
                 "w-8 h-8 rounded-full flex items-center justify-center border-2 bg-card shrink-0",
-                step.variant === "healthy" && "border-[var(--color-success)] text-[var(--color-success)]",
-                step.variant === "governance" && "border-[var(--color-governance)] text-[var(--color-governance)]",
-                step.variant === "warning" && "border-[var(--color-warning)] text-[var(--color-warning)]",
-                step.variant === "danger" && "border-destructive text-destructive",
-                step.variant === "info" && "border-[var(--color-info)] text-[var(--color-info)]",
-                step.variant === "muted" && "border-border text-muted-foreground",
-                step.variant === "cordum" && "border-cordum text-cordum",
+                statusToneBorderTextClasses[step.variant],
               )}>
                 <Icon className="w-4 h-4" />
               </div>
@@ -801,9 +792,15 @@ function BlobViewer({ label, pointer, data, emptyText }: {
         <div>
           <CodeBlock language="json" copyable maxHeight={500}>{displayText}</CodeBlock>
           {isTruncated && (
-            <button type="button" onClick={() => setShowFull(true)} className="mt-2 text-cordum hover:underline text-xs">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowFull(true)}
+              className="mt-2 h-auto px-0 text-cordum hover:bg-transparent hover:text-cordum hover:underline"
+            >
               Show full result ({Math.round((formatted?.length ?? 0) / 1024)}KB)
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -886,7 +883,15 @@ function MetadataBar({ job, navigate }: { job: Job; navigate: (path: string) => 
         <div key={label} className="flex items-center gap-1.5">
           <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{label}</span>
           {onClick ? (
-            <button type="button" className="text-xs font-mono text-cordum hover:underline" onClick={onClick}>{value}</button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-auto px-0 font-mono text-cordum hover:bg-transparent hover:text-cordum hover:underline"
+              onClick={onClick}
+            >
+              {value}
+            </Button>
           ) : (
             <span className="text-xs font-mono text-foreground">{value}</span>
           )}
@@ -926,6 +931,7 @@ export default function JobDetailPage() {
   const copyId = () => {
     if (id) { navigator.clipboard.writeText(id); toast.success("Job ID copied"); }
   };
+  const [activeTab, setActiveTab] = useState("overview");
 
   // --- Error state ---
   if (isError) {
@@ -947,14 +953,16 @@ export default function JobDetailPage() {
   // --- Not found ---
   if (!job) {
     return (
-      <div className="flex flex-col items-center justify-center py-20">
-        <AlertTriangle className="w-10 h-10 text-[var(--color-warning)] mb-3" />
-        <h2 className="text-lg font-semibold font-display text-foreground">Job not found</h2>
-        <p className="text-sm text-muted-foreground mt-1">The job may have been purged or the ID is invalid.</p>
-        <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/jobs")}>
-          <ArrowLeft className="w-3 h-3 mr-1" />Back to Jobs
-        </Button>
-      </div>
+      <EmptyState
+        icon={<AlertTriangle className="w-10 h-10" />}
+        title="Job not found"
+        description="The job may have been purged or the ID is invalid."
+        action={(
+          <Button variant="outline" size="sm" onClick={() => navigate("/jobs")}>
+            <ArrowLeft className="w-3 h-3 mr-1" />Back to Jobs
+          </Button>
+        )}
+      />
     );
   }
 
@@ -967,25 +975,19 @@ export default function JobDetailPage() {
           <ArrowLeft className="w-4 h-4 mr-1" />Jobs
         </Button>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={copyId} className="p-2 rounded-full hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors" title="Copy Job ID">
+          <Button type="button" variant="ghost" size="icon" onClick={copyId} title="Copy Job ID" aria-label="Copy job ID">
             <Copy className="w-3.5 h-3.5" />
-          </button>
+          </Button>
           <JobActions job={job} />
         </div>
       </div>
 
       {/* Safety bypass warning */}
       {job.labels?.safety_bypassed === "true" && (
-        <div className={cn("flex items-center gap-3 px-4 py-3 rounded-xl border", "bg-[var(--color-warning)]/10 border-[var(--color-warning)]/30 text-[var(--color-warning)]")}>
-          <Shield className="w-5 h-5 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-semibold">Safety Bypassed</p>
-            <p className="text-xs opacity-80">
-              This job was allowed via fail-open because the Safety Kernel was unavailable.
-              {job.labels.safety_bypass_reason && <> Reason: {job.labels.safety_bypass_reason}</>}
-            </p>
-          </div>
-        </div>
+        <InfoBanner variant="warning" title="Safety bypassed" icon={<Shield className="h-4 w-4" />}>
+          This job was allowed via fail-open because the Safety Kernel was unavailable.
+          {job.labels.safety_bypass_reason && <> Reason: {job.labels.safety_bypass_reason}</>}
+        </InfoBanner>
       )}
 
       {/* 1. HERO BANNER */}
@@ -998,97 +1000,127 @@ export default function JobDetailPage() {
       {job.labels && Object.keys(job.labels).length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {Object.entries(job.labels).map(([k, v]) => (
-            <span key={k} className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-2 border border-border text-foreground">
+            <StatusBadge key={k} variant="muted" className="font-mono">
               <span className="text-muted-foreground">{k}:</span> {v}
-            </span>
+            </StatusBadge>
           ))}
         </div>
       )}
 
-      {/* 2. SMART CONTEXT */}
-      <SmartContext job={job} />
+      <Tabs
+        tabs={[
+          { id: "overview", label: "Overview" },
+          { id: "payload", label: "Payload" },
+          { id: "activity", label: "Activity" },
+          { id: "governance", label: "Governance" },
+        ]}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        ariaLabel="Job detail sections"
+      />
 
-      {/* 3. SAFETY STORY */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.1 }}
-        className="instrument-card"
-      >
-        <div className="flex items-center gap-2 mb-4">
-          <Shield className="w-4 h-4 text-cordum" />
-          <h2 className="font-display font-semibold text-sm text-foreground">Safety Story</h2>
-        </div>
-        <SafetyTimeline job={job} />
-      </motion.div>
+      {activeTab === "overview" && (
+        <>
+          {/* 2. SMART CONTEXT */}
+          <SmartContext job={job} />
 
-      {/* Error block */}
-      {(job.errorMessage || job.status === "failed") && (
+          {/* 3. SAFETY STORY */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.1 }}
+            className="instrument-card"
+          >
+            <div className="flex items-center gap-2 mb-4">
+              <Shield className="w-4 h-4 text-cordum" />
+              <h2 className="font-display font-semibold text-sm text-foreground">Safety Story</h2>
+            </div>
+            <SafetyTimeline job={job} />
+          </motion.div>
+
+          {/* Error block */}
+          {(job.errorMessage || job.status === "failed") && (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.15 }}
+            >
+              <InfoBanner variant="error" title="Error">
+                <div className="space-y-2 text-destructive">
+                  <p className="text-sm font-mono whitespace-pre-wrap">
+                    {job.errorMessage || `Job failed (no error message). Code: ${job.errorCode || "unknown"}`}
+                  </p>
+                  {job.errorCode && (
+                    <p className="text-xs font-mono text-muted-foreground">
+                      Code: {job.errorCode} {job.errorCodeEnum ? `(${job.errorCodeEnum})` : ""}
+                    </p>
+                  )}
+                </div>
+              </InfoBanner>
+            </motion.div>
+          )}
+        </>
+      )}
+
+      {activeTab === "activity" && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="space-y-4"
+        >
+          <div className="instrument-card">
+            <div className="flex items-center gap-2 mb-4">
+              <Clock className="w-4 h-4 text-cordum" />
+              <h2 className="font-display font-semibold text-sm text-foreground">Activity</h2>
+            </div>
+            <CompactTimeline job={job} />
+          </div>
+          <div className="instrument-card">
+            <div className="surface-inset p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
+              <JobTerminal job={job} />
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {activeTab === "payload" && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.25 }}
+          className="space-y-4"
+        >
+          <CollapsibleSection title="Context payload" defaultOpen={false}>
+            <div className="instrument-card">
+              <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Raw output" defaultOpen={false}>
+            <div className="space-y-4">
+              <div className="instrument-card">
+                <BlobViewer
+                  label="Result"
+                  pointer={job.resultPtr}
+                  data={job.result}
+                  emptyText={isActive ? "Job is still running\u2026" : "No result data available"}
+                />
+              </div>
+            </div>
+          </CollapsibleSection>
+        </motion.div>
+      )}
+
+      {activeTab === "governance" && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.15 }}
-          className="rounded-2xl bg-destructive/5 border border-destructive/15 p-4"
         >
-          <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle className="w-4 h-4 text-destructive" />
-            <span className="text-sm font-semibold text-destructive">Error</span>
-          </div>
-          <p className="text-sm font-mono text-destructive whitespace-pre-wrap">
-            {job.errorMessage || `Job failed (no error message). Code: ${job.errorCode || "unknown"}`}
-          </p>
-          {job.errorCode && (
-            <p className="text-xs text-muted-foreground mt-2 font-mono">
-              Code: {job.errorCode} {job.errorCodeEnum ? `(${job.errorCodeEnum})` : ""}
-            </p>
-          )}
+          <GovernanceTimeline jobId={job.id} />
         </motion.div>
       )}
-
-      {/* 4. EVENT TIMELINE — compact, collapsed */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.2 }}
-      >
-        <CollapsibleSection title="Event Timeline" defaultOpen={false}>
-          <div className="instrument-card">
-            <CompactTimeline job={job} />
-          </div>
-        </CollapsibleSection>
-      </motion.div>
-
-      {/* 5. RAW DATA — developer-only, collapsed */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.25 }}
-        className="space-y-4"
-      >
-        <CollapsibleSection title="Context payload" defaultOpen={false}>
-          <div className="instrument-card">
-            <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
-          </div>
-        </CollapsibleSection>
-
-        <CollapsibleSection title="Raw output" defaultOpen={false}>
-          <div className="space-y-4">
-            <div className="instrument-card">
-              <BlobViewer
-                label="Result"
-                pointer={job.resultPtr}
-                data={job.result}
-                emptyText={isActive ? "Job is still running\u2026" : "No result data available"}
-              />
-            </div>
-            <div className="instrument-card">
-              <div className="surface-inset p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
-                <JobTerminal job={job} />
-              </div>
-            </div>
-          </div>
-        </CollapsibleSection>
-      </motion.div>
     </div>
   );
 }

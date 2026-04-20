@@ -19,6 +19,7 @@ import (
 	"github.com/cordum/cordum/core/infra/redisutil"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -123,6 +124,12 @@ type failingSafetyDecisionStore struct {
 	err error
 }
 
+type fakeDecisionLogStore struct {
+	mu      sync.Mutex
+	records []model.DecisionLogRecord
+	err     error
+}
+
 // failingSetStateStore returns an error from SetState when the target state
 // matches failOnState. Used to verify RetryAfter propagation.
 type failingSetStateStore struct {
@@ -168,6 +175,32 @@ func (s *failingSafetyDecisionStore) SetSafetyDecision(_ context.Context, jobID 
 	_ = jobID
 	_ = record
 	return s.err
+}
+
+func (s *fakeDecisionLogStore) AppendDecision(_ context.Context, record model.DecisionLogRecord) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records = append(s.records, record)
+	return nil
+}
+
+func (s *fakeDecisionLogStore) QueryDecisions(_ context.Context, _ model.DecisionQuery) (model.DecisionPage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]model.DecisionLogRecord, len(s.records))
+	copy(items, s.records)
+	return model.DecisionPage{Items: items}, nil
+}
+
+func (s *fakeDecisionLogStore) snapshotRecords() []model.DecisionLogRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.DecisionLogRecord, len(s.records))
+	copy(out, s.records)
+	return out
 }
 
 func (s *fakeJobStore) SetState(_ context.Context, jobID string, state JobState) error {
@@ -2433,6 +2466,210 @@ type fixedDecisionSafety struct {
 
 func (f *fixedDecisionSafety) Check(_ context.Context, _ *pb.JobRequest) (SafetyDecisionRecord, error) {
 	return SafetyDecisionRecord{Decision: f.decision, Reason: f.reason}, nil
+}
+
+type fixedSafetyRecordChecker struct {
+	record SafetyDecisionRecord
+	err    error
+}
+
+func (f *fixedSafetyRecordChecker) Check(_ context.Context, _ *pb.JobRequest) (SafetyDecisionRecord, error) {
+	return f.record, f.err
+}
+
+func TestCheckSafetyDecisionAppendsDecisionLog(t *testing.T) {
+	checkedAt := time.Date(2026, time.April, 20, 9, 30, 0, 0, time.UTC).UnixNano() / int64(time.Microsecond)
+	tests := []struct {
+		name   string
+		record SafetyDecisionRecord
+	}{
+		{
+			name: "allow",
+			record: SafetyDecisionRecord{
+				Decision:       SafetyAllow,
+				Reason:         "allowed",
+				RuleID:         "rule-allow",
+				PolicySnapshot: "snap-allow|sha256:1",
+				CheckedAt:      checkedAt,
+			},
+		},
+		{
+			name: "deny",
+			record: SafetyDecisionRecord{
+				Decision:       SafetyDeny,
+				Reason:         "blocked",
+				RuleID:         "rule-deny",
+				PolicySnapshot: "snap-deny|sha256:2",
+				CheckedAt:      checkedAt + 1_000,
+			},
+		},
+		{
+			name: "constrain",
+			record: SafetyDecisionRecord{
+				Decision:       SafetyAllowWithConstraints,
+				Reason:         "limited",
+				RuleID:         "rule-constrain",
+				PolicySnapshot: "snap-constrain|sha256:3",
+				Constraints: &pb.PolicyConstraints{
+					Budgets: &pb.BudgetConstraints{MaxRetries: 2},
+				},
+				CheckedAt: checkedAt + 2_000,
+			},
+		},
+		{
+			name: "require approval",
+			record: SafetyDecisionRecord{
+				Decision:         SafetyRequireApproval,
+				Reason:           "needs review",
+				RuleID:           "rule-approval",
+				PolicySnapshot:   "snap-approval|sha256:4",
+				ApprovalRequired: true,
+				ApprovalStatus:   model.ApprovalStatusPending,
+				CheckedAt:        checkedAt + 3_000,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newFakeJobStore()
+			decisionLog := &fakeDecisionLogStore{}
+			engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: tt.record}, newTestRegistry(t), NewNaiveStrategy(), store, nil).
+				WithDependencies(Dependencies{DecisionLog: decisionLog})
+
+			req := &pb.JobRequest{
+				JobId:    "job-" + strings.ReplaceAll(tt.name, " ", "-"),
+				Topic:    "job.test",
+				TenantId: "tenant-a",
+				Labels:   map[string]string{"agent_id": "agent-123"},
+			}
+
+			record, err := engine.checkSafetyDecision(req)
+			if err != nil {
+				t.Fatalf("checkSafetyDecision() error = %v", err)
+			}
+			if record.Decision != tt.record.Decision {
+				t.Fatalf("Decision=%q want %q", record.Decision, tt.record.Decision)
+			}
+
+			logged := decisionLog.snapshotRecords()
+			if len(logged) != 1 {
+				t.Fatalf("logged decisions=%d want 1", len(logged))
+			}
+			entry := logged[0]
+			if entry.JobID != req.GetJobId() {
+				t.Fatalf("JobID=%q want %q", entry.JobID, req.GetJobId())
+			}
+			if entry.Tenant != "tenant-a" {
+				t.Fatalf("Tenant=%q want tenant-a", entry.Tenant)
+			}
+			if entry.AgentID != "agent-123" {
+				t.Fatalf("AgentID=%q want agent-123", entry.AgentID)
+			}
+			if entry.Topic != req.GetTopic() {
+				t.Fatalf("Topic=%q want %q", entry.Topic, req.GetTopic())
+			}
+			if entry.Verdict != tt.record.Decision {
+				t.Fatalf("Verdict=%q want %q", entry.Verdict, tt.record.Decision)
+			}
+			if entry.RuleID != tt.record.RuleID {
+				t.Fatalf("RuleID=%q want %q", entry.RuleID, tt.record.RuleID)
+			}
+			if entry.PolicyVersion != decisionLogPolicyVersion(tt.record.PolicySnapshot) {
+				t.Fatalf("PolicyVersion=%q want %q", entry.PolicyVersion, decisionLogPolicyVersion(tt.record.PolicySnapshot))
+			}
+			if entry.Reason != tt.record.Reason {
+				t.Fatalf("Reason=%q want %q", entry.Reason, tt.record.Reason)
+			}
+			if entry.Timestamp != tt.record.CheckedAt/1_000 {
+				t.Fatalf("Timestamp=%d want %d", entry.Timestamp, tt.record.CheckedAt/1_000)
+			}
+			if tt.record.Constraints != nil && entry.Constraints.GetBudgets().GetMaxRetries() != tt.record.Constraints.GetBudgets().GetMaxRetries() {
+				t.Fatalf("constraints not preserved")
+			}
+			if entry.ApprovalStatus != tt.record.ApprovalStatus {
+				t.Fatalf("ApprovalStatus=%q want %q", entry.ApprovalStatus, tt.record.ApprovalStatus)
+			}
+		})
+	}
+}
+
+func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
+	store := newFakeJobStore()
+	decisionLog := &fakeDecisionLogStore{}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithDependencies(Dependencies{DecisionLog: decisionLog})
+
+	req := &pb.JobRequest{
+		JobId:    "job-approved-log",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels: map[string]string{
+			"approval_granted": "true",
+			"agent_id":         "agent-approved",
+		},
+	}
+	jobHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("HashJobRequest() error = %v", err)
+	}
+	store.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-approved|sha256:abc",
+		RuleID:           "rule-approved",
+		JobHash:          jobHash,
+		CheckedAt:        time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC).UnixNano() / int64(time.Microsecond),
+	}
+
+	record, err := engine.checkSafetyDecision(req)
+	if err != nil {
+		t.Fatalf("checkSafetyDecision() error = %v", err)
+	}
+	if record.Decision != SafetyAllow {
+		t.Fatalf("Decision=%q want %q", record.Decision, SafetyAllow)
+	}
+
+	logged := decisionLog.snapshotRecords()
+	if len(logged) != 1 {
+		t.Fatalf("logged decisions=%d want 1", len(logged))
+	}
+	if logged[0].Reason != "approval granted" {
+		t.Fatalf("Reason=%q want approval granted", logged[0].Reason)
+	}
+	if logged[0].PolicyVersion != "snap-approved" {
+		t.Fatalf("PolicyVersion=%q want snap-approved", logged[0].PolicyVersion)
+	}
+}
+
+func TestProcessJobDecisionLogFailureWarnsAndDoesNotBlock(t *testing.T) {
+	var logBuf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	store := newFakeJobStore()
+	decisionLog := &fakeDecisionLogStore{err: fmt.Errorf("decision log unavailable")}
+	engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:  SafetyAllow,
+		Reason:    "allowed",
+		CheckedAt: time.Now().UTC().UnixNano() / int64(time.Microsecond),
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil).WithDependencies(Dependencies{DecisionLog: decisionLog})
+
+	req := &pb.JobRequest{
+		JobId:    "job-log-warn",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+	}
+	if err := engine.processJob(testCtx(t), req, "trace-log-warn"); err != nil {
+		t.Fatalf("processJob() error = %v", err)
+	}
+	if store.states[req.JobId] == "" {
+		t.Fatalf("expected job state to be updated, got empty state")
+	}
+	if !strings.Contains(logBuf.String(), "decision log append failed") {
+		t.Fatalf("expected decision log warning, got %q", logBuf.String())
+	}
 }
 
 func TestSetJobStateFailureApprovalReturnsRetry(t *testing.T) {

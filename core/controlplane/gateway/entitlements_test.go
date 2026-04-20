@@ -364,3 +364,30 @@ func TestLicenseEndpointsReturnPlanRightsAndUsage(t *testing.T) {
 		t.Fatalf("unexpected policy_bundles usage payload: %#v", usage["policy_bundles"])
 	}
 }
+
+func TestLicenseEndpointProjectsAgentIdentityEntitlement(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.AgentIdentity = true
+	})
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/license", nil))
+	rec := httptest.NewRecorder()
+	s.handleGetLicense(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get license: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Entitlements struct {
+			AgentIdentity bool `json:"agent_identity"`
+		} `json:"entitlements"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode license response: %v", err)
+	}
+	if !payload.Entitlements.AgentIdentity {
+		t.Fatal("agent_identity entitlement missing from /api/v1/license response")
+	}
+}

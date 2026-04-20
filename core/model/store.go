@@ -67,3 +67,48 @@ type JobStore interface {
 	// Worker tracking
 	SetWorkerID(ctx context.Context, jobID, workerID string) error
 }
+
+// DecisionLogStore indexes governance decisions for the Policy Decision Log.
+type DecisionLogStore interface {
+	AppendDecision(ctx context.Context, record DecisionLogRecord) error
+	QueryDecisions(ctx context.Context, query DecisionQuery) (DecisionPage, error)
+}
+
+// EvalDatasetStore persists curated policy-regression evaluation datasets.
+//
+// Datasets are immutable once created: the store does not expose an update
+// method, and Create enforces uniqueness on the (tenant, name, version)
+// triple. To evolve a dataset, callers Create a new version with the same
+// (tenant, name) and an incremented Version. Destruction is an admin-only
+// escape hatch and is modeled as a hard delete so auditors do not discover
+// silently-hidden datasets.
+type EvalDatasetStore interface {
+	// CreateEvalDataset persists a new dataset. The ID, CreatedAt,
+	// UpdatedAt, EntryCount, and ContentHash fields are assigned by the
+	// store and will overwrite whatever the caller set. Returns
+	// ErrEvalDatasetVersionExists when (tenant, name, version) already
+	// exists.
+	CreateEvalDataset(ctx context.Context, dataset EvalDataset) (EvalDataset, error)
+
+	// GetEvalDataset returns the dataset by id within the tenant scope, or
+	// (EvalDataset{}, ErrEvalDatasetNotFound) when absent.
+	GetEvalDataset(ctx context.Context, tenant, id string) (EvalDataset, error)
+
+	// ListEvalDatasets returns a page of datasets ordered by CreatedAt
+	// descending, filtered by the supplied filter.
+	ListEvalDatasets(ctx context.Context, tenant string, filter EvalDatasetFilter, cursor string, limit int) (EvalDatasetPage, error)
+
+	// DeleteEvalDataset removes a dataset and every index entry pointing
+	// at it. Because the store has no soft-delete it is the caller's job
+	// (typically the gateway handler) to gate this on the explicit force
+	// query flag plus admin RBAC.
+	DeleteEvalDataset(ctx context.Context, tenant, id string) error
+
+	// GetEvalDatasetByNameVersion returns the dataset uniquely identified
+	// by (tenant, name, version), or ErrEvalDatasetNotFound when absent.
+	GetEvalDatasetByNameVersion(ctx context.Context, tenant, name string, version int) (EvalDataset, error)
+
+	// ListEvalDatasetVersions returns every version of a dataset name in
+	// the tenant, newest-version-first.
+	ListEvalDatasetVersions(ctx context.Context, tenant, name string) ([]EvalDataset, error)
+}

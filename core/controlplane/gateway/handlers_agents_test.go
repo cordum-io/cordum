@@ -11,12 +11,21 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	redis "github.com/redis/go-redis/v9"
 )
 
+func enableAgentIdentityEntitlement(t *testing.T, s *server) {
+	t.Helper()
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.AgentIdentity = true
+	})
+}
+
 func TestCreateAgent(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 
 	body := bytes.NewBufferString(`{
 		"name": "fraud-detector",
@@ -67,6 +76,7 @@ func TestCreateAgent(t *testing.T) {
 
 func TestCreateAgentValidation(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 
 	tests := []struct {
 		name     string
@@ -111,8 +121,35 @@ func TestCreateAgentValidation(t *testing.T) {
 	}
 }
 
+func TestAgentIdentityHandlersRequireEntitlement(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	setTestEntitlements(t, s, licensing.PlanTeam, func(entitlements *licensing.Entitlements) {
+		entitlements.AgentIdentity = false
+	})
+
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &AuthContext{
+		Tenant:      "default",
+		Role:        "admin",
+		PrincipalID: "admin-user",
+	})
+	rr := httptest.NewRecorder()
+
+	s.handleListAgents(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"code":"tier_limit_exceeded"`)) {
+		t.Fatalf("expected tier_limit_exceeded response, got %s", rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"limit":"agent_identity"`)) {
+		t.Fatalf("expected agent_identity limit key, got %s", rr.Body.String())
+	}
+}
+
 func TestListAgents(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 
 	// Create 3 agents
 	for _, name := range []string{"agent-a", "agent-b", "agent-c"} {
@@ -154,6 +191,7 @@ func TestListAgents(t *testing.T) {
 
 func TestGetAgent(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 
 	// Create an agent
 	body := bytes.NewBufferString(`{"name":"get-me","owner":"admin","risk_tier":"medium"}`)
@@ -207,6 +245,7 @@ func TestGetAgent(t *testing.T) {
 
 func TestDeleteAgent(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 
 	// Create an agent
 	body := bytes.NewBufferString(`{"name":"delete-me","owner":"admin","risk_tier":"low"}`)
@@ -261,6 +300,7 @@ func TestDeleteAgent(t *testing.T) {
 
 func TestDeleteAgentNotFound(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 
 	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/agents/nonexistent", nil), &AuthContext{
 		Tenant: "default",
@@ -277,6 +317,7 @@ func TestDeleteAgentNotFound(t *testing.T) {
 
 func TestUpdateAgentNotFound(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 
 	body := bytes.NewBufferString(`{"name":"updated"}`)
 	req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/nonexistent", body), &AuthContext{
@@ -295,6 +336,7 @@ func TestUpdateAgentNotFound(t *testing.T) {
 
 func TestUpdateAgent(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 
 	// Create
 	body := bytes.NewBufferString(`{"name":"original","owner":"admin","risk_tier":"low","team":"eng"}`)
@@ -347,6 +389,7 @@ func TestUpdateAgent(t *testing.T) {
 
 func TestAgentStatsHighVolume(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 	ctx := context.Background()
 
 	// Create an agent identity.
@@ -434,6 +477,7 @@ func TestAgentStatsHighVolume(t *testing.T) {
 
 func TestListAgentsIncludesLastActive(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
 	ctx := context.Background()
 
 	// Create two agents.
