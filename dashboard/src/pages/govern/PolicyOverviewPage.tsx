@@ -35,8 +35,6 @@ import {
   type PolicyEvaluationMode,
 } from "@/components/policy/tabs";
 import type { PolicyBundle } from "@/api/types";
-import { AuditChainCard } from "@/components/AuditChainCard";
-import { useAuth } from "@/hooks/useAuth";
 
 // Lazy-loaded tab content — each page accepts { hideHeader?: boolean }
 const LazyInputRulesTab = lazy(() => import("@/pages/govern/InputRulesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
@@ -213,7 +211,6 @@ function OverviewTabContent() {
   return (
     <div className="space-y-6">
       <PostureSummary bundles={bundles} allRules={allRules} />
-      <AuditChainCardForOverview />
       <PolicyFilterBar
         searchText={searchText}
         onSearchChange={setSearchText}
@@ -276,14 +273,6 @@ function OverviewTabContent() {
       {activeView === "by-topic" && <ByTopicTable bundles={filteredBundles} filterText={combinedFilter || undefined} />}
     </div>
   );
-}
-
-// AuditChainCardForOverview keeps the overview tab a function component.
-// The card itself is a thin wrapper around the dashboard's default
-// tenant — scoping expands naturally once tenant switching lands here.
-function AuditChainCardForOverview() {
-  const { tenantId } = useAuth();
-  return <AuditChainCard tenant={tenantId ?? ""} />;
 }
 
 // ---------------------------------------------------------------------------

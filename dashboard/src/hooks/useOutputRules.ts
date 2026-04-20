@@ -6,6 +6,20 @@ import { useToastStore } from "../state/toast";
 import type { OutputRule, OutputRuleAuditEntry, OutputRuleFinding } from "../types/policy";
 import { encodePolicyBundleId } from "./usePolicies";
 
+export const GLOBAL_OUTPUT_DECISIONS = [
+  "allow",
+  "deny",
+  "quarantine",
+  "redact",
+] as const;
+
+export const GLOBAL_OUTPUT_SEVERITIES = [
+  "low",
+  "medium",
+  "high",
+  "critical",
+] as const;
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;

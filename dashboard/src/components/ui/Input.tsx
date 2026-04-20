@@ -1,16 +1,8 @@
-import type { InputHTMLAttributes } from "react";
-import { cn } from "../../lib/utils";
+import { forwardRef, type InputHTMLAttributes } from "react";
+import { cn } from "@/lib/utils";
 
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={cn(
-        "w-full rounded-md border border-border bg-input px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-micro ease-[cubic-bezier(0.16,1,0.3,1)] placeholder:text-muted-foreground/60 hover:border-accent/40 hover:shadow-soft focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 aria-[invalid=true]:border-danger disabled:bg-surface-1 disabled:text-muted-foreground disabled:cursor-not-allowed",
-        className
-      )}
-      {...props}
-    />
-  );
+interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+  icon?: React.ReactNode;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(

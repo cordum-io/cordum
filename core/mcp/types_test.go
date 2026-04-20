@@ -3,28 +3,8 @@ package mcp
 import (
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 )
-
-func TestToolJSONOmitsEmptyScopeMetadata(t *testing.T) {
-	t.Parallel()
-
-	tool := Tool{
-		Name:        "jobs.submit",
-		Description: "submit a job",
-	}
-	raw, err := json.Marshal(tool)
-	if err != nil {
-		t.Fatalf("marshal tool: %v", err)
-	}
-	js := string(raw)
-	for _, f := range []string{"tags", "riskTier", "dataClassifications"} {
-		if strings.Contains(js, f) {
-			t.Fatalf("expected %q to be omitted from bare tool JSON, got %s", f, js)
-		}
-	}
-}
 
 func TestTypeJSONRoundTrip(t *testing.T) {
 	t.Parallel()
@@ -71,17 +51,6 @@ func TestTypeJSONRoundTrip(t *testing.T) {
 				Name:        "jobs.submit",
 				Description: "submit a job",
 				InputSchema: map[string]any{"type": "object"},
-			},
-			dst: func() any { return &Tool{} },
-		},
-		{
-			name: "tool_with_scope_metadata",
-			value: Tool{
-				Name:                "jobs.delete",
-				Description:         "delete a job",
-				Tags:                []string{"destructive", "jobs"},
-				RiskTier:            "high",
-				DataClassifications: []string{"pii"},
 			},
 			dst: func() any { return &Tool{} },
 		},

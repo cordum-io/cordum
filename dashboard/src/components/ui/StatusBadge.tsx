@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-export type BadgeVariant = "healthy" | "warning" | "danger" | "info" | "muted" | "cordum";
+export type BadgeVariant = "healthy" | "warning" | "danger" | "info" | "muted" | "cordum" | "governance";
 
 export const statusToneTextClasses: Record<BadgeVariant, string> = {
   healthy: "text-[var(--color-success)]",

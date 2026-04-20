@@ -501,7 +501,11 @@ function RuleHitsChart({ ruleHits }: { ruleHits: PolicyReplayRuleHit[] }) {
 // Main page
 // ---------------------------------------------------------------------------
 
-export default function ReplayPage() {
+export default function ReplayPage({
+  hideHeader,
+}: {
+  hideHeader?: boolean;
+} = {}) {
   const [searchParams] = useSearchParams();
   const replayMutation = useReplayPolicy();
   const result = replayMutation.data;
@@ -554,15 +558,8 @@ export default function ReplayPage() {
     replayMutation,
   ]);
 
-  return (
-    <div className="flex flex-col h-full overflow-y-auto">
-      <PageHeader
-        title="Policy Replay"
-        subtitle="Replay historical jobs against a candidate policy to see what decisions would change"
-        label="Govern"
-      />
-
-      <div className="max-w-6xl mx-auto w-full px-4 py-6 space-y-6">
+  const content = (
+    <div className={hideHeader ? "space-y-6" : "max-w-6xl mx-auto w-full px-4 py-6 space-y-6"}>
         {/* Form section */}
         <div className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-5">
           {/* Time range */}
@@ -833,6 +830,20 @@ export default function ReplayPage() {
           </motion.div>
         )}
       </div>
+  );
+
+  if (hideHeader) {
+    return content;
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-y-auto">
+      <PageHeader
+        title="Replay & Compare"
+        subtitle="Re-run historical jobs against the current or a candidate policy to see what decisions would change."
+        label="Govern"
+      />
+      {content}
     </div>
   );
 }

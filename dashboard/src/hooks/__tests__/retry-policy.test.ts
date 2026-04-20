@@ -28,6 +28,16 @@ describe("shouldRetry", () => {
     expect(shouldRetry(0, error)).toBe(false);
   });
 
+  it("retries retryable approval lock conflicts up to 2 times", () => {
+    const error = new ApiError(409, "Conflict", {
+      code: "approval_retryable_lock",
+      retryable: true,
+    });
+    expect(shouldRetry(0, error)).toBe(true);
+    expect(shouldRetry(1, error)).toBe(true);
+    expect(shouldRetry(2, error)).toBe(false);
+  });
+
   it("does not retry 410 Gone", () => {
     const error = new ApiError(410, "Gone");
     expect(shouldRetry(0, error)).toBe(false);

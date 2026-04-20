@@ -55,20 +55,20 @@ function StateDiagram({ current }: { current: string }) {
           <div key={s} className="flex items-center gap-1">
             <span
               className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors",
+                "rounded-full px-2 py-0.5 text-xs font-medium transition-colors",
                 active
                   ? s === "CLOSED"
                     ? "bg-success/15 text-success ring-1 ring-success/30"
                     : s === "OPEN"
                       ? "bg-danger/15 text-danger ring-1 ring-danger/30"
                       : "bg-warning/15 text-warning ring-1 ring-warning/30"
-                  : "bg-surface2 text-muted",
+                  : "bg-surface2 text-muted-foreground",
               )}
             >
               {DIAGRAM_LABELS[s]}
             </span>
             {i < DIAGRAM_STATES.length - 1 && (
-              <span className="text-[10px] text-muted">&rarr;</span>
+              <span className="text-xs text-muted-foreground">&rarr;</span>
             )}
           </div>
         );
@@ -115,24 +115,24 @@ function CBSection({
         <Badge variant={config.variant}>{config.label}</Badge>
       </div>
 
-      <p className="text-xs text-muted">{config.description}</p>
+      <p className="text-xs text-muted-foreground">{config.description}</p>
 
       <StateDiagram current={cb.state} />
 
       <div className="space-y-1.5 text-xs">
         <div className="flex justify-between">
-          <span className="text-muted">Consecutive failures</span>
+          <span className="text-muted-foreground">Consecutive failures</span>
           <span className="font-mono text-ink">
             {cb.failures} / {cb.fail_threshold}
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-muted">Fallback mode</span>
+          <span className="text-muted-foreground">Fallback mode</span>
           <span className="text-ink">{fallbackMode}</span>
         </div>
         {cb.state === "OPEN" && cb.cooldown_remaining_ms > 0 && (
           <div className="flex justify-between">
-            <span className="text-muted">Cooldown</span>
+            <span className="text-muted-foreground">Cooldown</span>
             <span className="font-mono text-danger">
               {formatCooldown(cb.cooldown_remaining_ms)}
             </span>

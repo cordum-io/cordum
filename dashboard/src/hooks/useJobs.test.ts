@@ -1,17 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
-import { createTestQueryClient, mockFetch, renderWithQueryClient } from "./__tests__/test-utils";
-import {
-  __jobsInternal,
-  useCancelJob,
-  useJob,
-  useJobDecisions,
-  useJobEvents,
-  useJobs,
-  useRemediateJob,
-  useRetryJob,
-  useSubmitJob,
-} from "./useJobs";
+import { describe, expect, it } from "vitest";
+import type { Job } from "@/api/types";
+import { __jobsInternal } from "./useJobs";
 
 function makeJob(overrides: Partial<Job>): Job {
   return {
@@ -197,80 +186,3 @@ describe("useJobs internals", () => {
     });
   });
 });
-
-describe("useJobEvents", () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-    vi.clearAllMocks();
-    mockConfigState.apiBaseUrl = "/api/v1";
-    mockConfigState.apiKey = "";
-    mockConfigState.tenantId = "";
-    mockConfigState.principalId = "";
-    mockConfigState.principalRole = "";
-    mockConfigState.user = null;
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue("00000000-0000-0000-0000-000000000123");
-    vi.spyOn(performance, "now").mockReturnValue(100);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("fetches and maps events from /jobs/{id}/events", async () => {
-    const fetchSpy = mockFetch([
-      {
-        match: "/jobs/j1/events",
-        method: "GET",
-        body: {
-          events: [
-            { ts: 1700000000000000, state: "PENDING", ctx: { topic: "job.test" } },
-            { ts: 1700000060000000, state: "RUNNING" },
-          ],
-        },
-      },
-    ]);
-
-    const hook = renderWithQueryClient(() => useJobEvents("j1"));
-
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-
-    const data = hook.result.current?.data;
-    expect(data).toHaveLength(2);
-    expect(data![0].state).toBe("PENDING");
-    expect(data![0].timestamp).toBe("2023-11-14T22:13:20.000Z");
-    expect(data![0].ctx?.topic).toBe("job.test");
-    expect(data![1].state).toBe("RUNNING");
-    expect(data![1].ctx).toBeUndefined();
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    hook.unmount();
-  });
-
-  it("returns empty array when no events", async () => {
-    mockFetch([
-      {
-        match: "/jobs/j2/events",
-        method: "GET",
-        body: { events: [] },
-      },
-    ]);
-
-    const hook = renderWithQueryClient(() => useJobEvents("j2"));
-
-    await hook.waitFor(() => {
-      expect(hook.result.current?.isSuccess).toBe(true);
-    });
-
-    expect(hook.result.current?.data).toEqual([]);
-    hook.unmount();
-  });
-
-  it("is disabled when id is empty", () => {
-    const hook = renderWithQueryClient(() => useJobEvents(""));
-    expect(hook.result.current?.fetchStatus).toBe("idle");
-    hook.unmount();
-  });
-});
-

@@ -125,6 +125,28 @@ func (r *MemoryRegistry) Snapshot() map[string]*pb.Heartbeat {
 	return snapshot
 }
 
+// SnapshotAll returns every tracked worker heartbeat regardless of TTL
+// staleness. This is the view the DispatchGate consumes in warn +
+// telemetry modes so session-token authority can admit a worker whose
+// heartbeat has lapsed (e.g., clock skew, transient NATS loss).
+//
+// Entries with a nil heartbeat (handshake-only records prior to the
+// first heartbeat) are skipped since the scheduler can't route to them
+// without pool metadata.
+func (r *MemoryRegistry) SnapshotAll() map[string]*pb.Heartbeat {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	snapshot := make(map[string]*pb.Heartbeat, len(r.workers))
+	for id, entry := range r.workers {
+		if entry.hb == nil {
+			continue
+		}
+		snapshot[id] = entry.hb
+	}
+	return snapshot
+}
+
 func (r *MemoryRegistry) ReadinessSnapshot() map[string]WorkerReadiness {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

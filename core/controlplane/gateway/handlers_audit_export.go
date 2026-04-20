@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 )
 
 // handleAuditExportHealth returns the current audit export backend status.
 // GET /api/v1/audit/export/health
 func (s *server) handleAuditExportHealth(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAuditRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAuditRead, "admin") {
 		return
 	}
 
@@ -54,7 +53,7 @@ func (s *server) handleAuditExportHealth(w http.ResponseWriter, r *http.Request)
 // handleAuditExportTest sends a test event to the configured export backend.
 // POST /api/v1/audit/export/test
 func (s *server) handleAuditExportTest(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAuditRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAuditRead, "admin") {
 		return
 	}
 
@@ -98,7 +97,7 @@ func (s *server) handleAuditExportTest(w http.ResponseWriter, r *http.Request) {
 // handleAuditExportConfig returns the current export configuration (non-sensitive).
 // GET /api/v1/audit/export/config
 func (s *server) handleAuditExportConfig(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAuditRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAuditRead, "admin") {
 		return
 	}
 

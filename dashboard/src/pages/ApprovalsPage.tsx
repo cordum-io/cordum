@@ -20,6 +20,10 @@ import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
+import { Input } from "@/components/ui/Input";
+import { Textarea } from "@/components/ui/Textarea";
+import { Tabs } from "@/components/ui/Tabs";
+import { StatTile } from "@/components/ui/StatTile";
 import {
   Search,
   RefreshCw,
@@ -36,7 +40,6 @@ import { cn, formatRelativeTime } from "@/lib/utils";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
-import { MetricValue } from "@/components/ui/MetricValue";
 import { friendlyError } from "@/lib/friendlyError";
 import { toast } from "sonner";
 
@@ -313,127 +316,289 @@ function DecisionFacts({
   if (!facts.length) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-md border border-border/70 bg-surface-1/55 px-3 py-2 text-[11px] text-muted-foreground">
-      {totalCount > 0 && (<><input type="checkbox" checked={selectedCount > 0 && selectedCount === totalCount} ref={(el) => { if (el) el.indeterminate = selectedCount > 0 && selectedCount < totalCount; }} onChange={onSelectAll} className="h-3.5 w-3.5 rounded border-border text-accent focus:ring-accent cursor-pointer" title="Select all" aria-label="Select all pending approvals" /><span aria-hidden>&middot;</span></>)}
-      <span><span className="font-semibold text-foreground">{pending}</span> pending</span>
-      <span aria-hidden>&middot;</span>
-      <span><span className={cn("font-semibold", critical > 0 ? "text-danger" : "text-foreground")}>{critical}</span> critical</span>
-      <span aria-hidden>&middot;</span>
-      <span>avg wait <span className="font-semibold text-foreground">{formatWait(avgWait)}</span></span>
-      <span aria-hidden>&middot;</span>
-      <span><span className="font-semibold text-foreground">{resolvedToday}</span> resolved today</span>
-      {slaBreaches > 0 && (<><span aria-hidden>&middot;</span><span><span className="font-semibold text-danger">{slaBreaches}</span> SLA breach{slaBreaches !== 1 ? "es" : ""}</span></>)}
+    <ul
+      className={cn("flex flex-wrap gap-2", compact ? "pt-1" : "pt-2")}
+      aria-label="Decision facts"
+    >
+      {facts.map((fact) => (
+        <li
+          key={`${fact.label}:${fact.value}`}
+          className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2/80 px-3 py-1.5 text-xs"
+        >
+          <span className="font-mono uppercase tracking-wide text-muted-foreground">
+            {fact.label}
+          </span>
+          <span className="font-medium text-foreground">{fact.value}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function DecisionSummaryBlock({
+  approval,
+  compact = false,
+}: {
+  approval: Approval;
+  compact?: boolean;
+}) {
+  const title = getApprovalPrimaryTitle(approval);
+  const reason = getApprovalPrimaryReason(approval);
+  const escalationReason = getApprovalEscalationReason(approval);
+  const contextStatus = approval.decisionSummary?.contextStatus;
+  const missingFields = approval.decisionSummary?.missingFields ?? [];
+  const TitleTag = compact ? "h3" : "h2";
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <TitleTag
+          className={cn(
+            "font-display font-semibold leading-tight text-foreground",
+            compact ? "text-base" : "text-xl",
+          )}
+        >
+          {title}
+        </TitleTag>
+        {reason ? (
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {reason}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Review the request details before deciding.
+          </p>
+        )}
+      </div>
+
+      {escalationReason && (
+        <div className="flex items-start gap-2 rounded-2xl border border-warning/20 bg-warning/10 px-3 py-2 text-sm text-foreground">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <div>
+            <p className="text-xs font-mono uppercase tracking-wide text-warning">
+              Escalation
+            </p>
+            <p>{escalationReason}</p>
+          </div>
+        </div>
+      )}
+
+      {contextStatus && contextStatus !== "available" && (
+        <div className="rounded-2xl border border-border bg-surface-2/70 px-3 py-2 text-xs text-muted-foreground">
+          Approval context is{" "}
+          <span className="font-medium text-foreground">
+            {contextStatus.replace(/_/g, " ")}
+          </span>
+          {missingFields.length > 0 && (
+            <> — missing {missingFields.join(", ")}.</>
+          )}
+        </div>
+      )}
+
+      <DecisionFacts approval={approval} compact={compact} />
     </div>
   );
 }
 
-function MiniCard({ approval, active, onClick }: { approval: Approval; active: boolean; onClick: () => void }) {
-  const urgency = approval.urgencyLevel === "critical" || approval.urgencyLevel === "breach"
-    ? "danger"
-    : approval.urgencyLevel === "aging"
-      ? "warning"
-      : "default";
-  const urgencyDotColor: Record<typeof urgency, string> = { default: "bg-success", warning: "bg-warning", danger: "bg-danger" };
-  const summary = approval.humanSummary || `Job ${approval.jobId.slice(0, 8)} requires approval`;
-  const wait = formatWait(approval.waitMs ?? 0);
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={active ? "true" : undefined}
-      aria-pressed={active}
-      aria-label={`${summary}, waiting ${wait}`}
-      className={cn(
-        "w-full rounded-md border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-0",
-        active ? "border-accent bg-status-info-bg" : "border-border bg-surface-1/50 hover:bg-surface-2/45"
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", urgencyDotColor[urgency])} />
-        <p className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{approval.humanSummary || `Job ${approval.jobId.slice(0, 8)}`}</p>
-        <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{wait}</span>
+function SecondaryMetadata({
+  approval,
+  compact = false,
+}: {
+  approval: Approval;
+  compact?: boolean;
+}) {
+  const rows = compact
+    ? [
+        { label: "Approval", value: compactValue(approval.id) },
+        { label: "Job", value: compactValue(approval.jobId) },
+        { label: "Topic", value: approval.topic },
+        { label: "Run", value: compactValue(approval.workflowContext?.runId) },
+      ].filter((row) => !!row.value)
+    : getApprovalAuditRows(approval);
+
+  if (!rows.length) return null;
+
+  if (compact) {
+    return (
+      <div className="border-t border-border/70 pt-3">
+        <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono text-muted-foreground">
+          {rows.map((row) => (
+            <li key={row.label} className="inline-flex items-center gap-1">
+              <span className="uppercase tracking-wide">{row.label}</span>
+              <span className="text-foreground/80">{row.value}</span>
+            </li>
+          ))}
+        </ul>
       </div>
-    </button>
+    );
+  }
+
+  return (
+    <dl className="grid gap-3 sm:grid-cols-2">
+      {rows.map((row) => (
+        <div key={row.label} className="space-y-1">
+          <dt className="text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
+            {row.label}
+          </dt>
+          <dd className="break-all text-sm text-foreground">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
-export default function ApprovalsPage() {
-  usePageTitle("Approvals");
-  const { data, isLoading, isError, error, dataUpdatedAt, refetch, isRefetching } = useApprovals();
-  const { data: historyData } = useApprovalHistory();
-  const approveJob = useApproveJob();
-  const rejectJob = useRejectJob();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab: ApprovalsTab = (searchParams.get("tab") as ApprovalsTab) || "queue";
-  const setActiveTab = useCallback(
-    (tab: ApprovalsTab) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (tab === "queue") next.delete("tab");
-        else next.set("tab", tab);
-        // Clear other tab's params
-        next.delete("page");
-        return next;
-      }, { replace: true });
-    },
-    [setSearchParams],
+function JsonDisclosure({
+  title,
+  data,
+}: {
+  title: string;
+  data?: Record<string, unknown>;
+}) {
+  if (!data || Object.keys(data).length === 0) return null;
+
+  return (
+    <details className="rounded-2xl border border-border bg-surface-2/60 p-3">
+      <summary className="cursor-pointer list-none text-xs font-mono uppercase tracking-wide text-muted-foreground">
+        {title}
+      </summary>
+      <div className="mt-3">
+        <CodeBlock language="json" maxHeight={300}>
+          {renderJson(data)}
+        </CodeBlock>
+      </div>
+    </details>
   );
-  const approvals = data?.items ?? [];
-  const resolvedToday = historyData?.items?.length ?? 0;
+}
 
-  const filters = useMemo<FilterState>(() => ({
-    urgency: (searchParams.get("urgency") as FilterState["urgency"]) || "all",
-    workflow: searchParams.get("workflow") || "",
-    rule: searchParams.get("rule") || "",
-    risk: (searchParams.get("risk") as FilterState["risk"]) || "all",
-    sortBy: (searchParams.get("sortBy") as FilterState["sortBy"]) || "waitTime",
-    assignment: (searchParams.get("assignment") as FilterState["assignment"]) || "all",
-  }), [searchParams]);
+// ---------------------------------------------------------------------------
+// Exported for unit tests (following SettingsKeysPage pattern)
+// ---------------------------------------------------------------------------
 
-  const setFilters = useCallback((next: FilterState) => {
-    const params: Record<string, string> = {};
-    const currentTab = searchParams.get("tab");
-    if (currentTab) params.tab = currentTab;
-    const currentId = searchParams.get("id");
-    if (currentId) params.id = currentId;
-    if (next.urgency !== "all") params.urgency = next.urgency;
-    if (next.workflow) params.workflow = next.workflow;
-    if (next.rule) params.rule = next.rule;
-    if (next.risk !== "all") params.risk = next.risk;
-    if (next.sortBy !== "waitTime") params.sortBy = next.sortBy;
-    if (next.assignment !== "all") params.assignment = next.assignment;
-    setSearchParams(params);
-  }, [searchParams, setSearchParams]);
+/** Drawer a11y configuration — tested to ensure ARIA attributes are wired. */
+export const DRAWER_A11Y = {
+  role: "dialog" as const,
+  ariaModal: true,
+  labelledById: "approval-drawer-title",
+  /** The hook wired to the drawer — "useDialogA11y" provides Escape + focus trap */
+  hookName: "useDialogA11y" as const,
+} as const;
 
-  // Subscribe to assignment count as a lightweight change signal —
-  // avoids re-rendering the full page on every individual assignment update.
-  const assignmentVersion = useEventStore((s) => s.approvalAssignments.size);
-  const sorted = useMemo(() => applyFilters(approvals, filters), [approvals, filters, assignmentVersion]);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const toggleSelect = useCallback((id: string) => { setSelectedIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }, []);
-  const selectAll = useCallback(() => { setSelectedIds((prev) => prev.size === sorted.length ? new Set() : new Set(sorted.map((a) => a.id))); }, [sorted]);
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+/** Resolves the deny reason: trims input, falls back to default. */
+export function resolveDenyReason(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed || "Denied by operator";
+}
 
-  const selectedId = searchParams.get("id");
-  const selectedApproval = useMemo(() => sorted.find((a) => a.id === selectedId) ?? null, [sorted, selectedId]);
-  const openPanel = useCallback((id: string) => { const params: Record<string, string> = { id }; const t = searchParams.get("tab"); if (t) params.tab = t; if (filters.urgency !== "all") params.urgency = filters.urgency; if (filters.workflow) params.workflow = filters.workflow; if (filters.rule) params.rule = filters.rule; if (filters.risk !== "all") params.risk = filters.risk; if (filters.sortBy !== "waitTime") params.sortBy = filters.sortBy; if (filters.assignment !== "all") params.assignment = filters.assignment; setSearchParams(params); }, [filters, searchParams, setSearchParams]);
-  const closePanel = useCallback(() => { const params: Record<string, string> = {}; const t = searchParams.get("tab"); if (t) params.tab = t; if (filters.urgency !== "all") params.urgency = filters.urgency; if (filters.workflow) params.workflow = filters.workflow; if (filters.rule) params.rule = filters.rule; if (filters.risk !== "all") params.risk = filters.risk; if (filters.sortBy !== "waitTime") params.sortBy = filters.sortBy; if (filters.assignment !== "all") params.assignment = filters.assignment; setSearchParams(params); }, [filters, searchParams, setSearchParams]);
-  const panelOpen = !!selectedApproval;
-  const filtersActive = !isDefaultFilters(filters);
-  const filteredOutCount = Math.max(0, approvals.length - sorted.length);
-  const hasVisibleQueueItems = !isLoading && !isError && sorted.length > 0;
-  const queueFilteredToZero = !isLoading && !isError && approvals.length > 0 && sorted.length === 0;
-  const approvalsErrorMessage = useMemo(() => {
-    if (!isError) return "";
-    const raw = String((error as { message?: string } | null)?.message ?? "");
-    const msg = raw.toLowerCase();
-    if (msg.includes("timeout")) return "Approval API timed out. Retry to refresh queue state.";
-    if (msg.includes("network")) return "Unable to reach approval service. Check gateway connectivity and retry.";
-    return "Failed to load approvals. Retry to refresh queue state.";
-  }, [isError, error]);
+/** Pure handler for deny confirmation — calls mutate with resolved reason. */
+export function handleDenyConfirm(
+  target: Approval | null,
+  rawReason: string,
+  deps: {
+    mutate: (input: { jobId: string; reason: string }) => void;
+    clearTarget: () => void;
+  },
+): void {
+  if (!target) return;
+  deps.mutate({ jobId: target.jobId, reason: resolveDenyReason(rawReason) });
+  deps.clearTarget();
+}
 
-  const handleApprove = useCallback((id: string, comment?: string) => approveJob.mutateAsync({ id, comment }), [approveJob]);
-  const handleReject = useCallback((id: string, reason: string) => rejectJob.mutateAsync({ id, reason }), [rejectJob]);
+export default function ApprovalsPage() {
+  const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState("pending");
+  const [selectedApproval, setSelectedApproval] = useState<Approval | null>(
+    null,
+  );
+  const [denyTarget, setDenyTarget] = useState<Approval | null>(null);
+  const [denyReason, setDenyReason] = useState("");
+
+  const drawerRef = useDialogA11y(() => setSelectedApproval(null), {
+    enabled: !!selectedApproval,
+    initialFocusSelector: 'button[aria-label="Close approval detail"]',
+  });
+  const {
+    data: approvalsData,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useApprovals();
+  const approvals = approvalsData?.items ?? [];
+  const approveMutation = useApproveJob();
+  const rejectMutation = useRejectJob();
+
+  const handleApprove = (approval: Approval) => {
+    if (approveMutation.isPending) return;
+    approveMutation.mutate(
+      { jobId: approval.jobId },
+      {
+        onError: (err) => {
+          const errBody = (err as any)?.body ?? (err as any)?.data;
+          if (errBody?.code === "self_approval_denied") {
+            toast.error("Self-approval not permitted", {
+              description:
+                "You cannot approve a job you submitted. A different administrator must approve this request.",
+            });
+          } else {
+            const friendly = friendlyError(err, "approve approval");
+            toast.error(friendly.title, { description: friendly.description });
+          }
+        },
+      },
+    );
+  };
+
+  const handleDeny = (approval: Approval, reason: string) => {
+    if (rejectMutation.isPending) return;
+    rejectMutation.mutate(
+      { jobId: approval.jobId, reason },
+      {
+        onSuccess: () => {
+          setDenyTarget(null);
+          setDenyReason("");
+        },
+        onError: (err) => {
+          const friendly = friendlyError(err, "reject approval");
+          toast.error(friendly.title, { description: friendly.description });
+        },
+      },
+    );
+  };
+
+  const all = approvals ?? [];
+  const pending = all.filter((a) => a.status === "pending");
+  const approved = all.filter((a) => a.status === "approved");
+  const denied = all.filter((a) => a.status === "rejected");
+  const expired = all.filter((a) => a.status === "expired");
+  const invalidated = all.filter((a) => a.status === "invalidated");
+  const repaired = all.filter((a) => a.status === "repaired");
+
+  const filtered = useMemo(
+    () =>
+      all
+        .filter((approval) => {
+          if (activeTab !== "all" && approval.status !== activeTab)
+            return false;
+          if (!search.trim()) return true;
+          return getApprovalSearchText(approval).includes(
+            search.trim().toLowerCase(),
+          );
+        })
+        .sort((a, b) => {
+          const aActionable = isApprovalActionable(a);
+          const bActionable = isApprovalActionable(b);
+          if (aActionable && !bActionable) return -1;
+          if (bActionable && !aActionable) return 1;
+          if (a.status === "pending" && b.status !== "pending") return -1;
+          if (b.status === "pending" && a.status !== "pending") return 1;
+          return (
+            new Date(b.requestedAt ?? 0).getTime() -
+            new Date(a.requestedAt ?? 0).getTime()
+          );
+        }),
+    [activeTab, all, search],
+  );
 
   return (
     <div className="space-y-6">
@@ -449,10 +614,10 @@ export default function ApprovalsPage() {
         }
       />
 
-      {/* MCP per-tool approval queue — rendered as its own section so
-          operators see pending tool calls at the top of the page, not
-          commingled with job-level approvals which have different
-          action copy and lifecycle states. */}
+      {/* MCP tool-call approvals — surfaced above job approvals so
+          operators see the high-privilege agent-driven calls before
+          the routine job queue. Each card shows tool_name + requester
+          + args-preview (modal) + approve/reject. */}
       <McpApprovalsSection statusFilter="pending" />
 
       <motion.div
@@ -465,253 +630,582 @@ export default function ApprovalsPage() {
           Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            <InstrumentCard accent={pending.length > 0 ? "warning" : "muted"}>
-              <MetricValue
-                label="Pending"
-                value={pending.length}
-                icon={
-                  <Clock
-                    className={cn(
-                      "h-4 w-4",
-                      pending.length > 0
-                        ? "text-[var(--color-warning)]"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent={pending.length > 0 ? "warning" : "muted"}
+              label="Pending"
+              value={pending.length}
+              helperText={
+                pending.length > 0 ? "Needs operator review" : "Queue clear"
+              }
+              icon={
+                <Clock
+                  className={cn(
+                    "h-4 w-4",
+                    pending.length > 0
+                      ? "text-warning"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            />
 
-            <InstrumentCard accent="healthy">
-              <MetricValue
-                label="Approved"
-                value={approved.length}
-                icon={
-                  <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent="healthy"
+              label="Approved"
+              value={approved.length}
+              helperText="Resolved successfully"
+              icon={
+                <CheckCircle2 className="h-4 w-4 text-success" />
+              }
+            />
 
-            <InstrumentCard accent={denied.length > 0 ? "governance" : "muted"}>
-              <MetricValue
-                label="Denied"
-                value={denied.length}
-                icon={
-                  <XCircle
-                    className={cn(
-                      "h-4 w-4",
-                      denied.length > 0
-                        ? "text-[var(--color-governance)]"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent={denied.length > 0 ? "governance" : "muted"}
+              label="Denied"
+              value={denied.length}
+              helperText={
+                denied.length > 0 ? "Review denial reasons" : "No denied items"
+              }
+              icon={
+                <XCircle
+                  className={cn(
+                    "h-4 w-4",
+                    denied.length > 0
+                      ? "text-[var(--color-governance)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            />
 
-            <InstrumentCard accent="muted">
-              <MetricValue
-                label="Expired"
-                value={expired.length}
-                icon={<Timer className="h-4 w-4 text-muted-foreground" />}
-              />
-            </InstrumentCard>
+            <StatTile
+              accent="muted"
+              label="Expired"
+              value={expired.length}
+              helperText="Timed out before decision"
+              icon={<Timer className="h-4 w-4 text-muted-foreground" />}
+            />
 
-            <InstrumentCard accent={invalidated.length > 0 ? "danger" : "muted"}>
-              <MetricValue
-                label="Invalidated"
-                value={invalidated.length}
-                icon={
-                  <XCircle
-                    className={cn(
-                      "h-4 w-4",
-                      invalidated.length > 0
-                        ? "text-destructive"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent={invalidated.length > 0 ? "danger" : "muted"}
+              label="Invalidated"
+              value={invalidated.length}
+              helperText={
+                invalidated.length > 0
+                  ? "Requests drifted after creation"
+                  : "No invalidated requests"
+              }
+              icon={
+                <XCircle
+                  className={cn(
+                    "h-4 w-4",
+                    invalidated.length > 0
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            />
 
-            <InstrumentCard accent={repaired.length > 0 ? "cordum" : "muted"}>
-              <MetricValue
-                label="Repaired"
-                value={repaired.length}
-                icon={
-                  <RefreshCw
-                    className={cn(
-                      "h-4 w-4",
-                      repaired.length > 0
-                        ? "text-cordum"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent={repaired.length > 0 ? "cordum" : "muted"}
+              label="Repaired"
+              value={repaired.length}
+              helperText={
+                repaired.length > 0 ? "Legacy rows normalized" : "No repairs"
+              }
+              icon={
+                <RefreshCw
+                  className={cn(
+                    "h-4 w-4",
+                    repaired.length > 0
+                      ? "text-cordum"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            />
           </>
         )}
       </motion.div>
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="relative w-full max-w-md">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            aria-label="Search approvals"
-            placeholder="Search decision summaries, vendors, workflow steps, or IDs"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-10 w-full rounded-2xl border border-border bg-surface-1 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+      <InstrumentCard className="p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="w-full max-w-md">
+            <Input
+              type="text"
+              aria-label="Search approvals"
+              icon={<Search className="h-3.5 w-3.5" />}
+              placeholder="Search decision summaries, vendors, workflow steps, or IDs"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-10 bg-surface-1"
+            />
+          </div>
+          <Tabs
+            ariaLabel="Approval status filters"
+            variant="segmented"
+            className="w-full lg:w-auto"
+            activeTab={activeTab}
+            onChange={setActiveTab}
+            tabs={[
+              { id: "pending", label: "Pending", count: pending.length },
+              { id: "approved", label: "Approved", count: approved.length },
+              { id: "rejected", label: "Denied", count: denied.length },
+              { id: "expired", label: "Expired", count: expired.length },
+              {
+                id: "invalidated",
+                label: "Invalidated",
+                count: invalidated.length,
+              },
+              { id: "repaired", label: "Repaired", count: repaired.length },
+              { id: "all", label: "All", count: all.length },
+            ]}
           />
         </div>
-        <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-border bg-surface-1 p-0.5">
-          {[
-            { id: "pending", label: "Pending", count: pending.length },
-            { id: "approved", label: "Approved", count: approved.length },
-            { id: "rejected", label: "Denied", count: denied.length },
-            { id: "expired", label: "Expired", count: expired.length },
-            { id: "invalidated", label: "Invalidated", count: invalidated.length },
-            { id: "repaired", label: "Repaired", count: repaired.length },
-            { id: "all", label: "All", count: all.length },
-          ].map((tab) => (
-            <button
-              type="button"
-              key={tab.id}
-              aria-pressed={activeTab === tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                "rounded-xl px-3 py-2 text-xs font-medium transition-colors",
-                activeTab === tab.id
-                  ? "bg-cordum/10 text-cordum"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab.label}
-              {tab.count > 0 && (
-                <span className="ml-1.5 rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-xs">
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-        {sorted.length > 0 && <Badge variant="warning" className="px-2 py-0.5 text-[10px] uppercase tracking-[0.08em]">{sorted.length} pending</Badge>}
-      </div>
-      <StatsStrip approvals={approvals} resolvedToday={resolvedToday} selectedCount={selectedIds.size} totalCount={sorted.length} onSelectAll={selectAll} />
-      <div className="flex w-fit gap-1 rounded-md border border-border/80 bg-surface-1/45 p-1" role="tablist" aria-label="Approval views">
-        <button type="button" role="tab" aria-selected={activeTab === "queue"} aria-controls="tabpanel-queue" id="tab-queue" className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition", activeTab === "queue" ? "bg-status-info-bg text-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => setActiveTab("queue")}>
-          <Clock className="h-3.5 w-3.5" />Queue{sorted.length > 0 ? ` (${sorted.length})` : ""}
-        </button>
-        <button type="button" role="tab" aria-selected={activeTab === "history"} aria-controls="tabpanel-history" id="tab-history" className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition", activeTab === "history" ? "bg-status-info-bg text-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => setActiveTab("history")}>
-          <History className="h-3.5 w-3.5" />History
-        </button>
-      </div>
-      {activeTab === "queue" && (
-        <div id="tabpanel-queue" role="tabpanel" aria-labelledby="tab-queue" className="space-y-3">
-          {!isLoading && approvals.length > 0 && <ApprovalQueueFilters approvals={approvals} filters={filters} onFiltersChange={setFilters} />}
-          {hasVisibleQueueItems && (
-            <div role="status" aria-live="polite" className="flex items-center gap-2 rounded-md border border-border/70 bg-surface-1/45 px-3 py-2 text-[11px] text-muted-foreground">
-              <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
-              <span>
-                Showing <span className="font-semibold text-foreground">{sorted.length}</span> approval{sorted.length !== 1 ? "s" : ""}
-                {filtersActive ? (
-                  <> after filters{filteredOutCount > 0 ? ` (${filteredOutCount} hidden)` : ""}</>
-                ) : (
-                  <> in queue</>
-                )}
-              </span>
-            </div>
-          )}
-          {!isLoading && isRefetching && (
-            <div role="status" aria-live="polite" className="flex items-center gap-2 rounded-md border border-status-info-border bg-status-info-bg px-3 py-2 text-[11px] text-info">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Refreshing queue state\u2026
-            </div>
-          )}
-          {isLoading && (
-            <div aria-live="polite" role="status" className="space-y-2.5">
-              <p className="text-xs text-muted-foreground">Loading pending approvals\u2026</p>
-              {Array.from({ length: 4 }, (_, i) => (
-                <Card key={i} className="animate-pulse p-4">
-                  <div className="space-y-2.5">
-                    <div className="h-4 w-1/3 rounded bg-surface-2/70" />
-                    <div className="h-3.5 w-2/3 rounded bg-surface-2/70" />
-                    <div className="h-3.5 w-1/2 rounded bg-surface-2/70" />
+      </InstrumentCard>
+
+      {isLoading ? (
+        <SkeletonTable rows={5} />
+      ) : isError ? (
+        <EmptyState
+          icon={<XCircle className="h-5 w-5" />}
+          title="Approval queue unavailable"
+          description={
+            error instanceof Error
+              ? error.message
+              : "The approval queue could not be loaded."
+          }
+          action={
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Try again
+            </Button>
+          }
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<UserCheck className="h-5 w-5" />}
+          title={
+            activeTab === "pending"
+              ? "No pending approvals"
+              : "No approvals found"
+          }
+          description={
+            activeTab === "pending"
+              ? "Approvals are triggered when a job matches a require_approval rule in your input policy."
+              : "Try adjusting your search terms or status filter."
+          }
+          action={
+            activeTab === "pending" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/govern/overview?tab=input-rules")}
+              >
+                View input rules
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <div className="space-y-3">
+          <AnimatePresence mode="popLayout">
+            {filtered.map((approval) => {
+              const source = getApprovalSourceMeta(approval);
+              const title = getApprovalPrimaryTitle(approval);
+              const impact = getApprovalImpactText(approval);
+              const actionable = isApprovalActionable(approval);
+              const lifecycleNote = getApprovalLifecycleNote(approval);
+
+              return (
+                <motion.article
+                  key={approval.id}
+                  layout
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{
+                    opacity: 0,
+                    x: -100,
+                    height: 0,
+                    marginBottom: 0,
+                    overflow: "hidden",
+                  }}
+                  transition={{ duration: 0.3 }}
+                  className={cn(
+                    "instrument-card group cursor-pointer overflow-hidden border-border/70 bg-surface-1/95 focus:outline-none focus:ring-1 focus:ring-cordum",
+                    approval.status === "pending" &&
+                      "border-[var(--color-warning)]/30",
+                    approval.status === "rejected" &&
+                      "border-[var(--color-governance)]/30",
+                    approval.status === "invalidated" &&
+                      "border-destructive/30",
+                    approval.status === "repaired" &&
+                      "border-cordum/30",
+                  )}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open approval detail for ${title}`}
+                  onClick={() => navigate(`/approvals/${approval.jobId}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      navigate(`/approvals/${approval.jobId}`);
+                    }
+                  }}
+                >
+                  <div className="flex flex-col gap-4 p-4 md:p-5">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="min-w-0 flex-1 space-y-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge
+                            variant={approvalStatusVariant(approval.status)}
+                            dot
+                            pulse={actionable}
+                          >
+                            {formatApprovalStatusLabel(approval.status)}
+                          </StatusBadge>
+                          <StatusBadge variant={source.variant}>
+                            {source.label}
+                          </StatusBadge>
+                          {approval.actionability && !actionable && (
+                            <StatusBadge variant="muted">
+                              {approval.actionability.replace(/_/g, " ")}
+                            </StatusBadge>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {approval.requestedAt
+                              ? formatRelativeTime(approval.requestedAt)
+                              : "—"}
+                          </span>
+                        </div>
+
+                        <DecisionSummaryBlock approval={approval} compact />
+                        <p className="text-xs text-muted-foreground">
+                          {impact}
+                        </p>
+                        {lifecycleNote && (
+                          <p className="text-xs text-muted-foreground">
+                            {lifecycleNote}
+                          </p>
+                        )}
+                      </div>
+
+                      {actionable ? (
+                        <div className="flex shrink-0 flex-wrap gap-2 xl:flex-col xl:items-stretch">
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            aria-label={`Deny ${title}`}
+                            disabled={
+                              rejectMutation.isPending ||
+                              approveMutation.isPending
+                            }
+                            loading={rejectMutation.isPending}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDenyTarget(approval);
+                              setDenyReason("");
+                            }}
+                          >
+                            <XCircle className="mr-1 h-3.5 w-3.5" />
+                            Deny
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            aria-label={`Approve ${title}`}
+                            disabled={
+                              approveMutation.isPending ||
+                              rejectMutation.isPending
+                            }
+                            loading={approveMutation.isPending}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleApprove(approval);
+                            }}
+                          >
+                            <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                            Approve
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="shrink-0 pt-1 text-muted-foreground transition-colors group-hover:text-cordum">
+                          <ArrowRight className="h-4 w-4" />
+                        </div>
+                      )}
+                    </div>
+
+                    <SecondaryMetadata approval={approval} compact />
                   </div>
-                </Card>
-              ))}
-            </div>
-          )}
-          {!isLoading && isError && (
-            <Card variant="warning" role="alert" aria-live="assertive">
-              <div className="flex flex-col items-center gap-3 py-8 text-center">
-                <div className="rounded-full border border-status-warning-border bg-status-warning-bg p-2 text-warning">
-                  <AlertTriangle className="h-4 w-4" />
-                </div>
-                <p className="text-sm font-medium text-warning">{approvalsErrorMessage}</p>
-                <p className="max-w-md text-xs text-muted-foreground">Queue data is unavailable. Confirm gateway/auth health and retry.</p>
-                <Button variant="outline" size="sm" onClick={() => refetch()}>
-                  Retry
-                </Button>
-              </div>
-            </Card>
-          )}
-          {!isLoading && !isError && sorted.length === 0 && (
-            <div className="rounded-lg border border-border/70 bg-surface-1/45 py-14 text-center" role="status" aria-live="polite">
-              {queueFilteredToZero ? (
-                <>
-                  <SlidersHorizontal className="mx-auto mb-3 h-9 w-9 text-info opacity-70" />
-                  <p className="text-sm font-semibold text-foreground">No approvals match the current filters</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Clear filters to restore the full queue view.</p>
-                  <Button variant="ghost" size="sm" className="mt-4" onClick={() => setFilters(DEFAULT_FILTERS)}>
-                    Clear filters
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="mx-auto mb-3 h-9 w-9 text-success opacity-70" />
-                  <p className="text-sm font-semibold text-foreground">All clear — no pending approvals</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Nothing needs your attention right now.</p>
-                  <Button variant="ghost" size="sm" className="mt-4" onClick={() => setActiveTab("history")}>
-                    View History
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
-          {!isLoading && !isError && sorted.length > 0 && (
-            panelOpen ? (
-              <div className="hidden space-y-1.5 md:block" role="list" aria-label="Pending approvals quick list">
-                {sorted.map((approval) => (
-                  <div key={approval.id} role="listitem">
-                    <MiniCard approval={approval} active={approval.id === selectedId} onClick={() => openPanel(approval.id)} />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-3" role="list" aria-label="Pending approvals queue">
-                {sorted.map((approval: Approval) => (
-                  <div key={approval.id} role="listitem">
-                    <ApprovalCardV2
-                      approval={approval}
-                      onApprove={(id, comment) => { void handleApprove(id, comment); }}
-                      onReject={(id, reason) => { void handleReject(id, reason); }}
-                      onReview={openPanel}
-                      selected={selectedIds.has(approval.id)}
-                      onToggleSelect={toggleSelect}
-                    />
-                  </div>
-                ))}
-              </div>
-            )
-          )}
-          {panelOpen && selectedApproval && (<ApprovalDetailPanel approval={selectedApproval} allApprovals={approvals} onClose={closePanel} onApprove={handleApprove} onReject={handleReject} />)}
-          {selectedIds.size > 0 && (<RequireRole roles={["admin", "operator"]}><BulkActionBar selectedIds={selectedIds} approvals={sorted} onApprove={handleApprove} onReject={handleReject} onClear={clearSelection} onDone={clearSelection} /></RequireRole>)}
+                </motion.article>
+              );
+            })}
+          </AnimatePresence>
         </div>
       )}
-      {activeTab === "history" && <div id="tabpanel-history" role="tabpanel" aria-labelledby="tab-history"><ApprovalHistory /></div>}
+
+      <ConfirmDialog
+        open={!!denyTarget}
+        onClose={() => setDenyTarget(null)}
+        onConfirm={() => {
+          if (!denyTarget) return;
+          handleDeny(denyTarget, resolveDenyReason(denyReason));
+        }}
+        title="Deny approval"
+        description={
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Explain why this approval should be denied. The note becomes part
+              of the audit trail.
+            </p>
+            <div>
+              <label className="mb-1 block text-xs font-mono uppercase tracking-wide text-muted-foreground">
+                Reason <span className="text-destructive">*</span>
+              </label>
+              <Textarea
+                value={denyReason}
+                onChange={(e) => {
+                  if (e.target.value.length <= 500)
+                    setDenyReason(e.target.value);
+                }}
+                placeholder="Why should this request be denied?"
+                rows={3}
+                maxLength={500}
+                aria-required="true"
+                aria-label="Denial reason"
+                className="resize-none bg-surface-2 px-3 py-2 shadow-none focus:ring-cordum/30"
+              />
+              <p
+                className={cn(
+                  "text-xs mt-1 text-right",
+                  denyReason.length > 400
+                    ? "text-warning"
+                    : "text-muted-foreground",
+                  denyReason.length >= 500 && "text-destructive",
+                )}
+              >
+                {denyReason.length} / 500
+              </p>
+            </div>
+          </div>
+        }
+        confirmLabel={denyReason.trim() ? "Deny" : "Enter reason to deny"}
+        variant="destructive"
+        loading={rejectMutation.isPending}
+        initialFocusSelector='textarea[aria-label="Denial reason"]'
+      />
+
+      {selectedApproval && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => setSelectedApproval(null)}
+          />
+          <motion.div
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="approval-drawer-title"
+            initial={{ x: 440 }}
+            animate={{ x: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="fixed inset-y-0 right-0 z-50 w-full max-w-[560px] overflow-y-auto border-l border-border bg-surface-1 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-border p-5">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge
+                    variant={approvalStatusVariant(selectedApproval.status)}
+                    dot
+                    pulse={isApprovalActionable(selectedApproval)}
+                  >
+                    {formatApprovalStatusLabel(selectedApproval.status)}
+                  </StatusBadge>
+                  <StatusBadge
+                    variant={getApprovalSourceMeta(selectedApproval).variant}
+                  >
+                    {getApprovalSourceMeta(selectedApproval).label}
+                  </StatusBadge>
+                  {selectedApproval.actionability &&
+                    !isApprovalActionable(selectedApproval) && (
+                      <StatusBadge variant="muted">
+                        {selectedApproval.actionability.replace(/_/g, " ")}
+                      </StatusBadge>
+                    )}
+                </div>
+                <div>
+                  <h2
+                    id="approval-drawer-title"
+                    className="font-display text-lg font-semibold text-foreground"
+                  >
+                    {getApprovalPrimaryTitle(selectedApproval)}
+                  </h2>
+                  <p className="mt-0.5 text-xs font-mono text-muted-foreground">
+                    {selectedApproval.id}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close approval detail"
+                onClick={() => setSelectedApproval(null)}
+                className="flex items-center justify-center min-w-[44px] min-h-[44px] -mr-2 rounded-full text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-6 p-5">
+              <section
+                aria-labelledby="approval-decision-section"
+                className="space-y-4"
+              >
+                <p
+                  id="approval-decision-section"
+                  className="text-xs font-mono uppercase tracking-wide text-muted-foreground"
+                >
+                  Decision summary
+                </p>
+                <DecisionSummaryBlock approval={selectedApproval} />
+                {getApprovalLifecycleNote(selectedApproval) && (
+                  <div className="rounded-2xl border border-border bg-surface-2/70 px-3 py-2 text-xs text-muted-foreground">
+                    {getApprovalLifecycleNote(selectedApproval)}
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-3xl border border-border bg-surface-2/60 p-4">
+                <p className="text-xs font-mono uppercase tracking-wide text-muted-foreground">
+                  Impact
+                </p>
+                <div className="mt-3 space-y-3 text-sm">
+                  <div>
+                    <p className="font-medium text-foreground">If approved</p>
+                    <p className="mt-1 text-muted-foreground">
+                      {getApprovalImpactText(selectedApproval)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">If denied</p>
+                    <p className="mt-1 text-muted-foreground">
+                      {getApprovalRejectImpactText(selectedApproval)}
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <section
+                aria-labelledby="approval-workflow-section"
+                className="space-y-3 rounded-3xl border border-border bg-surface-2/40 p-4"
+              >
+                <p
+                  id="approval-workflow-section"
+                  className="text-xs font-mono uppercase tracking-wide text-muted-foreground"
+                >
+                  Workflow & context
+                </p>
+                <WorkflowContext
+                  workflowContext={selectedApproval.workflowContext}
+                  nextEffect={getApprovalImpactText(selectedApproval)}
+                  rejectEffect={getApprovalRejectImpactText(selectedApproval)}
+                />
+              </section>
+
+              <section
+                aria-labelledby="approval-payload-section"
+                className="space-y-3 rounded-3xl border border-border bg-surface-2/30 p-4"
+              >
+                <p
+                  id="approval-payload-section"
+                  className="text-xs font-mono uppercase tracking-wide text-muted-foreground"
+                >
+                  Structured payload
+                </p>
+                {selectedApproval.decisionSummary?.itemsPreview?.length ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-foreground">
+                      Item preview
+                    </p>
+                    <ul className="space-y-1 text-sm text-muted-foreground">
+                      {selectedApproval.decisionSummary.itemsPreview.map(
+                        (item) => (
+                          <li key={item} className="flex items-start gap-2">
+                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-cordum" />
+                            <span>{item}</span>
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No additional line-item preview is available for this
+                    request.
+                  </p>
+                )}
+                <JsonDisclosure
+                  title="Raw request payload"
+                  data={selectedApproval.jobInput}
+                />
+              </section>
+              {isApprovalActionable(selectedApproval) && (
+                <section
+                  aria-label="Approval actions"
+                  className="rounded-3xl border border-border bg-surface-2/40 p-4"
+                >
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button
+                      variant="primary"
+                      className="w-full"
+                      aria-label={`Approve ${getApprovalPrimaryTitle(selectedApproval)}`}
+                      disabled={
+                        approveMutation.isPending || rejectMutation.isPending
+                      }
+                      loading={approveMutation.isPending}
+                      onClick={() => handleApprove(selectedApproval)}
+                    >
+                      <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                      Approve
+                    </Button>
+                    <Button
+                      variant="danger"
+                      className="w-full"
+                      aria-label={`Deny ${getApprovalPrimaryTitle(selectedApproval)}`}
+                      disabled={
+                        rejectMutation.isPending || approveMutation.isPending
+                      }
+                      loading={rejectMutation.isPending}
+                      onClick={() => {
+                        setDenyTarget(selectedApproval);
+                        setDenyReason("");
+                      }}
+                    >
+                      <XCircle className="mr-1 h-3.5 w-3.5" />
+                      Deny
+                    </Button>
+                  </div>
+                </section>
+              )}
+
+              <section
+                aria-labelledby="approval-audit-section"
+                className="space-y-4 rounded-3xl border border-border bg-surface-2/20 p-4"
+              >
+                <p
+                  id="approval-audit-section"
+                  className="text-xs font-mono uppercase tracking-wide text-muted-foreground"
+                >
+                  Audit & debug detail
+                </p>
+                <SecondaryMetadata approval={selectedApproval} />
+                <JsonDisclosure
+                  title="Fallback context payload"
+                  data={selectedApproval.jobContext}
+                />
+              </section>
+            </div>
+          </motion.div>
+        </>
+      )}
     </div>
   );
 }

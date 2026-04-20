@@ -42,6 +42,7 @@ type Credential struct {
 	AllowedPools   []string `json:"allowed_pools,omitempty"`
 	AllowedTopics  []string `json:"allowed_topics,omitempty"`
 	PackID         string   `json:"pack_id,omitempty"`
+	AgentID        string   `json:"agent_id,omitempty"`
 	CreatedBy      string   `json:"created_by"`
 	CreatedAt      string   `json:"created_at"`
 	RevokedAt      string   `json:"revoked_at,omitempty"`
@@ -53,6 +54,7 @@ type IssueInput struct {
 	AllowedPools  []string
 	AllowedTopics []string
 	PackID        string
+	AgentID       string
 	CreatedBy     string
 	CreatedAt     time.Time
 }
@@ -262,6 +264,7 @@ func credentialFromIssueInput(input IssueInput, hash string) (Credential, error)
 		AllowedPools:   normalizeStrings(input.AllowedPools),
 		AllowedTopics:  normalizeStrings(input.AllowedTopics),
 		PackID:         strings.TrimSpace(input.PackID),
+		AgentID:        strings.TrimSpace(input.AgentID),
 		CreatedBy:      strings.TrimSpace(input.CreatedBy),
 		CreatedAt:      createdAt.Format(time.RFC3339),
 	}
@@ -346,6 +349,7 @@ func normalizeCredential(record Credential) Credential {
 	record.AllowedPools = normalizeStrings(record.AllowedPools)
 	record.AllowedTopics = normalizeStrings(record.AllowedTopics)
 	record.PackID = strings.TrimSpace(record.PackID)
+	record.AgentID = strings.TrimSpace(record.AgentID)
 	record.CreatedBy = strings.TrimSpace(record.CreatedBy)
 	record.CreatedAt = strings.TrimSpace(record.CreatedAt)
 	record.RevokedAt = strings.TrimSpace(record.RevokedAt)

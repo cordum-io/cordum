@@ -67,14 +67,23 @@ func (s *server) approvalModeLimit() string {
 	return mode
 }
 
+// hardMaxPromptChars is the absolute ceiling regardless of entitlement.
+// Defense in depth: even an enterprise license cannot exceed this.
+const hardMaxPromptChars = 500_000
+
 func (s *server) promptCharLimit() int {
-	if limit := s.currentEntitlements().MaxPromptChars; limit > 0 {
-		if limit > int64(^uint(0)>>1) {
-			return int(^uint(0) >> 1)
+	limit := maxPromptChars
+	if entLimit := s.currentEntitlements().MaxPromptChars; entLimit > 0 {
+		if entLimit > int64(^uint(0)>>1) {
+			limit = int(^uint(0) >> 1)
+		} else {
+			limit = int(entLimit)
 		}
-		return int(limit)
 	}
-	return maxPromptChars
+	if limit > hardMaxPromptChars {
+		limit = hardMaxPromptChars
+	}
+	return limit
 }
 
 func (s *server) jsonBodyBytesLimit() int64 {

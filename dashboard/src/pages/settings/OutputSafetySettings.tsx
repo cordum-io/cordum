@@ -16,6 +16,7 @@ import { useStatus } from "../../hooks/useStatus";
 import { logger } from "../../lib/logger";
 import { useToastStore } from "../../state/toast";
 import type { PolicyRule } from "../../api/types";
+import { ErrorBanner } from "../../components/ui/ErrorBanner";
 
 type FailMode = "open" | "closed";
 type FailureAction = "allow" | "deny";
@@ -323,7 +324,7 @@ export default function OutputSafetySettings() {
   usePageTitle("Settings - Output Safety");
 
   const queryClient = useQueryClient();
-  const { data: configData, isLoading: configLoading } = useConfig();
+  const { data: configData, isLoading: configLoading, isError: configError, error: configErr, refetch: refetchConfig } = useConfig();
   const { data: status } = useStatus();
   const bundles = usePolicyBundles();
   const audit = usePolicyAudit();
@@ -522,6 +523,10 @@ export default function OutputSafetySettings() {
     saveOverridesMutation.mutate(form.topicOverrides);
   };
 
+  if (configError) {
+    return <ErrorBanner message={configErr instanceof Error ? configErr.message : "Failed to load output safety settings"} onRetry={() => void refetchConfig()} />;
+  }
+
   if (configLoading) {
     return (
       <div className="space-y-4">
@@ -561,14 +566,14 @@ export default function OutputSafetySettings() {
               }`}
             >
               <span
-                className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-card shadow-sm transition-transform ${
                   form.enabled ? "translate-x-5" : "translate-x-0"
                 }`}
               />
             </button>
             <div>
               <p className="text-sm font-semibold text-ink">Enable Output Safety Scanning</p>
-              <p className="text-xs text-muted">Controls whether result payloads are checked before release.</p>
+              <p className="text-xs text-muted-foreground">Controls whether result payloads are checked before release.</p>
             </div>
             <div className="ml-auto flex items-center gap-2">
               {form.enabled ? (
@@ -576,7 +581,7 @@ export default function OutputSafetySettings() {
               ) : (
                 <ShieldOff className="h-4 w-4 text-warning" />
               )}
-              <span className="text-xs font-medium text-muted">
+              <span className="text-xs font-medium text-muted-foreground">
                 {form.enabled ? "Scanning active" : "Scanning off"}
               </span>
             </div>
@@ -584,7 +589,7 @@ export default function OutputSafetySettings() {
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-muted">Fail Mode</label>
+              <label className="text-xs font-semibold text-muted-foreground">Fail Mode</label>
               <Select
                 value={form.failMode}
                 onChange={(e) =>
@@ -600,7 +605,7 @@ export default function OutputSafetySettings() {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-muted">Default Action on Scan Failure</label>
+              <label className="text-xs font-semibold text-muted-foreground">Default Action on Scan Failure</label>
               <Select
                 value={form.failureAction}
                 onChange={(e) =>
@@ -616,7 +621,7 @@ export default function OutputSafetySettings() {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-muted">Scan Timeout (ms)</label>
+              <label className="text-xs font-semibold text-muted-foreground">Scan Timeout (ms)</label>
               <Input
                 type="number"
                 min={100}
@@ -632,7 +637,7 @@ export default function OutputSafetySettings() {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-muted">Max Payload Size (KB)</label>
+              <label className="text-xs font-semibold text-muted-foreground">Max Payload Size (KB)</label>
               <Input
                 type="number"
                 min={32}
@@ -669,13 +674,13 @@ export default function OutputSafetySettings() {
             {isDirty ? (
               <button
                 type="button"
-                className="text-xs font-semibold text-muted hover:text-ink"
+                className="text-xs font-semibold text-muted-foreground hover:text-ink"
                 onClick={() => setForm(baseline)}
               >
                 Reset
               </button>
             ) : (
-              <span className="text-xs text-muted">No unsaved changes</span>
+              <span className="text-xs text-muted-foreground">No unsaved changes</span>
             )}
           </div>
         </div>
@@ -707,7 +712,7 @@ export default function OutputSafetySettings() {
           <div className="mb-4 rounded-2xl border border-border bg-surface px-4 py-4">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-muted">Topic Pattern</label>
+                <label className="text-xs font-semibold text-muted-foreground">Topic Pattern</label>
                 <Input
                   type="text"
                   placeholder="job.reports.*"
@@ -718,7 +723,7 @@ export default function OutputSafetySettings() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-muted">Fail Mode</label>
+                <label className="text-xs font-semibold text-muted-foreground">Fail Mode</label>
                 <Select
                   value={overrideDraft.failMode}
                   onChange={(e) =>
@@ -734,10 +739,10 @@ export default function OutputSafetySettings() {
               </div>
             </div>
 
-            <div className="mt-3 rounded-xl border border-border bg-white/60 p-3">
+            <div className="mt-3 rounded-xl border border-border bg-card/60 p-3">
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-semibold text-muted">Scanners (multi-select)</p>
-                <label className="inline-flex items-center gap-2 text-xs font-medium text-muted">
+                <p className="text-xs font-semibold text-muted-foreground">Scanners (multi-select)</p>
+                <label className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={overrideDraft.enabled}
@@ -753,7 +758,7 @@ export default function OutputSafetySettings() {
                 {SCANNER_OPTIONS.map((scanner) => (
                   <label
                     key={scanner.value}
-                    className="flex items-start gap-2 rounded-lg border border-border px-3 py-2 text-xs"
+                    className="flex items-start gap-2 rounded-2xl border border-border px-3 py-2 text-xs"
                   >
                     <input
                       type="checkbox"
@@ -763,7 +768,7 @@ export default function OutputSafetySettings() {
                     />
                     <span>
                       <span className="block font-semibold text-ink">{scanner.label}</span>
-                      <span className="block text-muted">{scanner.description}</span>
+                      <span className="block text-muted-foreground">{scanner.description}</span>
                     </span>
                   </label>
                 ))}
@@ -782,14 +787,14 @@ export default function OutputSafetySettings() {
         )}
 
         {form.topicOverrides.length === 0 ? (
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             No topic overrides configured. Use <span className="font-semibold">Add Override</span> to
             define exceptions.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-muted">
+              <thead className="text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="pb-2 font-semibold">Topic Pattern</th>
                   <th className="pb-2 font-semibold">Enabled</th>
@@ -808,7 +813,7 @@ export default function OutputSafetySettings() {
                       </Badge>
                     </td>
                     <td className="py-2 text-ink">{override.failMode}</td>
-                    <td className="py-2 text-muted">{override.scanners.join(", ") || "none"}</td>
+                    <td className="py-2 text-muted-foreground">{override.scanners.join(", ") || "none"}</td>
                     <td className="py-2">
                       <div className="flex items-center gap-2">
                         <button
@@ -840,7 +845,7 @@ export default function OutputSafetySettings() {
           title="Checks (24h)"
           value={totalChecks24h}
           detail="Output policy evaluations"
-          icon={<Activity className="h-4 w-4 text-muted" />}
+          icon={<Activity className="h-4 w-4 text-muted-foreground" />}
         />
         <MetricCard
           title="Quarantined (24h)"
@@ -852,7 +857,7 @@ export default function OutputSafetySettings() {
           title="Avg Latency"
           value={`${avgLatencyMs.toFixed(1)}ms`}
           detail="Scanner processing time"
-          icon={<Activity className="h-4 w-4 text-muted" />}
+          icon={<Activity className="h-4 w-4 text-muted-foreground" />}
         />
       </div>
 
@@ -862,7 +867,7 @@ export default function OutputSafetySettings() {
             <CardTitle>Output Rules</CardTitle>
             <CardDescription>Summary of active output-focused policy rules.</CardDescription>
           </div>
-          <Link to="/policies/rules" className="text-xs font-semibold text-accent hover:underline">
+          <Link to="/govern/overview?tab=input-rules" className="text-xs font-semibold text-accent hover:underline">
             Open Policy Studio
           </Link>
         </CardHeader>
@@ -870,7 +875,7 @@ export default function OutputSafetySettings() {
           <Badge variant={outputRuleSummary.enabled > 0 ? "success" : "default"}>
             {outputRuleSummary.enabled} enabled
           </Badge>
-          <span className="text-muted">of {outputRuleSummary.total} output rules</span>
+          <span className="text-muted-foreground">of {outputRuleSummary.total} output rules</span>
         </div>
       </Card>
 
@@ -882,11 +887,11 @@ export default function OutputSafetySettings() {
           </div>
         </CardHeader>
         {recentDenials.length === 0 ? (
-          <p className="text-sm text-muted">No output-policy denials in recent audit entries.</p>
+          <p className="text-sm text-muted-foreground">No output-policy denials in recent audit entries.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[580px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-muted">
+              <thead className="text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="pb-2 font-semibold">Time</th>
                   <th className="pb-2 font-semibold">Action</th>
@@ -897,12 +902,12 @@ export default function OutputSafetySettings() {
               <tbody className="divide-y divide-border">
                 {recentDenials.map((entry) => (
                   <tr key={entry.id}>
-                    <td className="py-2 text-muted">{formatLastCheck(entry.timestamp)}</td>
+                    <td className="py-2 text-muted-foreground">{formatLastCheck(entry.timestamp)}</td>
                     <td className="py-2">
-                      <Badge variant="destructive">{entry.action || "deny"}</Badge>
+                      <Badge variant="danger">{entry.action || "deny"}</Badge>
                     </td>
                     <td className="py-2 text-ink">{entry.actor || "system"}</td>
-                    <td className="py-2 text-muted">{entry.bundleId || "n/a"}</td>
+                    <td className="py-2 text-muted-foreground">{entry.bundleId || "n/a"}</td>
                   </tr>
                 ))}
               </tbody>

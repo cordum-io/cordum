@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/secrets"
 	"github.com/cordum/cordum/core/infra/store"
@@ -40,7 +39,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// "admin" and "user" roles. Keep both in sync to avoid role asymmetry.
 	if err := s.requireRoleGRPC(ctx, "admin", "user"); err != nil {
 		actorID, role := "anonymous", "none"
-		if ac := auth.FromContext(ctx); ac != nil {
+		if ac := authFromContext(ctx); ac != nil {
 			actorID, role = ac.PrincipalID, ac.Role
 		}
 		s.appendAuditEntryNamed(ctx, "submit_denied", "job", "", "", actorID, role, "job submit denied: "+err.Error())
@@ -52,7 +51,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, err
 	}
 	principalID := req.GetPrincipalId()
-	if auth := auth.FromContext(ctx); auth != nil && auth.PrincipalID != "" {
+	if auth := authFromContext(ctx); auth != nil && auth.PrincipalID != "" {
 		principalID = auth.PrincipalID
 	}
 
@@ -132,10 +131,9 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// Strip reserved labels from client input (same as HTTP path).
 	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
 
-	// TODO(timeline): enrich with StateEventContext when context is available
-	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
-		logging.Error("api-gateway", "failed to initialize job state", "job_id", jobID, "error", err)
-		return nil, status.Error(codes.Unavailable, "failed to initialize job state")
+	// Inject request source for policy rules.
+	if payloadReq.Labels == nil {
+		payloadReq.Labels = map[string]string{}
 	}
 	if payloadReq.PackId != "" {
 		payloadReq.Labels["_source"] = "pack"
@@ -221,7 +219,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			reason = policyResult.Reason
 		}
 		actorForAudit, roleForAudit := "anonymous", "none"
-		if ac := auth.FromContext(ctx); ac != nil {
+		if ac := authFromContext(ctx); ac != nil {
 			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
 		}
 		s.appendAuditEntryWithAgent(ctx, "submit_denied", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy denied: "+reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
@@ -233,7 +231,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			reason = policyResult.Reason
 		}
 		actorForAudit, roleForAudit := "anonymous", "none"
-		if ac := auth.FromContext(ctx); ac != nil {
+		if ac := authFromContext(ctx); ac != nil {
 			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
 		}
 		s.appendAuditEntryWithAgent(ctx, "submit_throttled", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy throttled: "+reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
@@ -243,7 +241,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		slog.Info("submit-time policy requires approval",
 			"job_id", jobID, "topic", payloadReq.Topic, "reason", policyResult.Reason)
 		actorForAudit, roleForAudit := "anonymous", "none"
-		if ac := auth.FromContext(ctx); ac != nil {
+		if ac := authFromContext(ctx); ac != nil {
 			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
 		}
 		s.appendAuditEntryWithAgent(ctx, "submit_approval_required", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy requires approval: "+policyResult.Reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
@@ -491,7 +489,6 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
-		// TODO(timeline): enrich with StateEventContext when context is available
 		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)
 		slog.Error("job publish failed", "job_id", jobID, "error", err)
 		return nil, status.Errorf(codes.Unavailable, "failed to enqueue job")
@@ -514,16 +511,16 @@ func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
 	if s == nil || s.auth == nil {
 		return nil
 	}
-	authCtx := auth.FromContext(ctx)
+	authCtx := authFromContext(ctx)
 	if authCtx == nil {
 		return status.Error(codes.Unauthenticated, "authentication required")
 	}
-	role := auth.NormalizeRole(authCtx.Role)
+	role := normalizeRole(authCtx.Role)
 	if role == "" {
 		return status.Error(codes.PermissionDenied, "role required")
 	}
 	for _, candidate := range roles {
-		if auth.NormalizeRole(candidate) == role {
+		if normalizeRole(candidate) == role {
 			return nil
 		}
 	}
@@ -533,7 +530,7 @@ func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
 
 func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string, error) {
 	requested = strings.TrimSpace(requested)
-	if auth := auth.FromContext(ctx); auth != nil {
+	if auth := authFromContext(ctx); auth != nil {
 		authTenant := strings.TrimSpace(auth.Tenant)
 		if authTenant != "" {
 			if requested != "" && !auth.AllowCrossTenant && requested != authTenant {
@@ -555,7 +552,7 @@ func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string,
 }
 
 func (s *server) GetJobStatus(ctx context.Context, req *pb.GetJobStatusRequest) (*pb.GetJobStatusResponse, error) {
-	if auth := auth.FromContext(ctx); auth != nil && auth.Tenant != "" && s.jobStore != nil {
+	if auth := authFromContext(ctx); auth != nil && auth.Tenant != "" && s.jobStore != nil {
 		if tenant, _ := s.jobStore.GetTenant(ctx, req.GetJobId()); tenant != "" && tenant != auth.Tenant && !auth.AllowCrossTenant {
 			return nil, status.Error(codes.PermissionDenied, "tenant access denied")
 		}

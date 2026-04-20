@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 )
 
 type publicPathAuth struct {
@@ -19,12 +17,12 @@ type publicPathAuth struct {
 
 var errUnauthorized = errors.New("unauthorized")
 
-func (p *publicPathAuth) AuthenticateHTTP(*http.Request) (*auth.AuthContext, error) {
+func (p *publicPathAuth) AuthenticateHTTP(*http.Request) (*AuthContext, error) {
 	p.called = true
 	return nil, errUnauthorized
 }
 
-func (p *publicPathAuth) AuthenticateGRPC(context.Context) (*auth.AuthContext, error) {
+func (p *publicPathAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
 	return nil, errUnauthorized
 }
 
@@ -38,7 +36,7 @@ func (p *publicPathAuth) ResolvePrincipal(*http.Request, string) (string, error)
 
 func (p *publicPathAuth) IsPublicPath(path string) bool { return path == "/api/v1/auth/config" }
 
-func newBasicAuthForTest(t *testing.T, env map[string]string) *auth.BasicAuthProvider {
+func newBasicAuthForTest(t *testing.T, env map[string]string) *BasicAuthProvider {
 	t.Helper()
 	for _, key := range []string{
 		"CORDUM_API_KEYS",
@@ -84,17 +82,17 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *auth.BasicAuthPro
 	for key, value := range env {
 		t.Setenv(key, value)
 	}
-	provider, err := auth.NewBasicAuthProvider("default")
+	provider, err := newBasicAuthProvider("default")
 	if err != nil {
 		t.Fatalf("new basic auth provider: %v", err)
 	}
 	return provider
 }
 
-func requestWithAuthContext(auth *auth.AuthContext) *http.Request {
+func requestWithAuthContext(auth *AuthContext) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, auth))
+	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, auth))
 }
 
 func TestNormalizeRole(t *testing.T) {
@@ -106,14 +104,14 @@ func TestNormalizeRole(t *testing.T) {
 		"":         "",
 	}
 	for raw, expect := range cases {
-		if got := auth.NormalizeRole(raw); got != expect {
+		if got := normalizeRole(raw); got != expect {
 			t.Fatalf("role %q expected %q got %q", raw, expect, got)
 		}
 	}
 }
 
 func TestParseAPIKeysFormats(t *testing.T) {
-	entries, err := auth.ParseAPIKeys(`[{"key":"k1"}]`)
+	entries, err := parseAPIKeys(`[{"key":"k1"}]`)
 	if err != nil {
 		t.Fatalf("parse list: %v", err)
 	}
@@ -121,7 +119,7 @@ func TestParseAPIKeysFormats(t *testing.T) {
 		t.Fatalf("unexpected list entries: %#v", entries)
 	}
 
-	entries, err = auth.ParseAPIKeys(`{"k2":{}}`)
+	entries, err = parseAPIKeys(`{"k2":{}}`)
 	if err != nil {
 		t.Fatalf("parse map: %v", err)
 	}
@@ -129,7 +127,7 @@ func TestParseAPIKeysFormats(t *testing.T) {
 		t.Fatalf("unexpected map entries: %#v", entries)
 	}
 
-	entries, err = auth.ParseAPIKeys(`{"keys":[{"key":"k3"}]}`)
+	entries, err = parseAPIKeys(`{"keys":[{"key":"k3"}]}`)
 	if err != nil {
 		t.Fatalf("parse wrapped: %v", err)
 	}
@@ -137,7 +135,7 @@ func TestParseAPIKeysFormats(t *testing.T) {
 		t.Fatalf("unexpected wrapped entries: %#v", entries)
 	}
 
-	entries, err = auth.ParseAPIKeys("t4:key4:admin:alice")
+	entries, err = parseAPIKeys("t4:key4:admin:alice")
 	if err != nil {
 		t.Fatalf("parse colon: %v", err)
 	}
@@ -251,7 +249,7 @@ func TestRequireRoleDeniesEmptyRole(t *testing.T) {
 		"CORDUM_API_KEYS": "key1",
 	})
 	s := &server{auth: provider}
-	req := requestWithAuthContext(&auth.AuthContext{})
+	req := requestWithAuthContext(&AuthContext{})
 	if err := s.requireRole(req, "admin"); err == nil {
 		t.Fatalf("expected role required error")
 	}
@@ -268,7 +266,7 @@ func TestRequireRoleEnforces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	if err := provider.RequireRole(req, "admin"); err == nil {
 		t.Fatalf("expected role enforcement failure")
 	}
@@ -322,11 +320,11 @@ func TestAPIKeyFileReload(t *testing.T) {
 }
 
 func TestAuthContextHelpers(t *testing.T) {
-	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "default"})
-	if got := auth.FromContext(ctx); got == nil || got.Tenant != "default" {
+	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{Tenant: "default"})
+	if got := authFromContext(ctx); got == nil || got.Tenant != "default" {
 		t.Fatalf("expected auth context from ctx")
 	}
-	if got := auth.FromRequest(requestWithAuthContext(&auth.AuthContext{Tenant: "team"})); got == nil || got.Tenant != "team" {
+	if got := authFromRequest(requestWithAuthContext(&AuthContext{Tenant: "team"})); got == nil || got.Tenant != "team" {
 		t.Fatalf("expected auth context from request")
 	}
 }
@@ -368,7 +366,7 @@ func TestResolveTenantCrossTenantDenied(t *testing.T) {
 		"CORDUM_API_KEYS": `[{"key":"key1","tenant":"team-a"}]`,
 	})
 	// Tenant A authenticated, requests tenant B without AllowCrossTenant → denied
-	req := requestWithAuthContext(&auth.AuthContext{
+	req := requestWithAuthContext(&AuthContext{
 		APIKey: "key1",
 		Tenant: "team-a",
 	})
@@ -386,7 +384,7 @@ func TestResolveTenantOwnTenantAllowed(t *testing.T) {
 		"CORDUM_API_KEYS": `[{"key":"key1","tenant":"team-a"}]`,
 	})
 	// Tenant A authenticated, requests own tenant → allowed
-	req := requestWithAuthContext(&auth.AuthContext{
+	req := requestWithAuthContext(&AuthContext{
 		APIKey: "key1",
 		Tenant: "team-a",
 	})
@@ -404,7 +402,7 @@ func TestResolveTenantCrossTenantAllowedWithFlag(t *testing.T) {
 		"CORDUM_API_KEYS": `[{"key":"key1","tenant":"team-a","allow_cross_tenant":true}]`,
 	})
 	// AllowCrossTenant=true, tenant A requests tenant B → allowed
-	req := requestWithAuthContext(&auth.AuthContext{
+	req := requestWithAuthContext(&AuthContext{
 		APIKey:           "key1",
 		Tenant:           "team-a",
 		AllowCrossTenant: true,
@@ -435,7 +433,7 @@ func TestBasicAuthRequiresKeyInProduction(t *testing.T) {
 	t.Setenv("CORDUM_ENV", "production")
 	t.Setenv("CORDUM_API_KEYS", "")
 	t.Setenv("CORDUM_API_KEY", "")
-	if _, err := auth.NewBasicAuthProvider("default"); err == nil {
+	if _, err := newBasicAuthProvider("default"); err == nil {
 		t.Fatalf("expected api key requirement in production")
 	}
 }
@@ -454,7 +452,7 @@ func (m *maliciousPathAuth) IsPublicPath(path string) bool {
 type scimPrefixAuth struct{ publicPathAuth }
 
 func (s *scimPrefixAuth) IsPublicPath(path string) bool {
-	return strings.HasPrefix(path, auth.SCIMBasePath)
+	return strings.HasPrefix(path, scimBasePath)
 }
 
 func TestPublicPathCeilingBlocksArbitraryPaths(t *testing.T) {
@@ -511,11 +509,11 @@ func TestPublicPathCeilingAllowsSCIMPrefixPaths(t *testing.T) {
 	}))
 
 	for _, path := range []string{
-		auth.SCIMUsersPath,
-		auth.SCIMUsersPath + "/user-1",
-		auth.SCIMGroupsPath,
-		auth.SCIMGroupsPath + "/group-1",
-		auth.SCIMBasePath + "/ServiceProviderConfig",
+		scimUsersPath,
+		scimUsersPath + "/user-1",
+		scimGroupsPath,
+		scimGroupsPath + "/group-1",
+		scimBasePath + "/ServiceProviderConfig",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()
@@ -578,10 +576,10 @@ func TestTenantMiddlewareCeilingAllowsSCIMPrefixPaths(t *testing.T) {
 	}))
 
 	for _, path := range []string{
-		auth.SCIMUsersPath,
-		auth.SCIMUsersPath + "/user-1",
-		auth.SCIMGroupsPath + "/group-1",
-		auth.SCIMBasePath + "/Schemas",
+		scimUsersPath,
+		scimUsersPath + "/user-1",
+		scimGroupsPath + "/group-1",
+		scimBasePath + "/Schemas",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()

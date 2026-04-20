@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 export interface ApiResponse<T> {
-  items: T extends Array<infer _> ? T : T[];
+  items?: T extends Array<infer _> ? T : T[];
   next_cursor?: number | null;
 }
 
@@ -28,7 +28,39 @@ export type JobStatus =
   | "approval_required"
   | "denied"
   | "timeout"
-  | "output_quarantined";
+  | "output_quarantined"
+  | "quarantined";
+
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "invalidated"
+  | "repaired";
+
+export type ApprovalActionability =
+  | "actionable"
+  | "resolved"
+  | "expired"
+  | "invalidated"
+  | "repaired";
+
+export type ApprovalConflictCode =
+  | "approval_already_resolved"
+  | "approval_retryable_lock"
+  | "approval_terminal_run"
+  | "approval_stale_snapshot"
+  | "approval_stale_request"
+  | "approval_not_actionable";
+
+export interface ApprovalConflictPayload {
+  code?: ApprovalConflictCode;
+  error?: string;
+  message?: string;
+  retryable?: boolean;
+  status?: number;
+}
 
 export type OutputDecision = "ALLOW" | "QUARANTINE" | "REDACT";
 
@@ -51,74 +83,8 @@ export interface OutputSafetyRecord {
   phase?: string;
   policy_snapshot?: string;
   redacted_ptr?: string;
+  redacted?: unknown;
   original_ptr?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Job Events & Timeline
-// ---------------------------------------------------------------------------
-
-export type TimelineEventKind =
-  | "submitted"
-  | "policy_evaluated"
-  | "approval_requested"
-  | "approved"
-  | "rejected"
-  | "dispatched"
-  | "executing"
-  | "progress"
-  | "output_scanned"
-  | "succeeded"
-  | "failed"
-  | "denied"
-  | "timeout"
-  | "cancelled"
-  | "quarantined";
-
-export interface JobEventContext {
-  rule?: string;
-  reason?: string;
-  evalMs?: number;
-  evalPath?: string[];
-  workerId?: string;
-  pool?: string;
-  strategy?: string;
-  approvedBy?: string;
-  approvalRole?: string;
-  approvalNote?: string;
-  waitMs?: number;
-  errorCode?: string;
-  errorMsg?: string;
-  resultPtr?: string;
-  durationMs?: number;
-  findings?: number;
-  scanner?: string;
-  topic?: string;
-  capabilities?: string[];
-  riskTags?: string[];
-  actorId?: string;
-}
-
-export interface JobEvent {
-  timestamp: string;
-  state: string;
-  ctx?: JobEventContext;
-}
-
-export interface TimelineEvent {
-  timestamp: string;
-  kind: TimelineEventKind;
-  title: string;
-  detail?: string;
-  expandedData?: JobEventContext;
-  status: "completed" | "current" | "pending" | "error" | "warning";
-}
-
-export interface JobProgressEvent {
-  timestamp: string;
-  percent: number | null;
-  message: string;
-  status?: string;
 }
 
 export interface OutputPolicyRule {
@@ -129,16 +95,122 @@ export interface OutputPolicyRule {
   enabled?: boolean;
 }
 
+export type SafetyDecisionType = "allow" | "deny" | "require_approval" | "allow_with_constraints" | "throttle";
+
+export interface MatchedRule {
+  rule_id: string;
+  name: string;
+  bundle_id?: string;
+  priority: number;
+  match_reason?: string;
+  decision: SafetyDecisionType;
+}
+
+export interface PolicyConstraints {
+  budgets?: {
+    max_runtime_ms?: number;
+    max_retries?: number;
+    max_artifact_bytes?: number;
+    max_concurrent_jobs?: number;
+  };
+  sandbox?: {
+    isolated?: boolean;
+    network_allowlist?: string[];
+    fs_read_only?: string[];
+    fs_read_write?: string[];
+  };
+  toolchain?: {
+    allowed_tools?: string[];
+    allowed_commands?: string[];
+  };
+  diff?: {
+    max_files?: number;
+    max_lines?: number;
+    deny_path_globs?: string[];
+  };
+  redaction_level?: string;
+  maxInvocations?: number;
+  allowedDomains?: string[];
+  maskedFields?: string[];
+  rateLimit?:
+    | number
+    | string
+    | {
+        limit?: number;
+        requests?: number;
+        windowSeconds?: number;
+        window_seconds?: number;
+        burst?: number;
+      };
+  requireReviewer?:
+    | boolean
+    | string
+    | {
+        role?: string;
+        approverRole?: string;
+        reason?: string;
+      };
+}
+
+export type GovernanceVerdict =
+  | "allow"
+  | "deny"
+  | "constrain"
+  | "require_approval"
+  | "throttle";
+
+export interface GovernanceDecision {
+  jobId: string;
+  runId?: string;
+  stepId?: string;
+  topic: string;
+  matchedRule: string;
+  ruleName?: string;
+  verdict: GovernanceVerdict;
+  reason: string;
+  constraints?: PolicyConstraints;
+  approvalStatus?: ApprovalStatus;
+  approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  agentId: string;
+  policyVersion?: string;
+  timestamp: string;
+}
+
+export interface GovernanceDecisionsResponse {
+  items: GovernanceDecision[];
+  nextCursor?: string;
+}
+
+export interface McpPolicyResult {
+  server?: string;
+  tool?: string;
+  resource?: string;
+  action?: string;
+  decision: SafetyDecisionType;
+  matched_rules?: string[];
+}
+
 export interface SafetyDecision {
-  type: "allow" | "deny" | "require_approval" | "throttle";
+  type: SafetyDecisionType;
   reason: string;
   matchedRule?: string;
   evalTimeMs?: number;
   evalPath?: string[];
 }
 
+export interface SafetyResult {
+  decision: SafetyDecisionType;
+  matched_rules: MatchedRule[];
+  evaluation_ms: number;
+  constraints?: PolicyConstraints;
+  mcp_context?: McpPolicyResult;
+  approval_required: boolean;
+  approval_ref?: string;
+}
+
 export interface Job {
   id: string;
+  workerId?: string;
   type: string;
   topic: string;
   status: JobStatus;
@@ -149,6 +221,8 @@ export interface Job {
   metadata: Record<string, unknown>;
   contextPtr?: string;
   resultPtr?: string;
+  context?: unknown;
+  result?: unknown;
   workflowRunId?: string;
   workflowId?: string;
   createdAt: string;
@@ -177,6 +251,10 @@ export interface Job {
   approvalAt?: number;
   approvalReason?: string;
   approvalNote?: string;
+  approvalStatus?: ApprovalStatus;
+  approvalActionability?: ApprovalActionability;
+  approvalRevision?: number;
+  approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +435,7 @@ export type RunStatus =
   | "waiting"
   | "succeeded"
   | "failed"
+  | "denied"
   | "timed_out"
   | "cancelled";
 
@@ -383,8 +462,6 @@ export interface WorkflowStep {
   delay_sec?: number;
   delay_until?: string;
   route_labels?: Record<string, string>;
-  /** @deprecated Use depends_on */
-  dependsOn?: string[];
   /** Legacy config bag — kept for backward compat during migration */
   config?: Record<string, unknown>;
   // Run-time fields (present when viewing runs)
@@ -446,41 +523,92 @@ export interface WorkflowRun {
 // Policies
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Framework tags
-// ---------------------------------------------------------------------------
+export interface McpMatchConfig {
+  allow_servers?: string[];
+  deny_servers?: string[];
+  allow_tools?: string[];
+  deny_tools?: string[];
+  allow_resources?: string[];
+  deny_resources?: string[];
+  allow_actions?: string[];
+  deny_actions?: string[];
+}
 
-export type KnownFrameworkTag =
-  | "soc2"
-  | "iso27001"
-  | "gdpr"
-  | "owasp-llm-top10"
-  | "nist-rmf"
-  | "eu-ai-act"
-  | "iso-42001";
+export interface PolicyRuleMatch {
+  tenants?: string[];
+  topics?: string[];              // Glob patterns
+  capabilities?: string[];
+  risk_tags?: string[];
+  requires?: string[];
+  pack_ids?: string[];
+  actor_ids?: string[];
+  actor_types?: string[];
+  labels?: Record<string, string>;
+  label_allowlist?: Record<string, string[]>;
+  label_threshold?: Record<string, number>;
+  secrets_present?: boolean;
+  mcp?: McpMatchConfig;
+}
 
-/** A framework tag — one of the well-known values or an arbitrary string. */
-export type FrameworkTag = KnownFrameworkTag | (string & {});
+export interface VelocityConfig {
+  max_requests: number;
+  window_seconds: number;
+  key: string;
+}
 
 export interface PolicyRule {
   id: string;
-  matchCriteria: Record<string, unknown>;
-  decisionType: "allow" | "deny" | "require_approval" | "throttle";
+  rule_id?: string;
+  name: string;
+  description?: string;
+  bundle_id?: string;
+  match: PolicyRuleMatch;
+  velocity?: VelocityConfig;
+  decision: SafetyDecisionType;
+  constraints?: PolicyConstraints;
+  priority: number;
+  enabled: boolean;
+  version?: number;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Legacy compat
+  matchCriteria?: Record<string, unknown>;
+  decisionType?: SafetyDecisionType;
   reason?: string;
   hitCount24h?: number;
   lastTriggered?: string;
-  priority?: number;
   logic?: string;
   source?: Record<string, unknown>;
-  enabled?: boolean;
-  frameworkTags?: FrameworkTag[];
+}
+
+export type BundleStatus = "published" | "draft" | "archived";
+
+export interface BundleSnapshot {
+  snapshot_id: string;
+  bundle_id: string;
+  note: string;
+  created_at: string;
+  created_by: string;
+  version?: number;
+  rule_count?: number;
+}
+
+export interface PolicyBundleSignature {
+  algorithm: string;
+  key_id: string;
+  value: string;
+  hash: string;
+  signed_bytes: number;
 }
 
 export interface PolicyBundle {
   id: string;
+  bundle_id?: string;
   name: string;
   rules: PolicyRule[];
   version?: number;
+  status?: BundleStatus;
   enabled?: boolean;
   content?: string;
   source?: string;
@@ -491,7 +619,168 @@ export interface PolicyBundle {
   installedAt?: string;
   sha256?: string;
   publishedAt?: string;
+  published_by?: string;
   healthStatus?: string;
+  snapshots?: BundleSnapshot[];
+  rule_count?: number;
+  eval_count_24h?: number;
+  last_triggered?: string;
+  // shadow summary surfaces when the gateway detail response carries a
+  // /shadow sidecar. Absent = no shadow active for this bundle.
+  shadow?: ShadowPolicySummary | null;
+  // Signature fields sourced from the bundle's _signature map attached
+  // server-side by handlers_policy_bundles_signing.go. Missing when the
+  // bundle predates the signing pipeline or when the detail endpoint
+  // has not yet been extended to surface the _signature entry. UI
+  // surfaces default to 'unknown' badge when absent.
+  signed?: boolean;
+  signature?: PolicyBundleSignature;
+}
+
+export interface PolicyPublishRequest {
+  note?: string;
+  dry_run?: boolean;
+}
+
+export interface PolicyPublishResult {
+  version: number;
+  published_at: string;
+  published_by: string;
+  rule_count: number;
+  bundle_count: number;
+  diff?: {
+    added: number;
+    removed: number;
+    modified: number;
+  };
+}
+
+export interface PolicyRollbackRequest {
+  target_version: number;
+  note?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Policy Replay
+// ---------------------------------------------------------------------------
+
+export interface PolicyReplayFilter {
+  tenant?: string;
+  topic_pattern?: string;
+  original_decision?: string;
+}
+
+export interface PolicyReplayRequest {
+  from: string;
+  to: string;
+  filters?: PolicyReplayFilter;
+  candidate_bundle_id?: string;
+  candidate_content?: string;
+  use_current_policy?: boolean;
+  max_jobs?: number;
+}
+
+export interface PolicyReplaySummary {
+  total_jobs: number;
+  evaluated: number;
+  escalated: number;
+  relaxed: number;
+  unchanged: number;
+  errored: number;
+}
+
+export interface PolicyReplayRuleHit {
+  rule_id: string;
+  decision: string;
+  count: number;
+}
+
+export interface PolicyReplayChange {
+  job_id: string;
+  topic: string;
+  tenant: string;
+  original_decision: string;
+  new_decision: string;
+  new_rule_id?: string;
+  new_reason?: string;
+  direction: "escalated" | "relaxed" | "unchanged";
+}
+
+export interface PolicyReplayTimeRange {
+  from: string;
+  to: string;
+}
+
+export interface PolicyReplayResponse {
+  replay_id: string;
+  policy_snapshot: string;
+  time_range: PolicyReplayTimeRange;
+  summary: PolicyReplaySummary;
+  rule_hits: PolicyReplayRuleHit[];
+  changes: PolicyReplayChange[];
+  warnings: string[];
+  errors: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Policy Analytics
+// ---------------------------------------------------------------------------
+
+export interface PolicyAnalyticsRequest {
+  from: string;
+  to: string;
+  rule_filter?: string;
+}
+
+export interface RuleAnalytics {
+  rule_id: string;
+  hit_count: number;
+  approval_count: number;
+  override_count: number;
+  override_rate: number;
+  avg_approval_latency_ms: number;
+  daily_hits: number[];
+}
+
+export interface PolicyAnalyticsSummary {
+  total_rules: number;
+  total_hits: number;
+  total_overrides: number;
+  highest_override_rule_id: string;
+}
+
+export interface PolicyAnalyticsResponse {
+  time_range: { from: string; to: string };
+  rules: RuleAnalytics[];
+  summary: PolicyAnalyticsSummary;
+}
+
+// ---------------------------------------------------------------------------
+// Agent Identities
+// ---------------------------------------------------------------------------
+
+export interface AgentIdentity {
+  id: string;
+  name: string;
+  description?: string;
+  owner: string;
+  team?: string;
+  risk_tier: "low" | "medium" | "high" | "critical";
+  allowed_topics?: string[];
+  allowed_pools?: string[];
+  allowed_tools?: string[];
+  data_classifications?: string[];
+  status: "active" | "suspended" | "revoked";
+  created_at: string;
+  updated_at: string;
+  last_active?: number;
+}
+
+export interface AgentStats {
+  agent_id: string;
+  total_jobs_7d: number;
+  denied_7d: number;
+  last_active: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +804,58 @@ export interface Worker {
   cpuLoad?: number;
   gpuUtilization?: number;
   memoryLoad?: number;
+  // Heartbeat demotion (phase-2 boundary hardening). `online` is the
+  // authoritative dispatch-eligibility signal backed by the worker's
+  // session token; lastHeartbeat + heartbeatAgeSeconds are telemetry
+  // only — never gate UX behaviour on them.
+  online?: boolean;
+  sessionValid?: boolean;
+  sessionExpMs?: number;
+  sessionRevoked?: boolean;
+  sessionState?: WorkerSessionState;
+  lastHeartbeatAt?: string;
+  heartbeatAgeSeconds?: number;
+}
+
+/**
+ * WorkerSessionState mirrors the scheduler TrustReason* constants.
+ * Surfaced on /api/v1/workers for dashboards + external consumers.
+ */
+export type WorkerSessionState =
+  | "valid"
+  | "no_session"
+  | "session_expired"
+  | "session_revoked"
+  | "trust_store_unready";
+
+export interface Pool {
+  name: string;
+  workerCount: number;
+  activeJobs: number;
+  capacity: number;
+  utilization: number;
+  topics: string[];
+  workers: Worker[];
+}
+
+// ---------------------------------------------------------------------------
+// Topics
+// ---------------------------------------------------------------------------
+
+export interface TopicRegistration {
+  name: string;
+  pool: string;
+  inputSchemaId?: string;
+  outputSchemaId?: string;
+  packId?: string;
+  requires: string[];
+  riskTags: string[];
+  status: string;
+  activeWorkers: number;
+}
+
+export interface TopicsResponse extends ApiResponse<TopicRegistration[]> {
+  registryEmpty?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -616,10 +957,40 @@ export interface DLQEntry {
 // ---------------------------------------------------------------------------
 
 export type UrgencyLevel = "fresh" | "aging" | "critical" | "breach";
+export type ApprovalDecisionSummarySource =
+  | "workflow_payload"
+  | "workflow_labels"
+  | "policy_only";
+export type ApprovalDecisionSummaryCompleteness = "rich" | "partial" | "minimal";
+export type ApprovalContextStatus =
+  | "available"
+  | "missing"
+  | "malformed"
+  | "unavailable"
+  | "absent";
+
+export interface ApprovalDecisionSummary {
+  source: ApprovalDecisionSummarySource;
+  completeness: ApprovalDecisionSummaryCompleteness;
+  contextStatus: ApprovalContextStatus;
+  title: string;
+  subject?: string;
+  why?: string;
+  nextEffect?: string;
+  amount?: number;
+  currency?: string;
+  vendor?: string;
+  itemCount?: number;
+  itemsPreview?: string[];
+  escalationReason?: string;
+  missingFields?: string[];
+}
 
 export interface ApprovalWorkflowContext {
   workflowId: string;
+  workflowName?: string;
   runId: string;
+  stepId?: string;
   stepIndex?: number;
   stepName?: string;
   totalSteps?: number;
@@ -628,7 +999,7 @@ export interface ApprovalWorkflowContext {
 export interface Approval {
   id: string;
   jobId: string;
-  status: string;
+  status: ApprovalStatus;
   requestedAt: string;
   resolvedAt?: string;
   actor?: string;
@@ -637,6 +1008,7 @@ export interface Approval {
   comment?: string;
   policyRule?: string;
   jobContext?: Record<string, unknown>;
+  decisionSummary?: ApprovalDecisionSummary;
   // Enriched fields
   topic?: string;
   safetyDecision?: SafetyDecision;
@@ -651,7 +1023,80 @@ export interface Approval {
   approvalRef?: string;
   tenant?: string;
   contextPtr?: string;
+  jobInput?: Record<string, unknown>;
   constraints?: Record<string, unknown>;
+  actionability?: ApprovalActionability;
+  revision?: number;
+  approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  // Backend-compatible fields
+  job?: {
+    id: string;
+    type?: string;
+    topic?: string;
+    status?: string;
+    metadata?: Record<string, unknown>;
+    risk_tags?: string[];
+    requires?: string[];
+    capabilities?: string[];
+    capability?: string;
+    actor_id?: string;
+    actor_type?: string;
+    pack_id?: string;
+    tenant?: string;
+  };
+  decision?: string;
+  policy_rule_id?: string;
+  policy_snapshot?: string;
+  policy_reason?: string;
+  approval_required?: boolean;
+  approval_status?: ApprovalStatus;
+  approval_actionability?: ApprovalActionability;
+  approval_revision?: number;
+  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  // Enriched context fields (mapped from backend).
+  blastRadius?: BlastRadius;
+  priorApprovals?: PriorApproval[];
+  rollbackHint?: string;
+  policySnapshotSummary?: ApprovalPolicySnapshot;
+}
+
+// Enriched approval context types for decision-grade UX.
+export interface BlastRadius {
+  systems: string[];
+  namespaces: string[];
+  resources: string[];
+  scopeDescription: string;
+}
+
+export interface PriorApproval {
+  jobId: string;
+  topic: string;
+  tenant: string;
+  decision: string;
+  resolvedBy: string;
+  resolvedAt: number;
+  wasApproved: boolean;
+}
+
+export interface ApprovalPolicySnapshot {
+  ruleCount: number;
+  matchedRule: {
+    id: string;
+    description: string;
+    decision: string;
+    constraintsSummary: string;
+  };
+  policyVersion: string;
+}
+
+export interface ApprovalContext {
+  approval: Record<string, unknown>;
+  blastRadius: BlastRadius;
+  priorApprovals: PriorApproval[];
+  rollbackHint: string;
+  policySnapshotSummary: ApprovalPolicySnapshot;
+  timeRemainingMs: number | null;
+  constraints: Record<string, unknown> | null;
 }
 
 export interface ApprovalHistoryEntry {
@@ -787,6 +1232,11 @@ export interface AuthConfig {
   default_tenant: string;
   oidc_enabled?: boolean;
   oidc_issuer?: string;
+  oidc_login_url?: string;
+  oidc_client_id?: string;
+  oidc_redirect_uri?: string;
+  oidc_scopes?: string[];
+  oidc_client_secret_masked?: string;
 }
 
 export interface ChangePasswordPayload {
@@ -796,6 +1246,101 @@ export interface ChangePasswordPayload {
 
 export interface ResetUserPasswordPayload {
   password: string;
+}
+
+// ---------------------------------------------------------------------------
+// Licensing
+// ---------------------------------------------------------------------------
+
+export type LicensePlan = "community" | "team" | "enterprise";
+export type LicenseApprovalMode = "single" | "multi" | "custom";
+export type TelemetryMode = "off" | "local_only" | "anonymous";
+
+export interface LicenseRights {
+  hostedService: boolean;
+  embedding: boolean;
+  resale: boolean;
+  whiteLabel: boolean;
+  supportSla: boolean;
+}
+
+export interface LicenseEntitlements {
+  approvalMode?: LicenseApprovalMode | string;
+  telemetryMode?: TelemetryMode | string;
+  maxWorkers?: number;
+  requestsPerSecond?: number;
+  maxConcurrentJobs?: number;
+  maxWorkflowSteps?: number;
+  maxActiveWorkflows?: number;
+  maxTenants?: number;
+  maxSchemaCount?: number;
+  maxPromptChars?: number;
+  maxBodyBytes?: number;
+  maxArtifactBytes?: number;
+  maxPolicyBundles?: number;
+  auditRetentionDays?: number;
+  sso?: boolean;
+  saml?: boolean;
+  scim?: boolean;
+  rbac?: boolean;
+  audit?: boolean;
+  auditExport?: boolean;
+  siemExport?: boolean;
+  legalHold?: boolean;
+  velocityRules?: boolean;
+  breakGlassAdmin?: boolean;
+  agentIdentity?: boolean;
+  features?: Record<string, boolean>;
+  limits?: Record<string, number>;
+}
+
+export interface LicenseInfo {
+  mode?: string;
+  status?: string;
+  plan?: LicensePlan | string;
+  orgId?: string;
+  licenseId?: string;
+  deploymentType?: string;
+  issuedAt?: string;
+  notBefore?: string;
+  expiresAt?: string;
+  features?: string[];
+  limits?: Record<string, number>;
+}
+
+export interface LicenseSummary {
+  plan: LicensePlan | string;
+  entitlements: LicenseEntitlements;
+  rights: LicenseRights | null;
+  license?: LicenseInfo | null;
+  expiryStatus?: string;
+}
+
+export interface TierUsageMetric<TAllowed = number | string> {
+  current?: number;
+  allowed?: TAllowed;
+  registered?: number;
+  connected?: number;
+}
+
+export interface LicenseUsage {
+  workers: TierUsageMetric<number>;
+  concurrentJobs: TierUsageMetric<number>;
+  activeWorkflows: TierUsageMetric<number>;
+  workflowSteps: TierUsageMetric<number>;
+  schemas: TierUsageMetric<number>;
+  policyBundles: TierUsageMetric<number>;
+  requestsPerSecond: TierUsageMetric<number>;
+  promptChars: TierUsageMetric<number>;
+  bodyBytes: TierUsageMetric<number>;
+  approvalMode: TierUsageMetric<string>;
+}
+
+export interface LicenseUsageSummary {
+  tenantId: string;
+  plan: LicensePlan | string;
+  license?: LicenseInfo | null;
+  usage: LicenseUsage;
 }
 
 // ---------------------------------------------------------------------------
@@ -869,6 +1414,31 @@ export interface McpResource {
   mimeType: string;
 }
 
+export interface McpPromptArgument {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface McpPrompt {
+  name: string;
+  description: string;
+  arguments: McpPromptArgument[];
+  // modelClass hints at the model tier the prompt is tuned for —
+  // e.g. 'small' for straightforward rewriting, 'reasoning' for the
+  // policy-migration helper that has to navigate grammar diffs.
+  // Rendered on the catalogue card.
+  modelClass: "small" | "reasoning";
+  // safetyDisclaimer is true for prompts whose rendered output
+  // operators should simulate before applying (draft_safety_rule +
+  // policy_migration_helper). Gets a distinct amber chip on the card.
+  safetyDisclaimer: boolean;
+  // docsHref links to the long-form catalogue entry in
+  // docs/mcp/prompts.md so operators can jump straight to the
+  // argument-schema + example-output deep-dive.
+  docsHref: string;
+}
+
 export interface McpStatus {
   running: boolean;
   connectedClients: number;
@@ -938,4 +1508,300 @@ export interface StreamEvent {
   type: string;
   timestamp: string;
   payload: Record<string, unknown>;
+  severity?: string;
+  eventType?: string;
+  jobId?: string;
+  runId?: string;
+  workflowId?: string;
+  source?: string;
+  chatData?: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Traces
+// ---------------------------------------------------------------------------
+
+export interface TraceSpan {
+  span_id: string;
+  parent_span_id?: string;
+  operation: string;
+  service: string;
+  start_time: string;
+  end_time?: string;
+  duration_ms?: number;
+  status: "ok" | "error" | "timeout";
+  attributes?: Record<string, unknown>;
+  safety_decision?: SafetyDecisionType;
+  error_message?: string;
+}
+
+export interface Trace {
+  trace_id: string;
+  job_id?: string;
+  agent_id?: string;
+  spans: TraceSpan[];
+  start_time: string;
+  end_time?: string;
+  total_duration_ms?: number;
+  service_count?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Agent Registry
+// ---------------------------------------------------------------------------
+
+export interface AgentRegistryEntry {
+  agent_id: string;
+  name?: string;
+  total_jobs: number;
+  safety_breakdown: {
+    allow: number;
+    deny: number;
+    require_approval: number;
+    allow_with_constraints: number;
+    throttle: number;
+  };
+  active_policy_bindings?: string[];
+  last_activity?: string;
+  metadata?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Setup Wizard
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Governance health — Command Center composite score.
+// Matches core/governance.HealthScore / HealthFactor on the wire.
+// ---------------------------------------------------------------------------
+
+export type GovernanceGrade = "A" | "B" | "C" | "D" | "F";
+
+export interface GovernanceHealthFactor {
+  score: number;
+  weight: number;
+  raw?: unknown;
+  notes?: string;
+}
+
+export interface GovernanceHealth {
+  score: number;
+  grade: GovernanceGrade;
+  generated_at: string;
+  factors: Record<string, GovernanceHealthFactor>;
+  truncated_at_max?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Policy shadow mode (mirrors core/policyshadow wire types)
+// ---------------------------------------------------------------------------
+
+export interface ShadowPolicy {
+  shadow_bundle_id: string;
+  bundle_id: string;
+  tenant_id: string;
+  content: string;
+  created_at: string;
+  activated_at: string;
+  created_by?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ShadowPolicySummary {
+  shadow_bundle_id: string;
+  bundle_id: string;
+  tenant_id: string;
+  created_by?: string;
+  created_at: string;
+  activated_at: string;
+}
+
+export interface ShadowResultsSummary {
+  total_evaluated: number;
+  escalated_count: number;
+  relaxed_count: number;
+  approval_differ_count: number;
+  unchanged_count: number;
+  first_evaluated_at?: string;
+  last_evaluated_at?: string;
+}
+
+export type ShadowDiff =
+  | "escalated"
+  | "relaxed"
+  | "approval_differ"
+  | "unchanged";
+
+export interface ShadowComparisonEntry {
+  ts_ms: number;
+  job_id: string;
+  agent_id: string;
+  active_verdict: string;
+  shadow_verdict: string;
+  diff: ShadowDiff;
+  active_rule_id?: string;
+  shadow_rule_id?: string;
+  latency_ms?: number;
+  seq?: number;
+}
+
+export interface ShadowComparisonsResponse {
+  entries: ShadowComparisonEntry[];
+  next_cursor?: string;
+  truncated_at_max?: boolean;
+}
+
+export interface ShadowTimeseriesBucket {
+  ts_ms: number;
+  escalated: number;
+  relaxed: number;
+  approval_differ: number;
+  unchanged: number;
+  total: number;
+}
+
+export interface ShadowTimeseriesResponse {
+  buckets: ShadowTimeseriesBucket[];
+  window_ms: number;
+}
+
+// ---------------------------------------------------------------------------
+// MCP governance dashboard
+// ---------------------------------------------------------------------------
+
+export type SignatureStatus = "verified" | "unverified" | "invalid";
+
+export interface MCPUsageCell {
+  agent_id: string;
+  tool_name: string;
+  count: number;
+  allow_count: number;
+  deny_count: number;
+  approval_required_count: number;
+  p50_latency_ms: number;
+  p99_latency_ms: number;
+  last_invoked_at_ms: number;
+}
+
+export interface MCPUsageResponse {
+  cells: MCPUsageCell[];
+  total_calls: number;
+  window_ms: number;
+  truncated_at_max: boolean;
+}
+
+export interface MCPOutboundEntry {
+  ts_ms: number;
+  stream_id: string;
+  agent_id: string;
+  tool_name: string;
+  target_server: string;
+  signature_status: SignatureStatus;
+  signature_key_id?: string;
+  latency_ms?: number;
+  result_type?: string;
+  event_hash?: string;
+}
+
+export interface MCPOutboundResponse {
+  entries: MCPOutboundEntry[];
+  next_cursor?: string;
+  truncated_at_max: boolean;
+}
+
+export interface SetupStatus {
+  setup_complete: boolean;
+  steps: {
+    admin_created: boolean;
+    api_key_configured: boolean;
+    safety_kernel_connected: boolean;
+    first_agent_registered: boolean;
+    first_job_submitted: boolean;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Evals
+// ---------------------------------------------------------------------------
+
+export interface EvalDataset {
+  id: string;
+  name: string;
+  version: number;
+  tenant: string;
+  description?: string;
+  entryCount: number;
+  contentHash: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+export interface EvalEntry {
+  id: string;
+  input: Record<string, unknown>;
+  expectedDecision: SafetyDecisionType;
+  ruleId?: string;
+  metadata?: Record<string, unknown>;
+  source: string;
+  sourceRef?: string;
+  notes?: string;
+}
+
+export type EvalRunStatus = "pass" | "fail" | "regression" | "error";
+
+export type EvalDriftDirection = "escalated" | "relaxed" | "unchanged";
+
+export interface EvalEntryResult {
+  entryId: string;
+  input: Record<string, unknown>;
+  expectedDecision: SafetyDecisionType;
+  actualDecision: SafetyDecisionType | string;
+  ruleId?: string;
+  reason?: string;
+  status: EvalRunStatus;
+  driftDirection: EvalDriftDirection;
+  constraints?: PolicyConstraints;
+}
+
+export interface EvalRunSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  regressions: number;
+  errored: number;
+  scorePercent: number | null;
+}
+
+export interface EvalRun {
+  runId: string;
+  datasetId: string;
+  datasetName: string;
+  datasetVersion: number;
+  policySnapshot: string;
+  startedAt: string;
+  completedAt?: string;
+  summary: EvalRunSummary;
+  entries?: EvalEntryResult[];
+}
+
+export interface ExtractIncidentsRequest {
+  since?: string;
+  until?: string;
+  topicPattern?: string;
+  ruleId?: string;
+  verdicts?: SafetyDecisionType[];
+  agentId?: string;
+  maxEntries?: number;
+  datasetName: string;
+  datasetDescription?: string;
+  dryRun?: boolean;
+}
+
+export interface ExtractIncidentsPreview {
+  scannedDecisions: number;
+  entryCount: number;
+  dedupedCount: number;
+  warnings: string[];
+  datasetId?: string;
 }

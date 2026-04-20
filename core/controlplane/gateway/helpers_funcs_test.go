@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -21,7 +20,7 @@ func TestNormalizeAPIKeyTrimsQuotes(t *testing.T) {
 		" \"test-key\"": "test-key",
 	}
 	for in, want := range cases {
-		if got := auth.NormalizeAPIKey(in); got != want {
+		if got := normalizeAPIKey(in); got != want {
 			t.Fatalf("normalizeAPIKey(%q)=%q want=%q", in, got, want)
 		}
 	}

@@ -44,6 +44,7 @@ type BackendLicenseEntitlements = {
   legal_hold?: boolean;
   velocity_rules?: boolean;
   break_glass_admin?: boolean;
+  agent_identity?: boolean;
   features?: Record<string, boolean>;
   limits?: Record<string, number>;
 };
@@ -141,6 +142,7 @@ function mapLicenseEntitlements(entitlements?: BackendLicenseEntitlements | null
     legalHold: entitlements.legal_hold,
     velocityRules: entitlements.velocity_rules,
     breakGlassAdmin: entitlements.break_glass_admin,
+    agentIdentity: entitlements.agent_identity,
     features: entitlements.features,
     limits: entitlements.limits,
   };

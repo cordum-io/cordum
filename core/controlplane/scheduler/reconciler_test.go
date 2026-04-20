@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
+	infraStore "github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -60,24 +62,6 @@ func (s *fakeReconcileStore) SetState(_ context.Context, jobID string, state Job
 		s.attempts[jobID]++
 	}
 	return nil
-}
-
-func (s *fakeReconcileStore) SetStateWithContext(_ context.Context, jobID string, state JobState, _ *StateEventContext) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.fail {
-		return errors.New("forced failure")
-	}
-	s.states[jobID] = state
-	s.updated[jobID] = toUnixMicros(time.Now())
-	if state == JobStateScheduled {
-		s.attempts[jobID]++
-	}
-	return nil
-}
-
-func (s *fakeReconcileStore) GetJobEvents(_ context.Context, _ string) ([]model.JobEvent, error) {
-	return nil, nil
 }
 
 func (s *fakeReconcileStore) GetState(_ context.Context, jobID string) (JobState, error) {

@@ -13,11 +13,20 @@ import (
 )
 
 func TestHandleSubmitJobHTTP_PromptTierLimit(t *testing.T) {
+	// Prevent any ambient license env vars from overriding the test state.
+	t.Setenv("CORDUM_LICENSE_TOKEN", "")
+	t.Setenv("CORDUM_LICENSE_FILE", "")
+
 	s, _, _ := newTestGateway(t)
 	s.tenant = "default"
 	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
 		entitlements.MaxPromptChars = 5
 	})
+
+	// Sanity: verify the resolver actually holds the forced value.
+	if got := s.currentEntitlements().MaxPromptChars; got != 5 {
+		t.Fatalf("entitlements.MaxPromptChars = %d after ForceState, want 5", got)
+	}
 
 	body := bytes.NewBufferString(`{"prompt":"abcdef","topic":"job.test"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", body)
@@ -223,6 +232,9 @@ func TestHandlePutPolicyBundle_MaxPolicyBundlesLimit(t *testing.T) {
 }
 
 func TestLicenseEndpointsReturnPlanRightsAndUsage(t *testing.T) {
+	t.Setenv("CORDUM_LICENSE_TOKEN", "")
+	t.Setenv("CORDUM_LICENSE_FILE", "")
+
 	s, _, _ := newTestGateway(t)
 	claims := licensing.Claims{
 		Plan: string(licensing.PlanTeam),
@@ -350,5 +362,32 @@ func TestLicenseEndpointsReturnPlanRightsAndUsage(t *testing.T) {
 	policyBundles, ok := usage["policy_bundles"].(map[string]any)
 	if !ok || policyBundles["current"] != float64(1) {
 		t.Fatalf("unexpected policy_bundles usage payload: %#v", usage["policy_bundles"])
+	}
+}
+
+func TestLicenseEndpointProjectsAgentIdentityEntitlement(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.AgentIdentity = true
+	})
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/license", nil))
+	rec := httptest.NewRecorder()
+	s.handleGetLicense(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get license: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Entitlements struct {
+			AgentIdentity bool `json:"agent_identity"`
+		} `json:"entitlements"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode license response: %v", err)
+	}
+	if !payload.Entitlements.AgentIdentity {
+		t.Fatal("agent_identity entitlement missing from /api/v1/license response")
 	}
 }

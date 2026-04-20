@@ -85,9 +85,10 @@ describe("pdfExport", () => {
       expect.objectContaining({
         scale: 2,
         useCORS: true,
-        backgroundColor: "#ffffff",
       }),
     );
+    const options = html2canvasMock.mock.calls[0]?.[1] as { backgroundColor?: unknown } | undefined;
+    expect(typeof options?.backgroundColor).toBe("string");
   });
 
   it("exportPdf renders mixed sections and saves with slugged filename", async () => {

@@ -77,27 +77,36 @@ const EXPECTED_LABELS = [
   "Environments",
   "MCP Server",
   "Configuration",
+  "Output Safety",
 ];
 
 describe("SettingsLayout navigation", () => {
-  it("does not include Output Safety link and shows migration note", async () => {
+  it("includes Output Safety link and navigates to output-safety route", async () => {
     const view = renderSettingsAt("/settings/health");
     await view.waitFor(() => {
-      expect(view.container.textContent).not.toContain("Output Safety");
-      expect(view.container.textContent).toContain("Safety controls have moved");
+      expect(view.container.textContent).toContain("Output Safety");
       expect(view.container.textContent).toContain("Health tab");
     });
 
-    const migrationLink = Array.from(view.container.querySelectorAll("a")).find((a) =>
-      a.textContent?.includes("Go to Safety"),
+    const outputLink = Array.from(view.container.querySelectorAll("a")).find((a) =>
+      a.textContent?.includes("Output Safety"),
     ) as HTMLAnchorElement | undefined;
-    expect(migrationLink).toBeTruthy();
-    expect(migrationLink?.getAttribute("href")).toBe("/security/safety");
+    expect(outputLink).toBeTruthy();
+
+    await act(async () => {
+      outputLink?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }),
+      );
+    });
+
+    await view.waitFor(() => {
+      expect(view.container.textContent).toContain("Output Safety tab");
+    });
 
     view.unmount();
   });
 
-  it("renders nav links for all 7 settings sections", async () => {
+  it("renders nav links for all settings sections", async () => {
     const view = renderSettingsAt("/settings/health");
     await view.waitFor(() => {
       for (const label of EXPECTED_LABELS) {
@@ -117,7 +126,7 @@ describe("SettingsLayout navigation", () => {
       expect(healthLink?.className).toContain("text-accent");
       // Non-active links should have muted class
       const keysLink = links.find((a) => a.textContent?.includes("API Keys"));
-      expect(keysLink?.className).toContain("text-muted");
+      expect(keysLink?.className).toContain("text-muted-foreground");
     });
     view.unmount();
   });

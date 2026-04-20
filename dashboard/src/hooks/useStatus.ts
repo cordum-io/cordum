@@ -56,6 +56,7 @@ export interface GatewayStatus {
     running?: number;
     succeeded?: number;
     failed?: number;
+    denied?: number;
   };
   // HA fields (absent when running single-replica / old backend)
   instance_id?: string;
@@ -102,7 +103,8 @@ function pipelineTotal(pipeline?: PipelineMetrics): number {
     pipelineMetric(pipeline.dispatched) +
     pipelineMetric(pipeline.running) +
     pipelineMetric(pipeline.succeeded) +
-    pipelineMetric(pipeline.failed)
+    pipelineMetric(pipeline.failed) +
+    pipelineMetric(pipeline.denied)
   );
 }
 
@@ -113,6 +115,7 @@ function pipelineFromJobs(records: BackendJobRecord[]): PipelineMetrics {
     running: 0,
     succeeded: 0,
     failed: 0,
+    denied: 0,
   };
 
   for (const record of records) {
@@ -132,10 +135,12 @@ function pipelineFromJobs(records: BackendJobRecord[]): PipelineMetrics {
       case "succeeded":
         out.succeeded = (out.succeeded ?? 0) + 1;
         break;
+      case "denied":
+        out.denied = (out.denied ?? 0) + 1;
+        break;
       case "failed":
       case "cancelled":
       case "timeout":
-      case "denied":
       case "output_quarantined":
         out.failed = (out.failed ?? 0) + 1;
         break;
@@ -196,8 +201,9 @@ export function useWorkersSummary() {
   return useQuery<ApiResponse<Worker[]>>({
     queryKey: ["workers"],
     queryFn: async () => {
-      const res = await get<{ items: BackendHeartbeat[] }>("/workers");
-      const items = (res.items ?? [])
+      const res = await get<{ items?: BackendHeartbeat[] } | BackendHeartbeat[]>("/workers");
+      const heartbeats = Array.isArray(res) ? res : (res.items ?? []);
+      const items = heartbeats
         .map(mapHeartbeatToWorker)
         .filter((w): w is Worker => !!w);
       return { items };

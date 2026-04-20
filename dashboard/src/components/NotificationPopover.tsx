@@ -96,7 +96,7 @@ export function NotificationPopover() {
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const dialogRef = useDialogA11y(() => setOpen(false));
+  const dialogRef = useDialogA11y(() => setOpen(false), { enabled: open });
 
   // Close on outside click
   useEffect(() => {
@@ -127,7 +127,7 @@ export function NotificationPopover() {
         <Bell className="w-4 h-4 text-muted-foreground" />
         {unreadCount > 0 && (
           <>
-            <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-amber-400 border-2 border-surface-0 status-pulse" />
+            <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-[var(--color-warning)] border-2 border-surface-0 status-pulse" />
             <span className="sr-only">{unreadCount} unread notifications</span>
           </>
         )}
@@ -213,9 +213,9 @@ export function NotificationPopover() {
 
             {/* Footer */}
             <div className="px-4 py-2.5 border-t border-border">
-              <button
+              <button type="button"
                 onClick={() => { setOpen(false); navigate("/audit"); }}
-                className="w-full text-center text-[11px] text-cordum hover:text-cordum-bright transition-colors font-medium"
+                className="w-full text-center text-xs text-cordum hover:text-cordum-bright transition-colors font-medium"
               >
                 View all notifications
               </button>

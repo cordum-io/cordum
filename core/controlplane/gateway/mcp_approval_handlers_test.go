@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
 )
 
@@ -166,7 +165,7 @@ func TestGetReturnsRecord(t *testing.T) {
 	// Tenant scoping requires an auth context — without one the handler
 	// refuses to disclose cross-tenant records (returns 404). Attach a
 	// matching tenant so the read is authorised.
-	req = withAuth(req, &auth.AuthContext{Tenant: "default", PrincipalID: "admin-1"})
+	req = withAuth(req, &AuthContext{Tenant: "default", PrincipalID: "admin-1"})
 	rr := httptest.NewRecorder()
 	h.Get(rr, req, rec.ID)
 

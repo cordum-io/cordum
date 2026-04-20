@@ -8,14 +8,21 @@ export function formatCount(n: number): string {
   return String(n);
 }
 
-export function formatStatusToken(value: string | undefined, fallback = "unknown"): string {
-  const raw = (value ?? fallback).trim();
-  if (!raw) return fallback;
-  return raw.replace(/[_-]+/g, " ");
+export { formatRelativeTime as formatRelative, formatDuration } from "./utils";
+
+export function formatDateTime(dateStr: string): string {
+  return new Date(dateStr).toLocaleString();
 }
 
-export function formatMonoId(value: string | undefined, visible = 12): string {
-  if (!value) return "\u2014";
-  if (value.length <= visible) return value;
-  return value.slice(0, visible);
+export function formatShortDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString();
+}
+
+export function formatPercent(n: number): string {
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+export function epochToMillis(epoch: number): number {
+  // If epoch is in seconds (< 1e12), convert to milliseconds
+  return epoch < 1e12 ? epoch * 1000 : epoch;
 }

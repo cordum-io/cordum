@@ -61,6 +61,7 @@ func NewSafetyClient(addr string) (*SafetyClient, error) {
 		addr,
 		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(grpcClientKeepaliveParams()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dial safety kernel: %w", err)

@@ -2,8 +2,11 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfigStore } from "../state/config";
 import { useEventStore } from "../state/events";
+import { useToastStore } from "../state/toast";
 import type { StreamEvent } from "../api/types";
+import { API_PATHS } from "../lib/constants";
 import { normalizeDecisionType } from "../api/transform";
+import { generateUUID } from "../lib/uuid";
 import { logger } from "../lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -13,6 +16,7 @@ import { logger } from "../lib/logger";
 const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 const BACKOFF_FACTOR = 2;
+const PARSE_FAILURE_THRESHOLD = 5;
 
 // ---------------------------------------------------------------------------
 // Derive WebSocket URL from API base URL or current origin
@@ -22,7 +26,7 @@ function wsUrl(apiBaseUrl?: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const override = import.meta.env.VITE_WS_URL;
   if (override) {
-    return `${override.replace(/\/+$/, "")}/api/v1/stream`;
+    return `${override.replace(/\/+$/, "")}${API_PATHS.stream}`;
   }
   const base = (apiBaseUrl || import.meta.env.VITE_API_URL || "/api/v1").trim();
   const trimmed = base.endsWith("/") ? base.slice(0, -1) : base;
@@ -72,7 +76,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   if (packet.jobRequest) {
     const jobId = String(packet.jobRequest.jobId ?? "");
     return {
-      id: traceId || jobId || crypto.randomUUID(),
+      id: traceId || jobId || generateUUID(),
       type: "job.submit",
       timestamp: ts,
       payload: {
@@ -87,7 +91,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
     const jobId = String(packet.jobResult.jobId ?? "");
     const status = normalizeEnum(packet.jobResult.status);
     return {
-      id: traceId || jobId || crypto.randomUUID(),
+      id: traceId || jobId || generateUUID(),
       type: status ? `job.result.${status}` : "job.result",
       timestamp: ts,
       payload: {
@@ -103,7 +107,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   if (packet.jobProgress) {
     const jobId = String(packet.jobProgress.jobId ?? "");
     return {
-      id: traceId || jobId || crypto.randomUUID(),
+      id: traceId || jobId || generateUUID(),
       type: "job.progress",
       timestamp: ts,
       payload: {
@@ -117,7 +121,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   if (packet.jobCancel) {
     const jobId = String(packet.jobCancel.jobId ?? "");
     return {
-      id: traceId || jobId || crypto.randomUUID(),
+      id: traceId || jobId || generateUUID(),
       type: "job.cancel",
       timestamp: ts,
       payload: {
@@ -129,7 +133,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   if (packet.heartbeat) {
     const workerId = String(packet.heartbeat.workerId ?? "");
     return {
-      id: traceId || workerId || crypto.randomUUID(),
+      id: traceId || workerId || generateUUID(),
       type: "worker.heartbeat",
       timestamp: ts,
       payload: {
@@ -142,7 +146,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
   }
   if (packet.alert) {
     return {
-      id: traceId || crypto.randomUUID(),
+      id: traceId || generateUUID(),
       type: "system.alert",
       timestamp: ts,
       payload: packet.alert as Record<string, unknown>,
@@ -156,7 +160,7 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
 // ---------------------------------------------------------------------------
 
 const INVALIDATION_MAP: Record<string, string[][]> = {
-  "job.": [["jobs"], ["job"], ["dlq"], ["dlq", "nav"]],
+  "job.": [["jobs"], ["dlq"], ["dlq", "nav"]],
   "workflow.": [["workflows"]],
   "approval.": [["approvals"], ["approvals", "nav"]],
   "worker.": [["workers"]],
@@ -166,12 +170,45 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
   "pack.": [["packs"]],
   "safety.": [["safety"]],
   "audit.": [["audit"]],
+  "scheduler.": [["jobs"], ["workers"]],
+  "context.": [["context"]],
 };
 
 function invalidateForEvent(
   queryClient: ReturnType<typeof useQueryClient>,
   eventType: string,
+  event?: StreamEvent | null,
 ): void {
+  // Extract specific resource ID from the event payload
+  const payload = event?.payload as Record<string, unknown> | undefined;
+  const jobId = payload?.jobId as string | undefined;
+  const workerId = payload?.workerId as string | undefined;
+
+  // Invalidate both detail and list queries so filtered views update in real-time.
+  // Using default refetchType ("active") so visible queries refetch immediately.
+  if (eventType.startsWith("job.") && jobId) {
+    queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+    queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["dlq"] });
+    return;
+  }
+  if (eventType.startsWith("worker.") && workerId) {
+    queryClient.invalidateQueries({ queryKey: ["worker", workerId] });
+    queryClient.invalidateQueries({ queryKey: ["workers"] });
+    return;
+  }
+  if (eventType.startsWith("workflow.run") || eventType.startsWith("workflow.step")) {
+    const eventObj = event as unknown as Record<string, unknown> | null | undefined;
+    const runId = eventObj?.run_id ?? eventObj?.runId;
+    if (typeof runId === "string" && runId) {
+      queryClient.invalidateQueries({ queryKey: ["workflow-run", runId] });
+    }
+    queryClient.invalidateQueries({ queryKey: ["workflows"] });
+    queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+    return;
+  }
+
+  // Fallback: broad invalidation for events without extractable IDs
   for (const [prefix, keys] of Object.entries(INVALIDATION_MAP)) {
     if (eventType.startsWith(prefix)) {
       for (const key of keys) {
@@ -203,6 +240,7 @@ export function useEventStream(): void {
   const backoffRef = useRef(MIN_BACKOFF_MS);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unmountedRef = useRef(false);
+  const parseFailuresRef = useRef(0);
 
   useEffect(() => {
     unmountedRef.current = false;
@@ -215,15 +253,15 @@ export function useEventStream(): void {
     function connect() {
       if (unmountedRef.current) return;
 
-      // Auth via subprotocol (use base64url without padding — '=' is invalid in subprotocol names)
+      // Auth via subprotocol — send identifier and credential as separate list
+      // entries so the server echoes only "cordum-api-key" (never the key itself).
       const encoded = btoa(apiKey).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const subprotocol = `cordum-api-key.${encoded}`;
 
       setStatus("connecting");
       const url = wsUrl(apiBaseUrl);
       logger.info("ws", "Connecting", { url });
 
-      const ws = new WebSocket(url, [subprotocol]);
+      const ws = new WebSocket(url, ["cordum-api-key", encoded]);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -231,9 +269,33 @@ export function useEventStream(): void {
           ws.close();
           return;
         }
+        const wasReconnect = backoffRef.current > MIN_BACKOFF_MS;
         backoffRef.current = MIN_BACKOFF_MS;
         setStatus("connected");
         logger.info("ws", "Connected");
+
+        // On reconnect, selectively invalidate caches to recover missed events.
+        // Skip queries that are currently fetching (e.g. in-flight mutations or
+        // active refetches) to prevent desync when a user is mid-save.
+        if (wasReconnect) {
+          const allQueries = queryClient.getQueryCache().getAll();
+          const pendingCount = allQueries.filter(
+            (q) => q.state.fetchStatus === "fetching",
+          ).length;
+          logger.info("ws", "Reconnected — selective cache invalidation", {
+            total: allQueries.length,
+            skipped: pendingCount,
+          });
+          queryClient.invalidateQueries({
+            predicate: (query) => query.state.fetchStatus !== "fetching",
+          });
+          useToastStore.getState().addToast({
+            type: "info",
+            title: "Connection restored",
+            description: "Data refreshed automatically.",
+            duration: 5000,
+          });
+        }
       };
 
       ws.onmessage = (msg) => {
@@ -241,14 +303,32 @@ export function useEventStream(): void {
         try {
           packet = JSON.parse(msg.data as string) as BusPacket;
         } catch {
-          logger.warn("ws", "Non-JSON frame dropped", { length: (msg.data as string).length });
+          parseFailuresRef.current++;
+          logger.warn("ws", "Non-JSON frame dropped", {
+            length: (msg.data as string).length,
+            consecutiveFailures: parseFailuresRef.current,
+          });
+          if (parseFailuresRef.current >= PARSE_FAILURE_THRESHOLD) {
+            setStatus("degraded");
+            useToastStore.getState().addToast({
+              type: "error",
+              title: "Event stream degraded",
+              description: "Receiving invalid data — reconnecting...",
+              duration: 8000,
+            });
+            parseFailuresRef.current = 0;
+            ws.close();
+          }
           return;
         }
+        // Reset consecutive failure counter on successful parse.
+        parseFailuresRef.current = 0;
         const event = busPacketToEvent(packet);
         if (!event) {
           logger.debug("ws", "Unrecognized packet dropped");
           return;
         }
+        logger.debug("ws", "Message received", { type: event.type, id: event.id });
 
         // Buffer into Zustand store for live feed
         addEvent(event);
@@ -269,7 +349,7 @@ export function useEventStream(): void {
             decision:
               "decision" in event.payload && typeof event.payload.decision === "string"
                 ? normalizeDecisionType(event.payload.decision)
-                : "allow",
+                : "deny",
             matchedRule:
               "matchedRule" in event.payload
                 ? String(event.payload.matchedRule)
@@ -284,16 +364,17 @@ export function useEventStream(): void {
         }
 
         // Invalidate React Query caches
-        invalidateForEvent(queryClient, event.type);
+        invalidateForEvent(queryClient, event.type, event);
       };
 
       ws.onerror = () => {
         logger.error("ws", "Connection error");
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         wsRef.current = null;
         if (unmountedRef.current) {
+          logger.info("ws", "Disconnected", { code: ev.code, reason: ev.reason });
           setStatus("disconnected");
           return;
         }

@@ -117,7 +117,7 @@ describe("usePacks hooks", () => {
       expect(hook.result.current?.isSuccess).toBe(true);
     });
 
-    expect(hook.result.current?.data?.items[0]).toMatchObject({
+    expect(hook.result.current?.data?.items![0]).toMatchObject({
       id: "pack-1",
       name: "Pack One",
       version: "1.2.3",
@@ -180,7 +180,7 @@ describe("usePacks hooks", () => {
     });
 
     expect(hook.result.current?.data?.catalogs[0]).toMatchObject({ id: "cat-1", title: "Main Catalog" });
-    expect(hook.result.current?.data?.items[0]).toMatchObject({ id: "pack-1", catalogId: "cat-1" });
+    expect(hook.result.current?.data?.items![0]).toMatchObject({ id: "pack-1", catalogId: "cat-1" });
     expect(hook.result.current?.data?.cached).toBe(true);
     hook.unmount();
   });

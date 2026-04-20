@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/mcp"
 )
 
@@ -75,7 +74,7 @@ func (r *denyEventRing) recent(agentID string, limit int) []denyEventRecord {
 // endpoint returns the unfiltered catalogue (admin-only). With agent_id
 // it returns the subset that identity would see.
 func (s *server) handleListMCPTools(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermMCPRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermMCPRead, "admin") {
 		return
 	}
 	runtime := s.getMCPRuntime()
@@ -100,7 +99,7 @@ func (s *server) handleListMCPTools(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentToolVisibility serves GET /api/v1/agents/{id}/tools.
 func (s *server) handleAgentToolVisibility(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermMCPRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermMCPRead, "admin") {
 		return
 	}
 	agentID := strings.TrimSpace(r.PathValue("id"))
@@ -154,7 +153,7 @@ func (s *server) writeAgentToolVisibility(w http.ResponseWriter, r *http.Request
 // Returns up to 50 most recent mcp_tool_denied records for the
 // identity from the in-memory ring.
 func (s *server) handleAgentDeniedEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermMCPRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermMCPRead, "admin") {
 		return
 	}
 	agentID := strings.TrimSpace(r.PathValue("id"))

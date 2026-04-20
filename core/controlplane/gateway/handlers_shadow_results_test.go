@@ -12,7 +12,6 @@ import (
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -726,8 +725,8 @@ func TestHandleShadowResultsComparisons_BadCursorRejected(t *testing.T) {
 // viewerCtx attaches an authenticated non-admin context so we can
 // exercise the 403 path. Mirrors adminCtx from handlers_locks_test.go.
 func viewerCtx(req *http.Request) *http.Request {
-	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
-	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 }
 
 // TestShadowResults_EmptyStoreHandlers covers the empty-input baseline

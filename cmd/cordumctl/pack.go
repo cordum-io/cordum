@@ -193,6 +193,17 @@ func runPackCmd(args []string) {
 		usage()
 		os.Exit(1)
 	}
+	// Pack-signing subcommands (task-6ced7932) — keygen, sign,
+	// verify-signature, export-key — share dispatch via
+	// dispatchPackSigningCmd in pack_sign.go. They don't collide with
+	// the legacy install/verify commands because each uses a distinct
+	// verb.
+	if handled, err := dispatchPackSigningCmd(args[0], args[1:]); handled {
+		if err != nil {
+			fail(err.Error())
+		}
+		return
+	}
 	switch args[0] {
 	case "create":
 		runPackCreate(args[1:])

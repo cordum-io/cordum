@@ -100,6 +100,18 @@ export function useDeleteDLQ() {
       logger.info("dlq", "Deleting DLQ entry", { id });
       return del(`/dlq/${encodeURIComponent(id)}`);
     },
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.dlq.all });
+      const previous = queryClient.getQueriesData<ApiResponse<DLQEntry[]>>({ queryKey: queryKeys.dlq.all });
+      queryClient.setQueriesData<ApiResponse<DLQEntry[]>>(
+        { queryKey: queryKeys.dlq.all },
+        (old) => {
+          if (!old?.items) return old;
+          return { ...old, items: old.items.filter((e) => e.id !== id) };
+        },
+      );
+      return { previous };
+    },
     onSuccess: (_, id) => {
       logger.info("dlq", "DLQ entry deleted", { id });
       useToastStore.getState().addToast({ type: "success", title: "Entry deleted" });

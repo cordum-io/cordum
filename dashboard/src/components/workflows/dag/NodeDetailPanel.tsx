@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { logger } from "../../../lib/logger";
+import { formatDuration, truncate } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Briefcase,
@@ -15,6 +16,8 @@ import {
   Workflow,
   Code,
   Database,
+  Globe,
+  AlertTriangle,
   ChevronDown,
   ChevronRight,
   X,
@@ -26,9 +29,10 @@ import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import { Textarea } from "../../ui/Textarea";
 import { RunStatusBadge } from "../../StatusBadge";
-import { useApproveJob, useRejectJob, useApproveStep } from "../../../hooks/useApprovals";
+import { useApproveJob, useRejectJob } from "../../../hooks/useApprovals";
 import type { WorkflowStep, WorkflowRun } from "../../../api/types";
 import { cn } from "../../../lib/utils";
+import { friendlyError } from "../../../lib/friendlyError";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -38,23 +42,14 @@ export interface NodeDetailPanelProps {
   step: WorkflowStep | null;
   run?: WorkflowRun | null;
   onClose: () => void;
+  /** When true, render content directly without the Drawer overlay wrapper. */
+  inline?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function truncate(str: string, max: number): string {
-  return str.length > max ? str.slice(0, max) + "\u2026" : str;
-}
-
-function formatDuration(ms: number): string {
-  const secs = Math.round(ms / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  const rem = secs % 60;
-  return rem > 0 ? `${mins}m ${rem}s` : `${mins}m`;
-}
 
 function formatDate(iso?: string): string {
   if (!iso) return "\u2014";
@@ -97,6 +92,8 @@ const STEP_ICONS: Record<string, React.ReactNode> = {
   subworkflow: <Workflow className="h-4 w-4" />,
   transform: <Code className="h-4 w-4" />,
   storage: <Database className="h-4 w-4" />,
+  http: <Globe className="h-4 w-4" />,
+  "error-trigger": <AlertTriangle className="h-4 w-4" />,
 };
 
 // ---------------------------------------------------------------------------
@@ -113,7 +110,7 @@ function CollapsibleJson({ label, data }: { label: string; data: unknown }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-muted hover:text-ink transition"
+        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-ink transition"
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5" />
@@ -123,7 +120,7 @@ function CollapsibleJson({ label, data }: { label: string; data: unknown }) {
         {label}
       </button>
       {open && (
-        <pre className="max-h-[300px] overflow-auto border-t border-border bg-surface2/30 px-3 py-2 text-[11px] text-ink">
+        <pre className="max-h-[300px] overflow-auto border-t border-border bg-surface2/30 px-3 py-2 text-xs text-ink">
           {safeJsonStr(data, 5000)}
         </pre>
       )}
@@ -138,7 +135,7 @@ function CollapsibleJson({ label, data }: { label: string; data: unknown }) {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </h4>
       {children}
@@ -149,7 +146,7 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between text-xs">
-      <span className="text-muted">{label}</span>
+      <span className="text-muted-foreground">{label}</span>
       <span className="font-medium text-ink">{value}</span>
     </div>
   );
@@ -242,7 +239,7 @@ function JobDetail({
         <div className="flex items-center justify-between">
           <RunStatusBadge status={runStep?.status} />
           {duration != null && (
-            <span className="text-xs text-muted">{formatDuration(duration)}</span>
+            <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
           )}
         </div>
         {runStep?.startedAt && (
@@ -288,13 +285,13 @@ function JobDetail({
               {safetyDecision.type}
             </Badge>
             {safetyDecision.matchedRule && (
-              <span className="text-[10px] text-muted">
+              <span className="text-xs text-muted-foreground">
                 rule: {safetyDecision.matchedRule}
               </span>
             )}
           </div>
           {safetyDecision.reason && (
-            <p className="text-xs text-muted">{truncate(safetyDecision.reason, 200)}</p>
+            <p className="text-xs text-muted-foreground">{truncate(safetyDecision.reason, 200)}</p>
           )}
           {safetyDecision.evalTimeMs != null && (
             <InfoRow label="Eval time" value={`${safetyDecision.evalTimeMs}ms`} />
@@ -329,8 +326,6 @@ function ApprovalDetail({
   const queryClient = useQueryClient();
   const approveJob = useApproveJob();
   const rejectJob = useRejectJob();
-  const approveStep = useApproveStep();
-
   const [comment, setComment] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -338,6 +333,10 @@ function ApprovalDetail({
   const output = runStep?.output ?? {};
   const config = runStep?.config ?? step.config ?? {};
   const approvalStatus = (output.status as string) ?? runStep?.status ?? "pending";
+  const approvalActionability =
+    (output.actionability as string) ??
+    (output.approvalActionability as string) ??
+    (approvalStatus === "pending" ? "actionable" : "resolved");
   const actor = (output.actor as string) ?? "";
   const existingComment = (output.comment as string) ?? "";
   const resolvedAt = (output.resolvedAt as string) ?? runStep?.completedAt;
@@ -357,8 +356,9 @@ function ApprovalDetail({
 
   const isWaiting =
     runStep?.status === "waiting" || runStep?.status === "pending";
+  const isActionable = approvalActionability === "actionable";
 
-  const isPending = approveJob.isPending || rejectJob.isPending || approveStep.isPending;
+  const isPending = approveJob.isPending || rejectJob.isPending;
 
   const invalidateRuns = () => {
     queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
@@ -376,26 +376,17 @@ function ApprovalDetail({
 
     if (jobId && JOB_ID_PATTERN.test(jobId)) {
       approveJob.mutate(
-        { id: jobId, comment: comment.trim() || undefined },
+        { jobId, comment: comment.trim() || undefined },
         {
           onSuccess: () => {
             setActionSuccess("Approved");
             setComment("");
             invalidateRuns();
           },
-          onError: (err) => setActionError(err.message),
-        },
-      );
-    } else if (run?.workflowId && run?.id) {
-      approveStep.mutate(
-        { workflowId: run.workflowId, runId: run.id, stepId: step.id, approved: true },
-        {
-          onSuccess: () => {
-            setActionSuccess("Approved");
-            setComment("");
-            invalidateRuns();
+          onError: (err) => {
+            const friendly = friendlyError(err, "approve workflow approval");
+            setActionError(`${friendly.title}: ${friendly.description}`);
           },
-          onError: (err) => setActionError(err.message),
         },
       );
     }
@@ -408,26 +399,17 @@ function ApprovalDetail({
 
     if (jobId && JOB_ID_PATTERN.test(jobId)) {
       rejectJob.mutate(
-        { id: jobId, reason, comment: comment.trim() || undefined },
+        { jobId, reason, comment: comment.trim() || undefined },
         {
           onSuccess: () => {
             setActionSuccess("Rejected");
             setComment("");
             invalidateRuns();
           },
-          onError: (err) => setActionError(err.message),
-        },
-      );
-    } else if (run?.workflowId && run?.id) {
-      approveStep.mutate(
-        { workflowId: run.workflowId, runId: run.id, stepId: step.id, approved: false },
-        {
-          onSuccess: () => {
-            setActionSuccess("Rejected");
-            setComment("");
-            invalidateRuns();
+          onError: (err) => {
+            const friendly = friendlyError(err, "reject workflow approval");
+            setActionError(`${friendly.title}: ${friendly.description}`);
           },
-          onError: (err) => setActionError(err.message),
         },
       );
     }
@@ -446,6 +428,10 @@ function ApprovalDetail({
                   ? "success"
                   : approvalStatus === "rejected"
                     ? "danger"
+                    : approvalStatus === "invalidated"
+                      ? "danger"
+                      : approvalStatus === "repaired"
+                        ? "info"
                     : "warning"
               }
             >
@@ -453,6 +439,7 @@ function ApprovalDetail({
             </Badge>
           }
         />
+        <InfoRow label="Actionability" value={approvalActionability.replace(/_/g, " ")} />
       </Section>
 
       {actor && (
@@ -460,7 +447,7 @@ function ApprovalDetail({
           <InfoRow label="Actor" value={truncate(actor, 60)} />
           {resolvedAt && <InfoRow label="Resolved at" value={formatDate(resolvedAt)} />}
           {existingComment && (
-            <p className="text-xs text-muted italic">{truncate(existingComment, 300)}</p>
+            <p className="text-xs text-muted-foreground italic">{truncate(existingComment, 300)}</p>
           )}
         </Section>
       )}
@@ -475,7 +462,7 @@ function ApprovalDetail({
       )}
 
       {/* In-context approve / reject actions */}
-      {isWaiting && (
+      {isWaiting && isActionable && (
         <div className="space-y-3 rounded-xl border border-border p-3">
           <Textarea
             placeholder="Add a comment (optional)..."
@@ -490,17 +477,17 @@ function ApprovalDetail({
               variant="primary"
               size="sm"
               type="button"
-              className="bg-green-600 hover:bg-green-700"
+              className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/90"
               onClick={handleApprove}
               disabled={isPending}
             >
-              {approveJob.isPending || approveStep.isPending ? (
+              {approveJob.isPending ? (
                 <Loader className="h-3 w-3 animate-spin" />
               ) : null}
               Approve
             </Button>
             <Button
-              variant="destructive"
+              variant="danger"
               size="sm"
               type="button"
               onClick={handleReject}
@@ -520,6 +507,15 @@ function ApprovalDetail({
             <p className="text-xs font-medium text-danger">{actionError}</p>
           )}
         </div>
+      )}
+
+      {isWaiting && !isActionable && (
+        <Card className="border-border bg-surface2/40">
+          <p className="text-xs font-semibold text-ink">Approval no longer actionable</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            This workflow step is no longer waiting for a human decision. Refresh the run to inspect the latest lifecycle state.
+          </p>
+        </Card>
       )}
     </div>
   );
@@ -610,7 +606,7 @@ function DelayDetail({
         <Section label={isRunning ? "Time Elapsed" : "Total Wait"}>
           <span className="text-xs font-medium text-ink">{formatDuration(elapsed)}</span>
           {isRunning && delayMs != null && elapsed < delayMs && (
-            <span className="ml-2 text-[10px] text-muted">
+            <span className="ml-2 text-xs text-muted-foreground">
               ({formatDuration(delayMs - elapsed)} remaining)
             </span>
           )}
@@ -635,7 +631,7 @@ function FanOutDetail({
 
   // Find child steps (steps that depend on this fan-out)
   const childSteps = (run?.steps ?? []).filter((rs) =>
-    (rs.depends_on ?? rs.dependsOn)?.includes(step.id),
+    rs.depends_on?.includes(step.id),
   );
 
   return (
@@ -722,7 +718,7 @@ function SwitchDetail({
 
       <Section label={`Cases (${switchCases.length})`}>
         {switchCases.length === 0 ? (
-          <p className="text-xs text-muted">No cases configured.</p>
+          <p className="text-xs text-muted-foreground">No cases configured.</p>
         ) : (
           <div className="space-y-1">
             {switchCases.map((entry, idx) => {
@@ -743,7 +739,7 @@ function SwitchDetail({
                       <RunStatusBadge status={stepRun?.status ?? "pending"} />
                     </div>
                   </div>
-                  <p className="mt-1 text-[11px] text-muted">{truncate(stepRun?.name || entry.stepId, 120)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{truncate(stepRun?.name || entry.stepId, 120)}</p>
                 </div>
               );
             })}
@@ -800,9 +796,9 @@ function ParallelDetail({
   const runStepsByID = new Map((run?.steps ?? []).map((entry) => [entry.id, entry]));
   const childRuns = childStepIDs.map((childID) => runStepsByID.get(childID)).filter(Boolean) as WorkflowStep[];
   const succeeded = childRuns.filter((entry) => entry.status === "succeeded").length;
-  const failed = childRuns.filter((entry) => entry.status === "failed" || entry.status === "timed_out").length;
+  const failed = childRuns.filter((entry) => entry.status === "failed" || entry.status === "denied" || entry.status === "timed_out").length;
   const cancelled = childRuns.filter((entry) => entry.status === "cancelled").length;
-  const done = childRuns.filter((entry) => ["succeeded", "failed", "timed_out", "cancelled"].includes(entry.status ?? "")).length;
+  const done = childRuns.filter((entry) => ["succeeded", "failed", "denied", "timed_out", "cancelled"].includes(entry.status ?? "")).length;
   const total = childStepIDs.length;
   const progressPct = total > 0 ? Math.round((done / total) * 100) : 0;
 
@@ -824,7 +820,7 @@ function ParallelDetail({
         <div className="h-2 w-full overflow-hidden rounded-full bg-surface2">
           <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progressPct}%` }} />
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-muted">
+        <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
           <span>succeeded: {succeeded}</span>
           <span>failed: {failed}</span>
           <span>cancelled: {cancelled}</span>
@@ -907,7 +903,7 @@ function LoopDetail({
 
   const dispatchedIterations = childRuns.length;
   const terminalChildren = childRuns.filter((entry) =>
-    ["succeeded", "failed", "timed_out", "cancelled"].includes(entry.step.status ?? ""),
+    ["succeeded", "failed", "denied", "timed_out", "cancelled"].includes(entry.step.status ?? ""),
   ).length;
   const failedChildren = childRuns.filter((entry) =>
     ["failed", "timed_out", "cancelled"].includes(entry.step.status ?? ""),
@@ -967,7 +963,7 @@ function LoopDetail({
             <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progressPct}%` }} />
           </div>
         )}
-        <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-muted">
+        <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
           <span>dispatched: {dispatchedIterations}</span>
           <span>active: {activeChildren}</span>
           <span>failed: {failedChildren}</span>
@@ -993,9 +989,9 @@ function LoopDetail({
                   >
                     <div className="flex items-center gap-2">
                       {isOpen ? (
-                        <ChevronDown className="h-3.5 w-3.5 text-muted" />
+                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                       ) : (
-                        <ChevronRight className="h-3.5 w-3.5 text-muted" />
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
                       )}
                       <span className="text-xs font-medium text-ink">{`Iteration ${entry.index + 1}`}</span>
                     </div>
@@ -1082,7 +1078,7 @@ function SubWorkflowDetail({
         <div className="flex items-center justify-between">
           <RunStatusBadge status={runStep?.status} />
           {childDuration != null && (
-            <span className="text-xs text-muted">{formatDuration(childDuration)}</span>
+            <span className="text-xs text-muted-foreground">{formatDuration(childDuration)}</span>
           )}
         </div>
         {childStatus && <InfoRow label="Child status" value={<RunStatusBadge status={childStatus} />} />}
@@ -1090,11 +1086,11 @@ function SubWorkflowDetail({
 
       <Section label="Child Workflow">
         {childWorkflowId ? (
-          <Link to={`/workflows/${childWorkflowId}`} className="text-xs font-mono text-accent hover:underline">
+          <Link to={`/workflows/${childWorkflowId}/studio`} className="text-xs font-mono text-accent hover:underline">
             {childWorkflowId}
           </Link>
         ) : (
-          <span className="text-xs text-muted">Not configured</span>
+          <span className="text-xs text-muted-foreground">Not configured</span>
         )}
         {childRunId && childWorkflowId && (
           <div>
@@ -1151,7 +1147,7 @@ function TransformDetail({
         <div className="flex items-center justify-between">
           <RunStatusBadge status={runStep?.status} />
           {duration != null && (
-            <span className="text-xs text-muted">{formatDuration(duration)}</span>
+            <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
           )}
         </div>
         {runStep?.startedAt && <InfoRow label="Started" value={formatDate(runStep.startedAt)} />}
@@ -1166,7 +1162,7 @@ function TransformDetail({
 
       <Section label={`Mappings (${entries.length})`}>
         {entries.length === 0 ? (
-          <p className="text-xs text-muted">No input mappings configured.</p>
+          <p className="text-xs text-muted-foreground">No input mappings configured.</p>
         ) : (
           <div className="space-y-2">
             {entries.map(([key, expr]) => (
@@ -1174,14 +1170,14 @@ function TransformDetail({
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-ink">{key}</span>
                   {runStep?.status === "succeeded" && outputMap[key] !== undefined && (
-                    <Badge variant="success" className="text-[10px]">evaluated</Badge>
+                    <Badge variant="success" className="text-xs">evaluated</Badge>
                   )}
                 </div>
-                <pre className="mt-1 rounded bg-surface2/40 px-2 py-1 text-[11px] font-mono text-muted">
+                <pre className="mt-1 rounded bg-surface2/40 px-2 py-1 text-xs font-mono text-muted-foreground">
                   {typeof expr === "string" ? expr : JSON.stringify(expr, null, 2)}
                 </pre>
                 {runStep?.status === "succeeded" && outputMap[key] !== undefined && (
-                  <pre className="mt-1 rounded bg-success/5 border border-success/20 px-2 py-1 text-[11px] font-mono text-ink">
+                  <pre className="mt-1 rounded bg-success/5 border border-success/20 px-2 py-1 text-xs font-mono text-ink">
                     {typeof outputMap[key] === "string"
                       ? outputMap[key] as string
                       : JSON.stringify(outputMap[key], null, 2)}
@@ -1248,7 +1244,7 @@ function StorageDetail({
         <div className="flex items-center justify-between">
           <RunStatusBadge status={runStep?.status} />
           {duration != null && (
-            <span className="text-xs text-muted">{formatDuration(duration)}</span>
+            <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
           )}
         </div>
         {runStep?.startedAt && <InfoRow label="Started" value={formatDate(runStep.startedAt)} />}
@@ -1280,7 +1276,7 @@ function StorageDetail({
 
       {runStep?.status === "succeeded" && outputMap.value !== undefined && (
         <Section label="Value">
-          <pre className="rounded-lg border border-success/20 bg-success/5 px-3 py-2 text-[11px] font-mono text-ink">
+          <pre className="rounded-lg border border-success/20 bg-success/5 px-3 py-2 text-xs font-mono text-ink">
             {typeof outputMap.value === "string"
               ? outputMap.value
               : JSON.stringify(outputMap.value, null, 2)}
@@ -1296,6 +1292,139 @@ function StorageDetail({
       )}
 
       <CollapsibleJson label="Full Output" data={runStep?.output} />
+    </div>
+  );
+}
+
+function HttpDetail({
+  step,
+  runStep,
+}: {
+  step: WorkflowStep;
+  runStep?: WorkflowStep;
+}) {
+  const config = step.config ?? {};
+  const input = (step.input ?? config.input ?? {}) as Record<string, unknown>;
+  const method =
+    (typeof input.method === "string" ? input.method.toUpperCase() : undefined) ??
+    (typeof config.method === "string" ? config.method.toUpperCase() : undefined) ??
+    "";
+  const url =
+    (typeof input.url === "string" ? input.url : undefined) ??
+    (typeof config.url === "string" ? config.url : undefined) ??
+    "";
+  const headers = (input.headers ?? config.headers) as Record<string, unknown> | undefined;
+
+  let duration: number | undefined;
+  if (runStep?.startedAt && runStep?.completedAt) {
+    duration = new Date(runStep.completedAt).getTime() - new Date(runStep.startedAt).getTime();
+  }
+
+  const methodVariant: Record<string, "success" | "danger" | "warning" | "info"> = {
+    GET: "info",
+    POST: "success",
+    PUT: "warning",
+    PATCH: "warning",
+    DELETE: "danger",
+  };
+
+  return (
+    <div className="space-y-4">
+      <Section label="Execution">
+        <div className="flex items-center justify-between">
+          <RunStatusBadge status={runStep?.status} />
+          {duration != null && (
+            <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
+          )}
+        </div>
+        {runStep?.startedAt && <InfoRow label="Started" value={formatDate(runStep.startedAt)} />}
+        {runStep?.completedAt && <InfoRow label="Completed" value={formatDate(runStep.completedAt)} />}
+      </Section>
+
+      <Section label="Request">
+        <div className="flex items-center gap-2">
+          {method && <Badge variant={methodVariant[method] ?? "default"}>{method}</Badge>}
+        </div>
+        {url && (
+          <pre className="mt-1.5 rounded-lg bg-surface2/40 px-3 py-2 text-xs font-mono text-ink break-all whitespace-pre-wrap">
+            {truncate(url, 300)}
+          </pre>
+        )}
+      </Section>
+
+      {headers && Object.keys(headers).length > 0 && (
+        <CollapsibleJson label="Headers" data={headers} />
+      )}
+
+      {runStep?.error && (
+        <Card className="border-danger/40 bg-danger/5">
+          <p className="text-xs font-semibold text-danger">Error</p>
+          <p className="mt-1 text-xs text-ink">{truncate(runStep.error, 500)}</p>
+        </Card>
+      )}
+
+      <CollapsibleJson label="Request Body" data={input.body ?? config.body} />
+      <CollapsibleJson label="Response" data={runStep?.output} />
+    </div>
+  );
+}
+
+function ErrorTriggerDetail({
+  step,
+  runStep,
+}: {
+  step: WorkflowStep;
+  runStep?: WorkflowStep;
+}) {
+  const config = step.config ?? {};
+  const input = (step.input ?? config.input ?? {}) as Record<string, unknown>;
+  const catchFrom =
+    (typeof input.catch_from === "string" ? input.catch_from : undefined) ??
+    (typeof config.catchFrom === "string" ? config.catchFrom : undefined) ??
+    "";
+  const retryCount =
+    typeof input.retry_count === "number" ? input.retry_count
+    : typeof config.retryCount === "number" ? config.retryCount
+    : undefined;
+  const retryDelay =
+    (typeof input.retry_delay === "string" ? input.retry_delay : undefined) ??
+    (typeof config.retryDelay === "string" ? config.retryDelay : undefined) ??
+    "";
+  const onError = step.on_error ?? (typeof config.onError === "string" ? config.onError : "");
+
+  let duration: number | undefined;
+  if (runStep?.startedAt && runStep?.completedAt) {
+    duration = new Date(runStep.completedAt).getTime() - new Date(runStep.startedAt).getTime();
+  }
+
+  return (
+    <div className="space-y-4">
+      <Section label="Execution">
+        <div className="flex items-center justify-between">
+          <RunStatusBadge status={runStep?.status} />
+          {duration != null && (
+            <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
+          )}
+        </div>
+        {runStep?.startedAt && <InfoRow label="Started" value={formatDate(runStep.startedAt)} />}
+        {runStep?.completedAt && <InfoRow label="Completed" value={formatDate(runStep.completedAt)} />}
+      </Section>
+
+      <Section label="Error Handling">
+        {catchFrom && <InfoRow label="Catches from" value={catchFrom} />}
+        {onError && <InfoRow label="On error action" value={onError} />}
+        {retryCount != null && <InfoRow label="Retry count" value={String(retryCount)} />}
+        {retryDelay && <InfoRow label="Retry delay" value={retryDelay} />}
+      </Section>
+
+      {runStep?.error && (
+        <Card className="border-danger/40 bg-danger/5">
+          <p className="text-xs font-semibold text-danger">Caught Error</p>
+          <p className="mt-1 text-xs text-ink">{truncate(runStep.error, 500)}</p>
+        </Card>
+      )}
+
+      <CollapsibleJson label="Output" data={runStep?.output} />
     </div>
   );
 }
@@ -1321,6 +1450,7 @@ export function NodeDetailPanel({
   step,
   run,
   onClose,
+  inline,
 }: NodeDetailPanelProps) {
   // Find matching run step
   const runStep = step && run?.steps
@@ -1329,83 +1459,95 @@ export function NodeDetailPanel({
 
   const stepIcon = step ? (STEP_ICONS[step.type] ?? STEP_ICONS.job) : null;
 
+  const content = step ? (
+    <div className={cn("space-y-6", inline && "p-4")}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface2 text-muted-foreground">
+            {stepIcon}
+          </div>
+          <div className="min-w-0">
+            <h3
+              className="truncate font-display text-base font-semibold text-ink"
+              title={step.name || step.id}
+            >
+              {truncate(step.name || step.id, 60)}
+            </h3>
+            <Badge variant="info" className="text-xs">
+              {step.type}
+            </Badge>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full p-1.5 hover:bg-surface2 transition"
+        >
+          <X className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </div>
+
+      {/* Step-type-specific content */}
+      {["job", "worker", "agent-task", "pack-action", "tool-call"].includes(step.type) && (
+        <JobDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "approval" && (
+        <ApprovalDetail
+          step={step}
+          runStep={runStep}
+          run={run}
+        />
+      )}
+      {step.type === "condition" && (
+        <ConditionDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "switch" && (
+        <SwitchDetail step={step} runStep={runStep} run={run} />
+      )}
+      {step.type === "delay" && (
+        <DelayDetail step={step} runStep={runStep} />
+      )}
+      {(step.type === "fan-out" || step.type === "fanout") && (
+        <FanOutDetail step={step} runStep={runStep} run={run} />
+      )}
+      {step.type === "parallel" && (
+        <ParallelDetail step={step} runStep={runStep} run={run} />
+      )}
+      {step.type === "loop" && (
+        <LoopDetail step={step} runStep={runStep} run={run} />
+      )}
+      {(step.type === "sub-workflow" || step.type === "subworkflow") && (
+        <SubWorkflowDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "transform" && (
+        <TransformDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "storage" && (
+        <StorageDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "http" && (
+        <HttpDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "error-trigger" && (
+        <ErrorTriggerDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "notify" && (
+        <GenericDetail runStep={runStep} />
+      )}
+      {!["job", "worker", "agent-task", "pack-action", "tool-call", "approval", "condition", "switch", "delay", "fan-out", "fanout", "parallel", "loop", "sub-workflow", "subworkflow", "transform", "storage", "http", "error-trigger", "notify"].includes(step.type) && (
+        <GenericDetail runStep={runStep} />
+      )}
+    </div>
+  ) : null;
+
+  if (inline) {
+    return content;
+  }
+
   return (
     <Drawer open={step !== null} onClose={onClose} size="sm">
-      {step && (
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface2 text-muted">
-                {stepIcon}
-              </div>
-              <div className="min-w-0">
-                <h3
-                  className="truncate font-display text-base font-semibold text-ink"
-                  title={step.name || step.id}
-                >
-                  {truncate(step.name || step.id, 60)}
-                </h3>
-                <Badge variant="info" className="text-[10px]">
-                  {step.type}
-                </Badge>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full p-1.5 hover:bg-surface2 transition"
-            >
-              <X className="h-4 w-4 text-muted" />
-            </button>
-          </div>
-
-          {/* Step-type-specific content */}
-          {step.type === "job" && (
-            <JobDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "approval" && (
-            <ApprovalDetail
-              step={step}
-              runStep={runStep}
-              run={run}
-            />
-          )}
-          {step.type === "condition" && (
-            <ConditionDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "switch" && (
-            <SwitchDetail step={step} runStep={runStep} run={run} />
-          )}
-          {step.type === "delay" && (
-            <DelayDetail step={step} runStep={runStep} />
-          )}
-          {(step.type === "fan-out" || step.type === "fanout") && (
-            <FanOutDetail step={step} runStep={runStep} run={run} />
-          )}
-          {step.type === "parallel" && (
-            <ParallelDetail step={step} runStep={runStep} run={run} />
-          )}
-          {step.type === "loop" && (
-            <LoopDetail step={step} runStep={runStep} run={run} />
-          )}
-          {(step.type === "sub-workflow" || step.type === "subworkflow") && (
-            <SubWorkflowDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "transform" && (
-            <TransformDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "storage" && (
-            <StorageDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "notify" && (
-            <GenericDetail runStep={runStep} />
-          )}
-          {!["job", "approval", "condition", "switch", "delay", "fan-out", "fanout", "parallel", "loop", "sub-workflow", "subworkflow", "transform", "storage", "notify"].includes(step.type) && (
-            <GenericDetail runStep={runStep} />
-          )}
-        </div>
-      )}
+      {content}
     </Drawer>
   );
 }

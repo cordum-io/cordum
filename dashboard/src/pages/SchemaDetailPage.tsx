@@ -148,16 +148,13 @@ export function SchemaCreateForm() {
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         {errorMessages.length > 0 && (
-          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-4">
-            <p className="text-xs font-mono uppercase tracking-wide text-destructive">
-              Validation issues
-            </p>
+          <InfoBanner variant="error" title="Validation issues">
             <ul className="mt-2 space-y-1 text-sm text-destructive">
               {errorMessages.map((message) => (
                 <li key={message}>{message}</li>
               ))}
             </ul>
-          </div>
+          </InfoBanner>
         )}
 
         <div className="instrument-card p-6 space-y-4">
@@ -174,14 +171,9 @@ export function SchemaCreateForm() {
             <LabeledField label="Type">
               <Select {...register("type")} aria-label="Schema type" className="bg-surface-0">
                 {SCHEMA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
+              </Select>
               {errors.type && <p className="mt-1 text-xs text-destructive">{errors.type.message}</p>}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Description</label>
-            <input {...register("description")} placeholder="Optional description" className="w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
-            {errors.description && <p className="mt-1 text-xs text-destructive">{errors.description.message}</p>}
+            </LabeledField>
           </div>
           <LabeledField label="Description" description="Optional schema summary shown to operators.">
             <Input
@@ -248,21 +240,24 @@ export function SchemaCreateForm() {
                     wrapperClassName="h-9 rounded-2xl border border-border bg-surface-0 px-3 py-2 hover:bg-surface-0"
                   />
                 </div>
-                <div>
-                  <select {...register(`fields.${index}.type`)} className="rounded-lg border border-border bg-surface-0 px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30">
-                    {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                  {errors.fields?.[index]?.type && <p className="mt-0.5 text-xs text-destructive">{errors.fields[index].type?.message}</p>}
-                </div>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap py-1.5">
-                  <input type="checkbox" {...register(`fields.${index}.required`)} className="rounded border-border" />
-                  Required
-                </label>
-                <div>
-                  <input {...register(`fields.${index}.description`)} placeholder="Description" className="w-full rounded-lg border border-border bg-surface-0 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-cordum/30" />
+                <LabeledField label="Description" className="space-y-1">
+                  <Input
+                    {...register(`fields.${index}.description`)}
+                    aria-label={`Field ${index + 1} description`}
+                    placeholder="Description"
+                    className="h-9 bg-surface-0 text-xs"
+                  />
                   {errors.fields?.[index]?.description && <p className="mt-0.5 text-xs text-destructive">{errors.fields[index].description?.message}</p>}
-                </div>
-                <button type="button" onClick={() => fields.length > 1 && remove(index)} disabled={fields.length <= 1} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                </LabeledField>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove field ${index + 1}`}
+                  onClick={() => fields.length > 1 && remove(index)}
+                  disabled={fields.length <= 1}
+                  className="self-end text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
               </div>
@@ -288,11 +283,27 @@ export default function SchemaDetailPage() {
 
   const isCreateMode = id === "new";
 
-  const { data: schema, isLoading } = useQuery({
+  const { data: schema, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["schema", id],
     queryFn: async () => {
-      const res = await get<{ data?: { id: string; name: string; type: string; versions: SchemaVersion[]; currentVersion: string } }>(`/schemas/${id}`);
-      return res.data;
+      const res = await get<{ id: string; schema: Record<string, unknown> }>(`/schemas/${encodeURIComponent(id!)}`);
+      const raw = res.schema ?? {};
+      const properties = (raw.properties ?? {}) as Record<string, Record<string, unknown>>;
+      const requiredSet = new Set<string>(Array.isArray(raw.required) ? raw.required as string[] : []);
+      const fields: SchemaField[] = Object.entries(properties).map(([name, def]) => ({
+        name,
+        type: typeof def?.type === "string" ? def.type : Array.isArray(def?.type) ? def.type.join(" | ") : "unknown",
+        required: requiredSet.has(name),
+        description: typeof def?.description === "string" ? def.description : undefined,
+      }));
+      return {
+        id: res.id,
+        name: res.id,
+        type: typeof raw.type === "string" ? raw.type : "object",
+        currentVersion: "1",
+        versions: [{ version: "1", createdAt: new Date().toISOString(), fields }] as SchemaVersion[],
+        schema: raw,
+      };
     },
     enabled: !isCreateMode,
   });
@@ -305,28 +316,11 @@ export default function SchemaDetailPage() {
   const currentVersion = schema?.versions?.find(v => v.version === schema.currentVersion) || schema?.versions?.[0];
 
   if (isCreateMode) {
-    return (
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button onClick={() => navigate("/schemas")} className="p-1.5 rounded-md hover:bg-surface-2 transition-colors">
-              <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-            </button>
-            <FileJson className="w-5 h-5 text-cordum" />
-            <div>
-              <h1 className="text-lg font-display font-bold text-foreground">New Schema</h1>
-              <p className="text-xs text-muted-foreground">Define a new schema for your platform</p>
-            </div>
-          </div>
-        </div>
-        <div className="instrument-card p-6">
-          <p className="text-sm text-muted-foreground">Schema creation form coming soon.</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/schemas")}>
-            Back to Schemas
-          </Button>
-        </div>
-      </motion.div>
-    );
+    return <SchemaCreateForm />;
+  }
+
+  if (isError) {
+    return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load schema"} onRetry={() => void refetch()} />;
   }
 
   if (isLoading) {

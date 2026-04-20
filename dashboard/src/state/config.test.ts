@@ -37,7 +37,8 @@ describe("useConfigStore", () => {
     vi.useRealTimers();
   });
 
-  it("loads initial state from localStorage and applies defaults", async () => {
+  it("loads initial state from localStorage user (token not persisted) and applies defaults", async () => {
+    // Legacy token in localStorage should be cleared on init
     window.localStorage.setItem(TOKEN_KEY, "token-in-storage");
     window.localStorage.setItem(
       USER_KEY,
@@ -56,17 +57,20 @@ describe("useConfigStore", () => {
     const state = useConfigStore.getState();
 
     expect(state.apiBaseUrl).toBe("");
-    expect(state.apiKey).toBe("token-in-storage");
+    expect(state.apiKey).toBe(""); // token NOT loaded from localStorage
     expect(state.tenantId).toBe("tenant-a");
     expect(state.principalId).toBe("user-1");
     expect(state.principalRole).toBe("admin");
     expect(state.traceUrlTemplate).toBe("");
     expect(state.approvalSlaMs).toBe(900_000);
-    expect(state.isAuthenticated).toBe(true);
+    expect(state.isAuthenticated).toBe(true); // based on user, not token
+    expect(state.isLoggingOut).toBe(false);
     expect(state.loginTimestamp).toBe(1700000000000);
+    // Legacy token should have been cleared
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
   });
 
-  it("update merges patch, persists apiKey, and recomputes isAuthenticated", async () => {
+  it("update merges patch into memory state (apiKey not persisted to localStorage)", async () => {
     const { useConfigStore } = await loadConfigModule();
 
     useConfigStore.getState().update({
@@ -79,13 +83,13 @@ describe("useConfigStore", () => {
     expect(state.apiKey).toBe("new-token");
     expect(state.tenantId).toBe("tenant-x");
     expect(state.isAuthenticated).toBe(true);
-    expect(window.localStorage.getItem(TOKEN_KEY)).toBe("new-token");
+    // Token should NOT be in localStorage (httpOnly cookie handles persistence)
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
 
     useConfigStore.getState().update({ apiKey: "" });
     state = useConfigStore.getState();
     expect(state.apiKey).toBe("");
     expect(state.isAuthenticated).toBe(false);
-    expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
   });
 
   it("login sets auth fields, persists state, and broadcasts auth-login", async () => {
@@ -106,12 +110,15 @@ describe("useConfigStore", () => {
     expect(state.apiKey).toBe("login-token");
     expect(state.user?.id).toBe("user-2");
     expect(state.isAuthenticated).toBe(true);
+    expect(state.isLoggingOut).toBe(false);
     expect(state.tenantId).toBe("tenant-b");
     expect(state.principalId).toBe("user-2");
     expect(state.principalRole).toBe("operator");
     expect(state.loginTimestamp).toBe(new Date("2026-02-13T06:00:00.000Z").getTime());
 
-    expect(window.localStorage.getItem(TOKEN_KEY)).toBe("login-token");
+    // Token NOT persisted to localStorage (httpOnly cookie handles auth)
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
+    // User metadata IS persisted (no secrets, used for initial state on refresh)
     expect(window.localStorage.getItem(USER_KEY)).toContain("\"id\":\"user-2\"");
     expect(window.localStorage.getItem(LOGIN_TS_KEY)).toBe(
       String(new Date("2026-02-13T06:00:00.000Z").getTime()),
@@ -154,6 +161,7 @@ describe("useConfigStore", () => {
     expect(state.apiKey).toBe("");
     expect(state.user).toBeNull();
     expect(state.isAuthenticated).toBe(false);
+    expect(state.isLoggingOut).toBe(true);
     expect(state.loginTimestamp).toBeNull();
     expect(state.tenantId).toBe("");
     expect(state.principalId).toBe("");
@@ -163,6 +171,41 @@ describe("useConfigStore", () => {
     expect(window.localStorage.getItem(USER_KEY)).toBeNull();
     expect(window.localStorage.getItem(LOGIN_TS_KEY)).toBeNull();
     expect(broadcastSyncMock).toHaveBeenCalledWith({ type: "auth-logout" });
+  });
+
+  it("ignores duplicate logout calls until the next login", async () => {
+    const { useConfigStore } = await loadConfigModule();
+    useConfigStore.getState().login("token-1", {
+      id: "user-1",
+      username: "alice",
+      email: "alice@example.com",
+      display_name: "Alice",
+      roles: ["admin"],
+      tenant: "tenant-a",
+    });
+
+    useConfigStore.getState().logout();
+    useConfigStore.getState().logout();
+
+    expect(useConfigStore.getState().isLoggingOut).toBe(true);
+    expect(broadcastSyncMock).toHaveBeenCalledTimes(2);
+    expect(broadcastSyncMock).toHaveBeenNthCalledWith(1, {
+      type: "auth-login",
+      token: "token-1",
+      user: expect.objectContaining({ id: "user-1", tenant: "tenant-a" }),
+    });
+    expect(broadcastSyncMock).toHaveBeenNthCalledWith(2, { type: "auth-logout" });
+
+    useConfigStore.getState().login("token-2", {
+      id: "user-2",
+      username: "bob",
+      email: "bob@example.com",
+      display_name: "Bob",
+      roles: ["operator"],
+      tenant: "tenant-b",
+    });
+
+    expect(useConfigStore.getState().isLoggingOut).toBe(false);
   });
 
   it("refreshLoginTimestamp updates and persists timestamp", async () => {

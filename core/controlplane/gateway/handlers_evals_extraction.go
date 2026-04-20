@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/evals/extraction"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -45,10 +44,10 @@ type createDatasetFromIncidentsResponse struct {
 }
 
 func (s *server) handleCreateDatasetFromIncidents(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermGovernanceRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermGovernanceRead, "admin") {
 		return
 	}
-	if !s.requirePermissionOrRole(w, r, auth.PermEvalsDatasetsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermEvalsDatasetsWrite, "admin") {
 		return
 	}
 	if s.decisionLogStore == nil || s.evalDatasetStore == nil || s.jobStore == nil {

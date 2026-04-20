@@ -32,7 +32,7 @@ export function AuditTransportBadge({ transport }: AuditTransportBadgeProps) {
         "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
         key === "nats"
           ? "border-success/30 bg-success/5 text-success"
-          : "border-border bg-surface2/30 text-muted",
+          : "border-border bg-surface2/30 text-muted-foreground",
       )}
       title={mode.tooltip}
     >

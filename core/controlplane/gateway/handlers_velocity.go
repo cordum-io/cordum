@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
@@ -116,7 +115,7 @@ func (s *server) handleVelocityRules(w http.ResponseWriter, r *http.Request) {
 	if !s.requireFeatureEntitlement(w, "velocity_rules", "velocity rules require an Enterprise license") {
 		return
 	}
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundles, updatedAt, err := s.loadPolicyBundles(r.Context())
@@ -145,7 +144,7 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 	if !s.requireFeatureEntitlement(w, "velocity_rules", "velocity rules require an Enterprise license") {
 		return
 	}
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 
@@ -214,7 +213,7 @@ func (s *server) handleVelocityRuleStats(w http.ResponseWriter, r *http.Request)
 	if !s.requireFeatureEntitlement(w, "velocity_rules", "velocity rules require an Enterprise license") {
 		return
 	}
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
@@ -262,7 +261,7 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 	if !s.requireFeatureEntitlement(w, "velocity_rules", "velocity rules require an Enterprise license") {
 		return
 	}
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 
@@ -339,7 +338,7 @@ func (s *server) handleDeleteVelocityRule(w http.ResponseWriter, r *http.Request
 	if !s.requireFeatureEntitlement(w, "velocity_rules", "velocity rules require an Enterprise license") {
 		return
 	}
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 

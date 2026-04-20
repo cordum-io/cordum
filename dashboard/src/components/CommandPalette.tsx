@@ -5,7 +5,8 @@ import { useDialogA11y } from "@/hooks/useDialogA11y";
 import {
   LayoutGrid, ListChecks, Workflow, Cpu, UserCheck, Shield, ShieldCheck, ShieldAlert, Boxes,
   AlertTriangle, FileText, Settings, Search, Activity, Key, Bell,
-  Users, Server, Globe, Monitor, ArrowRight, GitBranch, Clock,
+  Users, Server, Globe, Monitor, ArrowRight, GitBranch, Hash,
+  History, TrendingUp, Zap, Layers,
 } from "lucide-react";
 
 interface CommandItem {
@@ -17,29 +18,29 @@ interface CommandItem {
   keywords?: string[];
 }
 
-const commands: CommandItem[] = [
+/** @internal exported for unit tests */
+export const COMMAND_PALETTE_COMMANDS: CommandItem[] = [
   { id: "home", label: "Dashboard Overview", section: "Navigate", icon: LayoutGrid, path: "/", keywords: ["home", "overview", "dashboard"] },
   { id: "jobs", label: "Jobs", section: "Navigate", icon: ListChecks, path: "/jobs", keywords: ["jobs", "tasks", "queue"] },
   { id: "workflows", label: "Workflows", section: "Navigate", icon: Workflow, path: "/workflows", keywords: ["workflows", "orchestration", "pipeline"] },
   { id: "agents", label: "Agent Fleet", section: "Navigate", icon: Cpu, path: "/agents", keywords: ["agents", "workers", "fleet", "pool"] },
   { id: "approvals", label: "Approvals", section: "Navigate", icon: UserCheck, path: "/approvals", keywords: ["approvals", "pending", "approve", "deny"] },
-  { id: "security", label: "Security Overview", section: "Navigate", icon: ShieldCheck, path: "/security", keywords: ["security", "overview", "safety", "decisions"] },
-  { id: "policies", label: "Policy Studio", section: "Navigate", icon: Shield, path: "/policies", keywords: ["policies", "rules", "safety", "governance"] },
-  { id: "policy-rules", label: "Policy Rules", section: "Navigate", icon: Shield, path: "/policies/rules", keywords: ["rules", "policy"] },
-  { id: "policy-builder", label: "Policy Builder", section: "Navigate", icon: Shield, path: "/policies/rules/new", keywords: ["builder", "create", "policy"] },
-  { id: "policy-simulator", label: "Policy Simulator", section: "Navigate", icon: Shield, path: "/policies/simulator", keywords: ["simulator", "test", "dry run"] },
-  { id: "policy-analytics", label: "Policy Analytics", section: "Navigate", icon: Shield, path: "/policies/analytics", keywords: ["analytics", "metrics"] },
-  { id: "policy-hierarchy", label: "Policy Hierarchy", section: "Navigate", icon: Shield, path: "/policies/hierarchy", keywords: ["hierarchy", "inheritance", "scope"] },
-  { id: "policy-history", label: "Policy History", section: "Navigate", icon: Clock, path: "/policies/history", keywords: ["history", "changelog", "versions"] },
-  { id: "policy-publish", label: "Publish Policy", section: "Navigate", icon: GitBranch, path: "/policies/publish", keywords: ["publish", "deploy", "release"] },
+  { id: "security", label: "Security Overview", section: "Navigate", icon: ShieldCheck, path: "/", keywords: ["security", "overview", "safety", "decisions"] },
+  { id: "policy-studio", label: "Policy Studio", section: "Govern", icon: Shield, path: "/govern/overview", keywords: ["policy studio", "governance", "rules", "bundles", "evaluation", "scope"] },
+  { id: "input-rules", label: "Input Rules", section: "Govern", icon: Shield, path: "/govern/overview?tab=input-rules", keywords: ["input", "rules", "safety", "pii", "injection", "policies", "governance"] },
+  { id: "output-rules", label: "Output Rules", section: "Govern", icon: Shield, path: "/govern/overview?tab=output-rules", keywords: ["output", "rules", "safety", "quarantine", "policies"] },
+  { id: "velocity", label: "Velocity Controls", section: "Govern", icon: Zap, path: "/govern/overview?tab=velocity", keywords: ["velocity", "rate limit", "thresholds", "approval fatigue"] },
+  { id: "bundles", label: "Bundles", section: "Govern", icon: GitBranch, path: "/govern/overview?tab=bundles", keywords: ["bundles", "policy", "publish", "deploy", "history", "changelog", "versions"] },
+  { id: "analytics", label: "Rule Quality Analytics", section: "Govern", icon: TrendingUp, path: "/govern/overview?tab=evaluation&mode=analytics", keywords: ["analytics", "evaluation", "overrides", "fatigue", "rule quality"] },
+  { id: "replay", label: "Replay & Compare", section: "Govern", icon: History, path: "/govern/overview?tab=evaluation&mode=replay", keywords: ["replay", "compare", "candidate policy", "what if", "historical"] },
+  { id: "simulator", label: "Simulator", section: "Govern", icon: Shield, path: "/govern/overview?tab=evaluation&mode=simulator", keywords: ["simulator", "test", "dry run", "evaluation"] },
+  { id: "scope", label: "Scope & Rollout", section: "Govern", icon: Layers, path: "/govern/overview?tab=scope", keywords: ["scope", "tenants", "hierarchy", "inheritance", "multi-tenant", "rollout"] },
+  { id: "quarantine", label: "Quarantine", section: "Govern", icon: ShieldAlert, path: "/govern/quarantine", keywords: ["quarantine", "output", "blocked", "review"] },
   { id: "packs", label: "Packs", section: "Navigate", icon: Boxes, path: "/packs", keywords: ["packs", "marketplace", "plugins"] },
+  { id: "topics", label: "Topics", section: "Navigate", icon: Hash, path: "/topics", keywords: ["topics", "registry", "routing", "pool mappings"] },
   { id: "schemas", label: "Schemas", section: "Navigate", icon: Monitor, path: "/schemas", keywords: ["schemas", "types", "definitions"] },
   { id: "dlq", label: "Dead Letter Queue", section: "Navigate", icon: AlertTriangle, path: "/dlq", keywords: ["dlq", "dead letter", "failed", "retry"] },
-  { id: "quarantine", label: "Quarantine Queue", section: "Navigate", icon: ShieldAlert, path: "/quarantine", keywords: ["quarantine", "output", "blocked", "review"] },
-  { id: "traces", label: "Traces", section: "Navigate", icon: Activity, path: "/traces", keywords: ["traces", "spans", "observability", "telemetry"] },
   { id: "audit", label: "Audit Log", section: "Navigate", icon: FileText, path: "/audit", keywords: ["audit", "log", "events", "history"] },
-  { id: "input-safety", label: "Input Safety", section: "Navigate", icon: Shield, path: "/policies/input", keywords: ["input", "safety", "pii", "injection"] },
-  { id: "output-safety", label: "Output Safety", section: "Navigate", icon: Shield, path: "/policies/output", keywords: ["output", "safety", "quarantine"] },
   { id: "settings", label: "Settings Hub", section: "Settings", icon: Settings, path: "/settings", keywords: ["settings", "config"] },
   { id: "settings-config", label: "System Config", section: "Settings", icon: Settings, path: "/settings/config", keywords: ["config", "configuration", "system"] },
   { id: "settings-env", label: "Environments", section: "Settings", icon: Globe, path: "/settings/environments", keywords: ["environments", "production", "staging"] },
@@ -57,7 +58,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const dialogRef = useDialogA11y(() => setOpen(false));
+  const dialogRef = useDialogA11y(() => setOpen(false), { enabled: open });
 
   // Cmd+K to open
   useEffect(() => {
@@ -84,9 +85,9 @@ export function CommandPalette() {
   }, [open]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return commands;
+    if (!query.trim()) return COMMAND_PALETTE_COMMANDS;
     const q = query.toLowerCase();
-    return commands.filter(
+    return COMMAND_PALETTE_COMMANDS.filter(
       (c) =>
         c.label.toLowerCase().includes(q) ||
         c.section.toLowerCase().includes(q) ||
@@ -174,7 +175,7 @@ export function CommandPalette() {
                   placeholder="Type a command or search..."
                   className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
                 />
-                <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-2 border border-border text-muted-foreground">
+                <kbd className="text-xs font-mono px-1.5 py-0.5 rounded bg-surface-2 border border-border text-muted-foreground">
                   ESC
                 </kbd>
               </div>
@@ -188,13 +189,13 @@ export function CommandPalette() {
                 ) : (
                   Object.entries(grouped).map(([section, items]) => (
                     <div key={section}>
-                      <p className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
+                      <p className="px-4 pt-2 pb-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
                         {section}
                       </p>
                       {items.map((item) => {
                         const globalIndex = flatItems.indexOf(item);
                         return (
-                          <button
+                          <button type="button"
                             key={item.id}
                             data-index={globalIndex}
                             onClick={() => handleSelect(item)}
@@ -219,7 +220,7 @@ export function CommandPalette() {
               </div>
 
               {/* Footer */}
-              <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-[10px] text-muted-foreground">
+              <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <kbd className="px-1 py-0.5 rounded bg-surface-2 border border-border font-mono">↑↓</kbd>
                   navigate

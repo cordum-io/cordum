@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/prometheus/client_golang/prometheus"
@@ -52,7 +51,7 @@ func (s *server) handleListGovernanceDecisions(w http.ResponseWriter, r *http.Re
 		writeErrorJSON(w, http.StatusServiceUnavailable, "decision log store unavailable")
 		return
 	}
-	if !s.requirePermissionOrRole(w, r, auth.PermGovernanceRead) {
+	if !s.requirePermissionOrRole(w, r, PermGovernanceRead) {
 		return
 	}
 

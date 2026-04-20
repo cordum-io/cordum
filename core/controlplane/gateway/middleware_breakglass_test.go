@@ -1,9 +1,11 @@
 package gateway
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestBreakGlass_GraceStateJobSubmitReturns503(t *testing.T) {
@@ -56,6 +59,11 @@ func TestBreakGlass_GraceStateLicenseRotateSucceeds(t *testing.T) {
 		Plan:      string(licensing.PlanEnterprise),
 		ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
 	})
+	sink := &testAuditSender{}
+	s.auditExporter = sink
+	logs, restoreLogger := captureBreakGlassLogger(t)
+	defer restoreLogger()
+	before := breakGlassDecisionCount(t, "allow", licensing.BreakGlassStateGrace)
 
 	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/license/reload", nil))
 	rec := httptest.NewRecorder()
@@ -75,6 +83,30 @@ func TestBreakGlass_GraceStateLicenseRotateSucceeds(t *testing.T) {
 	}
 	if body["plan"] != string(licensing.PlanEnterprise) {
 		t.Fatalf("plan = %#v, want %q", body["plan"], licensing.PlanEnterprise)
+	}
+	if sink.Len() != 1 {
+		t.Fatalf("expected 1 break-glass audit event, got %d", sink.Len())
+	}
+	ev := sink.Get(0)
+	if ev.EventType != audit.EventLicenseBreakglassActivated {
+		t.Fatalf("event type = %q, want %q", ev.EventType, audit.EventLicenseBreakglassActivated)
+	}
+	if ev.Reason != string(licensing.BreakGlassStateGrace) {
+		t.Fatalf("reason = %q, want %q", ev.Reason, licensing.BreakGlassStateGrace)
+	}
+	if got := breakGlassDecisionCount(t, "allow", licensing.BreakGlassStateGrace) - before; got != 1 {
+		t.Fatalf("allow metric increment = %v, want 1", got)
+	}
+	logOutput := logs.String()
+	for _, needle := range []string{
+		`"principal":"admin-1"`,
+		`"route":"/api/v1/license/reload"`,
+		`"state":"grace"`,
+		`"decision":"allow"`,
+	} {
+		if !strings.Contains(logOutput, needle) {
+			t.Fatalf("expected log output to contain %s, got %s", needle, logOutput)
+		}
 	}
 }
 
@@ -158,6 +190,25 @@ func TestBreakGlass_InvalidStateRecoveryEmitsAuditEvent(t *testing.T) {
 	}
 }
 
+func TestBreakGlass_DegradedStateDeniedRouteRecordsDecisionMetric(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setBreakGlassState(t, s, "degraded")
+	before := breakGlassDecisionCount(t, "deny", licensing.BreakGlassStateDegraded)
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/license", nil))
+	rec := httptest.NewRecorder()
+
+	s.handleGetLicense(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := breakGlassDecisionCount(t, "deny", licensing.BreakGlassStateDegraded) - before; got != 1 {
+		t.Fatalf("deny metric increment = %v, want 1", got)
+	}
+}
+
 func setBreakGlassState(t *testing.T, s *server, status string) {
 	t.Helper()
 
@@ -197,4 +248,20 @@ func installReloadableLicense(t *testing.T, claims licensing.Claims) {
 	t.Setenv("CORDUM_LICENSE_TOKEN", base64.StdEncoding.EncodeToString(licenseJSON))
 	t.Setenv("CORDUM_LICENSE_PUBLIC_KEY", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("CORDUM_LICENSE_PUBLIC_KEY_PATH", "")
+}
+
+func captureBreakGlassLogger(t *testing.T) (*bytes.Buffer, func()) {
+	t.Helper()
+
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	return &buf, func() {
+		slog.SetDefault(previous)
+	}
+}
+
+func breakGlassDecisionCount(t *testing.T, decision string, state licensing.BreakGlassState) float64 {
+	t.Helper()
+	return testutil.ToFloat64(licenseBreakGlassDecisionsTotal.WithLabelValues(decision, string(state)))
 }

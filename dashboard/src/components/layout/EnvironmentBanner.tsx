@@ -7,18 +7,18 @@ import { cn } from "../../lib/utils";
 
 interface EnvConfig {
   label: string;
-  tone: "success" | "warning" | "danger";
+  color: string;
   pulse?: boolean;
 }
 
 const ENV_MAP: Record<string, EnvConfig> = {
-  production: { label: "PROD", tone: "danger", pulse: true },
-  prod: { label: "PROD", tone: "danger", pulse: true },
-  staging: { label: "STAGING", tone: "warning" },
-  stag: { label: "STAGING", tone: "warning" },
-  development: { label: "DEV", tone: "success" },
-  dev: { label: "DEV", tone: "success" },
-  local: { label: "LOCAL", tone: "success" },
+  production: { label: "PROD", color: "var(--danger)", pulse: true },
+  prod: { label: "PROD", color: "var(--danger)", pulse: true },
+  staging: { label: "STAGING", color: "var(--warning)" },
+  stag: { label: "STAGING", color: "var(--warning)" },
+  development: { label: "DEV", color: "var(--success)" },
+  dev: { label: "DEV", color: "var(--success)" },
+  local: { label: "LOCAL", color: "var(--success)" },
 };
 
 function useEnvironment(): EnvConfig | null {
@@ -43,16 +43,11 @@ function useEnvironment(): EnvConfig | null {
 export function EnvironmentBorder() {
   const env = useEnvironment();
   if (!env) return null;
-
-  const bgClass =
-    env.tone === "danger"
-      ? "bg-danger"
-      : env.tone === "warning"
-        ? "bg-warning"
-        : "bg-success";
-
   return (
-    <div className={cn("h-[2px] w-full", bgClass)} aria-hidden />
+    <div
+      className="h-[3px] w-full"
+      style={{ backgroundColor: env.color }}
+    />
   );
 }
 
@@ -60,22 +55,13 @@ export function EnvironmentBorder() {
 export function EnvironmentBadge() {
   const env = useEnvironment();
   if (!env) return null;
-
-  const toneClass =
-    env.tone === "danger"
-      ? "border-status-danger-border bg-status-danger-bg text-danger"
-      : env.tone === "warning"
-        ? "border-status-warning-border bg-status-warning-bg text-warning"
-        : "border-status-success-border bg-status-success-bg text-success";
-
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-sm border px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em]",
-        toneClass,
-        env.pulse && "animate-pulse motion-reduce:animate-none",
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-primary-foreground",
+        env.pulse && "animate-pulse",
       )}
-      aria-label={`Environment ${env.label}`}
+      style={{ backgroundColor: env.color }}
     >
       {env.label}
     </span>

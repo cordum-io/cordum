@@ -31,10 +31,19 @@ type JSONRPCMessage struct {
 	// Transport metadata (not serialized on wire).
 	sessionID string
 	// identity is the agent identity the transport resolved for this
-	// message. It travels through the dispatcher so tools/list and
+	// message. It flows through the dispatcher so tools/list and
 	// tools/call can filter by scope without a side channel. nil when
 	// the transport could not resolve one.
 	identity *AgentIdentity
+	// requestCtx carries the ORIGINAL request context from the HTTP
+	// transport so the dispatcher sees the full set of ctx values the
+	// gateway middleware installed — tenant (mcp.WithTenant),
+	// MCPCallMetadata (for the approval gate), approval_id, and any
+	// future request-scoped keys. Nil when the transport did not
+	// attach a ctx (tests, stdio). handleMessage falls back to
+	// context.Background() with just the identity pulled from msg in
+	// that case.
+	requestCtx context.Context
 }
 
 // JSONRPCRequest is a standard JSON-RPC 2.0 request object.
@@ -170,33 +179,28 @@ type Tool struct {
 	InputSchema map[string]any `json:"inputSchema,omitempty"`
 
 	// RequiresApproval, when true, gates every tools/call invocation behind
-	// a human approval. The MCP server enqueues an approval record via the
-	// existing approval workflow and replies with JSON-RPC code -32099
-	// until the approval is granted. Omitted from the JSON wire format
-	// when false so external MCP clients see a clean tool descriptor.
+	// a human approval. Omitted from the JSON wire format when false so
+	// external MCP clients see a clean tool descriptor.
 	RequiresApproval bool `json:"requiresApproval,omitempty"`
 
 	// ApprovalScope is an opaque tag the runtime tool-policy config
-	// (mcp_policy) matches against — e.g. "dangerous" or "destructive".
-	// When set in addition to (or instead of) RequiresApproval, runtime
-	// rules with a matching scope can flip the approval gate without a
-	// code change.
+	// matches against. When set, runtime rules can flip the approval
+	// gate without a code change.
 	ApprovalScope string `json:"approvalScope,omitempty"`
 
 	// Tags are free-form labels consumed by scope-filter rules and
-	// surfaced in the dashboard tool-catalogue for operator search.
+	// surfaced in the dashboard tool-catalogue.
 	Tags []string `json:"tags,omitempty"`
 
 	// RiskTier declares the minimum actor risk tier required to see or
 	// call this tool. Valid values: "low", "medium", "high", "critical".
-	// An empty string is treated as "high" (fail-closed): new tools start
-	// restricted and must be explicitly opted into a lower tier.
+	// An empty string is treated as "high" (fail-closed).
 	RiskTier string `json:"riskTier,omitempty"`
 
 	// DataClassifications labels the data sensitivities this tool may
 	// access (e.g. "pii", "phi", "secrets"). An agent identity's
 	// DataClassifications must be a superset for the tool to be
-	// visible/callable. Empty means the tool is not sensitivity-gated.
+	// visible/callable.
 	DataClassifications []string `json:"dataClassifications,omitempty"`
 }
 

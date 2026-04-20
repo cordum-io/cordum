@@ -17,10 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
-	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -802,9 +800,6 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionStreamRead) {
-		return
-	}
 
 	slog.Info("ws connection attempt", "remote", r.RemoteAddr)
 	ws, err := upgrader.Upgrade(w, r, negotiateSubprotocol(r))
@@ -824,7 +819,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	disconnectState := &wsDisconnectState{}
 	defer func() { _ = ws.Close() }()
 
-	authCtx := auth.FromRequest(r)
+	authCtx := authFromRequest(r)
 	client := &wsClient{ch: make(chan wsEvent, s.wsClientBufSz)}
 	if authCtx != nil {
 		client.tenant = strings.TrimSpace(authCtx.Tenant)
@@ -998,7 +993,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	disconnectState := &wsDisconnectState{}
 	defer func() { _ = ws.Close() }()
 
-	authCtx := auth.FromRequest(r)
+	authCtx := authFromRequest(r)
 	client := &wsClient{ch: make(chan wsEvent, s.wsClientBufSz), tenant: strings.TrimSpace(tenant), jobID: jobID}
 	if authCtx != nil {
 		client.apiKey = authCtx.APIKey

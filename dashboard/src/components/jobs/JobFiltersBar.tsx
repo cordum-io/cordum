@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
 import { cn } from "../../lib/utils";
 import type { JobStatus } from "../../api/types";
 
@@ -82,27 +81,24 @@ function MultiSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={`${label} filters`}
         className={cn(
-          "inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface-1/70 px-2.5 text-xs font-medium text-ink transition hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-0",
+          "inline-flex items-center gap-1.5 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs font-medium text-ink transition hover:border-accent/40",
           selected.length > 0 && "border-accent/50 bg-accent/5",
         )}
-        aria-haspopup="listbox"
-        aria-expanded={open}
       >
         {label}
         {selected.length > 0 && (
-          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[10px] font-bold text-white">
+          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent text-xs font-bold text-primary-foreground">
             {selected.length}
           </span>
         )}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 min-w-[180px] rounded-md border border-border bg-surface-1 p-1.5 shadow-lg">
+        <div className="absolute left-0 top-full z-20 mt-1 min-w-[160px] rounded-xl border border-border bg-card p-1.5 shadow-lg">
           {options.map((opt) => (
             <label
               key={opt.value}
-              className="flex min-h-8 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-ink hover:bg-surface2/60"
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-ink hover:bg-surface2/60"
             >
               <input
                 type="checkbox"
@@ -128,7 +124,6 @@ export interface JobFilterValues {
   decision?: string[];
   topic?: string;
   pool?: string;
-  runId?: string;
   timeRange?: string;
   updatedAfter?: string;
   updatedBefore?: string;
@@ -147,29 +142,25 @@ export function JobFiltersBar({
   const decisionFilter = searchParams.get("decision")?.split(",").filter(Boolean) ?? [];
   const topicFilter = searchParams.get("topic") ?? "";
   const poolFilter = searchParams.get("pool") ?? "";
-  const runIdFilter = searchParams.get("runId") ?? "";
   const timeRangeFilter = searchParams.get("timeRange") ?? "";
   const updatedAfterFilter = searchParams.get("updatedAfter") ?? "";
   const updatedBeforeFilter = searchParams.get("updatedBefore") ?? "";
   const tenantFilter = searchParams.get("tenant") ?? "";
 
-  // Local topic/tenant/pool/runId for debounce
+  // Local topic/tenant/pool for debounce
   const [topicLocal, setTopicLocal] = useState(topicFilter);
   const [poolLocal, setPoolLocal] = useState(poolFilter);
-  const [runIdLocal, setRunIdLocal] = useState(runIdFilter);
   const [tenantLocal, setTenantLocal] = useState(tenantFilter);
   const [showCustomRange, setShowCustomRange] = useState(timeRangeFilter === "custom");
-  const topicTimer = useRef<ReturnType<typeof setTimeout>>();
-  const poolTimer = useRef<ReturnType<typeof setTimeout>>();
-  const runIdTimer = useRef<ReturnType<typeof setTimeout>>();
-  const tenantTimer = useRef<ReturnType<typeof setTimeout>>();
+  const topicTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const poolTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const tenantTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Clear pending debounce timers on unmount
   useEffect(() => {
     return () => {
       clearTimeout(topicTimer.current);
       clearTimeout(poolTimer.current);
-      clearTimeout(runIdTimer.current);
       clearTimeout(tenantTimer.current);
     };
   }, []);
@@ -180,7 +171,6 @@ export function JobFiltersBar({
     (decisionFilter.length > 0 ? 1 : 0) +
     (topicFilter ? 1 : 0) +
     (poolFilter ? 1 : 0) +
-    (runIdFilter ? 1 : 0) +
     (timeRangeFilter ? 1 : 0) +
     (updatedAfterFilter ? 1 : 0) +
     (updatedBeforeFilter ? 1 : 0) +
@@ -211,13 +201,12 @@ export function JobFiltersBar({
       decision: decisionFilter.length > 0 ? decisionFilter : undefined,
       topic: topicFilter || undefined,
       pool: poolFilter || undefined,
-      runId: runIdFilter || undefined,
       timeRange: timeRangeFilter || undefined,
       updatedAfter: updatedAfterFilter || undefined,
       updatedBefore: updatedBeforeFilter || undefined,
       tenant: tenantFilter || undefined,
     });
-  }, [stateFilter.join(","), decisionFilter.join(","), topicFilter, poolFilter, runIdFilter, timeRangeFilter, updatedAfterFilter, updatedBeforeFilter, tenantFilter]);
+  }, [stateFilter.join(","), decisionFilter.join(","), topicFilter, poolFilter, timeRangeFilter, updatedAfterFilter, updatedBeforeFilter, tenantFilter]);
 
   // Handlers
   const handleStateChange = useCallback(
@@ -246,16 +235,6 @@ export function JobFiltersBar({
       setTopicLocal(val);
       clearTimeout(topicTimer.current);
       topicTimer.current = setTimeout(() => setFilters({ topic: val }), 400);
-    },
-    [setFilters],
-  );
-
-  const handleRunIdChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setRunIdLocal(val);
-      clearTimeout(runIdTimer.current);
-      runIdTimer.current = setTimeout(() => setFilters({ runId: val }), 400);
     },
     [setFilters],
   );
@@ -290,7 +269,6 @@ export function JobFiltersBar({
   const clearAll = useCallback(() => {
     setTopicLocal("");
     setPoolLocal("");
-    setRunIdLocal("");
     setTenantLocal("");
     setShowCustomRange(false);
     setFilters({
@@ -298,7 +276,6 @@ export function JobFiltersBar({
       decision: "",
       topic: "",
       pool: "",
-      runId: "",
       timeRange: "",
       updatedAfter: "",
       updatedBefore: "",
@@ -312,7 +289,7 @@ export function JobFiltersBar({
   }));
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-surface-1/45 px-3 py-2" role="region" aria-label="Job filters">
+    <div className="flex flex-wrap items-center gap-2">
       {/* State multi-select */}
       <MultiSelect
         label="State"
@@ -330,57 +307,44 @@ export function JobFiltersBar({
       />
 
       {/* Topic text input (debounced) */}
-      <Input
+      <input
         type="text"
         placeholder="Topic"
         value={topicLocal}
         onChange={handleTopicChange}
-        className="h-8 w-28 rounded-md px-2.5 py-1 text-xs"
-        aria-label="Filter by topic"
+        className="w-28 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
       />
 
       {/* Pool text input (debounced) */}
-      <Input
+      <input
         type="text"
         placeholder="Pool"
         value={poolLocal}
         onChange={handlePoolChange}
-        className="h-8 w-24 rounded-md px-2.5 py-1 text-xs"
-        aria-label="Filter by pool"
-      />
-
-      {/* Run ID text input (debounced) */}
-      <Input
-        type="text"
-        placeholder="Run ID"
-        value={runIdLocal}
-        onChange={handleRunIdChange}
-        className="h-8 w-28 rounded-md px-2.5 py-1 text-xs font-mono"
-        aria-label="Filter by run ID"
+        className="w-24 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
       />
 
       {/* Tenant text input (debounced) */}
-      <Input
+      <input
         type="text"
         placeholder="Tenant"
         value={tenantLocal}
         onChange={handleTenantChange}
-        className="h-8 w-24 rounded-md px-2.5 py-1 text-xs font-mono"
-        aria-label="Filter by tenant"
+        className="w-24 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
       />
 
       {/* Time range preset buttons */}
-      <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5" role="group" aria-label="Quick time filters">
+      <div className="flex items-center gap-0.5 rounded-xl border border-border p-0.5">
         {TIME_RANGES.map((tr) => (
           <button
             key={tr.value}
             type="button"
             onClick={() => handleTimeRange(tr.value)}
             className={cn(
-              "h-8 rounded-md px-2 py-1 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-0",
+              "rounded-lg px-2.5 py-1 text-xs font-medium transition",
               timeRangeFilter === tr.value
-                ? "bg-accent text-white"
-                : "text-muted hover:text-ink hover:bg-surface2/60",
+                ? "bg-accent text-primary-foreground"
+                : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
             )}
           >
             {tr.label}
@@ -390,10 +354,10 @@ export function JobFiltersBar({
           type="button"
           onClick={() => handleTimeRange("custom")}
           className={cn(
-            "h-8 rounded-md px-2 py-1 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-0",
+            "rounded-lg px-2.5 py-1 text-xs font-medium transition",
             timeRangeFilter === "custom"
-              ? "bg-accent text-white"
-              : "text-muted hover:text-ink hover:bg-surface2/60",
+              ? "bg-accent text-primary-foreground"
+              : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
           )}
         >
           Custom
@@ -403,20 +367,18 @@ export function JobFiltersBar({
       {/* Custom date range inputs */}
       {showCustomRange && (
         <div className="flex items-center gap-1.5">
-          <Input
+          <input
             type="datetime-local"
             value={updatedAfterFilter}
             onChange={(e) => setFilters({ updatedAfter: e.target.value })}
-            className="h-8 rounded-md px-2 py-1 text-xs"
-            aria-label="Updated after"
+            className="rounded-xl border border-border bg-card/70 px-2 py-1 text-xs text-ink"
           />
-          <span className="text-xs text-muted">to</span>
-          <Input
+          <span className="text-xs text-muted-foreground">to</span>
+          <input
             type="datetime-local"
             value={updatedBeforeFilter}
             onChange={(e) => setFilters({ updatedBefore: e.target.value })}
-            className="h-8 rounded-md px-2 py-1 text-xs"
-            aria-label="Updated before"
+            className="rounded-xl border border-border bg-card/70 px-2 py-1 text-xs text-ink"
           />
         </div>
       )}
@@ -424,8 +386,8 @@ export function JobFiltersBar({
       {/* Active count + clear */}
       {activeCount > 0 && (
         <>
-          <Badge variant="info" className="text-[10px]">{activeCount} filter{activeCount !== 1 ? "s" : ""}</Badge>
-          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={clearAll}>
+          <Badge variant="info">{activeCount} filter{activeCount !== 1 ? "s" : ""}</Badge>
+          <Button variant="ghost" size="sm" onClick={clearAll}>
             Clear all
           </Button>
         </>

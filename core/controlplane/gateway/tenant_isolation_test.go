@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
@@ -19,14 +18,14 @@ type tenantStrictAuth struct {
 	role   string
 }
 
-func (a *tenantStrictAuth) AuthenticateHTTP(*http.Request) (*auth.AuthContext, error) {
-	return &auth.AuthContext{Tenant: a.tenant, Role: a.role}, nil
+func (a *tenantStrictAuth) AuthenticateHTTP(*http.Request) (*AuthContext, error) {
+	return &AuthContext{Tenant: a.tenant, Role: a.role}, nil
 }
-func (a *tenantStrictAuth) AuthenticateGRPC(context.Context) (*auth.AuthContext, error) {
-	return &auth.AuthContext{Tenant: a.tenant, Role: a.role}, nil
+func (a *tenantStrictAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
+	return &AuthContext{Tenant: a.tenant, Role: a.role}, nil
 }
 func (a *tenantStrictAuth) RequireRole(r *http.Request, roles ...string) error {
-	auth := auth.FromRequest(r)
+	auth := authFromRequest(r)
 	if auth == nil {
 		return errors.New("unauthorized")
 	}
@@ -41,7 +40,7 @@ func (a *tenantStrictAuth) ResolveTenant(_ *http.Request, requested, _ string) (
 	return requested, nil
 }
 func (a *tenantStrictAuth) RequireTenantAccess(r *http.Request, tenant string) error {
-	auth := auth.FromRequest(r)
+	auth := authFromRequest(r)
 	if auth == nil {
 		return errors.New("unauthorized")
 	}
@@ -71,10 +70,10 @@ func TestMemoryTenantIsolation_CrossTenantBlocked(t *testing.T) {
 
 	// Authenticate as admin in tenant-a.
 	s.auth = &tenantStrictAuth{tenant: "tenant-a", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "user-a"}
+	authCtx := &AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "user-a"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/memory?key="+ctxKey, nil)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetMemory(rec, req)
@@ -101,10 +100,10 @@ func TestMemoryTenantIsolation_OwnTenantAllowed(t *testing.T) {
 
 	// Authenticate as admin in tenant-a.
 	s.auth = &tenantStrictAuth{tenant: "tenant-a", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "user-a"}
+	authCtx := &AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "user-a"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/memory?key="+ctxKey, nil)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetMemory(rec, req)
@@ -119,10 +118,10 @@ func TestStatusHidesInternalsForNonAdmin(t *testing.T) {
 
 	// Authenticate as viewer (not admin).
 	s.auth = &tenantStrictAuth{tenant: "default", role: "viewer"}
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "viewer"}
+	authCtx := &AuthContext{Tenant: "default", Role: "viewer"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleStatus(rec, req)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	coreschema "github.com/cordum/cordum/core/infra/schema"
 )
@@ -40,6 +41,11 @@ type ToolRegistry struct {
 	auditMu sync.RWMutex
 	audit   DenyAuditor
 
+	// auditHook is invoked once per successful tools/call (task-466b6a6a).
+	// Nil means no auditing — dev/stdio deploys usually leave it off.
+	// Wire via (*ToolRegistry).WithToolCallAudit.
+	auditHook ToolCallAuditHook
+
 	// scopeEnforce controls whether Call applies FilterForIdentity.
 	// Default false so unit tests can register tools and invoke handlers
 	// without wiring an identity into every ctx. Production callers
@@ -51,25 +57,63 @@ type ToolRegistry struct {
 	cache *filterCache
 }
 
+// ApprovalGate is the gateway-level contract the MCP server uses to
+// enforce RequiresApproval.
+type ApprovalGate interface {
+	Check(ctx context.Context, tool Tool, paramsJSON json.RawMessage) (*ApprovalRequired, error)
+}
+
+// ApprovalRequired is the structured payload the gate returns when a
+// tools/call must wait for human approval.
+type ApprovalRequired struct {
+	ApprovalID string `json:"approval_id"`
+	Reason     string `json:"reason,omitempty"`
+	Tool       string `json:"tool"`
+}
+
+// Error satisfies the error interface so ApprovalRequired can flow
+// through the regular ToolRegistry.Call return path.
+func (a *ApprovalRequired) Error() string {
+	if a == nil {
+		return "mcp: approval required"
+	}
+	return fmt.Sprintf("mcp: approval required for %s (approval_id=%s)", a.Tool, a.ApprovalID)
+}
+
+// SetApprovalGate wires the gate. Passing nil disables the approval check.
+func (r *ToolRegistry) SetApprovalGate(gate ApprovalGate) {
+	if r == nil {
+		return
+	}
+	r.gateMu.Lock()
+	r.gate = gate
+	r.gateMu.Unlock()
+}
+
+func (r *ToolRegistry) approvalGate() ApprovalGate {
+	if r == nil {
+		return nil
+	}
+	r.gateMu.RLock()
+	defer r.gateMu.RUnlock()
+	return r.gate
+}
+
 // DenyAuditor is invoked by the tool registry when a tools/call is
 // rejected by the scope filter. Implementations forward the event to
-// the SIEM chain. Runs on the dispatch goroutine so implementations
-// must be non-blocking; wrap expensive work in a goroutine if needed.
+// the SIEM chain.
 type DenyAuditor interface {
 	ToolDenied(ctx context.Context, event DenyEvent)
 }
 
-// DenyEvent is the structured payload the auditor receives. Extra is
-// optional and lets the auditor enrich the event (e.g. with tenant
-// derived from ctx) before forwarding.
+// DenyEvent is the structured payload the auditor receives.
 type DenyEvent struct {
 	ToolName  string
 	SubReason DenyReason
 	AgentID   string
 }
 
-// SetDenyAuditor wires the auditor. Passing nil disables the audit
-// call — this is the default for tests and for gateway-less deploys.
+// SetDenyAuditor wires the auditor. Passing nil disables the audit call.
 func (r *ToolRegistry) SetDenyAuditor(a DenyAuditor) {
 	if r == nil {
 		return
@@ -79,13 +123,17 @@ func (r *ToolRegistry) SetDenyAuditor(a DenyAuditor) {
 	r.auditMu.Unlock()
 }
 
+func (r *ToolRegistry) denyAuditor() DenyAuditor {
+	if r == nil {
+		return nil
+	}
+	r.auditMu.RLock()
+	defer r.auditMu.RUnlock()
+	return r.audit
+}
+
 // SetScopeEnforcement toggles Call's scope filter. Production deploys
-// (gateway HTTP transport, cordum-mcp stdio) MUST call this with true
-// during setup — tests and isolated handler validators can leave it
-// off so they don't have to carry an identity through ctx. Enforcement
-// is orthogonal to ListTools, which always filters (its fail-closed
-// behaviour is what keeps tool inventories from leaking to callers
-// that lack an identity).
+// MUST call this with true during setup.
 func (r *ToolRegistry) SetScopeEnforcement(on bool) {
 	if r == nil {
 		return
@@ -101,80 +149,6 @@ func (r *ToolRegistry) ScopeEnforced() bool {
 	return r.scopeEnforce.Load()
 }
 
-func (r *ToolRegistry) denyAuditor() DenyAuditor {
-	if r == nil {
-		return nil
-	}
-	r.auditMu.RLock()
-	defer r.auditMu.RUnlock()
-	return r.audit
-}
-
-// ApprovalGate is the gateway-level contract the MCP server uses to
-// enforce RequiresApproval. The gateway provides an implementation that
-// wraps the MCPApprovalStore: it either returns ApprovalDecisionAllow
-// (pre-approval exists and was consumed), or ApprovalDecisionGated
-// (fresh approval enqueued, tools/call must fail with -32099).
-type ApprovalGate interface {
-	// Check is invoked by ToolRegistry.Call when the tool has
-	// RequiresApproval=true (or a runtime rule matches). Implementations
-	// consult the pre-approval index, and when no valid pre-approval
-	// exists enqueue a fresh approval and return a populated
-	// *ApprovalRequired.
-	//
-	// Returning (nil, nil) means the call is authorised. Returning
-	// (*ApprovalRequired, nil) means the call is gated; the server maps
-	// it to JSON-RPC code -32099. Any non-nil error is a hard failure
-	// that bubbles up as JSON-RPC -32603.
-	Check(ctx context.Context, tool Tool, paramsJSON json.RawMessage) (*ApprovalRequired, error)
-}
-
-// ApprovalRequired is the structured payload the gate returns when a
-// tools/call must wait for human approval. It is returned as an error
-// value (see Error() below) so callers can use errors.As to switch on
-// it without depending on a sentinel.
-type ApprovalRequired struct {
-	// ApprovalID is the freshly enqueued approval's ID. Clients use it
-	// to poll /api/v1/approvals or to invoke `cordumctl mcp approve`.
-	ApprovalID string `json:"approval_id"`
-	// Reason is an operator-facing summary of why approval is required.
-	Reason string `json:"reason,omitempty"`
-	// Tool is the tool name the call targeted.
-	Tool string `json:"tool"`
-}
-
-// Error satisfies the error interface so ApprovalRequired can flow
-// through the regular ToolRegistry.Call return path. The server layer
-// switches on this type via errors.As to emit JSON-RPC -32099.
-func (a *ApprovalRequired) Error() string {
-	if a == nil {
-		return "mcp: approval required"
-	}
-	return fmt.Sprintf("mcp: approval required for %s (approval_id=%s)", a.Tool, a.ApprovalID)
-}
-
-// SetApprovalGate wires the gate. Passing nil disables the approval
-// check — this is the default for tests and for gateway-less deploys
-// (e.g. the stdio MCP server used as a developer tool).
-func (r *ToolRegistry) SetApprovalGate(gate ApprovalGate) {
-	if r == nil {
-		return
-	}
-	r.gateMu.Lock()
-	r.gate = gate
-	r.gateMu.Unlock()
-}
-
-// approvalGate returns the current gate under read lock.
-func (r *ToolRegistry) approvalGate() ApprovalGate {
-	if r == nil {
-		return nil
-	}
-	r.gateMu.RLock()
-	defer r.gateMu.RUnlock()
-	return r.gate
-}
-
 // NewToolRegistry creates an empty tool registry.
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
@@ -184,8 +158,8 @@ func NewToolRegistry() *ToolRegistry {
 }
 
 // SetConfig updates config used for enable/disable lookups and scope
-// policy overrides. Bumping the filter cache version here is what
-// makes identity changes "take effect immediately" (see plan DoD).
+// policy overrides. Bumping the filter cache version here makes
+// identity changes take effect immediately.
 func (r *ToolRegistry) SetConfig(cfg map[string]any) {
 	if r == nil {
 		return
@@ -216,18 +190,14 @@ func (r *ToolRegistry) Register(tool Tool, handler ToolHandler) error {
 	return nil
 }
 
-// List returns all enabled registered tools. It is kept for backward
-// compatibility (status counters, unfiltered diagnostics). New
-// on-the-wire callers should prefer ListTools(ctx) which applies the
-// scope filter against the caller's AgentIdentity.
+// List returns all enabled registered tools. Kept for back-compat.
+// On-the-wire callers should prefer ListTools(ctx).
 func (r *ToolRegistry) List() []Tool {
 	return r.ListToolsUnfiltered()
 }
 
 // ListToolsUnfiltered returns every enabled registered tool regardless
-// of identity. Intended for diagnostic surfaces such as the admin
-// tool-catalogue page in the dashboard and the `cordumctl mcp tools
-// list` admin command — callers MUST gate it with a role check.
+// of identity. Admin/diagnostic surfaces only.
 func (r *ToolRegistry) ListToolsUnfiltered() []Tool {
 	if r == nil {
 		return nil
@@ -244,18 +214,9 @@ func (r *ToolRegistry) ListToolsUnfiltered() []Tool {
 	return out
 }
 
-// ListTools resolves the AgentIdentity from ctx (set by transports via
-// mcp.ContextWithIdentity) and returns the subset of enabled tools the
-// identity is allowed to see. Fail-closed: when ctx has no identity
-// the result is empty.
-//
-// Results are memoised per (identity fingerprint, config_version) with
-// a 60s TTL. SetConfig bumps the version so runtime policy changes
-// invalidate the cache immediately.
-//
-// Callers that want unfiltered output for admin/diagnostic surfaces
-// must call ListToolsUnfiltered directly — this function intentionally
-// has no escape hatch.
+// ListTools resolves the AgentIdentity from ctx and returns the subset
+// of enabled tools the identity is allowed to see. Results are memoised
+// per (identity fingerprint, config_version) with a 60s TTL.
 func (r *ToolRegistry) ListTools(ctx context.Context) []Tool {
 	if r == nil {
 		return nil
@@ -275,25 +236,16 @@ func (r *ToolRegistry) ListTools(ctx context.Context) []Tool {
 }
 
 // effectiveTool returns the tool descriptor after runtime-config
-// overrides are merged in. This is the version that should be
-// advertised to clients and matched against the scope filter — a
-// runtime policy can tighten a tool's required risk tier or add
-// required data classifications without a code change.
+// overrides are merged in.
 func (r *ToolRegistry) effectiveTool(tool Tool) Tool {
-	return r.applyToolPolicyOverrides(tool)
-}
-
-// applyToolPolicyOverrides is the default passthrough. Runtime policy
-// merging lives in policy_overrides.go (step 7) so this file stays
-// focused on registry semantics.
-func (r *ToolRegistry) applyToolPolicyOverrides(tool Tool) Tool {
 	if r == nil {
 		return tool
 	}
 	return r.mergeScopePolicyForTool(tool)
 }
 
-// Call executes a named enabled tool after optional JSON Schema validation.
+// Call executes a named enabled tool after scope filtering, approval
+// gating, and optional JSON Schema validation.
 func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMessage) (*ToolCallResult, error) {
 	if r == nil {
 		return nil, fmt.Errorf("tool registry is nil")
@@ -311,16 +263,11 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 	if !r.isToolEnabled(name) {
 		return nil, ErrToolDisabled
 	}
+
 	// Scope filter runs FIRST — before approval gating, before schema
 	// validation — so a principal that lacks the scope for a tool sees
-	// a clean "not authorized" denial instead of leaking either the
-	// approval workflow or the tool's input schema. Filter rejection
-	// always produces a -32098 with the specific sub-reason so clients
-	// can tell "tier too low" from "not on your allowlist".
-	//
-	// Enforcement is toggled off by default so isolated handler tests
-	// don't have to thread an identity through ctx; production setup
-	// (gateway HTTP transport + cordum-mcp stdio) enables it at boot.
+	// a clean "not authorized" denial instead of leaking the approval
+	// workflow or the tool's input schema.
 	effectiveTool := r.effectiveTool(entry.tool)
 	identity := IdentityFromContext(ctx)
 	if r.scopeEnforce.Load() {
@@ -344,28 +291,21 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 			return nil, err
 		}
 	}
-	// Approval gating runs before schema validation so an operator sees a
-	// clean "approval required" response even on a malformed call — the
-	// gate is about the intent to call, not the correctness of the args.
-	// When the gate is unset (dev/test) the check is a no-op.
-	//
-	// effectiveApprovalForTool merges the tool's code-time metadata with
-	// runtime config, so a flag flipped in /api/v1/config takes effect
-	// on the very next call without restarting the server.
+
+	// Approval gating.
 	effectiveGated, effectiveScope := r.effectiveApprovalForTool(entry.tool)
 	if effectiveGated {
-		effectiveTool := entry.tool
-		effectiveTool.RequiresApproval = true
+		gatedTool := entry.tool
+		gatedTool.RequiresApproval = true
 		if effectiveScope != "" {
-			effectiveTool.ApprovalScope = effectiveScope
+			gatedTool.ApprovalScope = effectiveScope
 		}
 		if gate := r.approvalGate(); gate != nil {
-			gated, err := gate.Check(ctx, effectiveTool, params)
+			gated, err := gate.Check(ctx, gatedTool, params)
 			if err != nil {
 				return nil, err
 			}
 			if gated != nil {
-				// Return as error so server.go can map via errors.As.
 				gated.Tool = entry.tool.Name
 				return nil, gated
 			}
@@ -402,23 +342,7 @@ func (r *ToolRegistry) isToolEnabled(name string) bool {
 
 // effectiveApprovalForTool returns the RequiresApproval/ApprovalScope
 // values that should apply to a tool after merging the registered code
-// metadata with runtime config. Runtime config WINS over code —
-// operators can flip a safe tool to require approval without a redeploy,
-// which is the whole point of the runtime policy surface.
-//
-// Config shape (stored at /api/v1/config?scope=system&id=mcp_policy):
-//
-//	{
-//	  "tools": [
-//	    {"tool_name_pattern": "dangerous.*",
-//	     "requires_approval": true,
-//	     "approval_scope": "dangerous"}
-//	  ]
-//	}
-//
-// Rules are evaluated in order; the FIRST matching rule wins. A
-// rule that sets requires_approval=false can explicitly turn off a
-// code-gated tool (useful for CI bypass with a signed operator note).
+// metadata with runtime config. Runtime config WINS over code.
 func (r *ToolRegistry) effectiveApprovalForTool(tool Tool) (bool, string) {
 	requires := tool.RequiresApproval
 	scope := tool.ApprovalScope
@@ -431,9 +355,6 @@ func (r *ToolRegistry) effectiveApprovalForTool(tool Tool) (bool, string) {
 	}
 	rules, ok := cfg["tools"].([]any)
 	if !ok {
-		// Accept either `{"tools": [...]}` or `{"mcp_policy": {"tools": [...]}}`
-		// so the same config payload can be served either as a root
-		// document or embedded under its config ID.
 		if root, rootOK := cfg["mcp_policy"].(map[string]any); rootOK {
 			if inner, innerOK := root["tools"].([]any); innerOK {
 				rules = inner
@@ -466,19 +387,14 @@ func (r *ToolRegistry) effectiveApprovalForTool(tool Tool) (bool, string) {
 				scope = s
 			}
 		}
-		// First matching rule wins — more specific rules should be
-		// placed earlier in the list by the operator.
 		break
 	}
 	return requires, scope
 }
 
 // globMatch is a tiny star-glob matcher: `*` matches zero or more
-// characters, any other character is literal. Go's path.Match is almost
-// right but treats `/` specially, which tool names legitimately use
-// (e.g. "fs/read").
+// characters, any other character is literal.
 func globMatch(pattern, s string) bool {
-	// Fast path: exact match or pure-wildcard.
 	if pattern == s {
 		return true
 	}
@@ -489,9 +405,6 @@ func globMatch(pattern, s string) bool {
 }
 
 func globMatchSlice(pattern, s []rune) bool {
-	// Classic two-pointer star-glob recursion with memoisation via
-	// shrinking the s slice. Patterns typical for MCP tools are short
-	// (<40 chars) so O(n*m) is fine.
 	pi, si := 0, 0
 	starPi, starSi := -1, 0
 	for si < len(s) {

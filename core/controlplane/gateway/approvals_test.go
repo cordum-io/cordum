@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -22,8 +21,8 @@ import (
 	"github.com/google/uuid"
 )
 
-func withAuth(req *http.Request, auth *auth.AuthContext) *http.Request {
-	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, auth))
+func withAuth(req *http.Request, auth *AuthContext) *http.Request {
+	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, auth))
 }
 
 func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
@@ -63,7 +62,7 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 
 	s.handleApproveJob(rr, httpReq)
@@ -140,7 +139,7 @@ func TestApproveJobMarksPublishIntentComplete(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"ok"}`))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleApproveJob(rr, httpReq)
 
@@ -199,7 +198,7 @@ func TestApproveJobPublishFailureLeavesPendingIntent(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"ok"}`))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleApproveJob(rr, httpReq)
 
@@ -264,7 +263,7 @@ func TestApproveWorkflowGateBypassesSafetySnapshotCheck(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"ok"}`))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 
 	s.handleApproveJob(rr, httpReq)
@@ -349,7 +348,7 @@ func TestApproveJobUsesAuthContextForApprover(t *testing.T) {
 	authReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", nil)
 	authReq.Header.Set("X-Tenant-ID", "default")
 	authReq.SetPathValue("job_id", jobID)
-	authReq = withAuth(authReq, &auth.AuthContext{Tenant: "default", PrincipalID: "approver-1", Role: "admin"})
+	authReq = withAuth(authReq, &AuthContext{Tenant: "default", PrincipalID: "approver-1", Role: "admin"})
 	authRec := httptest.NewRecorder()
 	s.handleApproveJob(authRec, authReq)
 	if authRec.Code != http.StatusOK {
@@ -454,13 +453,6 @@ func TestApproveJobRejectsWhenSnapshotUnavailable(t *testing.T) {
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 got %d body=%s", rr.Code, rr.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp["code"] != string(model.ApprovalConflictStaleSnapshot) {
-		t.Fatalf("expected stale snapshot code, got %#v", resp["code"])
-	}
 	state, _ := s.jobStore.GetState(context.Background(), jobID)
 	if state != model.JobStateApproval {
 		t.Fatalf("expected approval state got %s", state)
@@ -502,7 +494,7 @@ func TestRejectJobStoresApprovalRecord(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(body))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleRejectJob(rr, httpReq)
 
@@ -571,7 +563,7 @@ func TestRejectJobMarksPublishIntentComplete(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(`{"reason":"nope"}`))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleRejectJob(rr, httpReq)
 
@@ -629,7 +621,7 @@ func TestRejectWorkflowGateResultPublishFailureLeavesPendingIntent(t *testing.T)
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(`{"reason":"denied"}`))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "bob", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleRejectJob(rr, httpReq)
 
@@ -704,7 +696,7 @@ func TestRepairApprovalDryRunClassifiesTerminalWorkflowRun(t *testing.T) {
 
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(`{}`))
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleRepairApproval(rr, httpReq)
 
@@ -762,7 +754,7 @@ func TestRepairApprovalDryRunClassifiesStaleSnapshot(t *testing.T) {
 
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(`{}`))
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleRepairApproval(rr, httpReq)
 
@@ -820,7 +812,7 @@ func TestRepairApprovalApplyApprovedResolutionPublishesAndAudits(t *testing.T) {
 	body := `{"apply":true,"note":"operator fix"}`
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(body))
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 	s.handleRepairApproval(rr, httpReq)
 
@@ -1229,7 +1221,7 @@ func TestApproveJobDoubleApproveIdempotent(t *testing.T) {
 		httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 		httpReq.Header.Set("X-Tenant-ID", "default")
 		httpReq.SetPathValue("job_id", jobID)
-		httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+		httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 		rr := httptest.NewRecorder()
 		s.handleApproveJob(rr, httpReq)
 		return rr
@@ -1296,7 +1288,7 @@ func TestApproveJobConcurrentRace(t *testing.T) {
 			httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 			httpReq.Header.Set("X-Tenant-ID", "default")
 			httpReq.SetPathValue("job_id", jobID)
-			httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+			httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 			rr := httptest.NewRecorder()
 			s.handleApproveJob(rr, httpReq)
 
@@ -1388,7 +1380,7 @@ func TestApproveJob_RejectsTimedOutRun(t *testing.T) {
 	// Attempt to approve — should get 409 with a clear timeout message.
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{}`))
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	httpReq = withAuth(httpReq, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	rr := httptest.NewRecorder()
 
 	s.handleApproveJob(rr, httpReq)

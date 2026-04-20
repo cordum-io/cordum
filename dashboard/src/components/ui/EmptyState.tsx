@@ -1,67 +1,40 @@
-import type { HTMLAttributes, ReactNode } from "react";
-import type { LucideIcon } from "lucide-react";
-import { cn } from "../../lib/utils";
+import { type ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
-interface EmptyStateProps extends HTMLAttributes<HTMLDivElement> {
-  icon?: LucideIcon;
+interface EmptyStateProps {
+  icon?: ReactNode;
   title: string;
   description?: string;
   action?: ReactNode;
-  tone?: "success" | "warning" | "danger" | "info" | "muted";
+  className?: string;
 }
 
-const toneIconStyles: Record<string, string> = {
-  success: "text-success opacity-60",
-  warning: "text-warning opacity-60",
-  danger: "text-danger opacity-60",
-  info: "text-accent opacity-60",
-  muted: "text-muted opacity-60",
-};
-
 export function EmptyState({
-  icon: Icon,
+  icon,
   title,
   description,
   action,
-  tone,
   className,
-  ...props
 }: EmptyStateProps) {
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center py-16 text-center",
+        "flex flex-col items-center justify-center py-16 px-6 text-center",
         className,
       )}
-      {...props}
     >
-      {Icon && (
-        <Icon
-          className={cn(
-            "mb-3 h-12 w-12",
-            tone ? toneIconStyles[tone] : "text-muted opacity-60",
-          )}
-        />
+      {icon && (
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-primary/10 text-primary shadow-soft">
+          {icon}
+        </div>
       )}
-      <p className="text-sm font-semibold text-ink">{title}</p>
+      <h3 className="text-sm font-semibold font-display text-foreground mb-1">
+        {title}
+      </h3>
       {description && (
-        <p className="mt-1 max-w-sm text-xs text-muted">{description}</p>
+        <p className="text-xs text-muted-foreground max-w-sm">{description}</p>
       )}
       {action && <div className="mt-4">{action}</div>}
     </div>
-  );
-}
-
-export function TableEmptyState({
-  colSpan,
-  className,
-  ...props
-}: EmptyStateProps & { colSpan: number }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} className="px-4">
-        <EmptyState className={className} {...props} />
-      </td>
-    </tr>
   );
 }

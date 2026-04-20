@@ -1,170 +1,114 @@
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
-  SEMANTIC_COLORS,
-  semanticColor,
-  gridProps,
+  chartColors,
+  resolveChartColor,
+  gradientId,
+  gradientFill,
   axisTickStyle,
-  axisLineProps,
-  tooltipStyle,
+  gridProps,
   barDefaults,
-  areaDefaults,
-  chartMotionProps,
+  decisionLabels,
+  getDecisionLabel,
 } from "./chart-theme";
 
-// ---------------------------------------------------------------------------
-// Semantic colors
-// ---------------------------------------------------------------------------
-
-describe("SEMANTIC_COLORS", () => {
-  it("maps allow to success token", () => {
-    expect(SEMANTIC_COLORS.allow).toBe("var(--success)");
+describe("chartColors", () => {
+  it("contains all 5 safety decision colors", () => {
+    expect(chartColors.allow).toBe("#1f7a57");
+    expect(chartColors.deny).toBe("#7c3aed");
+    expect(chartColors.require_approval).toBe("#c58a1c");
+    expect(chartColors.allow_with_constraints).toBe("#0f7f7a");
+    expect(chartColors.throttle).toBe("#d4833a");
   });
 
-  it("maps deny to danger token", () => {
-    expect(SEMANTIC_COLORS.deny).toBe("var(--danger)");
-  });
-
-  it("maps require_approval to warning token", () => {
-    expect(SEMANTIC_COLORS.require_approval).toBe("var(--warning)");
-  });
-
-  it("maps throttle to muted token", () => {
-    expect(SEMANTIC_COLORS.throttle).toBe("var(--muted)");
-  });
-
-  it("maps running to accent token", () => {
-    expect(SEMANTIC_COLORS.running).toBe("var(--accent)");
-  });
-
-  it("maps succeeded to success token", () => {
-    expect(SEMANTIC_COLORS.succeeded).toBe("var(--success)");
-  });
-
-  it("maps failed to danger token", () => {
-    expect(SEMANTIC_COLORS.failed).toBe("var(--danger)");
+  it("includes cordum and muted", () => {
+    expect(chartColors.cordum).toBeDefined();
+    expect(chartColors.muted).toBeDefined();
   });
 });
 
-describe("semanticColor", () => {
-  it("returns known color for valid key", () => {
-    expect(semanticColor("allow")).toBe("var(--success)");
-    expect(semanticColor("deny")).toBe("var(--danger)");
+describe("resolveChartColor", () => {
+  it("resolves a semantic key to hex color", () => {
+    expect(resolveChartColor("allow")).toBe("#1f7a57");
+    expect(resolveChartColor("deny")).toBe("#7c3aed");
   });
 
-  it("returns muted fallback for unknown key", () => {
-    expect(semanticColor("unknown_status")).toBe("var(--muted)");
-    expect(semanticColor("")).toBe("var(--muted)");
+  it("passes through a raw hex color unchanged", () => {
+    expect(resolveChartColor("#FF0000")).toBe("#FF0000");
+    expect(resolveChartColor("rgb(0,0,0)")).toBe("rgb(0,0,0)");
+  });
+
+  it("returns the key itself if not in palette", () => {
+    expect(resolveChartColor("unknown-key")).toBe("unknown-key");
   });
 });
 
-// ---------------------------------------------------------------------------
-// Grid & axis
-// ---------------------------------------------------------------------------
-
-describe("gridProps", () => {
-  it("uses dashed stroke pattern", () => {
-    expect(gridProps.strokeDasharray).toBe("3 3");
+describe("gradientId / gradientFill", () => {
+  it("produces correct gradient ID", () => {
+    expect(gradientId("allowed")).toBe("grad-allowed");
+    expect(gradientId("denied")).toBe("grad-denied");
   });
 
-  it("uses tokenized border color", () => {
-    expect(gridProps.stroke).toBe("var(--border)");
-  });
-
-  it("has reduced opacity", () => {
-    expect(gridProps.strokeOpacity).toBeLessThan(1);
+  it("produces correct gradient fill URL", () => {
+    expect(gradientFill("allowed")).toBe("url(#grad-allowed)");
   });
 });
 
 describe("axisTickStyle", () => {
-  it("uses mono font family", () => {
-    expect(axisTickStyle.fontFamily).toContain("IBM Plex Mono");
+  it("has font size 10", () => {
+    expect(axisTickStyle.fontSize).toBe(10);
   });
 
-  it("uses small font size", () => {
-    expect(axisTickStyle.fontSize).toBeLessThanOrEqual(12);
+  it("includes mono font family", () => {
+    expect(axisTickStyle.fontFamily).toContain("JetBrains Mono");
   });
 
-  it("uses muted fill token", () => {
-    expect(axisTickStyle.fill).toBe("var(--muted)");
-  });
-});
-
-describe("axisLineProps", () => {
-  it("hides axis line", () => {
-    expect(axisLineProps.axisLine).toBe(false);
-  });
-
-  it("hides tick line", () => {
-    expect(axisLineProps.tickLine).toBe(false);
+  it("has muted fill color", () => {
+    expect(axisTickStyle.fill).toBe("#5a6a70");
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tooltip
-// ---------------------------------------------------------------------------
-
-describe("tooltipStyle", () => {
-  it("uses surface background token", () => {
-    expect(tooltipStyle.backgroundColor).toBe("var(--surface)");
+describe("gridProps", () => {
+  it("has dashed stroke", () => {
+    expect(gridProps.strokeDasharray).toBe("3 3");
   });
 
-  it("uses border token", () => {
-    expect(tooltipStyle.border).toContain("var(--border)");
-  });
-
-  it("uses compact border radius", () => {
-    expect(tooltipStyle.borderRadius).toBeLessThanOrEqual(16);
-  });
-
-  it("uses shadow token", () => {
-    expect(tooltipStyle.boxShadow).toContain("var(--shadow)");
+  it("has low-opacity stroke", () => {
+    expect(gridProps.stroke).toContain("rgba");
   });
 });
-
-// ---------------------------------------------------------------------------
-// Bar & area defaults
-// ---------------------------------------------------------------------------
 
 describe("barDefaults", () => {
-  it("has top-rounded corners", () => {
-    const [tl, tr, br, bl] = barDefaults.radius;
-    expect(tl).toBeGreaterThan(0);
-    expect(tr).toBeGreaterThan(0);
-    expect(br).toBe(0);
-    expect(bl).toBe(0);
+  it("has rounded top corners", () => {
+    expect(barDefaults.radius).toEqual([3, 3, 0, 0]);
   });
 
-  it("constrains max bar width", () => {
-    expect(barDefaults.maxBarSize).toBeLessThanOrEqual(60);
+  it("has max bar size", () => {
+    expect(barDefaults.maxBarSize).toBe(32);
   });
 });
 
-describe("areaDefaults", () => {
-  it("uses monotone interpolation", () => {
-    expect(areaDefaults.type).toBe("monotone");
+describe("getDecisionLabel", () => {
+  it("maps known decisions to labels", () => {
+    expect(getDecisionLabel("allow")).toBe("Allow");
+    expect(getDecisionLabel("deny")).toBe("Deny");
+    expect(getDecisionLabel("require_approval")).toBe("Approval");
+    expect(getDecisionLabel("allow_with_constraints")).toBe("Constrained");
+    expect(getDecisionLabel("throttle")).toBe("Throttle");
   });
 
-  it("has subtle fill opacity", () => {
-    expect(areaDefaults.fillOpacity).toBeLessThan(0.5);
+  it("returns the raw string for unknown decisions", () => {
+    expect(getDecisionLabel("unknown")).toBe("unknown");
+    expect(getDecisionLabel("")).toBe("");
   });
 });
 
-// ---------------------------------------------------------------------------
-// Motion
-// ---------------------------------------------------------------------------
-
-describe("chartMotionProps", () => {
-  it("has animation enabled by default in jsdom", () => {
-    // jsdom matchMedia returns false for reduce-motion → animation active
-    expect(chartMotionProps.isAnimationActive).toBe(true);
-  });
-
-  it("uses reasonable animation duration", () => {
-    expect(chartMotionProps.animationDuration).toBeGreaterThan(0);
-    expect(chartMotionProps.animationDuration).toBeLessThanOrEqual(1000);
-  });
-
-  it("uses ease-out easing", () => {
-    expect(chartMotionProps.animationEasing).toBe("ease-out");
+describe("decisionLabels", () => {
+  it("has entries for all 5 decision types", () => {
+    expect(Object.keys(decisionLabels)).toHaveLength(5);
+    expect(decisionLabels).toHaveProperty("allow");
+    expect(decisionLabels).toHaveProperty("deny");
+    expect(decisionLabels).toHaveProperty("require_approval");
+    expect(decisionLabels).toHaveProperty("allow_with_constraints");
+    expect(decisionLabels).toHaveProperty("throttle");
   });
 });

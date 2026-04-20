@@ -4,7 +4,11 @@ import { get } from "../api/client";
 import type { Job, Worker, Pool } from "../api/types";
 import {
   mapHeartbeatToWorker,
+  mapJobRecord,
+  mapPoolResponse,
   type BackendHeartbeat,
+  type BackendJobRecord,
+  type BackendPoolSummary,
 } from "../api/transform";
 
 // ---------------------------------------------------------------------------
@@ -15,8 +19,11 @@ export function useWorkers() {
   return useQuery<Worker[]>({
     queryKey: ["workers"],
     queryFn: async () => {
-      const res = await get<{ items: BackendHeartbeat[] }>("/workers");
-      return (res.items ?? [])
+      const res = await get<{ items?: BackendHeartbeat[] } | BackendHeartbeat[]>(
+        "/workers",
+      );
+      const items = Array.isArray(res) ? res : (res.items ?? []);
+      return items
         .map(mapHeartbeatToWorker)
         .filter((w): w is Worker => !!w);
     },
@@ -33,12 +40,10 @@ export function useWorker(id: string | null | undefined) {
     queryKey: ["worker", id],
     queryFn: async () => {
       if (!id) throw new Error("worker id is required");
-      const res = await get<{ items: BackendHeartbeat[] }>("/workers");
-      const match = (res.items ?? [])
-        .map(mapHeartbeatToWorker)
-        .find((w): w is Worker => !!w && w.id === id);
-      if (!match) throw new Error("worker not found");
-      return match;
+      const res = await get<BackendHeartbeat>(`/workers/${encodeURIComponent(id)}`);
+      const worker = mapHeartbeatToWorker(res);
+      if (!worker) throw new Error("worker not found");
+      return worker;
     },
     enabled: !!id,
     staleTime: 10_000,
@@ -53,9 +58,11 @@ export function useWorkerJobs(workerId: string | null | undefined) {
   return useQuery<Job[]>({
     queryKey: ["worker-jobs", workerId],
     queryFn: async () => {
-      // Backend has no worker_id filter or worker→job tracking.
-      // Return empty — the agent detail page shows an honest empty state.
-      return [];
+      if (!workerId) return [];
+      const res = await get<{ items?: BackendJobRecord[] }>(
+        `/workers/${encodeURIComponent(workerId)}/jobs?limit=20`,
+      );
+      return (res.items ?? []).map(mapJobRecord);
     },
     enabled: !!workerId,
     staleTime: 15_000,

@@ -13,6 +13,35 @@ export interface QuarantinedJobsFilters {
   cursor?: number;
 }
 
+function readOutputPolicyErrorDetails(error: ApiError): string | undefined {
+  if (!error.body || typeof error.body !== "object") return undefined;
+  const payload = error.body as Record<string, unknown>;
+  return [payload.error, payload.message, payload.details]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .find(Boolean);
+}
+
+export function describeOutputPolicyError(error: Error): string {
+  if (error instanceof ApiError) {
+    const details = readOutputPolicyErrorDetails(error);
+    if (error.status === 400 || error.status === 422) {
+      return details
+        ? `Validation failed: ${details}`
+        : "Validation failed while updating output policy.";
+    }
+    if (error.status === 409) {
+      return details
+        ? `Conflict while updating output policy: ${details}`
+        : "Conflict while updating output policy. Refresh and retry.";
+    }
+    if (details) {
+      return `Output policy request failed: ${details}`;
+    }
+    return `Output policy request failed (status ${error.status}).`;
+  }
+  return error.message;
+}
+
 function buildQuarantineParams(filters: QuarantinedJobsFilters): string {
   const params = new URLSearchParams();
   params.set("state", "OUTPUT_QUARANTINED");
@@ -56,11 +85,12 @@ export function useReleaseQuarantinedJob() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
     onError: (err, jobId) => {
-      logger.error("output-policy", "Release quarantined job failed", { jobId, error: err.message });
+      const detail = describeOutputPolicyError(err);
+      logger.error("output-policy", "Release quarantined job failed", { jobId, error: detail });
       useToastStore.getState().addToast({
         type: "error",
         title: "Failed to release quarantined job",
-        description: err.message,
+        description: detail,
       });
     },
   });
@@ -80,11 +110,12 @@ export function useConfirmQuarantine() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dlq.all });
     },
     onError: (err, jobId) => {
-      logger.error("output-policy", "Confirm quarantine failed", { jobId, error: err.message });
+      const detail = describeOutputPolicyError(err);
+      logger.error("output-policy", "Confirm quarantine failed", { jobId, error: detail });
       useToastStore.getState().addToast({
         type: "error",
         title: "Failed to confirm quarantine",
-        description: err.message,
+        description: detail,
       });
     },
   });
@@ -462,13 +493,14 @@ export function useUpdateOutputPolicy() {
       queryClient.invalidateQueries({ queryKey: queryKeys.outputPolicy.stats() });
     },
     onError: (err) => {
+      const detail = describeOutputPolicyError(err);
       logger.error("output-policy", "failed to update output policy config", {
-        error: err.message,
+        error: detail,
       });
       useToastStore.getState().addToast({
         type: "error",
         title: "Failed to save Output Safety settings",
-        description: err.message,
+        description: detail,
       });
     },
   });
@@ -502,4 +534,5 @@ export const __outputPolicyInternal = {
   parseOutputPolicyConfig,
   mergeOutputPolicyConfig,
   mapOutputPolicyStats,
+  describeOutputPolicyError,
 };

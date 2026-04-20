@@ -3,7 +3,6 @@
  * OPERATE / Agents / Identity / :id
  * Identity profile: risk tier, permissions, activity, linked credentials
  */
-import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -11,13 +10,11 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
-import { Tabs } from "@/components/ui/Tabs";
 import {
   ArrowLeft, Shield, Fingerprint, Tag, Clock, AlertTriangle, Activity,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { useAgentIdentity, useAgentStats } from "@/hooks/useAgentIdentities";
-import { AgentToolVisibilityTab } from "@/components/agents/AgentToolVisibilityTab";
 
 const riskTierConfig: Record<string, { color: string; bg: string; border: string }> = {
   low:      { color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
@@ -54,7 +51,6 @@ export default function AgentIdentityDetailPage() {
   const navigate = useNavigate();
   const { data: agent, isLoading, isError, error } = useAgentIdentity(id);
   const { data: stats, isLoading: statsLoading, isError: statsError } = useAgentStats(id);
-  const [activeTab, setActiveTab] = useState<"overview" | "tools">("overview");
 
   if (isError) {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load agent identity"} />;
@@ -118,20 +114,6 @@ export default function AgentIdentityDetailPage() {
         </div>
       </motion.div>
 
-      <Tabs
-        tabs={[
-          { id: "overview", label: "Overview" },
-          { id: "tools", label: "Tool visibility" },
-        ]}
-        activeTab={activeTab}
-        onChange={(next) => setActiveTab(next as typeof activeTab)}
-      />
-
-      {activeTab === "tools" && id && (
-        <AgentToolVisibilityTab agentId={id} />
-      )}
-
-      {activeTab === "overview" && (<>
       {/* Stats + Permissions grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Activity stats */}
@@ -294,7 +276,6 @@ export default function AgentIdentityDetailPage() {
           </div>
         </div>
       </motion.div>
-      </>)}
     </div>
   );
 }

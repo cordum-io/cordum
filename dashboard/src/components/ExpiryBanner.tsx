@@ -72,14 +72,14 @@ export function ExpiryBanner({ status, expiresAt, className }: ExpiryBannerProps
   if (normalized === "degraded") {
     return (
       <InfoBanner
-        variant="error"
-        title="Enterprise features are degraded"
+        variant="warning"
+        title="Break-glass mode active"
         icon={<ShieldAlert className="h-3.5 w-3.5" />}
         className={cn(className)}
       >
         {dateLabel
-          ? `This license expired on ${dateLabel}. Cordum is now enforcing Community-tier limits while preserving audit visibility and break-glass access.`
-          : "This license has expired. Cordum is now enforcing Community-tier limits while preserving audit visibility and break-glass access."}
+          ? `This license expired on ${dateLabel}. Cordum is now enforcing Community-tier limits while keeping recovery routes, audit visibility, and break-glass admin access available.`
+          : "This license has expired. Cordum is now enforcing Community-tier limits while keeping recovery routes, audit visibility, and break-glass admin access available."}
       </InfoBanner>
     );
   }

@@ -64,6 +64,7 @@ describe("useLicense hooks", () => {
             max_concurrent_jobs: 25,
             audit_retention_days: 90,
             siem_export: false,
+            agent_identity: true,
           },
           rights: {
             hosted_service: true,
@@ -100,6 +101,7 @@ describe("useLicense hooks", () => {
         maxConcurrentJobs: 25,
         auditRetentionDays: 90,
         siemExport: false,
+        agentIdentity: true,
       },
       rights: {
         hostedService: true,
@@ -238,6 +240,16 @@ describe("useLicense hooks", () => {
         workers: {},
         approvalMode: {},
       },
+    });
+  });
+
+  it("maps agent_identity feature flags into the dashboard entitlement model", () => {
+    expect(
+      __licenseInternal.mapLicenseEntitlements({
+        agent_identity: true,
+      }),
+    ).toMatchObject({
+      agentIdentity: true,
     });
   });
 });

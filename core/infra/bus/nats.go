@@ -414,6 +414,71 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	return err
 }
 
+// SubscribeWithContext is the context-aware variant of Subscribe. When the
+// underlying transport carries trace headers, they are extracted and passed to
+// the handler so downstream services can join the same distributed trace.
+func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(context.Context, *pb.BusPacket) error) error {
+	if b == nil || b.nc == nil {
+		return errNilBus
+	}
+	if subject == "" {
+		return errEmptyTopic
+	}
+	if handler == nil {
+		return errors.New("nil handler")
+	}
+	if b.jsEnabled && isDurableSubject(subject) {
+		opts := []nats.SubOpt{
+			nats.ManualAck(),
+			nats.AckExplicit(),
+			nats.AckWait(b.ackWait),
+			nats.MaxAckPending(natsMaxAckPending()),
+			nats.MaxDeliver(maxJSRedeliveries),
+		}
+		if durable := durableName(subject, queue); durable != "" {
+			opts = append(opts, nats.Durable(durable))
+		}
+
+		var (
+			sub *nats.Subscription
+			err error
+		)
+		cb := b.jsCallbackCtx(subject, handler)
+		if queue == "" {
+			sub, err = b.js.Subscribe(subject, cb, opts...)
+		} else {
+			sub, err = b.js.QueueSubscribe(subject, queue, cb, opts...)
+		}
+		if err != nil {
+			return fmt.Errorf("subscribe %s: %w", subject, err)
+		}
+		b.trackSub(sub)
+		return nil
+	}
+
+	cb := func(msg *nats.Msg) {
+		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
+		action, _ := processBusMsgCtx(ctx, msg.Data, handler, 0)
+		if action != msgActionAck {
+			slog.Error("bus: handler error", "subject", subject)
+		}
+	}
+	var (
+		sub *nats.Subscription
+		err error
+	)
+	if queue == "" {
+		sub, err = b.nc.Subscribe(subject, cb)
+	} else {
+		sub, err = b.nc.QueueSubscribe(subject, queue, cb)
+	}
+	if err != nil {
+		return fmt.Errorf("subscribe %s: %w", subject, err)
+	}
+	b.trackSub(sub)
+	return nil
+}
+
 // jsCallbackCtx builds a JetStream message callback that extracts trace
 // context from NATS headers before decoding and invoking the handler.
 func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *pb.BusPacket) error) func(*nats.Msg) {

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 )
 
 // handlers_packs_audit.go — SIEM emission helpers for the topic
@@ -88,7 +87,7 @@ func (s *server) emitTopicUnregisteredAudit(ctx context.Context, packID string, 
 // event. Falls back to "admin" when no auth context is present (e.g.
 // tests) so emission stays non-nil.
 func packOpActor(r *http.Request) string {
-	if auth := auth.FromRequest(r); auth != nil {
+	if auth := authFromRequest(r); auth != nil {
 		if id := strings.TrimSpace(auth.PrincipalID); id != "" {
 			return id
 		}
@@ -104,7 +103,7 @@ func tenantFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
-	if auth := auth.FromContext(ctx); auth != nil {
+	if auth := authFromContext(ctx); auth != nil {
 		return strings.TrimSpace(auth.Tenant)
 	}
 	return ""

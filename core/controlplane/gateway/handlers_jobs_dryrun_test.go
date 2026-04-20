@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 )
@@ -170,8 +169,8 @@ func TestHandleWorkflowDryRunForbiddenWithoutAdmin(t *testing.T) {
 	req.SetPathValue("id", "wf-test")
 
 	// Inject auth context with viewer role (not admin).
-	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handleWorkflowDryRun(rec, req)

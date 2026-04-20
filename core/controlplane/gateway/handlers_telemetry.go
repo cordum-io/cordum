@@ -10,8 +10,7 @@ import (
 )
 
 func (s *server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermTelemetryRead, "admin") {
 		return
 	}
 	if s.telemetry == nil {
@@ -27,8 +26,7 @@ func (s *server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleGetTelemetryInspect(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermTelemetryExport, "admin") {
 		return
 	}
 	if s.telemetry == nil {
@@ -44,8 +42,7 @@ func (s *server) handleGetTelemetryInspect(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) handleGetTelemetryExport(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermTelemetryExport, "admin") {
 		return
 	}
 	if s.telemetry == nil {
@@ -68,8 +65,7 @@ func (s *server) handleGetTelemetryExport(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleGetTelemetryUsage(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermTelemetryRead, "admin") {
 		return
 	}
 	if s.telemetry == nil {
@@ -85,8 +81,7 @@ func (s *server) handleGetTelemetryUsage(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handleSetTelemetryConsent(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermTelemetryWrite, "admin") {
 		return
 	}
 	if s.telemetry == nil {

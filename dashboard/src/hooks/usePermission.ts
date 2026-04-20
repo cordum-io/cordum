@@ -1,8 +1,6 @@
 import { useConfigStore } from "../state/config";
 import { useAuthConfig } from "./useAuthConfig";
 
-export const APPROVER_ROLES = ["admin", "operator"];
-
 /**
  * Client-side display gating only — the backend enforces real authorization.
  * Returns allowed=true when no auth is configured (graceful degradation).
@@ -19,7 +17,8 @@ export function usePermission(requiredRoles: string[]): {
     !!authConfig &&
     (authConfig.password_enabled ||
       !!authConfig.user_auth_enabled ||
-      authConfig.saml_enabled);
+      authConfig.saml_enabled ||
+      authConfig.oidc_enabled);
 
   // Graceful degradation: if no auth configured, allow everything
   if (!requiresAuth) return { allowed: true, userRoles: [] };
@@ -33,5 +32,7 @@ export function usePermission(requiredRoles: string[]): {
 }
 
 export function useIsAdmin(): boolean {
-  return usePermission(["admin"]).allowed;
+  const { allowed } = usePermission(["admin"]);
+  return allowed;
 }
+

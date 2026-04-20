@@ -3,13 +3,14 @@ import { Link } from "react-router-dom";
 import { useOutputRuleAudit } from "../../hooks/useOutputRules";
 import type { OutputRule } from "../../types/policy";
 import { Badge } from "../ui/Badge";
+import { CodeBlock } from "../ui/CodeBlock";
 import { Drawer } from "../ui/Drawer";
 
-function decisionVariant(decision?: string): "danger" | "warning" | "success" | "default" {
+function decisionVariant(decision?: string): "governance" | "warning" | "success" | "default" {
   switch ((decision || "").toLowerCase()) {
     case "deny":
     case "quarantine":
-      return "danger";
+      return "governance";
     case "redact":
       return "warning";
     case "allow":
@@ -103,7 +104,7 @@ export function OutputRuleDetail({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="font-display text-xl font-semibold text-ink">{rule.id}</h3>
-            <p className="text-sm text-muted">{rule.description || "Output safety rule details"}</p>
+            <p className="text-sm text-muted-foreground">{rule.description || "Output safety rule details"}</p>
           </div>
           <div className="flex items-center gap-2">
             <Badge variant={decisionVariant(rule.decision)}>
@@ -120,25 +121,25 @@ export function OutputRuleDetail({
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-border bg-surface2/30 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Triggers 24h</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triggers 24h</p>
             <p className="mt-1 text-xl font-semibold text-ink">{stats.count24h}</p>
           </div>
           <div className="rounded-xl border border-border bg-surface2/30 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Triggers 7d</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triggers 7d</p>
             <p className="mt-1 text-xl font-semibold text-ink">{stats.count7d}</p>
           </div>
           <div className="rounded-xl border border-border bg-surface2/30 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Triggers 30d</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triggers 30d</p>
             <p className="mt-1 text-xl font-semibold text-ink">{stats.count30d}</p>
           </div>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-3 rounded-xl border border-border p-4">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Scanners</h4>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scanners</h4>
             <div className="flex flex-wrap gap-1.5">
               {(rule.scanners ?? []).length === 0 && (
-                <span className="text-xs text-muted">No scanners configured.</span>
+                <span className="text-xs text-muted-foreground">No scanners configured.</span>
               )}
               {(rule.scanners ?? []).map((scanner) => (
                 <Badge key={scanner} variant="info">
@@ -146,15 +147,15 @@ export function OutputRuleDetail({
                 </Badge>
               ))}
             </div>
-            <h4 className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted">Patterns</h4>
+            <h4 className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Patterns</h4>
             <div className="space-y-1.5">
               {(rule.patterns ?? []).length === 0 && (
-                <span className="text-xs text-muted">No content patterns configured.</span>
+                <span className="text-xs text-muted-foreground">No content patterns configured.</span>
               )}
               {(rule.patterns ?? []).map((pattern, idx) => (
                 <p
                   key={`${pattern}-${idx}`}
-                  className="rounded-md bg-surface2 px-2 py-1 font-mono text-[11px] text-ink"
+                  className="rounded-md bg-surface2 px-2 py-1 font-mono text-xs text-ink"
                 >
                   {pattern}
                 </p>
@@ -162,20 +163,15 @@ export function OutputRuleDetail({
             </div>
           </div>
 
-          <div className="space-y-2 rounded-xl border border-border p-4">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Rule Configuration</h4>
-            <pre className="max-h-64 overflow-auto rounded-md bg-surface2 p-3 text-[11px] text-ink">
-              {configJson}
-            </pre>
-          </div>
+          <CodeBlock title="Rule Configuration" language="json" maxHeight={256} copyable>{configJson}</CodeBlock>
         </div>
 
         <div className="space-y-3 rounded-xl border border-border p-4">
           <div className="flex items-center justify-between">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Recent Findings (Last 10)
             </h4>
-            {isFetching && <span className="text-xs text-muted">Refreshing…</span>}
+            {isFetching && <span className="text-xs text-muted-foreground">Refreshing…</span>}
           </div>
 
           {isLoading && (
@@ -187,11 +183,11 @@ export function OutputRuleDetail({
           )}
 
           {!isLoading && isError && (
-            <p className="text-sm text-muted">Failed to load output findings for this rule.</p>
+            <p className="text-sm text-muted-foreground">Failed to load output findings for this rule.</p>
           )}
 
           {!isLoading && !isError && data.length === 0 && (
-            <p className="text-sm text-muted">No quarantined output findings were recorded for this rule.</p>
+            <p className="text-sm text-muted-foreground">No quarantined output findings were recorded for this rule.</p>
           )}
 
           {!isLoading &&
@@ -204,7 +200,7 @@ export function OutputRuleDetail({
                   >
                     {entry.jobId}
                   </Link>
-                  <span className="text-xs text-muted">{formatTimestamp(entry.timestamp)}</span>
+                  <span className="text-xs text-muted-foreground">{formatTimestamp(entry.timestamp)}</span>
                   {entry.decision && (
                     <Badge variant={decisionVariant(entry.decision)}>
                       {entry.decision.toUpperCase()}
@@ -213,7 +209,7 @@ export function OutputRuleDetail({
                   {entry.phase && <Badge variant="default">{entry.phase.toUpperCase()}</Badge>}
                 </div>
 
-                {entry.reason && <p className="text-xs text-muted">{entry.reason}</p>}
+                {entry.reason && <p className="text-xs text-muted-foreground">{entry.reason}</p>}
 
                 {(entry.findings ?? []).map((finding, idx) => (
                   <p key={`${entry.id}-${idx}`} className="text-xs text-ink">
@@ -222,11 +218,11 @@ export function OutputRuleDetail({
                 ))}
 
                 {(entry.findings ?? []).length === 0 && (
-                  <p className="text-xs text-muted">No scanner findings payload was attached.</p>
+                  <p className="text-xs text-muted-foreground">No scanner findings payload was attached.</p>
                 )}
 
                 {(entry.originalPtr || entry.redactedPtr) && (
-                  <p className="font-mono text-[11px] text-muted">
+                  <p className="font-mono text-xs text-muted-foreground">
                     {entry.originalPtr ? `original=${entry.originalPtr}` : ""}
                     {entry.originalPtr && entry.redactedPtr ? " " : ""}
                     {entry.redactedPtr ? `redacted=${entry.redactedPtr}` : ""}

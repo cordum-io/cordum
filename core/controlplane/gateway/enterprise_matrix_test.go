@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestEnterpriseEntitlementMatrixProjectsLicenseSurface(t *testing.T) {
@@ -142,7 +143,9 @@ func TestEnterpriseEntitlementMatrixRepresentativeGatewayFeatureGates(t *testing
 			},
 			prepare: func(s *server) {
 				if s.jobStore != nil {
-					s.legalHoldStore = audit.NewLegalHoldStoreFromClient(s.jobStore.Client())
+					if client, ok := s.jobStore.Client().(*redis.Client); ok {
+						s.legalHoldStore = audit.NewLegalHoldStoreFromClient(client)
+					}
 				}
 			},
 			request: func() *http.Request {

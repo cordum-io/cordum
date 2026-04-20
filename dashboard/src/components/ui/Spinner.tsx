@@ -16,23 +16,17 @@ const sizes = {
 
 export function Spinner({
   size = "md",
-  label,
   className,
 }: {
   size?: keyof typeof sizes;
-  label?: string;
   className?: string;
 }) {
-  const a11yProps = label
-    ? { role: "status" as const, "aria-live": "polite" as const, "aria-label": label, "aria-hidden": undefined }
-    : { "aria-hidden": true as const };
-
   return (
     <svg
       viewBox="0 0 24 24"
       fill="none"
       className={cn("animate-spin", sizes[size], className)}
-      {...a11yProps}
+      aria-hidden="true"
     >
       <circle
         cx="12"
@@ -66,7 +60,7 @@ export function LoadingScreen({
   return (
     <div className={cn("flex min-h-[200px] items-center justify-center", className)}>
       <div className="flex flex-col items-center gap-3">
-        <Spinner size="lg" label={label} />
+        <Spinner size="lg" className="text-accent" />
         <p className="text-sm text-muted-foreground">{label}</p>
       </div>
     </div>

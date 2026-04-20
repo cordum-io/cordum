@@ -1,408 +1,881 @@
-import { useState, useCallback } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+/*
+ * DESIGN: "Control Surface" — Workflow Run Detail
+ * PRD Section 13: Real-time workflow run view with animated graph + chat
+ */
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/Button";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Tabs } from "@/components/ui/Tabs";
 import {
   ArrowLeft,
-  Loader,
-  RefreshCw,
-  XCircle,
-  Trash2,
-  Clock,
-  ChevronDown,
-  ChevronUp,
-  AlertTriangle,
+  Send,
+  Briefcase,
   Shield,
+  ShieldAlert,
+  GitBranch,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  MessageSquare,
+  AlertTriangle,
+  ChevronDown,
+  Copy,
+  Check,
+  RotateCcw,
+  Hand,
 } from "lucide-react";
-import { Button } from "../components/ui/Button";
-import { Card } from "../components/ui/Card";
-import { Badge } from "../components/ui/Badge";
-import { isValidResourceId } from "../lib/utils";
-import { RunStatusBadge } from "../components/StatusBadge";
-import { GanttTimeline } from "../components/workflow/GanttTimeline";
-import { RunVisualization } from "../components/workflow/RunVisualization";
-import { InvestigationLinks } from "../components/InvestigationLinks";
-import { useRun, useRerunRun, useCancelRun, useDeleteRun } from "../hooks/useWorkflows";
-import { DelayTimerBadge } from "../components/workflows/DelayTimerBadge";
-import type { WorkflowStep } from "../api/types";
-import { usePageTitle } from "../hooks/usePageTitle";
+import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
+import {
+  isRunVisibilityActive,
+  isRunVisibilityTerminal,
+  toRunVisibilityState,
+} from "@/lib/runVisibility";
+import { toast } from "sonner";
+import { get, post } from "@/api/client";
+import {
+  useRun,
+  useRunTimeline,
+  useCancelRun,
+  useRerunRun,
+  type RunTimelineEvent,
+} from "@/hooks/useWorkflows";
+import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatDuration(ms: number | undefined): string {
-  if (!ms) return "—";
-  if (ms < 1_000) return `${Math.round(ms)}ms`;
-  const secs = ms / 1_000;
-  if (secs < 60) return `${secs.toFixed(1)}s`;
-  const mins = Math.floor(secs / 60);
-  const remSecs = Math.round(secs % 60);
-  return `${mins}m ${remSecs}s`;
+interface ChatMessage {
+  id: string;
+  role: "user" | "system" | "agent";
+  content: string;
+  timestamp: string;
 }
 
-function computeDuration(run: { startedAt?: string | null; completedAt?: string | null }): number | undefined {
-  if (!run.startedAt) return undefined;
-  const end = run.completedAt ? new Date(run.completedAt).getTime() : Date.now();
-  return end - new Date(run.startedAt).getTime();
+interface RunStep {
+  id: string;
+  label: string;
+  type: "worker" | "approval" | "condition" | "delay";
+  status:
+    | "succeeded"
+    | "running"
+    | "waiting"
+    | "failed"
+    | "pending"
+    | "skipped"
+    | "quarantined";
+  duration?: string;
+  output?: string;
 }
 
-const safetyVariant: Record<string, "success" | "danger" | "warning" | "info"> = {
-  allow: "success",
-  deny: "danger",
-  require_approval: "warning",
-  throttle: "info",
-};
-
-// ---------------------------------------------------------------------------
-// Confirm Dialog
-// ---------------------------------------------------------------------------
-
-function ConfirmDialog({
-  title,
-  message,
-  confirmLabel,
-  isPending,
-  onConfirm,
-  onCancel,
-  variant = "primary",
-}: {
-  title: string;
-  message: string;
-  confirmLabel: string;
-  isPending: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-  variant?: "primary" | "danger";
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <Card className="relative z-10 w-full max-w-sm">
-        <div className="space-y-4">
-          <h3 className="font-display text-lg font-semibold text-ink">{title}</h3>
-          <p className="text-sm text-muted">{message}</p>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
-              Cancel
-            </Button>
-            <Button variant={variant} size="sm" onClick={onConfirm} disabled={isPending}>
-              {isPending ? "Processing…" : confirmLabel}
-            </Button>
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
+function mapStepType(type: string): RunStep["type"] {
+  switch (type) {
+    case "approval":
+      return "approval";
+    case "condition":
+    case "switch":
+      return "condition";
+    case "delay":
+      return "delay";
+    default:
+      return "worker";
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Step List Item
-// ---------------------------------------------------------------------------
-
-function StepItem({ step }: { step: WorkflowStep }) {
-  const [expanded, setExpanded] = useState(false);
-  const duration = computeDuration(step);
-  const safetyDecision = step.output?.safetyDecision as string | undefined;
-
-  return (
-    <div className="border-b border-border last:border-b-0">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-surface2/40"
-      >
-        <RunStatusBadge status={step.status} />
-        <span className="flex-1 text-sm font-medium text-ink">
-          {step.name || step.id}
-        </span>
-        {safetyDecision && (
-          <Badge variant={safetyVariant[safetyDecision] ?? "default"} className="text-[10px]">
-            <Shield className="mr-0.5 h-3 w-3" />
-            {safetyDecision}
-          </Badge>
-        )}
-        {duration != null && (
-          <span className="flex items-center gap-1 text-xs text-muted">
-            <Clock className="h-3 w-3" />
-            {formatDuration(duration)}
-          </span>
-        )}
-        {expanded ? (
-          <ChevronUp className="h-4 w-4 text-muted" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-muted" />
-        )}
-      </button>
-
-      {expanded && (
-        <div className="space-y-2 border-t border-border bg-surface2/20 px-4 py-3">
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <span className="text-muted">Type:</span>{" "}
-              <span className="text-ink">{step.type}</span>
-            </div>
-            <div>
-              <span className="text-muted">ID:</span>{" "}
-              <span className="font-mono text-ink">{step.id}</span>
-            </div>
-            {step.startedAt && (
-              <div>
-                <span className="text-muted">Started:</span>{" "}
-                <span className="text-ink">{new Date(step.startedAt).toLocaleString()}</span>
-              </div>
-            )}
-            {step.completedAt && (
-              <div>
-                <span className="text-muted">Completed:</span>{" "}
-                <span className="text-ink">{new Date(step.completedAt).toLocaleString()}</span>
-              </div>
-            )}
-          </div>
-          {(step.depends_on ?? step.dependsOn)?.length ? (
-            <div className="text-xs">
-              <span className="text-muted">Depends on:</span>{" "}
-              <span className="font-mono text-ink">{(step.depends_on ?? step.dependsOn)!.join(", ")}</span>
-            </div>
-          ) : null}
-          {step.error && (
-            <div className="flex items-start gap-1.5 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-xs text-danger">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-              <span>{step.error}</span>
-            </div>
-          )}
-          {step.output && !step.error && (
-            <pre className="max-h-40 overflow-auto rounded-lg border border-border bg-surface2/30 p-2 text-[11px] text-muted">
-              {JSON.stringify(step.output, null, 2)}
-            </pre>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function mapStepStatus(status?: string): RunStep["status"] {
+  switch (status) {
+    case "completed":
+      return "succeeded";
+    case "succeeded":
+      return "succeeded";
+    case "queued":
+      return "pending";
+    case "running":
+      return "running";
+    case "waiting":
+      return "waiting";
+    case "quarantined":
+    case "output_quarantined":
+      return "quarantined";
+    case "denied":
+    case "blocked":
+    case "failed":
+    case "timed_out":
+      return "failed";
+    case "cancelled":
+      return "skipped";
+    default:
+      return "pending";
+  }
 }
 
-// ---------------------------------------------------------------------------
-// RunDetailPage
-// ---------------------------------------------------------------------------
+function runStatusVariant(
+  status?: string,
+): "healthy" | "warning" | "danger" | "info" | "muted" | "governance" {
+  switch (toRunVisibilityState(status)) {
+    case "completed":
+      return "healthy";
+    case "running":
+      return "info";
+    case "queued":
+      return "warning";
+    case "blocked":
+      return "governance";
+    case "failed":
+      return "danger";
+    default:
+      return "muted";
+  }
+}
 
-export default function RunDetailPage() {
-  const { id: rawWorkflowId, runId: rawRunId } = useParams<{ id: string; runId: string }>();
-  const workflowId = isValidResourceId(rawWorkflowId) ? rawWorkflowId : undefined;
-  const runId = isValidResourceId(rawRunId) ? rawRunId : undefined;
-  usePageTitle(runId ? `Run ${runId.slice(0, 8)}` : "Run");
-  const { data: run, isLoading, isError } = useRun(runId);
+export function resolveRunChatBanner(
+  chatError: unknown,
+  isChatFallback: boolean,
+): { tone: "warning" | "danger"; message: string } | null {
+  if (chatError && isChatFallback) {
+    return {
+      tone: "warning",
+      message: "Chat unavailable, showing timeline events instead.",
+    };
+  }
 
+  if (chatError) {
+    const status =
+      typeof chatError === "object" &&
+      chatError != null &&
+      "status" in chatError &&
+      typeof (chatError as { status?: unknown }).status === "number"
+        ? (chatError as { status: number }).status
+        : undefined;
+
+    if (status === 401 || status === 403) {
+      return {
+        tone: "danger",
+        message: "Chat unavailable — check your API key or permissions",
+      };
+    }
+    if (status === 404) {
+      return {
+        tone: "danger",
+        message: "Chat endpoint not available for this run",
+      };
+    }
+    return {
+      tone: "danger",
+      message: "Unable to load chat messages",
+    };
+  }
+
+  if (isChatFallback) {
+    return {
+      tone: "warning",
+      message: "Showing timeline events (no chat messages)",
+    };
+  }
+
+  return null;
+}
+
+export default function WorkflowRunDetailPage() {
+  const { workflowId, runId } = useParams();
   const navigate = useNavigate();
-  const rerunRun = useRerunRun();
-  const cancelRun = useCancelRun();
-  const deleteRun = useDeleteRun();
+  const queryClient = useQueryClient();
+  const [chatInput, setChatInput] = useState("");
+  const [selectedStep, setSelectedStep] = useState<RunStep | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [copiedRunId, setCopiedRunId] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const [showRerunConfirm, setShowRerunConfirm] = useState(false);
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Real data hooks
+  const { data: run, isLoading: runLoading, error: runError } = useRun(runId);
+  const { data: timeline, isLoading: timelineLoading } = useRunTimeline(runId);
+  const cancelMutation = useCancelRun();
+  const rerunMutation = useRerunRun();
 
-  const handleRerun = useCallback(() => {
+  // Chat: try real endpoint, fall back to timeline events as messages
+  const { data: chatData, error: chatError } = useQuery<ChatMessage[]>({
+    queryKey: ["run-chat", runId],
+    queryFn: async () => {
+      if (!runId) throw new Error("run id required");
+      const res = await get<ChatMessage[]>(`/workflow-runs/${runId}/chat`);
+      return res ?? [];
+    },
+    enabled: !!runId,
+    retry: false,
+    staleTime: 5_000,
+  });
+
+  const chatMutation = useMutation({
+    mutationFn: (content: string) => {
+      if (!runId) throw new Error("run id required");
+      return post<ChatMessage>(`/workflow-runs/${runId}/chat`, { content });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["run-chat", runId] });
+    },
+  });
+
+  // Derive messages: prefer chat API data, fall back to timeline events
+  const messages = useMemo<ChatMessage[]>(() => {
+    if (chatData && chatData.length > 0) return chatData;
+    if (!timeline) return [];
+    return timeline
+      .filter((e) => e.message || e.status)
+      .map((e, i) => ({
+        id: String(i),
+        role: "system" as const,
+        content:
+          e.message ||
+          `Step ${e.step_id ?? "?"}: ${e.type} \u2192 ${e.status ?? ""}`,
+        timestamp: e.time ? formatRelativeTime(e.time) : "",
+      }));
+  }, [chatData, timeline]);
+
+  // True when chat API failed or returned empty and we're showing timeline-derived messages
+  const isChatFallback =
+    (!chatData || chatData.length === 0) && messages.length > 0;
+  const chatBanner = useMemo(
+    () => resolveRunChatBanner(chatError, isChatFallback),
+    [chatError, isChatFallback],
+  );
+
+  // Derive steps from run data + timeline
+  const steps = useMemo<RunStep[]>(() => {
+    if (!run?.steps) return [];
+
+    const timelineByStep = new Map<string, RunTimelineEvent[]>();
+    if (timeline) {
+      for (const evt of timeline) {
+        if (!evt.step_id) continue;
+        const existing = timelineByStep.get(evt.step_id) ?? [];
+        existing.push(evt);
+        timelineByStep.set(evt.step_id, existing);
+      }
+    }
+
+    return run.steps.map((step): RunStep => {
+      const events = timelineByStep.get(step.id) ?? [];
+
+      // Compute duration from timeline events
+      let duration: string | undefined;
+      if (events.length >= 2) {
+        const times = events
+          .map((e) => new Date(e.time).getTime())
+          .filter((t) => !isNaN(t));
+        if (times.length >= 2) {
+          const durationMs = Math.max(...times) - Math.min(...times);
+          duration = formatDuration(durationMs);
+        }
+      }
+
+      // Get output from step output or latest timeline event
+      let output: string | undefined;
+      if (step.output) {
+        try {
+          output = JSON.stringify(step.output);
+        } catch {
+          /* ignore */
+        }
+      } else {
+        const lastEvent = events.filter((e) => e.result_ptr || e.data).pop();
+        if (lastEvent?.data) {
+          try {
+            output = JSON.stringify(lastEvent.data);
+          } catch {
+            /* ignore */
+          }
+        } else if (lastEvent?.result_ptr) {
+          output = lastEvent.result_ptr;
+        }
+      }
+
+      // Prefer step.status from run data, fall back to timeline
+      const stepStatus =
+        step.status ?? events.filter((e) => e.status).pop()?.status;
+
+      return {
+        id: step.id,
+        label: step.name,
+        type: mapStepType(step.type),
+        status: mapStepStatus(stepStatus),
+        duration:
+          stepStatus === "running"
+            ? duration
+              ? `${duration}...`
+              : undefined
+            : duration,
+        output,
+      };
+    });
+  }, [run, timeline]);
+
+  const completedCount = steps.filter((s) => s.status === "succeeded").length;
+  const totalSteps = steps.length;
+
+  // Auto-select first running or first step
+  useEffect(() => {
+    if (steps.length > 0 && !selectedStep) {
+      const active =
+        steps.find((s) => s.status === "waiting") ??
+        steps.find((s) => s.status === "running");
+      setSelectedStep(active ?? steps[0]);
+    }
+  }, [steps, selectedStep]);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const sendMessage = useCallback(() => {
+    if (!chatInput.trim()) return;
+    chatMutation.mutate(chatInput.trim());
+    setChatInput("");
+  }, [chatInput, chatMutation]);
+
+  const handleCopyRunId = useCallback(async () => {
     if (!runId) return;
-    rerunRun.mutate({ runId }, { onSuccess: () => setShowRerunConfirm(false) });
-  }, [runId, rerunRun]);
 
-  const handleCancel = useCallback(() => {
+    try {
+      await navigator.clipboard.writeText(runId);
+      setCopiedRunId(true);
+      setTimeout(() => setCopiedRunId(false), 1500);
+    } catch {
+      toast.error("Copy failed");
+    }
+  }, [runId]);
+
+  const handleCancel = () => {
     if (!workflowId || !runId) return;
-    cancelRun.mutate(
+    cancelMutation.mutate(
       { workflowId, runId },
-      { onSuccess: () => setShowCancelConfirm(false) },
+      {
+        onSuccess: () => {
+          setCancelOpen(false);
+          navigate(`/workflows/${workflowId}/studio`);
+        },
+      },
     );
-  }, [workflowId, runId, cancelRun]);
+  };
 
-  const handleDelete = useCallback(() => {
-    if (!workflowId || !runId) return;
-    deleteRun.mutate(
-      { workflowId, runId },
-      { onSuccess: () => navigate(`/workflows/${workflowId}`) },
+  const handleRetry = () => {
+    if (!runId) return;
+    rerunMutation.mutate(
+      { runId },
+      {
+        onSuccess: (data) => {
+          if (data?.run_id && workflowId) {
+            navigate(`/workflows/${workflowId}/runs/${data.run_id}`);
+          }
+        },
+      },
     );
-  }, [workflowId, runId, deleteRun, navigate]);
+  };
 
-  if (isLoading) {
+  const stepIcon = (type: string) => {
+    switch (type) {
+      case "worker":
+        return Briefcase;
+      case "approval":
+        return Shield;
+      case "condition":
+        return GitBranch;
+      default:
+        return Clock;
+    }
+  };
+
+  const stepStatusIcon = (status: string) => {
+    switch (status) {
+      case "succeeded":
+        return <CheckCircle2 className="w-4 h-4 text-[var(--color-success)]" />;
+      case "running":
+        return <Loader2 className="w-4 h-4 text-cordum animate-spin" />;
+      case "waiting":
+        return (
+          <Hand className="w-4 h-4 text-[var(--color-warning)] animate-pulse" />
+        );
+      case "failed":
+        return <XCircle className="w-4 h-4 text-destructive" />;
+      case "quarantined":
+        return (
+          <ShieldAlert className="w-4 h-4 text-[var(--color-governance)]" />
+        );
+      case "skipped":
+        return <ChevronDown className="w-4 h-4 text-muted-foreground" />;
+      default:
+        return <div className="w-4 h-4 rounded-full border-2 border-border" />;
+    }
+  };
+
+  // Loading state
+  if (runLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-muted">
-        <Loader className="mr-2 h-4 w-4 animate-spin" />
-        Loading run details...
+      <div className="h-[calc(100vh-64px)] flex flex-col -m-6">
+        <div className="px-5 py-3 border-b border-border bg-surface-0">
+          <SkeletonCard />
+        </div>
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-80 border-r border-border bg-surface-0 p-4 space-y-3">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+          <div className="flex-1 p-5">
+            <SkeletonCard />
+          </div>
+        </div>
       </div>
     );
   }
 
-  if (isError || !run) {
+  // Error state
+  if (runError) {
     return (
-      <div className="py-16 text-center text-sm text-danger">
-        Failed to load run details. The run may not exist.
+      <div className="h-[calc(100vh-64px)] flex flex-col -m-6 items-center justify-center">
+        <AlertTriangle className="w-10 h-10 text-destructive mb-4" />
+        <p className="text-sm font-medium text-foreground mb-1">
+          Failed to load run
+        </p>
+        <p className="text-xs text-muted-foreground mb-4">
+          {runError instanceof Error
+            ? runError.message
+            : "An unexpected error occurred"}
+        </p>
+        <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
+          <ArrowLeft className="w-3 h-3 mr-1" />
+          Go Back
+        </Button>
       </div>
     );
   }
 
-  const duration = run.duration ?? computeDuration(run);
-  const isRunning = run.status === "running" || run.status === "waiting" || run.status === "pending";
-  const isTerminal = ["succeeded", "failed", "cancelled", "timed_out"].includes(run.status);
+  const runVisibility = toRunVisibilityState(run?.status);
+  const isRunActive = isRunVisibilityActive(run?.status);
+  const isRunTerminal = isRunVisibilityTerminal(run?.status);
 
   return (
-    <div className="space-y-6">
+    <div className="h-[calc(100vh-64px)] flex flex-col -m-6">
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-1">
-          <Link
-            to={`/workflows/${workflowId}`}
-            className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+      <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-0 shrink-0">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(`/workflows/${workflowId}/studio`)}
+            className="p-1.5 rounded-full hover:bg-surface-2 transition-colors"
           >
-            <ArrowLeft className="h-3 w-3" />
-            Back to workflow
-          </Link>
-          <h1 className="font-display text-xl font-bold text-ink">
-            Run <span className="font-mono text-accent">{run.id.slice(0, 12)}</span>
-          </h1>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-            <RunStatusBadge status={run.status} />
-            {run.startedAt && (
-              <span>Started {new Date(run.startedAt).toLocaleString()}</span>
-            )}
-            {duration != null && (
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {formatDuration(duration)}
+            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-display font-semibold text-foreground">
+                Run {runId?.slice(0, 8)}
               </span>
-            )}
-            {run.rerunOf && (
-              <span>
-                Rerun of{" "}
-                <Link
-                  to={`/workflows/${workflowId}/runs/${run.rerunOf}`}
-                  className="font-mono text-accent hover:underline"
+              {runId && (
+                <button
+                  type="button"
+                  onClick={handleCopyRunId}
+                  aria-label="Copy run ID"
+                  className="text-muted-foreground transition-colors hover:text-foreground"
                 >
-                  {run.rerunOf.slice(0, 12)}
-                </Link>
+                  {copiedRunId ? (
+                    <Check className="w-3 h-3" />
+                  ) : (
+                    <Copy className="w-3 h-3" />
+                  )}
+                </button>
+              )}
+              <StatusBadge
+                variant={runStatusVariant(run?.status ?? "pending")}
+                dot
+                pulse={runVisibility === "running"}
+              >
+                {runVisibility ?? run?.status ?? "unknown"}
+              </StatusBadge>
+              <span className="text-xs font-mono text-muted-foreground">
+                {completedCount}/{totalSteps} steps
               </span>
-            )}
-            {run.dryRun && <Badge variant="warning">Dry Run</Badge>}
-            {run.timers?.map((timer) => (
-              <DelayTimerBadge key={`${timer.workflow_id}:${timer.run_id}`} timer={timer} runId={run.id} />
-            ))}
+              {isRunActive ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-medium bg-[var(--color-success)]/15 text-[var(--color-success)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse" />
+                  LIVE
+                </span>
+              ) : isRunTerminal ? (
+                <span
+                  className={cn(
+                    "text-xs font-mono",
+                    runVisibility === "completed"
+                      ? "text-[var(--color-success)]"
+                      : runVisibility === "blocked"
+                        ? "text-[color:rgba(139,92,186,1)]"
+                        : "text-destructive",
+                  )}
+                >
+                  {runVisibility === "completed"
+                    ? "Completed"
+                    : runVisibility === "blocked"
+                      ? "Blocked"
+                      : "Failed"}
+                  {run?.updatedAt
+                    ? ` ${formatRelativeTime(run.updatedAt)}`
+                    : ""}
+                </span>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground font-mono">
+              Workflow: {run?.workflowId ?? workflowId}
+            </p>
           </div>
-          <InvestigationLinks
-            type="run"
-            workflowId={run.workflowId}
-            runId={run.id}
-            className="mt-4"
-          />
         </div>
-
-        {/* Actions */}
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowRerunConfirm(true)}
-            disabled={rerunRun.isPending}
+            onClick={handleRetry}
+            disabled={rerunMutation.isPending}
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Rerun
+            <RotateCcw className="w-3 h-3 mr-1" />
+            {rerunMutation.isPending ? "Retrying..." : "Retry"}
           </Button>
-          {isRunning && (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => setShowCancelConfirm(true)}
-              disabled={cancelRun.isPending}
-            >
-              <XCircle className="h-3.5 w-3.5" />
-              Cancel
-            </Button>
-          )}
-          {isTerminal && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-danger hover:bg-danger/10"
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={deleteRun.isPending}
-              title="Permanently removes this run and its data. Only completed/failed/cancelled runs can be deleted."
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </Button>
-          )}
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => setCancelOpen(true)}
+            disabled={!isRunActive || cancelMutation.isPending}
+          >
+            <XCircle className="w-3 h-3 mr-1" />
+            Cancel Run
+          </Button>
         </div>
       </div>
 
-      {/* DAG Visualization */}
-      <Card>
-        <div className="p-4">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
-            DAG Visualization
-          </h2>
-          <div style={{ height: 320 }}>
-            <RunVisualization run={run} />
+      {/* Progress Bar */}
+      <div className="h-1 bg-surface-1 shrink-0">
+        <motion.div
+          className="h-full bg-cordum"
+          initial={{ width: 0 }}
+          animate={{
+            width:
+              totalSteps > 0 ? `${(completedCount / totalSteps) * 100}%` : "0%",
+          }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+        />
+      </div>
+
+      <div className="border-b border-border bg-surface-0 px-5 py-3 shrink-0">
+        <Tabs
+          tabs={[
+            { id: "overview", label: "Overview" },
+            { id: "governance", label: "Governance" },
+          ]}
+          activeTab={activeTab}
+          onChange={setActiveTab}
+          ariaLabel="Workflow run sections"
+        />
+      </div>
+
+      {activeTab === "overview" && (
+        <div className="flex flex-1 overflow-hidden">
+        {/* Steps Panel — Animated Graph */}
+          <div className="w-80 border-r border-border bg-surface-0 overflow-y-auto shrink-0">
+          <div className="p-4">
+            <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-3">
+              Execution Graph ({completedCount}/{totalSteps})
+            </p>
+            {timelineLoading && steps.length === 0 ? (
+              <div className="space-y-3">
+                <SkeletonCard />
+                <SkeletonCard />
+              </div>
+            ) : steps.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No steps in this run
+              </p>
+            ) : (
+              <div className="relative">
+                {/* Vertical connector line */}
+                <div className="absolute left-[17px] top-0 bottom-0 w-px bg-border" />
+
+                <div className="space-y-0.5">
+                  {steps.map((step, i) => {
+                    const Icon = stepIcon(step.type);
+                    const isRunning = step.status === "running";
+                    const isWaiting = step.status === "waiting";
+                    const isActive = isRunning || isWaiting;
+                    return (
+                      <motion.div
+                        key={step.id}
+                        initial={{ opacity: 0, x: -12 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.08 }}
+                        onClick={() => setSelectedStep(step)}
+                        className={cn(
+                          "relative flex items-center gap-3 px-3 py-3 rounded-2xl transition-colors cursor-pointer",
+                          isRunning
+                            ? "bg-cordum/5 border border-cordum/20"
+                            : isWaiting
+                              ? "bg-[var(--color-warning)]/5 border border-[var(--color-warning)]/20"
+                              : "hover:bg-surface-1",
+                          selectedStep?.id === step.id &&
+                            !isActive &&
+                            "bg-surface-1 border border-border",
+                          step.status === "pending" && "opacity-50",
+                        )}
+                      >
+                        <div className="relative z-10">
+                          {stepStatusIcon(step.status)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p
+                              className={cn(
+                                "text-xs font-medium",
+                                step.status === "pending"
+                                  ? "text-muted-foreground"
+                                  : "text-foreground",
+                                step.status === "skipped" &&
+                                  "text-muted-foreground line-through opacity-50",
+                              )}
+                            >
+                              {step.label}
+                            </p>
+                            <Icon className="w-3 h-3 text-muted-foreground" />
+                          </div>
+                          {step.status === "skipped" && (
+                            <p className="text-xs text-muted-foreground italic mt-0.5">
+                              Skipped: dependency failed
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+                              {step.status}
+                            </span>
+                            <span className="text-border">·</span>
+                            <span className="text-xs text-muted-foreground capitalize">
+                              {step.type}
+                            </span>
+                            {step.duration && (
+                              <span
+                                className={cn(
+                                  "text-xs font-mono",
+                                  isActive
+                                    ? "text-cordum"
+                                    : "text-muted-foreground",
+                                )}
+                              >
+                                {step.duration}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-xs font-mono text-muted-foreground">
+                          {i + 1}
+                        </span>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      </Card>
 
-      {/* Gantt Timeline */}
-      {run.steps.length > 0 && <GanttTimeline steps={run.steps} />}
-
-      {/* Step List */}
-      <Card>
-        <div className="px-4 py-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Steps ({run.steps.length})
-          </h2>
+          {/* Selected Step Output */}
+          <AnimatePresence mode="wait">
+            {selectedStep && (
+              <motion.div
+                key={selectedStep.id}
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="border-t border-border overflow-hidden"
+              >
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+                      Step Output
+                    </p>
+                    {selectedStep.output && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedStep.output) {
+                            navigator.clipboard.writeText(selectedStep.output);
+                            toast.success("Copied");
+                          }
+                        }}
+                        className="p-1 rounded hover:bg-surface-2 transition-colors"
+                      >
+                        <Copy className="w-3 h-3 text-muted-foreground" />
+                      </button>
+                    )}
+                  </div>
+                  {selectedStep.output ? (
+                    <div className="rounded-2xl bg-surface-1 border border-border p-3 font-mono text-xs text-foreground max-h-48 overflow-auto">
+                      <pre>
+                        {(() => {
+                          try {
+                            return JSON.stringify(
+                              JSON.parse(selectedStep.output),
+                              null,
+                              2,
+                            );
+                          } catch {
+                            return selectedStep.output;
+                          }
+                        })()}
+                      </pre>
+                    </div>
+                  ) : selectedStep.status === "running" ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="w-3 h-3 animate-spin text-cordum" />
+                      Processing...
+                    </div>
+                  ) : selectedStep.status === "waiting" ? (
+                    <div className="flex items-center gap-2 text-xs text-[var(--color-warning)]">
+                      <Hand className="w-3 h-3 animate-pulse" />
+                      Awaiting approval
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Waiting to execute
+                    </p>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
-        {run.steps.length === 0 ? (
-          <div className="px-4 pb-4 text-sm text-muted">No steps in this run.</div>
-        ) : (
-          <div className="border-t border-border">
-            {run.steps.map((step) => (
-              <StepItem key={step.id} step={step} />
+
+        {/* Chat Panel */}
+          <div className="flex-1 flex flex-col">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-border bg-surface-0">
+            <MessageSquare className="w-4 h-4 text-cordum" />
+            <span className="text-sm font-display font-semibold text-foreground">
+              Run Chat
+            </span>
+            <span className="text-xs font-mono text-muted-foreground ml-auto">
+              {messages.length} messages
+            </span>
+          </div>
+          {chatBanner && (
+            <div
+              className={cn(
+                "flex items-center gap-2 px-5 py-1.5 border-b text-xs",
+                chatBanner.tone === "warning"
+                  ? "border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 text-[var(--color-warning)]"
+                  : "border-destructive/20 bg-destructive/5 text-destructive",
+              )}
+            >
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              {chatBanner.message}
+            </div>
+          )}
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-3">
+            {messages.length === 0 && (
+              <EmptyState
+                icon={<MessageSquare className="w-5 h-5" />}
+                title="No messages yet"
+                description="Messages will appear here as the run progresses."
+                className="py-8"
+              />
+            )}
+            {messages.map((msg, i) => (
+              <motion.div
+                key={msg.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.03 }}
+                className={cn(
+                  "max-w-[80%] rounded-2xl p-3",
+                  msg.role === "user"
+                    ? "ml-auto bg-cordum/10 border border-cordum/20"
+                    : msg.role === "agent"
+                      ? "bg-[var(--color-info)]/10 border border-[var(--color-info)]/20"
+                      : "bg-surface-1 border border-border",
+                )}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span
+                    className={cn(
+                      "text-xs font-mono uppercase",
+                      msg.role === "user"
+                        ? "text-cordum"
+                        : msg.role === "agent"
+                          ? "text-[var(--color-info)]"
+                          : "text-muted-foreground",
+                    )}
+                  >
+                    {msg.role}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {msg.timestamp}
+                  </span>
+                </div>
+                <p className="text-sm text-foreground leading-relaxed">
+                  {msg.content}
+                </p>
+              </motion.div>
             ))}
+            <div ref={chatEndRef} />
           </div>
-        )}
-      </Card>
 
-      {/* Run Error */}
-      {run.error && (
-        <div className="flex items-start gap-2 rounded-2xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">
-          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-          <pre className="whitespace-pre-wrap">{JSON.stringify(run.error, null, 2)}</pre>
+          {/* Input */}
+          <div className="p-4 border-t border-border bg-surface-0">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                placeholder="Send a message to the workflow..."
+                disabled={chatMutation.isPending}
+                className={cn(
+                  "flex-1 h-9 px-3 text-sm bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum",
+                  chatMutation.isPending && "opacity-50 cursor-not-allowed",
+                )}
+              />
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={sendMessage}
+                disabled={!chatInput.trim() || chatMutation.isPending}
+              >
+                <Send className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Press Enter to send. Messages are visible to all participants.
+            </p>
+          </div>
+        </div>
         </div>
       )}
 
-      {/* Confirm dialogs */}
-      {showRerunConfirm && (
-        <ConfirmDialog
-          title="Rerun this workflow?"
-          message="This will create a new run with the same input. The original run is not affected."
-          confirmLabel="Rerun"
-          isPending={rerunRun.isPending}
-          onConfirm={handleRerun}
-          onCancel={() => setShowRerunConfirm(false)}
-        />
+      {activeTab === "governance" && (
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <GovernanceTimeline
+            runId={run?.id ?? runId}
+            emptyHint="This workflow run has not evaluated any policy rules yet."
+          />
+        </div>
       )}
-      {showCancelConfirm && (
-        <ConfirmDialog
-          title="Cancel this run?"
-          message="This will attempt to cancel the currently running workflow. Steps already completed will not be rolled back."
-          confirmLabel="Cancel Run"
-          isPending={cancelRun.isPending}
-          onConfirm={handleCancel}
-          onCancel={() => setShowCancelConfirm(false)}
-          variant="danger"
-        />
-      )}
-      {showDeleteConfirm && (
-        <ConfirmDialog
-          title={`Delete run ${run.id.slice(0, 8)}?`}
-          message="This permanently removes the run and its timeline data. This cannot be undone."
-          confirmLabel="Delete"
-          isPending={deleteRun.isPending}
-          onConfirm={handleDelete}
-          onCancel={() => setShowDeleteConfirm(false)}
-          variant="danger"
-        />
-      )}
+
+      {/* Cancel Confirmation */}
+      <ConfirmDialog
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        onConfirm={handleCancel}
+        title="Cancel Workflow Run"
+        description="This will terminate the currently running step and mark all pending steps as skipped. This action cannot be undone."
+        confirmLabel={cancelMutation.isPending ? "Cancelling..." : "Cancel Run"}
+        variant="destructive"
+      />
     </div>
   );
 }

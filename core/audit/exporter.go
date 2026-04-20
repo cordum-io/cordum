@@ -44,6 +44,23 @@ const (
 	// MCP bridge. Extra carries server, tool_name, tenant, duration_ms,
 	// and outcome for SIEM correlation of egress activity.
 	EventMCPToolOutboundInvocation = "mcp.tool_outbound_invocation"
+	EventMCPSignatureInvalid       = "mcp.signature_invalid"
+	EventWorkerTrustChange         = "worker_trust_change"
+	EventTopicRegistered           = "topic_registered"
+	EventTopicUnregistered         = "topic_unregistered"
+	// EventLicenseLegacyRejected is emitted when the licensing layer
+	// rejects a pre-GA top-level features/limits envelope instead of
+	// silently migrating it to the current schema.
+	EventLicenseLegacyRejected = "license.legacy_format_rejected"
+	// EventLicenseBreakglassActivated is emitted whenever an expired or
+	// invalid license still admits a request through one of the explicit
+	// break-glass recovery paths.
+	EventLicenseBreakglassActivated = "license.breakglass_activated"
+	// EventShadowEval is emitted by the Safety Kernel when an active
+	// policy evaluation is mirrored against the shadow policy for
+	// A/B impact analysis. Extra carries shadow_bundle_id, bundle_id,
+	// active_verdict, shadow_verdict, diff, and latency_ms.
+	EventShadowEval = "shadow_eval"
 )
 
 // Severity levels for SIEM events.

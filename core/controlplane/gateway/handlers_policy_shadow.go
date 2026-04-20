@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/policyshadow"
 )
@@ -27,7 +26,7 @@ type policyShadowUpsertRequest struct {
 // from query/path, to prevent a misconfigured client from flipping a
 // shadow in someone else's tenant.
 func (s *server) handlePutPolicyShadow(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	if s.policyShadowStore == nil {
@@ -93,7 +92,7 @@ func (s *server) handlePutPolicyShadow(w http.ResponseWriter, r *http.Request) {
 // handleGetPolicyShadow returns the shadow policy for the given bundle
 // or 404 when none is active.
 func (s *server) handleGetPolicyShadow(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	if s.policyShadowStore == nil {
@@ -126,7 +125,7 @@ func (s *server) handleGetPolicyShadow(w http.ResponseWriter, r *http.Request) {
 // handleDeletePolicyShadow removes the shadow policy for the given
 // bundle. 204 on successful removal, 404 if none was active.
 func (s *server) handleDeletePolicyShadow(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	if s.policyShadowStore == nil {

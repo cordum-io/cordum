@@ -1,6 +1,6 @@
 import { get, post, put, del, patch } from "../api/client";
 import type { User, Approval, DLQEntry, ApprovalContext, PolicyReplayRequest, PolicyReplayResponse, PolicyAnalyticsRequest, PolicyAnalyticsResponse } from "../api/types";
-import { mapDLQEntry, mapApprovalItem, type BackendDLQEntry, type BackendApprovalItem } from "../api/transform";
+import { mapDLQEntry, mapApprovalItem, mapApprovalContext, type BackendDLQEntry, type BackendApprovalItem } from "../api/transform";
 import type {
   PolicyBundlesResponse,
   PolicyBundleDetail,
@@ -254,8 +254,9 @@ export const api = {
     return post<void>(`/approvals/${id}/reject`, body);
   },
 
-  getApprovalContext(jobId: string): Promise<ApprovalContext> {
-    return get<ApprovalContext>(`/approvals/${jobId}/context`);
+  async getApprovalContext(jobId: string): Promise<ApprovalContext> {
+    const raw = await get<unknown>(`/approvals/${jobId}/context`);
+    return mapApprovalContext(raw);
   },
 
   listJobs(params?: QueryParams): Promise<JobsResponse> {

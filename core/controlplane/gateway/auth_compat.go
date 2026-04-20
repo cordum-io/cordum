@@ -1,0 +1,170 @@
+package gateway
+
+// auth_compat.go provides backward-compatible type aliases and function
+// re-exports so that existing gateway code (handlers, middleware, tests)
+// continues to compile after the auth logic moved to gateway/auth/.
+//
+// New code should import "gateway/auth" directly.
+
+import (
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+)
+
+// ─── Type aliases ────────────────────────────────────────────────────────────
+// Go type aliases are fully compatible — callers can use either name.
+
+type AuthSource = auth.AuthSource
+type AuthContext = auth.AuthContext
+type authContextKey = auth.ContextKey
+type AuthProvider = auth.AuthProvider
+type UserStoreProvider = auth.UserStoreProvider
+type BasicAuthProvider = auth.BasicAuthProvider
+type CompositeAuthProvider = auth.CompositeAuthProvider
+type OIDCProvider = auth.OIDCProvider
+type OIDCConfig = auth.OIDCConfig
+type OIDCAuthAdapter = auth.OIDCAuthAdapter
+type OIDCFlowAdapter = auth.OIDCFlowAdapter
+type SAMLAuthAdapter = auth.SAMLAuthAdapter
+type SAMLService = auth.SAMLService
+type SCIMService = auth.SCIMService
+type AuthConfig = auth.AuthConfig
+type User = auth.User
+type UserStore = auth.UserStore
+type KeyStore = auth.KeyStore
+type ManagedKey = auth.ManagedKey
+type RedisUserStore = auth.RedisUserStore
+type RedisKeyStore = auth.RedisKeyStore
+type PublicPathProvider = auth.PublicPathProvider
+type AuthConfigProvider = auth.AuthConfigProvider
+type RouteRegistrar = auth.RouteRegistrar
+type CreateUserRequest = auth.CreateUserRequest
+type ChangePasswordRequest = auth.ChangePasswordRequest
+type RBACStore = auth.RBACStore
+type PermissionChecker = auth.PermissionChecker
+type RoleDefinition = auth.RoleDefinition
+
+// ─── Constant re-exports ────────────────────────────────────────────────────
+
+const (
+	AuthSourceAPIKey           = auth.AuthSourceAPIKey
+	AuthSourceJWT              = auth.AuthSourceJWT
+	AuthSourceOIDC             = auth.AuthSourceOIDC
+	AuthSourceSession          = auth.AuthSourceSession
+	PermAdminAll               = auth.PermAdminAll
+	PermJobsRead               = auth.PermJobsRead
+	PermJobsWrite              = auth.PermJobsWrite
+	PermJobsApprove            = auth.PermJobsApprove
+	PermAgentsRead             = auth.PermAgentsRead
+	PermAgentsWrite            = auth.PermAgentsWrite
+	PermAgentsDelegate         = auth.PermAgentsDelegate
+	PermWorkflowsRead          = auth.PermWorkflowsRead
+	PermWorkflowsWrite         = auth.PermWorkflowsWrite
+	PermWorkersRead            = auth.PermWorkersRead
+	PermWorkersWrite           = auth.PermWorkersWrite
+	PermConfigRead             = auth.PermConfigRead
+	PermConfigWrite            = auth.PermConfigWrite
+	PermAuditRead              = auth.PermAuditRead
+	PermAuditExport            = auth.PermAuditExport
+	PermAuditVerify            = auth.PermAuditVerify
+	PermAPIKeysRead            = auth.PermAPIKeysRead
+	PermAPIKeysWrite           = auth.PermAPIKeysWrite
+	PermDLQRead                = auth.PermDLQRead
+	PermDLQWrite               = auth.PermDLQWrite
+	PermMemoryRead             = auth.PermMemoryRead
+	PermLegalHoldRead          = auth.PermLegalHoldRead
+	PermLegalHoldWrite         = auth.PermLegalHoldWrite
+	PermLicenseRead            = auth.PermLicenseRead
+	PermLocksRead              = auth.PermLocksRead
+	PermMCPRead                = auth.PermMCPRead
+	PermMCPVerify              = auth.PermMCPVerify
+	PermPacksInstall           = auth.PermPacksInstall
+	PermPacksUninstall         = auth.PermPacksUninstall
+	PermPacksRead              = auth.PermPacksRead
+	PermPacksVerify            = auth.PermPacksVerify
+	PermPolicyRead             = auth.PermPolicyRead
+	PermPolicyWrite            = auth.PermPolicyWrite
+	PermPoolsWrite             = auth.PermPoolsWrite
+	PermTelemetryRead          = auth.PermTelemetryRead
+	PermTelemetryWrite         = auth.PermTelemetryWrite
+	PermTelemetryExport        = auth.PermTelemetryExport
+	PermTopicsRead             = auth.PermTopicsRead
+	PermTopicsWrite            = auth.PermTopicsWrite
+	PermWorkerCredentialsRead  = auth.PermWorkerCredentialsRead
+	PermWorkerCredentialsWrite = auth.PermWorkerCredentialsWrite
+	PermGovernanceRead         = auth.PermGovernanceRead
+	PermSchemasRead            = auth.PermSchemasRead
+	PermSchemasWrite           = auth.PermSchemasWrite
+	PermUsersRead              = auth.PermUsersRead
+	PermUsersWrite             = auth.PermUsersWrite
+	PermRolesRead              = auth.PermRolesRead
+	PermRolesWrite             = auth.PermRolesWrite
+	PermEvalsDatasetsRead      = auth.PermEvalsDatasetsRead
+	PermEvalsDatasetsWrite     = auth.PermEvalsDatasetsWrite
+	PermEvalsDatasetsDelete    = auth.PermEvalsDatasetsDelete
+	samlMetadataPath           = auth.SAMLMetadataPath
+	samlLoginPath              = auth.SAMLLoginPath
+	samlACSPath                = auth.SAMLACSPath
+	oidcLoginPath              = auth.OIDCLoginPath
+	oidcCallbackPath           = auth.OIDCCallbackPath
+	scimBasePath               = auth.SCIMBasePath
+	scimUsersPath              = auth.SCIMUsersPath
+	scimGroupsPath             = auth.SCIMGroupsPath
+	sessionCookieName          = auth.SessionCookieName
+)
+
+// ─── Function re-exports (var = pkg.Fn preserves the original signature) ────
+
+var (
+	// Context helpers (unexported — used by gateway internals + tests).
+	authFromContext = auth.FromContext
+	authFromRequest = auth.FromRequest
+
+	// Provider constructors.
+	newBasicAuthProvider     = auth.NewBasicAuthProvider
+	NewCompositeAuthProvider = auth.NewCompositeAuthProvider
+	NewOIDCAuthAdapter       = auth.NewOIDCAuthAdapter
+	NewOIDCFlowAdapter       = auth.NewOIDCFlowAdapter
+	NewOIDCProvider          = auth.NewOIDCProvider
+	NewOIDCProviderFromEnv   = auth.NewOIDCProviderFromEnv
+	NewSAMLService           = auth.NewSAMLService
+	NewSCIMService           = auth.NewSCIMService
+
+	// Store constructors.
+	NewRedisUserStore      = auth.NewRedisUserStore
+	NewRedisKeyStore       = auth.NewRedisKeyStore
+	NewRBACStore           = auth.NewRBACStore
+	NewRBACStoreFromClient = auth.NewRBACStoreFromClient
+	NewPermissionChecker   = auth.NewPermissionChecker
+	RBACEntitled           = auth.RBACEntitled
+	seedDefaultAdminUser   = auth.SeedDefaultAdminUser
+	GenerateRawKey         = auth.GenerateRawKey
+
+	// Validation helpers.
+	ValidatePassword  = auth.ValidatePassword
+	bcryptCostFromEnv = auth.BcryptCostFromEnv
+
+	// Auth helpers (unexported — used by gateway internals + tests).
+	basicAuthProvider      = auth.ExtractBasicAuth
+	normalizeAPIKey        = auth.NormalizeAPIKey
+	apiKeyFromWebSocket    = auth.APIKeyFromWebSocket
+	bearerToken            = auth.BearerToken
+	headerValue            = auth.HeaderValue
+	normalizeRole          = auth.NormalizeRole
+	parseAPIKeys           = auth.ParseAPIKeys
+	sessionTokenFromCookie = auth.SessionTokenFromCookie
+	setSessionCookie       = auth.SetSessionCookie
+	clearSessionCookie     = auth.ClearSessionCookie
+)
+
+// ─── Error re-exports ───────────────────────────────────────────────────────
+
+var (
+	ErrUserNotFound      = auth.ErrUserNotFound
+	ErrUserAlreadyExists = auth.ErrUserAlreadyExists
+	ErrInvalidPassword   = auth.ErrInvalidPassword
+	ErrUserDisabled      = auth.ErrUserDisabled
+	ErrLoginThrottled    = auth.ErrLoginThrottled
+	ErrKeyNotFound       = auth.ErrKeyNotFound
+	ErrRoleNotFound      = auth.ErrRoleNotFound
+	ErrBuiltInRole       = auth.ErrBuiltInRole
+)

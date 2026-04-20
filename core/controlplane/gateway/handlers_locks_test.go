@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/locks"
 )
 
@@ -40,8 +39,8 @@ func (s *stubLockStore) Get(_ context.Context, _ string) (*locks.Lock, error) {
 }
 
 func adminCtx(req *http.Request) *http.Request {
-	authCtx := &auth.AuthContext{Role: "admin", Tenant: "default"}
-	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Role: "admin", Tenant: "default"}
+	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 }
 
 func lockBody(resource, owner string) string {

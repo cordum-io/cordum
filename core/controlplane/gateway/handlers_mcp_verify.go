@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/mcp/outbound"
 )
 
@@ -84,7 +83,7 @@ func (s *server) mcpVerifier() (*outbound.Verifier, error) {
 
 // handleMCPVerifySignature serves POST /api/v1/mcp/verify-signature.
 func (s *server) handleMCPVerifySignature(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermMCPVerify, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermMCPVerify, "admin") {
 		return
 	}
 	var body mcpVerifySignatureRequest

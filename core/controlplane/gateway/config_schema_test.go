@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 )
 
 func TestConfigAndSchemaHandlers(t *testing.T) {
@@ -104,8 +102,8 @@ func TestSchemaRegister_ViewerForbidden(t *testing.T) {
 	body, _ := json.Marshal(schemaPayload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/schemas", bytes.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "default")
-	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handleRegisterSchema(rec, req)
@@ -122,8 +120,8 @@ func TestSchemaList_ViewerAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/schemas", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handleListSchemas(rec, req)

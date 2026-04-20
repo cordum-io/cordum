@@ -40,6 +40,9 @@ type Registration struct {
 	Requires       []string `json:"requires,omitempty"`
 	RiskTags       []string `json:"risk_tags,omitempty"`
 	Status         string   `json:"status"`
+	// RiskTagDeriver names a built-in server-side risk tag derivation strategy.
+	// Set from pack manifest riskTagDeriver field during pack install.
+	RiskTagDeriver string `json:"risk_tag_deriver,omitempty"`
 }
 
 // Snapshot is the current topic registry view.

@@ -6,28 +6,26 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 )
 
 // mockAuthProvider implements AuthProvider for testing.
 type mockAuthProvider struct {
-	authHTTP func(*http.Request) (*auth.AuthContext, error)
-	authGRPC func(context.Context) (*auth.AuthContext, error)
+	authHTTP func(*http.Request) (*AuthContext, error)
+	authGRPC func(context.Context) (*AuthContext, error)
 	role     func(*http.Request, ...string) error
 	tenant   func(*http.Request, string, string) (string, error)
 	access   func(*http.Request, string) error
 	princ    func(*http.Request, string) (string, error)
 }
 
-func (m *mockAuthProvider) AuthenticateHTTP(r *http.Request) (*auth.AuthContext, error) {
+func (m *mockAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
 	if m.authHTTP != nil {
 		return m.authHTTP(r)
 	}
 	return nil, errors.New("mock: not configured")
 }
 
-func (m *mockAuthProvider) AuthenticateGRPC(ctx context.Context) (*auth.AuthContext, error) {
+func (m *mockAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext, error) {
 	if m.authGRPC != nil {
 		return m.authGRPC(ctx)
 	}
@@ -73,7 +71,7 @@ func (m *mockPublicPathProvider) IsPublicPath(path string) bool {
 }
 
 func TestNewCompositeAuthProvider_RequiresAtLeastOne(t *testing.T) {
-	_, err := auth.NewCompositeAuthProvider()
+	_, err := NewCompositeAuthProvider()
 	if err == nil {
 		t.Fatal("expected error for zero providers")
 	}
@@ -81,17 +79,17 @@ func TestNewCompositeAuthProvider_RequiresAtLeastOne(t *testing.T) {
 
 func TestCompositeAuthHTTP_FirstProviderSucceeds(t *testing.T) {
 	p1 := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
-			return &auth.AuthContext{APIKey: "key1", Tenant: "t1", Role: "admin"}, nil
+		authHTTP: func(*http.Request) (*AuthContext, error) {
+			return &AuthContext{APIKey: "key1", Tenant: "t1", Role: "admin"}, nil
 		},
 	}
 	p2 := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
+		authHTTP: func(*http.Request) (*AuthContext, error) {
 			t.Fatal("second provider should not be called")
 			return nil, nil
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1, p2)
+	comp, err := NewCompositeAuthProvider(p1, p2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,16 +105,16 @@ func TestCompositeAuthHTTP_FirstProviderSucceeds(t *testing.T) {
 
 func TestCompositeAuthHTTP_FallthroughToSecondProvider(t *testing.T) {
 	p1 := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
+		authHTTP: func(*http.Request) (*AuthContext, error) {
 			return nil, errors.New("p1: no token")
 		},
 	}
 	p2 := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
-			return &auth.AuthContext{APIKey: "key2", Tenant: "t2", AuthSource: auth.AuthSource("basic")}, nil
+		authHTTP: func(*http.Request) (*AuthContext, error) {
+			return &AuthContext{APIKey: "key2", Tenant: "t2", AuthSource: AuthSource("basic")}, nil
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1, p2)
+	comp, err := NewCompositeAuthProvider(p1, p2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,16 +130,16 @@ func TestCompositeAuthHTTP_FallthroughToSecondProvider(t *testing.T) {
 
 func TestCompositeAuthHTTP_AllProvidersFail(t *testing.T) {
 	p1 := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
+		authHTTP: func(*http.Request) (*AuthContext, error) {
 			return nil, errors.New("p1: fail")
 		},
 	}
 	p2 := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
+		authHTTP: func(*http.Request) (*AuthContext, error) {
 			return nil, errors.New("p2: fail")
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1, p2)
+	comp, err := NewCompositeAuthProvider(p1, p2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,16 +156,16 @@ func TestCompositeAuthHTTP_AllProvidersFail(t *testing.T) {
 
 func TestCompositeAuthGRPC_FallthroughToSecond(t *testing.T) {
 	p1 := &mockAuthProvider{
-		authGRPC: func(context.Context) (*auth.AuthContext, error) {
+		authGRPC: func(context.Context) (*AuthContext, error) {
 			return nil, errors.New("p1: no metadata")
 		},
 	}
 	p2 := &mockAuthProvider{
-		authGRPC: func(context.Context) (*auth.AuthContext, error) {
-			return &auth.AuthContext{PrincipalID: "user1", Tenant: "t1"}, nil
+		authGRPC: func(context.Context) (*AuthContext, error) {
+			return &AuthContext{PrincipalID: "user1", Tenant: "t1"}, nil
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1, p2)
+	comp, err := NewCompositeAuthProvider(p1, p2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,11 +180,11 @@ func TestCompositeAuthGRPC_FallthroughToSecond(t *testing.T) {
 
 func TestCompositeAuthGRPC_AllFail(t *testing.T) {
 	p1 := &mockAuthProvider{
-		authGRPC: func(context.Context) (*auth.AuthContext, error) {
+		authGRPC: func(context.Context) (*AuthContext, error) {
 			return nil, errors.New("p1: fail")
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1)
+	comp, err := NewCompositeAuthProvider(p1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +211,7 @@ func TestCompositeRequireRole_DelegatesToPrimary(t *testing.T) {
 			return nil
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1, p2)
+	comp, err := NewCompositeAuthProvider(p1, p2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +239,7 @@ func TestCompositeResolveTenant_DelegatesToPrimary(t *testing.T) {
 			return "", nil
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1, p2)
+	comp, err := NewCompositeAuthProvider(p1, p2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +263,7 @@ func TestCompositeRequireTenantAccess_DelegatesToPrimary(t *testing.T) {
 			return nil
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1)
+	comp, err := NewCompositeAuthProvider(p1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +282,7 @@ func TestCompositeResolvePrincipal_DelegatesToPrimary(t *testing.T) {
 			return "resolved-" + requested, nil
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1)
+	comp, err := NewCompositeAuthProvider(p1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +303,7 @@ func TestCompositeIsPublicPath_AnyProviderReturnsTrue(t *testing.T) {
 	p2 := &mockPublicPathProvider{
 		publicPaths: map[string]bool{"/metrics": true},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1, p2)
+	comp, err := NewCompositeAuthProvider(p1, p2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +320,7 @@ func TestCompositeIsPublicPath_AnyProviderReturnsTrue(t *testing.T) {
 
 func TestCompositeIsPublicPath_NoPublicPathProviders(t *testing.T) {
 	p1 := &mockAuthProvider{}
-	comp, err := auth.NewCompositeAuthProvider(p1)
+	comp, err := NewCompositeAuthProvider(p1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,11 +331,11 @@ func TestCompositeIsPublicPath_NoPublicPathProviders(t *testing.T) {
 
 func TestCompositeSingleProvider(t *testing.T) {
 	p1 := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
-			return &auth.AuthContext{APIKey: "single", Tenant: "t1"}, nil
+		authHTTP: func(*http.Request) (*AuthContext, error) {
+			return &AuthContext{APIKey: "single", Tenant: "t1"}, nil
 		},
 	}
-	comp, err := auth.NewCompositeAuthProvider(p1)
+	comp, err := NewCompositeAuthProvider(p1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 )
 
 func TestLockHandlers(t *testing.T) {
@@ -76,8 +74,8 @@ func TestLockGet_ViewerAllowed(t *testing.T) {
 	body, _ := json.Marshal(acquire)
 	aReq := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", bytes.NewReader(body))
 	aReq.Header.Set("X-Tenant-ID", "default")
-	authCtx := &auth.AuthContext{Role: "admin", Tenant: "default"}
-	aReq = aReq.WithContext(context.WithValue(aReq.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Role: "admin", Tenant: "default"}
+	aReq = aReq.WithContext(context.WithValue(aReq.Context(), authContextKey{}, authCtx))
 	aRR := httptest.NewRecorder()
 	s.handleAcquireLock(aRR, aReq)
 	if aRR.Code != http.StatusOK {
@@ -87,8 +85,8 @@ func TestLockGet_ViewerAllowed(t *testing.T) {
 	// Viewer should be allowed to read locks.
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/locks?resource=lock:viewer-test", nil)
 	getReq.Header.Set("X-Tenant-ID", "default")
-	viewerCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
-	getReq = getReq.WithContext(context.WithValue(getReq.Context(), auth.ContextKey{}, viewerCtx))
+	viewerCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	getReq = getReq.WithContext(context.WithValue(getReq.Context(), authContextKey{}, viewerCtx))
 	getRR := httptest.NewRecorder()
 	s.handleGetLock(getRR, getReq)
 	if getRR.Code != http.StatusOK {
@@ -106,8 +104,8 @@ func TestLockAcquire_ViewerForbidden(t *testing.T) {
 	body, _ := json.Marshal(acquire)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", bytes.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "default")
-	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handleAcquireLock(rec, req)

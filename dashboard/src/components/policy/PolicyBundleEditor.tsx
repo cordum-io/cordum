@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor, { DiffEditor, loader } from "@monaco-editor/react";
-import type { editor as MonacoEditor } from "monaco-editor";
 import {
   AlertTriangle,
   FileCode,
@@ -29,6 +28,31 @@ interface PolicyBundleEditorProps {
 
 type ConfirmAction = "save" | "discard" | null;
 
+type MonacoEditorInstance = {
+  getModel: () => { getLineMaxColumn: (lineNumber: number) => number } | null;
+  addCommand: (keybinding: number, handler: () => void) => void;
+};
+
+type MonacoEditorModule = {
+  MarkerSeverity: { Error: number };
+  editor: {
+    setModelMarkers: (
+      model: unknown,
+      owner: string,
+      markers: Array<{
+        severity: number;
+        message: string;
+        startLineNumber: number;
+        startColumn: number;
+        endLineNumber: number;
+        endColumn: number;
+      }>,
+    ) => void;
+  };
+  KeyMod: { CtrlCmd: number };
+  KeyCode: { KeyS: number };
+};
+
 function ConfirmDialog({
   action,
   isPending,
@@ -48,7 +72,7 @@ function ConfirmDialog({
           <h3 className="font-display text-lg font-semibold text-ink">
             {isSave ? "Update Live Policy Bundle" : "Discard YAML Changes"}
           </h3>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             {isSave
               ? "This will update the live policy bundle and affect safety evaluation behavior."
               : "You have unsaved YAML changes. Discard and close the editor?"}
@@ -91,8 +115,8 @@ export function PolicyBundleEditor({
     Array<{ line: number; message: string }>
   >([]);
 
-  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
-  const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
+  const editorRef = useRef<MonacoEditorInstance | null>(null);
+  const monacoRef = useRef<MonacoEditorModule | null>(null);
 
   const updateBundle = useUpdatePolicyBundle();
 
@@ -106,7 +130,7 @@ export function PolicyBundleEditor({
     const model = editorRef.current?.getModel();
     const monaco = monacoRef.current;
     if (!model || !monaco) return;
-    const markers: MonacoEditor.IMarkerData[] = validationErrors.map((err) => ({
+    const markers = validationErrors.map((err) => ({
       severity: monaco.MarkerSeverity.Error,
       message: err.message,
       startLineNumber: Math.max(1, err.line),
@@ -193,8 +217,8 @@ export function PolicyBundleEditor({
 
   const handleEditorMount = useCallback(
     (
-      mountedEditor: MonacoEditor.IStandaloneCodeEditor,
-      monaco: typeof import("monaco-editor"),
+      mountedEditor: MonacoEditorInstance,
+      monaco: MonacoEditorModule,
     ) => {
       editorRef.current = mountedEditor;
       monacoRef.current = monaco;
@@ -308,7 +332,7 @@ export function PolicyBundleEditor({
         )}
       </div>
 
-      <div className="rounded-xl border border-border bg-surface2/30 px-4 py-2 text-xs text-muted">
+      <div className="rounded-xl border border-border bg-surface2/30 px-4 py-2 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>{lineCount} lines</span>
           <span>{charCount} chars</span>

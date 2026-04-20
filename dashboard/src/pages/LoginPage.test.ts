@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import {
   isSafeReturnUrl,
   isSafeApiUrl,
+  buildOidcLoginHref,
+  buildSamlLoginHref,
+  buildSamlRedirectTarget,
   buildPasswordFallbackUser,
+  parseSamlCallbackHash,
   parseLoginUser,
   readJsonIfOk,
 } from "./LoginPage";
@@ -101,6 +105,47 @@ describe("buildPasswordFallbackUser", () => {
   });
 });
 
+describe("parseSamlCallbackHash", () => {
+  it("parses a successful SAML callback fragment into a session payload", () => {
+    expect(
+      parseSamlCallbackHash(
+        "#token=session-123&user_id=user-1&username=alice&email=alice%40example.com&display_name=Alice&role=admin&tenant=acme",
+      ),
+    ).toEqual({
+      token: "session-123",
+      user: {
+        id: "user-1",
+        username: "alice",
+        email: "alice@example.com",
+        display_name: "Alice",
+        roles: ["admin"],
+        tenant: "acme",
+      },
+    });
+  });
+
+  it("falls back to a viewer role and derives a username when needed", () => {
+    expect(
+      parseSamlCallbackHash("#token=session-123&email=alice%40example.com"),
+    ).toEqual({
+      token: "session-123",
+      user: {
+        id: "alice@example.com",
+        username: "alice@example.com",
+        email: "alice@example.com",
+        display_name: "alice@example.com",
+        roles: ["viewer"],
+        tenant: "default",
+      },
+    });
+  });
+
+  it("returns null when the fragment is missing a token or user identity", () => {
+    expect(parseSamlCallbackHash("#username=alice")).toBeNull();
+    expect(parseSamlCallbackHash("#token=session-123")).toBeNull();
+  });
+});
+
 describe("parseLoginUser", () => {
   it("returns a typed user when the payload is complete", () => {
     expect(
@@ -129,6 +174,26 @@ describe("parseLoginUser", () => {
         roles: ["admin"],
       }),
     ).toBeNull();
+  });
+});
+
+describe("SAML redirect helpers", () => {
+  it("builds a login redirect target that returns to /login with the original path", () => {
+    expect(buildSamlRedirectTarget("/jobs?status=failed")).toBe(
+      `${window.location.origin}/login?returnUrl=%2Fjobs%3Fstatus%3Dfailed`,
+    );
+  });
+
+  it("builds a safe SAML login href against the chosen API base URL", () => {
+    expect(buildSamlLoginHref("/api/v1", "/jobs")).toBe(
+      `${window.location.origin}/api/v1/auth/sso/saml/login?redirect=${encodeURIComponent(`${window.location.origin}/login?returnUrl=%2Fjobs`)}`,
+    );
+  });
+
+  it("builds a safe OIDC login href against the chosen API base URL", () => {
+    expect(buildOidcLoginHref("/api/v1", "/jobs")).toBe(
+      `${window.location.origin}/api/v1/auth/sso/oidc/login?redirect=${encodeURIComponent(`${window.location.origin}/login?returnUrl=%2Fjobs`)}`,
+    );
   });
 });
 

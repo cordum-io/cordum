@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
@@ -77,7 +76,7 @@ func agentResponseFromIdentity(a *store.AgentIdentity) agentResponse {
 }
 
 func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAgentsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAgentsWrite, "admin") {
 		return
 	}
 	if !s.requireFeatureEntitlement(w, agentIdentityFeature, "agent identity requires an Enterprise license") {
@@ -126,7 +125,7 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleListAgents(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAgentsRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAgentsRead, "admin") {
 		return
 	}
 	if !s.requireFeatureEntitlement(w, agentIdentityFeature, "agent identity requires an Enterprise license") {
@@ -241,7 +240,7 @@ func (s *server) computeAgentLastActive(ctx context.Context, agentIDs []string) 
 }
 
 func (s *server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAgentsRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAgentsRead, "admin") {
 		return
 	}
 	if !s.requireFeatureEntitlement(w, agentIdentityFeature, "agent identity requires an Enterprise license") {
@@ -272,7 +271,7 @@ func (s *server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAgentsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAgentsWrite, "admin") {
 		return
 	}
 	if !s.requireFeatureEntitlement(w, agentIdentityFeature, "agent identity requires an Enterprise license") {
@@ -330,7 +329,7 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAgentsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAgentsWrite, "admin") {
 		return
 	}
 	if !s.requireFeatureEntitlement(w, agentIdentityFeature, "agent identity requires an Enterprise license") {
@@ -374,7 +373,7 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleAgentStats(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAgentsRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAgentsRead, "admin") {
 		return
 	}
 	if !s.requireFeatureEntitlement(w, agentIdentityFeature, "agent identity requires an Enterprise license") {

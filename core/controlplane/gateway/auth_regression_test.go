@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -46,8 +45,8 @@ func TestPostRunChat_ViewerRole_Forbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflow-runs/"+runID+"/chat", bytes.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "default")
 	req.SetPathValue("id", runID)
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "viewer", PrincipalID: "viewer-user"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Tenant: "default", Role: "viewer", PrincipalID: "viewer-user"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handlePostRunChat(rec, req)
@@ -71,8 +70,8 @@ func TestPostRunChat_ViewerRole_Forbidden(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestResolveGRPCTenant_UnscopedKey_RejectsArbitraryTenant(t *testing.T) {
-	authCtx := &auth.AuthContext{Role: "admin", Tenant: ""}
-	ctx := context.WithValue(context.Background(), auth.ContextKey{}, authCtx)
+	authCtx := &AuthContext{Role: "admin", Tenant: ""}
+	ctx := context.WithValue(context.Background(), authContextKey{}, authCtx)
 
 	_, err := resolveGRPCTenant(ctx, "attacker-tenant", "default")
 	if err == nil {
@@ -84,8 +83,8 @@ func TestResolveGRPCTenant_UnscopedKey_RejectsArbitraryTenant(t *testing.T) {
 }
 
 func TestResolveGRPCTenant_UnscopedKey_EmptyRequest_ReturnsFallback(t *testing.T) {
-	authCtx := &auth.AuthContext{Role: "admin", Tenant: ""}
-	ctx := context.WithValue(context.Background(), auth.ContextKey{}, authCtx)
+	authCtx := &AuthContext{Role: "admin", Tenant: ""}
+	ctx := context.WithValue(context.Background(), authContextKey{}, authCtx)
 
 	tenant, err := resolveGRPCTenant(ctx, "", "default")
 	if err != nil {
@@ -97,8 +96,8 @@ func TestResolveGRPCTenant_UnscopedKey_EmptyRequest_ReturnsFallback(t *testing.T
 }
 
 func TestResolveGRPCTenant_UnscopedKey_RequestMatchesFallback_Allowed(t *testing.T) {
-	authCtx := &auth.AuthContext{Role: "admin", Tenant: ""}
-	ctx := context.WithValue(context.Background(), auth.ContextKey{}, authCtx)
+	authCtx := &AuthContext{Role: "admin", Tenant: ""}
+	ctx := context.WithValue(context.Background(), authContextKey{}, authCtx)
 
 	tenant, err := resolveGRPCTenant(ctx, "default", "default")
 	if err != nil {
@@ -110,8 +109,8 @@ func TestResolveGRPCTenant_UnscopedKey_RequestMatchesFallback_Allowed(t *testing
 }
 
 func TestResolveGRPCTenant_ScopedKey_DeniesOtherTenant(t *testing.T) {
-	authCtx := &auth.AuthContext{Role: "admin", Tenant: "tenant-a"}
-	ctx := context.WithValue(context.Background(), auth.ContextKey{}, authCtx)
+	authCtx := &AuthContext{Role: "admin", Tenant: "tenant-a"}
+	ctx := context.WithValue(context.Background(), authContextKey{}, authCtx)
 
 	_, err := resolveGRPCTenant(ctx, "tenant-b", "default")
 	if err == nil {
@@ -123,8 +122,8 @@ func TestResolveGRPCTenant_ScopedKey_DeniesOtherTenant(t *testing.T) {
 }
 
 func TestResolveGRPCTenant_ScopedKey_EmptyRequest_ReturnsAuthTenant(t *testing.T) {
-	authCtx := &auth.AuthContext{Role: "admin", Tenant: "tenant-a"}
-	ctx := context.WithValue(context.Background(), auth.ContextKey{}, authCtx)
+	authCtx := &AuthContext{Role: "admin", Tenant: "tenant-a"}
+	ctx := context.WithValue(context.Background(), authContextKey{}, authCtx)
 
 	tenant, err := resolveGRPCTenant(ctx, "", "default")
 	if err != nil {
@@ -136,8 +135,8 @@ func TestResolveGRPCTenant_ScopedKey_EmptyRequest_ReturnsAuthTenant(t *testing.T
 }
 
 func TestResolveGRPCTenant_CrossTenantKey_Allowed(t *testing.T) {
-	authCtx := &auth.AuthContext{Role: "admin", Tenant: "tenant-a", AllowCrossTenant: true}
-	ctx := context.WithValue(context.Background(), auth.ContextKey{}, authCtx)
+	authCtx := &AuthContext{Role: "admin", Tenant: "tenant-a", AllowCrossTenant: true}
+	ctx := context.WithValue(context.Background(), authContextKey{}, authCtx)
 
 	tenant, err := resolveGRPCTenant(ctx, "tenant-b", "default")
 	if err != nil {
@@ -192,10 +191,10 @@ func TestMemoryTenantIsolation_MemRunKey_CrossTenantDenied(t *testing.T) {
 
 	// Authenticate as admin in tenant-a — should be denied.
 	s.auth = &tenantStrictAuth{tenant: "tenant-a", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "user-a"}
+	authCtx := &AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "user-a"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/memory?key="+memKey, nil)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetMemory(rec, req)
@@ -230,10 +229,10 @@ func TestMemoryTenantIsolation_MemJobKey_CrossTenantDenied(t *testing.T) {
 
 	// Authenticate as admin in tenant-a — should be denied.
 	s.auth = &tenantStrictAuth{tenant: "tenant-a", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "user-a"}
+	authCtx := &AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "user-a"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/memory?key="+memKey, nil)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetMemory(rec, req)
@@ -268,10 +267,10 @@ func TestMemoryTenantIsolation_MemRunKey_SameTenantAllowed(t *testing.T) {
 
 	// Authenticate as admin in default — should be allowed.
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "user-d"}
+	authCtx := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "user-d"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/memory?key="+memKey, nil)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetMemory(rec, req)
@@ -292,8 +291,8 @@ func TestGetConfig_UnknownScope_Rejected(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=custom&scope_id=anything", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetConfig(rec, req)
@@ -309,8 +308,8 @@ func TestGetConfig_SystemScope_RequiresAdmin(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "viewer"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Tenant: "default", Role: "viewer"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetConfig(rec, req)
@@ -326,8 +325,8 @@ func TestGetConfig_OrgScope_ViewerDenied(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=org&scope_id=default", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "viewer"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Tenant: "default", Role: "viewer"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetConfig(rec, req)
@@ -343,8 +342,8 @@ func TestGetConfig_OrgScope_OperatorAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=org&scope_id=default", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "operator", PrincipalID: "op1"}
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	authCtx := &AuthContext{Tenant: "default", Role: "operator", PrincipalID: "op1"}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetConfig(rec, req)
@@ -363,10 +362,10 @@ func TestGetConfig_OrgScope_OperatorAllowed(t *testing.T) {
 func TestStatus_ViewerCannotSeeInfraFields(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &tenantStrictAuth{tenant: "default", role: "viewer"}
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "viewer"}
+	authCtx := &AuthContext{Tenant: "default", Role: "viewer"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleStatus(rec, req)
@@ -398,10 +397,10 @@ func TestStatus_ViewerCannotSeeInfraFields(t *testing.T) {
 func TestStatus_AdminCanSeeInfraFields(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
+	authCtx := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleStatus(rec, req)
@@ -431,11 +430,11 @@ func TestStatus_AdminCanSeeInfraFields(t *testing.T) {
 func TestGetEffectiveConfig_ViewerDenied(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &tenantStrictAuth{tenant: "default", role: "viewer"}
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "viewer"}
+	authCtx := &AuthContext{Tenant: "default", Role: "viewer"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/effective", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetEffectiveConfig(rec, req)
@@ -453,11 +452,11 @@ func TestGetEffectiveConfig_OperatorAllowed(t *testing.T) {
 	}
 
 	s.auth = &tenantStrictAuth{tenant: "default", role: "operator"}
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "operator", PrincipalID: "op1"}
+	authCtx := &AuthContext{Tenant: "default", Role: "operator", PrincipalID: "op1"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/effective", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetEffectiveConfig(rec, req)
@@ -485,12 +484,12 @@ func TestCrossTenantHeaderSpoofing_Blocked(t *testing.T) {
 
 	// Authenticate as tenant-a, try to read tenant-b's job.
 	s.auth = &tenantStrictAuth{tenant: "tenant-a", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "attacker"}
+	authCtx := &AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "attacker"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
 	req.Header.Set("X-Tenant-ID", "tenant-a") // Correct header, but job belongs to tenant-b
 	req.SetPathValue("id", jobID)
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleGetJob(rec, req)
@@ -511,7 +510,7 @@ func TestGetLock_TenantIsolation(t *testing.T) {
 
 	// Acquire a lock as tenant-a admin via the handler (ensures tenant prefix).
 	s.auth = &tenantStrictAuth{tenant: "tenant-a", role: "admin"}
-	authCtxA := &auth.AuthContext{Tenant: "tenant-a", Role: "admin"}
+	authCtxA := &AuthContext{Tenant: "tenant-a", Role: "admin"}
 
 	acquireBody, _ := json.Marshal(map[string]any{
 		"resource": lockName,
@@ -521,7 +520,7 @@ func TestGetLock_TenantIsolation(t *testing.T) {
 	})
 	acquireReq := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", bytes.NewReader(acquireBody))
 	acquireReq.Header.Set("X-Tenant-ID", "tenant-a")
-	acquireReq = acquireReq.WithContext(context.WithValue(acquireReq.Context(), auth.ContextKey{}, authCtxA))
+	acquireReq = acquireReq.WithContext(context.WithValue(acquireReq.Context(), authContextKey{}, authCtxA))
 	acquireRec := httptest.NewRecorder()
 	s.handleAcquireLock(acquireRec, acquireReq)
 	if acquireRec.Code != http.StatusOK {
@@ -531,7 +530,7 @@ func TestGetLock_TenantIsolation(t *testing.T) {
 	// Tenant-a should be able to read the lock.
 	getReqA := httptest.NewRequest(http.MethodGet, "/api/v1/locks?resource="+lockName, nil)
 	getReqA.Header.Set("X-Tenant-ID", "tenant-a")
-	getReqA = getReqA.WithContext(context.WithValue(getReqA.Context(), auth.ContextKey{}, authCtxA))
+	getReqA = getReqA.WithContext(context.WithValue(getReqA.Context(), authContextKey{}, authCtxA))
 	getRecA := httptest.NewRecorder()
 	s.handleGetLock(getRecA, getReqA)
 	if getRecA.Code != http.StatusOK {
@@ -540,10 +539,10 @@ func TestGetLock_TenantIsolation(t *testing.T) {
 
 	// Tenant-b should NOT see tenant-a's lock (different tenant prefix → 404).
 	s.auth = &tenantStrictAuth{tenant: "tenant-b", role: "admin"}
-	authCtxB := &auth.AuthContext{Tenant: "tenant-b", Role: "admin"}
+	authCtxB := &AuthContext{Tenant: "tenant-b", Role: "admin"}
 	getReqB := httptest.NewRequest(http.MethodGet, "/api/v1/locks?resource="+lockName, nil)
 	getReqB.Header.Set("X-Tenant-ID", "tenant-b")
-	getReqB = getReqB.WithContext(context.WithValue(getReqB.Context(), auth.ContextKey{}, authCtxB))
+	getReqB = getReqB.WithContext(context.WithValue(getReqB.Context(), authContextKey{}, authCtxB))
 	getRecB := httptest.NewRecorder()
 	s.handleGetLock(getRecB, getReqB)
 	if getRecB.Code != http.StatusNotFound {
@@ -560,7 +559,7 @@ func TestGetLock_TenantIsolation(t *testing.T) {
 	})
 	releaseReq := httptest.NewRequest(http.MethodPost, "/api/v1/locks/release", bytes.NewReader(releaseBody))
 	releaseReq.Header.Set("X-Tenant-ID", "tenant-b")
-	releaseReq = releaseReq.WithContext(context.WithValue(releaseReq.Context(), auth.ContextKey{}, authCtxB))
+	releaseReq = releaseReq.WithContext(context.WithValue(releaseReq.Context(), authContextKey{}, authCtxB))
 	releaseRec := httptest.NewRecorder()
 	s.handleReleaseLock(releaseRec, releaseReq)
 	// Release of non-existent key is a no-op (200 with lock=null, or 409).
@@ -570,7 +569,7 @@ func TestGetLock_TenantIsolation(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "tenant-a", role: "admin"}
 	verifyReq := httptest.NewRequest(http.MethodGet, "/api/v1/locks?resource="+lockName, nil)
 	verifyReq.Header.Set("X-Tenant-ID", "tenant-a")
-	verifyReq = verifyReq.WithContext(context.WithValue(verifyReq.Context(), auth.ContextKey{}, authCtxA))
+	verifyReq = verifyReq.WithContext(context.WithValue(verifyReq.Context(), authContextKey{}, authCtxA))
 	verifyRec := httptest.NewRecorder()
 	s.handleGetLock(verifyRec, verifyReq)
 	if verifyRec.Code != http.StatusOK {
@@ -586,13 +585,13 @@ func TestGetLock_TenantIsolation(t *testing.T) {
 func TestListRuns_MissingWorkflow_Returns404(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "admin"}
+	authCtx := &AuthContext{Tenant: "default", Role: "admin"}
 
 	// Try to list runs for a non-existent workflow.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/nonexistent-wf/runs", nil)
 	req.Header.Set("X-Tenant-ID", "default")
 	req.SetPathValue("id", "nonexistent-wf")
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 	s.handleListRuns(rec, req)
 
@@ -605,13 +604,13 @@ func TestListRuns_MissingWorkflow_Returns404(t *testing.T) {
 func TestGetRunTimeline_MissingRun_Returns404(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
-	authCtx := &auth.AuthContext{Tenant: "default", Role: "admin"}
+	authCtx := &AuthContext{Tenant: "default", Role: "admin"}
 
 	// Try to get timeline for a non-existent run.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-runs/nonexistent-run/timeline", nil)
 	req.Header.Set("X-Tenant-ID", "default")
 	req.SetPathValue("id", "nonexistent-run")
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 	s.handleGetRunTimeline(rec, req)
 
@@ -631,7 +630,7 @@ func TestSubmitJob_RoleParity_UserAllowed(t *testing.T) {
 	// Verify gRPC allows "user" role.
 	s.auth = &tenantStrictAuth{tenant: "default", role: "user"}
 	err := s.requireRoleGRPC(
-		context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "default", Role: "user"}),
+		context.WithValue(context.Background(), authContextKey{}, &AuthContext{Tenant: "default", Role: "user"}),
 		"admin", "user",
 	)
 	if err != nil {
@@ -640,7 +639,7 @@ func TestSubmitJob_RoleParity_UserAllowed(t *testing.T) {
 
 	// Verify gRPC denies "viewer" role.
 	err = s.requireRoleGRPC(
-		context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "default", Role: "viewer"}),
+		context.WithValue(context.Background(), authContextKey{}, &AuthContext{Tenant: "default", Role: "viewer"}),
 		"admin", "user",
 	)
 	if err == nil {

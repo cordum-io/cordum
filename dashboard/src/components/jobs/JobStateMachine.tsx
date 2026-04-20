@@ -44,7 +44,8 @@ const TERMINAL_LABELS: Record<string, string> = {
 export function JobStateMachine({ status }: { status?: JobStatus }) {
   const current = status ?? "pending";
   const currentIdx = STATUS_INDEX[current] ?? 0;
-  const isFailed = current === "failed" || current === "cancelled" || current === "denied" || current === "timeout";
+  const isFailed = current === "failed" || current === "cancelled" || current === "timeout";
+  const isDenied = current === "denied";
 
   return (
     <div className="flex items-center gap-0">
@@ -52,6 +53,7 @@ export function JobStateMachine({ status }: { status?: JobStatus }) {
         const isCompleted = i < currentIdx;
         const isCurrent = i === currentIdx;
         const isTerminalFailed = isCurrent && isFailed;
+        const isTerminalDenied = isCurrent && isDenied;
         const label = i === 4 && TERMINAL_LABELS[current] ? TERMINAL_LABELS[current] : step.label;
 
         return (
@@ -62,8 +64,9 @@ export function JobStateMachine({ status }: { status?: JobStatus }) {
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-full border-2 transition-all",
                   isCompleted && "border-success bg-success/10",
-                  isCurrent && !isTerminalFailed && "border-accent bg-accent/10 ring-2 ring-accent/20",
+                  isCurrent && !isTerminalFailed && !isDenied && "border-accent bg-accent/10 ring-2 ring-accent/20",
                   isTerminalFailed && "border-danger bg-danger/10 ring-2 ring-danger/20",
+                  isDenied && "border-[var(--color-governance)] bg-[var(--color-governance)]/10 ring-2 ring-[var(--color-governance)]/20",
                   !isCompleted && !isCurrent && "border-border bg-surface2",
                 )}
               >
@@ -73,20 +76,21 @@ export function JobStateMachine({ status }: { status?: JobStatus }) {
                   <Circle
                     className={cn(
                       "h-3 w-3",
-                      isTerminalFailed ? "text-danger fill-danger" : "text-accent fill-accent",
+                      isTerminalFailed ? "text-danger fill-danger" : isTerminalDenied ? "text-[var(--color-governance)] fill-[var(--color-governance)]" : "text-accent fill-accent",
                     )}
                   />
                 ) : (
-                  <Circle className="h-3 w-3 text-muted" />
+                  <Circle className="h-3 w-3 text-muted-foreground" />
                 )}
               </div>
               <span
                 className={cn(
-                  "text-[10px] font-medium whitespace-nowrap",
+                  "text-xs font-medium whitespace-nowrap",
                   isCompleted && "text-success",
-                  isCurrent && !isTerminalFailed && "text-accent font-semibold",
+                  isCurrent && !isTerminalFailed && !isTerminalDenied && "text-accent font-semibold",
                   isTerminalFailed && "text-danger font-semibold",
-                  !isCompleted && !isCurrent && "text-muted",
+                  isTerminalDenied && "text-[var(--color-governance)] font-semibold",
+                  !isCompleted && !isCurrent && "text-muted-foreground",
                 )}
               >
                 {label}

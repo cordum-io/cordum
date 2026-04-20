@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/stretchr/testify/assert"
@@ -22,25 +21,25 @@ import (
 // policyReplayAuth implements AuthProvider for replay tests, requiring admin role.
 type policyReplayAuth struct{}
 
-func (a *policyReplayAuth) AuthenticateHTTP(r *http.Request) (*auth.AuthContext, error) {
-	return auth.FromRequest(r), nil
+func (a *policyReplayAuth) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
+	return authFromRequest(r), nil
 }
 
-func (a *policyReplayAuth) AuthenticateGRPC(ctx context.Context) (*auth.AuthContext, error) {
-	return auth.FromContext(ctx), nil
+func (a *policyReplayAuth) AuthenticateGRPC(ctx context.Context) (*AuthContext, error) {
+	return authFromContext(ctx), nil
 }
 
 func (a *policyReplayAuth) RequireRole(r *http.Request, roles ...string) error {
-	auth := auth.FromRequest(r)
+	auth := authFromRequest(r)
 	if auth == nil {
 		return errors.New("unauthorized")
 	}
-	role := auth.NormalizeRole(auth.Role)
+	role := normalizeRole(auth.Role)
 	if role == "" {
 		return errors.New("role required")
 	}
 	for _, candidate := range roles {
-		if auth.NormalizeRole(candidate) == role {
+		if normalizeRole(candidate) == role {
 			return nil
 		}
 	}
@@ -48,7 +47,7 @@ func (a *policyReplayAuth) RequireRole(r *http.Request, roles ...string) error {
 }
 
 func (a *policyReplayAuth) ResolveTenant(r *http.Request, requested, _ string) (string, error) {
-	auth := auth.FromRequest(r)
+	auth := authFromRequest(r)
 	if auth == nil {
 		return "", errors.New("unauthorized")
 	}
@@ -67,7 +66,7 @@ func (a *policyReplayAuth) ResolvePrincipal(r *http.Request, requested string) (
 	if requested != "" {
 		return requested, nil
 	}
-	auth := auth.FromRequest(r)
+	auth := authFromRequest(r)
 	if auth != nil {
 		return auth.PrincipalID, nil
 	}
@@ -84,7 +83,7 @@ func seedPolicyBundle(t *testing.T, s *server, bundleID, content string) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/"+bundleID, bytes.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "default")
 	req.SetPathValue("id", bundleID)
-	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+	req = withAuth(req, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 	rec := httptest.NewRecorder()
 	s.handlePutPolicyBundle(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, "seed bundle %s: %s", bundleID, rec.Body.String())
@@ -134,7 +133,7 @@ type testJob struct {
 	SafetyRuleID   string
 }
 
-func replayRequest(t *testing.T, s *server, body map[string]any, auth *auth.AuthContext) *httptest.ResponseRecorder {
+func replayRequest(t *testing.T, s *server, body map[string]any, auth *AuthContext) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -190,10 +189,10 @@ func TestHandlePolicyReplay_Basic(t *testing.T) {
     decision: allow
 `
 	rec := replayRequest(t, s, map[string]any{
-		"from":              now.Add(-1 * time.Hour).Format(time.RFC3339),
-		"to":                now.Add(1 * time.Hour).Format(time.RFC3339),
-		"candidate_content": candidateYAML,
-	}, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+		"from":               now.Add(-1 * time.Hour).Format(time.RFC3339),
+		"to":                 now.Add(1 * time.Hour).Format(time.RFC3339),
+		"candidate_content":  candidateYAML,
+	}, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	resp := decodeReplayResponse(t, rec)
@@ -236,7 +235,7 @@ func TestHandlePolicyReplay_CurrentPolicy(t *testing.T) {
 		"from":               now.Add(-1 * time.Hour).Format(time.RFC3339),
 		"to":                 now.Add(1 * time.Hour).Format(time.RFC3339),
 		"use_current_policy": true,
-	}, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+	}, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	resp := decodeReplayResponse(t, rec)
@@ -250,7 +249,7 @@ func TestHandlePolicyReplay_CurrentPolicy(t *testing.T) {
 func TestHandlePolicyReplay_InvalidTimeRange(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &policyReplayAuth{}
-	auth := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"}
+	auth := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"}
 
 	now := time.Now().UTC()
 
@@ -325,7 +324,7 @@ func TestHandlePolicyReplay_Filters(t *testing.T) {
 		{ID: "f-job-3", Topic: "job.deploy", Tenant: "tenant-a", SafetyDecision: "DENY"},
 	})
 
-	auth := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"}
+	auth := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"}
 
 	// Filter by tenant.
 	rec := replayRequest(t, s, map[string]any{
@@ -385,7 +384,7 @@ func TestHandlePolicyReplay_EmptyResult(t *testing.T) {
 		"from":               future.Format(time.RFC3339),
 		"to":                 future.Add(1 * time.Hour).Format(time.RFC3339),
 		"use_current_policy": true,
-	}, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+	}, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	resp := decodeReplayResponse(t, rec)
@@ -425,7 +424,7 @@ func TestHandlePolicyReplay_MaxJobs(t *testing.T) {
 		"to":                 now.Add(1 * time.Hour).Format(time.RFC3339),
 		"use_current_policy": true,
 		"max_jobs":           3,
-	}, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+	}, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	resp := decodeReplayResponse(t, rec)
@@ -437,7 +436,7 @@ func TestHandlePolicyReplay_MaxJobs(t *testing.T) {
 		"to":                 now.Add(1 * time.Hour).Format(time.RFC3339),
 		"use_current_policy": true,
 		"max_jobs":           9999,
-	}, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+	}, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	resp = decodeReplayResponse(t, rec)
 	assert.LessOrEqual(t, resp.Summary.TotalJobs, 1000, "should be capped at 1000")
@@ -459,11 +458,11 @@ func TestHandlePolicyReplay_Auth(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 
 	// Viewer role — should fail.
-	rec = replayRequest(t, s, body, &auth.AuthContext{Tenant: "default", Role: "viewer", PrincipalID: "viewer-1"})
+	rec = replayRequest(t, s, body, &AuthContext{Tenant: "default", Role: "viewer", PrincipalID: "viewer-1"})
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 
 	// Admin role — should succeed (even without seeded bundles/jobs).
-	rec = replayRequest(t, s, body, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+	rec = replayRequest(t, s, body, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 	assert.Equal(t, http.StatusOK, rec.Code, "admin should be allowed: %s", rec.Body.String())
 }
 
@@ -494,7 +493,7 @@ func TestHandlePolicyReplay_VelocityWarning(t *testing.T) {
 		"from":              now.Add(-1 * time.Hour).Format(time.RFC3339),
 		"to":                now.Add(1 * time.Hour).Format(time.RFC3339),
 		"candidate_content": candidateYAML,
-	}, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+	}, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	resp := decodeReplayResponse(t, rec)
@@ -509,7 +508,7 @@ func TestHandlePolicyReplay_NoPolicySpecified(t *testing.T) {
 	rec := replayRequest(t, s, map[string]any{
 		"from": now.Add(-1 * time.Hour).Format(time.RFC3339),
 		"to":   now.Add(1 * time.Hour).Format(time.RFC3339),
-	}, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
+	}, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-1"})
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "one of candidate_content")

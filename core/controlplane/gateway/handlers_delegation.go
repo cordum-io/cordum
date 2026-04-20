@@ -11,7 +11,6 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 )
 
@@ -76,11 +75,11 @@ func (r gatewayDelegationPermissionsResolver) ResolveAgentPermissions(ctx contex
 }
 
 func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAgentsDelegate, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAgentsDelegate, "admin") {
 		s.emitDelegationAudit(r, "issue", tenantFromRequest(r), "", "", "", 0, "denied", errors.New("access denied"))
 		return
 	}
-	authCtx := auth.FromRequest(r)
+	authCtx := authFromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "authentication required")
 		return
@@ -171,7 +170,7 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleVerifyDelegation(w http.ResponseWriter, r *http.Request) {
-	if auth.FromRequest(r) == nil {
+	if authFromRequest(r) == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
@@ -220,7 +219,7 @@ func (s *server) handleVerifyDelegation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *server) handleRevokeDelegation(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermAgentsDelegate, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermAgentsDelegate, "admin") {
 		s.emitDelegationAudit(r, "revoke", tenantFromRequest(r), "", "", "", 0, "denied", errors.New("access denied"))
 		return
 	}

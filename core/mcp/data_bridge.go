@@ -361,6 +361,23 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
 		}
 	}
+	// Bracket the outbound HTTP round-trip with the invocation auditor
+	// so FinishRequest sees the terminal status + latency + response
+	// body. Mirrors the HTTPServiceBridge wiring; every data bridge
+	// request (resource read, artifact fetch) also lands on
+	// mcp.tool_outbound_invocation when an auditor is installed.
+	var handle OutboundRequestHandle
+	if b.outboundInvocationAuditor != nil {
+		handle = b.outboundInvocationAuditor.StartRequest(ctx, method, path, bodyBytes)
+	}
+	status := 0
+	var data []byte
+	var callErr error
+	defer func() {
+		if b.outboundInvocationAuditor != nil {
+			b.outboundInvocationAuditor.FinishRequest(handle, status, data, callErr)
+		}
+	}()
 	// #nosec G704 -- URL is validated and DNS-pinned via validateAndResolveOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {

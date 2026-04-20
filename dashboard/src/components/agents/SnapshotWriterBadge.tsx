@@ -42,7 +42,7 @@ export function SnapshotWriterBadge({ snapshotMeta }: SnapshotWriterBadgeProps) 
         "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
         stale
           ? "border-warning/30 bg-warning/5 text-warning"
-          : "border-border bg-surface2/30 text-muted",
+          : "border-border bg-surface2/30 text-muted-foreground",
       )}
       title={`Snapshot written by ${snapshotMeta.writer_id} at ${new Date(snapshotMeta.captured_at).toLocaleString()}`}
     >

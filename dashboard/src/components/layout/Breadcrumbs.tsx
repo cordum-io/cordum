@@ -14,6 +14,8 @@ const ROUTE_LABELS: Record<string, string> = {
   approvals: "Approvals",
   policies: "Policy Studio",
   packs: "Packs",
+  topics: "Topics",
+  schemas: "Schemas",
   dlq: "Dead Letters",
   audit: "Audit Log",
   settings: "Settings",
@@ -92,30 +94,27 @@ export function Breadcrumbs() {
   // Root path — just show "Overview"
   if (crumbs.length === 0) {
     return (
-      <nav className="flex items-center gap-1 text-[11px]" aria-label="Breadcrumb navigation">
-        <span className="font-semibold text-foreground">Overview</span>
+      <nav className="flex items-center gap-1 text-xs">
+        <span className="font-semibold text-ink">Overview</span>
       </nav>
     );
   }
 
   return (
-    <nav className="flex items-center gap-1 text-[11px]" aria-label="Breadcrumb navigation">
-      <Link
-        to="/"
-        className="rounded-sm px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-surface-2/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35"
-      >
+    <nav className="flex items-center gap-1 text-xs">
+      <Link to="/" className="text-muted-foreground transition-colors hover:text-accent">
         Overview
       </Link>
       {crumbs.map((crumb, i) => {
         const isLast = i === crumbs.length - 1;
         return (
           <span key={crumb.path} className="flex items-center gap-1">
-            <ChevronRight className="h-3 w-3 text-muted-foreground/60" />
+            <ChevronRight className="h-3 w-3 text-muted/50" />
             {isLast ? (
               <span
                 className={cn(
-                  "font-semibold text-foreground",
-                  crumb.isId && "font-mono text-[10px]",
+                  "font-semibold text-ink",
+                  crumb.isId && "font-mono text-xs",
                 )}
               >
                 {crumb.label}
@@ -124,8 +123,8 @@ export function Breadcrumbs() {
               <Link
                 to={crumb.path}
                 className={cn(
-                  "rounded-sm px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-surface-2/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35",
-                  crumb.isId && "font-mono text-[10px]",
+                  "text-muted-foreground transition-colors hover:text-accent",
+                  crumb.isId && "font-mono text-xs",
                 )}
               >
                 {crumb.label}

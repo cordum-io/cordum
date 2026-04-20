@@ -6,8 +6,7 @@ import (
 )
 
 func (s *server) handleGetLicense(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermLicenseRead, "admin") {
 		return
 	}
 
@@ -51,8 +50,7 @@ func (s *server) handleReloadLicense(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetLicenseUsage(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermLicenseRead, "admin") {
 		return
 	}
 

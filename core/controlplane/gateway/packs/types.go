@@ -29,12 +29,17 @@ type PackCompatibility struct {
 
 // PackTopic describes a job topic provided by the pack.
 type PackTopic struct {
-	Name       string   `yaml:"name" json:"name"`
-	Requires   []string `yaml:"requires" json:"requires"`
-	RiskTags   []string `yaml:"riskTags" json:"riskTags"`
-	Capability string   `yaml:"capability" json:"capability"`
-	InputSchemaID  string `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
-	OutputSchemaID string `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
+	Name           string   `yaml:"name" json:"name"`
+	Requires       []string `yaml:"requires" json:"requires"`
+	RiskTags       []string `yaml:"riskTags" json:"riskTags"`
+	Capability     string   `yaml:"capability" json:"capability"`
+	InputSchemaID  string   `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
+	OutputSchemaID string   `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
+	// RiskTagDeriver names a built-in server-side risk tag derivation strategy
+	// for this topic. When set, the safety kernel derives authoritative risk tags
+	// from job content instead of trusting client-supplied tags.
+	// Built-in derivers: "amount-threshold" (parses amount from JSON payload).
+	RiskTagDeriver string `yaml:"riskTagDeriver,omitempty" json:"risk_tag_deriver,omitempty"`
 }
 
 // PackResources lists schemas and workflows bundled in the pack.

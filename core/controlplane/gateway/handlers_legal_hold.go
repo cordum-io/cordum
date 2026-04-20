@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 )
 
@@ -46,7 +45,7 @@ func (s *server) requireLegalHoldEntitlement(w http.ResponseWriter) bool {
 // handleCreateLegalHold creates a legal hold on a tenant's audit data.
 // POST /api/v1/audit/legal-hold
 func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermLegalHoldWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermLegalHoldWrite, "admin") {
 		return
 	}
 	if s.requireLegalHoldEntitlement(w) {
@@ -76,7 +75,7 @@ func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve creator from auth context
 	createdBy := "admin"
-	if auth := auth.FromRequest(r); auth != nil && auth.PrincipalID != "" {
+	if auth := authFromRequest(r); auth != nil && auth.PrincipalID != "" {
 		createdBy = auth.PrincipalID
 	}
 
@@ -97,7 +96,7 @@ func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 // handleListLegalHolds lists legal holds, optionally filtered by tenant.
 // GET /api/v1/audit/legal-holds
 func (s *server) handleListLegalHolds(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermLegalHoldRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermLegalHoldRead, "admin") {
 		return
 	}
 	if s.requireLegalHoldEntitlement(w) {
@@ -121,7 +120,7 @@ func (s *server) handleListLegalHolds(w http.ResponseWriter, r *http.Request) {
 // handleReleaseLegalHold releases a legal hold. Does NOT delete retained data.
 // DELETE /api/v1/audit/legal-hold/{id}
 func (s *server) handleReleaseLegalHold(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermLegalHoldWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, PermLegalHoldWrite, "admin") {
 		return
 	}
 	if s.requireLegalHoldEntitlement(w) {
@@ -139,7 +138,7 @@ func (s *server) handleReleaseLegalHold(w http.ResponseWriter, r *http.Request) 
 	}
 
 	releasedBy := "admin"
-	if auth := auth.FromRequest(r); auth != nil && auth.PrincipalID != "" {
+	if auth := authFromRequest(r); auth != nil && auth.PrincipalID != "" {
 		releasedBy = auth.PrincipalID
 	}
 
